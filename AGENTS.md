@@ -51,6 +51,9 @@ non-trivial change. CI runs these on Linux, Windows, and macOS.
 - `main` — release branch. It only moves by maintainer-controlled promotion
   from `dev` (releases, docs deploys). Do not open feature PRs against `main`.
 - `preview` — prerelease train (`x.y.z-preview.*` versions).
+- `dev2-go` — temporary maintainer-owned Go rewrite track running in parallel
+  with the TypeScript `preview` train. It intentionally has no standing pull
+  request into `dev`; do not merge or rebase it without maintainer direction.
 
 The Claude Desktop integration formerly carried on the `claudedesktop` branch is
 now fully merged into `dev`, and that branch has been retired. Desktop work
