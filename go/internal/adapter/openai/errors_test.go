@@ -41,3 +41,17 @@ func TestReadUpstreamHTTPErrorDoesNotEchoHTML(t *testing.T) {
 		t.Fatalf("unexpected sanitized error: %#v", err)
 	}
 }
+
+func TestReadUpstreamHTTPErrorExtractsPydanticDetailMessages(t *testing.T) {
+	response := &http.Response{
+		StatusCode: http.StatusUnprocessableEntity,
+		Status:     "422 Unprocessable Entity",
+		Body: io.NopCloser(strings.NewReader(
+			`{"detail":[{"loc":["body","tools"],"msg":"single tool call required"},{"msg":"parallel calls are unsupported"},{"type":"ignored"}]}`,
+		)),
+	}
+	err := ReadUpstreamHTTPError(context.Background(), response).(*UpstreamHTTPError)
+	if err.Message != "single tool call required; parallel calls are unsupported" {
+		t.Fatalf("message = %q", err.Message)
+	}
+}

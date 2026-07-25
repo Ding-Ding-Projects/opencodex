@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	cursorRunPath       = "/agent.v1.AgentService/Run"
-	cursorClientVersion = "cli-2026.02.13-41ac335"
+	cursorRunPath           = "/agent.v1.AgentService/Run"
+	cursorClientVersion     = "cli-2026.07.08-0c04a8a"
+	cursorHeartbeatInterval = 5 * time.Second
 )
 
 type InteractionHandler func(context.Context, []byte) ([]byte, error)
@@ -28,6 +29,7 @@ type TransportConfig struct {
 	Headers                                  map[string]string
 	Client                                   *http.Client
 	FirstFrameTimeout                        time.Duration
+	HeartbeatInterval                        time.Duration
 	MaxFrameSize                             int
 	InteractionHandler                       InteractionHandler
 }
@@ -59,6 +61,9 @@ func NewLiveTransport(config TransportConfig) (*LiveTransport, error) {
 	if config.FirstFrameTimeout <= 0 {
 		config.FirstFrameTimeout = 30 * time.Second
 	}
+	if config.HeartbeatInterval <= 0 {
+		config.HeartbeatInterval = cursorHeartbeatInterval
+	}
 	if config.ClientVersion == "" {
 		config.ClientVersion = cursorClientVersion
 	}
@@ -69,6 +74,19 @@ func NewLiveTransport(config TransportConfig) (*LiveTransport, error) {
 }
 
 func (t *LiveTransport) RequestCommitted() bool { return t.committed.Load() }
+
+func (t *LiveTransport) commitTrace() *httptrace.ClientTrace {
+	return &httptrace.ClientTrace{
+		// A streaming request does not reach WroteRequest until its body closes. Headers on
+		// the wire are the earliest conservative boundary after which replay is unsafe.
+		WroteHeaders: func() { t.committed.Store(true) },
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				t.committed.Store(true)
+			}
+		},
+	}
+}
 
 func (t *LiveTransport) SendClient(payload []byte) error {
 	frame, err := EncodeFrame(ConnectFrame{Payload: payload})
@@ -93,6 +111,31 @@ func (t *LiveTransport) Close() error {
 		return writer.Close()
 	}
 	return nil
+}
+
+func marshalClientHeartbeat() []byte {
+	return appendMessage(nil, 7, nil) // AgentClientMessage.client_heartbeat
+}
+
+func (t *LiveTransport) startHeartbeat(ctx context.Context) <-chan error {
+	errors := make(chan error, 1)
+	go func() {
+		defer close(errors)
+		ticker := time.NewTicker(t.config.HeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := t.SendClient(marshalClientHeartbeat()); err != nil {
+					errors <- fmt.Errorf("write Cursor heartbeat: %w", err)
+					return
+				}
+			}
+		}
+	}()
+	return errors
 }
 
 func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(types.AdapterEvent) error) error {
@@ -125,12 +168,7 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 			req.Header.Set(key, value)
 		}
 	}
-	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
-		if info.Err == nil {
-			t.committed.Store(true)
-		}
-	}}
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), t.commitTrace()))
 	responseCh := make(chan struct {
 		response *http.Response
 		err      error
@@ -145,9 +183,17 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 	if err := t.SendClient(payload); err != nil {
 		return fmt.Errorf("write Cursor run request: %w", err)
 	}
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	heartbeatErrors := t.startHeartbeat(heartbeatCtx)
+	defer stopHeartbeat()
 	var response *http.Response
 	select {
 	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-heartbeatErrors:
+		if err != nil {
+			return err
+		}
 		return ctx.Err()
 	case result := <-responseCh:
 		if result.err != nil {
@@ -171,22 +217,28 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 	first := true
 	for {
 		var frame ConnectFrame
-		if first {
-			result := make(chan struct {
+		result := make(chan struct {
+			frame ConnectFrame
+			err   error
+		}, 1)
+		go func() {
+			f, err := ReadFrame(response.Body, t.config.MaxFrameSize)
+			result <- struct {
 				frame ConnectFrame
 				err   error
-			}, 1)
-			go func() {
-				f, err := ReadFrame(response.Body, t.config.MaxFrameSize)
-				result <- struct {
-					frame ConnectFrame
-					err   error
-				}{f, err}
-			}()
+			}{f, err}
+		}()
+		if first {
 			timer := time.NewTimer(t.config.FirstFrameTimeout)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
+				return ctx.Err()
+			case heartbeatErr := <-heartbeatErrors:
+				timer.Stop()
+				if heartbeatErr != nil {
+					return heartbeatErr
+				}
 				return ctx.Err()
 			case <-timer.C:
 				return fmt.Errorf("Cursor transport timed out before first response")
@@ -196,7 +248,17 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 			}
 			first = false
 		} else {
-			frame, err = ReadFrame(response.Body, t.config.MaxFrameSize)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case heartbeatErr := <-heartbeatErrors:
+				if heartbeatErr != nil {
+					return heartbeatErr
+				}
+				return ctx.Err()
+			case got := <-result:
+				frame, err = got.frame, got.err
+			}
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) && frames == 0 {

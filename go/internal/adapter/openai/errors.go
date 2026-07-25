@@ -95,7 +95,20 @@ func extractUpstreamMessage(payload []byte) string {
 	if message := SafeUpstreamErrorString(obj["error"]); message != "" {
 		return message
 	}
-	return SafeUpstreamErrorString(obj["detail"])
+	if message := SafeUpstreamErrorString(obj["detail"]); message != "" {
+		return message
+	}
+	if details, ok := obj["detail"].([]any); ok {
+		messages := make([]string, 0, len(details))
+		for _, detail := range details {
+			item, _ := detail.(map[string]any)
+			if message := SafeUpstreamErrorString(item["msg"]); message != "" {
+				messages = append(messages, message)
+			}
+		}
+		return strings.Join(messages, "; ")
+	}
+	return ""
 }
 
 func drainAndClose(body io.ReadCloser) {
