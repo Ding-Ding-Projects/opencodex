@@ -133,3 +133,24 @@ func TestADCFailuresDoNotLeakCredentialValues(t *testing.T) {
 		t.Fatalf("error leaked credential: %v", err)
 	}
 }
+
+func TestADCRetriesTransientTokenStatus(t *testing.T) {
+	var calls atomic.Int32
+	var sleeps atomic.Int32
+	resolver := adcTestResolver(t, map[string]string{
+		"type": "authorized_user", "client_id": "client", "client_secret": "secret", "refresh_token": "refresh",
+	}, func(*http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"access_token":"retried","expires_in":3600}`)), Header: make(http.Header)}, nil
+	})
+	resolver.Sleep = func(context.Context, time.Duration) error { sleeps.Add(1); return nil }
+	token, err := resolver.AccessToken(context.Background())
+	if err != nil || token != "retried" {
+		t.Fatalf("AccessToken() = %q, %v", token, err)
+	}
+	if calls.Load() != 2 || sleeps.Load() != 1 {
+		t.Fatalf("calls=%d sleeps=%d", calls.Load(), sleeps.Load())
+	}
+}

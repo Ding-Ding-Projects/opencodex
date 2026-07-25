@@ -29,6 +29,8 @@ const (
 	googleMetadataURL   = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 	cloudPlatformScope  = "https://www.googleapis.com/auth/cloud-platform"
 	jwtBearerGrant      = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	googleTokenAttempts = 3
+	googleRetryBase     = 300 * time.Millisecond
 )
 
 type adcFile struct {
@@ -63,6 +65,7 @@ type ADCResolver struct {
 	Env    func(string) string
 	Home   func() (string, error)
 	Now    func() time.Time
+	Sleep  func(context.Context, time.Duration) error
 
 	mu       sync.Mutex
 	cache    map[string]cachedGoogleToken
@@ -81,6 +84,7 @@ func NewADCResolver() *ADCResolver {
 		Env:      os.Getenv,
 		Home:     os.UserHomeDir,
 		Now:      time.Now,
+		Sleep:    sleepContext,
 		cache:    make(map[string]cachedGoogleToken),
 		inflight: make(map[string]*adcCall),
 	}
@@ -104,7 +108,7 @@ func (r *ADCResolver) Reset() {
 }
 
 func (r *ADCResolver) AccessToken(ctx context.Context) (string, error) {
-	if r.Client == nil || r.Env == nil || r.Home == nil || r.Now == nil {
+	if r.Client == nil || r.Env == nil || r.Home == nil || r.Now == nil || r.Sleep == nil {
 		return "", errors.New("vertex ADC resolver is not fully configured")
 	}
 	source := r.currentSourceKey()
@@ -277,20 +281,45 @@ func (r *ADCResolver) serviceAccountJWT(credentials adcFile) (string, error) {
 }
 
 func (r *ADCResolver) postToken(ctx context.Context, values url.Values) (googleTokenResponse, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, googleOAuthTokenURL, strings.NewReader(values.Encode()))
-	if err != nil {
-		return googleTokenResponse{}, err
+	encoded := values.Encode()
+	var lastErr error
+	for attempt := 0; attempt < googleTokenAttempts; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, googleOAuthTokenURL, strings.NewReader(encoded))
+		if err != nil {
+			return googleTokenResponse{}, err
+		}
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response, err := r.Client.Do(request)
+		if err == nil {
+			if response.StatusCode >= 200 && response.StatusCode < 300 {
+				token, decodeErr := decodeGoogleToken(response.Body)
+				response.Body.Close()
+				return token, decodeErr
+			}
+			status := response.StatusCode
+			response.Body.Close()
+			lastErr = fmt.Errorf("Google OAuth token exchange failed (%d)", status)
+			if !retryableGoogleTokenStatus(status) {
+				return googleTokenResponse{}, lastErr
+			}
+		} else {
+			if ctx.Err() != nil {
+				return googleTokenResponse{}, ctx.Err()
+			}
+			lastErr = fmt.Errorf("Google OAuth token exchange failed: %w", err)
+		}
+		if attempt+1 < googleTokenAttempts {
+			if err := r.Sleep(ctx, googleRetryBase*time.Duration(1<<attempt)); err != nil {
+				return googleTokenResponse{}, err
+			}
+		}
 	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := r.Client.Do(request)
-	if err != nil {
-		return googleTokenResponse{}, fmt.Errorf("Google OAuth token exchange failed: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleTokenResponse{}, fmt.Errorf("Google OAuth token exchange failed (%d)", response.StatusCode)
-	}
-	return decodeGoogleToken(response.Body)
+	return googleTokenResponse{}, lastErr
+}
+
+func retryableGoogleTokenStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError ||
+		status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
 func (r *ADCResolver) metadataToken(ctx context.Context) (googleTokenResponse, bool, error) {
