@@ -21,6 +21,13 @@ const (
 )
 
 var providerNamePattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$`)
+var headerNamePattern = regexp.MustCompile(`^[!#$%&'*+.^_` + "`" + `|~0-9A-Za-z-]+$`)
+var responsePathSchemePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
+var sensitiveProviderHeaders = map[string]bool{
+	"authorization": true, "cookie": true, "set-cookie": true,
+	"proxy-authorization": true, "x-api-key": true, "x-goog-api-key": true,
+	"x-amz-security-token": true,
+}
 
 type Config struct {
 	Port              int                       `json:"port"`
@@ -215,6 +222,52 @@ func (c Config) Validate() error {
 		}
 		if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return &ConfigError{Field: "providers." + name + ".baseUrl", Message: "must not contain credentials, query, or fragment"}
+		}
+		if path := provider.ResponsesPath; path != "" {
+			if responsePathSchemePattern.MatchString(path) || strings.Contains(path, "://") {
+				return &ConfigError{Field: "providers." + name + ".responsesPath", Message: "must be a relative path without a URL scheme"}
+			}
+			if !strings.HasPrefix(path, "/") {
+				return &ConfigError{Field: "providers." + name + ".responsesPath", Message: "must start with /"}
+			}
+			if strings.ContainsAny(path, "?#") {
+				return &ConfigError{Field: "providers." + name + ".responsesPath", Message: "must not include query strings or fragments"}
+			}
+		}
+		for header, value := range provider.Headers {
+			normalized := strings.ToLower(strings.TrimSpace(header))
+			if normalized == "" || !headerNamePattern.MatchString(header) {
+				return &ConfigError{Field: "providers." + name + ".headers", Message: "must use valid HTTP header names"}
+			}
+			if sensitiveProviderHeaders[normalized] {
+				return &ConfigError{Field: "providers." + name + ".headers." + header, Message: "sensitive authentication headers must use apiKey/authMode instead"}
+			}
+			if strings.ContainsAny(value, "\r\n") {
+				return &ConfigError{Field: "providers." + name + ".headers." + header, Message: "value must not include line breaks"}
+			}
+		}
+		if provider.DefaultMaxOutputTokens < 0 {
+			return &ConfigError{Field: "providers." + name + ".defaultMaxOutputTokens", Message: "must be a positive integer"}
+		}
+		for field, values := range map[string]map[string]int{
+			"modelContextWindows":  provider.ModelContextWindows,
+			"modelMaxInputTokens":  provider.ModelMaxInputTokens,
+			"modelMaxOutputTokens": provider.ModelMaxOutputTokens,
+		} {
+			for model, value := range values {
+				if strings.TrimSpace(model) == "" {
+					return &ConfigError{Field: "providers." + name + "." + field, Message: "keys must be nonblank model ids"}
+				}
+				if value <= 0 {
+					return &ConfigError{Field: "providers." + name + "." + field + "." + model, Message: "must be a positive integer"}
+				}
+			}
+		}
+		if provider.CodexAccountMode != "" {
+			canonical := name == providers.OpenAICodexProviderID && provider.Adapter == "openai-responses" && provider.AuthMode == "forward" && strings.TrimRight(provider.BaseURL, "/") == "https://chatgpt.com/backend-api/codex"
+			if (provider.CodexAccountMode != "pool" && provider.CodexAccountMode != "direct") || !canonical {
+				return &ConfigError{Field: "providers." + name + ".codexAccountMode", Message: "is valid only on the canonical built-in openai provider"}
+			}
 		}
 		if err := ValidateModelAdapters(name, provider); err != nil {
 			return err

@@ -140,3 +140,46 @@ func TestValidateModelAdapters(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateProviderSchemaBoundaries(t *testing.T) {
+	base := ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.com/v1"}
+	tests := []struct {
+		name     string
+		provider ProviderConfig
+	}{
+		{"absolute responses path", func() ProviderConfig { p := base; p.ResponsesPath = "https://evil.test/v1/responses"; return p }()},
+		{"sensitive header", func() ProviderConfig {
+			p := base
+			p.Headers = map[string]string{"Authorization": "Bearer secret"}
+			return p
+		}()},
+		{"header injection", func() ProviderConfig {
+			p := base
+			p.Headers = map[string]string{"X-Test": "ok\r\nInjected: true"}
+			return p
+		}()},
+		{"nonpositive model cap", func() ProviderConfig { p := base; p.ModelMaxOutputTokens = map[string]int{"model": 0}; return p }()},
+		{"codex mode on custom provider", func() ProviderConfig { p := base; p.CodexAccountMode = "direct"; return p }()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.DefaultProvider = "test"
+			cfg.Providers["test"] = test.provider
+			if err := cfg.Validate(); !IsConfigError(err) {
+				t.Fatalf("Validate() error = %v, want ConfigError", err)
+			}
+		})
+	}
+}
+
+func TestValidateCanonicalCodexAccountMode(t *testing.T) {
+	cfg := Default()
+	cfg.Providers["openai"] = ProviderConfig{
+		Adapter: "openai-responses", BaseURL: "https://chatgpt.com/backend-api/codex",
+		AuthMode: "forward", CodexAccountMode: "direct",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
