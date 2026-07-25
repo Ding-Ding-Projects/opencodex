@@ -11,16 +11,15 @@ from TS `src/types.ts`, `src/config.ts`, `src/providers/openai-tiers.ts` to Go.
 
 | Path | Role |
 |---|---|
-| `go/internal/providers/openai_tiers.go` | `IsCanonicalOpenAiForwardProvider`, `SupportsNativeResponsesCompactEndpoint`, provider ID constants |
+| `go/internal/providers/openai_tiers.go` | **NEW PACKAGE**: `IsCanonicalOpenAiForwardProvider`, `SupportsNativeResponsesCompactEndpoint`, provider ID constants |
 | `go/internal/providers/openai_tiers_test.go` | Tier predicate activation tests |
 
 ### MODIFY
 
 | Path | Before | After |
 |---|---|---|
-| `go/internal/types/types.go` | `Tool` struct lacks freeform; no `ModelAdapters`; no wire-pinned models; AdapterEvent lacks `assistant_boundary` | Add `ModelAdapters map[string]string` to provider config type; add `AssistantBoundary` event type; add `IsWirePinnedModel`, `PinnedWireAdapter`, `ModelAdapterOverrideAllowed` |
-| `go/internal/types/interfaces.go` | ProviderConfig may lack ModelAdapters | Add `ModelAdapters` field if provider config is here |
-| `go/internal/config/config.go` | No modelAdapter validation | Add `ValidateModelAdapters(provider, modelAdapters)` rejecting invalid wires, pinned models, canonical forward providers |
+| `go/internal/types/types.go` | AdapterEvent lacks `assistant_boundary`; no wire-pinned model helpers | Add `EventAssistantBoundary AdapterEventType = "assistant_boundary"`; add `IsWirePinnedModel`, `PinnedWireAdapter`, `ModelAdapterOverrideAllowed` set |
+| `go/internal/config/config.go` | `ProviderConfig` lacks `ModelAdapters`; no modelAdapter validation | Add `ModelAdapters map[string]string` field to `ProviderConfig`; add `ValidateModelAdapters(providerName, provider, modelAdapters)` rejecting invalid wires, pinned models, canonical forward providers |
 | `go/internal/config/config_test.go` | No modelAdapter tests | Add validation activation tests |
 
 ### DELETE
