@@ -64,6 +64,11 @@ const (
 	// EventIncomplete ends a turn early for a structured reason
 	// (TS src/types.ts:264). Terminal like done/error.
 	EventIncomplete AdapterEventType = "incomplete"
+	// EventAssistantBoundary is an internal boundary between a guarded first
+	// pass and its one-shot continuation (TS src/types.ts:249). Emitted by
+	// the terminal guard when it withholds a suspicious no-tool terminal and
+	// starts a continuation request.
+	EventAssistantBoundary AdapterEventType = "assistant_boundary"
 )
 
 type AdapterEvent struct {
@@ -210,4 +215,42 @@ type ResolvedCombo struct {
 	Targets       []ResolvedModel   `json:"targets"`
 	DefaultEffort string            `json:"defaultEffort,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
+}
+
+// ModelAdapterOverrideAllowed is the set of wires that a per-model modelAdapters
+// override may select. Deliberately narrow: provider-specific adapters carry their
+// own credential and base-URL semantics (TS src/types.ts MODEL_ADAPTER_OVERRIDE_ALLOWED, #404).
+var ModelAdapterOverrideAllowed = map[string]bool{
+	"openai-chat":      true,
+	"openai-responses": true,
+}
+
+// anthropicWireModels lists providers whose model ids must be driven over the
+// Anthropic wire regardless of the configured adapter (TS src/types.ts, #404).
+var anthropicWireModels = map[string]map[string]bool{
+	"opencode-go": {
+		"minimax-m2.5": true,
+		"minimax-m2.7": true,
+		"minimax-m3":   true,
+	},
+}
+
+// IsWirePinnedModel reports whether the upstream speaks exactly one wire for
+// this model, so a configured override must not apply. Deliberately independent
+// of the provider's current adapter (TS src/types.ts isWirePinnedModel, #404).
+func IsWirePinnedModel(providerName, modelID string) bool {
+	models, ok := anthropicWireModels[providerName]
+	if !ok {
+		return false
+	}
+	return models[modelID]
+}
+
+// PinnedWireAdapter returns the wire a pinned model must use, or empty string
+// when the model is not pinned (TS src/types.ts pinnedWireAdapter, #404).
+func PinnedWireAdapter(providerName, modelID string) string {
+	if IsWirePinnedModel(providerName, modelID) {
+		return "anthropic"
+	}
+	return ""
 }

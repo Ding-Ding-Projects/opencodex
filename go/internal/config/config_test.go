@@ -62,3 +62,81 @@ func TestLoadRejectsInvalidPort(t *testing.T) {
 		t.Fatalf("Load() error = %v, want ConfigError", err)
 	}
 }
+
+func TestValidateModelAdapters(t *testing.T) {
+	tests := []struct {
+		name         string
+		providerName string
+		provider     ProviderConfig
+		wantErr      bool
+	}{
+		{
+			name:         "empty modelAdapters",
+			providerName: "test",
+			provider:     ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.com/v1"},
+			wantErr:      false,
+		},
+		{
+			name:         "valid override",
+			providerName: "grok",
+			provider: ProviderConfig{
+				Adapter:       "openai-chat",
+				BaseURL:       "https://api.x.ai/v1",
+				ModelAdapters: map[string]string{"grok-3": "openai-responses"},
+			},
+			wantErr: false,
+		},
+		{
+			name:         "invalid wire",
+			providerName: "test",
+			provider: ProviderConfig{
+				Adapter:       "openai-chat",
+				BaseURL:       "https://example.com/v1",
+				ModelAdapters: map[string]string{"gpt-4o": "cursor"},
+			},
+			wantErr: true,
+		},
+		{
+			name:         "pinned model override rejected",
+			providerName: "opencode-go",
+			provider: ProviderConfig{
+				Adapter:       "openai-chat",
+				BaseURL:       "https://example.com/v1",
+				ModelAdapters: map[string]string{"minimax-m2.5": "openai-chat"},
+			},
+			wantErr: true,
+		},
+		{
+			name:         "canonical forward override rejected",
+			providerName: "openai",
+			provider: ProviderConfig{
+				Adapter:       "openai-responses",
+				AuthMode:      "forward",
+				BaseURL:       "https://chatgpt.com/backend-api/codex",
+				ModelAdapters: map[string]string{"gpt-4o": "openai-chat"},
+			},
+			wantErr: true,
+		},
+		{
+			name:         "blank model id rejected",
+			providerName: "test",
+			provider: ProviderConfig{
+				Adapter:       "openai-chat",
+				BaseURL:       "https://example.com/v1",
+				ModelAdapters: map[string]string{"  ": "openai-chat"},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateModelAdapters(tt.providerName, tt.provider)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateModelAdapters() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && !IsConfigError(err) {
+				t.Errorf("ValidateModelAdapters() error = %v, want ConfigError", err)
+			}
+		})
+	}
+}

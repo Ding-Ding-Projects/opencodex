@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/combos"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 const (
@@ -35,6 +37,7 @@ type Config struct {
 type ProviderConfig struct {
 	Adapter                 string                       `json:"adapter"`
 	BaseURL                 string                       `json:"baseUrl"`
+	ModelAdapters           map[string]string            `json:"modelAdapters,omitempty"`
 	ResponsesPath           string                       `json:"responsesPath,omitempty"`
 	AllowPrivateNetwork     bool                         `json:"allowPrivateNetwork,omitempty"`
 	Disabled                bool                         `json:"disabled,omitempty"`
@@ -232,4 +235,41 @@ func (e *ConfigError) Error() string {
 func IsConfigError(err error) bool {
 	var target *ConfigError
 	return errors.As(err, &target)
+}
+
+// ValidateModelAdapters validates a provider's per-model wire override map (#404).
+// It rejects configurations the resolver would refuse: a value outside the allowed
+// wires, a model the upstream pins to one wire, and any override on a canonical
+// forward provider (where switching wires would drop the caller's forwarded credential).
+func ValidateModelAdapters(providerName string, provider ProviderConfig) error {
+	if len(provider.ModelAdapters) == 0 {
+		return nil
+	}
+	if providers.IsCanonicalOpenAiForwardProvider(provider.Adapter, provider.AuthMode, provider.BaseURL) {
+		return &ConfigError{
+			Field:   "providers." + providerName + ".modelAdapters",
+			Message: "modelAdapters is not supported on the canonical ChatGPT forward provider",
+		}
+	}
+	for modelID, wire := range provider.ModelAdapters {
+		if strings.TrimSpace(modelID) == "" {
+			return &ConfigError{
+				Field:   "providers." + providerName + ".modelAdapters",
+				Message: "modelAdapters keys must be nonblank model ids",
+			}
+		}
+		if !types.ModelAdapterOverrideAllowed[wire] {
+			return &ConfigError{
+				Field:   "providers." + providerName + ".modelAdapters." + modelID,
+				Message: fmt.Sprintf("must be one of: openai-chat, openai-responses; got %q", wire),
+			}
+		}
+		if types.IsWirePinnedModel(providerName, strings.TrimSpace(modelID)) {
+			return &ConfigError{
+				Field:   "providers." + providerName + ".modelAdapters." + modelID,
+				Message: "cannot be overridden: the upstream only speaks one wire for this model",
+			}
+		}
+	}
+	return nil
 }
