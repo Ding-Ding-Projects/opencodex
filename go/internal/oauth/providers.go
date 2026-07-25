@@ -368,7 +368,9 @@ func ProviderFlow(provider string, client HTTPDoer) (OAuthFlow, error) {
 		return NewChatGPTFlow(client), nil
 	case "anthropic":
 		return NewAnthropicFlow(client), nil
-	case "xai", "google-antigravity", "cursor", "kimi", "github-copilot", "kiro":
+	case "xai":
+		return NewXAIFlow(client), nil
+	case "google-antigravity", "cursor", "kimi", "github-copilot", "kiro":
 		return nil, fmt.Errorf("%w: %s", ErrNotImplemented, provider)
 	default:
 		return nil, fmt.Errorf("unknown OAuth provider %q", provider)
