@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,6 +25,12 @@ func NewLifecycle() *Lifecycle {
 }
 func (l *Lifecycle) IsDraining() bool { l.mu.Lock(); defer l.mu.Unlock(); return l.draining }
 func (l *Lifecycle) Active() int      { l.mu.Lock(); defer l.mu.Unlock(); return len(l.active) }
+
+func (l *Lifecycle) BeginDrain() {
+	l.mu.Lock()
+	l.draining = true
+	l.mu.Unlock()
+}
 
 func (l *Lifecycle) Track(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(parent)
@@ -48,9 +55,7 @@ func (l *Lifecycle) Track(parent context.Context) (context.Context, func()) {
 }
 
 func (l *Lifecycle) Drain(ctx context.Context) error {
-	l.mu.Lock()
-	l.draining = true
-	l.mu.Unlock()
+	l.BeginDrain()
 	for {
 		l.mu.Lock()
 		count := len(l.active)
@@ -78,6 +83,9 @@ func (l *Lifecycle) abortAll() {
 
 // ServeUntilSignal starts server and drains it after SIGTERM or SIGINT.
 func ServeUntilSignal(server *http.Server, lifecycle *Lifecycle, drainTimeout time.Duration) error {
+	if server == nil {
+		return errors.New("HTTP server is required")
+	}
 	if lifecycle == nil {
 		lifecycle = NewLifecycle()
 	}
@@ -88,11 +96,22 @@ func ServeUntilSignal(server *http.Server, lifecycle *Lifecycle, drainTimeout ti
 	go func() { errCh <- server.ListenAndServe() }()
 	select {
 	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
 	case <-signals:
+		lifecycle.BeginDrain()
 		ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 		defer cancel()
-		_ = lifecycle.Drain(ctx)
-		return server.Shutdown(ctx)
+		if err := server.Shutdown(ctx); err != nil {
+			lifecycle.abortAll()
+			_ = server.Close()
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil
+			}
+			return err
+		}
+		return nil
 	}
 }

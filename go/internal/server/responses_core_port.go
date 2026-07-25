@@ -14,22 +14,25 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 const defaultResponsesBodyLimit int64 = 64 << 20
 
 type ResponsesCoreConfig struct {
-	Registry       types.Registry
-	Combos         *combos.Resolver
-	Auth           types.AuthProvider
-	ResolveAdapter AdapterResolver
-	Client         *http.Client
-	Recorder       types.UsageRecorder
-	Lifecycle      *Lifecycle
-	Logger         *slog.Logger
-	BodyLimit      int64
-	StallTimeout   *float64
+	Registry          types.Registry
+	Combos            *combos.Resolver
+	Auth              types.AuthProvider
+	ResolveAdapter    AdapterResolver
+	Client            *http.Client
+	Recorder          types.UsageRecorder
+	Lifecycle         *Lifecycle
+	Logger            *slog.Logger
+	BodyLimit         int64
+	StallTimeout      *float64
+	EffortCap         string
+	SubagentEffortCap string
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -103,7 +106,12 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	}
 	parsed, err := parseResponsesRequest(w, request, core.config.BodyLimit)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		status := http.StatusBadRequest
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeJSONError(w, status, "invalid_request_error", err.Error())
 		return
 	}
 	router := ModelRouter{Registry: core.config.Registry, Combos: core.config.Combos}
@@ -117,6 +125,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		}
 		return
 	}
+	applyResponsesEffortPolicy(parsed.Normalized, resolved, router, request.Header, core.config.EffortCap, core.config.SubagentEffortCap)
 	tracked, done := core.config.Lifecycle.Track(request.Context())
 	defer done()
 	ctx, cancel := context.WithCancelCause(tracked)
@@ -141,10 +150,36 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	core.buffered(ctx, w, parsed.RequestedModel, adapter, response, auth, record)
 }
 
+func applyResponsesEffortPolicy(normalized *types.NormalizedRequest, resolved *types.ResolvedModel, router ModelRouter, headers http.Header, effortCap, subagentEffortCap string) {
+	effort, keep := EnforceEffort(normalized.Options.Reasoning, effortCap, subagentEffortCap, IsThreadSpawnRequest(headers), router.SupportedEfforts(resolved))
+	if effort == normalized.Options.Reasoning && keep {
+		return
+	}
+	normalized.Options.Reasoning = effort
+	var body map[string]any
+	if json.Unmarshal(normalized.RawBody, &body) != nil {
+		return
+	}
+	reasoning, _ := body["reasoning"].(map[string]any)
+	if keep {
+		if reasoning == nil {
+			reasoning = make(map[string]any)
+			body["reasoning"] = reasoning
+		}
+		reasoning["effort"] = effort
+	} else if reasoning != nil {
+		delete(reasoning, "effort")
+	}
+	if updated, err := json.Marshal(body); err == nil {
+		normalized.RawBody = updated
+	}
+}
+
 type forwardError struct {
-	status int
-	kind   string
-	err    error
+	status     int
+	kind       string
+	retryAfter string
+	err        error
 }
 
 func (e *forwardError) Error() string { return e.err.Error() }
@@ -160,20 +195,20 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 					pick, resolved = next, next.Resolved
 					continue
 				}
-				return nil, nil, nil, resolved, pick, &forwardError{http.StatusUnauthorized, "authentication_error", err}
+				return nil, nil, nil, resolved, pick, &forwardError{status: http.StatusUnauthorized, kind: "authentication_error", err: err}
 			}
 		}
 		transport, err := core.config.Registry.ResolveTransport(resolved.Provider, auth)
 		if err != nil {
-			return nil, nil, auth, resolved, pick, &forwardError{http.StatusBadGateway, "transport_error", err}
+			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "transport_error", err: err}
 		}
 		adapter, err := core.config.ResolveAdapter(resolved, transport, auth, incoming.Clone())
 		if err != nil {
-			return nil, nil, auth, resolved, pick, &forwardError{http.StatusBadGateway, "adapter_error", err}
+			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "adapter_error", err: err}
 		}
 		upstream, err := adapter.BuildRequest(ctx, normalized)
 		if err != nil {
-			return nil, nil, auth, resolved, pick, &forwardError{http.StatusBadRequest, "request_build_error", err}
+			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadRequest, kind: "request_build_error", err: err}
 		}
 		if auth != nil {
 			for name, value := range auth.Headers {
@@ -187,7 +222,10 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 				pick, resolved = next, next.Resolved
 				continue
 			}
-			return nil, nil, auth, resolved, pick, &forwardError{http.StatusBadGateway, "provider_fetch_error", err}
+			if ctx.Err() != nil {
+				return nil, nil, auth, resolved, pick, &forwardError{status: 499, kind: "client_cancelled", err: ctx.Err()}
+			}
+			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "provider_fetch_error", err: err}
 		}
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			if pick != nil {
@@ -198,12 +236,19 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		_ = response.Body.Close()
 		message := strings.TrimSpace(string(payload))
+		if len(message) > 500 {
+			message = message[:500]
+		}
+		message = ocxlib.RedactSecretString(message)
 		core.recordAuthOutcome(auth, outcomeForHTTP(response.StatusCode), response.StatusCode, message, response.Header.Get("Retry-After"))
 		if next, ok := core.nextCombo(normalized, pick, response.StatusCode, "upstream_error", message, response.Header.Get("Retry-After")); ok {
 			pick, resolved = next, next.Resolved
 			continue
 		}
-		return nil, nil, auth, resolved, pick, &forwardError{http.StatusBadGateway, "provider_error", fmt.Errorf("%s", message)}
+		if message == "" {
+			message = http.StatusText(response.StatusCode)
+		}
+		return nil, nil, auth, resolved, pick, &forwardError{status: response.StatusCode, kind: "upstream_error", retryAfter: response.Header.Get("Retry-After"), err: fmt.Errorf("%s", message)}
 	}
 }
 
@@ -305,6 +350,9 @@ func (core *ResponsesCore) recordAuthOutcome(auth *types.AuthContext, outcome ty
 func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {
 	var failure *forwardError
 	if errors.As(err, &failure) {
+		if failure.retryAfter != "" {
+			w.Header().Set("Retry-After", failure.retryAfter)
+		}
 		writeJSONError(w, failure.status, failure.kind, failure.err.Error())
 		return
 	}
