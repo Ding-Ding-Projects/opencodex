@@ -30,10 +30,7 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 		return nil, fmt.Errorf("build Cursor request: nil normalized request")
 	}
 	modelID, parameters := CursorWireModel(req.ModelID, req.Options.Reasoning)
-	conversationID := strings.TrimSpace(req.Metadata["cursorConversationId"])
-	if conversationID == "" {
-		conversationID = newID()
-	}
+	conversationID := resolveCursorConversationID(req)
 	blobs := map[string][]byte{}
 	serialized := make([]string, 0, len(req.Context.SystemPrompt)+len(req.Context.Messages)+len(req.Context.Tools)+1)
 	system := append([]string(nil), req.Context.SystemPrompt...)

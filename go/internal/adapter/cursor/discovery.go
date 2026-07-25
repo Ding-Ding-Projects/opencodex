@@ -3,8 +3,10 @@ package cursor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"sort"
 	"strings"
@@ -31,6 +33,44 @@ func StaticModels() []types.ModelEntry {
 }
 
 func DiscoverModels(ctx context.Context, client *http.Client, baseURL, token string) ([]string, error) {
+	delay := 250*time.Millisecond + time.Duration(rand.Int64N(int64(250*time.Millisecond)))
+	return discoverModels(ctx, client, baseURL, token, discoveryOptions{
+		primaryTimeout: 8 * time.Second,
+		retryTimeout:   3 * time.Second,
+		retryDelay:     delay,
+	})
+}
+
+type discoveryOptions struct {
+	primaryTimeout time.Duration
+	retryTimeout   time.Duration
+	retryDelay     time.Duration
+}
+
+func discoverModels(ctx context.Context, client *http.Client, baseURL, token string, options discoveryOptions) ([]string, error) {
+	if options.primaryTimeout <= 0 {
+		options.primaryTimeout = 8 * time.Second
+	}
+	if options.retryTimeout <= 0 {
+		options.retryTimeout = 3 * time.Second
+	}
+	models, err := discoverModelsOnce(ctx, client, baseURL, token, options.primaryTimeout)
+	if err == nil || !retryableDiscoveryError(ctx, err) {
+		return models, err
+	}
+	if options.retryDelay > 0 {
+		timer := time.NewTimer(options.retryDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return discoverModelsOnce(ctx, client, baseURL, token, options.retryTimeout)
+}
+
+func discoverModelsOnce(ctx context.Context, client *http.Client, baseURL, token string, timeout time.Duration) ([]string, error) {
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.ForceAttemptHTTP2 = true
@@ -42,7 +82,7 @@ func DiscoverModels(ctx context.Context, client *http.Client, baseURL, token str
 	if token == "" {
 		return nil, fmt.Errorf("Cursor access token is required")
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(baseURL, "/")+cursorModelsPath, bytes.NewReader(MarshalGetUsableModelsRequest(nil)))
 	if err != nil {
@@ -92,6 +132,14 @@ func DiscoverModels(ctx context.Context, client *http.Client, baseURL, token str
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+func retryableDiscoveryError(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	classified := ClassifyError(err)
+	return classified != nil && classified.Kind == ErrorTransport && classified.Retryable
 }
 
 func inferContextWindow(id string) int {
