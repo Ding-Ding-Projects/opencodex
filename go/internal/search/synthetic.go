@@ -14,7 +14,9 @@ func SyntheticTool() types.Tool {
 	return types.Tool{
 		Name: ToolName,
 		Description: "Search the web for current, real-world, or post-training-cutoff information. " +
-			"Returns a concise answer synthesized from live results, with sources.",
+			"Returns a concise answer synthesized from live results, with sources. " +
+			"Use it whenever the user asks about recent events, versions, prices, docs, or anything you are unsure is current.",
+		WebSearch: true,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
