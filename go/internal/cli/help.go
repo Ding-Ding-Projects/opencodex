@@ -19,6 +19,7 @@ var commandHelp = map[string]string{
 	"claude":      "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.",
 	"debug":       "Usage: ocx debug <status|on|off|stack-on|stack-off>",
 	"service":     "Usage: ocx service [install|start|stop|status|uninstall]",
+	"tray":        "Usage: ocx tray [install|start|stop|restart|status|uninstall|run]\n\nManage the Windows system tray companion.",
 	"update":      "Usage: ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]",
 }
 
@@ -42,6 +43,7 @@ Usage:
   ocx completion <shell>     Generate shell completions
   ocx config <subcommand>    Inspect or update configuration
   ocx service [subcommand]    Manage the background service
+  ocx tray [subcommand]       Manage the Windows tray companion
   ocx provider <subcommand>   Manage providers
   ocx account <subcommand>    Manage provider accounts
   ocx models <subcommand>     List or edit configured models

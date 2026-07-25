@@ -8,7 +8,7 @@ import (
 
 var completionCommands = []string{
 	"account", "claude", "completion", "config", "debug", "diagnostics", "doctor",
-	"help", "init", "models", "provider", "serve", "service", "start", "status", "update", "version",
+	"help", "init", "models", "provider", "serve", "service", "start", "status", "tray", "update", "version",
 }
 
 func runCompletion(args []string, streams IO) error {

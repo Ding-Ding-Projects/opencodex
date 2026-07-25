@@ -81,6 +81,8 @@ func Run(ctx context.Context, args []string, streams IO) int {
 		runErr = runDebug(command.Args, streams)
 	case "service":
 		runErr = runService(command.Args, streams)
+	case "tray":
+		runErr = runTray(ctx, command.Args, streams)
 	case "update":
 		runErr = runUpdate(ctx, command.Args, streams)
 	default:
