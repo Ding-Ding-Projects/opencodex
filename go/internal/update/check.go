@@ -68,7 +68,7 @@ func (c Checker) Check(ctx context.Context, requested Channel) CheckResult {
 		ReleaseNotesURL: ReleaseNotesURL,
 	}
 	if c.Installer == InstallerSource {
-		result.Command = "git pull && bun install && bun run build:gui"
+		result.Command = ManualSourceCommand()
 		result.Reason = "source_checkout"
 		return result
 	}
