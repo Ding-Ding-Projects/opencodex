@@ -313,24 +313,7 @@ func (p *EventParser) normalizeToolArguments(name string, arguments map[string]a
 	if !ok {
 		return arguments
 	}
-	properties, _ := schema["properties"].(map[string]any)
-	if _, declaresCommand := properties["command"]; !declaresCommand {
-		return arguments
-	}
-	cmd, hasCmd := arguments["cmd"]
-	if !hasCmd {
-		return arguments
-	}
-	normalized := make(map[string]any, len(arguments))
-	for key, value := range arguments {
-		if key != "cmd" {
-			normalized[key] = value
-		}
-	}
-	if _, hasCommand := normalized["command"]; !hasCommand {
-		normalized["command"] = cmd
-	}
-	return normalized
+	return NormalizeArgKeys(arguments, schema)
 }
 
 type decodedTool struct {
@@ -411,11 +394,7 @@ func decodeToolCall(data []byte) (decodedTool, error) {
 				}
 			}
 			if key != "" {
-				value, err := UnmarshalValue(valueBytes)
-				if err != nil {
-					return decodedTool{}, err
-				}
-				tool.Arguments[key] = value
+				tool.Arguments[key] = DecodeCursorArgValue(valueBytes)
 			}
 		case 4:
 			provider = string(field.Bytes)

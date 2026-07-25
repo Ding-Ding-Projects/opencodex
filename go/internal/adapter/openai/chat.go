@@ -83,12 +83,15 @@ func chatRequestBody(req *types.NormalizedRequest, baseURL string) (map[string]a
 	}
 	body := map[string]any{"model": req.ModelID, "messages": messages, "stream": req.Stream}
 	if len(req.Context.Tools) > 0 {
-		body["tools"] = chatTools(req.Context.Tools)
-		parallel := true
-		if req.Options.ParallelToolCalls != nil {
-			parallel = *req.Options.ParallelToolCalls
+		tools := chatTools(req.Context.Tools, baseURL)
+		if len(tools) > 0 {
+			body["tools"] = tools
+			parallel := true
+			if req.Options.ParallelToolCalls != nil {
+				parallel = *req.Options.ParallelToolCalls
+			}
+			body["parallel_tool_calls"] = parallel
 		}
-		body["parallel_tool_calls"] = parallel
 	}
 	applyRequestOptions(body, req.Options, req.Stream)
 	return body, nil
@@ -259,12 +262,13 @@ func assistantParts(parts []any) (string, string, []any) {
 	return text.String(), reasoning.String(), calls
 }
 
-func chatTools(tools []types.Tool) []map[string]any {
+func chatTools(tools []types.Tool, baseURL string) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
+	target := chatSchemaTarget(baseURL)
 	for _, tool := range tools {
-		parameters := tool.Parameters
-		if parameters == nil {
-			parameters = map[string]any{"type": "object", "properties": map[string]any{}}
+		parameters, ok := normalizeChatToolParameters(tool.Parameters, target)
+		if !ok {
+			continue
 		}
 		out = append(out, map[string]any{"type": "function", "function": map[string]any{
 			"name": NamespacedToolName(tool), "description": tool.Description,
