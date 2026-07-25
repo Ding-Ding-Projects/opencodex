@@ -7,6 +7,13 @@ import (
 
 var commandHelp = map[string]string{
 	"serve":       "Usage: ocx serve [--host HOST] [--port PORT]\n\nStart the proxy in the foreground.",
+	"stop":        "Usage: ocx stop\n\nGracefully stop the running proxy.",
+	"restart":     "Usage: ocx restart\n\nRestart the proxy as a detached process.",
+	"health":      "Usage: ocx health [--json]\n\nCheck whether the proxy is healthy.",
+	"gui":         "Usage: ocx gui\n\nStart the proxy if needed and open its dashboard.",
+	"restore":     "Usage: ocx restore\n\nRemove OpenCodex-owned entries from Codex config.",
+	"login":       "Usage: ocx login <chatgpt|anthropic>\n\nAuthenticate an OAuth provider in the browser.",
+	"logout":      "Usage: ocx logout <provider>\n\nRemove saved OAuth accounts for a provider.",
 	"account":     "Usage: ocx account <list|switch|add|remove|refresh> [arguments]",
 	"provider":    "Usage: ocx provider <list|add|remove|default> [arguments]",
 	"models":      "Usage: ocx models <list|add|remove> [arguments]",
@@ -36,6 +43,13 @@ func PrintHelp(writer io.Writer, command string) error {
 
 Usage:
   ocx serve [--port PORT]     Start the proxy server
+  ocx stop                    Gracefully stop the proxy
+  ocx restart                 Restart the proxy in background
+  ocx health [--json]         Check proxy health
+  ocx gui                     Open the dashboard
+  ocx restore                 Restore native Codex routing
+  ocx login <provider>        Authenticate an OAuth provider
+  ocx logout <provider>       Remove saved OAuth accounts
   ocx init                    Interactive provider setup
   ocx status                  Show proxy and service status
   ocx doctor                  Run diagnostics

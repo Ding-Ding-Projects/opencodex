@@ -57,6 +57,20 @@ func Run(ctx context.Context, args []string, streams IO) int {
 		fmt.Fprintf(streams.Out, "opencodex %s\n", Version)
 	case "serve", "start":
 		runErr = runServe(ctx, command.Args, streams)
+	case "stop":
+		runErr = runStop(ctx, command.Args, streams)
+	case "restart":
+		runErr = runRestart(ctx, command.Args, streams)
+	case "health":
+		runErr = runHealth(ctx, command.Args, streams)
+	case "gui":
+		runErr = runGUI(ctx, command.Args, streams)
+	case "restore", "eject":
+		runErr = runRestore(command.Args, streams)
+	case "login":
+		runErr = runLogin(ctx, command.Args, streams)
+	case "logout":
+		runErr = runLogout(ctx, command.Args, streams)
 	case "account":
 		runErr = runAccount(ctx, command.Args, streams)
 	case "provider":
