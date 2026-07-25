@@ -9,6 +9,19 @@ func testConfig() Config {
 	return Config{Executable: "/opt/Open Codex/ocx", Arguments: []string{"serve", "--port", "10100"}, Environment: map[string]string{"OCX_SERVICE": "1", "PATH": "/usr/bin:/bin"}, LogPath: "/tmp/open codex.log"}
 }
 
+func TestValidateConfigRejectsArtifactInjection(t *testing.T) {
+	cfg := testConfig()
+	cfg.Environment["BAD\nKEY"] = "value"
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("newline environment key was accepted")
+	}
+	cfg = testConfig()
+	cfg.Arguments = append(cfg.Arguments, "bad\x00argument")
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("NUL argument was accepted")
+	}
+}
+
 func TestGenerateLaunchd(t *testing.T) {
 	artifact, err := GenerateLaunchd(testConfig())
 	if err != nil {

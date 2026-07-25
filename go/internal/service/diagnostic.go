@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -47,6 +48,29 @@ func ParseInstallState(data []byte) (InstallState, error) {
 		}
 	}
 	return state, nil
+}
+
+// EnvironmentMatches reports whether the current runtime homes match the
+// immutable paths baked into an installed service artifact.
+func (s InstallState) EnvironmentMatches(codexHome, openCodexHome string) bool {
+	return equalServicePath(s.CodexHome, codexHome) && equalServicePath(s.OpenCodexHome, openCodexHome)
+}
+
+func equalServicePath(left, right string) bool {
+	left = filepath.Clean(strings.ReplaceAll(strings.TrimSpace(left), `\`, "/"))
+	right = filepath.Clean(strings.ReplaceAll(strings.TrimSpace(right), `\`, "/"))
+	if left == "." || right == "." {
+		return false
+	}
+	return strings.EqualFold(filepath.ToSlash(left), filepath.ToSlash(right))
+}
+
+func ServiceReinstallArgs(state InstallState) []string {
+	args := []string{"service", "install"}
+	if state.Backend == BackendNative {
+		args = append(args, "--native")
+	}
+	return args
 }
 
 func errorsForState(message string) error {

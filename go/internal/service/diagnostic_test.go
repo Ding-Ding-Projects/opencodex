@@ -18,6 +18,20 @@ func TestParseInstallStateVersionsAndBackend(t *testing.T) {
 	}
 }
 
+func TestInstallEnvironmentAndReinstallArgs(t *testing.T) {
+	state := InstallState{Version: 2, CodexHome: `C:\\Users\\Jun\\.codex`, OpenCodexHome: `C:\\Users\\Jun\\.opencodex`, Backend: BackendNative}
+	if !state.EnvironmentMatches(`c:/Users/Jun/.codex`, `c:/Users/Jun/.opencodex`) {
+		t.Fatal("equivalent service paths did not match")
+	}
+	if state.EnvironmentMatches(`/home/jun/.codex`, `/home/jun/.opencodex`) {
+		t.Fatal("different service paths matched")
+	}
+	args := ServiceReinstallArgs(state)
+	if len(args) != 3 || args[2] != "--native" {
+		t.Fatalf("native reinstall args = %#v", args)
+	}
+}
+
 func TestDeriveWindowsDiagnosticFailsClosed(t *testing.T) {
 	xml := healthyTaskXML()
 	healthy := DeriveWindowsDiagnostic(WindowsDiagnosticInput{SchedulerXML: xml, SchedulerAssets: true, RecordedBackend: BackendScheduler, WScript: testWscript, Launcher: testLauncher})

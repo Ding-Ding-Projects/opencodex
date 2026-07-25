@@ -46,8 +46,8 @@ type Manager interface {
 }
 
 func NewManager(cfg Config) (Manager, error) {
-	if strings.TrimSpace(cfg.Executable) == "" {
-		return nil, fmt.Errorf("service executable must not be blank")
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, err
 	}
 	if cfg.HomeDir == "" {
 		home, err := os.UserHomeDir()
@@ -68,9 +68,41 @@ func NewManager(cfg Config) (Manager, error) {
 	}
 }
 
+// ValidateConfig rejects values that cannot be represented safely across the
+// launchd, systemd, and Task Scheduler artifact formats.
+func ValidateConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.Executable) == "" {
+		return fmt.Errorf("service executable must not be blank")
+	}
+	for field, value := range map[string]string{
+		"executable": cfg.Executable,
+		"log path":   cfg.LogPath,
+		"home dir":   cfg.HomeDir,
+		"state dir":  cfg.StateDir,
+	} {
+		if strings.ContainsRune(value, 0) {
+			return fmt.Errorf("service %s must not contain NUL", field)
+		}
+	}
+	for index, argument := range cfg.Arguments {
+		if strings.ContainsRune(argument, 0) {
+			return fmt.Errorf("service argument %d must not contain NUL", index)
+		}
+	}
+	for key, value := range cfg.Environment {
+		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "=\x00\r\n") {
+			return fmt.Errorf("invalid service environment key %q", key)
+		}
+		if strings.ContainsRune(value, 0) {
+			return fmt.Errorf("service environment %s must not contain NUL", key)
+		}
+	}
+	return nil
+}
+
 func GenerateLaunchd(cfg Config) (string, error) {
-	if cfg.Executable == "" {
-		return "", fmt.Errorf("service executable must not be blank")
+	if err := ValidateConfig(cfg); err != nil {
+		return "", err
 	}
 	type keyValue struct {
 		Key   string `xml:"key"`
@@ -106,8 +138,8 @@ func writePlistPair(builder *strings.Builder, key, value string) {
 }
 
 func GenerateSystemd(cfg Config) (string, error) {
-	if cfg.Executable == "" {
-		return "", fmt.Errorf("service executable must not be blank")
+	if err := ValidateConfig(cfg); err != nil {
+		return "", err
 	}
 	arguments := []string{systemdQuote(cfg.Executable)}
 	for _, arg := range cfg.Arguments {
@@ -128,8 +160,8 @@ func GenerateSystemd(cfg Config) (string, error) {
 }
 
 func GenerateTaskXML(cfg Config) (string, error) {
-	if cfg.Executable == "" {
-		return "", fmt.Errorf("service executable must not be blank")
+	if err := ValidateConfig(cfg); err != nil {
+		return "", err
 	}
 	launcher := taskLauncherPath(cfg)
 	wscript := strings.TrimRight(os.Getenv("SystemRoot"), `\/`)
@@ -157,8 +189,8 @@ func GenerateTaskXML(cfg Config) (string, error) {
 }
 
 func GenerateTaskLauncher(cfg Config) (string, error) {
-	if cfg.Executable == "" {
-		return "", fmt.Errorf("service executable must not be blank")
+	if err := ValidateConfig(cfg); err != nil {
+		return "", err
 	}
 	parts := []string{windowsQuoteAlways(cfg.Executable)}
 	for _, argument := range cfg.Arguments {
