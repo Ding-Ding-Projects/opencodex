@@ -192,8 +192,7 @@ func terminalUsage(events []types.AdapterEvent) *types.Usage {
 }
 
 func managementStub(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": "management API not configured"})
+	writeJSONError(w, http.StatusNotFound, "not_found", "management endpoint not found")
 }
 func writeJSONError(w http.ResponseWriter, status int, kind, message string) {
 	w.Header().Set("Content-Type", "application/json")
