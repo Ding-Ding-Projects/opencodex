@@ -167,3 +167,13 @@ func effortLadder(id string) []string {
 	out := append([]string(nil), tiers...)
 	return out
 }
+
+func IsCursorNativeWireModel(modelID string) bool {
+	wire := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(modelID, "cursor/")))
+	for _, suffix := range []string{"minimal", "medium", "xhigh", "high", "max", "low"} {
+		wire = strings.TrimSuffix(wire, "-"+suffix)
+	}
+	return wire == "default" || wire == "auto" || strings.HasPrefix(wire, "composer-")
+}
+
+func IsCursorExternalWireModel(modelID string) bool { return !IsCursorNativeWireModel(modelID) }

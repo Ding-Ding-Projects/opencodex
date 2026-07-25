@@ -228,8 +228,8 @@ func TestBuildAgentRunRequest(t *testing.T) {
 	if built.Run.Action.UserMessage == nil || built.Run.Action.UserMessage.Text != "hello" || len(built.Run.Tools) != 1 {
 		t.Fatalf("action/tools = %#v %#v", built.Run.Action, built.Run.Tools)
 	}
-	if len(built.Run.ConversationState.RootPromptBlobIDs) != 1 {
-		t.Fatalf("blob ids = %d", len(built.Run.ConversationState.RootPromptBlobIDs))
+	if len(built.Run.ConversationState.RootPromptBlobIDs) != 2 {
+		t.Fatalf("blob ids = %d, want system prompt plus tool guidance", len(built.Run.ConversationState.RootPromptBlobIDs))
 	}
 	if built.EstimatedInputTokens <= 0 || built.Run.EstimatedInputTokens != built.EstimatedInputTokens {
 		t.Fatalf("estimated input tokens = built %d run %d", built.EstimatedInputTokens, built.Run.EstimatedInputTokens)

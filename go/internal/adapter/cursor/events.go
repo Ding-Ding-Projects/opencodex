@@ -11,6 +11,8 @@ import (
 type openToolCall struct{ Name, Arguments string }
 type EventParserOptions struct {
 	EstimatedInputTokens int
+	CarryForwardTokens   int
+	RecordContextTokens  func(int)
 	ClientToolNames      []string
 	ToolSchemas          map[string]map[string]any
 }
@@ -20,6 +22,8 @@ type EventParser struct {
 	completed            map[string]struct{}
 	usage                types.Usage
 	contextTokens        int
+	carryForwardTokens   int
+	recordContextTokens  func(int)
 	EstimatedInputTokens int
 	ClientToolNames      map[string]struct{}
 	ToolSchemas          map[string]map[string]any
@@ -27,11 +31,13 @@ type EventParser struct {
 }
 
 func NewEventParser(options ...EventParserOptions) *EventParser {
-	parser := &EventParser{open: map[string]*openToolCall{}, completed: map[string]struct{}{}}
+	parser := &EventParser{open: map[string]*openToolCall{}, completed: map[string]struct{}{}, usage: types.Usage{Estimated: true}}
 	if len(options) == 0 {
 		return parser
 	}
 	parser.EstimatedInputTokens = max(0, options[0].EstimatedInputTokens)
+	parser.carryForwardTokens = max(0, options[0].CarryForwardTokens)
+	parser.recordContextTokens = options[0].RecordContextTokens
 	parser.ToolSchemas = options[0].ToolSchemas
 	if len(options[0].ClientToolNames) > 0 {
 		parser.ClientToolNames = make(map[string]struct{}, len(options[0].ClientToolNames))
@@ -74,8 +80,14 @@ func (p *EventParser) parseCheckpoint(data []byte) ([]types.AdapterEvent, error)
 			return nil, err
 		}
 		for _, detail := range details {
-			if detail.Number == 1 && int(detail.Varint) > p.contextTokens {
-				p.contextTokens = int(detail.Varint)
+			if detail.Number == 1 && detail.Varint > 0 {
+				tokens := int(detail.Varint)
+				if tokens > p.contextTokens {
+					p.contextTokens = tokens
+				}
+				if p.recordContextTokens != nil {
+					p.recordContextTokens(tokens)
+				}
 			}
 		}
 	}
@@ -262,9 +274,10 @@ func (p *EventParser) finish() []types.AdapterEvent {
 
 func (p *EventParser) currentUsage() types.Usage {
 	usage := p.usage
-	if p.contextTokens > 0 {
-		usage.TotalTokens = p.contextTokens
-		usage.InputTokens = max(0, p.contextTokens-usage.OutputTokens)
+	contextTokens := max(p.contextTokens, p.carryForwardTokens)
+	if contextTokens > 0 {
+		usage.TotalTokens = contextTokens
+		usage.InputTokens = max(0, contextTokens-usage.OutputTokens)
 	} else if p.EstimatedInputTokens > 0 {
 		usage.InputTokens = p.EstimatedInputTokens
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens

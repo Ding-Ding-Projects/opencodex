@@ -137,6 +137,17 @@ func TestResponsesParseStream(t *testing.T) {
 	}
 }
 
+func TestResponsesParseStreamIncomplete(t *testing.T) {
+	stream := "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":2,\"output_tokens\":3}}}\n\n"
+	events := collectEvents((&ResponsesAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
+	if len(events) != 1 || events[0].Type != types.EventIncomplete || events[0].Reason != "max_output_tokens" {
+		t.Fatalf("unexpected events: %#v", events)
+	}
+	if events[0].Usage == nil || events[0].Usage.TotalTokens != 0 || events[0].Usage.OutputTokens != 3 {
+		t.Fatalf("unexpected usage: %#v", events[0].Usage)
+	}
+}
+
 func decodeRequestBody(t *testing.T, reader io.Reader) map[string]any {
 	t.Helper()
 	var body map[string]any

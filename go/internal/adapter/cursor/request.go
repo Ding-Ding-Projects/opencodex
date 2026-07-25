@@ -30,53 +30,28 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 		return nil, fmt.Errorf("build Cursor request: nil normalized request")
 	}
 	modelID, parameters := CursorWireModel(req.ModelID, req.Options.Reasoning)
+	externalModel := IsCursorExternalWireModel(modelID)
 	conversationID := resolveCursorConversationID(req)
 	blobs := map[string][]byte{}
 	serialized := make([]string, 0, len(req.Context.SystemPrompt)+len(req.Context.Messages)+len(req.Context.Tools)+1)
+	choice := ParseToolChoice(req.Options.ToolChoice)
+	tools, omitted, err := budgetTools(req.Context.Tools, choice)
+	if err != nil {
+		return nil, err
+	}
 	system := append([]string(nil), req.Context.SystemPrompt...)
 	if len(system) == 0 {
 		system = []string{"You are a helpful assistant."}
 	}
-	rootIDs := make([][]byte, 0, len(system)+len(req.Context.Messages))
-	for _, prompt := range system {
-		id, err := storeJSONBlob(blobs, map[string]any{"role": "system", "content": prompt})
-		if err != nil {
-			return nil, err
-		}
-		rootIDs = append(rootIDs, id)
-		serialized = append(serialized, string(blobs[fmt.Sprintf("%x", id)]))
+	if guidance := BuildToolGuidance(req.Context.Tools, choice); guidance != "" {
+		system = append(system, guidance)
 	}
-	rootEnd := len(req.Context.Messages)
-	if rootEnd > 0 {
-		last := req.Context.Messages[rootEnd-1]
-		if last.Role == "user" || last.Role == "developer" {
-			rootEnd--
-		}
+	roots, err := buildCursorRoots(blobs, system, req.Context.Messages, externalModel)
+	if err != nil {
+		return nil, err
 	}
-	for _, message := range req.Context.Messages[:rootEnd] {
-		text := messageText(message.Content)
-		if text == "" && message.ToolCallID == "" {
-			continue
-		}
-		entry := map[string]any{"role": message.Role, "content": text}
-		if message.ToolCallID != "" {
-			entry["tool_call_id"] = message.ToolCallID
-		}
-		if message.ToolName != "" {
-			entry["tool_name"] = message.ToolName
-		}
-		if message.IsError {
-			entry["is_error"] = true
-		}
-		id, err := storeJSONBlob(blobs, entry)
-		if err != nil {
-			return nil, err
-		}
-		rootIDs = append(rootIDs, id)
-		serialized = append(serialized, string(blobs[fmt.Sprintf("%x", id)]))
-	}
-	choice := ParseToolChoice(req.Options.ToolChoice)
-	tools, omitted, err := budgetTools(req.Context.Tools, choice)
+	serialized = append(serialized, roots.Serialized...)
+	turns, err := buildConversationTurns(blobs, req.Context.Messages, externalModel, roots.HistoryStart)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +68,7 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 	}
 	estimatedInputTokens := EstimateInputTokens(strings.Join(serialized, "\n"))
 	run := AgentRunRequest{
-		ConversationState: ConversationState{RootPromptBlobIDs: rootIDs}, Action: action,
+		ConversationState: ConversationState{RootPromptBlobIDs: roots.IDs, Turns: turns}, Action: action,
 		Model: ModelDetails{ID: modelID, DisplayName: modelID}, Tools: tools,
 		ConversationID:       conversationID,
 		Blobs:                blobs,
@@ -118,14 +93,10 @@ func modelVisibleToolText(definition MCPToolDefinition) string {
 	return string(encoded)
 }
 
-func storeJSONBlob(store map[string][]byte, value any) ([]byte, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
+func storeBlob(store map[string][]byte, data []byte) []byte {
 	digest := sha256.Sum256(data)
 	store[hex.EncodeToString(digest[:])] = append([]byte(nil), data...)
-	return append([]byte(nil), digest[:]...), nil
+	return append([]byte(nil), digest[:]...)
 }
 
 func lastAction(messages []types.Message) (string, string) {

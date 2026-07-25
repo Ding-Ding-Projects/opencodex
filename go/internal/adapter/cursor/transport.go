@@ -37,6 +37,7 @@ type LiveTransport struct {
 	committed   atomic.Bool
 	mu          sync.Mutex
 	requestBody *io.PipeWriter
+	usage       *ContextUsageTracker
 }
 
 func NewLiveTransport(config TransportConfig) (*LiveTransport, error) {
@@ -64,7 +65,7 @@ func NewLiveTransport(config TransportConfig) (*LiveTransport, error) {
 	if config.SessionID == "" {
 		config.SessionID = newID()
 	}
-	return &LiveTransport{config: config}, nil
+	return &LiveTransport{config: config, usage: NewContextUsageTracker()}, nil
 }
 
 func (t *LiveTransport) RequestCommitted() bool { return t.committed.Load() }
@@ -159,7 +160,13 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("Cursor HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(detail)))
 	}
-	parser := NewEventParser(eventParserOptionsForRun(run))
+	parserOptions := eventParserOptionsForRun(run)
+	if t.usage != nil {
+		controls := t.usage.ControlsForConversation(run.ConversationID, false, true)
+		parserOptions.CarryForwardTokens = controls.CarryForwardTokens
+		parserOptions.RecordContextTokens = controls.RecordContextTokens
+	}
+	parser := NewEventParser(parserOptions)
 	frames := 0
 	first := true
 	for {
