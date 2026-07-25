@@ -106,6 +106,53 @@ func TestEventParsingAtomicToolCall(t *testing.T) {
 	}
 }
 
+func TestEventParserResolvesShellAliasAndNormalizesArguments(t *testing.T) {
+	parser := NewEventParser(EventParserOptions{
+		ClientToolNames: []string{ShellCommandTool},
+		ToolSchemas: map[string]map[string]any{
+			ShellCommandTool: CodexShellBridgeArgNormalizeSchema,
+		},
+	})
+	value, _ := MarshalValue("pwd")
+	entry := appendString(nil, 1, "cmd")
+	entry = appendBytes(entry, 2, value)
+	args := appendString(nil, 4, cursorToolProvider)
+	args = appendString(args, 5, ExecCommandTool)
+	args = appendMessage(args, 2, entry)
+	mcp := appendMessage(nil, 1, args)
+	tool := appendMessage(nil, 15, mcp)
+	completed := appendString(nil, 1, "call-shell")
+	completed = appendMessage(completed, 2, tool)
+	events, err := parser.Parse(appendMessage(nil, 1, appendMessage(nil, 3, completed)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.Name != ShellCommandTool {
+		t.Fatalf("tool events = %#v", events)
+	}
+	var arguments map[string]any
+	if err := json.Unmarshal(events[0].ToolCall.Arguments, &arguments); err != nil {
+		t.Fatal(err)
+	}
+	if arguments["command"] != "pwd" {
+		t.Fatalf("arguments = %#v", arguments)
+	}
+	if _, exists := arguments["cmd"]; exists {
+		t.Fatalf("cmd alias was not removed: %#v", arguments)
+	}
+}
+
+func TestEventParserUsesEstimatedInputTokensWithoutCheckpoint(t *testing.T) {
+	parser := NewEventParser(EventParserOptions{EstimatedInputTokens: 77})
+	events, err := parser.Parse(appendMessage(nil, 1, appendMessage(nil, 14, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Usage == nil || events[0].Usage.InputTokens != 77 || events[0].Usage.TotalTokens != 77 {
+		t.Fatalf("done events = %#v", events)
+	}
+}
+
 func TestKVBlobReply(t *testing.T) {
 	blobID := []byte{1, 2, 3}
 	query := appendVarintField(nil, 1, 7)
@@ -184,6 +231,9 @@ func TestBuildAgentRunRequest(t *testing.T) {
 	if len(built.Run.ConversationState.RootPromptBlobIDs) != 1 {
 		t.Fatalf("blob ids = %d", len(built.Run.ConversationState.RootPromptBlobIDs))
 	}
+	if built.EstimatedInputTokens <= 0 || built.Run.EstimatedInputTokens != built.EstimatedInputTokens {
+		t.Fatalf("estimated input tokens = built %d run %d", built.EstimatedInputTokens, built.Run.EstimatedInputTokens)
+	}
 	for _, id := range built.Run.ConversationState.RootPromptBlobIDs {
 		if _, ok := built.Blobs[fmt.Sprintf("%x", id)]; !ok {
 			t.Fatalf("blob %x missing", id)
@@ -199,6 +249,15 @@ func TestBuildAgentRunRequest(t *testing.T) {
 	}
 	if len(fields) != 1 || fields[0].Number != 1 {
 		t.Fatalf("client wire fields = %#v", fields)
+	}
+}
+
+func TestEstimateInputTokensUsesCharsPerFour(t *testing.T) {
+	if got := EstimateInputTokens("12345"); got != 2 {
+		t.Fatalf("estimate = %d, want 2", got)
+	}
+	if got := EstimateInputTokens(""); got != 0 {
+		t.Fatalf("empty estimate = %d", got)
 	}
 }
 

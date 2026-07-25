@@ -159,7 +159,7 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("Cursor HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(detail)))
 	}
-	parser := NewEventParser()
+	parser := NewEventParser(eventParserOptionsForRun(run))
 	frames := 0
 	first := true
 	for {
@@ -254,4 +254,28 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 			}
 		}
 	}
+}
+
+func eventParserOptionsForRun(run AgentRunRequest) EventParserOptions {
+	options := EventParserOptions{
+		EstimatedInputTokens: run.EstimatedInputTokens,
+		ClientToolNames:      make([]string, 0, len(run.Tools)),
+		ToolSchemas:          make(map[string]map[string]any, len(run.Tools)),
+	}
+	for _, definition := range run.Tools {
+		name := firstNonEmpty(definition.ToolName, definition.Name)
+		options.ClientToolNames = append(options.ClientToolNames, name)
+		if IsCodexShellBridgeToolName(name) {
+			options.ToolSchemas[name] = CodexShellBridgeArgNormalizeSchema
+			continue
+		}
+		decoded, err := UnmarshalValue(definition.InputSchema)
+		if err != nil {
+			continue
+		}
+		if schema, ok := decoded.(map[string]any); ok {
+			options.ToolSchemas[name] = schema
+		}
+	}
+	return options
 }

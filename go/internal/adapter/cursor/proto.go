@@ -11,13 +11,14 @@ import (
 // These are the small, stable subset of agent.v1 used by the Cursor adapter.
 // Keeping the wire encoder here avoids carrying the 15k-line generated schema.
 type AgentRunRequest struct {
-	ConversationState ConversationState
-	Action            ConversationAction
-	Model             ModelDetails
-	RequestedModel    *RequestedModel
-	Tools             []MCPToolDefinition
-	ConversationID    string
-	Blobs             map[string][]byte // local KV payloads; not encoded in AgentRunRequest
+	ConversationState    ConversationState
+	Action               ConversationAction
+	Model                ModelDetails
+	RequestedModel       *RequestedModel
+	Tools                []MCPToolDefinition
+	ConversationID       string
+	Blobs                map[string][]byte // local KV payloads; not encoded in AgentRunRequest
+	EstimatedInputTokens int               // request-local estimate; not encoded in AgentRunRequest
 }
 
 type ConversationState struct {

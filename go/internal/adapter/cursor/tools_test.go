@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	coretypes "github.com/lidge-jun/opencodex-go/internal/types"
@@ -44,6 +45,67 @@ func TestParseToolChoiceAndNormalizeDisplayName(t *testing.T) {
 	}
 	if got := NormalizeCursorToolName("mcp_opencodex-responses_exec_command"); got != "exec_command" {
 		t.Fatalf("normalized = %q", got)
+	}
+}
+
+func TestShellBridgeAliasesAndCatalogAwareChoice(t *testing.T) {
+	tools := []coretypes.Tool{
+		{Namespace: "remote", Name: ExecCommandTool},
+		{Name: ShellCommandTool},
+	}
+	defs, err := BuildCursorToolDefinitions(tools, ToolChoice{Mode: "function", Name: ExecCommandTool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 1 || defs[0].Name != ShellCommandTool {
+		t.Fatalf("definitions = %#v", defs)
+	}
+	remoteOnly := []coretypes.Tool{{Namespace: "remote", Name: ExecCommandTool}}
+	defs, err = BuildCursorToolDefinitions(remoteOnly, ToolChoice{Mode: "function", Name: ExecCommandTool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 1 || defs[0].Name != "remote__exec_command" {
+		t.Fatalf("remote-only definitions = %#v", defs)
+	}
+	if !IsCodexShellBridgeToolName(ExecCommandTool) || !IsCodexShellBridgeToolName(ShellCommandTool) {
+		t.Fatal("shell bridge aliases were not recognized")
+	}
+	values := map[string]int{ShellCommandTool: 7}
+	value, ok := ResolveShellBridgeAliasKey(ExecCommandTool, func(name string) (int, bool) {
+		value, found := values[name]
+		return value, found
+	})
+	if !ok || value != 7 {
+		t.Fatalf("resolved alias = %d, %v", value, ok)
+	}
+}
+
+func TestBudgetToolsPinsExecutionAndDiscoveryTools(t *testing.T) {
+	tools := make([]coretypes.Tool, 0, CursorToolCountLimit+3)
+	for i := 0; i < CursorToolCountLimit; i++ {
+		tools = append(tools, coretypes.Tool{Namespace: "remote", Name: fmt.Sprintf("tool_%03d", i)})
+	}
+	tools = append(tools,
+		coretypes.Tool{Name: "tool_search"},
+		coretypes.Tool{Name: ApplyPatchTool},
+		coretypes.Tool{Name: ShellCommandTool},
+	)
+	kept, omitted, err := budgetTools(tools, ToolChoice{Mode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != CursorToolCountLimit || len(omitted) != 3 {
+		t.Fatalf("kept/omitted = %d/%d", len(kept), len(omitted))
+	}
+	keptNames := map[string]bool{}
+	for _, definition := range kept {
+		keptNames[definition.Name] = true
+	}
+	for _, name := range []string{ShellCommandTool, ApplyPatchTool, "tool_search"} {
+		if !keptNames[name] {
+			t.Fatalf("priority tool %q was omitted", name)
+		}
 	}
 }
 

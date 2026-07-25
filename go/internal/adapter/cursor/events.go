@@ -9,16 +9,37 @@ import (
 )
 
 type openToolCall struct{ Name, Arguments string }
-type EventParser struct {
-	open          map[string]*openToolCall
-	completed     map[string]struct{}
-	usage         types.Usage
-	contextTokens int
-	terminated    bool
+type EventParserOptions struct {
+	EstimatedInputTokens int
+	ClientToolNames      []string
+	ToolSchemas          map[string]map[string]any
 }
 
-func NewEventParser() *EventParser {
-	return &EventParser{open: map[string]*openToolCall{}, completed: map[string]struct{}{}}
+type EventParser struct {
+	open                 map[string]*openToolCall
+	completed            map[string]struct{}
+	usage                types.Usage
+	contextTokens        int
+	EstimatedInputTokens int
+	ClientToolNames      map[string]struct{}
+	ToolSchemas          map[string]map[string]any
+	terminated           bool
+}
+
+func NewEventParser(options ...EventParserOptions) *EventParser {
+	parser := &EventParser{open: map[string]*openToolCall{}, completed: map[string]struct{}{}}
+	if len(options) == 0 {
+		return parser
+	}
+	parser.EstimatedInputTokens = max(0, options[0].EstimatedInputTokens)
+	parser.ToolSchemas = options[0].ToolSchemas
+	if len(options[0].ClientToolNames) > 0 {
+		parser.ClientToolNames = make(map[string]struct{}, len(options[0].ClientToolNames))
+		for _, name := range options[0].ClientToolNames {
+			parser.ClientToolNames[name] = struct{}{}
+		}
+	}
+	return parser
 }
 
 func (p *EventParser) Parse(data []byte) ([]types.AdapterEvent, error) {
@@ -129,6 +150,9 @@ func (p *EventParser) startTool(update []byte) error {
 	if _, done := p.completed[id]; done {
 		return nil
 	}
+	if resolved, ok := ResolveAdvertisedClientToolName(tool.Name, p.ClientToolNames); ok {
+		tool.Name = resolved
+	}
 	if _, open := p.open[id]; !open {
 		p.open[id] = &openToolCall{Name: tool.Name}
 	}
@@ -160,6 +184,9 @@ func (p *EventParser) partialTool(update []byte) error {
 	}
 	open := p.open[id]
 	if open == nil && tool.Name != "" {
+		if resolved, ok := ResolveAdvertisedClientToolName(tool.Name, p.ClientToolNames); ok {
+			tool.Name = resolved
+		}
 		open = &openToolCall{Name: tool.Name}
 		p.open[id] = open
 	}
@@ -185,17 +212,30 @@ func (p *EventParser) completeTool(update []byte) (*types.AdapterEvent, error) {
 		if tool.Name == "" {
 			return nil, nil
 		}
+		if resolved, ok := ResolveAdvertisedClientToolName(tool.Name, p.ClientToolNames); ok {
+			tool.Name = resolved
+		}
 		open = &openToolCall{Name: tool.Name}
 	}
 	arguments := open.Arguments
 	if len(tool.Arguments) > 0 {
-		encoded, err := json.Marshal(tool.Arguments)
+		argumentsMap := p.normalizeToolArguments(open.Name, tool.Arguments)
+		encoded, err := json.Marshal(argumentsMap)
 		if err != nil {
 			return nil, err
 		}
 		arguments = string(encoded)
 	}
-	if !json.Valid([]byte(arguments)) {
+	if json.Valid([]byte(arguments)) {
+		var argumentsMap map[string]any
+		if json.Unmarshal([]byte(arguments), &argumentsMap) == nil {
+			encoded, err := json.Marshal(p.normalizeToolArguments(open.Name, argumentsMap))
+			if err != nil {
+				return nil, err
+			}
+			arguments = string(encoded)
+		}
+	} else {
 		arguments = "{}"
 	}
 	if arguments == "" {
@@ -225,10 +265,59 @@ func (p *EventParser) currentUsage() types.Usage {
 	if p.contextTokens > 0 {
 		usage.TotalTokens = p.contextTokens
 		usage.InputTokens = max(0, p.contextTokens-usage.OutputTokens)
+	} else if p.EstimatedInputTokens > 0 {
+		usage.InputTokens = p.EstimatedInputTokens
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	} else {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	}
 	return usage
+}
+
+func ResolveAdvertisedClientToolName(name string, advertised map[string]struct{}) (string, bool) {
+	normalized := NormalizeCursorToolName(name)
+	if advertised == nil {
+		return normalized, true
+	}
+	return ResolveShellBridgeAliasKey(normalized, func(alias string) (string, bool) {
+		_, ok := advertised[alias]
+		return alias, ok
+	})
+}
+
+func (p *EventParser) toolSchema(name string) (map[string]any, bool) {
+	if p.ToolSchemas == nil {
+		return nil, false
+	}
+	return ResolveShellBridgeAliasKey(name, func(alias string) (map[string]any, bool) {
+		schema, ok := p.ToolSchemas[alias]
+		return schema, ok
+	})
+}
+
+func (p *EventParser) normalizeToolArguments(name string, arguments map[string]any) map[string]any {
+	schema, ok := p.toolSchema(name)
+	if !ok {
+		return arguments
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	if _, declaresCommand := properties["command"]; !declaresCommand {
+		return arguments
+	}
+	cmd, hasCmd := arguments["cmd"]
+	if !hasCmd {
+		return arguments
+	}
+	normalized := make(map[string]any, len(arguments))
+	for key, value := range arguments {
+		if key != "cmd" {
+			normalized[key] = value
+		}
+	}
+	if _, hasCommand := normalized["command"]; !hasCommand {
+		normalized["command"] = cmd
+	}
+	return normalized
 }
 
 type decodedTool struct {

@@ -10,10 +10,15 @@ import (
 )
 
 const (
-	ResponsesToolProvider = "opencodex-responses"
-	ExecCommandTool       = "exec_command"
-	ApplyPatchTool        = "apply_patch"
+	ResponsesToolProvider      = "opencodex-responses"
+	ExecCommandTool            = "exec_command"
+	ShellCommandTool           = "shell_command"
+	ApplyPatchTool             = "apply_patch"
+	CursorShellAliasSystemNote = "Shell commands use the Codex shell bridge tool shown in this turn's catalog (`shell_command` or `exec_command`) with JSON arguments like {\"cmd\":\"...\"}. The long `mcp_opencodex-responses_*` display name is the same tool. Prefer it over Cursor-native Shell; never say native shell is blocked."
+	CursorShellAliasUserHint   = "Use the Codex shell bridge tool listed this turn (`shell_command` or `exec_command`, including the long `mcp_opencodex-responses_*` name). Prefer that bridge over Cursor-native Shell/Read; silently use the bridge unless that bridge tool itself fails."
 )
+
+var CodexShellBridgeToolNames = []string{ExecCommandTool, ShellCommandTool}
 
 type ToolChoice struct {
 	Mode, Name   string
@@ -31,6 +36,41 @@ var ExecCommandInputSchema = map[string]any{
 		"max_output_tokens": map[string]any{"type": "number"},
 	},
 	"required": []any{"cmd"}, "additionalProperties": false,
+}
+
+var CodexShellBridgeArgNormalizeSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"command":           map[string]any{"type": "string", "description": "Shell command to execute."},
+		"workdir":           map[string]any{"type": "string", "description": "Working directory for the command."},
+		"shell":             map[string]any{"type": "string", "description": "Shell binary to launch."},
+		"tty":               map[string]any{"type": "boolean", "description": "Whether to allocate a PTY."},
+		"yield_time_ms":     map[string]any{"type": "number"},
+		"max_output_tokens": map[string]any{"type": "number"},
+		"max_output_chars":  map[string]any{"type": "number"},
+	},
+	"required": []any{"command"},
+}
+
+func IsCodexShellBridgeToolName(name string) bool {
+	return name == ExecCommandTool || name == ShellCommandTool
+}
+
+func ResolveShellBridgeAliasKey[T any](key string, lookup func(string) (T, bool)) (T, bool) {
+	if value, ok := lookup(key); ok {
+		return value, true
+	}
+	if IsCodexShellBridgeToolName(key) {
+		for _, alias := range CodexShellBridgeToolNames {
+			if alias != key {
+				if value, ok := lookup(alias); ok {
+					return value, true
+				}
+			}
+		}
+	}
+	var zero T
+	return zero, false
 }
 
 func ParseToolChoice(raw json.RawMessage) ToolChoice {
@@ -63,24 +103,32 @@ func ParseToolChoice(raw json.RawMessage) ToolChoice {
 func BuildCursorToolDefinitions(tools []coretypes.Tool, choice ToolChoice) ([]MCPToolDefinition, error) {
 	out := make([]MCPToolDefinition, 0, len(tools))
 	for _, tool := range tools {
-		if !toolAllowed(tool, choice) {
+		if !toolAllowed(tool, choice, tools) {
 			continue
 		}
-		name := wireToolName(tool)
-		schema := tool.Parameters
-		if schema == nil {
-			schema = map[string]any{}
-		}
-		if tool.Namespace == "" && tool.Name == ExecCommandTool {
-			schema = ExecCommandInputSchema
-		}
-		encoded, err := encodeProtoValue(schema)
+		definition, err := buildCursorToolDefinition(tool)
 		if err != nil {
-			return nil, fmt.Errorf("tool %s schema: %w", name, err)
+			return nil, err
 		}
-		out = append(out, MCPToolDefinition{Name: name, ToolName: name, Provider: ResponsesToolProvider, Description: tool.Description, InputSchema: encoded})
+		out = append(out, definition)
 	}
 	return out, nil
+}
+
+func buildCursorToolDefinition(tool coretypes.Tool) (MCPToolDefinition, error) {
+	name := wireToolName(tool)
+	schema := tool.Parameters
+	if schema == nil {
+		schema = map[string]any{}
+	}
+	if tool.Namespace == "" && IsCodexShellBridgeToolName(tool.Name) {
+		schema = ExecCommandInputSchema
+	}
+	encoded, err := encodeProtoValue(schema)
+	if err != nil {
+		return MCPToolDefinition{}, fmt.Errorf("tool %s schema: %w", name, err)
+	}
+	return MCPToolDefinition{Name: name, ToolName: name, Provider: ResponsesToolProvider, Description: tool.Description, InputSchema: encoded}, nil
 }
 
 func wireToolName(tool coretypes.Tool) string {
@@ -89,26 +137,41 @@ func wireToolName(tool coretypes.Tool) string {
 	}
 	return tool.Namespace + "__" + tool.Name
 }
-func toolAllowed(tool coretypes.Tool, choice ToolChoice) bool {
-	name := wireToolName(tool)
+func toolAllowed(tool coretypes.Tool, choice ToolChoice, catalog []coretypes.Tool) bool {
 	switch choice.Mode {
 	case "none":
 		return false
 	case "allowed":
 		for _, allowed := range choice.AllowedTools {
-			if allowed == name || allowed == tool.Name {
+			if cursorToolChoiceMatches(tool, allowed, catalog) {
 				return true
 			}
 		}
 		return false
 	case "function", "tool":
-		return choice.Name == name || choice.Name == tool.Name
+		return cursorToolChoiceMatches(tool, choice.Name, catalog)
 	default:
 		if choice.Name != "" {
-			return choice.Name == name || choice.Name == tool.Name
+			return cursorToolChoiceMatches(tool, choice.Name, catalog)
 		}
 		return true
 	}
+}
+
+func cursorToolChoiceMatches(tool coretypes.Tool, choiceName string, catalog []coretypes.Tool) bool {
+	if IsCodexShellBridgeToolName(choiceName) {
+		hasBareBridge := false
+		for _, candidate := range catalog {
+			if candidate.Namespace == "" && IsCodexShellBridgeToolName(candidate.Name) {
+				hasBareBridge = true
+				break
+			}
+		}
+		if hasBareBridge {
+			return tool.Namespace == "" && IsCodexShellBridgeToolName(tool.Name)
+		}
+	}
+	return choiceName == wireToolName(tool) || choiceName == tool.Name
 }
 func NormalizeCursorToolName(name string) string {
 	prefix := "mcp_" + ResponsesToolProvider + "_"
@@ -157,12 +220,12 @@ func BuildToolGuidance(tools []coretypes.Tool, choice ToolChoice) string {
 	hasExec := false
 	hasPatch := false
 	for _, tool := range tools {
-		if !toolAllowed(tool, choice) {
+		if !toolAllowed(tool, choice, tools) {
 			continue
 		}
 		name := wireToolName(tool)
 		names = append(names, name)
-		hasExec = hasExec || name == ExecCommandTool
+		hasExec = hasExec || IsCodexShellBridgeToolName(name)
 		hasPatch = hasPatch || name == ApplyPatchTool
 	}
 	if len(names) == 0 {
@@ -170,7 +233,7 @@ func BuildToolGuidance(tools []coretypes.Tool, choice ToolChoice) string {
 	}
 	parts := []string{"Cursor tool calls: available tool names are exactly `" + strings.Join(names, "`, `") + "`.", "Call only those exact names with their listed argument keys."}
 	if hasExec {
-		parts = append(parts, "`exec_command` is the Codex Responses bridge exec tool, not an external MCP server tool.")
+		parts = append(parts, "`shell_command` and `exec_command` are aliases for the Codex Responses shell bridge, not external MCP server tools; call whichever name this turn lists.")
 	}
 	if hasPatch {
 		parts = append(parts, "Use `apply_patch` for file edits instead of built-in file mutation tools.")

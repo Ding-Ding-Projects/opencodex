@@ -4,7 +4,110 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+
+	coretypes "github.com/lidge-jun/opencodex-go/internal/types"
 )
+
+type budgetCandidate struct {
+	tool       coretypes.Tool
+	definition MCPToolDefinition
+	index      int
+	priority   int
+}
+
+func budgetTools(input []coretypes.Tool, choice ToolChoice) ([]MCPToolDefinition, []string, error) {
+	selected := explicitlySelectedToolNames(choice)
+	candidates := make([]budgetCandidate, 0, len(input))
+	for index, tool := range input {
+		if !toolAllowed(tool, choice, input) {
+			continue
+		}
+		definition, err := buildCursorToolDefinition(tool)
+		if err != nil {
+			return nil, nil, err
+		}
+		candidates = append(candidates, budgetCandidate{
+			tool: tool, definition: definition, index: index, priority: cursorToolPriority(tool, selected, input),
+		})
+	}
+	if len(candidates) <= CursorToolCountLimit {
+		definitions := make([]MCPToolDefinition, 0, len(candidates))
+		for _, candidate := range candidates {
+			definitions = append(definitions, candidate.definition)
+		}
+		if CursorMCPToolsEncodedSize(definitions) <= CursorToolBytesLimit {
+			return definitions, nil, nil
+		}
+	}
+
+	ordered := append([]budgetCandidate(nil), candidates...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].priority < ordered[j].priority })
+	keptIndexes := map[int]struct{}{}
+	bytesUsed := 0
+	tryKeep := func(candidate budgetCandidate) {
+		if _, exists := keptIndexes[candidate.index]; exists || len(keptIndexes) >= CursorToolCountLimit {
+			return
+		}
+		size := CursorMCPToolEncodedSize(candidate.definition)
+		if bytesUsed+size > CursorToolBytesLimit {
+			return
+		}
+		keptIndexes[candidate.index] = struct{}{}
+		bytesUsed += size
+	}
+	for _, candidate := range ordered {
+		if candidate.priority <= 2 {
+			tryKeep(candidate)
+		}
+	}
+	for _, candidate := range ordered {
+		tryKeep(candidate)
+	}
+
+	kept := make([]MCPToolDefinition, 0, len(keptIndexes))
+	omitted := make([]string, 0, len(candidates)-len(keptIndexes))
+	for _, candidate := range candidates {
+		if _, exists := keptIndexes[candidate.index]; exists {
+			kept = append(kept, candidate.definition)
+		} else {
+			omitted = append(omitted, wireToolName(candidate.tool))
+		}
+	}
+	return kept, omitted, nil
+}
+
+func explicitlySelectedToolNames(choice ToolChoice) map[string]struct{} {
+	names := map[string]struct{}{}
+	if choice.Name != "" {
+		names[choice.Name] = struct{}{}
+	}
+	for _, name := range choice.AllowedTools {
+		names[name] = struct{}{}
+	}
+	return names
+}
+
+func cursorToolPriority(tool coretypes.Tool, selected map[string]struct{}, catalog []coretypes.Tool) int {
+	if tool.Namespace == "" && IsCodexShellBridgeToolName(tool.Name) {
+		return 0
+	}
+	if tool.Namespace == "" && tool.Name == ApplyPatchTool {
+		return 1
+	}
+	for name := range selected {
+		if cursorToolChoiceMatches(tool, name, catalog) {
+			return 2
+		}
+	}
+	if tool.Namespace == "" && tool.Name == "tool_search" {
+		return 3
+	}
+	if tool.Namespace == "" {
+		return 4
+	}
+	return 5
+}
 
 type ToolOperation string
 

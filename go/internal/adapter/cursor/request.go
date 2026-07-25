@@ -19,9 +19,10 @@ const (
 )
 
 type BuiltRequest struct {
-	Run          AgentRunRequest
-	Blobs        map[string][]byte
-	OmittedTools []string
+	Run                  AgentRunRequest
+	Blobs                map[string][]byte
+	OmittedTools         []string
+	EstimatedInputTokens int
 }
 
 func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
@@ -34,6 +35,7 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 		conversationID = newID()
 	}
 	blobs := map[string][]byte{}
+	serialized := make([]string, 0, len(req.Context.SystemPrompt)+len(req.Context.Messages)+len(req.Context.Tools)+1)
 	system := append([]string(nil), req.Context.SystemPrompt...)
 	if len(system) == 0 {
 		system = []string{"You are a helpful assistant."}
@@ -45,6 +47,7 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 			return nil, err
 		}
 		rootIDs = append(rootIDs, id)
+		serialized = append(serialized, string(blobs[fmt.Sprintf("%x", id)]))
 	}
 	rootEnd := len(req.Context.Messages)
 	if rootEnd > 0 {
@@ -73,8 +76,10 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 			return nil, err
 		}
 		rootIDs = append(rootIDs, id)
+		serialized = append(serialized, string(blobs[fmt.Sprintf("%x", id)]))
 	}
-	tools, omitted, err := budgetTools(req.Context.Tools)
+	choice := ParseToolChoice(req.Options.ToolChoice)
+	tools, omitted, err := budgetTools(req.Context.Tools, choice)
 	if err != nil {
 		return nil, err
 	}
@@ -84,42 +89,36 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 		action.Resume = true
 	} else {
 		action.UserMessage = &UserMessage{Text: activeText, MessageID: newID()}
+		serialized = append(serialized, activeText)
 	}
+	for _, tool := range tools {
+		serialized = append(serialized, modelVisibleToolText(tool))
+	}
+	estimatedInputTokens := EstimateInputTokens(strings.Join(serialized, "\n"))
 	run := AgentRunRequest{
 		ConversationState: ConversationState{RootPromptBlobIDs: rootIDs}, Action: action,
 		Model: ModelDetails{ID: modelID, DisplayName: modelID}, Tools: tools,
-		ConversationID: conversationID,
-		Blobs:          blobs,
+		ConversationID:       conversationID,
+		Blobs:                blobs,
+		EstimatedInputTokens: estimatedInputTokens,
 	}
 	if len(parameters) > 0 {
 		run.RequestedModel = &RequestedModel{ID: modelID, Parameters: parameters}
 	}
-	return &BuiltRequest{Run: run, Blobs: blobs, OmittedTools: omitted}, nil
+	return &BuiltRequest{Run: run, Blobs: blobs, OmittedTools: omitted, EstimatedInputTokens: estimatedInputTokens}, nil
 }
 
-func budgetTools(input []types.Tool) ([]MCPToolDefinition, []string, error) {
-	kept := make([]MCPToolDefinition, 0, min(len(input), CursorToolCountLimit))
-	var omitted []string
-	bytesUsed := 0
-	for _, tool := range input {
-		name := tool.Name
-		if tool.Namespace != "" {
-			name = tool.Namespace + "__" + name
-		}
-		schema, err := json.Marshal(tool.Parameters)
-		if err != nil {
-			return nil, nil, fmt.Errorf("marshal Cursor tool %s schema: %w", name, err)
-		}
-		definition := MCPToolDefinition{Name: name, Provider: cursorToolProvider, ToolName: name, Description: tool.Description, InputSchema: schema}
-		encodedSize := len(marshalTool(definition)) + 6
-		if len(kept) >= CursorToolCountLimit || bytesUsed+encodedSize > CursorToolBytesLimit {
-			omitted = append(omitted, name)
-			continue
-		}
-		kept = append(kept, definition)
-		bytesUsed += encodedSize
+func modelVisibleToolText(definition MCPToolDefinition) string {
+	schema, err := UnmarshalValue(definition.InputSchema)
+	if err != nil {
+		schema = nil
 	}
-	return kept, omitted, nil
+	value := map[string]any{"name": firstNonEmpty(definition.ToolName, definition.Name), "description": definition.Description}
+	if schema != nil {
+		value["inputSchema"] = schema
+	}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }
 
 func storeJSONBlob(store map[string][]byte, value any) ([]byte, error) {
