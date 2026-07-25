@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -30,13 +28,13 @@ type Response struct {
 	Output            []map[string]any `json:"output"`
 	Usage             map[string]any   `json:"usage"`
 	Error             map[string]any   `json:"error,omitempty"`
+	LastError         map[string]any   `json:"last_error,omitempty"`
+	Retryable         bool             `json:"retryable,omitempty"`
 	IncompleteDetails map[string]any   `json:"incomplete_details,omitempty"`
 }
 
 // UpstreamStallError distinguishes bridge-owned stall cancellation from caller cancellation.
 var UpstreamStallError = errors.New("upstream stall timeout")
-
-const defaultStallTimeout = 300 * time.Second
 
 type machine struct {
 	response Response
@@ -48,6 +46,7 @@ type machine struct {
 
 type openItem struct {
 	kind, id, callID, name string
+	phase                  string
 	index                  int
 	text                   strings.Builder
 }
@@ -55,10 +54,11 @@ type openItem struct {
 // StreamOptions supplies terminal usage recording metadata without coupling the
 // bridge to a concrete persistence implementation.
 type StreamOptions struct {
-	StallTimeout time.Duration
-	OnCancel     func()
-	Recorder     types.UsageRecorder
-	Record       *types.UsageRecord
+	StallTimeout    time.Duration
+	StallTimeoutSec *float64
+	OnCancel        func()
+	Recorder        types.UsageRecorder
+	Record          *types.UsageRecord
 }
 
 // Convert consumes adapter events and returns ordered Responses events and the final response.
@@ -86,10 +86,7 @@ func StreamWithOptions(ctx context.Context, w io.Writer, model string, events <-
 	if err := writeSSE(w, m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})); err != nil {
 		return err
 	}
-	stallTimeout := options.StallTimeout
-	if stallTimeout <= 0 {
-		stallTimeout = defaultStallTimeout
-	}
+	stallTimeout := resolveStallTimeout(options)
 	stallCh := make(chan uint64, 1)
 	var stallGeneration uint64 = 1
 	stallTimer := time.AfterFunc(stallTimeout, func() {
@@ -211,7 +208,11 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 	var out []Event
 	switch event.Type {
 	case types.EventTextDelta:
+		if m.current != nil && m.current.kind == "message" && m.current.phase != event.Phase {
+			out = append(out, m.closeCurrent()...)
+		}
 		out = append(out, m.ensureItem("message", "msg_")...)
+		m.current.phase = event.Phase
 		m.current.text.WriteString(event.Text)
 		out = append(out, m.emit("response.output_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "delta": event.Text}))
 	case types.EventReasoning:
@@ -244,18 +245,33 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 		m.response.Usage = usage(event.Usage)
 	case types.EventHeartbeat:
 		return nil
+	case types.EventAssistantBoundary:
+		out = append(out, m.closeCurrent()...)
 	case types.EventDone:
 		if event.Usage != nil {
 			m.usage = cloneUsage(event.Usage)
 			m.response.Usage = usage(event.Usage)
 		}
-		out = append(out, m.finish("completed", "")...)
+		if reason := doneIncompleteReason(event.StopReason); reason != "" {
+			out = append(out, m.finishIncomplete(reason, "")...)
+		} else {
+			out = append(out, m.finish("completed", "")...)
+		}
 	case types.EventError:
 		message := event.Error
 		if message == "" {
 			message = "provider error"
 		}
-		out = append(out, m.finish("failed", message)...)
+		if event.Usage != nil {
+			m.usage = cloneUsage(event.Usage)
+			m.response.Usage = usage(event.Usage)
+		}
+		status := event.StatusCode
+		if status == 0 {
+			status = 502
+		}
+		failure := responseError(status, "", message)
+		out = append(out, m.finishFailure(failure, event.Retryable)...)
 	case types.EventIncomplete:
 		if event.Usage != nil {
 			m.usage = cloneUsage(event.Usage)
@@ -264,14 +280,6 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 		out = append(out, m.finishIncomplete(event.Reason, event.Message)...)
 	}
 	return out
-}
-
-func cloneUsage(value *types.Usage) *types.Usage {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func (m *machine) ensureItem(kind, prefix string) []Event {
@@ -283,10 +291,15 @@ func (m *machine) ensureItem(kind, prefix string) []Event {
 	var item map[string]any
 	if kind == "message" {
 		item = map[string]any{"type": "message", "id": m.current.id, "status": "in_progress", "role": "assistant", "content": []any{}}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+		out = append(out, m.emit("response.content_part.added", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}}))
+		return out
 	} else {
 		item = map[string]any{"type": "reasoning", "id": m.current.id, "summary": []any{}}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+		out = append(out, m.emit("response.reasoning_summary_part.added", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": ""}}))
+		return out
 	}
-	return append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
 }
 
 func (m *machine) closeCurrent() []Event {
@@ -303,6 +316,9 @@ func (m *machine) closeCurrent() []Event {
 			m.emit("response.content_part.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "part": map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}),
 		)
 		final = map[string]any{"type": "message", "id": item.id, "status": "completed", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}}
+		if item.phase != "" {
+			final["phase"] = item.phase
+		}
 	case "reasoning":
 		out = append(out, m.emit("response.reasoning_summary_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "summary_index": 0, "text": text}))
 		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{map[string]any{"type": "summary_text", "text": text}}}
@@ -327,12 +343,19 @@ func (m *machine) finish(status, message string) []Event {
 	}
 	out := m.closeCurrent()
 	m.terminal, m.response.Status = true, status
-	if status == "failed" || status == "incomplete" {
+	if (status == "failed" || status == "incomplete") && m.response.Error == nil && message != "" {
 		m.response.Error = map[string]any{"type": "server_error", "message": message}
 	}
 	eventType := "response." + status
 	out = append(out, m.emit(eventType, map[string]any{"response": m.snapshot(status)}))
 	return out
+}
+
+func (m *machine) finishFailure(failure map[string]any, retryable bool) []Event {
+	m.response.Error = failure
+	m.response.LastError = failure
+	m.response.Retryable = retryable
+	return m.finish("failed", "")
 }
 
 func (m *machine) finishIncomplete(reason, message string) []Event {
@@ -348,6 +371,12 @@ func (m *machine) snapshot(status string) map[string]any {
 	if m.response.Error != nil {
 		result["error"] = m.response.Error
 	}
+	if m.response.LastError != nil {
+		result["last_error"] = m.response.LastError
+	}
+	if m.response.Retryable {
+		result["retryable"] = true
+	}
 	if m.response.IncompleteDetails != nil {
 		result["incomplete_details"] = m.response.IncompleteDetails
 	}
@@ -358,31 +387,6 @@ func (m *machine) emit(kind string, data map[string]any) Event {
 	data["sequence_number"] = m.sequence
 	m.sequence++
 	return Event{Type: kind, Data: data}
-}
-
-func writeSSE(w io.Writer, event Event) error {
-	payload := make(map[string]any, len(event.Data)+1)
-	for key, value := range event.Data {
-		payload[key] = value
-	}
-	payload["type"] = event.Type
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, data)
-	return err
-}
-
-func usage(value *types.Usage) map[string]any {
-	if value == nil {
-		return map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-	}
-	total := value.TotalTokens
-	if total == 0 {
-		total = value.InputTokens + value.OutputTokens
-	}
-	return map[string]any{"input_tokens": value.InputTokens, "output_tokens": value.OutputTokens, "total_tokens": total}
 }
 
 func randomID() string {

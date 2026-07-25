@@ -75,7 +75,7 @@ func eventTypes(events []Event) []string {
 
 func TestConvertOrdersMessageLifecycle(t *testing.T) {
 	events, response := Convert("model", []types.AdapterEvent{{Type: types.EventTextDelta, Text: "hello"}, {Type: types.EventDone}})
-	want := []string{"response.created", "response.output_item.added", "response.output_text.delta", "response.output_text.done", "response.content_part.done", "response.output_item.done", "response.completed"}
+	want := []string{"response.created", "response.output_item.added", "response.content_part.added", "response.output_text.delta", "response.output_text.done", "response.content_part.done", "response.output_item.done", "response.completed"}
 	got := eventTypes(events)
 	if len(got) != len(want) {
 		t.Fatalf("event count = %d, want %d: %v", len(got), len(want), got)
