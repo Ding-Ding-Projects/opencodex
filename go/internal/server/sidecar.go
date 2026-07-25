@@ -114,7 +114,7 @@ func sidecarHandler(kind SidecarKind, resolver SidecarResolver) http.HandlerFunc
 			writeJSONError(w, http.StatusBadRequest, "invalid_request_error", sidecarUnavailableMessage(kind))
 			return
 		}
-		payload, err := readSidecarJSON(w, request)
+		payload, contentType, err := readSidecarPayload(w, request, kind)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
@@ -128,20 +128,32 @@ func sidecarHandler(kind SidecarKind, resolver SidecarResolver) http.HandlerFunc
 			writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
 			return
 		}
-		relaySidecar(w, request, kind, target, payload)
+		relaySidecar(w, request, kind, target, payload, contentType)
 	}
 }
 
-func readSidecarJSON(w http.ResponseWriter, request *http.Request) ([]byte, error) {
+func readSidecarPayload(w http.ResponseWriter, request *http.Request, kind SidecarKind) ([]byte, string, error) {
+	if request.Body == nil {
+		return nil, "", errors.New("request body is required")
+	}
 	payload, err := io.ReadAll(http.MaxBytesReader(w, request.Body, sidecarRequestLimit))
 	if err != nil {
-		return nil, fmt.Errorf("read request body: %w", err)
+		return nil, "", fmt.Errorf("read request body: %w", err)
+	}
+	contentType := strings.TrimSpace(request.Header.Get("Content-Type"))
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if kind == SidecarImageEdits && mediaType == "multipart/form-data" {
+		if len(payload) == 0 {
+			return nil, "", errors.New("request body is required")
+		}
+		return payload, contentType, nil
 	}
 	var value any
 	if len(payload) == 0 || json.Unmarshal(payload, &value) != nil {
-		return nil, errors.New("request body must be valid JSON")
+		return nil, "", errors.New("request body must be valid JSON")
 	}
-	return json.Marshal(value)
+	canonical, err := json.Marshal(value)
+	return canonical, "application/json", err
 }
 
 func validateSidecarTarget(target SidecarTarget) error {
@@ -152,7 +164,7 @@ func validateSidecarTarget(target SidecarTarget) error {
 	return nil
 }
 
-func relaySidecar(w http.ResponseWriter, incoming *http.Request, kind SidecarKind, target SidecarTarget, payload []byte) {
+func relaySidecar(w http.ResponseWriter, incoming *http.Request, kind SidecarKind, target SidecarTarget, payload []byte, contentType string) {
 	timeout, limit := sidecarBounds(kind, target.Timeout)
 	ctx, cancel := context.WithTimeout(incoming.Context(), timeout)
 	defer cancel()
@@ -165,7 +177,10 @@ func relaySidecar(w http.ResponseWriter, incoming *http.Request, kind SidecarKin
 	if upstream.Header == nil {
 		upstream.Header = make(http.Header)
 	}
-	upstream.Header.Set("Content-Type", "application/json")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	upstream.Header.Set("Content-Type", contentType)
 	transport := target.Transport
 	if transport == nil {
 		transport = http.DefaultClient

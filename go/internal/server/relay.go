@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
 type RelayOptions struct {
 	Heartbeat time.Duration
 	QueueSize int
+	Inspector *SSEInspector
 }
 
 type relayChunk struct {
@@ -63,8 +63,10 @@ func RelaySSE(ctx context.Context, w http.ResponseWriter, upstream io.ReadCloser
 	}()
 	ticker := time.NewTicker(options.Heartbeat)
 	defer ticker.Stop()
-	terminalSeen := false
-	inspectTail := ""
+	inspector := options.Inspector
+	if inspector == nil {
+		inspector = NewSSEInspector(SSEInspectorHandlers{})
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -78,7 +80,8 @@ func RelaySSE(ctx context.Context, w http.ResponseWriter, upstream io.ReadCloser
 			}
 		case chunk, ok := <-queue:
 			if !ok {
-				if !terminalSeen {
+				inspector.Finish()
+				if !inspector.TerminalSeen() {
 					if err := WriteIncompleteTail(w, "upstream stream ended before a terminal event"); err != nil {
 						return err
 					}
@@ -89,7 +92,7 @@ func RelaySSE(ctx context.Context, w http.ResponseWriter, upstream io.ReadCloser
 				return nil
 			}
 			if chunk.err != nil {
-				if !terminalSeen {
+				if !inspector.TerminalSeen() {
 					_ = WriteFailureTail(w, http.StatusBadGateway, chunk.err.Error())
 				}
 				if flusher != nil {
@@ -97,11 +100,7 @@ func RelaySSE(ctx context.Context, w http.ResponseWriter, upstream io.ReadCloser
 				}
 				return chunk.err
 			}
-			inspectTail += string(chunk.data)
-			if len(inspectTail) > 4096 {
-				inspectTail = inspectTail[len(inspectTail)-4096:]
-			}
-			terminalSeen = hasResponsesTerminal(inspectTail)
+			inspector.Consume(chunk.data)
 			if _, err := w.Write(chunk.data); err != nil {
 				return err
 			}
@@ -122,15 +121,6 @@ func WriteIncompleteTail(w io.Writer, message string) error {
 	}
 	_, err = fmt.Fprintf(w, "event: response.incomplete\ndata: %s\n\ndata: [DONE]\n\n", encoded)
 	return err
-}
-
-func hasResponsesTerminal(value string) bool {
-	for _, status := range []string{"completed", "failed", "incomplete"} {
-		if strings.Contains(value, `"type":"response.`+status+`"`) || strings.Contains(value, `"type": "response.`+status+`"`) {
-			return true
-		}
-	}
-	return false
 }
 
 // WriteFailureTail writes a valid Responses terminal followed by [DONE].

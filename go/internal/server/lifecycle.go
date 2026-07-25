@@ -104,7 +104,7 @@ func ServeUntilSignal(server *http.Server, lifecycle *Lifecycle, drainTimeout ti
 		lifecycle.BeginDrain()
 		ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
+		if err := DrainHTTPServer(ctx, server, lifecycle, nil); err != nil {
 			lifecycle.abortAll()
 			_ = server.Close()
 			if errors.Is(err, context.DeadlineExceeded) {

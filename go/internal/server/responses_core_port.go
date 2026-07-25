@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -36,6 +37,7 @@ type ResponsesCoreConfig struct {
 	StallTimeout      *float64
 	EffortCap         string
 	SubagentEffortCap string
+	ShadowCall        *ShadowCallIntercept
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -65,6 +67,9 @@ type parsedResponsesRequest struct {
 }
 
 func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit int64) (*parsedResponsesRequest, error) {
+	if request.Body == nil {
+		return nil, fmt.Errorf("request body is required")
+	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, request.Body, limit))
 	if err != nil {
 		return nil, fmt.Errorf("read request body: %w", err)
@@ -85,16 +90,11 @@ func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit i
 		body["input"] = input
 		raw, _ = json.Marshal(body)
 	}
-	stream, _ := body["stream"].(bool)
-	previous, _ := body["previous_response_id"].(string)
-	reasoning := ""
-	if options, ok := body["reasoning"].(map[string]any); ok {
-		reasoning, _ = options["effort"].(string)
+	normalized, err := claude.ParseResponsesRequest(raw)
+	if err != nil {
+		return nil, err
 	}
-	normalized := &types.NormalizedRequest{
-		ModelID: model, PreviousResponseID: previous, Stream: stream, RawBody: raw,
-		Options: types.RequestOptions{Reasoning: reasoning},
-	}
+	normalized.ClientThreadID = strings.TrimSpace(request.Header.Get("X-Codex-Parent-Thread-Id"))
 	return &parsedResponsesRequest{RequestedModel: model, Normalized: normalized}, nil
 }
 
@@ -117,6 +117,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		writeJSONError(w, status, "invalid_request_error", err.Error())
 		return
 	}
+	ApplyShadowCallIntercept(parsed.Normalized, core.config.ShadowCall)
 	router := ModelRouter{Registry: core.config.Registry, Combos: core.config.Combos}
 	resolved, pick, err := router.ResolveRequest(parsed.Normalized)
 	if err != nil {
@@ -128,6 +129,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		}
 		return
 	}
+	applyResolvedResponsesModel(parsed.Normalized, resolved.Model)
 	applyResponsesEffortPolicy(parsed.Normalized, resolved, router, request.Header, core.config.EffortCap, core.config.SubagentEffortCap)
 	tracked, done := core.config.Lifecycle.Track(request.Context())
 	defer done()
@@ -151,6 +153,24 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		return
 	}
 	core.buffered(ctx, w, parsed.RequestedModel, adapter, response, auth, record)
+}
+
+// applyResolvedResponsesModel keeps the normalized request and native
+// passthrough body on the same wire model after a provider namespace or combo
+// selector has been resolved.
+func applyResolvedResponsesModel(request *types.NormalizedRequest, model string) {
+	if request == nil || strings.TrimSpace(model) == "" {
+		return
+	}
+	request.ModelID = model
+	var body map[string]any
+	if json.Unmarshal(request.RawBody, &body) != nil {
+		return
+	}
+	body["model"] = model
+	if updated, err := json.Marshal(body); err == nil {
+		request.RawBody = updated
+	}
 }
 
 func applyResponsesEffortPolicy(normalized *types.NormalizedRequest, resolved *types.ResolvedModel, router ModelRouter, headers http.Header, effortCap, subagentEffortCap string) {

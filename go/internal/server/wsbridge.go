@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,15 +72,42 @@ func WebSocketBridge(target http.Handler) http.Handler {
 					_ = rw.Flush()
 					return
 				}
-				request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(payload))
+				var frame map[string]any
+				if json.Unmarshal(payload, &frame) != nil {
+					continue
+				}
+				frameType, _ := frame["type"].(string)
+				if frameType == "response.processed" || frameType != "response.create" {
+					continue
+				}
+				if generate, ok := frame["generate"].(bool); ok && !generate {
+					for _, responseFrame := range BuildWarmupCompletionFrames(frame) {
+						if err := writeWSFrame(rw.Writer, 0x1, responseFrame); err != nil {
+							return
+						}
+					}
+					if err := rw.Flush(); err != nil {
+						return
+					}
+					continue
+				}
+				delete(frame, "type")
+				frame["stream"] = true
+				requestBody, err := json.Marshal(frame)
+				if err != nil {
+					continue
+				}
+				request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(requestBody))
 				request.Header.Set("Content-Type", "application/json")
-				for _, name := range []string{"Authorization", "X-Codex-Turn-Metadata", "X-OpenAI-Subagent", "Thread-Id", "X-Request-Id"} {
+				for _, name := range websocketForwardHeaders {
 					request.Header.Set(name, r.Header.Get(name))
 				}
 				response := httptest.NewRecorder()
 				target.ServeHTTP(response, request)
-				if err := writeWSFrame(rw.Writer, 0x1, response.Body.Bytes()); err != nil {
-					return
+				for _, responseFrame := range ResponseToWebSocketFrames(response.Code, response.Header(), response.Body.Bytes()) {
+					if err := writeWSFrame(rw.Writer, 0x1, responseFrame); err != nil {
+						return
+					}
 				}
 				if err := rw.Flush(); err != nil {
 					return

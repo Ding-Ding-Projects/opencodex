@@ -44,6 +44,7 @@ type Config struct {
 	SubagentEffortCap string
 	Hostname          string
 	SidecarResolver   SidecarResolver
+	ShadowCall        *ShadowCallIntercept
 	ReadinessChecks   map[string]func(context.Context) error
 }
 
@@ -102,6 +103,7 @@ func New(config Config) *Server {
 		ResolveAdapter: s.config.ResolveAdapter, Client: s.config.Client, Recorder: recorder,
 		Lifecycle: s.config.Lifecycle, Logger: s.config.Logger, EffortCap: s.config.EffortCap,
 		SubagentEffortCap: s.config.SubagentEffortCap,
+		ShadowCall:        s.config.ShadowCall,
 	})
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/responses", s.responses)
@@ -135,7 +137,7 @@ func New(config Config) *Server {
 	mux.HandleFunc("/api/", managementStub)
 	mux.HandleFunc("/v1/", unknownV1)
 	mux.Handle("/", StaticHandler())
-	s.handler = Middleware(decompressionMiddleware(mux), MiddlewareConfig{Token: config.Token, Hostname: s.config.Hostname, AllowedOrigins: config.AllowedOrigins, Logger: config.Logger})
+	s.handler = Middleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), MiddlewareConfig{Token: config.Token, Hostname: s.config.Hostname, AllowedOrigins: config.AllowedOrigins, Logger: config.Logger})
 	return s
 }
 

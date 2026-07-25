@@ -29,6 +29,38 @@ func TestReadResponsesBodyRejectsDeclaredAndStreamingOversize(t *testing.T) {
 		}
 	}
 }
+
+func TestParseResponsesRequestPreservesCanonicalContextAndTools(t *testing.T) {
+	body := `{"model":"provider/public","instructions":"be concise","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":[{"type":"function","name":"lookup","description":"find it","parameters":{"type":"object"}}],"reasoning":{"effort":"high"},"stream":true}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	request.Header.Set("X-Codex-Parent-Thread-Id", " parent-thread ")
+	parsed, err := parseResponsesRequest(httptest.NewRecorder(), request, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Normalized.ModelID != "provider/public" || !parsed.Normalized.Stream || parsed.Normalized.Options.Reasoning != "high" {
+		t.Fatalf("normalized options = %#v", parsed.Normalized)
+	}
+	if parsed.Normalized.ClientThreadID != "parent-thread" || len(parsed.Normalized.Context.SystemPrompt) != 1 || len(parsed.Normalized.Context.Messages) != 1 {
+		t.Fatalf("normalized context = %#v", parsed.Normalized.Context)
+	}
+	if len(parsed.Normalized.Context.Tools) != 1 || parsed.Normalized.Context.Tools[0].Name != "lookup" {
+		t.Fatalf("normalized tools = %#v", parsed.Normalized.Context.Tools)
+	}
+	applyResolvedResponsesModel(parsed.Normalized, "wire-model")
+	var raw map[string]any
+	if err := json.Unmarshal(parsed.Normalized.RawBody, &raw); err != nil || raw["model"] != "wire-model" || parsed.Normalized.ModelID != "wire-model" {
+		t.Fatalf("resolved request = %#v, raw=%#v, err=%v", parsed.Normalized, raw, err)
+	}
+}
+
+func TestParseResponsesRequestRejectsMalformedInputBeforeDispatch(t *testing.T) {
+	body := `{"model":"public","input":[{"type":"function_call","name":"missing-call-id"}]}`
+	_, err := parseResponsesRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)), 1<<20)
+	if err == nil || !strings.Contains(err.Error(), "requires call_id and name") {
+		t.Fatalf("parse error = %v", err)
+	}
+}
 func (r coreRegistry) ResolveTransport(string, *types.AuthContext) (*types.Transport, error) {
 	return &types.Transport{BaseURL: r.endpoint}, nil
 }

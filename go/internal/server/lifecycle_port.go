@@ -7,6 +7,22 @@ import (
 	"sync"
 )
 
+// DrainAdmissionMiddleware rejects new API work after graceful drain begins
+// while keeping health probes and the idempotent stop endpoint available.
+func DrainAdmissionMiddleware(next http.Handler, lifecycle *Lifecycle) http.Handler {
+	if lifecycle == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if !lifecycle.IsDraining() || isPublicHealthPath(request.URL.Path) || request.URL.Path == "/api/stop" {
+			next.ServeHTTP(w, request)
+			return
+		}
+		w.Header().Set("Retry-After", "5")
+		writeJSONError(w, http.StatusServiceUnavailable, "server_draining", "server is draining")
+	})
+}
+
 type trackedResponseBody struct {
 	body   io.ReadCloser
 	done   func()

@@ -3,10 +3,35 @@ package server
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestDrainAdmissionMiddlewareRejectsNewWorkButKeepsHealthAndStop(t *testing.T) {
+	lifecycle := NewLifecycle()
+	handler := DrainAdmissionMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), lifecycle)
+	lifecycle.BeginDrain()
+	for _, test := range []struct {
+		path string
+		want int
+	}{
+		{path: "/v1/responses", want: http.StatusServiceUnavailable},
+		{path: "/v1/chat/completions", want: http.StatusServiceUnavailable},
+		{path: "/api/providers", want: http.StatusServiceUnavailable},
+		{path: "/healthz", want: http.StatusNoContent},
+		{path: "/ready", want: http.StatusNoContent},
+		{path: "/api/stop", want: http.StatusNoContent},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, test.path, nil))
+		if response.Code != test.want {
+			t.Errorf("%s status = %d, want %d", test.path, response.Code, test.want)
+		}
+	}
+}
 
 func TestTrackResponseBodyReleasesOnEOF(t *testing.T) {
 	lifecycle := NewLifecycle()
