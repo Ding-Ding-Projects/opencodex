@@ -1,6 +1,7 @@
 package update
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var sha512IntegrityPattern = regexp.MustCompile(`^sha512-[A-Za-z0-9+/=]+$`)
@@ -88,3 +90,91 @@ func ParseIntegrityResult(version, output string, queryErr error) IntegrityResul
 }
 
 func ManualSourceCommand() string { return "git pull && bun install && bun run build:gui" }
+
+func IsSourceBuildVersion(version string) bool { return strings.TrimSpace(version) == "0.0.0" }
+
+type RestartMode string
+
+const (
+	RestartService RestartMode = "service"
+	RestartProxy   RestartMode = "proxy"
+)
+
+type RestartPlan struct {
+	Mode    RestartMode
+	Command Command
+}
+
+// BuildRestartPlan avoids shell shims and pins the captured port for a direct
+// proxy restart. The captured port is authoritative after update teardown has
+// removed runtime state.
+func BuildRestartPlan(installer Installer, runtimeExecutable, launcher string, serviceInstalled bool, port int, serviceArgs []string) RestartPlan {
+	mode := RestartProxy
+	args := []string{launcher, "start"}
+	if port > 0 {
+		args = append(args, "--port", fmt.Sprint(port))
+	}
+	if serviceInstalled {
+		mode = RestartService
+		if len(serviceArgs) == 0 {
+			serviceArgs = []string{"service", "install"}
+		}
+		args = append([]string{launcher}, serviceArgs...)
+	}
+	bin := runtimeExecutable
+	if installer == InstallerNPM {
+		bin = executableName("node")
+	}
+	return RestartPlan{Mode: mode, Command: Command{Bin: bin, Args: args}}
+}
+
+// ConfirmRestartedProxy requires the proxy to become healthy and remain so for
+// a stability window. A single successful probe is not restart proof.
+func ConfirmRestartedProxy(ctx context.Context, probe func(context.Context) bool, startupTimeout, stabilityWindow, interval time.Duration) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if probe == nil {
+		return false
+	}
+	if startupTimeout <= 0 {
+		startupTimeout = 15 * time.Second
+	}
+	if stabilityWindow < 0 {
+		stabilityWindow = 0
+	}
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	startup := time.NewTimer(startupTimeout)
+	defer startup.Stop()
+	for {
+		if probe(ctx) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-startup.C:
+			return false
+		case <-time.After(interval):
+		}
+	}
+	if stabilityWindow == 0 {
+		return true
+	}
+	stable := time.NewTimer(stabilityWindow)
+	defer stable.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-stable.C:
+			return true
+		case <-time.After(interval):
+			if !probe(ctx) {
+				return false
+			}
+		}
+	}
+}

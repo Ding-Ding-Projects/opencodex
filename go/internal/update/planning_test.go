@@ -1,10 +1,13 @@
 package update
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetectInstaller(t *testing.T) {
@@ -17,6 +20,37 @@ func TestDetectInstaller(t *testing.T) {
 		if got := DetectInstaller(path); got != want {
 			t.Errorf("DetectInstaller(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+func TestRestartPlanningAndHealthConfirmation(t *testing.T) {
+	proxy := BuildRestartPlan(InstallerBun, "/runtime/ocx", "/pkg/cli", false, 12000, nil)
+	if proxy.Mode != RestartProxy || proxy.Command.Bin != "/runtime/ocx" || strings.Join(proxy.Command.Args, " ") != "/pkg/cli start --port 12000" {
+		t.Fatalf("proxy plan = %#v", proxy)
+	}
+	service := BuildRestartPlan(InstallerNPM, "/ignored", "/pkg/cli", true, 12000, []string{"service", "install", "--native"})
+	if service.Mode != RestartService || !strings.HasSuffix(service.Command.Bin, "node") || strings.Join(service.Command.Args, " ") != "/pkg/cli service install --native" {
+		t.Fatalf("service plan = %#v", service)
+	}
+	if !IsSourceBuildVersion(" 0.0.0 ") || IsSourceBuildVersion("2.8.0") {
+		t.Fatal("source build detection mismatch")
+	}
+
+	calls := 0
+	stable := ConfirmRestartedProxy(context.Background(), func(context.Context) bool {
+		calls++
+		return calls >= 2
+	}, 20*time.Millisecond, 3*time.Millisecond, time.Millisecond)
+	if !stable || calls < 2 {
+		t.Fatalf("stable=%v calls=%d", stable, calls)
+	}
+	calls = 0
+	flaps := ConfirmRestartedProxy(context.Background(), func(context.Context) bool {
+		calls++
+		return calls == 1
+	}, 20*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	if flaps {
+		t.Fatal("flapping restart was accepted")
 	}
 }
 
