@@ -53,7 +53,8 @@ func (m *launchdManager) Uninstall() error {
 func (m *launchdManager) Status() (Status, error) {
 	_, statErr := os.Stat(m.ArtifactPath())
 	detail, err := run("launchctl", "list", LaunchdLabel)
-	return Status{Installed: statErr == nil, Running: err == nil, Detail: detail}, nil
+	installed, running := statErr == nil, err == nil
+	return Status{Installed: installed, Enabled: installed, Running: running, Viable: installed && running, Backend: "launchd", Detail: detail}, nil
 }
 
 func (m *systemdManager) Install() error {
@@ -86,8 +87,12 @@ func (m *systemdManager) Uninstall() error {
 }
 func (m *systemdManager) Status() (Status, error) {
 	_, statErr := os.Stat(m.ArtifactPath())
-	detail, err := run("systemctl", "--user", "is-active", ServiceName+".service")
-	return Status{Installed: statErr == nil, Running: err == nil && strings.TrimSpace(detail) == "active", Detail: detail}, nil
+	activeDetail, activeErr := run("systemctl", "--user", "is-active", ServiceName+".service")
+	enabledDetail, enabledErr := run("systemctl", "--user", "is-enabled", ServiceName+".service")
+	installed := statErr == nil
+	running := activeErr == nil && strings.TrimSpace(activeDetail) == "active"
+	enabled := enabledErr == nil && strings.TrimSpace(enabledDetail) == "enabled"
+	return Status{Installed: installed, Enabled: enabled, Running: running, Viable: installed && enabled && running, Backend: "systemd", Detail: strings.TrimSpace(activeDetail + " " + enabledDetail)}, nil
 }
 
 func (m *taskManager) Install() error {
@@ -126,8 +131,15 @@ func (m *taskManager) Uninstall() error {
 	return errors.Join(ignoreAbsent(commandErr), fileErr, launcherErr)
 }
 func (m *taskManager) Status() (Status, error) {
-	detail, err := run("schtasks.exe", "/query", "/tn", ServiceName)
-	return Status{Installed: err == nil, Running: err == nil && strings.Contains(strings.ToLower(detail), "running"), Detail: detail}, nil
+	xml, err := run("schtasks.exe", "/query", "/tn", ServiceName, "/xml")
+	if err != nil {
+		return Status{Backend: "scheduler", Detail: xml}, nil
+	}
+	state := ReadWindowsSchedulerXmlState(xml, `C:\Windows\System32\wscript.exe`, taskLauncherPath(m.config))
+	detail, queryErr := run("schtasks.exe", "/query", "/tn", ServiceName, "/fo", "LIST", "/v")
+	running := queryErr == nil && strings.Contains(strings.ToLower(detail), "running")
+	viable := state.Installed && state.Enabled && state.RegistrationHealthy
+	return Status{Installed: state.Installed, Enabled: state.Enabled, Running: running, Viable: viable, Stale: state.Installed && !state.RegistrationHealthy, Backend: "scheduler", Detail: detail}, nil
 }
 
 func ignoreAbsent(err error) error {

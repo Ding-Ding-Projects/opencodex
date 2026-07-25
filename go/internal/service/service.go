@@ -28,7 +28,11 @@ type Config struct {
 
 type Status struct {
 	Installed bool
+	Enabled   bool
 	Running   bool
+	Viable    bool
+	Stale     bool
+	Backend   string
 	Detail    string
 }
 
