@@ -19,11 +19,11 @@ func TestParseInstallStateVersionsAndBackend(t *testing.T) {
 }
 
 func TestInstallEnvironmentAndReinstallArgs(t *testing.T) {
-	state := InstallState{Version: 2, CodexHome: `C:\\Users\\Jun\\.codex`, OpenCodexHome: `C:\\Users\\Jun\\.opencodex`, Backend: BackendNative}
-	if !state.EnvironmentMatches(`c:/Users/Jun/.codex`, `c:/Users/Jun/.opencodex`) {
+	state := InstallState{Version: 2, CodexHome: `/home/jun/.codex`, OpenCodexHome: `/home/jun/.opencodex`, Backend: BackendNative}
+	if !state.EnvironmentMatches(`/home/jun/.codex`, `/home/jun/.opencodex`) {
 		t.Fatal("equivalent service paths did not match")
 	}
-	if state.EnvironmentMatches(`/home/jun/.codex`, `/home/jun/.opencodex`) {
+	if state.EnvironmentMatches(`/home/other/.codex`, `/home/jun/.opencodex`) {
 		t.Fatal("different service paths matched")
 	}
 	args := ServiceReinstallArgs(state)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -62,7 +63,10 @@ func equalServicePath(left, right string) bool {
 	if left == "." || right == "." {
 		return false
 	}
-	return strings.EqualFold(filepath.ToSlash(left), filepath.ToSlash(right))
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.ToSlash(left), filepath.ToSlash(right))
+	}
+	return filepath.ToSlash(left) == filepath.ToSlash(right)
 }
 
 func ServiceReinstallArgs(state InstallState) []string {
