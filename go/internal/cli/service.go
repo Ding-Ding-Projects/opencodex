@@ -22,7 +22,7 @@ func runService(args []string, streams IO) error {
 		args = args[1:]
 	}
 	if len(args) != 0 {
-		return fmt.Errorf("usage: ocx service [install|start|stop|status|uninstall]")
+		return fmt.Errorf("usage: ocx service [install|start|stop|restart|status|logs|uninstall]")
 	}
 	cfg, _, err := loadConfig()
 	if err != nil {
@@ -42,6 +42,11 @@ func runService(args []string, streams IO) error {
 		}
 		fmt.Fprintf(streams.Out, "Service installed and started: %s\n", manager.ArtifactPath())
 	case "start":
+		return manager.Start()
+	case "restart":
+		if err := manager.Stop(); err != nil {
+			return err
+		}
 		return manager.Start()
 	case "stop":
 		if err := manager.Stop(); err != nil {
@@ -67,6 +72,16 @@ func runService(args []string, streams IO) error {
 		if status.Detail != "" {
 			fmt.Fprintln(streams.Out, status.Detail)
 		}
+	case "logs":
+		data, readErr := os.ReadFile(serviceConfig(*cfg).LogPath)
+		if os.IsNotExist(readErr) {
+			return fmt.Errorf("service log does not exist: %s", serviceConfig(*cfg).LogPath)
+		}
+		if readErr != nil {
+			return readErr
+		}
+		_, readErr = streams.Out.Write(data)
+		return readErr
 	default:
 		return fmt.Errorf("unknown service subcommand %q", command)
 	}

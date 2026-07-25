@@ -6,17 +6,20 @@ import (
 )
 
 var commandHelp = map[string]string{
-	"serve":    "Usage: ocx serve [--host HOST] [--port PORT]\n\nStart the proxy in the foreground.",
-	"account":  "Usage: ocx account <list|switch|add|remove|refresh> [arguments]",
-	"provider": "Usage: ocx provider <list|add|remove|default> [arguments]",
-	"models":   "Usage: ocx models <list|add|remove> [arguments]",
-	"init":     "Usage: ocx init\n\nInteractively configure a provider.",
-	"status":   "Usage: ocx status\n\nShow proxy and service status.",
-	"doctor":   "Usage: ocx doctor\n\nRun local configuration, process, and network diagnostics.",
-	"claude":   "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.",
-	"debug":    "Usage: ocx debug <status|on|off|stack-on|stack-off>",
-	"service":  "Usage: ocx service [install|start|stop|status|uninstall]",
-	"update":   "Usage: ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]",
+	"serve":       "Usage: ocx serve [--host HOST] [--port PORT]\n\nStart the proxy in the foreground.",
+	"account":     "Usage: ocx account <list|switch|add|remove|refresh> [arguments]",
+	"provider":    "Usage: ocx provider <list|add|remove|default> [arguments]",
+	"models":      "Usage: ocx models <list|add|remove> [arguments]",
+	"init":        "Usage: ocx init\n\nInteractively configure a provider.",
+	"status":      "Usage: ocx status\n\nShow proxy and service status.",
+	"doctor":      "Usage: ocx doctor\n\nRun local configuration, process, and network diagnostics.",
+	"diagnostics": "Usage: ocx diagnostics [--json]\n\nPrint a secret-free local diagnostic report.",
+	"completion":  "Usage: ocx completion <bash|zsh|fish|powershell>\n\nGenerate shell completion setup.",
+	"config":      "Usage: ocx config <path|show|get|set|unset|validate> [arguments]\n\nInspect and update validated configuration values.",
+	"claude":      "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.",
+	"debug":       "Usage: ocx debug <status|on|off|stack-on|stack-off>",
+	"service":     "Usage: ocx service [install|start|stop|status|uninstall]",
+	"update":      "Usage: ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]",
 }
 
 func PrintHelp(writer io.Writer, command string) error {
@@ -35,6 +38,9 @@ Usage:
   ocx init                    Interactive provider setup
   ocx status                  Show proxy and service status
   ocx doctor                  Run diagnostics
+  ocx diagnostics [--json]   Print a secret-free diagnostic report
+  ocx completion <shell>     Generate shell completions
+  ocx config <subcommand>    Inspect or update configuration
   ocx service [subcommand]    Manage the background service
   ocx provider <subcommand>   Manage providers
   ocx account <subcommand>    Manage provider accounts

@@ -69,6 +69,12 @@ func Run(ctx context.Context, args []string, streams IO) int {
 		runErr = runStatus(ctx, command.Args, streams)
 	case "doctor":
 		runErr = runDoctor(ctx, command.Args, streams)
+	case "diagnostics", "diagnose":
+		runErr = runDiagnostics(command.Args, streams)
+	case "completion":
+		runErr = runCompletion(command.Args, streams)
+	case "config":
+		runErr = runConfig(command.Args, streams)
 	case "claude":
 		runErr = runClaude(ctx, command.Args, streams)
 	case "debug":
