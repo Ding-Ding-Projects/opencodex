@@ -29,10 +29,23 @@ func TestRouteModelOpenAIAndExplicitSlash(t *testing.T) {
 func TestRouteModelOpenAIDoesNotFallBack(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers["other"] = provider("openai-chat", "https://example.com/v1")
+	cfg.Providers[legacyOpenAIMultiProviderID] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://legacy.example/v1", DefaultModel: "legacy-model"}
 	_, err := RouteModel(cfg, "gpt-5.6")
 	var target *NoEnabledOpenAIProviderError
 	if !errors.As(err, &target) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRouteModelDoesNotBackfillConfiguredModelList(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers["openai-apikey"] = config.ProviderConfig{Adapter: "openai-responses", BaseURL: "https://api.openai.com/v1", Models: []string{"selected-only"}}
+	got, err := RouteModel(cfg, "openai-apikey/selected-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Provider.Models) != 1 || got.Provider.Models[0] != "selected-only" {
+		t.Fatalf("models unexpectedly backfilled: %#v", got.Provider.Models)
 	}
 }
 

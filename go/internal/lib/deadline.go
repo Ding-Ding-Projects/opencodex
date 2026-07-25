@@ -79,8 +79,22 @@ func NewClearableDeadline(parent context.Context, timeout time.Duration) *Cleara
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	d := &ClearableDeadline{Context: ctx, TimeoutErr: context.DeadlineExceeded, cancel: cancel}
-	d.timer = time.AfterFunc(timeout, func() { d.mu.Lock(); d.expired = true; d.timer = nil; d.mu.Unlock(); cancel(d.TimeoutErr) })
+	d.timer = time.AfterFunc(timeout, d.expire)
 	return d
+}
+func (d *ClearableDeadline) expire() {
+	d.mu.Lock()
+	select {
+	case <-d.Context.Done():
+		d.timer = nil
+		d.mu.Unlock()
+		return
+	default:
+	}
+	d.expired = true
+	d.timer = nil
+	d.mu.Unlock()
+	d.cancel(d.TimeoutErr)
 }
 func (d *ClearableDeadline) DidExpire() bool { d.mu.Lock(); defer d.mu.Unlock(); return d.expired }
 func (d *ClearableDeadline) Clear() {

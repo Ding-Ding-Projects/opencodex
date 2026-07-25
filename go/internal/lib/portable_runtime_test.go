@@ -30,13 +30,23 @@ func TestReadBoundedBodyTimeoutAndCancel(t *testing.T) {
 }
 func TestIdleDeadlineFiresOnce(t *testing.T) {
 	var calls atomic.Int32
-	d := NewIdleDeadline(5*time.Millisecond, func() { calls.Add(1) })
+	d := NewIdleDeadline(time.Second, func() { calls.Add(1) })
+	d.fire()
+	d.fire()
 	d.Reset()
-	time.Sleep(15 * time.Millisecond)
-	d.Reset()
-	time.Sleep(10 * time.Millisecond)
 	if calls.Load() != 1 {
 		t.Fatalf("calls=%d", calls.Load())
+	}
+}
+
+func TestClearableDeadlineParentWins(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	d := NewClearableDeadline(parent, time.Hour)
+	cancel()
+	<-d.Context.Done()
+	d.expire()
+	if d.DidExpire() {
+		t.Fatal("deadline claimed expiry after parent cancellation")
 	}
 }
 func TestDebugSettingsOverrideEnvironment(t *testing.T) {

@@ -173,7 +173,7 @@ func routeModel(cfg config.Config, modelID string, bypassCombos bool) (RouteResu
 }
 
 func inactiveProvider(name string, provider config.ProviderConfig) bool {
-	return name == legacyChatGPTProviderID || provider.Disabled
+	return name == legacyChatGPTProviderID || name == legacyOpenAIMultiProviderID || provider.Disabled
 }
 
 func makeRouteResult(name string, provider config.ProviderConfig, modelID string) (RouteResult, error) {
@@ -231,7 +231,6 @@ func routedProviderConfig(name string, user config.ProviderConfig) (config.Provi
 	if out.DefaultMaxOutputTokens == 0 {
 		out.DefaultMaxOutputTokens = entry.DefaultMaxOutputTokens
 	}
-	out.Models = union(entry.Models, user.Models)
 	out.ReasoningEfforts = firstSlice(user.ReasoningEfforts, entry.ReasoningEfforts)
 	out.NoVisionModels = union(entry.NoVisionModels, user.NoVisionModels)
 	out.NoReasoningModels = union(entry.NoReasoningModels, user.NoReasoningModels)
