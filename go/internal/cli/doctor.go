@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -18,7 +20,32 @@ func runDoctor(ctx context.Context, args []string, streams IO) error {
 		return err
 	}
 	cfg, path, configErr := loadConfig()
-	fmt.Fprintf(streams.Out, "OS: %s/%s\nConfig directory: %s\nConfig file: %s\n", runtime.GOOS, runtime.GOARCH, dir, path)
+	fmt.Fprintf(streams.Out, "opencodex doctor\n\nOS: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	home, _ := os.UserHomeDir()
+	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	paths := collectDoctorPaths(home, codexHome, dir, path)
+	mounts := readMountTable()
+	fmt.Fprintln(streams.Out, "\nPaths")
+	for _, row := range paths {
+		fs := detectFilesystem(row.Path, mounts)
+		marker := "--"
+		if row.Exists {
+			marker = "ok"
+		}
+		flags := []string{}
+		if fs.Type != "n/a" {
+			flags = append(flags, "fs="+fs.Type)
+		}
+		if fs.WindowsFS || fs.MountDrive {
+			flags = append(flags, "WSL /mnt drive")
+		}
+		suffix := ""
+		if len(flags) > 0 {
+			suffix = " (" + strings.Join(flags, ", ") + ")"
+		}
+		fmt.Fprintf(streams.Out, "  %s %s: %s%s\n", marker, row.Label, row.Path, suffix)
+	}
+	fmt.Fprintf(streams.Out, "\nConfiguration\n  directory: %s\n  file: %s\n", dir, path)
 	if configErr != nil {
 		fmt.Fprintf(streams.Out, "[FAIL] config: %v\n", configErr)
 	} else {
@@ -42,10 +69,32 @@ func runDoctor(ctx context.Context, args []string, streams IO) error {
 		_, port := readRuntime()
 		fmt.Fprintf(streams.Out, "[INFO] proxy health: %t\n", probeHealth(ctx, cfg.Host, port))
 	}
-	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"} {
-		if value := os.Getenv(name); value != "" {
-			fmt.Fprintf(streams.Out, "[INFO] %s is set\n", name)
+	fmt.Fprintln(streams.Out, "\nCurrent shell proxy environment")
+	for _, row := range collectProxyEnvironment(environmentMap(os.Environ())) {
+		fmt.Fprintf(streams.Out, "  %s %s\n", presenceMarker(row.Present), row.Key)
+	}
+	pid, _ := readRuntime()
+	running := collectRunningProxyEnvironment(pid, runtime.GOOS, nil)
+	fmt.Fprintln(streams.Out, "\nRunning proxy process proxy environment")
+	if running.Status == "unavailable" {
+		fmt.Fprintf(streams.Out, "  -- pid %d: %s\n", running.PID, running.Reason)
+	} else if running.Status == "not_running" {
+		fmt.Fprintln(streams.Out, "  -- proxy is not running")
+	} else {
+		fmt.Fprintf(streams.Out, "  ok pid %d\n", running.PID)
+		for _, row := range running.Rows {
+			fmt.Fprintf(streams.Out, "     %s %s\n", presenceMarker(row.Present), row.Key)
 		}
 	}
+	if history, globErr := filepath.Glob(filepath.Join(dir, "*.bak")); globErr == nil && len(history) > 0 {
+		fmt.Fprintf(streams.Out, "\n[INFO] backup artifacts: %d\n", len(history))
+	}
 	return nil
+}
+
+func presenceMarker(present bool) string {
+	if present {
+		return "set"
+	}
+	return "--"
 }
