@@ -23,37 +23,60 @@ const (
 var providerNamePattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$`)
 
 type Config struct {
-	Port            int                       `json:"port"`
-	Host            string                    `json:"hostname,omitempty"`
-	AuthToken       string                    `json:"authToken,omitempty"`
-	Providers       map[string]ProviderConfig `json:"providers"`
-	Combos          map[string]combos.Combo   `json:"combos,omitempty"`
-	DefaultProvider string                    `json:"defaultProvider"`
-	StreamMode      string                    `json:"streamMode,omitempty"`
-	EffortCap          string `json:"effortCap,omitempty"`
-	SubagentEffortCap  string `json:"subagentEffortCap,omitempty"`
-	MultiAgentMode     string `json:"multiAgentMode,omitempty"`
-	Debug           DebugConfig               `json:"debug,omitempty"`
-	Log             LogConfig                 `json:"log,omitempty"`
+	Port              int                       `json:"port"`
+	Host              string                    `json:"hostname,omitempty"`
+	AuthToken         string                    `json:"authToken,omitempty"`
+	Providers         map[string]ProviderConfig `json:"providers"`
+	Combos            map[string]combos.Combo   `json:"combos,omitempty"`
+	DefaultProvider   string                    `json:"defaultProvider"`
+	StreamMode        string                    `json:"streamMode,omitempty"`
+	EffortCap         string                    `json:"effortCap,omitempty"`
+	SubagentEffortCap string                    `json:"subagentEffortCap,omitempty"`
+	MultiAgentMode    string                    `json:"multiAgentMode,omitempty"`
+	Debug             DebugConfig               `json:"debug,omitempty"`
+	Log               LogConfig                 `json:"log,omitempty"`
 }
 
 type ProviderConfig struct {
-	Adapter                 string                       `json:"adapter"`
-	BaseURL                 string                       `json:"baseUrl"`
-	ModelAdapters           map[string]string            `json:"modelAdapters,omitempty"`
-	ResponsesPath           string                       `json:"responsesPath,omitempty"`
-	AllowPrivateNetwork     bool                         `json:"allowPrivateNetwork,omitempty"`
-	Disabled                bool                         `json:"disabled,omitempty"`
-	APIKey                  string                       `json:"apiKey,omitempty"`
-	DefaultModel            string                       `json:"defaultModel,omitempty"`
-	Models                  []string                     `json:"models,omitempty"`
-	Headers                 map[string]string            `json:"headers,omitempty"`
-	AuthMode                string                       `json:"authMode,omitempty"`
-	ReasoningEfforts        []string                     `json:"reasoningEfforts,omitempty"`
-	ModelReasoningEfforts   map[string][]string          `json:"modelReasoningEfforts,omitempty"`
-	ReasoningEffortMap      map[string]string            `json:"reasoningEffortMap,omitempty"`
-	ModelReasoningEffortMap map[string]map[string]string `json:"modelReasoningEffortMap,omitempty"`
-	NoReasoningModels       []string                     `json:"noReasoningModels,omitempty"`
+	Adapter                        string                       `json:"adapter"`
+	BaseURL                        string                       `json:"baseUrl"`
+	ModelAdapters                  map[string]string            `json:"modelAdapters,omitempty"`
+	ResponsesPath                  string                       `json:"responsesPath,omitempty"`
+	AllowPrivateNetwork            bool                         `json:"allowPrivateNetwork,omitempty"`
+	Disabled                       bool                         `json:"disabled,omitempty"`
+	APIKey                         string                       `json:"apiKey,omitempty"`
+	DefaultModel                   string                       `json:"defaultModel,omitempty"`
+	Models                         []string                     `json:"models,omitempty"`
+	Headers                        map[string]string            `json:"headers,omitempty"`
+	AuthMode                       string                       `json:"authMode,omitempty"`
+	CodexAccountMode               string                       `json:"codexAccountMode,omitempty"`
+	GoogleMode                     string                       `json:"googleMode,omitempty"`
+	Project                        string                       `json:"project,omitempty"`
+	Location                       string                       `json:"location,omitempty"`
+	ContextWindow                  int                          `json:"contextWindow,omitempty"`
+	DefaultMaxOutputTokens         int                          `json:"defaultMaxOutputTokens,omitempty"`
+	ParallelToolCalls              *bool                        `json:"parallelToolCalls,omitempty"`
+	EscapeBuiltinToolNames         *bool                        `json:"escapeBuiltinToolNames,omitempty"`
+	KeyOptional                    *bool                        `json:"keyOptional,omitempty"`
+	ModelSuffixBracketStrip        *bool                        `json:"modelSuffixBracketStrip,omitempty"`
+	ReasoningEfforts               []string                     `json:"reasoningEfforts,omitempty"`
+	ModelReasoningEfforts          map[string][]string          `json:"modelReasoningEfforts,omitempty"`
+	ModelDefaultReasoningEfforts   map[string]string            `json:"modelDefaultReasoningEfforts,omitempty"`
+	ReasoningEffortMap             map[string]string            `json:"reasoningEffortMap,omitempty"`
+	ModelReasoningEffortMap        map[string]map[string]string `json:"modelReasoningEffortMap,omitempty"`
+	ModelContextWindows            map[string]int               `json:"modelContextWindows,omitempty"`
+	ModelInputModalities           map[string][]string          `json:"modelInputModalities,omitempty"`
+	ModelMaxInputTokens            map[string]int               `json:"modelMaxInputTokens,omitempty"`
+	ModelMaxOutputTokens           map[string]int               `json:"modelMaxOutputTokens,omitempty"`
+	NoVisionModels                 []string                     `json:"noVisionModels,omitempty"`
+	NoReasoningModels              []string                     `json:"noReasoningModels,omitempty"`
+	NoTemperatureModels            []string                     `json:"noTemperatureModels,omitempty"`
+	NoTopPModels                   []string                     `json:"noTopPModels,omitempty"`
+	NoPenaltyModels                []string                     `json:"noPenaltyModels,omitempty"`
+	AutoToolChoiceOnlyModels       []string                     `json:"autoToolChoiceOnlyModels,omitempty"`
+	PreserveReasoningContentModels []string                     `json:"preserveReasoningContentModels,omitempty"`
+	ThinkingToggleModels           []string                     `json:"thinkingToggleModels,omitempty"`
+	ThinkingBudgetModels           []string                     `json:"thinkingBudgetModels,omitempty"`
 }
 
 type DebugConfig struct {
@@ -192,6 +215,9 @@ func (c Config) Validate() error {
 		}
 		if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return &ConfigError{Field: "providers." + name + ".baseUrl", Message: "must not contain credentials, query, or fragment"}
+		}
+		if err := ValidateModelAdapters(name, provider); err != nil {
+			return err
 		}
 	}
 	for id, combo := range c.Combos {
