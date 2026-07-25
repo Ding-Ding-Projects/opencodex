@@ -183,3 +183,51 @@ func TestValidateCanonicalCodexAccountMode(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConfigPreservesExtendedRuntimeSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.OpenAIProviderTierVersion = 2
+	cfg.SubagentModels = []string{"openai/gpt-5.6-sol"}
+	cfg.MultiAgentMode = "v2"
+	cfg.StallTimeoutSec = 300
+	cfg.ConnectTimeoutMS = 200_000
+	cfg.ShutdownTimeoutMS = 5_000
+	cfg.CacheRetention = "long"
+	cfg.WebSearchSidecar = &WebSearchSidecarConfig{Backend: "anthropic", Model: "claude-sonnet-4", MaxSearchesPerTurn: 3, TimeoutMS: 20_000}
+	cfg.VisionSidecar = &VisionSidecarConfig{Backend: "openai", Model: "gpt-5.4-mini", MaxDescriptionsPerTurn: 2}
+	cfg.CORSAllowOrigins = []string{"https://example.com"}
+	if err := Save(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(*loaded, cfg) {
+		t.Fatalf("extended settings did not round trip\n got: %#v\nwant: %#v", *loaded, cfg)
+	}
+}
+
+func TestValidateExtendedRuntimeSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"too many subagents", func(cfg *Config) { cfg.SubagentModels = []string{"1", "2", "3", "4", "5", "6"} }},
+		{"invalid effort", func(cfg *Config) { cfg.EffortCap = "extreme" }},
+		{"invalid multi-agent mode", func(cfg *Config) { cfg.MultiAgentMode = "v3" }},
+		{"invalid cache retention", func(cfg *Config) { cfg.CacheRetention = "forever" }},
+		{"invalid threshold", func(cfg *Config) { cfg.AutoSwitchThreshold = 101 }},
+		{"invalid sidecar backend", func(cfg *Config) { cfg.WebSearchSidecar = &WebSearchSidecarConfig{Backend: "custom"} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			test.mutate(&cfg)
+			if err := cfg.Validate(); !IsConfigError(err) {
+				t.Fatalf("Validate() error = %v, want ConfigError", err)
+			}
+		})
+	}
+}

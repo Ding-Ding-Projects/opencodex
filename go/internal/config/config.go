@@ -30,60 +30,118 @@ var sensitiveProviderHeaders = map[string]bool{
 }
 
 type Config struct {
-	Port              int                       `json:"port"`
-	Host              string                    `json:"hostname,omitempty"`
-	AuthToken         string                    `json:"authToken,omitempty"`
-	Providers         map[string]ProviderConfig `json:"providers"`
-	Combos            map[string]combos.Combo   `json:"combos,omitempty"`
-	DefaultProvider   string                    `json:"defaultProvider"`
-	StreamMode        string                    `json:"streamMode,omitempty"`
-	EffortCap         string                    `json:"effortCap,omitempty"`
-	SubagentEffortCap string                    `json:"subagentEffortCap,omitempty"`
-	MultiAgentMode    string                    `json:"multiAgentMode,omitempty"`
-	Debug             DebugConfig               `json:"debug,omitempty"`
-	Log               LogConfig                 `json:"log,omitempty"`
+	Port                      int                       `json:"port"`
+	Host                      string                    `json:"hostname,omitempty"`
+	AuthToken                 string                    `json:"authToken,omitempty"`
+	Providers                 map[string]ProviderConfig `json:"providers"`
+	Combos                    map[string]combos.Combo   `json:"combos,omitempty"`
+	DefaultProvider           string                    `json:"defaultProvider"`
+	OpenAIProviderTierVersion int                       `json:"openaiProviderTierVersion,omitempty"`
+	SubagentModels            []string                  `json:"subagentModels,omitempty"`
+	InjectionModel            string                    `json:"injectionModel,omitempty"`
+	InjectionEffort           string                    `json:"injectionEffort,omitempty"`
+	InjectionPrompt           string                    `json:"injectionPrompt,omitempty"`
+	FastMode                  *bool                     `json:"fastMode,omitempty"`
+	StreamMode                string                    `json:"streamMode,omitempty"`
+	EffortCap                 string                    `json:"effortCap,omitempty"`
+	SubagentEffortCap         string                    `json:"subagentEffortCap,omitempty"`
+	MultiAgentMode            string                    `json:"multiAgentMode,omitempty"`
+	MultiAgentGuidanceEnabled *bool                     `json:"multiAgentGuidanceEnabled,omitempty"`
+	DisabledModels            []string                  `json:"disabledModels,omitempty"`
+	ProviderContextCaps       map[string]int            `json:"providerContextCaps,omitempty"`
+	ContextCapValue           int                       `json:"contextCapValue,omitempty"`
+	Proxy                     string                    `json:"proxy,omitempty"`
+	StallTimeoutSec           int                       `json:"stallTimeoutSec,omitempty"`
+	ConnectTimeoutMS          int                       `json:"connectTimeoutMs,omitempty"`
+	ShutdownTimeoutMS         int                       `json:"shutdownTimeoutMs,omitempty"`
+	WebSockets                bool                      `json:"websockets,omitempty"`
+	CodexAutoStart            *bool                     `json:"codexAutoStart,omitempty"`
+	CodexShimAutoRestore      *bool                     `json:"codexShimAutoRestore,omitempty"`
+	SyncResumeHistory         *bool                     `json:"syncResumeHistory,omitempty"`
+	ModelCacheTTLMS           int                       `json:"modelCacheTtlMs,omitempty"`
+	CacheRetention            string                    `json:"cacheRetention,omitempty"`
+	WebSearchSidecar          *WebSearchSidecarConfig   `json:"webSearchSidecar,omitempty"`
+	VisionSidecar             *VisionSidecarConfig      `json:"visionSidecar,omitempty"`
+	Images                    *SidecarTimeoutConfig     `json:"images,omitempty"`
+	Search                    *SidecarTimeoutConfig     `json:"search,omitempty"`
+	AutoSwitchThreshold       int                       `json:"autoSwitchThreshold,omitempty"`
+	UpstreamFailoverThreshold int                       `json:"upstreamFailoverThreshold,omitempty"`
+	CORSAllowOrigins          []string                  `json:"corsAllowOrigins,omitempty"`
+	Debug                     DebugConfig               `json:"debug,omitempty"`
+	Log                       LogConfig                 `json:"log,omitempty"`
+}
+
+type SidecarTimeoutConfig struct {
+	TimeoutMS int `json:"timeoutMs,omitempty"`
+}
+
+type VisionSidecarConfig struct {
+	Enabled                *bool  `json:"enabled,omitempty"`
+	Backend                string `json:"backend,omitempty"`
+	Model                  string `json:"model,omitempty"`
+	MaxDescriptionsPerTurn int    `json:"maxDescriptionsPerTurn,omitempty"`
+	TimeoutMS              int    `json:"timeoutMs,omitempty"`
+}
+
+type WebSearchSidecarConfig struct {
+	Enabled                   *bool  `json:"enabled,omitempty"`
+	Backend                   string `json:"backend,omitempty"`
+	Model                     string `json:"model,omitempty"`
+	Reasoning                 string `json:"reasoning,omitempty"`
+	MaxSearchesPerTurn        int    `json:"maxSearchesPerTurn,omitempty"`
+	TimeoutMS                 int    `json:"timeoutMs,omitempty"`
+	RoutedModelStallTimeoutMS int    `json:"routedModelStallTimeoutMs,omitempty"`
 }
 
 type ProviderConfig struct {
-	Adapter                        string                       `json:"adapter"`
-	BaseURL                        string                       `json:"baseUrl"`
-	ModelAdapters                  map[string]string            `json:"modelAdapters,omitempty"`
-	ResponsesPath                  string                       `json:"responsesPath,omitempty"`
-	AllowPrivateNetwork            bool                         `json:"allowPrivateNetwork,omitempty"`
-	Disabled                       bool                         `json:"disabled,omitempty"`
-	APIKey                         string                       `json:"apiKey,omitempty"`
-	DefaultModel                   string                       `json:"defaultModel,omitempty"`
-	Models                         []string                     `json:"models,omitempty"`
-	Headers                        map[string]string            `json:"headers,omitempty"`
-	AuthMode                       string                       `json:"authMode,omitempty"`
-	CodexAccountMode               string                       `json:"codexAccountMode,omitempty"`
-	GoogleMode                     string                       `json:"googleMode,omitempty"`
-	Project                        string                       `json:"project,omitempty"`
-	Location                       string                       `json:"location,omitempty"`
-	ContextWindow                  int                          `json:"contextWindow,omitempty"`
-	DefaultMaxOutputTokens         int                          `json:"defaultMaxOutputTokens,omitempty"`
-	ParallelToolCalls              *bool                        `json:"parallelToolCalls,omitempty"`
-	EscapeBuiltinToolNames         *bool                        `json:"escapeBuiltinToolNames,omitempty"`
-	KeyOptional                    *bool                        `json:"keyOptional,omitempty"`
-	ModelSuffixBracketStrip        *bool                        `json:"modelSuffixBracketStrip,omitempty"`
-	ReasoningEfforts               []string                     `json:"reasoningEfforts,omitempty"`
-	ModelReasoningEfforts          map[string][]string          `json:"modelReasoningEfforts,omitempty"`
-	ModelDefaultReasoningEfforts   map[string]string            `json:"modelDefaultReasoningEfforts,omitempty"`
-	ReasoningEffortMap             map[string]string            `json:"reasoningEffortMap,omitempty"`
-	ModelReasoningEffortMap        map[string]map[string]string `json:"modelReasoningEffortMap,omitempty"`
-	ModelContextWindows            map[string]int               `json:"modelContextWindows,omitempty"`
-	ModelInputModalities           map[string][]string          `json:"modelInputModalities,omitempty"`
-	ModelMaxInputTokens            map[string]int               `json:"modelMaxInputTokens,omitempty"`
-	ModelMaxOutputTokens           map[string]int               `json:"modelMaxOutputTokens,omitempty"`
-	NoVisionModels                 []string                     `json:"noVisionModels,omitempty"`
-	NoReasoningModels              []string                     `json:"noReasoningModels,omitempty"`
-	NoTemperatureModels            []string                     `json:"noTemperatureModels,omitempty"`
-	NoTopPModels                   []string                     `json:"noTopPModels,omitempty"`
-	NoPenaltyModels                []string                     `json:"noPenaltyModels,omitempty"`
-	AutoToolChoiceOnlyModels       []string                     `json:"autoToolChoiceOnlyModels,omitempty"`
-	PreserveReasoningContentModels []string                     `json:"preserveReasoningContentModels,omitempty"`
-	ThinkingToggleModels           []string                     `json:"thinkingToggleModels,omitempty"`
-	ThinkingBudgetModels           []string                     `json:"thinkingBudgetModels,omitempty"`
+	Adapter                         string                       `json:"adapter"`
+	BaseURL                         string                       `json:"baseUrl"`
+	ModelAdapters                   map[string]string            `json:"modelAdapters,omitempty"`
+	ResponsesPath                   string                       `json:"responsesPath,omitempty"`
+	AllowPrivateNetwork             bool                         `json:"allowPrivateNetwork,omitempty"`
+	Disabled                        bool                         `json:"disabled,omitempty"`
+	APIKey                          string                       `json:"apiKey,omitempty"`
+	DefaultModel                    string                       `json:"defaultModel,omitempty"`
+	Models                          []string                     `json:"models,omitempty"`
+	Headers                         map[string]string            `json:"headers,omitempty"`
+	AuthMode                        string                       `json:"authMode,omitempty"`
+	CodexAccountMode                string                       `json:"codexAccountMode,omitempty"`
+	GoogleMode                      string                       `json:"googleMode,omitempty"`
+	Project                         string                       `json:"project,omitempty"`
+	Location                        string                       `json:"location,omitempty"`
+	ContextWindow                   int                          `json:"contextWindow,omitempty"`
+	DefaultMaxOutputTokens          int                          `json:"defaultMaxOutputTokens,omitempty"`
+	ParallelToolCalls               *bool                        `json:"parallelToolCalls,omitempty"`
+	EscapeBuiltinToolNames          *bool                        `json:"escapeBuiltinToolNames,omitempty"`
+	KeyOptional                     *bool                        `json:"keyOptional,omitempty"`
+	ModelSuffixBracketStrip         *bool                        `json:"modelSuffixBracketStrip,omitempty"`
+	ReasoningEfforts                []string                     `json:"reasoningEfforts,omitempty"`
+	ModelReasoningEfforts           map[string][]string          `json:"modelReasoningEfforts,omitempty"`
+	ModelDefaultReasoningEfforts    map[string]string            `json:"modelDefaultReasoningEfforts,omitempty"`
+	ReasoningEffortMap              map[string]string            `json:"reasoningEffortMap,omitempty"`
+	ModelReasoningEffortMap         map[string]map[string]string `json:"modelReasoningEffortMap,omitempty"`
+	ModelContextWindows             map[string]int               `json:"modelContextWindows,omitempty"`
+	ModelInputModalities            map[string][]string          `json:"modelInputModalities,omitempty"`
+	ModelMaxInputTokens             map[string]int               `json:"modelMaxInputTokens,omitempty"`
+	ModelMaxOutputTokens            map[string]int               `json:"modelMaxOutputTokens,omitempty"`
+	NoVisionModels                  []string                     `json:"noVisionModels,omitempty"`
+	NoReasoningModels               []string                     `json:"noReasoningModels,omitempty"`
+	NoTemperatureModels             []string                     `json:"noTemperatureModels,omitempty"`
+	NoTopPModels                    []string                     `json:"noTopPModels,omitempty"`
+	NoPenaltyModels                 []string                     `json:"noPenaltyModels,omitempty"`
+	AutoToolChoiceOnlyModels        []string                     `json:"autoToolChoiceOnlyModels,omitempty"`
+	PreserveReasoningContentModels  []string                     `json:"preserveReasoningContentModels,omitempty"`
+	ThinkingToggleModels            []string                     `json:"thinkingToggleModels,omitempty"`
+	ThinkingBudgetModels            []string                     `json:"thinkingBudgetModels,omitempty"`
+	SelectedModels                  []string                     `json:"selectedModels,omitempty"`
+	LiveModels                      *bool                        `json:"liveModels,omitempty"`
+	ModelSupportsReasoningSummaries map[string]bool              `json:"modelSupportsReasoningSummaries,omitempty"`
+	PromptCacheKey                  bool                         `json:"promptCacheKey,omitempty"`
+	RefreshPolicy                   string                       `json:"refreshPolicy,omitempty"`
+	FreeTier                        bool                         `json:"freeTier,omitempty"`
+	Note                            string                       `json:"note,omitempty"`
+	UnsafeAllowNativeLocalExec      bool                         `json:"unsafeAllowNativeLocalExec,omitempty"`
+	NativeLocalExec                 string                       `json:"nativeLocalExec,omitempty"`
 }
 
 type DebugConfig struct {
@@ -208,6 +266,55 @@ func (c Config) Validate() error {
 	default:
 		return &ConfigError{Field: "streamMode", Message: "must be auto, legacy-tee, or eager-relay"}
 	}
+	if c.OpenAIProviderTierVersion != 0 && c.OpenAIProviderTierVersion != 1 && c.OpenAIProviderTierVersion != 2 {
+		return &ConfigError{Field: "openaiProviderTierVersion", Message: "must be 1 or 2"}
+	}
+	if len(c.SubagentModels) > 5 {
+		return &ConfigError{Field: "subagentModels", Message: "must contain at most 5 models"}
+	}
+	for index, model := range c.SubagentModels {
+		if strings.TrimSpace(model) == "" {
+			return &ConfigError{Field: fmt.Sprintf("subagentModels.%d", index), Message: "must not be blank"}
+		}
+	}
+	for field, effort := range map[string]string{"effortCap": c.EffortCap, "subagentEffortCap": c.SubagentEffortCap, "injectionEffort": c.InjectionEffort} {
+		if effort != "" && !IsCodexReasoningEffort(effort) {
+			return &ConfigError{Field: field, Message: "must be a supported Codex reasoning effort"}
+		}
+	}
+	switch c.MultiAgentMode {
+	case "", "default", "v1", "v2":
+	default:
+		return &ConfigError{Field: "multiAgentMode", Message: "must be default, v1, or v2"}
+	}
+	for provider, value := range c.ProviderContextCaps {
+		if strings.TrimSpace(provider) == "" || value <= 0 {
+			return &ConfigError{Field: "providerContextCaps." + provider, Message: "must be a positive integer"}
+		}
+	}
+	for field, value := range map[string]int{
+		"contextCapValue": c.ContextCapValue, "stallTimeoutSec": c.StallTimeoutSec,
+		"connectTimeoutMs": c.ConnectTimeoutMS, "shutdownTimeoutMs": c.ShutdownTimeoutMS,
+		"modelCacheTtlMs": c.ModelCacheTTLMS,
+	} {
+		if value < 0 {
+			return &ConfigError{Field: field, Message: "must be a positive integer"}
+		}
+	}
+	if c.AutoSwitchThreshold < 0 || c.AutoSwitchThreshold > 100 {
+		return &ConfigError{Field: "autoSwitchThreshold", Message: "must be between 0 and 100"}
+	}
+	if c.UpstreamFailoverThreshold < 0 {
+		return &ConfigError{Field: "upstreamFailoverThreshold", Message: "must not be negative"}
+	}
+	switch c.CacheRetention {
+	case "", "none", "short", "long":
+	default:
+		return &ConfigError{Field: "cacheRetention", Message: "must be none, short, or long"}
+	}
+	if err := validateSidecars(c); err != nil {
+		return err
+	}
 	for name, provider := range c.Providers {
 		reservedName := strings.ToLower(name)
 		if !providerNamePattern.MatchString(name) || reservedName == "constructor" || reservedName == "prototype" || reservedName == "__proto__" {
@@ -269,6 +376,16 @@ func (c Config) Validate() error {
 				return &ConfigError{Field: "providers." + name + ".codexAccountMode", Message: "is valid only on the canonical built-in openai provider"}
 			}
 		}
+		switch provider.RefreshPolicy {
+		case "", "proactive", "lazy-only", "disabled":
+		default:
+			return &ConfigError{Field: "providers." + name + ".refreshPolicy", Message: "must be proactive, lazy-only, or disabled"}
+		}
+		switch provider.NativeLocalExec {
+		case "", "off", "codex-sandbox", "on":
+		default:
+			return &ConfigError{Field: "providers." + name + ".nativeLocalExec", Message: "must be off, codex-sandbox, or on"}
+		}
 		if err := ValidateModelAdapters(name, provider); err != nil {
 			return err
 		}
@@ -276,6 +393,32 @@ func (c Config) Validate() error {
 	for id, combo := range c.Combos {
 		if err := combos.ValidateBasic(id, combo); err != nil {
 			return &ConfigError{Field: "combos." + id, Message: err.Error()}
+		}
+	}
+	return nil
+}
+
+func validateSidecars(c Config) error {
+	if c.Images != nil && c.Images.TimeoutMS < 0 {
+		return &ConfigError{Field: "images.timeoutMs", Message: "must be a positive integer"}
+	}
+	if c.Search != nil && c.Search.TimeoutMS < 0 {
+		return &ConfigError{Field: "search.timeoutMs", Message: "must be a positive integer"}
+	}
+	if sidecar := c.VisionSidecar; sidecar != nil {
+		if sidecar.Backend != "" && sidecar.Backend != "openai" && sidecar.Backend != "anthropic" {
+			return &ConfigError{Field: "visionSidecar.backend", Message: "must be openai or anthropic"}
+		}
+		if sidecar.MaxDescriptionsPerTurn < 0 || sidecar.TimeoutMS < 0 {
+			return &ConfigError{Field: "visionSidecar", Message: "numeric limits must not be negative"}
+		}
+	}
+	if sidecar := c.WebSearchSidecar; sidecar != nil {
+		if sidecar.Backend != "" && sidecar.Backend != "openai" && sidecar.Backend != "anthropic" {
+			return &ConfigError{Field: "webSearchSidecar.backend", Message: "must be openai or anthropic"}
+		}
+		if sidecar.MaxSearchesPerTurn < 0 || sidecar.TimeoutMS < 0 || sidecar.RoutedModelStallTimeoutMS < 0 {
+			return &ConfigError{Field: "webSearchSidecar", Message: "numeric limits must not be negative"}
 		}
 	}
 	return nil
