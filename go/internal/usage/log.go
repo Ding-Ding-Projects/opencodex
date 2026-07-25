@@ -47,25 +47,29 @@ type Attempt struct {
 }
 
 type Entry struct {
-	RequestID      string       `json:"requestId"`
-	Timestamp      int64        `json:"timestamp"`
-	ThreadID       string       `json:"threadId,omitempty"`
-	Provider       string       `json:"provider"`
-	Model          string       `json:"model"`
-	Surface        Surface      `json:"surface,omitempty"`
-	ResolvedModel  string       `json:"resolvedModel,omitempty"`
-	RequestedModel string       `json:"requestedModel,omitempty"`
-	Status         int          `json:"status"`
-	DurationMS     int64        `json:"durationMs"`
-	FirstOutputMS  *int64       `json:"firstOutputMs,omitempty"`
-	UsageStatus    Status       `json:"usageStatus"`
-	Usage          *types.Usage `json:"usage,omitempty"`
-	TotalTokens    *int         `json:"totalTokens,omitempty"`
-	Attempts       []Attempt    `json:"attempts,omitempty"`
-	ErrorCode      string       `json:"errorCode,omitempty"`
-	TerminalStatus string       `json:"terminalStatus,omitempty"`
-	CloseReason    string       `json:"closeReason,omitempty"`
-	UpstreamError  string       `json:"upstreamError,omitempty"`
+	RequestID                string       `json:"requestId"`
+	Timestamp                int64        `json:"timestamp"`
+	ThreadID                 string       `json:"threadId,omitempty"`
+	Provider                 string       `json:"provider"`
+	Model                    string       `json:"model"`
+	Surface                  Surface      `json:"surface,omitempty"`
+	ResolvedModel            string       `json:"resolvedModel,omitempty"`
+	RequestedModel           string       `json:"requestedModel,omitempty"`
+	Status                   int          `json:"status"`
+	DurationMS               int64        `json:"durationMs"`
+	FirstOutputMS            *int64       `json:"firstOutputMs,omitempty"`
+	UsageStatus              Status       `json:"usageStatus"`
+	Usage                    *types.Usage `json:"usage,omitempty"`
+	TotalTokens              *int         `json:"totalTokens,omitempty"`
+	Attempts                 []Attempt    `json:"attempts,omitempty"`
+	ErrorCode                string       `json:"errorCode,omitempty"`
+	TerminalStatus           string       `json:"terminalStatus,omitempty"`
+	CloseReason              string       `json:"closeReason,omitempty"`
+	UpstreamError            string       `json:"upstreamError,omitempty"`
+	RequestedServiceTier     string       `json:"requestedServiceTier,omitempty"`
+	ConfiguredServiceTier    string       `json:"configuredServiceTier,omitempty"`
+	ResponseServiceTier      string       `json:"responseServiceTier,omitempty"`
+	ModelSupportsServiceTier *bool        `json:"modelSupportsServiceTier,omitempty"`
 }
 
 // Log is an append-only JSONL usage recorder. Its mutex makes append/read/clear
@@ -218,6 +222,9 @@ func normalizeEntry(entry Entry) Entry {
 	entry.ErrorCode = capString(entry.ErrorCode, 64)
 	entry.TerminalStatus = capString(entry.TerminalStatus, 64)
 	entry.CloseReason = capString(entry.CloseReason, 64)
+	entry.RequestedServiceTier = capString(entry.RequestedServiceTier, 64)
+	entry.ConfiguredServiceTier = capString(entry.ConfiguredServiceTier, 64)
+	entry.ResponseServiceTier = capString(entry.ResponseServiceTier, 64)
 	if entry.Usage != nil {
 		entry.Usage = cloneUsage(entry.Usage)
 	}

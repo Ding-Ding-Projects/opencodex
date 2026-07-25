@@ -189,11 +189,20 @@ func addTokens(total *SummaryTotals, entry Entry) {
 }
 
 func addCost(total *SummaryTotals, entry Entry) {
-	if entry.Usage == nil || entry.UsageStatus == StatusUnreported || entry.UsageStatus == StatusUnsupported {
+	if entry.UsageStatus == StatusUnreported || entry.UsageStatus == StatusUnsupported {
 		total.UnmeteredRequests++
 		return
 	}
-	estimate, ok := EstimateCost(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil)
+	var estimate CostEstimate
+	var ok bool
+	if len(entry.Attempts) > 0 {
+		estimate, ok = EstimateComboCost(entry.Attempts, nil, EffectiveServiceTier(entry))
+	} else if entry.Usage != nil {
+		estimate, ok = EstimateCostWithTier(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil, EffectiveServiceTier(entry))
+	} else {
+		total.UnmeteredRequests++
+		return
+	}
 	if !ok {
 		total.UnpricedRequests++
 		return
@@ -305,7 +314,7 @@ func buildModels(entries []Entry, grand int) []ModelSummary {
 			row.OutputTokens += entry.Usage.OutputTokens
 			value, _ := DisplayTotal(entry.Usage, entry.TotalTokens)
 			row.TotalTokens += value
-			if est, ok := EstimateCost(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil); ok {
+			if est, ok := EstimateCostWithTier(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil, EffectiveServiceTier(entry)); ok {
 				row.EstimatedCostUSD += est.Cost.Total
 			}
 		}
@@ -348,7 +357,7 @@ func buildProviders(entries []Entry, grand int) []ProviderSummary {
 		value, _ := DisplayTotal(entry.Usage, entry.TotalTokens)
 		row.TotalTokens += value
 		if entry.Usage != nil {
-			if est, ok := EstimateCost(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil); ok {
+			if est, ok := EstimateCostWithTier(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil, EffectiveServiceTier(entry)); ok {
 				row.EstimatedCostUSD += est.Cost.Total
 			}
 		}
