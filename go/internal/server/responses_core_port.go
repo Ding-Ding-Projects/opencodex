@@ -18,7 +18,10 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
-const defaultResponsesBodyLimit int64 = 64 << 20
+const (
+	defaultResponsesBodyLimit     int64 = 64 << 20
+	defaultResponsesResponseLimit int64 = 64 << 20
+)
 
 type ResponsesCoreConfig struct {
 	Registry          types.Registry
@@ -277,9 +280,9 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 
 func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord) {
 	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 64<<20))
+	payload, err := readResponsesBody(ctx, response, defaultResponsesResponseLimit)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "provider_read_error", err.Error())
+		writeJSONError(w, http.StatusBadGateway, "provider_response_error", err.Error())
 		return
 	}
 	events, err := adapter.ParseUnary(ctx, payload)
@@ -302,6 +305,29 @@ func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+func readResponsesBody(ctx context.Context, response *http.Response, limit int64) ([]byte, error) {
+	if response == nil || response.Body == nil {
+		return nil, errors.New("provider returned an empty response body")
+	}
+	if limit <= 0 {
+		limit = defaultResponsesResponseLimit
+	}
+	if response.ContentLength > limit {
+		return nil, fmt.Errorf("provider response exceeded %d bytes", limit)
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("read provider response: %w", err)
+	}
+	if int64(len(payload)) > limit {
+		return nil, fmt.Errorf("provider response exceeded %d bytes", limit)
+	}
+	return payload, nil
 }
 
 func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan types.AdapterEvent, auth *types.AuthContext) <-chan types.AdapterEvent {

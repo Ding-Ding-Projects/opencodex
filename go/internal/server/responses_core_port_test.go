@@ -18,6 +18,17 @@ type coreRegistry struct{ endpoint string }
 func (r coreRegistry) ResolveModel(selector string) (*types.ResolvedModel, error) {
 	return &types.ResolvedModel{Selector: selector, Provider: "provider", Model: "wire"}, nil
 }
+
+func TestReadResponsesBodyRejectsDeclaredAndStreamingOversize(t *testing.T) {
+	for _, response := range []*http.Response{
+		{ContentLength: 5, Body: io.NopCloser(strings.NewReader("short"))},
+		{ContentLength: -1, Body: io.NopCloser(strings.NewReader("12345"))},
+	} {
+		if _, err := readResponsesBody(context.Background(), response, 4); err == nil || !strings.Contains(err.Error(), "exceeded 4 bytes") {
+			t.Fatalf("oversize error = %v", err)
+		}
+	}
+}
 func (r coreRegistry) ResolveTransport(string, *types.AuthContext) (*types.Transport, error) {
 	return &types.Transport{BaseURL: r.endpoint}, nil
 }
