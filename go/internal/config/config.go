@@ -30,6 +30,9 @@ type Config struct {
 	Combos          map[string]combos.Combo   `json:"combos,omitempty"`
 	DefaultProvider string                    `json:"defaultProvider"`
 	StreamMode      string                    `json:"streamMode,omitempty"`
+	EffortCap          string `json:"effortCap,omitempty"`
+	SubagentEffortCap  string `json:"subagentEffortCap,omitempty"`
+	MultiAgentMode     string `json:"multiAgentMode,omitempty"`
 	Debug           DebugConfig               `json:"debug,omitempty"`
 	Log             LogConfig                 `json:"log,omitempty"`
 }
