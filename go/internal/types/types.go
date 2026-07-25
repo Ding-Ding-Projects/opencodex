@@ -117,19 +117,20 @@ type AdapterEvent struct {
 	// Reason/Message carry EventIncomplete details
 	// (e.g. "max_output_tokens", "content_filter", "adapter_eof",
 	// "upstream_stall_timeout").
-	Reason        string                    `json:"reason,omitempty"`
-	Message       string                    `json:"message,omitempty"`
-	Signature     string                    `json:"signature,omitempty"`
-	Data          string                    `json:"data,omitempty"`
-	ID            string                    `json:"id,omitempty"`
-	Name          string                    `json:"name,omitempty"`
-	Arguments     string                    `json:"arguments,omitempty"`
-	Queries       []string                  `json:"queries,omitempty"`
-	Sources       []URLCitation             `json:"sources,omitempty"`
-	ErrorType     string                    `json:"errorType,omitempty"`
-	Code          string                    `json:"code,omitempty"`
-	EndTurn       bool                      `json:"endTurn,omitempty"`
-	ProviderState ProviderContinuationState `json:"providerState,omitempty"`
+	Reason          string                    `json:"reason,omitempty"`
+	Message         string                    `json:"message,omitempty"`
+	Signature       string                    `json:"signature,omitempty"`
+	Data            string                    `json:"data,omitempty"`
+	ID              string                    `json:"id,omitempty"`
+	Name            string                    `json:"name,omitempty"`
+	Arguments       string                    `json:"arguments,omitempty"`
+	Queries         []string                  `json:"queries,omitempty"`
+	Sources         []URLCitation             `json:"sources,omitempty"`
+	WebSearchStatus string                    `json:"webSearchStatus,omitempty"`
+	ErrorType       string                    `json:"errorType,omitempty"`
+	Code            string                    `json:"code,omitempty"`
+	EndTurn         bool                      `json:"endTurn,omitempty"`
+	ProviderState   ProviderContinuationState `json:"providerState,omitempty"`
 }
 
 type ToolCall struct {

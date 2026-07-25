@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -37,11 +38,14 @@ type Response struct {
 var UpstreamStallError = errors.New("upstream stall timeout")
 
 type machine struct {
-	response Response
-	sequence int
-	current  *openItem
-	terminal bool
-	usage    *types.Usage
+	response          Response
+	sequence          int
+	current           *openItem
+	terminal          bool
+	usage             *types.Usage
+	pendingSignature  string
+	pendingRedacted   []string
+	pendingWebSources []types.URLCitation
 }
 
 type openItem struct {
@@ -49,6 +53,9 @@ type openItem struct {
 	phase                  string
 	index                  int
 	text                   strings.Builder
+	status                 string
+	queries                []string
+	sources                []types.URLCitation
 }
 
 // StreamOptions supplies terminal usage recording metadata without coupling the
@@ -223,6 +230,54 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 		}
 		m.current.text.WriteString(delta)
 		out = append(out, m.emit("response.reasoning_summary_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "summary_index": 0, "delta": delta}))
+	case types.EventThinkingDelta:
+		out = append(out, m.ensureItem("reasoning", "rs_")...)
+		delta := event.Reasoning
+		if delta == "" {
+			delta = event.Text
+		}
+		m.current.text.WriteString(delta)
+		out = append(out, m.emit("response.reasoning_summary_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "summary_index": 0, "delta": delta}))
+	case types.EventThinkingSignature:
+		m.pendingSignature = event.Signature
+	case types.EventRedactedThinking:
+		m.pendingRedacted = append(m.pendingRedacted, event.Data)
+	case types.EventReasoningRawDelta:
+		out = append(out, m.ensureItem("raw_reasoning", "rs_")...)
+		m.current.text.WriteString(event.Text)
+		out = append(out, m.emit("response.reasoning_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "delta": event.Text}))
+	case types.EventToolCallStart:
+		out = append(out, m.closeCurrent()...)
+		callID := event.ID
+		if callID == "" {
+			callID = "call_" + randomID()
+		}
+		m.current = &openItem{kind: "tool", id: "fc_" + randomID(), callID: callID, name: event.Name, index: len(m.response.Output)}
+		item := map[string]any{"type": "function_call", "id": m.current.id, "call_id": callID, "name": event.Name, "arguments": "", "status": "in_progress"}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+	case types.EventToolCallDelta:
+		if m.current != nil && m.current.kind == "tool" {
+			m.current.text.WriteString(event.Arguments)
+			out = append(out, m.emit("response.function_call_arguments.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": event.Arguments}))
+		}
+	case types.EventToolCallEnd:
+		out = append(out, m.closeCurrent()...)
+	case types.EventWebSearchCallBegin:
+		out = append(out, m.closeCurrent()...)
+		m.current = &openItem{kind: "web_search", id: "ws_" + randomID(), callID: event.ID, index: len(m.response.Output), status: "in_progress"}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": map[string]any{"type": "web_search_call", "id": m.current.id, "status": "in_progress"}}))
+	case types.EventWebSearchCallEnd:
+		if m.current == nil || m.current.kind != "web_search" || m.current.callID != event.ID {
+			out = append(out, m.closeCurrent()...)
+			m.current = &openItem{kind: "web_search", id: "ws_" + randomID(), callID: event.ID, index: len(m.response.Output), status: "in_progress"}
+			out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": map[string]any{"type": "web_search_call", "id": m.current.id, "status": "in_progress"}}))
+		}
+		m.current.status, m.current.queries, m.current.sources = event.WebSearchStatus, append([]string(nil), event.Queries...), append([]types.URLCitation(nil), event.Sources...)
+		if m.current.status == "" {
+			m.current.status = "completed"
+		}
+		out = append(out, m.closeCurrent()...)
+		m.addPendingSources(event.Sources)
 	case types.EventToolCall:
 		if event.ToolCall == nil {
 			break
@@ -294,10 +349,14 @@ func (m *machine) ensureItem(kind, prefix string) []Event {
 		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
 		out = append(out, m.emit("response.content_part.added", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}}))
 		return out
-	} else {
+	} else if kind == "reasoning" {
 		item = map[string]any{"type": "reasoning", "id": m.current.id, "summary": []any{}}
 		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
 		out = append(out, m.emit("response.reasoning_summary_part.added", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": ""}}))
+		return out
+	} else {
+		item = map[string]any{"type": "reasoning", "id": m.current.id, "summary": []any{}, "content": []any{}}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
 		return out
 	}
 }
@@ -311,23 +370,50 @@ func (m *machine) closeCurrent() []Event {
 	var final map[string]any
 	switch item.kind {
 	case "message":
+		annotations := m.takeWebAnnotations()
 		out = append(out,
 			m.emit("response.output_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "text": text}),
-			m.emit("response.content_part.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "part": map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}),
+			m.emit("response.content_part.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "part": map[string]any{"type": "output_text", "text": text, "annotations": annotations}}),
 		)
-		final = map[string]any{"type": "message", "id": item.id, "status": "completed", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}}
+		final = map[string]any{"type": "message", "id": item.id, "status": "completed", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": annotations}}}
 		if item.phase != "" {
 			final["phase"] = item.phase
 		}
 	case "reasoning":
-		out = append(out, m.emit("response.reasoning_summary_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "summary_index": 0, "text": text}))
+		out = append(out,
+			m.emit("response.reasoning_summary_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "summary_index": 0, "text": text}),
+			m.emit("response.reasoning_summary_part.done", map[string]any{"item_id": item.id, "output_index": item.index, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": text}}),
+		)
 		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{map[string]any{"type": "summary_text", "text": text}}}
+		if m.pendingSignature != "" || len(m.pendingRedacted) > 0 {
+			final["encrypted_content"] = claude.EncodeReasoningEnvelope(claude.ReasoningEnvelope{Signature: m.pendingSignature, Redacted: m.pendingRedacted})
+			m.pendingSignature, m.pendingRedacted = "", nil
+		}
+	case "raw_reasoning":
+		out = append(out, m.emit("response.reasoning_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "text": text}))
+		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": text}}}
 	case "tool":
 		if text == "" {
 			text = "{}"
 		}
 		out = append(out, m.emit("response.function_call_arguments.done", map[string]any{"item_id": item.id, "output_index": item.index, "arguments": text}))
 		final = map[string]any{"type": "function_call", "id": item.id, "call_id": item.callID, "name": item.name, "arguments": text, "status": "completed"}
+	case "web_search":
+		status := item.status
+		if status == "" || status == "in_progress" {
+			status = "completed"
+		}
+		action := map[string]any{"type": "search", "query": ""}
+		if len(item.queries) == 1 {
+			action["query"] = item.queries[0]
+		} else if len(item.queries) > 1 {
+			delete(action, "query")
+			action["queries"] = item.queries
+		}
+		final = map[string]any{"type": "web_search_call", "id": item.id, "status": status, "action": action}
+		if len(item.sources) > 0 {
+			final["sources"] = item.sources
+		}
 	}
 	if final != nil {
 		m.response.Output = append(m.response.Output, final)
@@ -337,11 +423,41 @@ func (m *machine) closeCurrent() []Event {
 	return out
 }
 
+func (m *machine) addPendingSources(sources []types.URLCitation) {
+	seen := make(map[string]bool, len(m.pendingWebSources))
+	for _, source := range m.pendingWebSources {
+		seen[source.URL] = true
+	}
+	for _, source := range sources {
+		if source.URL != "" && !seen[source.URL] {
+			seen[source.URL] = true
+			m.pendingWebSources = append(m.pendingWebSources, source)
+		}
+	}
+}
+
+func (m *machine) takeWebAnnotations() []any {
+	annotations := make([]any, 0, len(m.pendingWebSources))
+	for _, source := range m.pendingWebSources {
+		annotation := map[string]any{"type": "url_citation", "url": source.URL, "start_index": 0, "end_index": 0}
+		if source.Title != "" {
+			annotation["title"] = source.Title
+		}
+		annotations = append(annotations, annotation)
+	}
+	m.pendingWebSources = nil
+	return annotations
+}
+
 func (m *machine) finish(status, message string) []Event {
 	if m.terminal {
 		return nil
 	}
+	if m.current != nil && m.current.kind == "web_search" && status != "completed" {
+		m.current.status = "failed"
+	}
 	out := m.closeCurrent()
+	out = append(out, m.flushPendingReasoningEnvelope()...)
 	m.terminal, m.response.Status = true, status
 	if (status == "failed" || status == "incomplete") && m.response.Error == nil && message != "" {
 		m.response.Error = map[string]any{"type": "server_error", "message": message}
@@ -349,6 +465,23 @@ func (m *machine) finish(status, message string) []Event {
 	eventType := "response." + status
 	out = append(out, m.emit(eventType, map[string]any{"response": m.snapshot(status)}))
 	return out
+}
+
+func (m *machine) flushPendingReasoningEnvelope() []Event {
+	if m.pendingSignature == "" && len(m.pendingRedacted) == 0 {
+		return nil
+	}
+	index := len(m.response.Output)
+	item := map[string]any{
+		"type": "reasoning", "id": "rs_" + randomID(), "summary": []any{},
+		"encrypted_content": claude.EncodeReasoningEnvelope(claude.ReasoningEnvelope{Signature: m.pendingSignature, Redacted: m.pendingRedacted}),
+	}
+	m.pendingSignature, m.pendingRedacted = "", nil
+	m.response.Output = append(m.response.Output, item)
+	return []Event{
+		m.emit("response.output_item.added", map[string]any{"output_index": index, "item": item}),
+		m.emit("response.output_item.done", map[string]any{"output_index": index, "item": item}),
+	}
 }
 
 func (m *machine) finishFailure(failure map[string]any, retryable bool) []Event {
