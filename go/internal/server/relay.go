@@ -78,6 +78,14 @@ func RelaySSE(ctx context.Context, w http.ResponseWriter, upstream io.ReadCloser
 			}
 		case chunk, ok := <-queue:
 			if !ok {
+				if !terminalSeen {
+					if err := WriteIncompleteTail(w, "upstream stream ended before a terminal event"); err != nil {
+						return err
+					}
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
 				return nil
 			}
 			if chunk.err != nil {
@@ -102,6 +110,18 @@ func RelaySSE(ctx context.Context, w http.ResponseWriter, upstream io.ReadCloser
 			}
 		}
 	}
+}
+
+// WriteIncompleteTail converts a clean but premature EOF into an explicit
+// Responses terminal so clients never mistake truncation for completion.
+func WriteIncompleteTail(w io.Writer, message string) error {
+	payload := map[string]any{"type": "response.incomplete", "response": map[string]any{"status": "incomplete", "incomplete_details": map[string]any{"reason": message}}}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: response.incomplete\ndata: %s\n\ndata: [DONE]\n\n", encoded)
+	return err
 }
 
 func hasResponsesTerminal(value string) bool {

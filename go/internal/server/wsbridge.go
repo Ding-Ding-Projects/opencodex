@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"unicode/utf8"
 )
 
 const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -18,13 +19,23 @@ const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 // WebSocketBridge accepts text frames, executes them as /v1/responses JSON requests, and returns response text frames.
 func WebSocketBridge(target http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if target == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "server_not_configured", "responses handler is not configured")
+			return
+		}
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || !strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") {
 			http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
 			return
 		}
 		key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))
-		if key == "" {
+		decodedKey, keyErr := base64.StdEncoding.DecodeString(key)
+		if keyErr != nil || len(decodedKey) != 16 {
 			http.Error(w, "missing websocket key", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Sec-WebSocket-Version") != "13" {
+			w.Header().Set("Sec-WebSocket-Version", "13")
+			http.Error(w, "unsupported websocket version", http.StatusUpgradeRequired)
 			return
 		}
 		hijacker, ok := w.(http.Hijacker)
@@ -55,9 +66,14 @@ func WebSocketBridge(target http.Handler) http.Handler {
 				_ = rw.Flush()
 				continue
 			case 0x1:
+				if !utf8.Valid(payload) {
+					_ = writeWSFrame(rw.Writer, 0x8, []byte{0x03, 0xEF})
+					_ = rw.Flush()
+					return
+				}
 				request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(payload))
 				request.Header.Set("Content-Type", "application/json")
-				for _, name := range []string{"Authorization", "X-Codex-Turn-Metadata", "X-OpenAI-Subagent"} {
+				for _, name := range []string{"Authorization", "X-Codex-Turn-Metadata", "X-OpenAI-Subagent", "Thread-Id", "X-Request-Id"} {
 					request.Header.Set(name, r.Header.Get(name))
 				}
 				response := httptest.NewRecorder()
@@ -68,6 +84,10 @@ func WebSocketBridge(target http.Handler) http.Handler {
 				if err := rw.Flush(); err != nil {
 					return
 				}
+			default:
+				_ = writeWSFrame(rw.Writer, 0x8, []byte{0x03, 0xEB})
+				_ = rw.Flush()
+				return
 			}
 		}
 	})
@@ -77,6 +97,9 @@ func readWSFrame(reader *bufio.Reader) (byte, []byte, error) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return 0, nil, err
+	}
+	if header[0]&0x70 != 0 || header[0]&0x80 == 0 {
+		return 0, nil, fmt.Errorf("fragmented or extension websocket frames are unsupported")
 	}
 	opcode, masked, length := header[0]&0x0f, header[1]&0x80 != 0, uint64(header[1]&0x7f)
 	if length == 126 {

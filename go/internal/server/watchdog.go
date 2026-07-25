@@ -14,12 +14,13 @@ type MemorySample struct {
 }
 
 type MemoryWatchdog struct {
-	mu      sync.RWMutex
-	samples []MemorySample
-	next    int
-	full    bool
-	stop    chan struct{}
-	done    chan struct{}
+	mu       sync.RWMutex
+	samples  []MemorySample
+	next     int
+	full     bool
+	stop     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewMemoryWatchdog samples memory into a fixed-size ring. sample may be injected for platform RSS accuracy.
@@ -34,6 +35,7 @@ func NewMemoryWatchdog(interval time.Duration, capacity int, sample func() Memor
 		sample = runtimeMemorySample
 	}
 	w := &MemoryWatchdog{samples: make([]MemorySample, capacity), stop: make(chan struct{}), done: make(chan struct{})}
+	w.add(sample())
 	go func() {
 		defer close(w.done)
 		ticker := time.NewTicker(interval)
@@ -73,11 +75,19 @@ func (w *MemoryWatchdog) Snapshot() []MemorySample {
 	out := append([]MemorySample(nil), w.samples[w.next:]...)
 	return append(out, w.samples[:w.next]...)
 }
-func (w *MemoryWatchdog) Stop() {
-	select {
-	case <-w.stop:
-	default:
-		close(w.stop)
+func (w *MemoryWatchdog) Latest() (MemorySample, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if !w.full && w.next == 0 {
+		return MemorySample{}, false
 	}
+	index := w.next - 1
+	if index < 0 {
+		index = len(w.samples) - 1
+	}
+	return w.samples[index], true
+}
+func (w *MemoryWatchdog) Stop() {
+	w.stopOnce.Do(func() { close(w.stop) })
 	<-w.done
 }

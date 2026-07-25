@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"log/slog"
@@ -22,7 +23,18 @@ type MiddlewareConfig struct {
 
 // Middleware applies CORS, request logging, and bearer-token authentication.
 func Middleware(next http.Handler, config MiddlewareConfig) http.Handler {
-	return corsMiddleware(authMiddleware(loggingMiddleware(next, config.Logger), config), config)
+	return requestIDMiddleware(loggingMiddleware(corsMiddleware(authMiddleware(next, config), config), config.Logger))
+}
+
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+		if requestID == "" || len(requestID) > 128 || strings.ContainsAny(requestID, "\r\n") {
+			requestID = NextRequestLogID(time.Now())
+		}
+		w.Header().Set("X-Request-Id", requestID)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, requestID)))
+	})
 }
 
 func authMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
@@ -31,7 +43,7 @@ func authMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || r.URL.Path == "/healthz" {
+		if isPublicHealthPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -91,6 +103,9 @@ func corsMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -162,6 +177,10 @@ func loggingMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 		started := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
-		logger.Info("http_request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration_ms", time.Since(started).Milliseconds())
+		status := sw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		logger.Info("http_request", "request_id", RequestIDFromContext(r.Context()), "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", time.Since(started).Milliseconds())
 	})
 }

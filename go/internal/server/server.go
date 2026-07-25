@@ -44,6 +44,7 @@ type Config struct {
 	SubagentEffortCap string
 	Hostname          string
 	SidecarResolver   SidecarResolver
+	ReadinessChecks   map[string]func(context.Context) error
 }
 
 type Server struct {
@@ -112,8 +113,11 @@ func New(config Config) *Server {
 	mux.HandleFunc("POST /v1/images/edits", s.handleSidecar(SidecarImageEdits))
 	mux.HandleFunc("POST /v1/alpha/search", s.handleSidecar(SidecarSearch))
 	liveness := NewLiveness(config.Version)
+	health := NewHealthChecks(config.Version, config.ReadinessChecks)
 	mux.Handle("GET /health", liveness)
 	mux.Handle("GET /healthz", liveness)
+	mux.HandleFunc("GET /ready", health.Ready)
+	mux.HandleFunc("GET /health/startup", health.Startup)
 	mux.Handle("GET /v1/responses/ws", WebSocketBridge(s.responses))
 	managementRouter := config.Management
 	if managementRouter == nil {

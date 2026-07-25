@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,6 +12,15 @@ import (
 )
 
 var requestLogSequence atomic.Uint64
+
+type requestIDContextKey struct{}
+
+// RequestIDFromContext returns the ingress correlation ID for logs and
+// downstream requests. It intentionally contains no account or credential data.
+func RequestIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(requestIDContextKey{}).(string)
+	return value
+}
 
 func NextRequestLogID(now time.Time) string {
 	sequence := requestLogSequence.Add(1) % 1_000_000

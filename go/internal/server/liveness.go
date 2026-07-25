@@ -14,6 +14,10 @@ type Liveness struct {
 	Version string
 }
 
+func isPublicHealthPath(path string) bool {
+	return path == "/health" || path == "/healthz" || path == "/ready" || path == "/health/startup"
+}
+
 func NewLiveness(version string) *Liveness { return &Liveness{Started: time.Now(), Version: version} }
 func (l *Liveness) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +30,35 @@ func TestAuthMiddleware(t *testing.T) {
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("bare token status = %d", response.Code)
+	}
+}
+
+func TestMiddlewareCorrelatesAndLogsRejectedRequests(t *testing.T) {
+	var logs bytes.Buffer
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if RequestIDFromContext(r.Context()) != "client-request" {
+			t.Fatalf("context request id = %q", RequestIDFromContext(r.Context()))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), MiddlewareConfig{Token: "secret", Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+
+	authorized := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	authorized.Header.Set("Authorization", "Bearer secret")
+	authorized.Header.Set("X-Request-Id", "client-request")
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, authorized)
+	if response.Header().Get("X-Request-Id") != "client-request" || response.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("headers = %v", response.Header())
+	}
+
+	rejected := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	response = httptest.NewRecorder()
+	h.ServeHTTP(response, rejected)
+	if response.Code != http.StatusUnauthorized || response.Header().Get("X-Request-Id") == "" {
+		t.Fatalf("rejected = %d headers=%v", response.Code, response.Header())
+	}
+	if got := logs.String(); !strings.Contains(got, `"request_id":"client-request"`) || !strings.Contains(got, `"status":401`) {
+		t.Fatalf("logs = %s", got)
 	}
 }
 
