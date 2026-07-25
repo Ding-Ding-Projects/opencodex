@@ -2,6 +2,7 @@ package lib
 
 import (
 	"context"
+	"io"
 	"sync"
 	"time"
 )
@@ -104,4 +105,62 @@ func (d *ClearableDeadline) Clear() {
 		d.timer.Stop()
 		d.timer = nil
 	}
+}
+
+// LinkedTimeout owns a timeout context and an idempotent cleanup. Parent
+// cancellation is preserved by context propagation.
+type LinkedTimeout struct {
+	Context context.Context
+	once    sync.Once
+	cancel  context.CancelFunc
+}
+
+func NewLinkedTimeout(parent context.Context, timeout time.Duration) *LinkedTimeout {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	return &LinkedTimeout{Context: ctx, cancel: cancel}
+}
+
+func (t *LinkedTimeout) Cleanup() { t.once.Do(t.cancel) }
+
+// CancelBodyOnDone binds a response body's lifetime to ctx. Calling the
+// returned cleanup prevents a later context cancellation from closing a body
+// that has already completed normally.
+func CancelBodyOnDone(ctx context.Context, body io.Closer) func() {
+	if ctx == nil || body == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	active := true
+	cleanup := func() {
+		once.Do(func() {
+			mu.Lock()
+			active = false
+			mu.Unlock()
+			close(stop)
+		})
+	}
+	select {
+	case <-ctx.Done():
+		_ = body.Close()
+		return func() {}
+	default:
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			mu.Lock()
+			if active {
+				active = false
+				_ = body.Close()
+			}
+			mu.Unlock()
+		case <-stop:
+		}
+	}()
+	return cleanup
 }

@@ -12,7 +12,7 @@ var (
 	sensitiveKeyPattern = regexp.MustCompile(`(?i)^(authorization|proxy-authorization|cookie|set-cookie2?|api[-_]?key|x-api-key|x-goog-api-key|x-amz-security-token|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|client[-_]?secret|password|profile[-_]?arn)$`)
 	bearerPattern       = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}`)
 	secretTokenPattern  = regexp.MustCompile(`\b(?:sk-[A-Za-z0-9][A-Za-z0-9._-]{6,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{20,})\b`)
-	assignmentPattern   = regexp.MustCompile(`(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|refreshToken|accessToken|clientSecret|apiKey)=([^&\s"',;]+)`)
+	assignmentPattern   = regexp.MustCompile(`(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|refreshToken|accessToken|clientSecret|apiKey|token|secret|password)=([^&\s"',;]+)`)
 	jsonSecretPattern   = regexp.MustCompile(`(?i)("(?:token|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|refreshToken|accessToken|clientSecret|apiKey)"\s*:\s*")([^"]+)(")`)
 )
 
