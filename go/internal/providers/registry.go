@@ -205,6 +205,9 @@ func enrichRegistry(rows []ProviderRegistryEntry) {
 			e.GoogleMode, e.JawcodeBundle, e.ExtraMetadataAliases = "vertex", "google", []string{"gemini-vertex"}
 		case "google-antigravity":
 			e.GoogleMode, e.JawcodeBundle, e.ExtraMetadataAliases = "cloud-code-assist", "google", []string{"antigravity", "gemini-antigravity"}
+			e.Models, e.ModelContextWindows, e.ModelReasoningEfforts = cloneStrings(AntigravityModels), cloneIntMap(AntigravityModelContextWindows), cloneStringSlices(AntigravityModelEfforts)
+		case "kiro":
+			e.Models, e.ModelContextWindows, e.ModelReasoningEfforts = cloneStrings(KiroModels), cloneIntMap(KiroModelContextWindows), cloneStringSlices(KiroModelReasoningEfforts)
 		case "anthropic", "anthropic-apikey":
 			e.JawcodeBundle = "anthropic"
 		case "openrouter":
@@ -213,6 +216,9 @@ func enrichRegistry(rows []ProviderRegistryEntry) {
 			e.JawcodeBundle, e.MetadataModelIDNormalize = "minimax", "case-insensitive"
 		case "alibaba-token-plan-intl":
 			e.MetadataModelIDNormalize = "case-insensitive"
+			e.BaseURLChoices = append([]BaseURLChoice(nil), AlibabaIntlBaseURLChoices...)
+		case "qwen-cloud":
+			e.BaseURLChoices = append([]BaseURLChoice(nil), QwenCloudBaseURLChoices...)
 		case "kimi", "kimi-code":
 			e.ModelSuffixBracketStrip = true
 			e.NoTemperatureModels, e.NoTopPModels, e.NoPenaltyModels = cloneStrings(e.Models), cloneStrings(e.Models), cloneStrings(e.Models)
