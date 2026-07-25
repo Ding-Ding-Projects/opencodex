@@ -6,13 +6,24 @@ import (
 )
 
 type NormalizedRequest struct {
-	ModelID            string            `json:"modelId"`
-	PreviousResponseID string            `json:"previousResponseId,omitempty"`
-	Context            RequestContext    `json:"context"`
-	Stream             bool              `json:"stream"`
-	Options            RequestOptions    `json:"options"`
-	RawBody            json.RawMessage   `json:"-"`
-	Metadata           map[string]string `json:"metadata,omitempty"`
+	ModelID            string                    `json:"modelId"`
+	PreviousResponseID string                    `json:"previousResponseId,omitempty"`
+	Context            RequestContext            `json:"context"`
+	Stream             bool                      `json:"stream"`
+	Options            RequestOptions            `json:"options"`
+	RawBody            json.RawMessage           `json:"-"`
+	Metadata           map[string]string         `json:"metadata,omitempty"`
+	ReplayPrefixLen    int                       `json:"-"`
+	PreviousExpanded   bool                      `json:"-"`
+	ClientThreadID     string                    `json:"-"`
+	CursorConversation string                    `json:"-"`
+	CursorIdentity     string                    `json:"-"`
+	IsolateCursor      bool                      `json:"-"`
+	StructuredOutput   bool                      `json:"-"`
+	CompactionRequest  bool                      `json:"-"`
+	CompactionBoundary bool                      `json:"-"`
+	ProviderState      ProviderContinuationState `json:"-"`
+	WebSearch          map[string]any            `json:"-"`
 }
 
 type RequestContext struct {
@@ -22,31 +33,43 @@ type RequestContext struct {
 }
 
 type Message struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content"`
-	ToolCallID string          `json:"toolCallId,omitempty"`
-	ToolName   string          `json:"toolName,omitempty"`
-	IsError    bool            `json:"isError,omitempty"`
-	Timestamp  int64           `json:"timestamp,omitempty"`
+	Role                     string          `json:"role"`
+	Content                  json.RawMessage `json:"content"`
+	ToolCallID               string          `json:"toolCallId,omitempty"`
+	ToolName                 string          `json:"toolName,omitempty"`
+	IsError                  bool            `json:"isError,omitempty"`
+	Timestamp                int64           `json:"timestamp,omitempty"`
+	Phase                    string          `json:"phase,omitempty"`
+	Model                    string          `json:"model,omitempty"`
+	ToolNamespace            string          `json:"toolNamespace,omitempty"`
+	ContainsEncryptedContent bool            `json:"containsEncryptedContent,omitempty"`
 }
 
 type Tool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Parameters  map[string]any `json:"parameters,omitempty"`
-	Strict      bool           `json:"strict,omitempty"`
-	Namespace   string         `json:"namespace,omitempty"`
+	Name                 string         `json:"name"`
+	Description          string         `json:"description,omitempty"`
+	Parameters           map[string]any `json:"parameters,omitempty"`
+	Strict               bool           `json:"strict,omitempty"`
+	Namespace            string         `json:"namespace,omitempty"`
+	Freeform             bool           `json:"freeform,omitempty"`
+	ToolSearch           bool           `json:"toolSearch,omitempty"`
+	LoadedFromToolSearch bool           `json:"loadedFromToolSearch,omitempty"`
+	WebSearch            bool           `json:"webSearch,omitempty"`
 }
 
 type RequestOptions struct {
-	MaxOutputTokens   int             `json:"maxOutputTokens,omitempty"`
-	Temperature       *float64        `json:"temperature,omitempty"`
-	TopP              *float64        `json:"topP,omitempty"`
-	StopSequences     []string        `json:"stopSequences,omitempty"`
-	ToolChoice        json.RawMessage `json:"toolChoice,omitempty"`
-	ParallelToolCalls *bool           `json:"parallelToolCalls,omitempty"`
-	Reasoning         string          `json:"reasoning,omitempty"`
-	ServiceTier       string          `json:"serviceTier,omitempty"`
+	MaxOutputTokens     int             `json:"maxOutputTokens,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	TopP                *float64        `json:"topP,omitempty"`
+	StopSequences       []string        `json:"stopSequences,omitempty"`
+	ToolChoice          json.RawMessage `json:"toolChoice,omitempty"`
+	ParallelToolCalls   *bool           `json:"parallelToolCalls,omitempty"`
+	Reasoning           string          `json:"reasoning,omitempty"`
+	ServiceTier         string          `json:"serviceTier,omitempty"`
+	HideThinkingSummary bool            `json:"hideThinkingSummary,omitempty"`
+	PresencePenalty     *float64        `json:"presencePenalty,omitempty"`
+	FrequencyPenalty    *float64        `json:"frequencyPenalty,omitempty"`
+	PromptCacheKey      string          `json:"promptCacheKey,omitempty"`
 }
 
 type AdapterEventType string
@@ -68,7 +91,16 @@ const (
 	// pass and its one-shot continuation (TS src/types.ts:249). Emitted by
 	// the terminal guard when it withholds a suspicious no-tool terminal and
 	// starts a continuation request.
-	EventAssistantBoundary AdapterEventType = "assistant_boundary"
+	EventAssistantBoundary  AdapterEventType = "assistant_boundary"
+	EventThinkingDelta      AdapterEventType = "thinking_delta"
+	EventThinkingSignature  AdapterEventType = "thinking_signature"
+	EventRedactedThinking   AdapterEventType = "redacted_thinking"
+	EventReasoningRawDelta  AdapterEventType = "reasoning_raw_delta"
+	EventToolCallStart      AdapterEventType = "tool_call_start"
+	EventToolCallDelta      AdapterEventType = "tool_call_delta"
+	EventToolCallEnd        AdapterEventType = "tool_call_end"
+	EventWebSearchCallBegin AdapterEventType = "web_search_call_begin"
+	EventWebSearchCallEnd   AdapterEventType = "web_search_call_end"
 )
 
 type AdapterEvent struct {
@@ -85,15 +117,36 @@ type AdapterEvent struct {
 	// Reason/Message carry EventIncomplete details
 	// (e.g. "max_output_tokens", "content_filter", "adapter_eof",
 	// "upstream_stall_timeout").
-	Reason  string `json:"reason,omitempty"`
-	Message string `json:"message,omitempty"`
+	Reason        string                    `json:"reason,omitempty"`
+	Message       string                    `json:"message,omitempty"`
+	Signature     string                    `json:"signature,omitempty"`
+	Data          string                    `json:"data,omitempty"`
+	ID            string                    `json:"id,omitempty"`
+	Name          string                    `json:"name,omitempty"`
+	Arguments     string                    `json:"arguments,omitempty"`
+	Queries       []string                  `json:"queries,omitempty"`
+	Sources       []URLCitation             `json:"sources,omitempty"`
+	ErrorType     string                    `json:"errorType,omitempty"`
+	Code          string                    `json:"code,omitempty"`
+	EndTurn       bool                      `json:"endTurn,omitempty"`
+	ProviderState ProviderContinuationState `json:"providerState,omitempty"`
 }
 
 type ToolCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Arguments        json.RawMessage `json:"arguments"`
+	CustomWireName   string          `json:"customWireName,omitempty"`
+	ThoughtSignature string          `json:"thoughtSignature,omitempty"`
+	Namespace        string          `json:"namespace,omitempty"`
 }
+
+type URLCitation struct {
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+}
+
+type ProviderContinuationState map[string]map[string]any
 
 type Usage struct {
 	InputTokens              int  `json:"inputTokens"`
