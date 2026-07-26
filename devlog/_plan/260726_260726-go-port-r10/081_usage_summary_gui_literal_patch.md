@@ -13,7 +13,7 @@ native usage API having these exact semantics:
 
 ```go
 revision, err := log.CurrentRevision()
-snapshot, err := log.ReadSnapshotForManagement()
+snapshot, err := log.ReadSnapshotForManagement(ctx)
 revision.Key() string
 snapshot.Revision.Key() string
 snapshot.Entries []usage.Entry
@@ -58,7 +58,7 @@ diff --git a/go/internal/management/api.go b/go/internal/management/api.go
 diff --git a/go/internal/management/logs.go b/go/internal/management/logs.go
 --- a/go/internal/management/logs.go
 +++ b/go/internal/management/logs.go
-@@ -293,14 +293,5 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
+@@ -293,15 +293,5 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
  	case "GET /api/usage":
  		window := usage.ParseRange(r.URL.Query().Get("range"))
  		surface := usage.ParseSurface(r.URL.Query().Get("surface"))
@@ -66,13 +66,14 @@ diff --git a/go/internal/management/logs.go b/go/internal/management/logs.go
 -			writeJSON(w, http.StatusOK, usage.Summarize(nil, window, time.Now(), surface))
 -			return true
 -		}
--		entries, err := a.usageLog.ReadAll()
+-		snapshot, err := a.usageLog.ReadSnapshotForManagement(r.Context())
 -		if err != nil {
 -			writeError(w, http.StatusInternalServerError, "usage log could not be read")
 -			return true
 -		}
+-		entries := snapshot.Entries
 -		writeJSON(w, http.StatusOK, usageSummaryResponse(usage.Summarize(entries, window, time.Now(), surface), entries))
-+		writeJSON(w, http.StatusOK, a.usageSummary(window, surface, a.now()))
++		writeJSON(w, http.StatusOK, a.usageSummary(r.Context(), window, surface, a.now()))
  		return true
 @@ -337,6 +328,12 @@ type usageModelResponse struct {
  	EstimatedCostUSD  float64 `json:"estimatedCostUsd,omitempty"`
@@ -96,7 +97,7 @@ diff --git a/go/internal/management/logs.go b/go/internal/management/logs.go
  	}
  }
 +
-+func (a *API) usageSummary(window usage.Range, surface string, now time.Time) usageSummaryResponseDTO {
++func (a *API) usageSummary(ctx context.Context, window usage.Range, surface string, now time.Time) usageSummaryResponseDTO {
 +	if a.usageLog == nil {
 +		return usageSummaryResponse(usage.Summarize(nil, window, now, surface), nil)
 +	}
@@ -116,7 +117,7 @@ diff --git a/go/internal/management/logs.go b/go/internal/management/logs.go
 +		return response
 +	}
 +
-+	snapshot, err := a.usageLog.ReadSnapshotForManagement()
++	snapshot, err := a.usageLog.ReadSnapshotForManagement(ctx)
 +	if err != nil {
 +		return usageReadFailedResponse(window, surface, now)
 +	}

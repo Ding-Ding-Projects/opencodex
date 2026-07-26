@@ -14,8 +14,8 @@ the management API and all current-dev native behavior it consumes are present.
     `usageSummaryResponseDTO`, revision key, and expiry only;
   - protect the cache with an API-owned mutex because management requests run in
     parallel goroutines; keep its key space bounded by parsed range/surface enums;
-  - rebuild from `ReadSnapshotForManagement`, preserving resolved-model output
-    without retaining raw rows;
+  - rebuild from context-aware `ReadSnapshotForManagement`, preserving
+    resolved-model output without retaining raw rows;
   - invalidate on any revision change, the earliest matching 7d/30d entry
     expiry, or next local midnight;
   - refresh `since` and `generatedAt` on hits;
@@ -44,7 +44,8 @@ source-vs-embedded hash/content assertion.
   separation.
 - Read failure returns the exact stable empty DTO and does not poison a later
   successful rebuild.
-- Large rebuild and concurrent `/healthz` complete independently.
+- Retain the large-rebuild `/healthz` production-path proof established by 071;
+  cached and uncached `/api/usage` requests must preserve that independence.
 - Cache inspection/test hooks prove compact DTO retention only; no `[]usage.Entry`
   survives the request.
 

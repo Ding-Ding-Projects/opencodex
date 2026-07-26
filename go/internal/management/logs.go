@@ -297,11 +297,12 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 			writeJSON(w, http.StatusOK, usage.Summarize(nil, window, time.Now(), surface))
 			return true
 		}
-		entries, err := a.usageLog.ReadAll()
+		snapshot, err := a.usageLog.ReadSnapshotForManagement(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "usage log could not be read")
 			return true
 		}
+		entries := snapshot.Entries
 		writeJSON(w, http.StatusOK, usageSummaryResponse(usage.Summarize(entries, window, time.Now(), surface), entries))
 		return true
 	case "GET /api/storage":

@@ -85,8 +85,9 @@ type Entry struct {
 // Log is an append-only JSONL usage recorder. Its mutex makes append/read/clear
 // safe within one process; O_APPEND keeps individual records atomic at the OS boundary.
 type Log struct {
-	path string
-	mu   sync.RWMutex
+	path     string
+	mu       sync.RWMutex
+	snapshot snapshotOwner
 }
 
 func NewLog(path string) *Log { return &Log{path: path} }
@@ -240,14 +241,63 @@ func normalizeEntry(entry Entry) Entry {
 	entry.RequestedServiceTier = capString(entry.RequestedServiceTier, 64)
 	entry.ConfiguredServiceTier = capString(entry.ConfiguredServiceTier, 64)
 	entry.ResponseServiceTier = capString(entry.ResponseServiceTier, 64)
-	if entry.Usage != nil {
-		entry.Usage = cloneUsage(entry.Usage)
+	return cloneEntry(entry)
+}
+
+func cloneEntries(entries []Entry) []Entry {
+	cloned := make([]Entry, len(entries))
+	for index := range entries {
+		cloned[index] = cloneEntry(entries[index])
 	}
-	entry.Attempts = append([]Attempt(nil), entry.Attempts...)
+	return cloned
+}
+
+func cloneEntry(entry Entry) Entry {
+	attempts := entry.Attempts
+	entry.FirstOutputMS = cloneInt64(entry.FirstOutputMS)
+	entry.Usage = cloneUsage(entry.Usage)
+	entry.TotalTokens = cloneInt(entry.TotalTokens)
+	entry.ModelSupportsServiceTier = cloneBool(entry.ModelSupportsServiceTier)
+	if attempts == nil {
+		entry.Attempts = nil
+		return entry
+	}
+	entry.Attempts = make([]Attempt, len(attempts))
+	for index, attempt := range attempts {
+		attempt.FirstOutput = cloneInt64(attempt.FirstOutput)
+		attempt.Recovery = append([]string(nil), attempt.Recovery...)
+		attempt.Usage = cloneUsage(attempt.Usage)
+		attempt.TotalTokens = cloneInt(attempt.TotalTokens)
+		entry.Attempts[index] = attempt
+	}
 	return entry
 }
 
 func cloneUsage(value *types.Usage) *types.Usage {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func cloneInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func cloneBool(value *bool) *bool {
 	if value == nil {
 		return nil
 	}

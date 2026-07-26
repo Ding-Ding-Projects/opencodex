@@ -1,17 +1,117 @@
 # 071 — Literal patch: revision-safe native usage snapshots
 
-Apply this unified diff against `ddd968a0169e4c190bf1037e78a824c6780568e9`.
-It preserves the existing `Log` append/read/clear API and adds a management-only
-snapshot owner. The owner opens before inspecting, rejects non-regular files,
-reads only the descriptor's observed length, shares work only by exact revision,
-and drops the completed call (and its rows) before waking waiters.
+Apply this unified diff against `8a029c843dd4785b0a8d6ed9a5e8b39fd357a4bb`.
+It preserves the existing append/read/clear API and adds a context-aware
+management snapshot owner. Exact strong revisions share one detached in-flight
+read, each caller receives a deep clone, cancelled callers leave shared work
+alive, and revision churn stops after 64 attempts. The real
+`GET /api/usage` path consumes the snapshot while `/healthz` remains
+independent.
 
 ```diff
+diff --git a/go/internal/management/logs.go b/go/internal/management/logs.go
+index 38645f1a..50f27911 100644
+--- a/go/internal/management/logs.go
++++ b/go/internal/management/logs.go
+@@ -297,11 +297,12 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
+ 			writeJSON(w, http.StatusOK, usage.Summarize(nil, window, time.Now(), surface))
+ 			return true
+ 		}
+-		entries, err := a.usageLog.ReadAll()
++		snapshot, err := a.usageLog.ReadSnapshotForManagement(r.Context())
+ 		if err != nil {
+ 			writeError(w, http.StatusInternalServerError, "usage log could not be read")
+ 			return true
+ 		}
++		entries := snapshot.Entries
+ 		writeJSON(w, http.StatusOK, usageSummaryResponse(usage.Summarize(entries, window, time.Now(), surface), entries))
+ 		return true
+ 	case "GET /api/storage":
+diff --git a/go/internal/server/usage_snapshot_concurrency_test.go b/go/internal/server/usage_snapshot_concurrency_test.go
+new file mode 100644
+index 00000000..a6a24092
+--- /dev/null
++++ b/go/internal/server/usage_snapshot_concurrency_test.go
+@@ -0,0 +1,72 @@
++package server
++
++import (
++	"bytes"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
++	"github.com/lidge-jun/opencodex-go/internal/usage"
++)
++
++func TestProductionUsageSnapshotRebuildDoesNotBlockHealthz(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "usage.jsonl")
++	line := []byte(`{"requestId":"large","timestamp":1,"provider":"p","model":"m","status":200,"durationMs":1,"usageStatus":"reported"}` + "\n")
++	if err := os.WriteFile(path, bytes.Repeat(line, 200_000), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	log := usage.NewLog(path)
++	cfg := appconfig.Default()
++	proxy := New(Config{UsageRecorder: log, ManagementConfig: &cfg})
++	defer proxy.Close()
++
++	usageDone := make(chan *httptest.ResponseRecorder, 1)
++	go func() {
++		response := httptest.NewRecorder()
++		proxy.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/usage?range=all", nil))
++		usageDone <- response
++	}()
++
++	deadline := time.Now().Add(5 * time.Second)
++	for log.SnapshotStatsForTests().RetainedCall == 0 {
++		select {
++		case response := <-usageDone:
++			t.Fatalf("usage rebuild completed before its production snapshot became observable: %d %s", response.Code, response.Body.String())
++		default:
++		}
++		if time.Now().After(deadline) {
++			t.Fatal("production usage route did not enter snapshot rebuild")
++		}
++	}
++
++	healthDone := make(chan *httptest.ResponseRecorder, 1)
++	go func() {
++		response := httptest.NewRecorder()
++		proxy.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
++		healthDone <- response
++	}()
++	select {
++	case response := <-healthDone:
++		if response.Code != http.StatusOK {
++			t.Fatalf("healthz response = %d %s", response.Code, response.Body.String())
++		}
++	case <-time.After(time.Second):
++		t.Fatal("healthz blocked behind a production usage rebuild")
++	}
++
++	select {
++	case response := <-usageDone:
++		if response.Code != http.StatusOK {
++			t.Fatalf("usage response = %d %s", response.Code, response.Body.String())
++		}
++	case <-time.After(20 * time.Second):
++		t.Fatal("production usage rebuild did not complete")
++	}
++	if stats := log.SnapshotStatsForTests(); stats.FullReads != 1 || stats.RetainedCall != 0 {
++		t.Fatalf("production usage route bypassed snapshot owner: %#v", stats)
++	}
++}
 diff --git a/go/internal/usage/log.go b/go/internal/usage/log.go
-index 38522f26..adf88b70 100644
+index 24414e0b..c175aa1d 100644
 --- a/go/internal/usage/log.go
 +++ b/go/internal/usage/log.go
-@@ -87,6 +87,7 @@ type Entry struct {
+@@ -85,8 +85,9 @@ type Entry struct {
+ // Log is an append-only JSONL usage recorder. Its mutex makes append/read/clear
+ // safe within one process; O_APPEND keeps individual records atomic at the OS boundary.
  type Log struct {
 -	path string
 -	mu   sync.RWMutex
@@ -21,9 +121,79 @@ index 38522f26..adf88b70 100644
  }
  
  func NewLog(path string) *Log { return &Log{path: path} }
+@@ -240,10 +241,35 @@ func normalizeEntry(entry Entry) Entry {
+ 	entry.RequestedServiceTier = capString(entry.RequestedServiceTier, 64)
+ 	entry.ConfiguredServiceTier = capString(entry.ConfiguredServiceTier, 64)
+ 	entry.ResponseServiceTier = capString(entry.ResponseServiceTier, 64)
+-	if entry.Usage != nil {
+-		entry.Usage = cloneUsage(entry.Usage)
++	return cloneEntry(entry)
++}
++
++func cloneEntries(entries []Entry) []Entry {
++	cloned := make([]Entry, len(entries))
++	for index := range entries {
++		cloned[index] = cloneEntry(entries[index])
++	}
++	return cloned
++}
++
++func cloneEntry(entry Entry) Entry {
++	attempts := entry.Attempts
++	entry.FirstOutputMS = cloneInt64(entry.FirstOutputMS)
++	entry.Usage = cloneUsage(entry.Usage)
++	entry.TotalTokens = cloneInt(entry.TotalTokens)
++	entry.ModelSupportsServiceTier = cloneBool(entry.ModelSupportsServiceTier)
++	if attempts == nil {
++		entry.Attempts = nil
++		return entry
++	}
++	entry.Attempts = make([]Attempt, len(attempts))
++	for index, attempt := range attempts {
++		attempt.FirstOutput = cloneInt64(attempt.FirstOutput)
++		attempt.Recovery = append([]string(nil), attempt.Recovery...)
++		attempt.Usage = cloneUsage(attempt.Usage)
++		attempt.TotalTokens = cloneInt(attempt.TotalTokens)
++		entry.Attempts[index] = attempt
+ 	}
+-	entry.Attempts = append([]Attempt(nil), entry.Attempts...)
+ 	return entry
+ }
+ 
+@@ -255,6 +281,30 @@ func cloneUsage(value *types.Usage) *types.Usage {
+ 	return &clone
+ }
+ 
++func cloneInt(value *int) *int {
++	if value == nil {
++		return nil
++	}
++	clone := *value
++	return &clone
++}
++
++func cloneInt64(value *int64) *int64 {
++	if value == nil {
++		return nil
++	}
++	clone := *value
++	return &clone
++}
++
++func cloneBool(value *bool) *bool {
++	if value == nil {
++		return nil
++	}
++	clone := *value
++	return &clone
++}
++
+ func capString(value string, max int) string {
+ 	if len(value) > max {
+ 		return value[:max]
 diff --git a/go/internal/usage/revision.go b/go/internal/usage/revision.go
 new file mode 100644
-index 00000000..11111111
+index 00000000..78bba570
 --- /dev/null
 +++ b/go/internal/usage/revision.go
 @@ -0,0 +1,61 @@
@@ -90,7 +260,7 @@ index 00000000..11111111
 +}
 diff --git a/go/internal/usage/revision_darwin.go b/go/internal/usage/revision_darwin.go
 new file mode 100644
-index 00000000..22222222
+index 00000000..ac72b60e
 --- /dev/null
 +++ b/go/internal/usage/revision_darwin.go
 @@ -0,0 +1,23 @@
@@ -117,9 +287,31 @@ index 00000000..22222222
 +		changeTimeNS: stat.Ctimespec.Sec*1_000_000_000 + int64(stat.Ctimespec.Nsec),
 +	}, nil
 +}
+diff --git a/go/internal/usage/revision_fallback.go b/go/internal/usage/revision_fallback.go
+new file mode 100644
+index 00000000..94ec8fcb
+--- /dev/null
++++ b/go/internal/usage/revision_fallback.go
+@@ -0,0 +1,16 @@
++//go:build !darwin && !linux && !windows
++
++package usage
++
++import "os"
++
++// Unsupported platforms retain path/size/mtime observations but deliberately
++// mark the identity weak. snapshotOwner then refuses to coalesce callers under
++// this revision, which is safer than treating a same-size replacement as equal.
++func nativeRevisionIdentity(_ *os.File, info os.FileInfo) (nativeIdentity, error) {
++	return nativeIdentity{
++		modifyTimeNS: info.ModTime().UnixNano(),
++		changeTimeNS: info.ModTime().UnixNano(),
++		weak:         true,
++	}, nil
++}
 diff --git a/go/internal/usage/revision_linux.go b/go/internal/usage/revision_linux.go
 new file mode 100644
-index 00000000..33333333
+index 00000000..d689090b
 --- /dev/null
 +++ b/go/internal/usage/revision_linux.go
 @@ -0,0 +1,35 @@
@@ -160,7 +352,7 @@ index 00000000..33333333
 +}
 diff --git a/go/internal/usage/revision_windows.go b/go/internal/usage/revision_windows.go
 new file mode 100644
-index 00000000..44444444
+index 00000000..6ef63534
 --- /dev/null
 +++ b/go/internal/usage/revision_windows.go
 @@ -0,0 +1,43 @@
@@ -207,38 +399,17 @@ index 00000000..44444444
 +		changeTimeNS: windowsTicksToUnixNano(basic.ChangeTime),
 +	}, nil
 +}
-diff --git a/go/internal/usage/revision_fallback.go b/go/internal/usage/revision_fallback.go
-new file mode 100644
-index 00000000..55555555
---- /dev/null
-+++ b/go/internal/usage/revision_fallback.go
-@@ -0,0 +1,16 @@
-+//go:build !darwin && !linux && !windows
-+
-+package usage
-+
-+import "os"
-+
-+// Unsupported platforms retain path/size/mtime observations but deliberately
-+// mark the identity weak. snapshotOwner then refuses to coalesce callers under
-+// this revision, which is safer than treating a same-size replacement as equal.
-+func nativeRevisionIdentity(_ *os.File, info os.FileInfo) (nativeIdentity, error) {
-+	return nativeIdentity{
-+		modifyTimeNS: info.ModTime().UnixNano(),
-+		changeTimeNS: info.ModTime().UnixNano(),
-+		weak:         true,
-+	}, nil
-+}
 diff --git a/go/internal/usage/snapshot.go b/go/internal/usage/snapshot.go
 new file mode 100644
-index 00000000..66666666
+index 00000000..226c5abb
 --- /dev/null
 +++ b/go/internal/usage/snapshot.go
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,197 @@
 +package usage
 +
 +import (
 +	"bytes"
++	"context"
 +	"errors"
 +	"fmt"
 +	"io"
@@ -248,6 +419,8 @@ index 00000000..66666666
 +)
 +
 +var errSnapshotRevisionChanged = errors.New("usage log revision changed before snapshot read")
++
++const snapshotRevisionRetryLimit = 64
 +
 +// Snapshot is a management read result. Entries is always owned by the caller.
 +type Snapshot struct {
@@ -270,12 +443,13 @@ index 00000000..66666666
 +}
 +
 +type snapshotOwner struct {
-+	mu                 sync.Mutex
-+	calls              map[string]*snapshotCall
-+	weakSequence       atomic.Uint64
-+	fullReads          atomic.Uint64
-+	parsedLines        atomic.Uint64
-+	beforeReadForTests func(Revision)
++	mu                   sync.Mutex
++	calls                map[string]*snapshotCall
++	weakSequence         atomic.Uint64
++	fullReads            atomic.Uint64
++	parsedLines          atomic.Uint64
++	beforeReadForTests   func(Revision)
++	afterAcquireForTests func()
 +}
 +
 +// CurrentRevision opens the path first and derives identity from that descriptor.
@@ -300,10 +474,14 @@ index 00000000..66666666
 +// ReadSnapshotForManagement performs a descriptor-stable full read. Concurrent
 +// callers share only an exact, strong revision and every caller receives its own
 +// slice. Completed calls are removed before waiters are released.
-+func (l *Log) ReadSnapshotForManagement() (Snapshot, error) {
-+	l.mu.RLock()
-+	defer l.mu.RUnlock()
-+	for {
++func (l *Log) ReadSnapshotForManagement(ctx context.Context) (Snapshot, error) {
++	if ctx == nil {
++		ctx = context.Background()
++	}
++	for attempt := 0; attempt < snapshotRevisionRetryLimit; attempt++ {
++		if err := ctx.Err(); err != nil {
++			return Snapshot{}, err
++		}
 +		observed, err := l.currentRevision()
 +		if err != nil {
 +			return Snapshot{}, err
@@ -316,17 +494,32 @@ index 00000000..66666666
 +			key = fmt.Sprintf("%s\x00weak-%d", key, l.snapshot.weakSequence.Add(1))
 +		}
 +		call, leader := l.snapshot.acquire(key)
++		l.snapshot.notifyAcquireForTests()
 +		if leader {
-+			l.snapshot.run(l.path, key, observed, call)
++			go l.snapshot.run(l.path, key, observed, call)
 +		}
-+		<-call.done
++		select {
++		case <-ctx.Done():
++			return Snapshot{}, ctx.Err()
++		case <-call.done:
++		}
 +		if errors.Is(call.err, errSnapshotRevisionChanged) {
 +			continue
 +		}
 +		if call.err != nil {
 +			return Snapshot{}, call.err
 +		}
-+		return Snapshot{Entries: append([]Entry(nil), call.entries...), Revision: call.revision}, nil
++		return Snapshot{Entries: cloneEntries(call.entries), Revision: call.revision}, nil
++	}
++	return Snapshot{}, fmt.Errorf("%w after %d attempts", errSnapshotRevisionChanged, snapshotRevisionRetryLimit)
++}
++
++func (o *snapshotOwner) notifyAcquireForTests() {
++	o.mu.Lock()
++	hook := o.afterAcquireForTests
++	o.mu.Unlock()
++	if hook != nil {
++		hook()
 +	}
 +}
 +
@@ -411,13 +604,14 @@ index 00000000..66666666
 +}
 diff --git a/go/internal/usage/snapshot_test.go b/go/internal/usage/snapshot_test.go
 new file mode 100644
-index 00000000..77777777
+index 00000000..6637b787
 --- /dev/null
 +++ b/go/internal/usage/snapshot_test.go
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,480 @@
 +package usage
 +
 +import (
++	"context"
 +	"encoding/json"
 +	"errors"
 +	"fmt"
@@ -428,6 +622,8 @@ index 00000000..77777777
 +	"sync"
 +	"testing"
 +	"time"
++
++	"github.com/lidge-jun/opencodex-go/internal/types"
 +)
 +
 +func snapshotLine(id string) []byte {
@@ -460,6 +656,18 @@ index 00000000..77777777
 +	t.Cleanup(func() {
 +		log.snapshot.mu.Lock()
 +		log.snapshot.beforeReadForTests = nil
++		log.snapshot.mu.Unlock()
++	})
++}
++
++func setAfterSnapshotAcquire(t *testing.T, log *Log, hook func()) {
++	t.Helper()
++	log.snapshot.mu.Lock()
++	log.snapshot.afterAcquireForTests = hook
++	log.snapshot.mu.Unlock()
++	t.Cleanup(func() {
++		log.snapshot.mu.Lock()
++		log.snapshot.afterAcquireForTests = nil
 +		log.snapshot.mu.Unlock()
 +	})
 +}
@@ -522,7 +730,7 @@ index 00000000..77777777
 +			_ = file.Close()
 +		})
 +	})
-+	snapshot, err := log.ReadSnapshotForManagement()
++	snapshot, err := log.ReadSnapshotForManagement(context.Background())
 +	if err != nil {
 +		t.Fatal(err)
 +	}
@@ -547,7 +755,7 @@ index 00000000..77777777
 +			}
 +		})
 +	})
-+	_, err := log.ReadSnapshotForManagement()
++	_, err := log.ReadSnapshotForManagement(context.Background())
 +	if err == nil || !errors.Is(err, io.ErrUnexpectedEOF) {
 +		t.Fatalf("short read error = %v", err)
 +	}
@@ -568,17 +776,21 @@ index 00000000..77777777
 +		<-release
 +	})
 +	const readers = 12
++	acquired := make(chan struct{}, readers)
++	setAfterSnapshotAcquire(t, log, func() { acquired <- struct{}{} })
 +	results := make(chan Snapshot, readers)
 +	errorsOut := make(chan error, readers)
 +	for range readers {
 +		go func() {
-+			snapshot, err := log.ReadSnapshotForManagement()
++			snapshot, err := log.ReadSnapshotForManagement(context.Background())
 +			results <- snapshot
 +			errorsOut <- err
 +		}()
 +	}
 +	<-started
-+	time.Sleep(10 * time.Millisecond)
++	for range readers {
++		<-acquired
++	}
 +	close(release)
 +	snapshots := make([]Snapshot, 0, readers)
 +	for range readers {
@@ -621,7 +833,7 @@ index 00000000..77777777
 +	oldResult := make(chan Snapshot, 1)
 +	oldError := make(chan error, 1)
 +	go func() {
-+		snapshot, err := log.ReadSnapshotForManagement()
++		snapshot, err := log.ReadSnapshotForManagement(context.Background())
 +		oldResult <- snapshot
 +		oldError <- err
 +	}()
@@ -631,7 +843,7 @@ index 00000000..77777777
 +	if err := os.Rename(replacement, path); err != nil {
 +		t.Fatal(err)
 +	}
-+	newSnapshot, err := log.ReadSnapshotForManagement()
++	newSnapshot, err := log.ReadSnapshotForManagement(context.Background())
 +	if err != nil {
 +		t.Fatal(err)
 +	}
@@ -661,7 +873,7 @@ index 00000000..77777777
 +		t.Fatal(err)
 +	}
 +	log := NewLog(path)
-+	snapshot, err := log.ReadSnapshotForManagement()
++	snapshot, err := log.ReadSnapshotForManagement(context.Background())
 +	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].RequestID != "valid" {
 +		t.Fatalf("snapshot = %#v, %v", snapshot, err)
 +	}
@@ -689,7 +901,7 @@ index 00000000..77777777
 +		}(i)
 +		go func() {
 +			defer wg.Done()
-+			if _, err := log.ReadSnapshotForManagement(); err != nil {
++			if _, err := log.ReadSnapshotForManagement(context.Background()); err != nil {
 +				t.Errorf("ReadSnapshotForManagement: %v", err)
 +			}
 +		}()
@@ -699,17 +911,197 @@ index 00000000..77777777
 +		t.Fatalf("race test retained calls = %#v", stats)
 +	}
 +}
++
++func TestReadSnapshotDeepClonesNestedEntryState(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "usage.jsonl")
++	firstOutput, total, attemptFirstOutput, attemptTotal := int64(7), 11, int64(3), 5
++	modelTier := true
++	entry := Entry{
++		RequestID: "nested", Timestamp: 1, Provider: "openai", Model: "gpt-5.5",
++		Status: 200, DurationMS: 10, FirstOutputMS: &firstOutput,
++		UsageStatus: StatusReported, Usage: &types.Usage{InputTokens: 6, OutputTokens: 5}, TotalTokens: &total,
++		Attempts: []Attempt{{Ordinal: 1, Provider: "openai", Model: "gpt-5.5", HTTPStatus: 200,
++			FirstOutput: &attemptFirstOutput, Recovery: []string{"retry"}, UsageStatus: StatusReported,
++			Usage: &types.Usage{InputTokens: 3, OutputTokens: 2}, TotalTokens: &attemptTotal}},
++		ModelSupportsServiceTier: &modelTier,
++	}
++	data, err := json.Marshal(entry)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	log := NewLog(path)
++	started := make(chan struct{})
++	release := make(chan struct{})
++	var once sync.Once
++	setBeforeSnapshotRead(t, log, func(Revision) {
++		once.Do(func() { close(started) })
++		<-release
++	})
++	acquired := make(chan struct{}, 2)
++	setAfterSnapshotAcquire(t, log, func() { acquired <- struct{}{} })
++	results := make(chan Snapshot, 2)
++	errorsOut := make(chan error, 2)
++	for range 2 {
++		go func() {
++			snapshot, err := log.ReadSnapshotForManagement(context.Background())
++			results <- snapshot
++			errorsOut <- err
++		}()
++	}
++	<-started
++	for range 2 {
++		<-acquired
++	}
++	close(release)
++	first, second := <-results, <-results
++	for range 2 {
++		if err := <-errorsOut; err != nil {
++			t.Fatal(err)
++		}
++	}
++	if stats := log.SnapshotStatsForTests(); stats.FullReads != 1 || stats.RetainedCall != 0 {
++		t.Fatalf("nested callers did not share one flight: %#v", stats)
++	}
++	first.Entries[0].Usage.InputTokens = 99
++	*first.Entries[0].FirstOutputMS = 99
++	*first.Entries[0].TotalTokens = 99
++	first.Entries[0].Attempts[0].Recovery[0] = "mutated"
++	first.Entries[0].Attempts[0].Usage.InputTokens = 99
++	*first.Entries[0].Attempts[0].FirstOutput = 99
++	*first.Entries[0].Attempts[0].TotalTokens = 99
++	*first.Entries[0].ModelSupportsServiceTier = false
++	got := second.Entries[0]
++	if got.Usage.InputTokens != 6 || *got.FirstOutputMS != 7 || *got.TotalTokens != 11 ||
++		got.Attempts[0].Recovery[0] != "retry" || got.Attempts[0].Usage.InputTokens != 3 ||
++		*got.Attempts[0].FirstOutput != 3 || *got.Attempts[0].TotalTokens != 5 || !*got.ModelSupportsServiceTier {
++		t.Fatalf("nested snapshot state aliases another caller: %#v", got)
++	}
++}
++
++func TestReadSnapshotCancellationDoesNotCancelSharedReadOrBlockAppend(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "usage.jsonl")
++	writeSnapshotLog(t, path, "seed")
++	log := NewLog(path)
++	started := make(chan struct{})
++	release := make(chan struct{})
++	var once sync.Once
++	setBeforeSnapshotRead(t, log, func(Revision) {
++		once.Do(func() { close(started) })
++		<-release
++	})
++	acquired := make(chan struct{}, 2)
++	setAfterSnapshotAcquire(t, log, func() { acquired <- struct{}{} })
++	ctx, cancel := context.WithCancel(context.Background())
++	cancelled := make(chan error, 1)
++	go func() {
++		_, err := log.ReadSnapshotForManagement(ctx)
++		cancelled <- err
++	}()
++	<-started
++	<-acquired
++	follower := make(chan error, 1)
++	go func() {
++		_, err := log.ReadSnapshotForManagement(context.Background())
++		follower <- err
++	}()
++	<-acquired
++	cancel()
++	if err := <-cancelled; !errors.Is(err, context.Canceled) {
++		t.Fatalf("cancelled caller error = %v", err)
++	}
++	appendDone := make(chan error, 1)
++	go func() {
++		appendDone <- log.Append(Entry{RequestID: "append", Timestamp: 2, Provider: "p", Model: "m", Status: 200, UsageStatus: StatusReported})
++	}()
++	select {
++	case err := <-appendDone:
++		if err != nil {
++			t.Fatal(err)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("Append blocked behind a management snapshot read")
++	}
++	close(release)
++	if err := <-follower; err != nil {
++		t.Fatalf("shared follower failed after leader cancellation: %v", err)
++	}
++}
++
++func TestCurrentRevisionDetectsSameSizeRewriteAndNativeIdentity(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "usage.jsonl")
++	writeSnapshotLog(t, path, "aaa")
++	log := NewLog(path)
++	before, err := log.CurrentRevision()
++	if err != nil {
++		t.Fatal(err)
++	}
++	data := snapshotLine("bbb")
++	if got, want := int64(len(data)), before.Size; got != want {
++		t.Fatalf("test rows differ in size: got %d want %d", got, want)
++	}
++	if err := os.WriteFile(path, data, 0o600); err != nil {
++		t.Fatal(err)
++	}
++	forced := time.Unix(1_700_000_000, 123_456_789)
++	if err := os.Chtimes(path, forced, forced); err != nil {
++		t.Fatal(err)
++	}
++	after, err := log.CurrentRevision()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if before.Key() == after.Key() {
++		t.Fatalf("same-size rewrite retained revision key: %#v", after)
++	}
++	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" || runtime.GOOS == "windows" {
++		if after.Device == 0 || after.Inode == 0 || after.weakIdentity {
++			t.Fatalf("native identity missing on %s: %#v", runtime.GOOS, after)
++		}
++	}
++}
++
++func TestReadSnapshotBoundsRevisionChurnAndReleasesCalls(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "usage.jsonl")
++	writeSnapshotLog(t, path, "seed")
++	log := NewLog(path)
++	var sequence int
++	setAfterSnapshotAcquire(t, log, func() {
++		sequence++
++		replacement := filepath.Join(dir, fmt.Sprintf("replacement-%d.jsonl", sequence))
++		writeSnapshotLog(t, replacement, fmt.Sprintf("next-%03d", sequence))
++		if err := os.Rename(replacement, path); err != nil {
++			t.Fatal(err)
++		}
++	})
++	_, err := log.ReadSnapshotForManagement(context.Background())
++	if !errors.Is(err, errSnapshotRevisionChanged) {
++		t.Fatalf("revision churn error = %v", err)
++	}
++	if sequence != snapshotRevisionRetryLimit {
++		t.Fatalf("revision attempts = %d, want %d", sequence, snapshotRevisionRetryLimit)
++	}
++	if stats := log.SnapshotStatsForTests(); stats.RetainedCall != 0 {
++		t.Fatalf("revision churn retained calls: %#v", stats)
++	}
++}
 ```
 
 Verification after applying:
 
 ```bash
 cd go
-gofmt -w internal/usage/log.go internal/usage/revision*.go internal/usage/snapshot*.go
+gofmt -w internal/management/logs.go internal/server/usage_snapshot_concurrency_test.go internal/usage/log.go internal/usage/revision*.go internal/usage/snapshot*.go
 go test -race ./internal/usage -count=1
+go test -race ./internal/usage -run 'TestReadSnapshot(SameRevisionSharesOneReadAndClonesSlices|CancellationDoesNotCancelSharedReadOrBlockAppend|DeepClonesNestedEntryState)' -count=20
 go test ./internal/usage ./internal/management ./internal/server -count=1
+go test ./internal/server -run TestProductionUsageSnapshotRebuildDoesNotBlockHealthz -count=1
 go vet ./...
 GOOS=darwin GOARCH=arm64 go test -c -o /tmp/ocx-usage-darwin.test ./internal/usage
 GOOS=linux GOARCH=amd64 go test -c -o /tmp/ocx-usage-linux.test ./internal/usage
 GOOS=windows GOARCH=amd64 go test -c -o /tmp/ocx-usage-windows.test.exe ./internal/usage
 ```
+
