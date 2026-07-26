@@ -102,7 +102,13 @@ func waitRuntimePort(t *testing.T, path string) int {
 	for time.Now().Before(deadline) {
 		if data, err := os.ReadFile(path); err == nil {
 			if port, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && port > 0 {
-				return port
+				response, requestErr := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/healthz")
+				if requestErr == nil {
+					response.Body.Close()
+					if response.StatusCode == http.StatusOK {
+						return port
+					}
+				}
 			}
 		}
 		time.Sleep(25 * time.Millisecond)

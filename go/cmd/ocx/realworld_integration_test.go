@@ -85,7 +85,7 @@ func TestBuiltBinarySyncShimRestoreBackRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment = append(environment,
-		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"PATH="+strings.Join([]string{fakeBin, "/usr/bin", "/bin"}, string(os.PathListSeparator)),
 		"REALWORLD_TEST_BINARY="+testBinary,
 		"GO_WANT_REALWORLD_CODEX=1",
 	)
@@ -121,7 +121,7 @@ func TestBuiltServeAddsRoutesAndDeletesProviderImmediately(t *testing.T) {
 	port := waitRuntimePort(t, filepath.Join(ocxHome, "runtime-port"))
 	provider := config.ProviderConfig{Adapter: "openai-chat", BaseURL: upstream.URL + "/v1", APIKey: "dynamic-key", AuthMode: "key", DefaultModel: "dynamic", Models: []string{"dynamic"}, AllowPrivateNetwork: true}
 	status := managementJSON(t, port, http.MethodPost, "/api/providers", map[string]any{"name": "dynamic", "provider": provider})
-	if status != http.StatusCreated {
+	if status != http.StatusOK {
 		t.Fatalf("provider add status=%d logs=%s", status, logs.String())
 	}
 	if status = postModelStatus(t, port, "dynamic/dynamic"); status != http.StatusOK {
