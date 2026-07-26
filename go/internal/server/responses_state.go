@@ -3,23 +3,170 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 const (
-	maxStoredResponses       = 1000
-	responseStateTTL         = time.Hour
-	maxStoredResponseBytes   = 64 << 20
-	responseSnapshotEntryMax = 2 << 20
-	responseSnapshotTotalMax = 24 << 20
-	responseSnapshotDebounce = 2 * time.Second
+	maxStoredResponses        = 1000
+	responseStateTTL          = time.Hour
+	maxStoredResponseBytes    = 64 << 20
+	responseSnapshotEntryMax  = 2 << 20
+	responseSnapshotTotalMax  = 24 << 20
+	responseSnapshotDebounce  = 2 * time.Second
+	responseStateTempGrace    = 15 * time.Minute
+	responseStateTempEntries  = 4096
+	responseStateTempCleanups = 512
+	responseStateTempMaxSafe  = uint64(1<<53 - 1)
 )
+
+var responseStateTempSequence atomic.Uint64
+
+type ResponseStateTempRecoveryResult struct {
+	Matched      int
+	Removed      int
+	Failed       int
+	BytesRemoved int64
+}
+
+type responseStateTempDir interface {
+	ReadDir(int) ([]os.DirEntry, error)
+	Close() error
+}
+
+type responseStateTempRecoveryIO struct {
+	now           func() time.Time
+	openDir       func(string) (responseStateTempDir, error)
+	inspect       func(string) (os.FileInfo, error)
+	processExists func(int) bool
+	unlink        func(string) error
+	currentPID    int
+	maxEntries    int
+	maxCleanups   int
+}
+
+func defaultResponseStateTempRecoveryIO() responseStateTempRecoveryIO {
+	return responseStateTempRecoveryIO{
+		now:           time.Now,
+		openDir:       func(path string) (responseStateTempDir, error) { return os.Open(path) },
+		inspect:       os.Lstat,
+		processExists: platform.ProcessExists,
+		unlink:        unlinkResponseStateTemp,
+		currentPID:    os.Getpid(),
+		maxEntries:    responseStateTempEntries,
+		maxCleanups:   responseStateTempCleanups,
+	}
+}
+
+func responseStateTempDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func parseResponseStateTempName(snapshotPath, name string) (int, uint64, bool, bool) {
+	prefix := filepath.Base(snapshotPath) + ".ocx."
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".tmp") {
+		return 0, 0, false, false
+	}
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".tmp"), ".")
+	if len(parts) != 2 || !responseStateTempDigits(parts[0]) || !responseStateTempDigits(parts[1]) {
+		return 0, 0, false, false
+	}
+	pidValue, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil || pidValue == 0 || pidValue > responseStateTempMaxSafe || pidValue > uint64(^uint(0)>>1) {
+		return 0, 0, true, false
+	}
+	sequence, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil || sequence == 0 || sequence > responseStateTempMaxSafe {
+		return 0, 0, true, false
+	}
+	return int(pidValue), sequence, true, true
+}
+
+func recoverStaleResponseStateTemps(snapshotPath string, recoveryIO responseStateTempRecoveryIO) ResponseStateTempRecoveryResult {
+	result := ResponseStateTempRecoveryResult{}
+	if snapshotPath == "" || recoveryIO.maxEntries <= 0 || recoveryIO.maxCleanups <= 0 {
+		return result
+	}
+	directory, err := recoveryIO.openDir(filepath.Dir(snapshotPath))
+	if err != nil {
+		return result
+	}
+	defer directory.Close()
+
+	scanned := 0
+	for scanned < recoveryIO.maxEntries && result.Removed+result.Failed < recoveryIO.maxCleanups {
+		entries, readErr := directory.ReadDir(1)
+		if len(entries) == 0 {
+			if readErr != nil {
+				return result
+			}
+			continue
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return result
+		}
+		scanned++
+		entry := entries[0]
+		pid, _, matches, valid := parseResponseStateTempName(snapshotPath, entry.Name())
+		if !matches {
+			continue
+		}
+		result.Matched++
+		if !valid {
+			continue
+		}
+		path := filepath.Join(filepath.Dir(snapshotPath), entry.Name())
+		info, inspectErr := recoveryIO.inspect(path)
+		if inspectErr == nil && info.Mode().IsRegular() && recoveryIO.now().Sub(info.ModTime()) >= responseStateTempGrace && pid != recoveryIO.currentPID && !recoveryIO.processExists(pid) {
+			if recoveryIO.unlink(path) == nil {
+				result.Removed++
+				result.BytesRemoved += info.Size()
+			} else {
+				result.Failed++
+			}
+		}
+		if readErr != nil {
+			return result
+		}
+	}
+	return result
+}
+
+func createResponseStateTemp(snapshotPath string) (*os.File, string, error) {
+	for {
+		sequence := responseStateTempSequence.Add(1)
+		if sequence == 0 {
+			continue
+		}
+		if sequence > responseStateTempMaxSafe {
+			return nil, "", errors.New("response-state temp sequence exhausted")
+		}
+		path := snapshotPath + ".ocx." + strconv.Itoa(os.Getpid()) + "." + strconv.FormatUint(sequence, 10) + ".tmp"
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		return file, path, err
+	}
+}
 
 type ResponseStateMetrics struct {
 	Count        int   `json:"count"`
@@ -210,6 +357,7 @@ func (s *ResponseStateStore) ensureLoadedLocked() {
 	if s.path == "" {
 		return
 	}
+	_ = recoverStaleResponseStateTemps(s.path, defaultResponseStateTempRecoveryIO())
 	payload, err := os.ReadFile(s.path)
 	if err != nil {
 		return
@@ -338,11 +486,10 @@ func (s *ResponseStateStore) persistLocked() {
 		return
 	}
 	_ = os.Chmod(directory, 0o700)
-	temporary, err := os.CreateTemp(directory, ".responses-state-*")
+	temporary, temporaryPath, err := createResponseStateTemp(s.path)
 	if err != nil {
 		return
 	}
-	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if errors.Join(temporary.Chmod(0o600), func() error { _, err := temporary.Write(payload); return err }(), temporary.Sync(), temporary.Close()) != nil {
 		return

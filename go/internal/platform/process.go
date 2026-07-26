@@ -30,6 +30,15 @@ func ProcessAlive(pid int) bool {
 	return process.Signal(syscall.Signal(0)) == nil
 }
 
+// ProcessExists conservatively reports process existence for stale-file recovery.
+// It returns false only when the operating system definitively reports absence.
+func ProcessExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	return processExists(pid)
+}
+
 func WaitForExit(ctx context.Context, pid int) bool {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()

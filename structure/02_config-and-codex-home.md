@@ -39,8 +39,8 @@ shutdown handler) both restore Codex config simultaneously. The temp is renamed 
 
 Response-state loading performs a bounded recovery pass for interrupted snapshot writes. It only
 matches regular files named `responses-state.json.ocx.<pid>.<sequence>.tmp`, waits at least 15
-minutes, and skips the current or any live PID. Eligible files are truncated before unlinking so a
-matching stale path is unlinked without following it. Path-based truncation is intentionally avoided:
+minutes, and skips the current or any live PID. Eligible files are removed with unlink only.
+Path-based truncation is intentionally avoided:
 a same-user replacement could otherwise turn cleanup into a write through a symlink. Unrelated
 temporary files, symlinks, directories, and young/active writes are never touched; directory entries
 are consumed incrementally and at most 512 stale files are attempted per process start.
