@@ -137,6 +137,11 @@ func collectDoctorReport(ctx context.Context, input doctorDeps) (doctorReport, e
 	if cfg != nil {
 		appendProxyHealthCheck(ctx, &report, cfg.Host, port)
 		appendServiceMemoryCheck(ctx, &report, cfg, port, deps)
+		token := strings.TrimSpace(env["OPENCODEX_API_AUTH_TOKEN"])
+		if token == "" {
+			token = cfg.AuthToken
+		}
+		appendOAuthDoctorChecks(ctx, &report, ocxHome, port, cfg, token, deps)
 	}
 	appendWHAMCheck(ctx, &report, filepath.Join(codexHome, "auth.json"), deps)
 	appendProjectWarnings(&report, deps)

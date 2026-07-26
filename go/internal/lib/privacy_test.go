@@ -10,3 +10,16 @@ func TestMaskEmail(t *testing.T) {
 		}
 	}
 }
+
+func TestMaskAccountID(t *testing.T) {
+	tests := map[string]string{
+		"":                                "",
+		" abc ":                           "account-…",
+		"acct_abcdefghijklmnopqrstuvwxyz": "account-…wxyz",
+	}
+	for input, want := range tests {
+		if got := MaskAccountID(input); got != want {
+			t.Errorf("MaskAccountID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

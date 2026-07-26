@@ -56,13 +56,13 @@ func (*codexAuthBackendStub) CodexLoginStatus(context.Context, string, string, b
 }
 
 func TestCodexAuthRoutesMatchTSShapesAndNeverExposeCredentials(t *testing.T) {
-	backend := &codexAuthBackendStub{accounts: []CodexAuthAccount{{ID: "acct-1", Email: "person@example.com", IsMain: false, HasCredential: true}}}
+	backend := &codexAuthBackendStub{accounts: []CodexAuthAccount{{ID: "acct-1", Email: "person@example.com", IsMain: false, HasCredential: true, Health: OAuthAccountHealth{Status: "healthy"}, HealthLabel: "Healthy", HealthSummary: "codex account-…ct-1: healthy"}}}
 	cfg := config.Default()
 	cfg.CodexAccounts = []config.CodexAccount{{ID: "acct-1", Email: "person@example.com"}}
 	api := newParityAPI(t, &cfg, func(options *Options) { options.CodexAuth = backend })
 
 	accounts := serveManagement(api, http.MethodGet, "/api/codex-auth/accounts?refresh=true", "")
-	if accounts.Code != http.StatusOK || accounts.Body.String() != `{"accounts":[{"id":"acct-1","email":"p***@example.com","isMain":false,"quota":null,"hasCredential":true}]}` || !backend.refresh {
+	if accounts.Code != http.StatusOK || accounts.Body.String() != `{"accounts":[{"id":"acct-1","email":"p***@example.com","isMain":false,"quota":null,"hasCredential":true,"health":{"status":"healthy"},"healthLabel":"Healthy","healthSummary":"codex account-…ct-1: healthy"}]}` || !backend.refresh {
 		t.Fatalf("accounts=%d %s refresh=%v", accounts.Code, accounts.Body.String(), backend.refresh)
 	}
 	alias := serveManagement(api, http.MethodPut, "/api/codex-auth/accounts/alias", `{"id":"acct-1","alias":" Work "}`)

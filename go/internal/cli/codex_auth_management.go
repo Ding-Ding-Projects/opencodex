@@ -143,10 +143,13 @@ func (m *cliCodexAuthManagement) accountProjection(id, alias, email, plan, logLa
 			ResetCredits: value.ResetCredits, UpdatedAt: value.UpdatedAt,
 		}
 	}
-	return management.CodexAuthAccount{
+	result := management.CodexAuthAccount{
 		ID: id, Alias: alias, Email: email, Plan: optionalString(plan), LogLabel: logLabel,
 		IsMain: main, Quota: quota, NeedsReauth: needsReauth, HasCredential: hasCredential,
 	}
+	result.Health = projectOAuthAccountHealth(oauthHealthInput{NeedsReauth: needsReauth, ReauthReason: "refresh_failed", Now: m.now()})
+	result.HealthLabel, result.HealthSummary, result.HealthAction = oauthAccountHealthFields("codex", id, result.Health)
+	return result
 }
 
 func (m *cliCodexAuthManagement) fetchUsage(ctx context.Context, accessToken, accountID string) (codex.WhamUsageResponse, bool) {

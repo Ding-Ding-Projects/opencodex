@@ -6,7 +6,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
@@ -39,6 +41,15 @@ func runStatus(ctx context.Context, args []string, streams IO) error {
 			serviceSummary = fmt.Sprintf("installed=%t running=%t", status.Installed, status.Running)
 		}
 	}
+	baseURL := ""
+	if live != nil {
+		baseURL = serviceBaseURLAt(*cfg, live.Port)
+	}
+	token, _ := platform.LoadServiceToken(os.Getenv("OPENCODEX_API_AUTH_TOKEN"), filepath.Join(mustConfigDir(), "service-api-token"))
+	if token == "" {
+		token = strings.TrimSpace(cfg.AuthToken)
+	}
+	oauthHealth := collectOAuthCLIHealth(ctx, oauthHealthCollectOptions{AuthPath: filepath.Join(mustConfigDir(), "auth.json"), BaseURL: baseURL, Token: token})
 	if jsonOutput {
 		configPath, _ := configPath()
 		pidPath, runtimePath, _ := runtimePaths()
@@ -63,6 +74,7 @@ func runStatus(ctx context.Context, args []string, streams IO) error {
 			"startup":        map[string]any{"healthy": healthy}, "defaultProvider": cfg.DefaultProvider,
 			"config":       map[string]any{"source": "file", "error": nil},
 			"service":      map[string]any{"summary": serviceSummary, "installed": serviceInstalled, "running": serviceRunning},
+			"oauthHealth":  oauthHealth,
 			"codexShim":    map[string]any{"summary": "not inspected"},
 			"codexPlugins": map[string]any{"status": "not_inspected"},
 			"codexRuntime": map[string]any{"path": "codex", "version": nil, "source": "fallback", "newerAvailable": nil, "warning": nil, "catalogClamp": map[string]any{"active": false, "removedEfforts": []string{}, "runtimeVersion": nil}},
@@ -72,6 +84,9 @@ func runStatus(ctx context.Context, args []string, streams IO) error {
 	fmt.Fprintf(streams.Out, "Service: %s\n", serviceSummary)
 	if pid > 0 && !platform.ProcessAlive(pid) {
 		fmt.Fprintln(streams.Out, "Runtime: stale PID file")
+	}
+	if block := formatOAuthHealthForStatus(oauthHealth); block != "" {
+		fmt.Fprintln(streams.Out, block)
 	}
 	return nil
 }

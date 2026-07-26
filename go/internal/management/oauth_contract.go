@@ -25,11 +25,21 @@ type OAuthLoginStart struct {
 }
 
 type OAuthAccount struct {
-	ID          string `json:"id"`
-	Alias       string `json:"alias,omitempty"`
-	Email       string `json:"email,omitempty"`
-	Active      bool   `json:"active"`
-	NeedsReauth bool   `json:"needsReauth,omitempty"`
+	ID            string             `json:"id"`
+	Alias         string             `json:"alias,omitempty"`
+	Email         string             `json:"email,omitempty"`
+	Active        bool               `json:"active"`
+	NeedsReauth   bool               `json:"needsReauth,omitempty"`
+	Health        OAuthAccountHealth `json:"health"`
+	HealthLabel   string             `json:"healthLabel"`
+	HealthSummary string             `json:"healthSummary"`
+	HealthAction  string             `json:"healthAction,omitempty"`
+}
+
+type OAuthAccountHealth struct {
+	Status string `json:"status"`
+	Until  string `json:"until,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type OAuthAccountSet struct {
@@ -92,6 +102,10 @@ type CodexAuthAccount struct {
 	Quota         *CodexAccountQuota `json:"quota"`
 	NeedsReauth   bool               `json:"needsReauth,omitempty"`
 	HasCredential bool               `json:"hasCredential"`
+	Health        OAuthAccountHealth `json:"health"`
+	HealthLabel   string             `json:"healthLabel"`
+	HealthSummary string             `json:"healthSummary"`
+	HealthAction  string             `json:"healthAction,omitempty"`
 }
 
 type CodexAccountImport struct {

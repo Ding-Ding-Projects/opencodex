@@ -20,3 +20,15 @@ func MaskEmail(value string) string {
 		return string(runes[0]) + "***" + string(runes[len(runes)-1]) + "@" + domain
 	}
 }
+
+func MaskAccountID(value string) string {
+	id := strings.TrimSpace(value)
+	if id == "" {
+		return ""
+	}
+	if len([]rune(id)) <= 4 {
+		return "account-…"
+	}
+	runes := []rune(id)
+	return "account-…" + string(runes[len(runes)-4:])
+}

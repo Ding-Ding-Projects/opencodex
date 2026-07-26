@@ -62,7 +62,7 @@ func TestOAuthRoutesMatchPublicManagementContract(t *testing.T) {
 	backend := &oauthBackendStub{
 		providers: []string{" XAI ", "xai", "anthropic"}, cancelled: true, mutationOK: true,
 		start:    OAuthLoginStart{URL: "https://login.example/authorize", Instructions: "continue", DeviceCode: "ABCD-1234"},
-		accounts: OAuthAccountSet{ActiveAccountID: "acct-1", Accounts: []OAuthAccount{{ID: "acct-1", Email: "person@example.com", Active: true}}},
+		accounts: OAuthAccountSet{ActiveAccountID: "acct-1", Accounts: []OAuthAccount{{ID: "acct-1", Email: "person@example.com", Active: true, Health: OAuthAccountHealth{Status: "healthy"}, HealthLabel: "Healthy", HealthSummary: "xai account-…ct-1: healthy"}}},
 		status:   OAuthStatus{Provider: "xai", LoggedIn: true, Done: true, Error: "Authorization: Bearer status-secret-value", Accounts: []OAuthAccount{{ID: "acct-1", Email: "person@example.com"}}},
 	}
 	api, err := New(Options{OAuth: backend})
@@ -92,6 +92,9 @@ func TestOAuthRoutesMatchPublicManagementContract(t *testing.T) {
 		if strings.Contains(response, "person@example.com") || !strings.Contains(response, "p***@example.com") {
 			t.Fatalf("%s email safety = %s", name, response)
 		}
+	}
+	if !strings.Contains(accounts.Body.String(), `"health":{"status":"healthy"}`) || !strings.Contains(accounts.Body.String(), `"healthLabel":"Healthy"`) || strings.Contains(accounts.Body.String(), `"healthSummary":"xai acct-1`) {
+		t.Fatalf("accounts health projection = %s", accounts.Body.String())
 	}
 	if strings.Contains(status.Body.String(), "status-secret-value") {
 		t.Fatalf("status leaked backend credential: %s", status.Body.String())
