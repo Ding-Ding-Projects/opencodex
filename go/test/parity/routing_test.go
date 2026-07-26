@@ -18,9 +18,9 @@ func TestRouterBackfillsRegistryCapabilitiesWithoutOverridingUserConfig(t *testi
 				ModelSuffixBracketStrip:        &configuredFalse,
 				PreserveReasoningContentModels: []string{"user-model"},
 			},
-			"ollama": {
+			"litellm": {
 				Adapter:             "openai-chat",
-				BaseURL:             "http://localhost:11434/v1",
+				BaseURL:             "http://localhost:4000/v1",
 				AllowPrivateNetwork: true,
 			},
 		},
@@ -39,11 +39,11 @@ func TestRouterBackfillsRegistryCapabilitiesWithoutOverridingUserConfig(t *testi
 		t.Fatalf("user capability list was not preserved: %v", got)
 	}
 
-	ollama, err := core.RouteModel(cfg, "ollama/local-model")
+	litellm, err := core.RouteModel(cfg, "litellm/local-model")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ollama.Provider.KeyOptional == nil || !*ollama.Provider.KeyOptional {
-		t.Fatalf("registry keyOptional was not backfilled: %#v", ollama.Provider.KeyOptional)
+	if litellm.Provider.KeyOptional == nil || !*litellm.Provider.KeyOptional {
+		t.Fatalf("registry keyOptional was not backfilled: %#v", litellm.Provider.KeyOptional)
 	}
 }

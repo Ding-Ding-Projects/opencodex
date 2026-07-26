@@ -28,6 +28,7 @@ func TestRouteModelOpenAIAndExplicitSlash(t *testing.T) {
 
 func TestRouteModelOpenAIDoesNotFallBack(t *testing.T) {
 	cfg := config.Default()
+	delete(cfg.Providers, "openai")
 	cfg.Providers["other"] = provider("openai-chat", "https://example.com/v1")
 	cfg.Providers[legacyOpenAIMultiProviderID] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://legacy.example/v1", DefaultModel: "legacy-model"}
 	_, err := RouteModel(cfg, "gpt-5.6")
