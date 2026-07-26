@@ -1,11 +1,13 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"reflect"
 	"testing"
 
+	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -146,6 +148,28 @@ func TestConvertWithOptionsReportsRawTerminalUsage(t *testing.T) {
 	})
 	if len(calls) != 1 || calls[0] != nil {
 		t.Fatalf("adapter EOF callbacks = %#v", calls)
+	}
+}
+
+func TestOpenAIAdapterUsageDetailsReachResponsesWire(t *testing.T) {
+	events, err := (&openaiadapter.ChatAdapter{}).ParseUnary(context.Background(), []byte(`{
+		"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+		"usage":{
+			"prompt_tokens":20,
+			"completion_tokens":10,
+			"total_tokens":30,
+			"prompt_tokens_details":{"cached_tokens":7},
+			"completion_tokens_details":{"reasoning_tokens":3}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, response := Convert("model", events)
+	inputDetails := response.Usage["input_tokens_details"].(map[string]any)
+	outputDetails := response.Usage["output_tokens_details"].(map[string]any)
+	if inputDetails["cached_tokens"] != 7 || outputDetails["reasoning_tokens"] != 3 {
+		t.Fatalf("adapter usage details did not reach wire: %#v", response.Usage)
 	}
 }
 

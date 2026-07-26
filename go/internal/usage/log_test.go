@@ -89,3 +89,25 @@ func TestLogPreservesContextTotalWithoutTreatingItAsTurnTotal(t *testing.T) {
 		t.Fatal("negative contextTotalTokens was accepted")
 	}
 }
+
+func TestLogSurfaceSanitizerAllowsClaudeDesktop(t *testing.T) {
+	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
+	base := Entry{Timestamp: 1, Provider: "p", Model: "m", Status: 200, UsageStatus: StatusUnreported}
+	desktop := base
+	desktop.RequestID, desktop.Surface = "desktop", SurfaceClaudeDesktop
+	invalid := base
+	invalid.RequestID, invalid.Surface = "invalid", Surface("other")
+	if err := log.Append(desktop); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Append(invalid); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := log.ReadAll()
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("entries=%#v err=%v", entries, err)
+	}
+	if entries[0].Surface != SurfaceClaudeDesktop || entries[1].Surface != "" {
+		t.Fatalf("surfaces=%q,%q", entries[0].Surface, entries[1].Surface)
+	}
+}

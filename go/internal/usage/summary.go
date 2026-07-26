@@ -141,7 +141,7 @@ func filterEntries(entries []Entry, window Range, now time.Time, surface string)
 		if since != nil && entry.Timestamp < *since {
 			continue
 		}
-		if surface == "claude" && entry.Surface != SurfaceClaude {
+		if surface == "claude" && entry.Surface != SurfaceClaude && entry.Surface != SurfaceClaudeDesktop {
 			continue
 		}
 		if surface == "codex" && entry.Surface == SurfaceClaude {

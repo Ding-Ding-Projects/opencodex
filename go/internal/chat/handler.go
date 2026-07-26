@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
+	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -24,19 +26,42 @@ type AdapterResolver func(model *types.ResolvedModel, transport *types.Transport
 
 // HandlerConfig supplies the existing routing and transport owners to compatibility handlers.
 type HandlerConfig struct {
-	Registry        types.Registry
-	Auth            types.AuthProvider
-	ResolveAdapter  AdapterResolver
-	Client          *http.Client
-	BodyLimit       int64
-	ResponseLimit   int64
-	Compactor       types.CompactionHandler
-	NativeAnthropic func(*types.ResolvedModel) bool
-	NativeCompact   func(*types.ResolvedModel) bool
-	ConnectTimeout  time.Duration
-	BodyStall       time.Duration
-	ClaudeEnabled   *bool
-	ClaudeDebug     *claude.DebugRing
+	Registry            types.Registry
+	Auth                types.AuthProvider
+	ResolveAdapter      AdapterResolver
+	Client              *http.Client
+	BodyLimit           int64
+	ResponseLimit       int64
+	Compactor           types.CompactionHandler
+	NativeAnthropic     func(*types.ResolvedModel) bool
+	NativeCompact       func(*types.ResolvedModel) bool
+	ConnectTimeout      time.Duration
+	BodyStall           time.Duration
+	ClaudeEnabled       *bool
+	ClaudeDebug         *claude.DebugRing
+	ClaudeModelMap      map[string]string
+	ClaudeBlockedSkills []string
+	SearchLoop          *search.Loop
+	OnUsage             func(*types.Usage)
+}
+
+func (c HandlerConfig) runSearch(ctx context.Context, prepared *preparedRequest) ([]types.AdapterEvent, bool, error) {
+	if c.SearchLoop == nil || prepared == nil || prepared.normalized == nil || prepared.normalized.WebSearch == nil {
+		return nil, false, nil
+	}
+	loop := *c.SearchLoop
+	if c.OnUsage != nil {
+		loop.OnUsage = c.OnUsage
+	}
+	events, err := loop.Run(ctx, prepared.normalized, prepared.adapter)
+	return events, true, err
+}
+
+func (c HandlerConfig) claudeInboundConfig() *claude.InboundConfig {
+	if len(c.ClaudeModelMap) == 0 && c.ClaudeBlockedSkills == nil {
+		return nil
+	}
+	return &claude.InboundConfig{ModelMap: c.ClaudeModelMap, BlockedSkills: c.ClaudeBlockedSkills}
 }
 
 type Handler struct{ config HandlerConfig }
@@ -69,12 +94,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
-		message := readProviderError(response.Body, h.config.ResponseLimit)
-		if message == "" {
-			message = fmt.Sprintf("upstream error (%d)", response.StatusCode)
-		}
+		details := readProviderErrorDetails(response.Body, h.config.ResponseLimit, response.StatusCode)
 		copyRetryAfter(w.Header(), response.Header)
-		writeUpstreamChatError(w, response.StatusCode, message)
+		writeUpstreamChatErrorDetails(w, response.StatusCode, details)
 		return
 	}
 	if normalized.Stream {
@@ -223,27 +245,49 @@ func readBounded(reader io.Reader, limit int64) ([]byte, error) {
 }
 
 func readProviderError(reader io.Reader, limit int64) string {
+	return readProviderErrorDetails(reader, limit, 0).message
+}
+
+type providerErrorDetails struct {
+	message   string
+	errorType string
+	code      string
+}
+
+func readProviderErrorDetails(reader io.Reader, limit int64, status int) providerErrorDetails {
 	data, _ := readBounded(reader, min64(limit, 1<<20))
 	var body struct {
 		Error   any    `json:"error"`
 		Message string `json:"message"`
 	}
+	details := providerErrorDetails{}
 	if json.Unmarshal(data, &body) == nil {
 		switch value := body.Error.(type) {
 		case string:
 			if value != "" {
-				return value
+				details.message = value
 			}
 		case map[string]any:
 			if message, ok := value["message"].(string); ok {
-				return message
+				details.message = message
 			}
+			details.errorType, _ = value["type"].(string)
+			details.code, _ = value["code"].(string)
 		}
-		if body.Message != "" {
-			return body.Message
+		if details.message == "" {
+			details.message = body.Message
 		}
 	}
-	return strings.TrimSpace(string(data))
+	if details.message == "" {
+		details.message = strings.TrimSpace(ocxlib.RedactSecretString(string(data)))
+	}
+	if details.message == "" && status != 0 {
+		details.message = fmt.Sprintf("upstream error (%d)", status)
+	}
+	if len(details.message) > 500 {
+		details.message = details.message[:500]
+	}
+	return details
 }
 
 func writeChatErrorFor(w http.ResponseWriter, err error) {
@@ -259,28 +303,37 @@ func writeChatError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]any{"message": message, "type": chatErrorType(status), "param": nil, "code": chatErrorCode(status)}})
 }
 
-// writeUpstreamChatError preserves the TypeScript Chat Completions envelope.
-// Upstream errors deliberately carry a null code; locally generated errors
-// retain their more specific OpenAI-compatible codes via writeChatError.
 func writeUpstreamChatError(w http.ResponseWriter, status int, message string) {
-	type errorBody struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-		Param   any    `json:"param"`
-		Code    any    `json:"code"`
+	writeUpstreamChatErrorDetails(w, status, providerErrorDetails{message: message})
+}
+
+func writeUpstreamChatErrorDetails(w http.ResponseWriter, status int, details providerErrorDetails) {
+	kind := details.errorType
+	if kind == "" {
+		switch {
+		case status == http.StatusUnauthorized:
+			kind = "authentication_error"
+		case status == http.StatusTooManyRequests:
+			kind = "rate_limit_error"
+		case status >= http.StatusInternalServerError:
+			kind = "server_error"
+		default:
+			kind = "invalid_request_error"
+		}
 	}
-	kind := "invalid_request_error"
-	switch {
-	case status == http.StatusUnauthorized:
-		kind = "authentication_error"
-	case status == http.StatusTooManyRequests:
-		kind = "rate_limit_error"
-	case status >= http.StatusInternalServerError:
-		kind = "server_error"
+	classified := chatErrorPayload(status, kind, details.code, details.message)
+	if details.code == ocxlib.CyberPolicyErrorCode {
+		status = http.StatusBadRequest
+	}
+	type errorBody struct {
+		Message any `json:"message"`
+		Type    any `json:"type"`
+		Param   any `json:"param"`
+		Code    any `json:"code"`
 	}
 	payload, _ := json.Marshal(struct {
 		Error errorBody `json:"error"`
-	}{Error: errorBody{Message: message, Type: kind}})
+	}{Error: errorBody{Message: classified["message"], Type: classified["type"], Param: nil, Code: classified["code"]}})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(payload)

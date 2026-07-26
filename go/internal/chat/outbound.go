@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -70,16 +71,34 @@ func WriteChatStream(ctx context.Context, w http.ResponseWriter, model string, e
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
-	started, sawTool, terminal := false, false, false
+	started, terminal := false, false
 	var usage *types.Usage
-	toolIndexByID := make(map[string]int)
-	nextToolIndex := 0
+	var tools chatToolBuffer
+	emittedTools := 0
 	ensureRole := func() error {
 		if started {
 			return nil
 		}
 		started = true
 		return writeChatData(w, chatChunk(id, model, created, map[string]any{"role": "assistant", "content": ""}, nil, nil), flusher)
+	}
+	emitTools := func() error {
+		calls := tools.calls()
+		for emittedTools < len(calls) {
+			if err := ensureRole(); err != nil {
+				return err
+			}
+			call := calls[emittedTools]
+			delta := map[string]any{"tool_calls": []any{map[string]any{
+				"index": emittedTools, "id": call.ID, "type": "function",
+				"function": map[string]any{"name": call.Name, "arguments": string(call.Arguments)},
+			}}}
+			if err := writeChatData(w, chatChunk(id, model, created, delta, nil, nil), flusher); err != nil {
+				return err
+			}
+			emittedTools++
+		}
+		return nil
 	}
 	for !terminal {
 		select {
@@ -89,6 +108,9 @@ func WriteChatStream(ctx context.Context, w http.ResponseWriter, model string, e
 			if !ok {
 				if terminal {
 					return nil
+				}
+				if err := emitTools(); err != nil {
+					return err
 				}
 				return writeChatStreamError(w, "upstream stream ended before a terminal event", flusher)
 			}
@@ -103,7 +125,7 @@ func WriteChatStream(ctx context.Context, w http.ResponseWriter, model string, e
 				if err := writeChatData(w, chatChunk(id, model, created, map[string]any{"content": event.Text}, nil, nil), flusher); err != nil {
 					return err
 				}
-			case types.EventReasoning:
+			case types.EventReasoning, types.EventThinkingDelta, types.EventReasoningRawDelta:
 				text := event.Reasoning
 				if text == "" {
 					text = event.Text
@@ -117,27 +139,10 @@ func WriteChatStream(ctx context.Context, w http.ResponseWriter, model string, e
 				if err := writeChatData(w, chatChunk(id, model, created, map[string]any{"reasoning_content": text}, nil, nil), flusher); err != nil {
 					return err
 				}
-			case types.EventToolCall:
-				if event.ToolCall == nil {
-					continue
-				}
-				if err := ensureRole(); err != nil {
-					return err
-				}
-				sawTool = true
-				call := event.ToolCall
-				toolIndex, known := toolIndexByID[call.ID]
-				if !known {
-					toolIndex = nextToolIndex
-					nextToolIndex++
-					toolIndexByID[call.ID] = toolIndex
-				}
-				arguments := string(call.Arguments)
-				if arguments == "" {
-					arguments = "{}"
-				}
-				delta := map[string]any{"tool_calls": []any{map[string]any{"index": toolIndex, "id": call.ID, "type": "function", "function": map[string]any{"name": call.Name, "arguments": arguments}}}}
-				if err := writeChatData(w, chatChunk(id, model, created, delta, nil, nil), flusher); err != nil {
+			case types.EventToolCall, types.EventToolCallStart, types.EventToolCallDelta, types.EventToolCallEnd:
+				tools.accept(event)
+			case types.EventAssistantBoundary:
+				if err := emitTools(); err != nil {
 					return err
 				}
 			case types.EventUsage:
@@ -146,20 +151,22 @@ func WriteChatStream(ctx context.Context, w http.ResponseWriter, model string, e
 				continue
 			case types.EventError:
 				terminal = true
-				message := event.Error
-				if message == "" {
-					message = "upstream request failed"
+				if err := emitTools(); err != nil {
+					return err
 				}
-				return writeChatStreamError(w, message, flusher)
+				return writeChatStreamEventError(w, event, flusher)
 			case types.EventDone:
 				terminal = true
 				if event.Usage != nil {
 					usage = event.Usage
 				}
+				if err := emitTools(); err != nil {
+					return err
+				}
 				if err := ensureRole(); err != nil {
 					return err
 				}
-				finish := chatFinishReason(event.StopReason, sawTool)
+				finish := chatFinishReason(event.StopReason, len(tools.calls()) > 0)
 				if err := writeChatData(w, chatChunk(id, model, created, map[string]any{}, &finish, usage), flusher); err != nil {
 					return err
 				}
@@ -173,6 +180,9 @@ func WriteChatStream(ctx context.Context, w http.ResponseWriter, model string, e
 				terminal = true
 				if event.Usage != nil {
 					usage = event.Usage
+				}
+				if err := emitTools(); err != nil {
+					return err
 				}
 				if event.Reason != "max_output_tokens" && event.Reason != "content_filter" {
 					if err := writeChatStreamError(w, fmt.Sprintf("upstream stream ended early (%s)", event.Reason), flusher); err != nil {
@@ -201,23 +211,21 @@ func WriteChatStream(ctx context.Context, w http.ResponseWriter, model string, e
 
 func foldChatEvents(events []types.AdapterEvent) (string, string, []types.ToolCall, *types.Usage, string, error) {
 	var content, reasoning strings.Builder
-	var calls []types.ToolCall
+	var tools chatToolBuffer
 	var usage *types.Usage
 	finish, done := "stop", false
 	for _, event := range events {
 		switch event.Type {
 		case types.EventTextDelta:
 			content.WriteString(event.Text)
-		case types.EventReasoning:
+		case types.EventReasoning, types.EventThinkingDelta, types.EventReasoningRawDelta:
 			if event.Reasoning != "" {
 				reasoning.WriteString(event.Reasoning)
 			} else {
 				reasoning.WriteString(event.Text)
 			}
-		case types.EventToolCall:
-			if event.ToolCall != nil {
-				calls = append(calls, *event.ToolCall)
-			}
+		case types.EventToolCall, types.EventToolCallStart, types.EventToolCallDelta, types.EventToolCallEnd:
+			tools.accept(event)
 		case types.EventUsage:
 			usage = event.Usage
 		case types.EventHeartbeat:
@@ -233,7 +241,7 @@ func foldChatEvents(events []types.AdapterEvent) (string, string, []types.ToolCa
 			if event.Usage != nil {
 				usage = event.Usage
 			}
-			finish = chatFinishReason(event.StopReason, len(calls) > 0)
+			finish = chatFinishReason(event.StopReason, len(tools.calls()) > 0)
 		case types.EventIncomplete:
 			done = true
 			if event.Usage != nil {
@@ -245,7 +253,7 @@ func foldChatEvents(events []types.AdapterEvent) (string, string, []types.ToolCa
 	if !done {
 		return "", "", nil, usage, "", fmt.Errorf("adapter stream ended without a terminal event")
 	}
-	return content.String(), reasoning.String(), calls, usage, finish, nil
+	return content.String(), reasoning.String(), tools.calls(), usage, finish, nil
 }
 
 func chatFinishReason(reason string, sawTool bool) string {
@@ -336,9 +344,41 @@ func writeChatData(w io.Writer, payload any, flusher http.Flusher) error {
 
 func writeChatStreamError(w io.Writer, message string, flusher http.Flusher) error {
 	status := streamErrorStatus(message)
-	payload := map[string]any{"error": map[string]any{"message": message, "type": chatErrorType(status), "param": nil, "code": chatErrorCode(status)}}
+	payload := map[string]any{"error": chatErrorPayload(status, "upstream_error", "", message)}
 	return writeChatData(w, payload, flusher)
 }
+
+func writeChatStreamEventError(w io.Writer, event types.AdapterEvent, flusher http.Flusher) error {
+	message := event.Error
+	if message == "" {
+		message = "upstream request failed"
+	}
+	status := event.StatusCode
+	if status == 0 {
+		status = streamErrorStatus(message)
+	}
+	payload := map[string]any{"error": chatErrorPayload(status, event.ErrorType, event.Code, message)}
+	return writeChatData(w, payload, flusher)
+}
+
+func chatErrorPayload(status int, errorType, explicitCode, message string) map[string]any {
+	if errorType == "" {
+		errorType = "upstream_error"
+	}
+	classified := lib.ClassifyError(status, errorType, message)
+	if explicitCode == lib.CyberPolicyErrorCode {
+		classified.Type = "invalid_request_error"
+		classified.Code = stringPointer(lib.CyberPolicyErrorCode)
+	} else if explicitCode == "model_not_found" {
+		classified.Type = "invalid_request_error"
+		classified.Code = stringPointer("model_not_found")
+	} else if explicitCode != "" && classified.Code == nil {
+		classified.Code = stringPointer(explicitCode)
+	}
+	return map[string]any{"message": classified.Message, "type": classified.Type, "param": nil, "code": classified.Code}
+}
+
+func stringPointer(value string) *string { return &value }
 
 func streamErrorStatus(message string) int {
 	lower := strings.ToLower(message)
@@ -368,6 +408,7 @@ func chatErrorType(status int) string {
 	}
 	return "invalid_request_error"
 }
+
 func chatErrorCode(status int) any {
 	if status == 401 {
 		return "invalid_api_key"
@@ -380,6 +421,7 @@ func chatErrorCode(status int) any {
 	}
 	return nil
 }
+
 func completionID() string {
 	data := make([]byte, 12)
 	_, _ = rand.Read(data)

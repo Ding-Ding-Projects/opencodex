@@ -5,10 +5,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -20,6 +23,15 @@ type incompleteHandlerAdapter struct {
 }
 
 type handlerAuth struct{ context *types.AuthContext }
+
+type chatSearchRunner struct{ usage *types.Usage }
+
+func (runner chatSearchRunner) Run(context.Context, *types.NormalizedRequest, types.Adapter) (search.TurnResult, error) {
+	return search.TurnResult{StatusCode: http.StatusOK, Events: []types.AdapterEvent{
+		{Type: types.EventTextDelta, Text: "searched"},
+		{Type: types.EventDone, Usage: runner.usage},
+	}}, nil
+}
 
 func (a handlerAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
 	return a.context, nil
@@ -109,11 +121,8 @@ func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
 			if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != test.wantRetry {
 				t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 			}
-			if !strings.Contains(response.Body.String(), `"type":"rate_limit_error"`) || !strings.Contains(response.Body.String(), "quota exhausted") {
-				t.Fatalf("error body = %s", response.Body.String())
-			}
 			if test.name == "chat completions" {
-				want := `{"error":{"message":"quota exhausted","type":"rate_limit_error","param":null,"code":null}}`
+				want := `{"error":{"message":"quota exhausted","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`
 				if response.Body.String() != want {
 					t.Fatalf("chat upstream envelope = %q, want %q", response.Body.String(), want)
 				}
@@ -122,6 +131,37 @@ func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
 				if response.Body.String() != want || response.Header().Get("Retry-After") != "" {
 					t.Fatalf("Messages 429 bytes=%q headers=%v, want %q", response.Body.String(), response.Header(), want)
 				}
+			}
+		})
+	}
+}
+
+func TestChatHandlerPreservesStructuredCyberAndModelErrors(t *testing.T) {
+	tests := []struct {
+		name, code, wantType string
+		upstreamStatus       int
+		wantStatus           int
+	}{
+		{name: "cyber policy overrides 5xx", code: "cyber_policy", wantType: "invalid_request_error", upstreamStatus: 502, wantStatus: 400},
+		{name: "model not found survives classifier", code: "model_not_found", wantType: "invalid_request_error", upstreamStatus: 502, wantStatus: 502},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.upstreamStatus)
+				_, _ = io.WriteString(w, `{"error":{"message":"structured failure","type":"server_error","code":"`+test.code+`"}}`)
+			}))
+			defer upstream.Close()
+			reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+			handler := NewHandler(HandlerConfig{Registry: reg, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+				return handlerAdapter{endpoint: upstream.URL}, nil
+			}})
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"acme/wire","messages":[{"role":"user","content":"hi"}]}`))
+			response := httptest.NewRecorder()
+			handler.Handle(response, request)
+			want := `{"error":{"message":"structured failure","type":"` + test.wantType + `","param":null,"code":"` + test.code + `"}}`
+			if response.Code != test.wantStatus || response.Body.String() != want {
+				t.Fatalf("response=%d body=%s want=%d %s", response.Code, response.Body.String(), test.wantStatus, want)
 			}
 		})
 	}
@@ -136,6 +176,9 @@ func TestMessagesHandlerReclassifiesTransientUpstreamAsOverloaded(t *testing.T) 
 	}{
 		{name: "default retry", status: http.StatusInternalServerError, wantRetry: "2"},
 		{name: "replace hidden upstream retry", status: http.StatusBadGateway, retryAfter: "9", wantRetry: "2"},
+		{name: "cloudflare unknown", status: 520, wantRetry: "2"},
+		{name: "cloudflare offline", status: 521, wantRetry: "2"},
+		{name: "cloudflare timeout", status: 522, wantRetry: "2"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -156,6 +199,93 @@ func TestMessagesHandlerReclassifiesTransientUpstreamAsOverloaded(t *testing.T) 
 			handler.Handle(response, request)
 			if response.Code != 529 || response.Header().Get("Retry-After") != test.wantRetry || !strings.Contains(response.Body.String(), `"type":"overloaded_error"`) {
 				t.Fatalf("response=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMessagesHandlerRecordsDesktopRequestAndErrorAfterAliasResolution(t *testing.T) {
+	claude.BuildDesktop3pRegistry(nil, []claude.Desktop3pRoutedModel{{Provider: "acme", ID: "wire"}})
+	alias := claude.ActiveDesktop3pAlias("acme", "wire")
+	before := claude.GetDesktopHealth()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":{"message":"offline"}}`)
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	handler := NewMessagesHandler(HandlerConfig{Registry: reg, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+		return handlerAdapter{endpoint: upstream.URL}, nil
+	}})
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"`+alias+`","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+	response := httptest.NewRecorder()
+	handler.Handle(response, request)
+
+	after := claude.GetDesktopHealth()
+	if response.Code != 529 || after.RequestCount != before.RequestCount+1 || after.ErrorCount != before.ErrorCount+1 || after.LastRequestAt == nil {
+		t.Fatalf("response=%d before=%#v after=%#v body=%s", response.Code, before, after, response.Body.String())
+	}
+}
+
+func TestMessagesHandlerConnectsSearchLoopUsageCallback(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	rawUsage := &types.Usage{InputTokens: 13, OutputTokens: 4, CachedInputTokens: 3}
+	var recorded *types.Usage
+	loop := &search.Loop{Runner: chatSearchRunner{usage: rawUsage}}
+	handler := NewMessagesHandler(HandlerConfig{
+		Registry: reg, SearchLoop: loop, OnUsage: func(value *types.Usage) { recorded = value },
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return handlerAdapter{endpoint: upstream.URL}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
+		"model":"acme/wire","max_tokens":10,
+		"tools":[{"type":"web_search_20250305"}],
+		"messages":[{"role":"user","content":"hi"}]
+	}`))
+	response := httptest.NewRecorder()
+	handler.Handle(response, request)
+	if response.Code != http.StatusOK || recorded == nil || recorded.InputTokens != 13 || recorded.CachedInputTokens != 3 {
+		t.Fatalf("response=%d body=%s usage=%#v", response.Code, response.Body.String(), recorded)
+	}
+}
+
+func TestMessagesHandlerWiresMetadataPromptCacheSessionHeaderOnly(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	for _, test := range []struct {
+		name, extra string
+		wantSession bool
+	}{
+		{name: "metadata key", extra: `,"metadata":{"user_id":"session-1"}`, wantSession: true},
+		{name: "system cohort", extra: `,"system":"stable cohort"`, wantSession: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var sessionID string
+			handler := NewMessagesHandler(HandlerConfig{
+				Registry: reg,
+				ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, incoming http.Header) (types.Adapter, error) {
+					sessionID = incoming.Get("session_id")
+					return incompleteHandlerAdapter{handlerAdapter: handlerAdapter{endpoint: upstream.URL}, events: []types.AdapterEvent{{Type: types.EventDone}}}, nil
+				},
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"acme/wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]`+test.extra+`}`))
+			response := httptest.NewRecorder()
+			handler.Handle(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
+			}
+			matched, _ := regexp.MatchString(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$`, sessionID)
+			if matched != test.wantSession {
+				t.Fatalf("session_id=%q want=%v", sessionID, test.wantSession)
 			}
 		})
 	}

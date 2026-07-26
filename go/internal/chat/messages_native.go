@@ -18,23 +18,23 @@ func (h *MessagesHandler) shouldPassthrough(model *types.ResolvedModel) bool {
 	return provider == "anthropic" || provider == "claude"
 }
 
-func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Request, raw []byte, prepared *preparedRequest) {
+func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Request, raw []byte, prepared *preparedRequest) bool {
 	var body map[string]any
 	if json.Unmarshal(raw, &body) != nil {
 		writeAnthropicError(w, 400, "invalid request body")
-		return
+		return false
 	}
 	body["model"] = prepared.resolved.Model
 	payload, _ := json.Marshal(body)
 	endpoint, err := nativeMessagesURL(prepared.transport.BaseURL)
 	if err != nil {
 		writeAnthropicError(w, 502, err.Error())
-		return
+		return false
 	}
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, strings.NewReader(string(payload)))
 	if err != nil {
 		writeAnthropicError(w, 500, err.Error())
-		return
+		return false
 	}
 	request.Header.Set("Content-Type", "application/json")
 	for _, name := range []string{"anthropic-version", "anthropic-beta", "accept"} {
@@ -59,7 +59,7 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 	result := DoWithHeaderDeadline(r.Context(), h.config.Client, request, h.config.ConnectTimeout)
 	if result.TimedOut {
 		writeAnthropicError(w, http.StatusGatewayTimeout, "anthropic passthrough timed out waiting for response headers")
-		return
+		return false
 	}
 	if result.Err != nil {
 		status := http.StatusBadGateway
@@ -67,7 +67,7 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 			status = 499
 		}
 		writeAnthropicError(w, status, result.Err.Error())
-		return
+		return false
 	}
 	response := result.Response
 	defer response.Body.Close()
@@ -79,8 +79,8 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if prepared.normalized.Stream && strings.Contains(contentType, "text/event-stream") {
 		w.WriteHeader(response.StatusCode)
-		_ = WriteAnthropicPassthroughStream(r.Context(), w, response.Body, h.config.BodyStall, h.config.ResponseLimit, nil)
-		return
+		err := WriteAnthropicPassthroughStream(r.Context(), w, response.Body, h.config.BodyStall, h.config.ResponseLimit, nil)
+		return err == nil && response.StatusCode >= 200 && response.StatusCode < 300
 	}
 	bodyResult := ReadBoundedPassthroughBody(r.Context(), response.Body, h.config.BodyStall, h.config.ResponseLimit)
 	if bodyResult.Err != nil {
@@ -94,10 +94,11 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 		default:
 			writeAnthropicError(w, http.StatusBadGateway, bodyResult.Err.Error())
 		}
-		return
+		return false
 	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(bodyResult.Data)
+	return response.StatusCode >= 200 && response.StatusCode < 300
 }
 
 func nativeMessagesURL(base string) (string, error) {

@@ -57,12 +57,13 @@ func ParseInbound(raw []byte) (*types.NormalizedRequest, error) {
 	}
 
 	req := &types.NormalizedRequest{ModelID: body.Model, Stream: body.Stream}
+	knownToolNames := make(map[string]string)
 	for _, rawMessage := range body.Messages {
 		var message chatMessageInput
 		if json.Unmarshal(rawMessage, &message) != nil {
 			continue
 		}
-		if err := appendChatMessage(req, message); err != nil {
+		if err := appendChatMessage(req, message, knownToolNames); err != nil {
 			return nil, err
 		}
 	}
@@ -85,7 +86,7 @@ func ChatCompletionsToNormalized(raw []byte) (*types.NormalizedRequest, error) {
 	return ParseInbound(raw)
 }
 
-func appendChatMessage(req *types.NormalizedRequest, message chatMessageInput) error {
+func appendChatMessage(req *types.NormalizedRequest, message chatMessageInput, knownToolNames map[string]string) error {
 	switch message.Role {
 	case "system", "developer":
 		if text := contentText(message.Content); strings.TrimSpace(text) != "" {
@@ -98,7 +99,7 @@ func appendChatMessage(req *types.NormalizedRequest, message chatMessageInput) e
 	case "assistant":
 		parts := assistantBlocks(message.Content)
 		for _, rawCall := range message.ToolCalls {
-			call, err := chatToolCallPart(rawCall)
+			call, err := chatToolCallPart(rawCall, knownToolNames)
 			if err != nil {
 				return err
 			}
@@ -180,7 +181,7 @@ func assistantBlocks(raw json.RawMessage) []map[string]any {
 	return out
 }
 
-func chatToolCallPart(raw json.RawMessage) (map[string]any, error) {
+func chatToolCallPart(raw json.RawMessage, knownToolNames map[string]string) (map[string]any, error) {
 	var call map[string]any
 	if json.Unmarshal(raw, &call) != nil {
 		return nil, &RequestError{Message: "tool_calls entries must be objects"}
@@ -198,8 +199,12 @@ func chatToolCallPart(raw json.RawMessage) (map[string]any, error) {
 		id = "call_" + randomHex(12)
 	}
 	if name == "" {
+		name = knownToolNames[id]
+	}
+	if name == "" {
 		return nil, &RequestError{Message: "tool_calls entries require function.name"}
 	}
+	knownToolNames[id] = name
 	arguments := fn["arguments"]
 	if arguments == nil {
 		arguments = call["arguments"]

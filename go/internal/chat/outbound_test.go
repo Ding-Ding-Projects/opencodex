@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -82,6 +83,104 @@ func TestChatUsageAlwaysEmitsDetailObjects(t *testing.T) {
 				t.Fatalf("chat usage = %s, want %s", encodedGot, encodedWant)
 			}
 		})
+	}
+}
+
+func TestOpenAIAdapterUsageDetailsReachChatWire(t *testing.T) {
+	events, err := (&openaiadapter.ChatAdapter{}).ParseUnary(context.Background(), []byte(`{
+		"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+		"usage":{
+			"prompt_tokens":20,
+			"completion_tokens":10,
+			"total_tokens":30,
+			"prompt_tokens_details":{"cached_tokens":7},
+			"completion_tokens_details":{"reasoning_tokens":3}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := BuildChatCompletion(events, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := body["usage"].(map[string]any)
+	inputDetails := usage["prompt_tokens_details"].(map[string]any)
+	outputDetails := usage["completion_tokens_details"].(map[string]any)
+	if inputDetails["cached_tokens"] != 7 || outputDetails["reasoning_tokens"] != 3 {
+		t.Fatalf("adapter usage details did not reach chat wire: %#v", usage)
+	}
+}
+
+func TestBuildChatCompletionPreservesRawReasoningAndCoalescesToolFragments(t *testing.T) {
+	body, err := BuildChatCompletion([]types.AdapterEvent{
+		{Type: types.EventReasoningRawDelta, Text: "private thought"},
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call_1", Name: "exec", Arguments: json.RawMessage(`{"cmd":`)}},
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call_1", Name: "exec", Arguments: json.RawMessage(`"pwd"}`)}},
+		{Type: types.EventDone},
+	}, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	choice := body["choices"].([]any)[0].(map[string]any)
+	message := choice["message"].(map[string]any)
+	if message["reasoning_content"] != "private thought" {
+		t.Fatalf("reasoning_content = %#v", message["reasoning_content"])
+	}
+	calls := message["tool_calls"].([]map[string]any)
+	if len(calls) != 1 {
+		t.Fatalf("tool calls = %#v", calls)
+	}
+	function := calls[0]["function"].(map[string]any)
+	if function["name"] != "exec" || function["arguments"] != `{"cmd":"pwd"}` {
+		t.Fatalf("function = %#v", function)
+	}
+}
+
+func TestWriteChatStreamEmitsFragmentedToolCallOnce(t *testing.T) {
+	events := make(chan types.AdapterEvent, 4)
+	events <- types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call_1", Name: "exec", Arguments: json.RawMessage(`{"cmd":`)}}
+	events <- types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call_1", Name: "exec", Arguments: json.RawMessage(`"pwd"}`)}}
+	events <- types.AdapterEvent{Type: types.EventDone}
+	close(events)
+	w := httptest.NewRecorder()
+	if err := WriteChatStream(context.Background(), w, "m", events); err != nil {
+		t.Fatal(err)
+	}
+	body := w.Body.String()
+	if strings.Count(body, `"id":"call_1"`) != 1 || !strings.Contains(body, `"arguments":"{\"cmd\":\"pwd\"}"`) {
+		t.Fatalf("fragmented tool call was not emitted once: %s", body)
+	}
+}
+
+func TestWriteChatStreamPreservesExplicitCyberPolicyError(t *testing.T) {
+	events := make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{
+		Type: types.EventError, StatusCode: 502, ErrorType: "upstream_error", Code: "cyber_policy",
+		Error: "blocked by upstream safety policy",
+	}
+	close(events)
+	w := httptest.NewRecorder()
+	if err := WriteChatStream(context.Background(), w, "m", events); err != nil {
+		t.Fatal(err)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"type":"invalid_request_error"`) || !strings.Contains(body, `"code":"cyber_policy"`) || strings.Contains(body, "[DONE]") {
+		t.Fatalf("explicit error metadata was not preserved: %s", body)
+	}
+}
+
+func TestWriteChatStreamPreservesExplicitModelNotFound(t *testing.T) {
+	events := make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{Type: types.EventError, StatusCode: 502, ErrorType: "server_error", Code: "model_not_found", Error: "missing model"}
+	close(events)
+	w := httptest.NewRecorder()
+	if err := WriteChatStream(context.Background(), w, "m", events); err != nil {
+		t.Fatal(err)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"type":"invalid_request_error"`) || !strings.Contains(body, `"code":"model_not_found"`) || strings.Contains(body, "[DONE]") {
+		t.Fatalf("structured model error was not preserved: %s", body)
 	}
 }
 
@@ -172,6 +271,26 @@ func TestBuildAnthropicMessageUsesCacheExclusiveInput(t *testing.T) {
 	}
 }
 
+func TestBuildAnthropicMessageUsesCanonicalClaudeRichEvents(t *testing.T) {
+	body, err := buildAnthropicMessage([]types.AdapterEvent{
+		{Type: types.EventReasoningRawDelta, Text: "private"},
+		{Type: types.EventThinkingSignature, Signature: "signed"},
+		{Type: types.EventRedactedThinking, Data: "redacted"},
+		{Type: types.EventWebSearchCallBegin, ID: "search-1", Queries: []string{"query"}},
+		{Type: types.EventWebSearchCallEnd, ID: "search-1", WebSearchStatus: "completed", Sources: []types.URLCitation{{URL: "https://example.test", Title: "Result"}}},
+		{Type: types.EventDone},
+	}, "claude-requested")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, _ := json.Marshal(body)
+	for _, want := range []string{"private", "signed", "redacted_thinking", "server_tool_use", "web_search_tool_result", "web_search_requests"} {
+		if !strings.Contains(string(wire), want) {
+			t.Fatalf("canonical Claude output missing %q: %s", want, wire)
+		}
+	}
+}
+
 func TestWriteAnthropicStreamFailsClosedOnTruncation(t *testing.T) {
 	events := make(chan types.AdapterEvent)
 	close(events)
@@ -214,6 +333,27 @@ func TestWriteAnthropicStreamMessageStartIsByteOrderedWithUUIDLength(t *testing.
 	pattern := regexp.MustCompile(`^event: message_start\ndata: \{"type":"message_start","message":\{"id":"msg_[0-9a-f]{32}","type":"message","role":"assistant","content":\[\],"model":"claude-wire","stop_reason":null,"stop_sequence":null,"usage":\{"input_tokens":0,"output_tokens":0\}\}\}$`)
 	if !pattern.MatchString(first) {
 		t.Fatalf("message_start bytes differ from TypeScript: %s", first)
+	}
+}
+
+func TestWriteAnthropicStreamUsesCanonicalClaudeRichEvents(t *testing.T) {
+	events := make(chan types.AdapterEvent, 6)
+	events <- types.AdapterEvent{Type: types.EventReasoningRawDelta, Text: "private"}
+	events <- types.AdapterEvent{Type: types.EventThinkingSignature, Signature: "signed"}
+	events <- types.AdapterEvent{Type: types.EventRedactedThinking, Data: "redacted"}
+	events <- types.AdapterEvent{Type: types.EventWebSearchCallBegin, ID: "search-1", Queries: []string{"query"}}
+	events <- types.AdapterEvent{Type: types.EventWebSearchCallEnd, ID: "search-1", WebSearchStatus: "completed", Sources: []types.URLCitation{{URL: "https://example.test", Title: "Result"}}}
+	events <- types.AdapterEvent{Type: types.EventDone}
+	close(events)
+	w := httptest.NewRecorder()
+	if err := writeAnthropicStream(context.Background(), w, "m", events); err != nil {
+		t.Fatal(err)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"private", "signed", "redacted_thinking", "server_tool_use", "web_search_tool_result", "web_search_requests"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("canonical Claude stream missing %q: %s", want, body)
+		}
 	}
 }
 

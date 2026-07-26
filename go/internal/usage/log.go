@@ -26,8 +26,9 @@ const (
 type Surface string
 
 const (
-	SurfaceCodex  Surface = "codex"
-	SurfaceClaude Surface = "claude"
+	SurfaceCodex         Surface = "codex"
+	SurfaceClaude        Surface = "claude"
+	SurfaceClaudeDesktop Surface = "claude-desktop"
 )
 
 type Attempt struct {
@@ -219,6 +220,9 @@ func validUsage(value types.Usage) bool {
 }
 
 func normalizeEntry(entry Entry) Entry {
+	if entry.Surface != SurfaceClaude && entry.Surface != SurfaceClaudeDesktop {
+		entry.Surface = ""
+	}
 	entry.UpstreamError = capString(entry.UpstreamError, 500)
 	entry.ErrorCode = capString(entry.ErrorCode, 64)
 	entry.TerminalStatus = capString(entry.TerminalStatus, 64)

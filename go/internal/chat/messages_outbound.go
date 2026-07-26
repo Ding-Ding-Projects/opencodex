@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
+	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -19,55 +20,23 @@ type incompleteError struct {
 func (e incompleteError) Error() string { return e.message }
 
 func buildAnthropicMessage(events []types.AdapterEvent, model string) (map[string]any, error) {
-	content := make([]any, 0)
-	var usage *types.Usage
-	stop, done := "end_turn", false
+	done := false
 	for _, event := range events {
 		switch event.Type {
-		case types.EventTextDelta:
-			if event.Text != "" {
-				content = appendTextBlock(content, "text", "text", event.Text)
-			}
-		case types.EventReasoning:
-			text := event.Reasoning
-			if text == "" {
-				text = event.Text
-			}
-			if text != "" {
-				content = appendTextBlock(content, "thinking", "thinking", text)
-			}
-		case types.EventToolCall:
-			if event.ToolCall != nil {
-				input := any(map[string]any{})
-				if json.Unmarshal(event.ToolCall.Arguments, &input) != nil {
-					input = map[string]any{}
-				}
-				content = append(content, map[string]any{"type": "tool_use", "id": event.ToolCall.ID, "name": event.ToolCall.Name, "input": input})
-				stop = "tool_use"
-			}
-		case types.EventUsage:
-			usage = event.Usage
-		case types.EventHeartbeat:
-			continue
 		case types.EventError:
-			return nil, statusError{status: http.StatusBadGateway, message: firstNonEmpty(event.Error, "upstream request failed")}
+			status := event.StatusCode
+			if status == 0 {
+				status = http.StatusBadGateway
+			}
+			return nil, statusError{status: status, message: firstNonEmpty(event.Error, "upstream request failed")}
 		case types.EventDone:
 			done = true
-			if event.Usage != nil {
-				usage = event.Usage
-			}
-			if stop != "tool_use" {
-				stop = anthropicStopReason(event.StopReason)
-			}
 		case types.EventIncomplete:
-			if event.Usage != nil {
-				usage = event.Usage
-			}
 			switch event.Reason {
 			case "max_output_tokens":
-				stop, done = "max_tokens", true
+				done = true
 			case "content_filter":
-				stop, done = "refusal", true
+				done = true
 			default:
 				message := firstNonEmpty(event.Message, fmt.Sprintf("upstream response was incomplete (%s)", event.Reason))
 				return nil, incompleteError{status: 529, message: message}
@@ -77,188 +46,108 @@ func buildAnthropicMessage(events []types.AdapterEvent, model string) (map[strin
 	if !done {
 		return nil, statusError{status: http.StatusBadGateway, message: "adapter stream ended without a terminal event"}
 	}
-	return map[string]any{"id": "msg_" + randomHex(16), "type": "message", "role": "assistant", "content": content, "model": model, "stop_reason": stop, "stop_sequence": nil, "usage": anthropicUsage(usage)}, nil
-}
-
-func appendTextBlock(content []any, kind, field, text string) []any {
-	if len(content) > 0 {
-		if last, ok := content[len(content)-1].(map[string]any); ok && last["type"] == kind {
-			last[field] = fmt.Sprint(last[field]) + text
-			return content
-		}
+	_, canonical := claude.ConvertEvents(model, events)
+	content := make([]any, len(canonical.Content))
+	for index := range canonical.Content {
+		content[index] = canonical.Content[index]
 	}
-	block := map[string]any{"type": kind, field: text}
-	if kind == "thinking" {
-		block["signature"] = "ocx" + fmt.Sprint(time.Now().UnixMilli())
-	}
-	return append(content, block)
+	return map[string]any{
+		"id": canonical.ID, "type": canonical.Type, "role": canonical.Role,
+		"content": content, "model": canonical.Model, "stop_reason": canonical.StopReason,
+		"stop_sequence": canonical.StopSequence, "usage": canonical.Usage,
+	}, nil
 }
 
 func writeAnthropicStream(ctx context.Context, w http.ResponseWriter, model string, events <-chan types.AdapterEvent) error {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(200)
-	flusher, _ := w.(http.Flusher)
-	started, terminal, sawTool, index := false, false, false, 0
-	open := ""
-	var usage *types.Usage
-	emit := func(name string, data any) error {
-		encoded, err := marshalAnthropicJSON(data)
-		if err != nil {
-			return err
-		}
-		if _, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, encoded); err != nil {
-			return err
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		return nil
-	}
-	start := func() error {
-		if started {
-			return nil
-		}
-		started = true
-		if err := emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_" + randomHex(16), "type": "message", "role": "assistant", "content": []any{}, "model": model, "stop_reason": nil, "stop_sequence": nil, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0}}}); err != nil {
-			return err
-		}
-		return emit("ping", map[string]any{"type": "ping"})
-	}
-	closeBlock := func() error {
-		if open == "" {
-			return nil
-		}
-		if open == "thinking" {
-			_ = emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": index - 1, "delta": map[string]any{"type": "signature_delta", "signature": "ocx" + fmt.Sprint(time.Now().UnixMilli())}})
-		}
-		err := emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index - 1})
-		open = ""
-		return err
-	}
-	for !terminal {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case event, ok := <-events:
-			if !ok {
-				if err := start(); err != nil {
-					return err
-				}
-				_ = closeBlock()
-				return emit("error", anthropicErrorBody(http.StatusBadGateway, "upstream stream ended before a terminal event", "overloaded_error"))
-			}
-			if err := start(); err != nil {
-				return err
-			}
-			switch event.Type {
-			case types.EventTextDelta, types.EventReasoning:
-				kind, deltaType, field, text := "text", "text_delta", "text", event.Text
-				if event.Type == types.EventReasoning {
-					kind, deltaType, field, text = "thinking", "thinking_delta", "thinking", event.Reasoning
-					if text == "" {
-						text = event.Text
-					}
-				}
-				if text == "" {
-					continue
-				}
-				if open != kind {
-					if err := closeBlock(); err != nil {
-						return err
-					}
-					block := map[string]any{"type": kind, field: ""}
-					if kind == "thinking" {
-						block["signature"] = ""
-					}
-					if err := emit("content_block_start", map[string]any{"type": "content_block_start", "index": index, "content_block": block}); err != nil {
-						return err
-					}
-					index++
-					open = kind
-				}
-				if err := emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": index - 1, "delta": map[string]any{"type": deltaType, field: text}}); err != nil {
-					return err
-				}
-			case types.EventToolCall:
-				if event.ToolCall == nil {
-					continue
-				}
-				if err := closeBlock(); err != nil {
-					return err
-				}
-				sawTool = true
-				call := event.ToolCall
-				if err := emit("content_block_start", map[string]any{"type": "content_block_start", "index": index, "content_block": map[string]any{"type": "tool_use", "id": call.ID, "name": call.Name, "input": map[string]any{}}}); err != nil {
-					return err
-				}
-				if err := emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": index, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(call.Arguments)}}); err != nil {
-					return err
-				}
-				if err := emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index}); err != nil {
-					return err
-				}
-				index++
-			case types.EventUsage:
-				usage = event.Usage
-			case types.EventHeartbeat:
-				continue
-			case types.EventError:
-				terminal = true
-				_ = closeBlock()
-				status := event.StatusCode
-				if status == 0 {
-					status = http.StatusBadGateway
-				}
-				override := ""
-				if status == 500 || status == 502 || status == 503 || status == 504 {
-					override = "overloaded_error"
-				}
-				return emit("error", anthropicErrorBody(status, firstNonEmpty(event.Error, "upstream request failed"), override))
-			case types.EventDone:
-				terminal = true
-				if event.Usage != nil {
-					usage = event.Usage
-				}
-				if err := closeBlock(); err != nil {
-					return err
-				}
-				stop := anthropicStopReason(event.StopReason)
-				if sawTool {
-					stop = "tool_use"
-				}
-				if err := emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": anthropicUsage(usage)}); err != nil {
-					return err
-				}
-				return emit("message_stop", map[string]any{"type": "message_stop"})
-			case types.EventIncomplete:
-				terminal = true
-				if event.Usage != nil {
-					usage = event.Usage
-				}
-				if err := closeBlock(); err != nil {
-					return err
-				}
-				switch event.Reason {
-				case "max_output_tokens", "content_filter":
-					stop := "max_tokens"
-					if event.Reason == "content_filter" {
-						stop = "refusal"
-					}
-					if err := emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": anthropicUsage(usage)}); err != nil {
-						return err
-					}
-					return emit("message_stop", map[string]any{"type": "message_stop"})
-				default:
-					message := firstNonEmpty(event.Message, fmt.Sprintf("upstream response was incomplete (%s)", event.Reason))
-					return emit("error", anthropicErrorBody(529, message, "overloaded_error"))
-				}
-			}
-		}
-	}
-	return nil
+	w.WriteHeader(http.StatusOK)
+	return claude.StreamEvents(ctx, anthropicStreamWriter{ResponseWriter: w}, model, normalizeAnthropicStreamEvents(ctx, events))
 }
 
+type anthropicStreamWriter struct{ http.ResponseWriter }
+
+func (writer anthropicStreamWriter) Write(frame []byte) (int, error) {
+	text := string(frame)
+	marker := "\ndata: "
+	start := strings.Index(text, marker)
+	end := strings.LastIndex(text, "\n\n")
+	if start < 0 || end < start {
+		_, err := writer.ResponseWriter.Write(frame)
+		return len(frame), err
+	}
+	var data map[string]any
+	if json.Unmarshal([]byte(text[start+len(marker):end]), &data) != nil {
+		_, err := writer.ResponseWriter.Write(frame)
+		return len(frame), err
+	}
+	if message, ok := data["message"].(map[string]any); ok {
+		if id, ok := message["id"].(string); ok && strings.HasPrefix(id, "msg_") && len(id) == len("msg_")+24 {
+			message["id"] = id + randomHex(4)
+		}
+	}
+	payload, err := marshalAnthropicJSON(data)
+	if err != nil {
+		return 0, err
+	}
+	rewritten := text[:start+len(marker)] + string(payload) + text[end:]
+	_, err = writer.ResponseWriter.Write([]byte(rewritten))
+	return len(frame), err
+}
+
+func (writer anthropicStreamWriter) Flush() {
+	if flusher, ok := writer.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func normalizeAnthropicStreamEvents(ctx context.Context, events <-chan types.AdapterEvent) <-chan types.AdapterEvent {
+	out := make(chan types.AdapterEvent)
+	go func() {
+		defer close(out)
+		terminal := false
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-events:
+				if !ok {
+					if !terminal {
+						out <- types.AdapterEvent{Type: types.EventError, StatusCode: 529, Error: "upstream stream ended before a terminal event"}
+					}
+					return
+				}
+				if event.Type == types.EventError && (event.StatusCode == 0 || isTransientAnthropicStatus(event.StatusCode)) {
+					event.StatusCode = 529
+				}
+				if event.Type == types.EventIncomplete && event.Reason != "max_output_tokens" && event.Reason != "content_filter" && event.Message == "" {
+					event.Message = fmt.Sprintf("upstream response was incomplete (%s)", event.Reason)
+				}
+				if event.Type == types.EventDone || event.Type == types.EventError || event.Type == types.EventIncomplete {
+					terminal = true
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- event:
+				}
+				if terminal {
+					return
+				}
+			}
+		}
+	}()
+	return out
+}
+
+func isTransientAnthropicStatus(status int) bool {
+	switch status {
+	case 500, 502, 503, 504, 520, 521, 522:
+		return true
+	default:
+		return false
+	}
+}
 func anthropicUsage(value *types.Usage) map[string]any {
 	if value == nil {
 		return map[string]any{"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}

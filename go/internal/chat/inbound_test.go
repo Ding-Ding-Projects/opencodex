@@ -2,7 +2,10 @@ package chat
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 )
 
 func TestParseInboundTranslatesMessagesToolsImagesAndOptions(t *testing.T) {
@@ -64,6 +67,27 @@ func TestParseInboundRejectsMalformedToolHistory(t *testing.T) {
 	}
 }
 
+func TestParseInboundRecoversToolNameFromEarlierCallID(t *testing.T) {
+	req, err := ParseInbound([]byte(`{
+		"model":"m",
+		"messages":[
+			{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"inspect","arguments":"{}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"done"},
+			{"role":"assistant","tool_calls":[{"id":"call_1","function":{"arguments":"{\"path\":\"a\"}"}}]}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(req.Context.Messages[2].Content, &parts); err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 || parts[0]["name"] != "inspect" {
+		t.Fatalf("recovered tool call = %#v", parts)
+	}
+}
+
 func TestParseAnthropicInboundTranslatesToolAndThinking(t *testing.T) {
 	req, model, err := parseAnthropicInbound([]byte(`{
 		"model":"claude-x","max_tokens":100,"thinking":{"type":"enabled","budget_tokens":8000},
@@ -80,6 +104,41 @@ func TestParseAnthropicInboundTranslatesToolAndThinking(t *testing.T) {
 	}
 	if len(req.Context.Messages) != 3 || req.Context.Messages[1].Role != "toolResult" || req.Context.Messages[1].ToolCallID != "toolu_1" {
 		t.Fatalf("messages = %#v", req.Context.Messages)
+	}
+}
+
+func TestParseAnthropicInboundUsesCanonicalAliasDirectiveAndPolicy(t *testing.T) {
+	req, requested, surface, err := parseAnthropicInboundWithConfig([]byte(`{
+		"model":"claude-ocx-fallback--model[1M]",
+		"system":"pin <!-- ocx-route: claude-ocx-openrouter--real[1m] -->",
+		"metadata":{"user_id":"session-1"},
+		"tools":[{"type":"web_search_20250305","name":"web_search"}],
+		"messages":[{"role":"user","content":"hi"}]
+	}`), &claude.InboundConfig{ModelMap: map[string]string{"unused": "other/model"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested != "claude-ocx-openrouter--real" || req.ModelID != "openrouter/real" || surface != claude.InboundSurfaceClaude {
+		t.Fatalf("requested=%q normalized=%q surface=%q", requested, req.ModelID, surface)
+	}
+	if req.Options.PromptCacheKey == "" || req.WebSearch == nil {
+		t.Fatalf("canonical policy was not applied: options=%#v metadata=%#v webSearch=%#v", req.Options, req.Metadata, req.WebSearch)
+	}
+	if strings.Contains(req.ModelID, "[1M]") {
+		t.Fatalf("context marker survived: %q", req.ModelID)
+	}
+}
+
+func TestParseAnthropicInboundAppliesConfiguredModelMap(t *testing.T) {
+	req, _, _, err := parseAnthropicInboundWithConfig([]byte(`{
+		"model":"claude-custom-20260726",
+		"messages":[{"role":"user","content":"hi"}]
+	}`), &claude.InboundConfig{ModelMap: map[string]string{"claude-custom": "provider/wire"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ModelID != "provider/wire" {
+		t.Fatalf("mapped model = %q", req.ModelID)
 	}
 }
 
