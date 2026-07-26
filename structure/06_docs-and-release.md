@@ -40,8 +40,8 @@ bun run build
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | `pull_request`, `push` to `main`/`dev`/`preview`/`dev2-go`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs source typecheck/tests, privacy scan, release-helper syntax check, and GUI lint/build; `npm-global-smoke` (Node only, **no setup-bun**) installs the exact packed archive and runs `ocx help` through its package-local Go artifact. |
-| `.github/workflows/go-ci.yml` | Pushes to `dev2-go` touching Go, native packaging, package metadata, or governing workflow paths, or manual dispatch | Quality gate for the temporary Go rewrite track: build, vet, test, race detection where supported, six-target cross-compilation (darwin/linux/windows × amd64/arm64), a six-name dry-run inventory, and the Go E2E suite. Superseded runs on the same ref are cancelled. |
-| `.github/workflows/release.yml` | Manual dispatch only | npm publish/dry-run workflow. It requires the exact `GITHUB_SHA` to have a successful Cross-platform CI run before publish or dry-run. |
+| `.github/workflows/go-ci.yml` | Pushes to `dev2-go`, `main`, or `preview` touching Go, native packaging, package metadata, or governing workflow paths, or manual dispatch | Go/package release quality gate: build, vet, test, race detection where supported, six-target cross-compilation (darwin/linux/windows × amd64/arm64), a six-name dry-run inventory, and the Go E2E suite. Every job installs pinned Bun 1.3.14 so mandatory Go-to-TypeScript compatibility tests run on each operating system. Superseded runs on the same ref are cancelled. |
+| `.github/workflows/release.yml` | Manual dispatch only | npm publish/dry-run workflow. It requires the exact `GITHUB_SHA` to have successful Cross-platform CI and Go CI runs before publish or dry-run. |
 | `.github/workflows/deploy-docs.yml` | `push` to `main` touching `docs-site/**` or the workflow, or manual dispatch | Build and publish the Astro/Starlight docs site to GitHub Pages. |
 | `.github/workflows/service-lifecycle.yml` | `push` touching `src/service.ts`, `src/cli/index.ts`, or the workflow, or manual dispatch | Linux systemd smoke test: install, verify, `ocx stop` stops the service, uninstall. |
 
@@ -118,10 +118,11 @@ before publish. A dry-run performs all archive and asset preparation but cannot 
 Git push, or GitHub Release mutations. A real run publishes the private retained archive and uses
 freshly materialized, immediately revalidated bytes as the seven GitHub Release assets. It then
 downloads the remote assets, normalizes local modes, and verifies their inventory and bytes against
-the retained archive. Post-notes tag and GitHub Release changes are owned by
-`scripts/reconcile-release-assets.ts`, which uses bounded argument-vector `git`/`gh` calls and
-re-reads the authoritative remote tag before every mutation and before final success. Docs
-publishing is separate.
+the retained archive. Registry visibility must prove both immutable version integrity and the
+requested npm dist-tag before GitHub reconciliation. Post-notes tag and GitHub Release changes are
+owned by `scripts/reconcile-release-assets.ts`, which receives that npm integrity and dist-tag, uses
+bounded argument-vector `git`/`gh` calls, revalidates npm identity and the authoritative remote tag
+before every mutation, and repeats both checks before final success. Docs publishing is separate.
 
 ## Release metadata invariants
 
@@ -194,6 +195,7 @@ The CI intentionally does not build docs, run coverage, or perform remote Ubuntu
 Those stay outside the default gate until a concrete regression justifies the extra runtime.
 
 The Release workflow remains manual and publish-focused. Before any dry-run or publish step, it
-checks that the exact release commit (`GITHUB_SHA`) already has a successful Cross-platform CI run.
-This keeps release runs short and makes release a deployment of a verified commit rather than a
-second CI pipeline.
+checks that the exact release commit (`GITHUB_SHA`) already has successful Cross-platform CI and Go
+CI runs. Go CI runs on `dev2-go`, `main`, and `preview`, with pinned Bun 1.3.14 in every job for the
+mandatory cross-runtime compatibility test. This keeps release runs short and makes release a
+deployment of a verified commit rather than a second CI pipeline.

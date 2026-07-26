@@ -262,6 +262,13 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("main releases must use a stable semver version");
     expect(workflow).toContain("preview releases must use a preview prerelease version");
 
+    const ciGate = workflowStep(workflow, /^Require successful Cross-platform and Go CI for this commit$/);
+    expect(ciGate).toContain('"ci.yml|Cross-platform CI"');
+    expect(ciGate).toContain('"go-ci.yml|Go CI"');
+    expect(ciGate).toContain('--commit "$GITHUB_SHA"');
+    expect(ciGate).toContain('.headSha == $sha');
+    expect(ciGate).toContain('.conclusion == "success"');
+
     // Release notes include PR categories and the full channel commit range.
     expect(workflow).toContain("releases/generate-notes");
     expect(workflow).toContain("git log --pretty=format:'- %s (%h)'");
@@ -1757,12 +1764,14 @@ describe("GitHub Actions hardening", () => {
   test("release workflow classifies exact retries only after immutable identities exist", async () => {
     const workflow = await readText(".github/workflows/release.yml");
     const classify = workflowStep(workflow, /^Classify exact release retry state$/);
+    const smoke = workflowStep(workflow, /^Post-publish registry smoke$/);
     const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
 
     expect(classify).toContain("pack.json");
     expect(classify).toContain("dist.integrity");
     expect(classify).toContain("dist-tag");
     expect(classify).toContain("NPM_RELEASE_STATE");
+    expect(classify).toContain("NPM_EXPECTED_INTEGRITY");
     expect(classify).toContain("GITHUB_RELEASE_CANDIDATE");
     expect(classify).not.toContain("GITHUB_RELEASE_STATE=exact");
     expect(classify).toContain("GITHUB_SHA");
@@ -1776,6 +1785,14 @@ describe("GitHub Actions hardening", () => {
     expect(release).not.toContain("git push origin");
     expect(release).toContain('--archive-sha256 "$TARBALL_SHA256"');
     expect(release).toContain('--native-dir "$upload_native_dir"');
+    expect(release).toContain('--npm-tag "$NPM_DIST_TAG"');
+    expect(release).toContain('--npm-integrity "$NPM_EXPECTED_INTEGRITY"');
+
+    expect(smoke).toContain("NPM_DIST_TAG: ${{ inputs.tag }}");
+    expect(smoke).toContain('dist.integrity');
+    expect(smoke).toContain('"dist-tags.${NPM_DIST_TAG}"');
+    expect(smoke).toContain('"$remote_integrity" != "$NPM_EXPECTED_INTEGRITY"');
+    expect(smoke).toContain('"$tagged_version" = "$RELEASE_VERSION"');
   });
 
   test("GitHub release assets are exactly the six binaries and checksum manifest", async () => {
@@ -1783,12 +1800,13 @@ describe("GitHub Actions hardening", () => {
     const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
     const reconciler = await readText("scripts/reconcile-release-assets.ts");
     expect(reconciler).toContain("const names = [...nativeArtifactNames(version), `ocx_${version}_checksums.txt`]");
-    expect(reconciler).toContain("paths: names.map(name => join(nativeDir, name))");
+    expect(reconciler).toContain("return Promise.all(names.map(async name =>");
     expect(release).toContain("reconcile-release-assets.ts");
     expect(reconciler).toContain('"--verify-tag"');
     expect(reconciler).toContain('"--draft=false"');
-    expect(reconciler).toContain('"--clobber"');
-    expect(reconciler).toContain("downloadAndVerify");
+    expect(reconciler).not.toContain('"--clobber"');
+    expect(reconciler).toContain('"--method", "DELETE"');
+    expect(reconciler).toContain("downloadAsset");
   });
 
   test("dev2-go changes activate both package and Go release ownership gates", async () => {
@@ -1797,6 +1815,19 @@ describe("GitHub Actions hardening", () => {
 
     expect(ci).toMatch(/push:[\s\S]*?branches: \[main, preview, dev, dev2-go\]/);
     expect(ci).toContain("npm run verify:native-install");
+    expect(goCi).toMatch(/push:[\s\S]*?branches: \[dev2-go, main, preview\]/);
+    expect(count(goCi, "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6")).toBe(3);
+    expect(count(goCi, "bun-version: 1.3.14")).toBe(3);
+    for (const [job, nextJob] of [
+      ["build-and-test", "cross-compile"],
+      ["cross-compile", "e2e"],
+      ["e2e", undefined],
+    ] as const) {
+      const tail = goCi.split(`\n  ${job}:\n`)[1]!;
+      const block = nextJob ? tail.split(`\n  ${nextJob}:\n`)[0]! : tail;
+      expect(block).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
+      expect(block).toContain("bun-version: 1.3.14");
+    }
 
     for (const path of [
       '"bin/**"',
