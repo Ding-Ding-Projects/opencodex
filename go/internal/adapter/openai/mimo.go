@@ -90,6 +90,9 @@ func (a *MimoAdapter) BuildRequest(ctx context.Context, req *types.NormalizedReq
 	}
 	httpReq.URL = parsedURL
 	httpReq.Body = io.NopCloser(bytes.NewReader(payload))
+	httpReq.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(payload)), nil
+	}
 	httpReq.ContentLength = int64(len(payload))
 	httpReq.Header = make(http.Header)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -103,6 +106,35 @@ func (a *MimoAdapter) BuildRequest(ctx context.Context, req *types.NormalizedReq
 		httpReq.Header.Set("Accept", "application/json")
 	}
 	return httpReq, nil
+}
+
+// Do performs MiMo's provider-specific fetch path. A 401 invalidates the
+// anonymous bootstrap JWT and retries the same request exactly once; a 403 is
+// an anti-abuse rejection and is returned without retrying.
+func (a *MimoAdapter) Do(ctx context.Context, request *http.Request) (*http.Response, error) {
+	if request == nil {
+		return nil, fmt.Errorf("MiMo request is nil")
+	}
+	response, err := a.httpClient().Do(request.Clone(ctx))
+	if err != nil || response.StatusCode != http.StatusUnauthorized {
+		return response, err
+	}
+	drainAndClose(response.Body)
+	a.ResetJWT()
+	jwt, err := a.getJWT(ctx)
+	if err != nil {
+		return nil, err
+	}
+	retry := request.Clone(ctx)
+	if request.GetBody == nil {
+		return nil, fmt.Errorf("MiMo request body cannot be replayed after 401")
+	}
+	retry.Body, err = request.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("replay MiMo request body: %w", err)
+	}
+	retry.Header.Set("Authorization", "Bearer "+jwt)
+	return a.httpClient().Do(retry)
 }
 
 func (a *MimoAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan types.AdapterEvent {
