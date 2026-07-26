@@ -28,14 +28,17 @@ Exact ownership:
 - validate source archive bytes once, then exclusively write a mode-0600 retained copy
   under the helper-created output root; later paths point only at that copy;
 - run `tar -tzf` by argument vector and require each exact canonical native member once;
-- run `tar -xOzf <retained> -- <exact-member>` by argument vector, stream with an exact
-  report-size cap, and write only helper-created regular files with canonical modes;
+- run `tar -xOzf <retained> -- <exact-member>` by argument vector. `prepare` uses the
+  typed exact `pack.json.files` size; `materialize`/`verify` use named 40 MiB binary and
+  1 MiB manifest caps, followed by exact observed-size/digest comparison;
 - never let tar write filesystem paths, so traversal/link metadata cannot escape;
 - call `validateNativeDirectory(<output>/package/bin/native, version)` and rehash retained bytes;
 - exclusively write an atomic exact three-line receipt for `TARBALL`,
   `TARBALL_SHA256`, and `RELEASE_NATIVE_DIR`; reject CR/LF/NUL in every value;
-- `verify` requires the retained archive to be regular/non-symlink with matching SHA-256
-  and reruns `validateNativeDirectory` immediately before mutation;
+- `verify` requires the retained archive to be regular/non-symlink with matching SHA-256,
+  reruns `validateNativeDirectory`, then freshly streams every canonical archive member
+  and compares its exact byte count/SHA-256 to the matching directory file immediately
+  before mutation;
 - on failure remove only paths created by this invocation, with bounded child-process
   output and explicit nonzero/stderr diagnostics; never execute npm/git/gh.
 
@@ -57,7 +60,8 @@ Cases:
 6. traversal, absolute, duplicate, extra, symlink, and hardlink member fixtures cannot
    create an escaped file and reject before receipt;
 7. corrupt manifest/artifact archive rejects and emits no receipt;
-8. mutate retained archive, binary, and manifest after prepare; each `verify` call fails;
+8. mutate retained archive, binary, manifest, and a coherent binary+matching-manifest
+   pair after prepare; each `verify` call fails through direct archive binding;
 9. pre-existing/dangling-symlink receipt rejects without truncation or injected env lines.
 
 All temp directories are removed in `finally`; tests do not touch repository
@@ -120,9 +124,9 @@ implementation keeps the existing notes body verbatim):
 
       - name: Classify exact release retry state
         # Read-only npm/git/GitHub queries. Writes NPM_RELEASE_STATE=fresh|exact and
-        # GITHUB_RELEASE_STATE=fresh|exact only after the identity matrix below.
-        # Conflicting package integrity/dist-tag, tag SHA, target, title, body, or
-        # prerelease flag exits before any mutation.
+        # GITHUB_RELEASE_CANDIDATE=absent|present. Conflicting package integrity,
+        # dist-tag, or tag SHA exits before any mutation. Final release metadata state
+        # is deliberately deferred until notes_file exists.
 
       - name: Publish exact tarball
         if: ${{ inputs.dry-run != true }}
@@ -141,8 +145,9 @@ implementation keeps the existing notes body verbatim):
 The classifier runs after the pack exists. For npm it compares `pack.json[0].integrity`
 to registry `dist.integrity` and verifies the requested dist-tag. For Git it permits only
 an absent tag or a tag resolving to `GITHUB_SHA`. For an existing GitHub Release it
-requires same tag target plus exact generated title/body/prerelease metadata before any
-`upload --clobber`; this comparison occurs after notes assembly and before mutation.
+records only absent/present plus the same-SHA tag invariant. After notes assembly, a
+second read-only block computes `GITHUB_RELEASE_STATE=fresh|exact` by requiring exact
+generated title/body/prerelease metadata before any `upload --clobber`.
 The earlier Preflight release metadata step therefore changes same-SHA/existing-version
 errors into recovery-candidate notices, while retaining immediate failure for a tag at a
 different SHA. No exact-state decision is made before the retained archive and notes exist.
@@ -194,8 +199,10 @@ The final mutation/recovery branch is:
 ```
 
 After either branch, download exactly the seven named assets into a fresh directory,
-require no extras, and run canonical directory validation plus byte-for-byte SHA-256
-comparison against the upload directory. A failed/partial upload therefore fails the run
+require no extras, chmod the six downloaded binaries to 0755 and manifest to 0644, then
+run archive-bound canonical validation plus byte-for-byte SHA-256 comparison against the
+upload directory. The remote contract is inventory+bytes, not transport mode preservation.
+A failed/partial upload therefore fails the run
 but the next exact-SHA rerun repairs it idempotently.
 
 Before a recovery upload, query the current asset-name list and require it to be a subset
@@ -263,8 +270,12 @@ Extend the release test with exact assertions:
 - archive build/helper precede publish, which precedes tag/release;
 - the final create call includes `"${assets[@]}"` and the array has seven explicit paths;
 - exact npm retry skips publish only on matching registry integrity and dist-tag;
+- GitHub candidate presence is recorded before notes, but exact release state is decided
+  only after generated title/body/prerelease metadata exists;
 - same-SHA tag and exact partial release resume through `upload --clobber`, then a fresh
-  download is byte-verified; conflicts fail before mutation;
+  download is mode-normalized and byte-verified against the retained archive; conflicts
+  fail before mutation;
+- coherent binary+manifest mutation fails direct archive-member comparison;
 - an executed fake-command harness covers dry-run zero mutation and interruptions after
   npm publish, tag push, release creation, and partial asset upload;
 - `ci.yml` includes `dev2-go` and preserves poison-install verification;

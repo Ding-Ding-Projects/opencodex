@@ -112,10 +112,15 @@ finished directory must pass `validateNativeDirectory`.
 receipt containing newline-safe absolute `TARBALL`, 64-hex `TARBALL_SHA256`, and
 absolute `RELEASE_NATIVE_DIR`. On failure it removes only helper-created partial paths;
 it never removes a pre-existing caller path. `verify` rechecks the retained regular
-archive and canonical directory immediately before an external mutation. `materialize`
+archive and canonical directory immediately before an external mutation. It also streams
+each canonical archive member again and compares its byte count and SHA-256 directly to
+the corresponding native-directory file, so a coherently changed binary+manifest pair
+cannot detach the directory from the retained archive. `materialize`
 repeats the stdout-only member materialization from the retained archive into a second
 fresh directory and writes a fresh receipt. It never runs npm, git, or gh. Spawn failures,
-nonzero exits, excess output, and stderr are bounded and surfaced.
+nonzero exits, excess output, and stderr are bounded and surfaced. Initial prepare uses
+the exact typed pack-report size per member; later retained-archive modes use the named
+40 MiB binary and 1 MiB manifest caps, then direct archive↔directory byte comparison.
 
 Activation matrix:
 
@@ -146,8 +151,10 @@ The old combined `Publish (or dry-run)` step becomes:
    version as fresh, exact retry, or conflict. Existing npm is recoverable only when
    registry `dist.integrity` equals `pack.json` and the requested dist-tag already maps
    to that version. Existing tags must resolve to `GITHUB_SHA`. An existing release is
-   accepted initially only as present with a same-SHA tag; after notes assembly it must
-   match the expected tag/title/prerelease/body and same-SHA tag exactly or fail.
+   recorded initially as `GITHUB_RELEASE_CANDIDATE=absent|present` with a same-SHA tag.
+   Only after notes assembly does the workflow compute
+   `GITHUB_RELEASE_STATE=fresh|exact` by comparing expected tag/title/prerelease/body;
+   mismatch fails immediately before create/upload.
 3. **Publish exact tarball** — real-publish-only. It runs `verify` immediately first.
    Fresh state runs `npm publish "$TARBALL" --ignore-scripts ...`; exact state skips npm
    so a failed later GitHub operation can safely resume without republishing.
@@ -159,8 +166,9 @@ The old combined `Publish (or dry-run)` step becomes:
    expected asset, keeps exact bytes, and uses `gh release upload --clobber` only for
    missing or mismatched names. Existing asset names must be a subset of the expected
    seven before repair and exactly the expected seven afterward. It then downloads all
-   seven assets into a third fresh directory,
-   verifies the canonical inventory/digests, and only then succeeds. Same-SHA tags are
+   seven assets into a third fresh directory, normalizes local modes to canonical
+   0755/0644 (GitHub assets guarantee bytes, not npm-tar modes), and verifies the
+   archive-bound inventory/digests before succeeding. Same-SHA tags are
    reusable; absent tags are created; conflicting tags/releases always fail.
 
 Thus dry-run executes every byte-producing and byte-validating operation, while
@@ -196,6 +204,14 @@ The private copy, stdout-only materialization, immediate verify modes, and exact
 reconciliation above are the resulting design replacement. Medium receipt ownership,
 bounded spawning, activation, and cleanup findings are also folded in.
 
+## A round 2 fold-back
+
+Round 2 also returned `VERDICT: FAIL`; its three High findings are accepted. `verify`
+now binds every native file directly to freshly streamed retained-archive bytes, GitHub
+state is split into pre-notes candidate and post-notes final classification, and remote
+downloads normalize local modes before canonical byte validation. The stale runbook and
+ambiguous later-mode size caps are corrected below.
+
 ## Verification
 
 ```bash
@@ -206,7 +222,7 @@ bun run build:gui
 npm pack --json > pack.json
 npm run verify:native-package
 npm run verify:native-install
-bun scripts/prepare-release-assets.ts --pack pack.json --output "$fresh" --env-file "$envfile"
+bun scripts/prepare-release-assets.ts prepare --pack pack.json --output "$fresh" --receipt "$receipt"
 go test ./...
 go test -race ./...
 go vet ./...
