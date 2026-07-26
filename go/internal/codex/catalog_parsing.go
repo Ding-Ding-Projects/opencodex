@@ -2,10 +2,13 @@ package codex
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -22,6 +25,28 @@ type RawCatalog struct {
 var mediaGenerationModel = regexp.MustCompile(`(?i)(?:^|[/_-])(?:image|video)(?:[/_-]|$)|(?:^|[/_-])(?:dall-e|dalle|imagen|sora|veo|flux|kling|seedance|hailuo|stable-diffusion|sdxl|midjourney)(?:[/_-]|$|\d)`)
 
 var routedModelCompatibilityExclusions = map[string]bool{"opencode-go/hy3-preview": true}
+var upstreamNativeMultiAgentVersions = map[string]string{"gpt-5.6-sol": "v2", "gpt-5.6-terra": "v2", "gpt-5.6-luna": "v1"}
+
+func CatalogBackupPathFor(catalogPath, configDir string) string {
+	absolute, err := filepath.Abs(catalogPath)
+	if err != nil {
+		absolute = filepath.Clean(catalogPath)
+	}
+	if filepath.Separator == '\\' {
+		absolute = strings.ToLower(absolute)
+	}
+	digest := sha256.Sum256([]byte(absolute))
+	return filepath.Join(configDir, fmt.Sprintf("catalog-backup-%x.json", digest[:8]))
+}
+
+func SameCatalogPath(left, right string) bool {
+	left, _ = filepath.Abs(left)
+	right, _ = filepath.Abs(right)
+	if filepath.Separator == '\\' {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
 
 func ParseRawCatalog(data []byte) (RawCatalog, error) {
 	if len(data) > MaxCatalogBytes {
@@ -48,6 +73,68 @@ func ReadRawCatalog(path string) (RawCatalog, error) {
 		return RawCatalog{}, err
 	}
 	return ParseRawCatalog(data)
+}
+
+func FindNativeCatalogTemplate(catalog RawCatalog) RawCatalogEntry {
+	for _, entry := range catalog.Models {
+		slug, _ := entry["slug"].(string)
+		if slug != "" && !strings.Contains(slug, "/") {
+			if _, ok := entry["base_instructions"]; ok {
+				return entry
+			}
+		}
+	}
+	return nil
+}
+
+func CatalogHasRoutedEntries(catalog RawCatalog) bool {
+	for _, entry := range catalog.Models {
+		if slug, _ := entry["slug"].(string); strings.Contains(slug, "/") {
+			return true
+		}
+	}
+	return false
+}
+
+func EnsureCatalogBackup(catalogPath, backupPath string, catalog RawCatalog) error {
+	if _, err := os.Stat(backupPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if onDisk, err := ReadRawCatalog(catalogPath); err == nil && !CatalogHasRoutedEntries(onDisk) {
+		data, readErr := os.ReadFile(catalogPath)
+		if readErr != nil {
+			return readErr
+		}
+		return atomicWriteFile(backupPath, data, 0o600)
+	}
+	if CatalogHasRoutedEntries(catalog) {
+		return nil
+	}
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(backupPath, append(data, '\n'), 0o600)
+}
+
+func ReadNativeBaseline(backupPath string) map[string]int {
+	catalog, err := ReadRawCatalog(backupPath)
+	if err != nil {
+		return map[string]int{}
+	}
+	result := map[string]int{}
+	for _, entry := range catalog.Models {
+		slug, _ := entry["slug"].(string)
+		if slug == "" || strings.Contains(slug, "/") {
+			continue
+		}
+		if priority, ok := positiveCatalogNumber(entry["priority"]); ok {
+			result[slug] = priority
+		}
+	}
+	return result
 }
 
 func IsMediaGenerationModelID(id string) bool { return mediaGenerationModel.MatchString(id) }
@@ -90,17 +177,74 @@ func NormalizeServiceTiers(entry RawCatalogEntry) RawCatalogEntry {
 	return entry
 }
 
+func ApplyNativeOpenAIContextOverride(entry RawCatalogEntry) {
+	slug, _ := entry["slug"].(string)
+	if slug == "" || strings.Contains(slug, "/") {
+		return
+	}
+	window, ok := NativeOpenAIContextWindow(slug)
+	if !ok {
+		return
+	}
+	entry["context_window"] = window
+	entry["auto_compact_token_limit"] = window * 9 / 10
+	if _, exists := entry["max_context_window"]; exists {
+		entry["max_context_window"] = window
+	}
+}
+
+func ApplyMultiAgentMode(entries []RawCatalogEntry, mode string) []RawCatalogEntry {
+	for _, entry := range entries {
+		if mode == "v1" || mode == "v2" {
+			entry["multi_agent_version"] = mode
+			continue
+		}
+		slug, _ := entry["slug"].(string)
+		if pinned := upstreamNativeMultiAgentVersions[slug]; pinned != "" {
+			entry["multi_agent_version"] = pinned
+		} else {
+			delete(entry, "multi_agent_version")
+		}
+	}
+	return entries
+}
+
 func EnsureStrictCatalogFields(entry RawCatalogEntry, preserveExactInputModalities, routed bool) RawCatalogEntry {
-	setDefault(entry, "supports_reasoning_summaries", false)
-	setDefault(entry, "default_reasoning_summary", "none")
-	setDefault(entry, "support_verbosity", true)
-	setDefault(entry, "default_verbosity", "low")
-	setDefault(entry, "apply_patch_tool_type", "freeform")
-	setDefault(entry, "truncation_policy", map[string]any{"mode": "tokens", "limit": 10000})
-	setDefault(entry, "supports_parallel_tool_calls", true)
-	setDefault(entry, "supports_image_detail_original", false)
-	setDefault(entry, "experimental_supported_tools", []any{})
-	if _, ok := entry["input_modalities"].([]any); !ok && !preserveExactInputModalities {
+	if _, ok := entry["supports_reasoning_summaries"].(bool); !ok {
+		entry["supports_reasoning_summaries"] = false
+	}
+	if _, ok := entry["default_reasoning_summary"].(string); !ok {
+		entry["default_reasoning_summary"] = "none"
+	}
+	if _, ok := entry["support_verbosity"].(bool); !ok {
+		entry["support_verbosity"] = true
+	}
+	if _, ok := entry["default_verbosity"].(string); !ok {
+		entry["default_verbosity"] = "low"
+	}
+	if _, ok := entry["apply_patch_tool_type"].(string); !ok {
+		entry["apply_patch_tool_type"] = "freeform"
+	}
+	if policy, ok := entry["truncation_policy"].(map[string]any); !ok || policy == nil {
+		entry["truncation_policy"] = map[string]any{"mode": "tokens", "limit": 10000}
+	}
+	if _, ok := entry["supports_parallel_tool_calls"].(bool); !ok {
+		entry["supports_parallel_tool_calls"] = true
+	}
+	if _, ok := entry["supports_image_detail_original"].(bool); !ok {
+		entry["supports_image_detail_original"] = false
+	}
+	if _, ok := entry["experimental_supported_tools"].([]any); !ok {
+		if _, stringsOK := entry["experimental_supported_tools"].([]string); !stringsOK {
+			entry["experimental_supported_tools"] = []any{}
+		}
+	}
+	modalitiesArray := false
+	switch entry["input_modalities"].(type) {
+	case []any, []string:
+		modalitiesArray = true
+	}
+	if !modalitiesArray && !preserveExactInputModalities {
 		entry["input_modalities"] = []any{"text"}
 	}
 	contextWindow, ok := positiveCatalogNumber(entry["context_window"])
@@ -109,7 +253,7 @@ func EnsureStrictCatalogFields(entry RawCatalogEntry, preserveExactInputModaliti
 		entry["context_window"] = contextWindow
 	}
 	maxContext, maxOK := positiveCatalogNumber(entry["max_context_window"])
-	if !maxOK || (routed && maxContext > contextWindow) {
+	if !maxOK || ((routed || strings.Contains(stringValue(entry["slug"]), "/")) && maxContext > contextWindow) {
 		entry["max_context_window"] = contextWindow
 	}
 	setDefault(entry, "effective_context_window_percent", 95)

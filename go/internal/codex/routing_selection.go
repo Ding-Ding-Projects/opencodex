@@ -109,6 +109,74 @@ func (r *Router) ResolveCodexAccountForThread(threadID string, config *RoutingCo
 	return ""
 }
 
+// PreviewCodexAccountForRequest mirrors account selection without mutating the
+// active account, affinity map, persisted config, or quota probe state.
+func (r *Router) PreviewCodexAccountForRequest(threadID string, config *RoutingConfig, now time.Time) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	nowMillis := now.UnixMilli()
+	if threadID != "" {
+		if entry, found := r.threadAccounts[threadID]; found &&
+			nowMillis-entry.lastUsedAt <= CodexThreadAffinityIdleTTL.Milliseconds() &&
+			r.generationLiveLocked(entry.accountID, entry.generation) &&
+			r.selectableLocked(config, entry.accountID, nowMillis) &&
+			!r.shouldFailoverLocked(config, entry.accountID, nowMillis) {
+			threshold := thresholdOrDefault(config.AutoSwitchThreshold)
+			if threshold > 0 {
+				quota, ok := r.quotas[entry.accountID]
+				var quotaPointer *AccountQuota
+				if ok {
+					quotaPointer = &quota
+				}
+				usage := ComputeCodexUsageScore(quotaPointer, r.accountPlanLocked(config, entry.accountID))
+				if usage >= threshold {
+					if best := r.pickLowerUsageLocked(config, entry.accountID, usage, nowMillis); best != entry.accountID {
+						return best
+					}
+				}
+			}
+			return entry.accountID
+		}
+	}
+	active := config.ActiveCodexAccountID
+	if active == "" {
+		return r.pickLowestUsageLocked(config, "", nowMillis)
+	}
+	if !r.selectableLocked(config, active, nowMillis) {
+		if fallback := r.pickLowestUsageLocked(config, active, nowMillis); fallback != "" {
+			active = fallback
+		} else if r.hasConfiguredPoolAccountLocked(config, active, nowMillis) {
+			return active
+		} else {
+			return ""
+		}
+	}
+	threshold := thresholdOrDefault(config.AutoSwitchThreshold)
+	if threshold > 0 {
+		quota, ok := r.quotas[active]
+		var quotaPointer *AccountQuota
+		if ok {
+			quotaPointer = &quota
+		}
+		usage := ComputeCodexUsageScore(quotaPointer, r.accountPlanLocked(config, active))
+		if usage >= threshold {
+			active = r.pickLowerUsageLocked(config, active, usage, nowMillis)
+		}
+	}
+	if r.shouldFailoverLocked(config, active, nowMillis) {
+		if best := r.pickLowestUsageLocked(config, active, nowMillis); best != "" {
+			active = best
+		}
+	}
+	if !r.isUsableLocked(config, active, nowMillis) || r.cooldownUntilLocked(active, nowMillis) != 0 {
+		if r.hasConfiguredPoolAccountLocked(config, active, nowMillis) {
+			return active
+		}
+		return ""
+	}
+	return active
+}
+
 func (r *Router) ResolveCodexAccountForThreadDetailed(threadID string, config *RoutingConfig, now time.Time) CodexThreadResolution {
 	r.mu.Lock()
 	defer r.mu.Unlock()

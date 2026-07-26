@@ -102,8 +102,12 @@ func EffectiveComboDefault(configured string, common []string) string {
 }
 
 func UniqueCatalogModelsForPublicList(models []CatalogModel) []CatalogModel {
+	skipped := ResolveSlugAliasCollisions(models)
 	comboSlugs := map[string]bool{}
-	for _, model := range models {
+	for index, model := range models {
+		if skipped[index] {
+			continue
+		}
 		if model.Provider == ComboCatalogProvider {
 			comboSlugs[CatalogModelSlug(model)] = true
 		}
@@ -119,6 +123,59 @@ func UniqueCatalogModelsForPublicList(models []CatalogModel) []CatalogModel {
 		out = append(out, model)
 	}
 	return out
+}
+
+// ResolveSlugAliasCollisions prefers a plain-hyphen native id over an encoded
+// slash id when both collapse to the same Codex-facing slug.
+func ResolveSlugAliasCollisions(models []CatalogModel) map[int]bool {
+	skipped := map[int]bool{}
+	winner := map[string]int{}
+	for index, model := range models {
+		if model.Provider == ComboCatalogProvider {
+			continue
+		}
+		key := CatalogModelSlug(model)
+		prior, exists := winner[key]
+		if !exists {
+			winner[key] = index
+			continue
+		}
+		priorPlain := !strings.Contains(models[prior].ID, "/")
+		currentPlain := !strings.Contains(model.ID, "/")
+		if currentPlain && !priorPlain {
+			skipped[prior] = true
+			winner[key] = index
+		} else {
+			skipped[index] = true
+		}
+	}
+	return skipped
+}
+
+func UniqueCatalogModelsForRawPublicList(models []CatalogModel) []CatalogModel {
+	publicID := func(model CatalogModel) string {
+		if model.Alias != "" {
+			return model.Alias
+		}
+		return model.Provider + "/" + model.ID
+	}
+	comboIDs := map[string]bool{}
+	for _, model := range models {
+		if model.Provider == ComboCatalogProvider {
+			comboIDs[publicID(model)] = true
+		}
+	}
+	seen := map[string]bool{}
+	result := make([]CatalogModel, 0, len(models))
+	for _, model := range models {
+		id := publicID(model)
+		if model.Provider != ComboCatalogProvider && comboIDs[id] || seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, model)
+	}
+	return result
 }
 
 func catalogMetadataInt(model CatalogModel, key string) (int, bool) {
