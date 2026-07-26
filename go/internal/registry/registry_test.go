@@ -46,3 +46,29 @@ func TestRegistryResolveModelDecodesKnownAlias(t *testing.T) {
 		t.Fatalf("bare resolved = %#v", bare)
 	}
 }
+
+func TestRegistryResolveModelMatchesRoutingPrecedence(t *testing.T) {
+	reg := New(
+		Provider{ID: "openai", DefaultModel: "gpt-default"},
+		Provider{ID: "anthropic", DefaultModel: "claude-default", Models: []ModelDefinition{{ID: "claude-known"}}},
+		Provider{ID: "custom", DefaultModel: "custom-default", Models: []ModelDefinition{{ID: "vendor/model"}}},
+	)
+	if err := reg.SetDefaultProvider("custom"); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct{ selector, provider, model string }{
+		{"custom/vendor-model", "custom", "vendor/model"},
+		{"gpt-new", "openai", "gpt-new"},
+		{"claude-known", "anthropic", "claude-known"},
+		{"unknown-model", "custom", "unknown-model"},
+	}
+	for _, test := range tests {
+		resolved, err := reg.ResolveModel(test.selector)
+		if err != nil || resolved.Provider != test.provider || resolved.Model != test.model {
+			t.Errorf("ResolveModel(%q)=%+v err=%v", test.selector, resolved, err)
+		}
+	}
+	if err := reg.SetDefaultProvider("missing"); err == nil {
+		t.Fatal("unknown default provider accepted")
+	}
+}

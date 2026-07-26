@@ -237,6 +237,26 @@ func routedProviderConfig(name string, user config.ProviderConfig) (config.Provi
 	out.NoTemperatureModels = union(entry.NoTemperatureModels, user.NoTemperatureModels)
 	out.NoTopPModels = union(entry.NoTopPModels, user.NoTopPModels)
 	out.NoPenaltyModels = union(entry.NoPenaltyModels, user.NoPenaltyModels)
+	out.AutoToolChoiceOnlyModels = union(entry.AutoToolChoiceOnlyModels, user.AutoToolChoiceOnlyModels)
+	out.PreserveReasoningContentModels = union(entry.PreserveReasoningContentModels, user.PreserveReasoningContentModels)
+	out.ThinkingToggleModels = union(entry.ThinkingToggleModels, user.ThinkingToggleModels)
+	out.ThinkingBudgetModels = union(entry.ThinkingBudgetModels, user.ThinkingBudgetModels)
+	if out.ParallelToolCalls == nil && entry.ParallelToolCalls != nil {
+		value := *entry.ParallelToolCalls
+		out.ParallelToolCalls = &value
+	}
+	if out.EscapeBuiltinToolNames == nil && entry.EscapeBuiltinToolNames {
+		value := true
+		out.EscapeBuiltinToolNames = &value
+	}
+	if out.KeyOptional == nil && entry.KeyOptional {
+		value := true
+		out.KeyOptional = &value
+	}
+	if out.ModelSuffixBracketStrip == nil && entry.ModelSuffixBracketStrip {
+		value := true
+		out.ModelSuffixBracketStrip = &value
+	}
 	out.ModelContextWindows = mergeCaps(entry.ModelContextWindows, user.ModelContextWindows, name == providers.OpenAIAPIProviderID)
 	out.ModelMaxInputTokens = mergeCaps(entry.ModelMaxInputTokens, user.ModelMaxInputTokens, name == providers.OpenAIAPIProviderID)
 	out.ModelMaxOutputTokens = mergeInts(entry.ModelMaxOutputTokens, user.ModelMaxOutputTokens)

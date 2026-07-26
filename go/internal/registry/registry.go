@@ -2,6 +2,8 @@ package registry
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -198,16 +200,17 @@ var Providers = func() []Provider {
 }()
 
 type ProviderRegistry struct {
-	mu      sync.RWMutex
-	entries []Provider
-	byID    map[string]int
+	mu              sync.RWMutex
+	entries         []Provider
+	byID            map[string]int
+	defaultProvider string
 }
 
 func New(entries ...Provider) *ProviderRegistry {
 	if len(entries) == 0 {
 		entries = Providers
 	}
-	r := &ProviderRegistry{entries: make([]Provider, 0, len(entries)), byID: make(map[string]int, len(entries))}
+	r := &ProviderRegistry{entries: make([]Provider, 0, len(entries)), byID: make(map[string]int, len(entries)), defaultProvider: "openai"}
 	for _, entry := range entries {
 		if entry.ID == "" {
 			continue
@@ -222,6 +225,18 @@ func New(entries ...Provider) *ProviderRegistry {
 		r.entries = append(r.entries, entry)
 	}
 	return r
+}
+
+// SetDefaultProvider selects the fallback used for unknown bare model IDs.
+// Invalid IDs are rejected without changing the current selection.
+func (r *ProviderRegistry) SetDefaultProvider(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.byID[id]; !ok {
+		return fmt.Errorf("set default provider: unknown provider %q", id)
+	}
+	r.defaultProvider = id
+	return nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -266,26 +281,95 @@ func (r *ProviderRegistry) ResolveModel(selector string) (*types.ResolvedModel, 
 	if selector == "" {
 		return nil, fmt.Errorf("resolve model: selector is empty")
 	}
-	providerID, modelID := "openai", selector
-	if slash := strings.IndexByte(selector, '/'); slash >= 0 {
-		providerID, modelID = selector[:slash], selector[slash+1:]
+	r.mu.RLock()
+	entries := make([]Provider, len(r.entries))
+	for index, entry := range r.entries {
+		entries[index] = cloneProvider(entry)
 	}
-	provider, ok := r.Lookup(providerID)
-	if !ok {
-		return nil, fmt.Errorf("resolve model: unknown provider %q", providerID)
+	defaultProvider := r.defaultProvider
+	r.mu.RUnlock()
+	byID := make(map[string]Provider, len(entries))
+	for _, entry := range entries {
+		byID[entry.ID] = entry
 	}
-	if modelID == "" {
-		modelID = provider.DefaultModel
+	resolve := func(provider Provider, model string) (*types.ResolvedModel, error) {
+		if model == "" {
+			model = provider.DefaultModel
+		}
+		if model == "" {
+			return nil, fmt.Errorf("resolve model: model is empty for provider %q", provider.ID)
+		}
+		known := providerModelIDs(provider)
+		if slices.Contains(known, selector) {
+			model = selector
+		} else {
+			model = DecodeRoutedModelID(model, known)
+		}
+		return &types.ResolvedModel{Selector: selector, Provider: provider.ID, Model: model}, nil
 	}
-	if modelID == "" {
-		return nil, fmt.Errorf("resolve model: model is empty for provider %q", providerID)
+	if slash := strings.IndexByte(selector, '/'); slash > 0 {
+		if provider, ok := byID[selector[:slash]]; ok {
+			return resolve(provider, selector[slash+1:])
+		}
 	}
-	known := make([]string, 0, len(provider.Models))
+	if bareOpenAIModel.MatchString(selector) {
+		if provider, ok := byID["openai"]; ok {
+			return resolve(provider, selector)
+		}
+		return nil, fmt.Errorf("resolve model: no enabled OpenAI provider for %q", selector)
+	}
+	for _, provider := range entries {
+		if provider.DefaultModel == selector || EncodeRoutedModelID(provider.DefaultModel) == selector {
+			return resolve(provider, provider.DefaultModel)
+		}
+	}
+	for _, family := range registryModelFamilies {
+		if !hasAnyPrefix(selector, family.prefixes) {
+			continue
+		}
+		for _, provider := range entries {
+			if provider.ID == family.provider || strings.HasPrefix(provider.ID, family.provider+"-") {
+				return resolve(provider, selector)
+			}
+		}
+	}
+	for _, provider := range entries {
+		known := providerModelIDs(provider)
+		if slices.Contains(known, selector) || slices.Contains(known, DecodeRoutedModelID(selector, known)) {
+			return resolve(provider, selector)
+		}
+	}
+	if provider, ok := byID[defaultProvider]; ok {
+		return resolve(provider, selector)
+	}
+	return nil, fmt.Errorf("resolve model: no provider configured for %q", selector)
+}
+
+var bareOpenAIModel = regexp.MustCompile(`^(?:gpt-|o1-|o3-|o4-)`)
+
+var registryModelFamilies = []struct {
+	provider string
+	prefixes []string
+}{
+	{provider: "anthropic", prefixes: []string{"claude-", "claude-sonnet-", "claude-opus-", "claude-haiku-"}},
+	{provider: "groq", prefixes: []string{"llama-", "mixtral-", "gemma-"}},
+}
+
+func providerModelIDs(provider Provider) []string {
+	models := make([]string, 0, len(provider.Models))
 	for _, model := range provider.Models {
-		known = append(known, model.ID)
+		models = append(models, model.ID)
 	}
-	modelID = DecodeRoutedModelID(modelID, known)
-	return &types.ResolvedModel{Selector: selector, Provider: providerID, Model: modelID}, nil
+	return models
+}
+
+func hasAnyPrefix(value string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ProviderRegistry) ResolveTransport(provider string, cred *types.AuthContext) (*types.Transport, error) {
