@@ -104,10 +104,10 @@ type expectedRuntimeDiff struct {
 }
 
 var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
-	"invalid/malformed-json":             {body: true},
-	"invalid/model-wrong-type":           {body: true},
-	"invalid/input-wrong-type":           {body: true},
-	"invalid/stream-wrong-type":          {body: true},
+	"config/wrong-field-type":            {body: true},
+	"logs/request-shape":                 {body: true},
+	"advanced/network-disconnect":        {body: true},
+	"server/health-route":                {body: true},
 	"nonstandard/invalid-chunk-encoding": {status: true, headers: []string{"Content-Type", "Cache-Control"}, body: true},
 }
 

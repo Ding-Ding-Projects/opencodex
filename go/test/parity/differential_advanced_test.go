@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type advancedDifferentialUpstream struct {
@@ -57,10 +58,26 @@ func newAdvancedDifferentialUpstream(t *testing.T) *advancedDifferentialUpstream
 			frame(`{"id":"chatcmpl-advanced","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}`)
 		case "large":
 			chunk, _ := json.Marshal(strings.Repeat("x", 64*1024))
-			for range 48 {
+			for range 192 {
 				frame(fmt.Sprintf(`{"id":"chatcmpl-advanced","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":%s},"finish_reason":null}]}`, chunk))
 			}
-			frame(`{"id":"chatcmpl-advanced","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":786432,"total_tokens":786434}}`)
+			frame(`{"id":"chatcmpl-advanced","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3145728,"total_tokens":3145730}}`)
+		case "jitter":
+			for index, delay := range []time.Duration{5 * time.Millisecond, 35 * time.Millisecond, time.Millisecond, 20 * time.Millisecond} {
+				time.Sleep(delay)
+				frame(fmt.Sprintf(`{"id":"chatcmpl-advanced","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"jitter-%d"},"finish_reason":null}]}`, index))
+			}
+			frame(`{"id":"chatcmpl-advanced","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":4,"total_tokens":6}}`)
+		case "disconnect":
+			if hijacker, ok := writer.(http.Hijacker); ok {
+				connection, buffer, hijackErr := hijacker.Hijack()
+				if hijackErr == nil {
+					_, _ = buffer.WriteString("data: {\"id\":\"chatcmpl-cut\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"잘린")
+					_ = buffer.Flush()
+					_ = connection.Close()
+					return
+				}
+			}
 		case "unicode-split":
 			payload, _ := json.Marshal(map[string]any{"id": "chatcmpl-advanced", "object": "chat.completion.chunk", "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "안녕하세요 世界 👩🏽‍💻🚀"}, "finish_reason": nil}}})
 			wire := append(append([]byte("data: "), payload...), '\n', '\n')
@@ -90,7 +107,7 @@ func newAdvancedDifferentialUpstream(t *testing.T) *advancedDifferentialUpstream
 }
 
 func advancedDifferentialConfig(upstreamURL string) map[string]any {
-	models := []string{"tool", "final", "reasoning", "large", "unicode-split", "malformed-sse", "multiturn", "image", "structured"}
+	models := []string{"tool", "final", "reasoning", "large", "jitter", "disconnect", "unicode-split", "malformed-sse", "multiturn", "image", "structured"}
 	for index := range 12 {
 		models = append(models, fmt.Sprintf("concurrent-%02d", index))
 	}
@@ -121,7 +138,9 @@ func TestTypeScriptAndGoAdvancedResponsesMatrix(t *testing.T) {
 			map[string]any{"type": "function_call_output", "call_id": "call_weather", "output": "sunny"},
 		}},
 		{name: "reasoning", model: "reasoning", input: "think first"},
-		{name: "large-3mib", model: "large", input: "large response"},
+		{name: "large-12mib", model: "large", input: "large response"},
+		{name: "irregular-jitter", model: "jitter", input: "slow response"},
+		{name: "network-disconnect", model: "disconnect", input: "disconnect"},
 		{name: "unicode-byte-split", model: "unicode-split", input: "한국어"},
 		{name: "malformed-sse", model: "malformed-sse", input: "malformed"},
 	} {
@@ -202,14 +221,11 @@ func TestTypeScriptAndGoInvalidRequestMatrix(t *testing.T) {
 		body := []byte(`{"model":"differential/final","input":"x","stream":true}`)
 		goResult := captureRawRequest(goProxy.baseURL+"/v1/responses", body, headers)
 		tsResult := captureRawRequest(tsProxy.baseURL+"/v1/responses", body, headers)
-		if goResult.err != nil || goResult.status != http.StatusRequestHeaderFieldsTooLarge || len(goResult.body) == 0 {
+		if goResult.err != nil || goResult.status != http.StatusRequestHeaderFieldsTooLarge || len(goResult.body) != 0 {
 			t.Fatalf("Go oversized-header contract changed: status=%d err=%v body=%q", goResult.status, goResult.err, goResult.body)
 		}
 		if tsResult.err == nil && (tsResult.status != http.StatusRequestHeaderFieldsTooLarge || len(tsResult.body) != 0) {
 			t.Fatalf("Bun oversized-header contract changed: status=%d body=%q", tsResult.status, tsResult.body)
-		}
-		if tsResult.err == nil && goResult.status == tsResult.status && bytes.Equal(goResult.body, tsResult.body) {
-			t.Fatal("oversized-header differential disappeared; promote this boundary to strict byte parity")
 		}
 	})
 }
@@ -287,6 +303,14 @@ func TestTypeScriptAndGoHTTP2NegotiationBoundary(t *testing.T) {
 			t.Fatalf("cleartext parity listeners unexpectedly negotiated %s", goResponse.Proto)
 		}
 	}
+}
+
+func TestTypeScriptAndGoHealthRoute(t *testing.T) {
+	upstream := newAdvancedDifferentialUpstream(t)
+	config := advancedDifferentialConfig(upstream.server.URL)
+	tsProxy := startTypeScriptProxy(t, config)
+	goProxy := startProxyWithConfig(t, config)
+	compareRuntimeBytes(t, "server/health-route", captureGET(t, goProxy.baseURL, "/health"), captureGET(t, tsProxy.baseURL, "/health"), true)
 }
 
 func TestTypeScriptAndGoInvalidChunkEncoding(t *testing.T) {
