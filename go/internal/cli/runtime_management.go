@@ -16,6 +16,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -288,6 +289,8 @@ type cliRuntimeControl struct {
 	updateCheck   func(context.Context, string) (updatepkg.CheckResult, error)
 	updateRunner  func(context.Context, string) error
 	restartRunner func(context.Context) error
+	healthCache   *platform.StartupHealthCache
+	healthProbe   platform.HealthProbe
 	now           func() time.Time
 }
 
@@ -295,7 +298,8 @@ var _ management.RuntimeControlBackend = (*cliRuntimeControl)(nil)
 
 func newRuntimeControl(cfg *config.Config) *cliRuntimeControl {
 	dir, _ := configDir()
-	control := &cliRuntimeControl{config: cfg, now: time.Now}
+	control := &cliRuntimeControl{config: cfg, now: time.Now, healthCache: platform.NewStartupHealthCache(30 * time.Second)}
+	control.healthProbe = control.probeStartupHealth
 	control.updateCheck = control.resolveUpdateCheck
 	control.updateRunner = func(ctx context.Context, channel string) error {
 		return runUpdate(ctx, []string{"--tag", channel}, IO{Out: ioDiscard{}, Err: ioDiscard{}})
@@ -319,8 +323,35 @@ func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
 
 func (r *cliRuntimeControl) StartupHealth(ctx context.Context) (map[string]any, error) {
 	pid, port := readRuntime()
+	fallback := platform.StartupHealthDiagnostics{
+		Service:   platform.HealthDiagnostic{State: platform.HealthOffline, Summary: "Proxy health is being refreshed."},
+		Startup:   platform.HealthDiagnostic{State: platform.HealthWarning, Summary: "Startup protection is being refreshed."},
+		CheckedAt: r.now().UTC(), Stale: true,
+	}
+	diagnostics := r.healthCache.GetStaleWhileRevalidate(ctx, fallback, r.healthProbe)
+	return map[string]any{
+		"healthy": diagnostics.Service.State == platform.HealthHealthy, "pid": pid, "port": port,
+		"codexAutoStart": r.config.CodexAutoStart == nil || *r.config.CodexAutoStart,
+		"stale":          diagnostics.Stale,
+	}, nil
+}
+
+func (r *cliRuntimeControl) probeStartupHealth(ctx context.Context) (platform.StartupHealthDiagnostics, error) {
+	_, port := readRuntime()
 	healthy := probeHealth(ctx, r.config.Host, port)
-	return map[string]any{"healthy": healthy, "pid": pid, "port": port, "codexAutoStart": r.config.CodexAutoStart == nil || *r.config.CodexAutoStart}, nil
+	serviceState, serviceSummary := platform.HealthOffline, "Proxy is not responding."
+	if healthy {
+		serviceState, serviceSummary = platform.HealthHealthy, "Proxy is responding."
+	}
+	startupState, startupSummary := platform.HealthWarning, "Automatic startup is disabled."
+	if r.config.CodexAutoStart == nil || *r.config.CodexAutoStart {
+		startupState, startupSummary = platform.HealthHealthy, "Automatic startup is enabled."
+	}
+	return platform.StartupHealthDiagnostics{
+		Service: platform.HealthDiagnostic{State: serviceState, Summary: serviceSummary},
+		Tray:    platform.HealthDiagnostic{State: platform.HealthWarning, Summary: "Tray health is checked independently."},
+		Startup: platform.HealthDiagnostic{State: startupState, Summary: startupSummary}, CheckedAt: r.now().UTC(),
+	}, nil
 }
 
 func (r *cliRuntimeControl) RunStartupAction(ctx context.Context, action string) (string, error) {
@@ -330,11 +361,13 @@ func (r *cliRuntimeControl) RunStartupAction(ctx context.Context, action string)
 		if err := runService([]string{"install"}, streams); err != nil {
 			return "", err
 		}
+		r.healthCache.Invalidate()
 		return "Background service installed.", nil
 	case "install-shim":
 		if err := runCodexShim([]string{"install"}, streams); err != nil {
 			return "", err
 		}
+		r.healthCache.Invalidate()
 		return "Codex shim installed.", nil
 	default:
 		return "", fmt.Errorf("unsupported startup action %q", action)
@@ -345,6 +378,9 @@ func (r *cliRuntimeControl) WindowsTray(ctx context.Context, action string) (map
 	var output bytes.Buffer
 	if err := runTray(ctx, []string{action, "--json"}, IO{Out: &output, Err: &output}); err != nil {
 		return nil, err
+	}
+	if action != "status" {
+		r.healthCache.Invalidate()
 	}
 	result := map[string]any{}
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {

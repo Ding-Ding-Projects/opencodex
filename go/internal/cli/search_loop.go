@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -82,6 +83,8 @@ func searchBackendAvailable(registry types.Registry, auth types.AuthProvider, ba
 }
 
 func (executor *routedSearchExecutor) Search(ctx context.Context, query string, hostedTool map[string]any) (search.Result, error) {
+	exit := lib.DefaultSidecarTracker.Enter("web-search")
+	defer exit()
 	if executor == nil || executor.registry == nil {
 		return search.Result{}, fmt.Errorf("web search sidecar registry is unavailable")
 	}

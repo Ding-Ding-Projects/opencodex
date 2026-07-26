@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	"github.com/lidge-jun/opencodex-go/internal/vision"
@@ -53,6 +54,8 @@ func bindAdapterVision(adapter types.Adapter, preprocessor *vision.VisionPreproc
 }
 
 func (a *visionBoundAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	exit := lib.DefaultSidecarTracker.Enter("vision")
+	defer exit()
 	if err := a.preprocessor.PreprocessForModel(ctx, request, a.supportsVision); err != nil {
 		return nil, err
 	}

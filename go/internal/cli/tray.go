@@ -49,30 +49,16 @@ func runTray(ctx context.Context, args []string, streams IO) error {
 }
 
 func runTrayManager(ctx context.Context, manager tray.Manager, command string, startNow, jsonOutput bool, streams IO) error {
-	var status tray.Status
-	var err error
-	switch command {
-	case "install":
-		status, err = manager.Install(ctx, startNow)
-	case "uninstall", "remove":
-		status, err = manager.Uninstall(ctx)
-	case "start":
-		status, err = manager.Start(ctx)
-	case "stop":
-		status, err = manager.Stop(ctx)
-	case "restart":
-		if _, err = manager.Stop(ctx); err == nil {
-			status, err = manager.Start(ctx)
-		}
-	case "status":
-		status, err = manager.Status(ctx)
-	case "run":
-		return manager.Run(ctx)
-	default:
-		return fmt.Errorf("unknown tray subcommand %q", command)
+	if command == "remove" {
+		command = string(tray.ActionUninstall)
 	}
+	action := tray.Action(command)
+	status, err := tray.ExecuteAction(ctx, manager, action, startNow)
 	if err != nil {
 		return err
+	}
+	if action == tray.ActionRun {
+		return nil
 	}
 	if jsonOutput {
 		return writePrettyJSON(streams.Out, status)

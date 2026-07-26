@@ -19,6 +19,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
@@ -467,6 +468,38 @@ func TestRuntimeUpdateStatusSurvivesManagerRecreation(t *testing.T) {
 	job, found, err := recreated.UpdateStatus(context.Background(), id)
 	if err != nil || !found || job["status"] != "succeeded" {
 		t.Fatalf("recreated status = found=%t job=%#v err=%v", found, job, err)
+	}
+}
+
+func TestRuntimeStartupHealthUsesStaleWhileRevalidateCache(t *testing.T) {
+	cfg := config.FreshInstall()
+	control := newRuntimeControl(&cfg)
+	control.healthCache = platform.NewStartupHealthCache(time.Minute)
+	refreshed := make(chan struct{})
+	control.healthProbe = func(context.Context) (platform.StartupHealthDiagnostics, error) {
+		close(refreshed)
+		return platform.StartupHealthDiagnostics{
+			Service: platform.HealthDiagnostic{State: platform.HealthHealthy}, CheckedAt: time.Now(),
+		}, nil
+	}
+	first, err := control.StartupHealth(context.Background())
+	if err != nil || first["healthy"] != false || first["stale"] != true {
+		t.Fatalf("initial startup health = %#v err=%v", first, err)
+	}
+	<-refreshed
+	deadline := time.Now().Add(time.Second)
+	for {
+		current, currentErr := control.StartupHealth(context.Background())
+		if currentErr != nil {
+			t.Fatal(currentErr)
+		}
+		if current["healthy"] == true && current["stale"] == false {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("startup health never refreshed: %#v", current)
+		}
+		runtime.Gosched()
 	}
 }
 

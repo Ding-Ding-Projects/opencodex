@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 )
 
 var Version = "0.1.0-dev"
@@ -118,7 +121,27 @@ func Parse(args []string) (Command, error) {
 
 // Dispatch executes os.Args and returns a process exit code.
 func Dispatch() int {
-	return Run(context.Background(), os.Args[1:], IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
+	return dispatchGuarded(func() int {
+		return Run(context.Background(), os.Args[1:], IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
+	}, os.Stderr)
+}
+
+func dispatchGuarded(run func() int, stderr io.Writer) int {
+	dir, err := configDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	exitCode := 1
+	crashed, guardErr := lib.RunGuarded(filepath.Join(dir, "crash.log"), "uncaughtException", lib.DefaultSidecarTracker, func() {
+		exitCode = run()
+	})
+	if guardErr != nil && stderr != nil {
+		fmt.Fprintln(stderr, "Error: write crash log:", guardErr)
+	}
+	if crashed && stderr != nil {
+		fmt.Fprintln(stderr, "Error: unexpected CLI panic (details written to crash.log)")
+	}
+	return exitCode
 }
 
 func Run(ctx context.Context, args []string, streams IO) int {
