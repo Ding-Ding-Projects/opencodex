@@ -46,7 +46,7 @@ func (a *xaiRequestIDAdapter) BuildRequest(ctx context.Context, request *types.N
 }
 
 func bindAdapterVision(adapter types.Adapter, preprocessor *vision.VisionPreprocessor, supportsVision bool) types.Adapter {
-	if preprocessor == nil {
+	if preprocessor == nil || supportsVision {
 		return adapter
 	}
 	return &visionBoundAdapter{Adapter: adapter, preprocessor: preprocessor, supportsVision: supportsVision}

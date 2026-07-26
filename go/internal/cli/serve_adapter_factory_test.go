@@ -461,7 +461,7 @@ func TestVisionFactoryPreservesExplicitZeroDescriptionLimit(t *testing.T) {
 	if preprocessor == nil {
 		t.Fatal("configuredVisionPreprocessor returned nil")
 	}
-	content := json.RawMessage(`[{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}]`)
+	content := json.RawMessage(`[{"type":"input_image","image_url":"https://images.example/pixel.png"}]`)
 	request := &types.NormalizedRequest{Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: content}}}}
 	if err := preprocessor.PreprocessForModel(context.Background(), request, false); err != nil {
 		t.Fatalf("PreprocessForModel: %v", err)
@@ -469,4 +469,84 @@ func TestVisionFactoryPreservesExplicitZeroDescriptionLimit(t *testing.T) {
 	if strings.Contains(string(request.Context.Messages[0].Content), "input_image") {
 		t.Fatalf("explicit zero must strip rather than describe images: %s", request.Context.Messages[0].Content)
 	}
+}
+
+func TestVisionProductionFactoryEnablesOmittedConfigAndUsesAnthropicOAuth(t *testing.T) {
+	var authorization string
+	visionUpstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"content":[{"type":"text","text":"oauth vision description"}]}`)
+	}))
+	defer visionUpstream.Close()
+	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err := store.SaveCredential(context.Background(), "anthropic-oauth", oauth.OAuthCredentials{Access: "anthropic-oauth-token", Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), Source: oauth.SourceOAuth}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.FreshInstall()
+	cfg.VisionSidecar = nil
+	cfg.Providers["anthropic-oauth"] = config.ProviderConfig{Adapter: "anthropic", AuthMode: "oauth", BaseURL: visionUpstream.URL}
+	cfg.Providers["text-only"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://target.example/v1", Models: []string{"plain"}, NoVisionModels: []string{"plain"}}
+	resolver := configBackedAdapterResolver(&cfg, nil, visionUpstream.Client(), store)
+	adapter, err := resolver(&types.ResolvedModel{Provider: "text-only", Model: "plain"}, &types.Transport{BaseURL: "https://target.example/v1"}, &types.AuthContext{APIKey: "target-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := adapter.(*visionBoundAdapter); !ok {
+		t.Fatalf("omitted vision config did not wrap production adapter: %T", adapter)
+	}
+	request := visionImageRequest("plain")
+	if _, err := adapter.BuildRequest(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if authorization != "Bearer anthropic-oauth-token" {
+		t.Fatalf("Anthropic vision authorization=%q content=%s", authorization, request.Context.Messages[0].Content)
+	}
+	if !strings.Contains(string(request.Context.Messages[0].Content), "oauth vision description") {
+		t.Fatalf("vision description was not injected: %s", request.Context.Messages[0].Content)
+	}
+}
+
+func TestVisionProductionFactoryFallsBackToOpenAIForwardAccount(t *testing.T) {
+	var authorization, accountID string
+	visionUpstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		accountID = request.Header.Get("chatgpt-account-id")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"output_text":"openai fallback description"}`)
+	}))
+	defer visionUpstream.Close()
+	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err := store.SaveCredential(context.Background(), "openai", oauth.OAuthCredentials{Access: "openai-forward-token", Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: "chatgpt-account", Source: oauth.SourceOAuth}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.FreshInstall()
+	cfg.VisionSidecar = nil
+	openai := cfg.Providers["openai"]
+	openai.BaseURL = visionUpstream.URL
+	cfg.Providers["openai"] = openai
+	// An API-key Anthropic provider is deliberately ineligible for the OAuth
+	// Messages sidecar and must not suppress the OpenAI forward fallback.
+	cfg.Providers["anthropic-key"] = config.ProviderConfig{Adapter: "anthropic", AuthMode: "key", APIKey: "must-not-be-used", BaseURL: "https://anthropic.invalid"}
+	cfg.Providers["text-only"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://target.example/v1", Models: []string{"plain"}, NoVisionModels: []string{"plain"}}
+	resolver := configBackedAdapterResolver(&cfg, nil, visionUpstream.Client(), store)
+	adapter, err := resolver(&types.ResolvedModel{Provider: "text-only", Model: "plain"}, &types.Transport{BaseURL: "https://target.example/v1"}, &types.AuthContext{APIKey: "target-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := visionImageRequest("plain")
+	if _, err := adapter.BuildRequest(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if authorization != "Bearer openai-forward-token" || accountID != "chatgpt-account" {
+		t.Fatalf("OpenAI fallback auth=%q account=%q content=%s", authorization, accountID, request.Context.Messages[0].Content)
+	}
+	if !strings.Contains(string(request.Context.Messages[0].Content), "openai fallback description") {
+		t.Fatalf("vision description was not injected: %s", request.Context.Messages[0].Content)
+	}
+}
+
+func visionImageRequest(model string) *types.NormalizedRequest {
+	content := json.RawMessage(`[{"type":"input_image","image_url":"https://images.example/pixel.png"}]`)
+	return &types.NormalizedRequest{ModelID: model, Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: content}}}, RawBody: json.RawMessage(`{"model":"` + model + `","input":[]}`)}
 }

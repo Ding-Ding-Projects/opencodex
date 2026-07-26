@@ -42,14 +42,14 @@ func (r *configBackedRegistry) ResolveTransport(provider string, credential *typ
 
 func (r *configBackedRegistry) ListModels() []types.ModelEntry { return r.current().ListModels() }
 
-func configBackedAdapterResolver(cfg *config.Config, cursorModels []string, client *http.Client) server.AdapterResolver {
+func configBackedAdapterResolver(cfg *config.Config, cursorModels []string, client *http.Client, stores ...*oauth.CredentialStore) server.AdapterResolver {
 	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
 		snapshot := *cfg
 		if resolved, err := config.ResolveEnvironment(snapshot); err == nil {
 			snapshot = resolved
 		}
 		reg := configuredRegistryWithCursorModels(snapshot, cursorModels)
-		return adapterResolverWithVisionClient(reg, snapshot, client)(model, transport, auth, incoming)
+		return adapterResolverWithVisionClient(reg, snapshot, client, stores...)(model, transport, auth, incoming)
 	}
 }
 

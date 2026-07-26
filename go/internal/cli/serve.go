@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,7 +138,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		teardownOwnedGrokFence(streams)
 		stop.Stop()
 	}
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop})
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop})
 	selectedPort := cfg.Port
 	if cfg.Port > 0 {
 		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, cfg.Port, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
@@ -332,9 +333,9 @@ func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.A
 	return adapterResolverWithVisionClient(reg, cfg, http.DefaultClient)
 }
 
-func adapterResolverWithVisionClient(reg *registry.ProviderRegistry, cfg config.Config, client *http.Client) server.AdapterResolver {
+func adapterResolverWithVisionClient(reg *registry.ProviderRegistry, cfg config.Config, client *http.Client, stores ...*oauth.CredentialStore) server.AdapterResolver {
 	base := baseAdapterResolver(reg, cfg)
-	preprocessor := configuredVisionPreprocessor(cfg, client)
+	preprocessor := configuredVisionPreprocessor(cfg, client, stores...)
 	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
 		adapter, err := base(model, transport, auth, incoming)
 		if err != nil || preprocessor == nil {
@@ -345,10 +346,21 @@ func adapterResolverWithVisionClient(reg *registry.ProviderRegistry, cfg config.
 	}
 }
 
-func configuredVisionPreprocessor(cfg config.Config, client *http.Client) *vision.VisionPreprocessor {
-	sidecar := cfg.VisionSidecar
-	if sidecar == nil || (sidecar.Enabled != nil && !*sidecar.Enabled) {
+func configuredVisionPreprocessor(cfg config.Config, client *http.Client, stores ...*oauth.CredentialStore) *vision.VisionPreprocessor {
+	preprocessor, enabled := configuredVisionPlan(cfg, client, stores...)
+	if !enabled {
 		return nil
+	}
+	return vision.NewVisionPreprocessor(preprocessor)
+}
+
+func configuredVisionPlan(cfg config.Config, client *http.Client, stores ...*oauth.CredentialStore) (vision.PreprocessorConfig, bool) {
+	sidecar := cfg.VisionSidecar
+	if sidecar != nil && sidecar.Enabled != nil && !*sidecar.Enabled {
+		return vision.PreprocessorConfig{}, false
+	}
+	if sidecar == nil {
+		sidecar = &config.VisionSidecarConfig{}
 	}
 	preprocessor := vision.PreprocessorConfig{
 		Backend:                   vision.Backend(sidecar.Backend),
@@ -356,22 +368,90 @@ func configuredVisionPreprocessor(cfg config.Config, client *http.Client) *visio
 		MaxDescriptionsPerTurnSet: sidecar.MaxDescriptionsPerTurnSet || sidecar.MaxDescriptionsPerTurn != 0,
 	}
 	timeout := time.Duration(sidecar.TimeoutMS) * time.Millisecond
-	for _, provider := range cfg.Providers {
-		if provider.Disabled {
-			continue
-		}
-		switch provider.Adapter {
-		case "anthropic":
-			if preprocessor.Anthropic == nil {
-				preprocessor.Anthropic = &vision.AnthropicConfig{BaseURL: provider.BaseURL, Model: sidecar.Model, AccessToken: provider.APIKey, Headers: provider.Headers, Client: client, Timeout: timeout}
-			}
-		case "openai-responses":
-			if preprocessor.OpenAI == nil {
-				preprocessor.OpenAI = &vision.OpenAIConfig{BaseURL: provider.BaseURL, Model: sidecar.Model, AccessToken: provider.APIKey, Headers: provider.Headers, Client: client, Timeout: timeout}
-			}
+	var store *oauth.CredentialStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
+	if name, provider, ok := eligibleAnthropicVisionProvider(cfg, store); ok {
+		preprocessor.Anthropic = &vision.AnthropicConfig{
+			BaseURL: provider.BaseURL, Model: sidecar.Model, Headers: provider.Headers, Client: client, Timeout: timeout,
+			TokenSource: vision.OAuthTokenSourceFunc(func(context.Context) (string, error) {
+				credential, usable := activeUsableOAuthCredential(store, name)
+				if !usable {
+					return "", fmt.Errorf("Anthropic OAuth access token is unavailable")
+				}
+				return credential.Access, nil
+			}),
 		}
 	}
-	return vision.NewVisionPreprocessor(preprocessor)
+	if _, provider, credential, ok := eligibleOpenAIForwardVisionProvider(cfg, store); ok {
+		headers := make(map[string]string, len(provider.Headers)+2)
+		for key, value := range provider.Headers {
+			headers[key] = value
+		}
+		headers["Authorization"] = "Bearer " + credential.Access
+		if credential.AccountID != "" {
+			headers["chatgpt-account-id"] = credential.AccountID
+		}
+		preprocessor.OpenAI = &vision.OpenAIConfig{BaseURL: provider.BaseURL, Model: sidecar.Model, Headers: headers, Client: client, Timeout: timeout}
+	}
+	return preprocessor, true
+}
+
+func eligibleAnthropicVisionProvider(cfg config.Config, store *oauth.CredentialStore) (string, config.ProviderConfig, bool) {
+	for _, name := range sortedVisionProviderNames(cfg, "") {
+		provider := cfg.Providers[name]
+		if provider.Disabled || provider.Adapter != "anthropic" || provider.AuthMode != "oauth" {
+			continue
+		}
+		if _, ok := activeUsableOAuthCredential(store, name); ok {
+			return name, provider, true
+		}
+	}
+	return "", config.ProviderConfig{}, false
+}
+
+func eligibleOpenAIForwardVisionProvider(cfg config.Config, store *oauth.CredentialStore) (string, config.ProviderConfig, oauth.OAuthCredentials, bool) {
+	for _, name := range sortedVisionProviderNames(cfg, "openai") {
+		provider := cfg.Providers[name]
+		if provider.Disabled || provider.Adapter != "openai-responses" || provider.AuthMode != "forward" {
+			continue
+		}
+		if credential, ok := activeUsableOAuthCredential(store, name); ok {
+			return name, provider, credential, true
+		}
+	}
+	return "", config.ProviderConfig{}, oauth.OAuthCredentials{}, false
+}
+
+func activeUsableOAuthCredential(store *oauth.CredentialStore, provider string) (oauth.OAuthCredentials, bool) {
+	if store == nil {
+		return oauth.OAuthCredentials{}, false
+	}
+	set, found, err := store.GetAccountSet(provider)
+	if err != nil || !found || strings.TrimSpace(set.ActiveAccountID) == "" {
+		return oauth.OAuthCredentials{}, false
+	}
+	for _, account := range set.Accounts {
+		if account.ID == set.ActiveAccountID && !account.NeedsReauth && strings.TrimSpace(account.Credential.Access) != "" && !account.Credential.Expired(time.Now(), time.Minute) {
+			return account.Credential, true
+		}
+	}
+	return oauth.OAuthCredentials{}, false
+}
+
+func sortedVisionProviderNames(cfg config.Config, preferred string) []string {
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		if name != preferred {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if _, ok := cfg.Providers[preferred]; ok && preferred != "" {
+		names = append([]string{preferred}, names...)
+	}
+	return names
 }
 
 func modelInList(models []string, model string) bool {
