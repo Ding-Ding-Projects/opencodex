@@ -194,6 +194,66 @@ func TestServerConsumesResponsesQuotaHeadersIntoCodexStore(t *testing.T) {
 	if !ok || quota.WeeklyPercent == nil || *quota.WeeklyPercent != 73 {
 		t.Fatalf("quota = %#v, found=%v", quota, ok)
 	}
+	quotaResponse := serveRequest(proxy.Handler(), http.MethodGet, "/api/codex-auth/quota", "", nil)
+	if quotaResponse.Code != http.StatusOK || !strings.Contains(quotaResponse.Body.String(), `"account-1"`) || !strings.Contains(quotaResponse.Body.String(), `"weeklyPercent":73`) {
+		t.Fatalf("quota route = %d %s", quotaResponse.Code, quotaResponse.Body.String())
+	}
+}
+
+type poolKeyAuth struct{}
+
+func (poolKeyAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
+	return &types.AuthContext{Provider: "acme", APIKey: "key-one"}, nil
+}
+func (poolKeyAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
+
+type poolKeyAdapter struct {
+	endpoint string
+	key      string
+}
+
+func (a poolKeyAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, strings.NewReader(string(request.RawBody)))
+	if err == nil {
+		req.Header.Set("X-Test-Key", a.key)
+	}
+	return req, err
+}
+func (a poolKeyAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
+	out := make(chan types.AdapterEvent, 1)
+	out <- types.AdapterEvent{Type: types.EventDone}
+	close(out)
+	return out
+}
+func (a poolKeyAdapter) ParseUnary(context.Context, []byte) ([]types.AdapterEvent, error) {
+	return []types.AdapterEvent{{Type: types.EventDone}}, nil
+}
+
+func TestServerRotatesConfiguredAPIKeyPoolOnResponses429(t *testing.T) {
+	var attempts atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		if r.Header.Get("X-Test-Key") == "key-one" {
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		if r.Header.Get("X-Test-Key") != "key-two" {
+			t.Fatalf("unexpected key selector %q", r.Header.Get("X-Test-Key"))
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+	cfg := appconfig.Default()
+	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", AuthMode: "key", APIKey: "key-one", APIKeyPool: []appconfig.APIKeyEntry{{ID: "one", Key: "key-one"}, {ID: "two", Key: "key-two"}}}}
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{Registry: reg, Auth: poolKeyAuth{}, ManagementConfig: &cfg, ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, auth *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return poolKeyAdapter{endpoint: upstream.URL, key: auth.APIKey}, nil
+	}})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire","stream":false}`, nil)
+	if response.Code != http.StatusOK || attempts.Load() != 2 {
+		t.Fatalf("status=%d attempts=%d body=%s", response.Code, attempts.Load(), response.Body.String())
+	}
 }
 
 type sidecarTestAuth struct{}

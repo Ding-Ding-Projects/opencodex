@@ -15,6 +15,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	"github.com/lidge-jun/opencodex-go/internal/usage"
 )
@@ -47,6 +48,7 @@ type Config struct {
 	Version            string
 	EffortCap          string
 	SubagentEffortCap  string
+	StallTimeoutSec    *float64
 	Hostname           string
 	SidecarResolver    SidecarResolver
 	ShadowCall         *ShadowCallIntercept
@@ -124,6 +126,7 @@ func New(config Config) *Server {
 		quota = codex.NewQuotaStore()
 	}
 	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota}
+	keyFailover := providers.NewKeyFailover()
 	guidance := MultiAgentGuidanceOptions{}
 	if config.ManagementConfig != nil {
 		guidance = MultiAgentGuidanceOptions{
@@ -149,11 +152,48 @@ func New(config Config) *Server {
 		ResolveAdapter: s.config.ResolveAdapter, Client: s.config.Client, Recorder: recorder,
 		Lifecycle: s.config.Lifecycle, Logger: s.config.Logger, EffortCap: s.config.EffortCap,
 		SubagentEffortCap: s.config.SubagentEffortCap,
+		StallTimeout:      s.config.StallTimeoutSec,
 		ShadowCall:        s.config.ShadowCall,
 		ConsumeQuotaHeaders: func(_ context.Context, accountID string, headers http.Header) {
 			quota.ApplyUpstreamHeaders(accountID, headers)
 		},
 		Guidance: guidance,
+		ProviderAdapter: func(provider string) string {
+			if s.config.ManagementConfig == nil {
+				return ""
+			}
+			return strings.ToLower(strings.TrimSpace(s.config.ManagementConfig.Providers[provider].Adapter))
+		},
+		ItemIDRepair: func(provider string) *ResponsesItemIDRepairConfig {
+			if s.config.ManagementConfig == nil {
+				return nil
+			}
+			configured := s.config.ManagementConfig.Providers[provider].ResponsesItemIDRepair
+			if configured == nil {
+				return nil
+			}
+			return &ResponsesItemIDRepairConfig{Message: append([]string(nil), configured.Message...), Reasoning: append([]string(nil), configured.Reasoning...), RepairMissingTerminalIDs: configured.RepairMissingTerminalIDs}
+		},
+		RotateAPIKeyOn429: func(provider, attemptedKey, retryAfter string) (string, bool) {
+			if s.config.ManagementConfig == nil {
+				return "", false
+			}
+			configured, ok := s.config.ManagementConfig.Providers[provider]
+			if !ok {
+				return "", false
+			}
+			pool := make([]providers.APIKeyEntry, 0, len(configured.APIKeyPool))
+			for _, entry := range configured.APIKeyPool {
+				pool = append(pool, providers.APIKeyEntry{ID: entry.ID, Key: entry.Key, Label: entry.Label})
+			}
+			candidate := providers.ProviderConfig{AuthMode: configured.AuthMode, APIKey: configured.APIKey, APIKeyPool: pool}
+			rotated, ok := keyFailover.RotateKeyOn429(provider, &candidate, retryAfter, time.Now(), attemptedKey)
+			if !ok {
+				return "", false
+			}
+			return rotated.APIKey, true
+		},
+		PrepareImageRetry: ApplyAnthropicImageTierRetry,
 	})
 	mux := http.NewServeMux()
 	websocketsEnabled := config.WebSockets
@@ -175,6 +215,7 @@ func New(config Config) *Server {
 		mux.Handle("GET /v1/realtime", sideband)
 	}
 	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("GET /api/codex-auth/quota", s.handleCodexQuota)
 	mux.HandleFunc("POST /v1/images/generations", s.handleSidecar(SidecarImageGenerations))
 	mux.HandleFunc("POST /v1/images/edits", s.handleSidecar(SidecarImageEdits))
 	mux.HandleFunc("POST /v1/alpha/search", s.handleSidecar(SidecarSearch))
@@ -238,6 +279,15 @@ func (s *Server) QuotaStore() *codex.QuotaStore {
 		return nil
 	}
 	return s.quota
+}
+
+func (s *Server) handleCodexQuota(w http.ResponseWriter, _ *http.Request) {
+	quotas := map[string]codex.StoredAccountQuota{}
+	if s != nil && s.quota != nil {
+		quotas = s.quota.List()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"quotas": quotas})
 }
 
 type admissionKeySnapshot struct {

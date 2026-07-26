@@ -44,6 +44,10 @@ type ResponsesCoreConfig struct {
 	ConsumeQuotaHeaders func(context.Context, string, http.Header)
 	Guidance            MultiAgentGuidanceOptions
 	ResolveSubagents    SubagentRosterResolver
+	ProviderAdapter     func(string) string
+	ItemIDRepair        func(string) *ResponsesItemIDRepairConfig
+	RotateAPIKeyOn429   func(string, string, string) (string, bool)
+	PrepareImageRetry   func(*types.NormalizedRequest) error
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -161,7 +165,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		record.AccountID = auth.AccountID
 	}
 	if parsed.Normalized.Stream {
-		core.stream(ctx, cancel, w, parsed.RequestedModel, adapter, response, auth, record)
+		core.stream(ctx, cancel, w, request.Header, parsed.Normalized, resolved, pick, parsed.RequestedModel, adapter, response, auth, record)
 		return
 	}
 	core.buffered(ctx, w, parsed.RequestedModel, adapter, response, auth, record)
@@ -220,6 +224,8 @@ type forwardError struct {
 func (e *forwardError) Error() string { return e.err.Error() }
 
 func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick) (types.Adapter, *http.Response, *types.AuthContext, *types.ResolvedModel, *combos.Pick, error) {
+	var overrideKey string
+	imageRetryAttempted := false
 	for {
 		var auth *types.AuthContext
 		var err error
@@ -232,6 +238,9 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 				}
 				return nil, nil, nil, resolved, pick, &forwardError{status: http.StatusUnauthorized, kind: "authentication_error", err: err}
 			}
+		}
+		if overrideKey != "" {
+			auth = authWithAPIKey(auth, overrideKey)
 		}
 		transport, err := core.config.Registry.ResolveTransport(resolved.Provider, auth)
 		if err != nil {
@@ -278,6 +287,27 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		message = ocxlib.RedactSecretString(message)
 		core.recordAuthOutcome(auth, outcomeForHTTP(response.StatusCode), response.StatusCode, message, response.Header.Get("Retry-After"))
+		if response.StatusCode == http.StatusTooManyRequests && core.config.RotateAPIKeyOn429 != nil {
+			attempted := ""
+			if auth != nil {
+				attempted = auth.APIKey
+			}
+			if nextKey, ok := core.config.RotateAPIKeyOn429(resolved.Provider, attempted, response.Header.Get("Retry-After")); ok && strings.TrimSpace(nextKey) != "" && nextKey != attempted {
+				overrideKey = nextKey
+				continue
+			}
+		}
+		adapterName := ""
+		if core.config.ProviderAdapter != nil {
+			adapterName = core.config.ProviderAdapter(resolved.Provider)
+		}
+		if ShouldAttemptImageTierRetry(response.StatusCode, adapterName, normalized, imageRetryAttempted) && core.config.PrepareImageRetry != nil {
+			imageRetryAttempted = true
+			if err := core.config.PrepareImageRetry(normalized); err != nil {
+				return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadRequest, kind: "request_build_error", err: fmt.Errorf("prepare image retry: %w", err)}
+			}
+			continue
+		}
 		if next, ok := core.nextCombo(normalized, pick, response.StatusCode, "upstream_error", message, response.Header.Get("Retry-After")); ok {
 			pick, resolved = next, next.Resolved
 			continue
@@ -287,6 +317,36 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		return nil, nil, auth, resolved, pick, &forwardError{status: response.StatusCode, kind: "upstream_error", retryAfter: response.Header.Get("Retry-After"), err: fmt.Errorf("%s", message)}
 	}
+}
+
+func authWithAPIKey(auth *types.AuthContext, key string) *types.AuthContext {
+	if auth == nil {
+		return &types.AuthContext{APIKey: key}
+	}
+	clone := *auth
+	previous := clone.APIKey
+	clone.APIKey = key
+	clone.Headers = cloneStringHeaders(auth.Headers)
+	for name, value := range clone.Headers {
+		switch {
+		case value == previous:
+			clone.Headers[name] = key
+		case previous != "" && value == "Bearer "+previous:
+			clone.Headers[name] = "Bearer " + key
+		}
+	}
+	return &clone
+}
+
+func cloneStringHeaders(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]string, len(source))
+	for name, value := range source {
+		result[name] = value
+	}
+	return result
 }
 
 func (core *ResponsesCore) consumeQuotaHeaders(ctx context.Context, auth *types.AuthContext, headers http.Header) {
@@ -304,19 +364,60 @@ func (core *ResponsesCore) nextCombo(request *types.NormalizedRequest, pick *com
 	return next, err == nil
 }
 
-func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord) {
+func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord) {
 	defer response.Body.Close()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	events := core.observeEvents(ctx, adapter.ParseStream(ctx, response.Body), auth)
+	events := core.eventsForResponse(ctx, adapter, response, record.Provider, false)
+	adapterName := ""
+	if core.config.ProviderAdapter != nil {
+		adapterName = core.config.ProviderAdapter(record.Provider)
+	}
+	events = GuardTerminalEventStream(ctx, normalized, events, GuardOptions{
+		AdapterName: adapterName,
+		Continuation: func(continuationContext context.Context, continuation *types.NormalizedRequest) (<-chan types.AdapterEvent, error) {
+			nextAdapter, nextResponse, _, nextResolved, _, err := core.forward(continuationContext, incoming, continuation, resolved, pick)
+			if err != nil {
+				return nil, err
+			}
+			return core.eventsForResponse(continuationContext, nextAdapter, nextResponse, nextResolved.Provider, true), nil
+		},
+	})
+	events = core.observeEvents(ctx, events, auth)
 	err := bridge.StreamWithOptions(ctx, w, requestedModel, events, bridge.StreamOptions{
-		StallTimeout: ResolveStallTimeout(core.config.StallTimeout),
-		OnCancel:     func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
+		StallTimeoutSec: core.config.StallTimeout,
+		OnCancel:        func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
 	})
 	if err != nil && !errors.Is(err, context.Canceled) && core.config.Logger != nil {
 		core.config.Logger.Error("responses_stream", "error", err)
 	}
+}
+
+func (core *ResponsesCore) eventsForResponse(ctx context.Context, adapter types.Adapter, response *http.Response, provider string, closeBody bool) <-chan types.AdapterEvent {
+	body := io.Reader(response.Body)
+	if core.config.ItemIDRepair != nil {
+		if repair := core.config.ItemIDRepair(provider); HasResponsesItemIDRepair(repair) {
+			body = RepairResponsesItemIDsWithConfig(body, *repair)
+		}
+	}
+	parsed := adapter.ParseStream(ctx, io.NopCloser(body))
+	if !closeBody {
+		return parsed
+	}
+	out := make(chan types.AdapterEvent)
+	go func() {
+		defer close(out)
+		defer response.Body.Close()
+		for event := range parsed {
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
 }
 
 func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord) {

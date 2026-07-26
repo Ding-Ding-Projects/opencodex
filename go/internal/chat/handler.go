@@ -72,7 +72,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			message = fmt.Sprintf("upstream error (%d)", response.StatusCode)
 		}
 		copyRetryAfter(w.Header(), response.Header)
-		writeChatError(w, response.StatusCode, message)
+		writeUpstreamChatError(w, response.StatusCode, message)
 		return
 	}
 	if normalized.Stream {
@@ -255,6 +255,33 @@ func writeChatErrorFor(w http.ResponseWriter, err error) {
 
 func writeChatError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]any{"message": message, "type": chatErrorType(status), "param": nil, "code": chatErrorCode(status)}})
+}
+
+// writeUpstreamChatError preserves the TypeScript Chat Completions envelope.
+// Upstream errors deliberately carry a null code; locally generated errors
+// retain their more specific OpenAI-compatible codes via writeChatError.
+func writeUpstreamChatError(w http.ResponseWriter, status int, message string) {
+	type errorBody struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Param   any    `json:"param"`
+		Code    any    `json:"code"`
+	}
+	kind := "invalid_request_error"
+	switch {
+	case status == http.StatusUnauthorized:
+		kind = "authentication_error"
+	case status == http.StatusTooManyRequests:
+		kind = "rate_limit_error"
+	case status >= http.StatusInternalServerError:
+		kind = "server_error"
+	}
+	payload, _ := json.Marshal(struct {
+		Error errorBody `json:"error"`
+	}{Error: errorBody{Message: message, Type: kind}})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(payload)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -90,6 +90,46 @@ type coreAdapter struct {
 	onBuild  func(*types.NormalizedRequest)
 }
 
+type inspectingStreamAdapter struct {
+	coreAdapter
+	seen chan string
+}
+
+type guardActivationAdapter struct {
+	endpoint string
+	builds   *int
+}
+
+func (a guardActivationAdapter) BuildRequest(ctx context.Context, _ *types.NormalizedRequest) (*http.Request, error) {
+	*a.builds++
+	return http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, strings.NewReader(`{}`))
+}
+func (a guardActivationAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
+	out := make(chan types.AdapterEvent, 3)
+	if *a.builds == 1 {
+		out <- types.AdapterEvent{Type: types.EventTextDelta, Text: "I will implement it now."}
+		out <- types.AdapterEvent{Type: types.EventDone, StopReason: "end_turn"}
+	} else {
+		out <- types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call-1", Name: "edit", Arguments: json.RawMessage(`{"path":"a.go"}`)}}
+		out <- types.AdapterEvent{Type: types.EventDone, StopReason: "tool_use"}
+	}
+	close(out)
+	return out
+}
+func (a guardActivationAdapter) ParseUnary(context.Context, []byte) ([]types.AdapterEvent, error) {
+	return nil, errors.New("unexpected unary parse")
+}
+
+func (a inspectingStreamAdapter) ParseStream(_ context.Context, body io.ReadCloser) <-chan types.AdapterEvent {
+	payload, _ := io.ReadAll(body)
+	a.seen <- string(payload)
+	close(a.seen)
+	out := make(chan types.AdapterEvent, 1)
+	out <- types.AdapterEvent{Type: types.EventDone}
+	close(out)
+	return out
+}
+
 func (a coreAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
 	if a.buildErr != nil {
 		return nil, a.buildErr
@@ -175,6 +215,79 @@ func TestResponsesCoreStreamsResponsesEvents(t *testing.T) {
 	}
 	if len(recorder.records) != 1 || len(auth.outcomes) != 1 || auth.outcomes[0] != types.OutcomeSuccess {
 		t.Fatalf("records=%d outcomes=%#v", len(recorder.records), auth.outcomes)
+	}
+}
+
+func TestResponsesCoreAppliesConfiguredItemIDRepairBeforeAdapterParsing(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"placeholder\"}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"placeholder\",\"delta\":\"hi\"}\n\n")
+	}))
+	defer upstream.Close()
+	seen := make(chan string, 1)
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL},
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return inspectingStreamAdapter{coreAdapter: coreAdapter{endpoint: transport.BaseURL}, seen: seen}, nil
+		},
+		ItemIDRepair: func(string) *ResponsesItemIDRepairConfig {
+			return &ResponsesItemIDRepairConfig{Message: []string{"placeholder"}}
+		},
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
+	repaired := <-seen
+	if strings.Contains(repaired, `"item_id":"placeholder"`) || strings.Contains(repaired, `"id":"placeholder"`) || !strings.Contains(repaired, `"item_id":"msg_`) {
+		t.Fatalf("adapter received unrepaired SSE: %s", repaired)
+	}
+}
+
+func TestResponsesCoreInvokesImageRetryPreparationOnAnthropic413(t *testing.T) {
+	var attempts int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = io.WriteString(w, `request too large`)
+			return
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+	prepared := 0
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL}, ProviderAdapter: func(string) string { return "anthropic" },
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return coreAdapter{endpoint: transport.BaseURL}, nil
+		},
+		PrepareImageRetry: func(*types.NormalizedRequest) error { prepared++; return nil },
+	})
+	body := `{"model":"public","stream":false,"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+	if response.Code != http.StatusOK || attempts != 2 || prepared != 1 {
+		t.Fatalf("status=%d upstreamAttempts=%d prepareCalls=%d body=%s", response.Code, attempts, prepared, response.Body.String())
+	}
+}
+
+func TestResponsesCoreTerminalGuardActuallyContinuesAnthropicStream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: ignored\n\n")
+	}))
+	defer upstream.Close()
+	builds := 0
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL}, ProviderAdapter: func(string) string { return "anthropic" },
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return guardActivationAdapter{endpoint: transport.BaseURL, builds: &builds}, nil
+		},
+	})
+	body := `{"model":"public","stream":true,"input":[{"role":"user","content":[{"type":"input_text","text":"implement the fix"}]}],"tools":[{"type":"function","name":"edit","parameters":{"type":"object"}}]}`
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+	if response.Code != http.StatusOK || builds != 2 || !strings.Contains(response.Body.String(), `call-1`) || !strings.Contains(response.Body.String(), "event: response.completed") {
+		t.Fatalf("status=%d builds=%d body=%s", response.Code, builds, response.Body.String())
 	}
 }
 

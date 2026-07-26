@@ -111,6 +111,12 @@ func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
 			if !strings.Contains(response.Body.String(), `"type":"rate_limit_error"`) || !strings.Contains(response.Body.String(), "quota exhausted") {
 				t.Fatalf("error body = %s", response.Body.String())
 			}
+			if test.name == "chat completions" {
+				want := `{"error":{"message":"quota exhausted","type":"rate_limit_error","param":null,"code":null}}`
+				if response.Body.String() != want {
+					t.Fatalf("chat upstream envelope = %q, want %q", response.Body.String(), want)
+				}
+			}
 		})
 	}
 }
