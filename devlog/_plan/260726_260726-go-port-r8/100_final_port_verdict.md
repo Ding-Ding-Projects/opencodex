@@ -30,13 +30,13 @@ criterion is shown separately at reachability (S2) and activation lock (S3):
 |---|---:|---|
 | Has Go code been ported/audited across the internal package inventory? | **33/33 packages, 100% at S1 or above** | Every package is represented in the S1/S2/S3 inventory. The three S1 duplicate/generated packages have no production caller and are all decided for deletion, so this is code inventory completion, not product completion. |
 | Is the code reachable from production roots? | **30/33 packages, 90.9% at S2 or above** | A default CLI/server/management/config root reaches these packages. Reachability alone does not prove the intended branch fires correctly. |
-| Is production activation fully locked? | **25/33 packages, 75.8% at S3** | This is the strict repository-level “complete package” score: production enters the canonical implementation and a test asserts its external effect. Five packages remain S2 and three remain S1. |
+| Is production activation fully locked? | **29/33 packages, 87.9% at S3** | This is the strict repository-level “complete package” score: production enters the canonical implementation and a test asserts its external effect. Only the aggregate CLI package remains S2; three duplicate/generated packages remain S1 with deletion disposition. |
 | Do covered TypeScript and Go bytes match? | **100% of the strict matrix; `knownRuntimeDiffs = 0`** | This is not 100% of the product. Grok ordering, storage key order, and buffered continuation serialization are explicit semantic-only observations; real provider/OS boundaries are unmeasured. |
 | How much observable product behavior has differential evidence? | **about 93% of the core data plane; about 72% of the whole product** | This is the best user-facing completion estimate. It includes the R8 lifecycle/management expansion, buffered/streaming replay, and Messages token counting, but excludes substantial external and platform boundaries. |
 
 The honest one-line answer is therefore: **code inventory is 100% represented,
 the core strict matrix is 100% green, production-reachable packages are 90.9%,
-activation-complete packages are 75.8%, and whole-product scenario evidence is
+activation-complete packages are 87.9%, and whole-product scenario evidence is
 about 72%. The product as a default TypeScript replacement is not 100% done.**
 
 ## How to read the percentages
@@ -54,19 +54,18 @@ package is already reachable; it remains S2 if even one intended capability
 family lacks caller wiring, a production-root activation test, or duplicate-
 owner consolidation. S2 therefore does not mean “the package is unported.”
 
-**Production activation — 75.8% S3.** S3 is deliberately package-aggregate and
+**Production activation — 87.9% S3.** S3 is deliberately package-aggregate and
 strict: every intended capability family must be entered through the real root,
 the branch must fire, and its external effect must be asserted. At the requested
 13/33 snapshot, 17 packages were S2: 11 needed only wiring/activation/
 consolidation and 6 needed substantive TS behavior. The latest committed
-dashboard then advanced through 15/33 and 19/33 S3. Cursor, OpenAI adapter,
-config, service, Google, lib, OAuth, platform, tray, and chat activation have
-now landed, producing the current 25/33 snapshot. Of the five remaining S2
-packages, `internal/cli` is the aggregate executable awaiting its four
-incomplete production roots; `internal/codex`, `internal/providers`,
-`internal/server`, and `internal/update` still need substantive parity work.
-Thus 75.8% is the activation-evidence completion rate, not “only 75.8% of the
-Go port exists.”
+dashboard then advanced through 15/33, 19/33, and 25/33 S3. Codex, providers,
+server, and update activation have now landed as well, producing the current
+29/33 snapshot. The sole S2 package is `internal/cli`, an aggregate executable
+awaiting three assembly items: update lifecycle dependencies, server port
+configuration, and quota composition. No S2 package remains for package-local
+behavioral parity work. Thus 87.9% is the activation-evidence completion rate,
+not “only 87.9% of the Go port exists.”
 
 **Strict byte parity — 100% of the declared strict matrix.** Every scenario
 inside that matrix matches after only approved dynamic ID/time normalization,
@@ -90,7 +89,7 @@ The distinction is evidence-based:
 - whole-product differential coverage is about 72%, so a substantial
   user-facing perimeter still lacks equivalent evidence;
 - the latest landed S1/S2/S3 promotion set scores the package inventory at
-  25 S3, 5 S2, and 3 S1.
+  29 S3, 1 S2, and 3 S1.
 
 “Ported” therefore means two different things that must both be true before a
 default cutover:
@@ -260,17 +259,18 @@ the authoritative repository dashboard:
 
 | Stage | Packages | Share |
 |---|---:|---:|
-| S3 activation locked | 25 | 75.8% |
-| S2 production reachable, incompletely locked | 5 | 15.2% |
+| S3 activation locked | 29 | 87.9% |
+| S2 production reachable, incompletely locked | 1 | 3.0% |
 | S1 ported, not production reachable | 3 | 9.1% |
 
 The S3 set is `internal/adapter`, `internal/adapter/anthropic`,
 `internal/adapter/cursor`, `internal/adapter/google`, `internal/adapter/kiro`,
 `internal/adapter/openai`, `internal/bridge`, `internal/chat`,
-`internal/claude`, `internal/combos`, `internal/config`, `internal/grok`,
+`internal/claude`, `internal/codex`, `internal/combos`, `internal/config`, `internal/grok`,
 `internal/lib`, `internal/management`, `internal/oauth`, `internal/platform`,
-`internal/protocol`, `internal/registry`, `internal/search`, `internal/service`,
-`internal/storage`, `internal/tray`, `internal/types`, `internal/usage`, and
+`internal/protocol`, `internal/providers`, `internal/registry`,
+`internal/search`, `internal/server`, `internal/service`, `internal/storage`,
+`internal/tray`, `internal/types`, `internal/update`, `internal/usage`, and
 `internal/vision`.
 The S1 set is the duplicate root router plus unimported generated snapshots:
 `internal`, `internal/adapter/cursor/gen`, and `internal/generated`. All three
@@ -279,15 +279,15 @@ none is intended to become a production architecture owner. Every other package
 is S2 or S3.
 
 This makes two useful production numbers: 90.9% of packages are reachable at
-S2 or better, but only 75.8% satisfy the repository's full activation-locked
+S2 or better, but only 87.9% satisfy the repository's full activation-locked
 definition. The latter is the defensible package-completion percentage.
 
-At the current 25/33 snapshot, all previously caller-only packages are
-activation locked. The five S2 rows divide into one aggregate surface
-(`internal/cli`) and four substantive behavior owners (`internal/codex`,
-`internal/providers`, `internal/server`, and `internal/update`). The exact
-package rows must still be re-read at cutover time because promotions are
-moving concurrently and can raise S3 without adding new TypeScript policy.
+At the current 29/33 snapshot, all package-local behavioral parity owners are
+activation locked. The sole S2 row is the aggregate `internal/cli` surface,
+pending three assembly items rather than missing package-local policy. The
+three S1 rows are all decided for deletion. The exact package rows must still
+be re-read at cutover time because promotions are moving concurrently and can
+raise S3 without adding new TypeScript policy.
 
 ## Remaining verification boundaries
 
