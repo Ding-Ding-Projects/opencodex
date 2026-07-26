@@ -59,7 +59,7 @@ jobs:
             exit 1
           fi
 
-      # opencodex is bun-native (the prepublishOnly GUI build + typecheck run under bun).
+      # Release tooling and the GUI build run under Bun; the published runtime is native Go.
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -71,6 +71,11 @@ jobs:
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
 
       # Trusted Publishing (OIDC) needs npm >= 11.5.1. Node 24 runners already
       # provide a compatible npm; avoid replacing the bundled npm because global
@@ -191,8 +196,8 @@ jobs:
 
       # Tokenless publish via Trusted Publishing (OIDC) — NO NPM_TOKEN secret. npm auto-detects the
       # OIDC environment (`id-token: write` above) and generates provenance automatically, so neither a
-      # token nor `--provenance` is needed. `npm publish` runs prepublishOnly first (typecheck + build
-      # the GUI into gui/dist), so even a dry-run fully verifies the build.
+      # token nor `--provenance` is needed. The workflow builds and packs once, verifies the exact
+      # tarball bytes, then publishes that same archive with lifecycle scripts disabled.
       # PREREQUISITE: configure the Trusted Publisher for this repo + workflow on npmjs.com — possible
       # only AFTER the package's first version exists (do the first publish locally, see the runbook).
       - name: Preflight release metadata
@@ -247,12 +252,17 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run }}
           NPM_DIST_TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
+
+          npm run build:publish
+          npm pack --json > pack.json
+          npm run verify:native-package
+          tarball="$(node -e 'const report=require("./pack.json"); if (report.length !== 1) process.exit(1); process.stdout.write(report[0].filename)')"
+
           if [ "$DRY_RUN" = "true" ]; then
-            echo "::notice::DRY RUN — building + packing, not publishing"
-            npm run prepublishOnly
-            npm pack --dry-run
+            echo "::notice::DRY RUN — verified ${tarball}; not publishing"
           else
-            npm publish --tag "$NPM_DIST_TAG" --access public
+            npm publish "./${tarball}" --ignore-scripts --tag "$NPM_DIST_TAG" --access public
           fi
 
       # Confirm the registry actually has the new version (real publishes only).

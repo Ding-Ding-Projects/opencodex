@@ -5,6 +5,7 @@ on:
     branches: [main, dev, dev2-go]
     paths:
       - "src/**"
+      - "go/**"
       - "bin/**"
       - "tests/**"
       - "scripts/**"
@@ -22,6 +23,7 @@ on:
     branches: [main, preview, dev]
     paths:
       - "src/**"
+      - "go/**"
       - "bin/**"
       - "tests/**"
       - "scripts/**"
@@ -117,6 +119,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+
       - name: Install package dependencies
         run: npm install
 
@@ -127,12 +134,12 @@ jobs:
         shell: bash
         run: npm pack --json > pack.json
 
-      - name: Verify packed GUI asset
-        run: node -e "const p=require('./pack.json')[0]; if (!p.files.some(f => f.path === 'gui/dist/index.html')) { console.error('missing gui/dist/index.html in npm pack'); process.exit(1); }"
+      - name: Verify exact native package tarball
+        run: npm run verify:native-package
 
       - name: Install globally (downloads bundled bun)
         shell: bash
         run: npm install -g ./bitkyc08-opencodex-*.tgz
 
-      - name: ocx help via bundled bun
+      - name: ocx help via native launcher
         run: ocx help

@@ -1,93 +1,89 @@
 # 010 — WP1: deterministic native npm package staging
 
-Literal implementation hunks: `011_wp1_literal_patch.md`.
+Literal contract: `011_wp1_literal_patch.md`.
 
 ## Outcome
 
-Generate a clean `bin/native/` containing exactly the six version-matched Go
-binaries and one checksum manifest before npm packing. Generated artifacts remain
-ignored and reproducible.
+Make the existing npm package publish the Go runtime directly. `npm pack` first
+rebuilds a disposable `bin/native/` containing exactly six version-matched Go
+binaries and one SHA-256 manifest, then keeps the Node launcher and current GUI in
+the same tarball. Existing `npm install -g` and `bun add -g` consumers therefore
+receive the native launcher without changing the package name.
 
-## REUSE `scripts/build-go-release.go`
+Base: `3f28468863f942adc6425e8b0912682a36b3aea4` (`dev2-go`).
 
-No production change is planned unless B discovers a concrete blocker. Its six-target
-matrix, versioned names, `CGO_ENABLED=0`, `-trimpath`, Version ldflag, and checksum
-manifest are already the canonical release format.
+## Reuse
 
-## MODIFY `scripts/prepare-package.ts` — exact contract
+`scripts/build-go-release.go` remains unchanged. It is the canonical six-target
+builder (`darwin/linux/windows × amd64/arm64`, `CGO_ENABLED=0`, `-trimpath`, version
+ldflag, deterministic names, SHA-256 manifest).
 
-- Add exported `nativeArtifactNames(version)`, `validateNativeDirectory(path,
-  version)`, `replaceNativeDirectory(stage, live, ops)`, and
-  `verifyPackReport(reportPath, version)`.
-- `--native` reads `package.json.version`, removes only the generated
-  `bin/native` directory, and invokes:
+## Change set
 
-```ts
-const build = Bun.spawnSync([
-  "go", "run", "scripts/build-go-release.go",
-  "--version", version,
-  "--output", relative(root, stage),
-], { cwd: root, stdout: "inherit", stderr: "inherit" });
-if (build.exitCode !== 0) throw new Error(`native build failed (${build.exitCode})`);
-```
+- `.gitignore`: ignore generated `/bin/native/` only.
+- `package.json`: add native prepare/verify and explicit publish-build scripts;
+  make `prepack` run native staging first and make direct source `npm publish`
+  fail with the release-workflow recovery path.
+- `scripts/prepare-package.ts`:
+  - validate package versions before interpolating names or invoking Go;
+  - delete only disposable `bin/native`, build all six targets, normalize modes,
+    validate exact inventory and checksums, and remove partial output on failure;
+  - pipe Go builder stdout and relay it to stderr so `npm pack --json` remains valid
+    JSON on stdout;
+  - reject symlinks in any path component, non-files, empty/stale/extra artifacts, malformed or reordered
+    manifest rows, checksum mismatches, path escapes, duplicate pack entries, size
+    mismatches, and incorrect modes;
+  - verify the named tarball's exact byte size, SHA-1 `shasum`, and SHA-512
+    `integrity`, then require `bin/ocx.mjs`, both JS wrappers, `gui/dist/index.html`, all six binaries,
+    and the checksum manifest in the actual pack report;
+  - enforce inclusive ceilings: binary 1..40 MiB, packed 192 MiB, unpacked 256 MiB.
+- `.github/workflows/ci.yml`: provision pinned Go in the three-OS npm-global job,
+  verify the exact tarball, and force the installed launcher to exercise Go.
+- `.github/workflows/release.yml`: build once, pack once, verify the exact archive,
+  and publish only that archive with lifecycle scripts disabled.
+- `tests/install-scripts.test.ts`: focused lifecycle, cleanup, checksum, inventory,
+  exact-limit, required-file, stdout-channel, and mode regression tests.
 
-- `validateNativeDirectory` uses `lstatSync` and rejects symlinks, directories,
-  empty files, extra names, missing names, wrong-version names, duplicate/malformed
-  manifest rows, digest mismatches, and non-executable Unix binaries. It requires
-  exactly six binaries plus `ocx_<version>_checksums.txt`.
-- `bin/native` is disposable prepack output, never a live runtime set in the source
-  checkout. Build writes directly there only after the old generated directory is
-  removed. Any build/chmod/validation failure removes the partial directory and exits
-  nonzero; `npm pack` never begins. The next run starts clean. No transaction,
-  backup, marker, stale recovery, or cross-platform directory rename is required.
-- `--verify-pack <pack.json>` validates npm's exact file inventory/modes/sizes,
-  revalidates live checksums, and enforces:
-  - each binary: 1 MiB ≤ size ≤ 40 MiB;
-  - unpacked package: ≤ 256 MiB;
-  - packed tarball: ≤ 192 MiB.
-  The 40 MiB limit gives 66% headroom over the measured ~24 MiB binary; aggregate
-  limits cover six binaries plus current GUI/source assets without allowing a
-  duplicated runtime set.
-- Never fetch the network or follow symlinks.
+## P-phase composition evidence
 
-## MODIFY `package.json` — exact hunk
+The patch was composed and tested in a clean clone at
+`/Users/jun/.codex/tmp/opencodex-package-compose.8ZWnkm/repo` before touching the
+authoritative worktree.
 
-```diff
- "prepare:package": "bun scripts/prepare-package.ts",
--"prepack": "bun run prepare:package",
-+"prepare:native-package": "bun scripts/prepare-package.ts --native",
-+"verify:native-package": "bun scripts/prepare-package.ts --verify-pack pack.json",
-+"test:native-launcher": "node --test scripts/ocx-native-launcher.test.mjs",
-+"prepack": "bun run prepare:native-package && bun run prepare:package",
-```
-- Keep `bin` as the files boundary; it already includes `bin/native/**`.
+- initial audit: `FAIL`; report-only verification did not bind the checked inventory
+  to the `.tgz`, and source `npm publish` could bypass the optional verifier;
+- replanned tracked diff: 6 files, `+605/-24`;
+- canonical diff SHA-256:
+  `3b8c2bcb2b358606c3fadfd9b0c3e0e27a28313d1f82808e4133fbcdf834b310`;
+- focused tests: 13 pass, 0 fail, 75 assertions; TypeScript check pass;
+- `actionlint` passes both changed workflows;
+- first real `npm pack --json`: correctly exposed builder stdout contamination;
+  fixed by routing captured builder progress to stderr;
+- unprepared pack: correctly rejected because `gui/dist/index.html` was absent;
+- prepared pack after `bun run build:gui`: accepted.
+- final gpt-5.6-sol medium/priority security re-audit: `PASS`, no blockers;
+  exact six-file digest and pack-once publish path confirmed.
 
-## MODIFY `.gitignore` — exact hunk
+## Actual prepared package receipt
 
-```diff
- dist/
-+/bin/native/
-```
+Package version `2.7.41`:
 
-## MODIFY `tests/install-scripts.test.ts`
+- filename: `bitkyc08-opencodex-2.7.41.tgz`;
+- SHA-1: `718af870a4f00c6bb9a699863fd06fa7c7a23e3c`;
+- SHA-512 integrity:
+  `sha512-1Ft874Avrq2fimQQmtC3yFGxJpH/0S3+xUlecrH8TjfV7PtlIrW7hKSM9AyHnvxd9+XydFmO6Retx4jnIQO+9w==`;
+- 373 files;
+- packed: 54,199,159 bytes;
+- unpacked: 126,097,467 bytes;
+- checksum manifest: 548 bytes, mode `0644`;
+- binaries: 17,891,490..20,683,776 bytes, mode `0755`;
+- `bin/ocx.mjs`: mode `0755`;
+- `bin/native-runtime.mjs`, `bin/package-main.mjs`, and
+  `gui/dist/index.html`: mode `0644`.
 
-- Update the prepack expectation to the exact new command.
-- Import the four exported preparation functions and add named tests:
-  `native directory rejects stale and malformed artifacts`,
-  `failed native build removes disposable partial output`,
-  `native staging removes a stale prior version before build`, and
-  `pack report enforces exact files modes and size limits`.
-- Exact-limit fixtures pass; per-binary/packed/unpacked limit+1 fixtures fail.
-- The checksum fixture flips one byte and asserts validation failure plus directory
-  removal before packing.
+## Gates
 
-## Check
-
-```bash
-npm pack --json > pack.json
-bun run verify:native-package
-```
-
-The pack inventory must contain `bin/ocx.mjs`, `bin/native-runtime.mjs`, six
-`bin/native/ocx_2.7.35_*` files, and one checksum manifest, with no other native
-version. Record packed and unpacked sizes and the three enforced ceilings.
+1. Explicit gpt-5.6-sol medium/priority security review of the exact candidate.
+2. Apply the exact six-file packet only after P → A → B.
+3. Focused tests, typecheck, actual six-target pack and verification.
+4. Full Go/Bun/privacy/cross-build gates before commit and push.
