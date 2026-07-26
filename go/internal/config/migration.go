@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 )
@@ -65,17 +67,39 @@ func LoadMigrated(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	migrated, changed, err := MigrateOpenAITiers(*cfg)
-	if err != nil || !changed {
+	migrated, tiersChanged, err := MigrateOpenAITiers(*cfg)
+	if err != nil {
 		return cfg, err
 	}
-	if err := backupBeforeOpenAITierMigration(path); err != nil {
-		return nil, err
+	migrated, claudeChanged := MigrateClaudeAuthMode(migrated, time.Now())
+	if !tiersChanged && !claudeChanged {
+		return cfg, nil
+	}
+	if tiersChanged {
+		if err := backupBeforeOpenAITierMigration(path); err != nil {
+			return nil, err
+		}
 	}
 	if err := Save(path, &migrated); err != nil {
-		return nil, fmt.Errorf("save OpenAI tier migration: %w", err)
+		return nil, fmt.Errorf("save startup migrations: %w", err)
 	}
 	return &migrated, nil
+}
+
+// MigrateClaudeAuthMode preserves the pre-auto effective behavior exactly once.
+// An existing claudeCode block with no stored mode meant subscription before auto.
+func MigrateClaudeAuthMode(cfg Config, now time.Time) (Config, bool) {
+	if cfg.ClaudeCode == nil || strings.TrimSpace(cfg.ClaudeCode.AuthModeMigratedAt) != "" {
+		return cfg, false
+	}
+	out := cfg
+	claudeCode := *cfg.ClaudeCode
+	if claudeCode.AuthMode == "" {
+		claudeCode.AuthMode = "subscription"
+	}
+	claudeCode.AuthModeMigratedAt = now.UTC().Format(time.RFC3339Nano)
+	out.ClaudeCode = &claudeCode
+	return out, true
 }
 
 func backupBeforeOpenAITierMigration(path string) error {

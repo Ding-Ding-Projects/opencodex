@@ -13,6 +13,7 @@ type ClaudeCodeConfig struct {
 	ModelMap           map[string]string      `json:"modelMap,omitempty"`
 	SystemEnv          bool                   `json:"systemEnv,omitempty"`
 	AuthMode           string                 `json:"authMode,omitempty"`
+	AuthModeMigratedAt string                 `json:"authModeMigratedAt,omitempty"`
 	MaxContextTokens   int                    `json:"maxContextTokens,omitempty"`
 	AlwaysEnableEffort bool                   `json:"alwaysEnableEffort,omitempty"`
 	TierModels         *ClaudeTierModels      `json:"tierModels,omitempty"`

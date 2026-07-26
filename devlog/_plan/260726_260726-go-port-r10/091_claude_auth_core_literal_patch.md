@@ -1,10 +1,12 @@
 # 091 — Literal patch: Claude auth core parity
 
-Apply this unified diff against `ddd968a0` after extracting and applying
-`061_response_state_literal_patch.md` and
-`071_usage_snapshot_literal_patch.md` in that order. The patch is complete:
-it includes the Go auth owner, build-tagged Keychain activation, schema and
-startup migration changes, and all focused tests.
+Apply this unified diff against
+`94f0fa2102e08018881a37efb685fb7050e37444`, where audited 061 and 071 are
+already committed. The patch is complete: it includes the Go auth owner,
+build-tagged Keychain activation, schema and startup migration changes, and all
+focused tests. The audit fold-back explicitly fires the 1.5-second timeout,
+isolates a true Claude-only migration from OpenAI tier migration, and proves a
+combined migration preserves one exact rollback snapshot and stable second load.
 
 ```diff
 diff --git a/go/internal/claude/auth.go b/go/internal/claude/auth.go
@@ -376,10 +378,10 @@ index 00000000..d81af1c0
 +func defaultKeychainProbe() AuthPresence { return AuthAbsent }
 diff --git a/go/internal/claude/auth_test.go b/go/internal/claude/auth_test.go
 new file mode 100644
-index 00000000..eb292a76
+index 00000000..a07c439e
 --- /dev/null
 +++ b/go/internal/claude/auth_test.go
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,180 @@
 +package claude
 +
 +import (
@@ -545,15 +547,31 @@ index 00000000..eb292a76
 +		}
 +	}
 +}
++
++func TestDarwinKeychainProbeTimeoutReturnsUnknown(t *testing.T) {
++	started := time.Now()
++	got := probeDarwinKeychain(func(ctx context.Context, _ string, _ []string, _ io.Reader, _, _ io.Writer) (int, error) {
++		<-ctx.Done()
++		return -1, ctx.Err()
++	})
++	elapsed := time.Since(started)
++	if got != AuthUnknown {
++		t.Fatalf("timeout result = %q", got)
++	}
++	if elapsed < keychainTimeout || elapsed > keychainTimeout+time.Second {
++		t.Fatalf("timeout elapsed = %v, want %v..%v", elapsed, keychainTimeout, keychainTimeout+time.Second)
++	}
++}
 diff --git a/go/internal/config/claude_auth_migration_test.go b/go/internal/config/claude_auth_migration_test.go
 new file mode 100644
-index 00000000..e661116a
+index 00000000..3954439a
 --- /dev/null
 +++ b/go/internal/config/claude_auth_migration_test.go
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,111 @@
 +package config
 +
 +import (
++	"bytes"
 +	"encoding/json"
 +	"os"
 +	"path/filepath"
@@ -598,7 +616,7 @@ index 00000000..e661116a
 +func TestLoadMigratedPersistsClaudeSentinelAndRoundTrips(t *testing.T) {
 +	dir := t.TempDir()
 +	path := filepath.Join(dir, "config.json")
-+	data := []byte(`{"port":10100,"providers":{},"defaultProvider":"openai","claudeCode":{"enabled":true}}`)
++	data := []byte(`{"port":10100,"providers":{},"defaultProvider":"openai","openaiProviderTierVersion":2,"claudeCode":{"enabled":true}}`)
 +	if err := os.WriteFile(path, data, 0o600); err != nil {
 +		t.Fatal(err)
 +	}
@@ -622,6 +640,43 @@ index 00000000..e661116a
 +	again, err := LoadMigrated(path)
 +	if err != nil || again.ClaudeCode.AuthModeMigratedAt != stamp {
 +		t.Fatalf("second load=%#v err=%v", again.ClaudeCode, err)
++	}
++	if _, err := os.Stat(path + openAITierBackupSuffix); !os.IsNotExist(err) {
++		t.Fatalf("Claude-only migration created an OpenAI rollback backup: %v", err)
++	}
++}
++
++func TestLoadMigratedCombinesOpenAIAndClaudeInOneStableTransaction(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "config.json")
++	original := []byte(`{"port":10100,"hostname":"127.0.0.1","providers":{"openai-multi":{"adapter":"openai-responses","baseUrl":"https://chatgpt.com/backend-api/codex","authMode":"forward","selectedModels":["openai-multi/gpt-5.5"]}},"defaultProvider":"openai-multi","subagentModels":["openai-multi/gpt-5.5"],"claudeCode":{"enabled":true}}`)
++	if err := os.WriteFile(path, original, 0o600); err != nil {
++		t.Fatal(err)
++	}
++	cfg, err := LoadMigrated(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if cfg.DefaultProvider != "openai" || cfg.OpenAIProviderTierVersion != 2 || cfg.Providers["openai"].CodexAccountMode != "pool" || cfg.SubagentModels[0] != "gpt-5.5" {
++		t.Fatalf("OpenAI migration result = %#v", cfg)
++	}
++	if cfg.ClaudeCode == nil || cfg.ClaudeCode.AuthMode != "subscription" || cfg.ClaudeCode.AuthModeMigratedAt == "" {
++		t.Fatalf("Claude migration result = %#v", cfg.ClaudeCode)
++	}
++	backup, err := os.ReadFile(path + openAITierBackupSuffix)
++	if err != nil || !bytes.Equal(backup, original) {
++		t.Fatalf("combined migration backup = %q, %v", backup, err)
++	}
++	first, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := LoadMigrated(path); err != nil {
++		t.Fatal(err)
++	}
++	second, err := os.ReadFile(path)
++	if err != nil || !bytes.Equal(first, second) {
++		t.Fatalf("second combined migration rewrote config: err=%v", err)
 +	}
 +}
 diff --git a/go/internal/config/migration.go b/go/internal/config/migration.go

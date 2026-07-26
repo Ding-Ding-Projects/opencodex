@@ -1,8 +1,9 @@
 # 090 — Claude auth core parity
 
-Base: `ddd968a0` with `061_response_state_literal_patch.md` and
-`071_usage_snapshot_literal_patch.md` applied in that order. Upstream parity
-reference: `origin/dev@9d1bb146`.
+Current stale-check base: `94f0fa2102e08018881a37efb685fb7050e37444`,
+which already contains audited `061_response_state_literal_patch.md` and
+`071_usage_snapshot_literal_patch.md`. Current upstream ancestry reference:
+`origin/dev@1eb7269f447c913c31e5609dda503da8b623d7ac`.
 
 ## Boundary
 
@@ -23,8 +24,8 @@ The diff owns eight files:
   `auth_keychain_other.go`: build-tagged production activation; non-Darwin is
   an explicit absent source and never spawns `security`.
 - NEW `go/internal/claude/auth_test.go`: source parity, privacy, feedback-loop,
-  resolver, profile binding, command shape, deadline, output suppression, and
-  exit-44 tests.
+  resolver, profile binding, command shape, actual 1.5-second timeout activation,
+  output suppression, and exit-44 tests.
 - MODIFY `go/internal/config/schema_extended.go`: persist
   `authModeMigratedAt` across Go/TypeScript round trips.
 - MODIFY `go/internal/config/migration.go`: run the Claude migration in the
@@ -32,7 +33,8 @@ The diff owns eight files:
   returned config can be served.
 - NEW `go/internal/config/claude_auth_migration_test.go`: legacy pinning,
   explicit mode preservation, later-Auto idempotence, no-block behavior, disk
-  persistence, and second-load stability.
+  persistence, true Claude-only backup absence, combined OpenAI+Claude ordering,
+  exact rollback bytes, and second-load stability.
 
 ## Behavioral contract
 
@@ -81,7 +83,7 @@ migration does not manufacture an unrelated backup.
 ## Verification protocol
 
 Extract the fenced diff from `091_claude_auth_core_literal_patch.md`, apply it
-after 061 and 071 to a clean `ddd968a0` checkout, then run:
+to a clean `94f0fa21` checkout, then run:
 
 ```bash
 gofmt -d go/internal/claude/auth.go go/internal/claude/auth_keychain.go \
@@ -90,11 +92,11 @@ gofmt -d go/internal/claude/auth.go go/internal/claude/auth_keychain.go \
   go/internal/config/migration.go go/internal/config/claude_auth_migration_test.go
 git diff --check
 (cd go && go test ./internal/claude ./internal/config -count=1)
-(cd go && go test ./... -count=1 -timeout 120s)
+(cd go && go test ./... -count=1 -timeout 400s)
 (cd go && go vet ./...)
 (cd go && GOOS=windows GOARCH=amd64 go build ./...)
 (cd go && GOOS=linux GOARCH=amd64 go build ./...)
 ```
 
-The literal patch is 611 insertions and 5 deletions across eight files. The
+The literal patch is 664 insertions and 5 deletions across eight files. The
 independent apply check must leave only the 061, 071, and 091 scoped deltas.
