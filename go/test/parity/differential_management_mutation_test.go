@@ -14,6 +14,7 @@ import (
 const managementParityToken = "synthetic-management-token"
 
 var managementAddedAtPattern = regexp.MustCompile(`"addedAt":\d+`)
+var managementUsageTimePattern = regexp.MustCompile(`"(since|generatedAt)":\d+`)
 
 func TestTypeScriptAndGoManagementMutationSequence(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -204,12 +205,20 @@ func TestTypeScriptAndGoManagementLogDeletionMutations(t *testing.T) {
 			captureManagementRequest(t, tsProxy.baseURL, method, path, "", payload), true)
 	}
 	compare("logs-delete", http.MethodDelete, "/api/logs", nil)
-	compare("logs-empty", http.MethodGet, "/api/logs?tail=10", nil)
+	goLogs := captureManagementRequest(t, goProxy.baseURL, http.MethodGet, "/api/logs?tail=10", "", nil)
+	tsLogs := captureManagementRequest(t, tsProxy.baseURL, http.MethodGet, "/api/logs?tail=10", "", nil)
+	goLogs.body = normalizeLogBytes(goLogs.body)
+	tsLogs.body = normalizeLogBytes(tsLogs.body)
+	compareRuntimeBytes(t, "management-deletion/logs-empty", goLogs, tsLogs, true)
 	compare("debug-enable-usage", http.MethodPut, "/api/debug", map[string]any{"usage": true})
 	compare("debug-usage-delete", http.MethodDelete, "/api/debug/usage-logs", nil)
 	compare("debug-usage-empty", http.MethodGet, "/api/debug/usage-logs", nil)
 	compare("usage-delete", http.MethodDelete, "/api/usage", nil)
-	compare("usage-empty", http.MethodGet, "/api/usage", nil)
+	goUsage := captureManagementRequest(t, goProxy.baseURL, http.MethodGet, "/api/usage", "", nil)
+	tsUsage := captureManagementRequest(t, tsProxy.baseURL, http.MethodGet, "/api/usage", "", nil)
+	goUsage.body = managementUsageTimePattern.ReplaceAll(goUsage.body, []byte(`"$1":0`))
+	tsUsage.body = managementUsageTimePattern.ReplaceAll(tsUsage.body, []byte(`"$1":0`))
+	compareRuntimeBytes(t, "management-deletion/usage-empty", goUsage, tsUsage, true)
 	compare("debug-reset", http.MethodPut, "/api/debug", map[string]any{"reset": true})
 }
 

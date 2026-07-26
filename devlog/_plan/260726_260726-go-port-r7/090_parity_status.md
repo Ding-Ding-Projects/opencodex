@@ -9,7 +9,7 @@ Primary harness: `go/test/parity/`
 The Go runtime is byte-locked to the Bun TypeScript runtime across the core
 Responses, Chat Completions, and Messages scenarios covered below. This is a
 bounded claim, not whole-product byte parity. The Round 9 known-diff set reached
-zero. Rounds 10–16 deliberately expanded the oracle beyond those paths and
+zero. Rounds 10–17 deliberately expanded the oracle beyond those paths and
 found new validation, transport, config, logging, CLI, and native-shim
 differences. Those residuals are explicitly enumerated; none is hidden by
 normalization.
@@ -58,14 +58,16 @@ Dynamic request-log fields are normalized separately and narrowly:
 
 ## Current residual differences
 
-| Owner | Scenario | Current Go behavior | Bun TypeScript behavior |
-|---|---|---|---|
-| Bun HTTP server | 1.1 MiB request header | empty 431 | connection reset or empty 431; semantic lock because Bun alternates between both outcomes |
-| config | wrong known-field type | Go fallback config representation | TS repaired/default config representation |
-| management | DELETE `/api/logs`, `/api/debug/usage-logs`, and `/api/usage` | returns 200 and clears the corresponding Go state | route is absent and returns 404 |
-| management | GET `/api/logs` and `/api/usage` after the extra Go DELETE routes | empty state | original request remains visible |
-| management API access | GET `/api/keys` with an explicit Host | omits key `prefix`; map-sorted response fields | includes redacted key `prefix`; insertion-order response fields |
-| management API access | GET `/api/keys` on a wildcard bind with an allowed Origin | derives public endpoints from Host | prefers the Origin scheme and authority |
+The live finalization audit reduced the fixable known set from eight to two.
+`65687f45` fixed `config/wrong-field-type`; the server owner then removed all
+three Go-only deletion routes. Each stale declaration failed as designed before
+promotion to strict. The server owner also aligned the usage summary DTO. Only
+the two API-access differences remain, both owned by server/management.
+
+| Scenario ID | Request | Current Go behavior | Bun TypeScript behavior | Owner evidence |
+|---|---|---|---|---|
+| `api-access/host-header` | `GET /api/keys`, Host `api.example.test:7777` | key DTO omits `prefix`; map-sorted fields | redacted `prefix:"syntheti..."`; insertion-order fields | Go `go/internal/management/api_keys.go:245-253`, `api_access.go:13-39`; TS `oauth-account-routes.ts:274-285`, `api-access.ts:126-143` |
+| `api-access/origin-priority` | `GET /api/keys`, wildcard bind, allowed Origin plus fallback Host | public base uses `http://fallback.example.test:8888/v1` | prefers `https://origin.example.test:8443/v1` | Go ignores Origin at `api_access.go:18-33`; TS prioritizes it at `src/server/management/api-access.ts:73-76` |
 
 Owner fixes promoted the unknown-command stdout/stderr contract and the
 `GET /health` 404 body to strict assertions. Socket-cut SSE status, headers,
@@ -91,29 +93,32 @@ also initially found a Responses passthrough difference in empty-body handling
 and Retry-After preservation. The concurrent server owner fix now matches the
 contract at `src/server/responses/passthrough-error.ts:23`, and that scenario is
 strict as well. Round 17 added API-access endpoint discovery and found two
-management response-body differences. The fixable known runtime set is now
-eight scenarios: one config repair, five management deletion outcomes, and two
-API-access response shapes.
+management response-body differences. During finalization the config owner fix
+made `config/wrong-field-type` byte-identical and the server owner made all
+three deletion methods plus log-state preservation strict. The server owner
+then aligned the preserved usage row, including `resolvedModel`, leaving two
+known scenarios total.
 Status and body dimensions are tracked independently, so a disappearing
 difference cannot silently pass as a changed known-diff shape.
 
 ### Round 17 owner handoff
 
-The config difference originates at `go/internal/config/config.go:289-303`
-and the startup fallback at `go/internal/cli/provider.go:65-85`. With
-`websockets: "true"`, Go currently exposes the fresh OpenAI default config;
-TS treats `websockets` as a passthrough field and preserves the configured
-`differential` provider (`src/config.ts:718-751`). Status is 200 on both sides;
-only the body differs.
+Config is no longer an owner handoff. Go now preserves the raw
+`websockets:"true"` value, configured provider, and public DTO bytes exactly;
+`TestTypeScriptAndGoConfigInterpretation/wrong-field-type` is strict.
 
-The five deletion scenarios originate from three Go-only handlers and their
-state effects: `go/internal/management/logs.go:190-196` (`DELETE /api/logs`),
-`:294-302` (`DELETE /api/debug/usage-logs`), and `:317-325`
-(`DELETE /api/usage`), all registered at
-`go/internal/management/api.go:133`. TS has only the corresponding GET routes
-at `src/server/management/logs-usage-routes.ts:66-69`, `:80-83`, and
-`:121-159`. Each DELETE is Go 200 `{"ok":true}` versus TS 404; the logs and
-usage follow-up GETs then differ because only Go cleared the state.
+Deletion methods and log-state preservation are no longer owner handoffs. The
+three unsupported methods return TS-identical typed 404 responses, request logs
+remain present, and usage totals remain `requests=1,totalTokens=5`, including
+the TS-identical `resolvedModel` summary field. `since` and `generatedAt` are
+narrowly normalized as dynamic sample times while every other byte remains
+strict.
+
+The two API-access scenarios are body-only differences. The first needs the Go
+safe key DTO to include the same redacted prefix and deterministic TS field
+order. The second needs wildcard-bind endpoint discovery to accept an allowed
+Origin before falling back to request Host, matching the TS precedence cited in
+the table above.
 
 ### Intentional native-distribution difference
 
@@ -298,6 +303,43 @@ one second per connection, three independent runs; table values are medians:
 The hour-equivalent adapter soak sends 12,000 heartbeat records through each of
 Anthropic, OpenAI Chat, OpenAI Responses, Google, and Mimo. All return to their
 pre-run goroutine count within the two-second collection budget.
+
+## 다음 사람이 이어서 하려면
+
+1. Start with the two focused known scenarios:
+
+   ```bash
+   cd go
+   go test ./test/parity \
+     -run '^TestTypeScriptAndGoAPIAccessEndpoints$' \
+     -v -count=1 -timeout 180s
+   ```
+
+   A fix intentionally makes the current known-diff declaration fail. Remove
+   only the matching entry from `knownRuntimeDiffs`, rerun, and commit the strict
+   promotion with the owner fix.
+
+2. Keep the deletion methods, log/usage state preservation, and usage summary
+   DTO strict. Do not reintroduce the removed destructive routes.
+
+3. For API access, fix the safe key prefix plus ordered response DTO first, then
+   implement allowed-Origin precedence for wildcard binds. Keep auth and CORS
+   rejection tests green; never expose full keys.
+
+4. The next two highest-value uncovered production seams are quota-aware
+   subagent fallback feedback/rerouting and Responses continuation state. Use
+   the hermetic approaches in "Round 17 next-boundary assessment"; do not rely
+   on store unit tests alone for production wiring claims.
+
+5. Run the complete gate before every commit:
+
+   ```bash
+   go build ./... && go vet ./... && go test ./... -count=1 -timeout 300s
+   ```
+
+   Bun is optional in CI: differential tests skip safely when unavailable. Keep
+   performance, long-stream performance, and oversized-header characterization
+   opt-in; the 17–18 second default parity package is intentionally blocking.
 
 ## Reproduction
 
