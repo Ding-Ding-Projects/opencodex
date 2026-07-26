@@ -245,6 +245,9 @@ func TestBuiltBinaryUpstreamKeepalivePreventsStall(t *testing.T) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		writer.WriteHeader(http.StatusOK)
 		flusher, _ := writer.(http.Flusher)
+		if flusher != nil {
+			flusher.Flush()
+		}
 		deadline := time.NewTimer(1200 * time.Millisecond)
 		defer deadline.Stop()
 		if model == "keepalive" {

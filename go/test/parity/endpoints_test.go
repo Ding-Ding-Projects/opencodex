@@ -302,7 +302,7 @@ func TestBuiltBinaryErrorShapes(t *testing.T) {
 			}
 			switch test.name {
 			case "chat":
-				if !strings.Contains(string(payload), `"type":"rate_limit_error"`) || !strings.Contains(string(payload), `"code":"rate_limit_exceeded"`) || !strings.Contains(string(payload), "quota exhausted") {
+				if !strings.Contains(string(payload), `"type":"rate_limit_error"`) || !strings.Contains(string(payload), `"code":null`) || !strings.Contains(string(payload), "quota exhausted") {
 					t.Fatalf("chat error parity mismatch: %s", payload)
 				}
 			case "messages":

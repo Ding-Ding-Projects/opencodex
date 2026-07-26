@@ -24,8 +24,12 @@ type tsProxyProcess struct {
 }
 
 func startTypeScriptProxy(t *testing.T, config map[string]any) *tsProxyProcess {
+	return startTypeScriptProxyWithLookup(t, config, exec.LookPath)
+}
+
+func startTypeScriptProxyWithLookup(t *testing.T, config map[string]any, lookup func(string) (string, error)) *tsProxyProcess {
 	t.Helper()
-	bun, err := exec.LookPath("bun")
+	bun, err := lookup("bun")
 	if err != nil {
 		t.Skip("Bun runtime is unavailable")
 	}
@@ -122,8 +126,8 @@ func TestTypeScriptAndGoErrorResponseBytes(t *testing.T) {
 			"apiKey": "parity-api-key", "authMode": "key", "defaultModel": "error-429", "models": []string{"error-429"},
 		}},
 	}
-	goProxy := startProxyWithConfig(t, config)
 	tsProxy := startTypeScriptProxy(t, config)
+	goProxy := startProxyWithConfig(t, config)
 	body := map[string]any{"model": "parity/error-429", "stream": false, "messages": []any{map[string]any{"role": "user", "content": "hello"}}}
 	goResponse, goPayload := postJSON(t, goProxy.baseURL+"/v1/chat/completions", body)
 	tsResponse, tsPayload := postJSON(t, tsProxy.baseURL+"/v1/chat/completions", body)
@@ -137,6 +141,15 @@ func TestTypeScriptAndGoErrorResponseBytes(t *testing.T) {
 	if goResponse.Header.Get("Retry-After") != tsResponse.Header.Get("Retry-After") {
 		t.Fatalf("differential Retry-After Go=%q TS=%q", goResponse.Header.Get("Retry-After"), tsResponse.Header.Get("Retry-After"))
 	}
+}
+
+func TestDifferentialHarnessSkipsWithoutBun(t *testing.T) {
+	t.Run("missing Bun", func(t *testing.T) {
+		startTypeScriptProxyWithLookup(t, nil, func(string) (string, error) {
+			return "", exec.ErrNotFound
+		})
+		t.Fatal("missing Bun lookup did not skip the differential test")
+	})
 }
 
 func firstDifferentByte(left, right []byte) int {
