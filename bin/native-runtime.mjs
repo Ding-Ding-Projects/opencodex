@@ -3,10 +3,14 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-function nativeTarget(platform, architecture) {
+export function nativeTarget(platform, architecture) {
   const os = { darwin: "darwin", linux: "linux", win32: "windows" }[platform];
   const arch = { x64: "amd64", arm64: "arm64" }[architecture];
   return os && arch ? { os, arch } : null;
+}
+
+export function isSupportedNativeTarget(platform = process.platform, architecture = process.arch) {
+  return nativeTarget(platform, architecture) !== null;
 }
 
 export function nativeArtifactName(version, target) {
@@ -34,10 +38,17 @@ export function resolveNativeGoBinary({
   env = process.env,
   platform = process.platform,
   architecture = process.arch,
+  strictPackaged = false,
 }) {
   const mode = (env.OPENCODEX_RUNTIME ?? "auto").trim().toLowerCase();
   if (!new Set(["auto", "go", "ts"]).has(mode)) {
     throw new Error(`selection must be one of auto, go, or ts (got ${JSON.stringify(mode)}).`);
+  }
+  if (strictPackaged && mode === "ts") {
+    throw new Error("OPENCODEX_RUNTIME=ts is not allowed for a supported packaged installation.");
+  }
+  if (strictPackaged && env.OPENCODEX_GO_BINARY?.trim()) {
+    throw new Error("OPENCODEX_GO_BINARY is not allowed for a supported packaged installation.");
   }
   if (mode === "ts") return null;
 
@@ -52,6 +63,9 @@ export function resolveNativeGoBinary({
   if (target) {
     const candidate = join(here, "native", nativeArtifactName(version, target));
     if (isExecutableFile(candidate, platform)) return candidate;
+    if (strictPackaged) {
+      throw new Error(`package artifact is missing, symlinked, or not executable: ${candidate}`);
+    }
   }
   if (mode === "go") {
     throw new Error("was requested but no packaged binary exists for this platform. Set OPENCODEX_GO_BINARY or use OPENCODEX_RUNTIME=ts.");

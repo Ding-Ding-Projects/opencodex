@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
-import { launchForwardingChild, resolveNativeGoBinary } from "./native-runtime.mjs";
+import { isSupportedNativeTarget, launchForwardingChild, resolveNativeGoBinary } from "./native-runtime.mjs";
 
 const PKG = "@bitkyc08/opencodex";
 const require = createRequire(import.meta.url);
@@ -45,9 +45,9 @@ function failGo(message) {
   process.exit(1);
 }
 
-function resolveGoBinary() {
+function resolveGoBinary(strictPackaged = false) {
   try {
-    return resolveNativeGoBinary({ here, version: currentPackageVersion() });
+    return resolveNativeGoBinary({ here, version: currentPackageVersion(), strictPackaged });
   } catch (error) {
     failGo(error instanceof Error ? error.message : String(error));
   }
@@ -404,11 +404,18 @@ function resolveBun(required = true) {
   return bin;
 }
 
-refreshLegacyCodexShimRuntime();
-const goBinary = resolveGoBinary();
+// A supported npm installation is Go-first and fail-closed. Validate the exact
+// package-local artifact before any retained Bun or install.js path can run.
+const strictPackaged = isNodeModulesInstall() && isSupportedNativeTarget();
+const goBinary = resolveGoBinary(strictPackaged);
 if (goBinary) {
+  // The only packaged Bun exception is the one-time WP2 legacy-shim migration,
+  // and it runs only after the Go artifact has passed validation.
+  refreshLegacyCodexShimRuntime();
   launchForwardingChild(goBinary, process.argv.slice(2), "Go runtime");
 } else {
+  // Source checkouts and unsupported targets retain the bridge behavior.
+  refreshLegacyCodexShimRuntime();
   // `ocx update --help` prints usage and exits WITHOUT side effects. The legacy npm
   // launcher intercepts update only on the TypeScript path; native Go handles its own update.
   const updateHelpRequested = process.argv[2] === "update" &&

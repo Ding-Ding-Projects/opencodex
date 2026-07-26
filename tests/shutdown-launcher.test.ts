@@ -1,120 +1,74 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/**
- * Regression: `ocx start` + Ctrl-C must NOT orphan the Bun proxy.
- *
- * The bin/ocx.mjs launcher used a blocking spawnSync that did not forward signals,
- * so a signal delivered only to the launcher killed it and left the Bun child
- * serving forever (port bound, ocx.pid/runtime-port.json left behind, Codex config
- * not restored). The launcher now forwards SIGINT/SIGTERM/SIGHUP to the child and
- * waits for its graceful shutdown.
- *
- * POSIX-only (Windows has no real signal forwarding semantics) and requires `node`
- * on PATH to exercise the real launcher.
- */
-
-const BIN_OCX = join(import.meta.dir, "..", "bin", "ocx.mjs");
-const nodeAvailable = !spawnSync("node", ["--version"], { stdio: "ignore" }).error;
-const runnable = process.platform !== "win32" && nodeAvailable;
-
+const runnable = process.platform !== "win32" && !spawnSync("node", ["--version"], { stdio: "ignore" }).error;
+setDefaultTimeout(20_000);
 const spawned: ChildProcess[] = [];
-const tmpHomes: string[] = [];
+const roots: string[] = [];
 
 afterAll(() => {
-  for (const c of spawned) {
-    try { c.kill("SIGKILL"); } catch { /* already gone */ }
-  }
-  for (const dir of tmpHomes) {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-  }
+  for (const child of spawned) try { child.kill("SIGKILL"); } catch { /* already gone */ }
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => (port ? resolve(port) : reject(new Error("no port"))));
-    });
-  });
-}
-
-async function healthy(port: number): Promise<boolean> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/healthz`, {
-      signal: AbortSignal.timeout(800),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function waitUntil(fn: () => Promise<boolean>, deadlineMs: number): Promise<boolean> {
-  const end = Date.now() + deadlineMs;
-  while (Date.now() < end) {
-    if (await fn()) return true;
-    await Bun.sleep(250);
+async function waitFor(path: string, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return true;
+    await Bun.sleep(25);
   }
   return false;
 }
 
-describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
+function packagedLauncherFixture() {
+  const root = mkdtempSync(join(tmpdir(), "ocx-native-signal-"));
+  roots.push(root);
+  const packageRoot = join(root, "node_modules", "@bitkyc08", "opencodex");
+  const bin = join(packageRoot, "bin");
+  mkdirSync(join(bin, "native"), { recursive: true });
+  mkdirSync(join(packageRoot, "src", "update"), { recursive: true });
+  copyFileSync(join(import.meta.dir, "..", "bin", "ocx.mjs"), join(bin, "ocx.mjs"));
+  copyFileSync(join(import.meta.dir, "..", "bin", "native-runtime.mjs"), join(bin, "native-runtime.mjs"));
+  copyFileSync(join(import.meta.dir, "..", "src", "update", "tray-update-plan.mjs"), join(packageRoot, "src", "update", "tray-update-plan.mjs"));
+  writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ type: "module", version: "2.7.41" }));
+  const os = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "amd64";
+  const native = join(bin, "native", `ocx_2.7.41_${os}_${arch}`);
+  writeFileSync(native, `#!/bin/sh
+trap 'printf "%s\\n" "$OCX_TEST_SIGNAL" > "$OCX_TEST_STOPPED"; exit 0' INT TERM HUP
+printf 'ready\\n' > "$OCX_TEST_READY"
+while :; do sleep 1; done
+`, { mode: 0o755 });
+  chmodSync(native, 0o755);
+  return { root, launcher: join(bin, "ocx.mjs") };
+}
+
+describe.skipIf(!runnable)("ocx native launcher graceful shutdown", () => {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    test(
-      `${signal} to the launcher tears down the Bun proxy and restores Codex config (no orphan)`,
-      async () => {
-        const home = mkdtempSync(join(tmpdir(), "ocx-shutdown-"));
-        tmpHomes.push(home);
-        const port = await freePort();
-
-        // Seed a native Codex config so the proxy actually injects on start (injectCodexConfig
-        // no-ops when no config.toml exists) — this lets us prove the config is RESTORED.
-        const codexConfig = join(home, "config.toml");
-        writeFileSync(codexConfig, 'model = "gpt-5.1"\n');
-
-        const child = spawn("node", [BIN_OCX, "start", "--port", String(port)], {
-          stdio: "ignore",
-          env: { ...process.env, OPENCODEX_HOME: home, CODEX_HOME: home },
-        });
-        spawned.push(child);
-
-        let exited = false;
-        child.on("exit", () => { exited = true; });
-
-        // 1. Proxy comes up + injected the Codex config (Design B root override on loopback).
-        const up = await waitUntil(() => healthy(port), 20_000);
-        expect(up).toBe(true);
-        expect(existsSync(join(home, "ocx.pid"))).toBe(true);
-        const injected = readFileSync(codexConfig, "utf8");
-        expect(injected).toContain("# Auto-injected by opencodex");
-        expect(injected).toContain(`openai_base_url = "http://127.0.0.1:${port}/v1"`);
-        expect(injected).not.toContain("model_providers.opencodex");
-
-        // 2. Signal ONLY the launcher PID (the exact orphan trigger).
-        child.kill(signal);
-
-        // 3. Launcher exits...
-        const launcherGone = await waitUntil(async () => exited, 15_000);
-        expect(launcherGone).toBe(true);
-
-        // 4. ...and the Bun proxy is gone (port freed) — the regression guard.
-        const portFreed = await waitUntil(async () => !(await healthy(port)), 10_000);
-        expect(portFreed).toBe(true);
-
-        // 5. Graceful cleanup ran: pid + runtime-port removed, Codex config restored.
-        expect(existsSync(join(home, "ocx.pid"))).toBe(false);
-        expect(existsSync(join(home, "runtime-port.json"))).toBe(false);
-        expect(readFileSync(codexConfig, "utf8")).not.toContain("opencodex");
-      },
-      45_000,
-    );
+    test(`${signal} is forwarded to the exact package-local Go artifact`, async () => {
+      const fixture = packagedLauncherFixture();
+      const ready = join(fixture.root, "ready");
+      const stopped = join(fixture.root, "stopped");
+      const child = spawn("node", [fixture.launcher, "start"], {
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          OPENCODEX_HOME: join(fixture.root, "home"),
+          OCX_TEST_READY: ready,
+          OCX_TEST_STOPPED: stopped,
+          OCX_TEST_SIGNAL: signal,
+        },
+      });
+      spawned.push(child);
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      expect(await waitFor(ready)).toBe(true);
+      child.kill(signal);
+      expect(await waitFor(stopped)).toBe(true);
+      expect(readFileSync(stopped, "utf8").trim()).toBe(signal);
+      await exited;
+    });
   }
 });

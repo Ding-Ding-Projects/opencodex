@@ -45,6 +45,8 @@
     "prepare:package": "bun scripts/prepare-package.ts",
     "prepare:native-package": "bun scripts/prepare-package.ts --native",
     "verify:native-package": "bun scripts/prepare-package.ts --verify-pack pack.json",
+    "test:native-launcher": "node --test scripts/ocx-native-launcher.test.mjs",
+    "verify:native-install": "node scripts/verify-native-install.mjs pack.json",
     "build:publish": "bun run typecheck && bun run build:gui",
     "prepack": "bun run prepare:native-package && bun run prepare:package",
     "prepublishOnly": "bun scripts/prepare-package.ts --reject-source-publish",

@@ -105,6 +105,8 @@ describe("install scripts", () => {
     expect(pkg.scripts?.["prepare:package"]).toBe("bun scripts/prepare-package.ts");
     expect(pkg.scripts?.["prepare:native-package"]).toBe("bun scripts/prepare-package.ts --native");
     expect(pkg.scripts?.["verify:native-package"]).toBe("bun scripts/prepare-package.ts --verify-pack pack.json");
+    expect(pkg.scripts?.["test:native-launcher"]).toBe("node --test scripts/ocx-native-launcher.test.mjs");
+    expect(pkg.scripts?.["verify:native-install"]).toBe("node scripts/verify-native-install.mjs pack.json");
     expect(pkg.scripts?.["build:publish"]).toBe("bun run typecheck && bun run build:gui");
     expect(pkg.scripts?.prepack).toBe("bun run prepare:native-package && bun run prepare:package");
     expect(pkg.scripts?.prepublishOnly).toBe("bun scripts/prepare-package.ts --reject-source-publish");

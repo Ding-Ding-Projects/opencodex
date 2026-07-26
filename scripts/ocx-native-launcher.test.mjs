@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { nativeArtifactName, resolveNativeGoBinary } from "../bin/native-runtime.mjs";
+import { isSupportedNativeTarget, nativeArtifactName, resolveNativeGoBinary } from "../bin/native-runtime.mjs";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const launcher = join(root, "bin", "ocx.mjs");
@@ -62,6 +62,16 @@ test("auto mode selects the exact package-local platform artifact", () => {
     chmodSync(binary, 0o755);
     assert.equal(resolveNativeGoBinary({ here: dir, version: "2.9.0", env: {}, platform: "linux", architecture: "arm64" }), binary);
     assert.equal(resolveNativeGoBinary({ here: dir, version: "2.9.0", env: { OPENCODEX_RUNTIME: "ts", OPENCODEX_GO_BINARY: binary }, platform: "linux", architecture: "arm64" }), null);
+    assert.equal(isSupportedNativeTarget("linux", "arm64"), true);
+    assert.equal(isSupportedNativeTarget("freebsd", "x64"), false);
+    assert.throws(
+      () => resolveNativeGoBinary({ here: dir, version: "2.9.0", env: { OPENCODEX_RUNTIME: "ts" }, platform: "linux", architecture: "arm64", strictPackaged: true }),
+      /OPENCODEX_RUNTIME=ts is not allowed/,
+    );
+    assert.throws(
+      () => resolveNativeGoBinary({ here: dir, version: "2.9.0", env: { OPENCODEX_GO_BINARY: binary }, platform: "linux", architecture: "arm64", strictPackaged: true }),
+      /OPENCODEX_GO_BINARY is not allowed/,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -79,6 +89,25 @@ test("native resolver rejects a symlinked packaged artifact", { skip: process.pl
     chmodSync(real, 0o755);
     symlinkSync(real, linked);
     assert.equal(resolveNativeGoBinary({ here: dir, version: "2.9.0", env: {}, platform: "linux", architecture: "arm64" }), null);
+    assert.throws(
+      () => resolveNativeGoBinary({ here: dir, version: "2.9.0", env: {}, platform: "linux", architecture: "arm64", strictPackaged: true }),
+      /missing, symlinked, or not executable/,
+    );
+    unlinkSync(linked);
+    writeFileSync(linked, "native", { mode: 0o644 });
+    chmodSync(linked, 0o644);
+    assert.throws(
+      () => resolveNativeGoBinary({ here: dir, version: "2.9.0", env: {}, platform: "linux", architecture: "arm64", strictPackaged: true }),
+      /missing, symlinked, or not executable/,
+    );
+    unlinkSync(linked);
+    const wrong = join(nativeDir, "ocx_wrong_linux_arm64");
+    writeFileSync(wrong, "native", { mode: 0o755 });
+    chmodSync(wrong, 0o755);
+    assert.throws(
+      () => resolveNativeGoBinary({ here: dir, version: "2.9.0", env: {}, platform: "linux", architecture: "arm64", strictPackaged: true }),
+      /missing, symlinked, or not executable/,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
