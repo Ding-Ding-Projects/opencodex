@@ -158,3 +158,38 @@ func ValidateChannel(channel Channel) error {
 	}
 	return nil
 }
+
+// ValidateNativeTransition enforces the native updater's same-channel,
+// same-major, strictly-newer policy. Equal versions are a successful no-op.
+func ValidateNativeTransition(current, latest string, channel Channel) (bool, error) {
+	if err := ValidateChannel(channel); err != nil {
+		return false, err
+	}
+	current = strings.TrimPrefix(strings.TrimSpace(current), "v")
+	latest = strings.TrimPrefix(strings.TrimSpace(latest), "v")
+	var currentParts, latestParts []int
+	var currentOK, latestOK bool
+	if channel == ChannelLatest {
+		currentParts, currentOK = parseStable(current)
+		latestParts, latestOK = parseStable(latest)
+	} else {
+		currentParts, currentOK = parsePreview(current)
+		latestParts, latestOK = parsePreview(latest)
+	}
+	if !currentOK {
+		return false, fmt.Errorf("current version %q does not match %s channel", current, channel)
+	}
+	if !latestOK {
+		return false, fmt.Errorf("release version %q does not match %s channel", latest, channel)
+	}
+	if currentParts[0] != latestParts[0] {
+		return false, fmt.Errorf("native update cannot change major version from %d to %d", currentParts[0], latestParts[0])
+	}
+	if current == latest {
+		return false, nil
+	}
+	if !greater(latestParts, currentParts) {
+		return false, fmt.Errorf("native update requires a strictly newer release than %s", current)
+	}
+	return true, nil
+}

@@ -69,6 +69,15 @@ func TestResolveRuntimeCommandUsesStablePackageLauncher(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeCommandUsesManifestNameAfterNativeSelfUpdate(t *testing.T) {
+	fixture := newPackagedRuntimeFixture(t)
+	fixture.deps.version = "2.7.42-preview.1"
+	command := resolveRuntimeCommand(fixture.deps)
+	if command.Executable != evaluatedPath(t, fixture.node) || command.Launcher != fixture.launcher {
+		t.Fatalf("self-updated command=%#v", command)
+	}
+}
+
 func TestResolveRuntimeCommandRejectsInvalidPackageFiles(t *testing.T) {
 	tests := map[string]func(*testing.T, packagedRuntimeFixture){
 		"malformed manifest": func(t *testing.T, fixture packagedRuntimeFixture) {

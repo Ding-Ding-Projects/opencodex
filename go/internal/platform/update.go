@@ -15,8 +15,28 @@ import (
 
 const MaxUpdateBytes int64 = 256 << 20
 
+// UpdateDestination is an opaque identity snapshot for the executable being replaced.
+type UpdateDestination struct {
+	path string
+	info os.FileInfo
+}
+
+var beforeUpdateReplace func()
+
+func SnapshotUpdateDestination(path string) (UpdateDestination, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return UpdateDestination{}, err
+	}
+	info, err := os.Lstat(absolute)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return UpdateDestination{}, fmt.Errorf("update destination must be an existing regular non-symlink file")
+	}
+	return UpdateDestination{path: filepath.Clean(absolute), info: info}, nil
+}
+
 // DownloadAndReplace downloads an HTTPS binary, verifies SHA-256, then atomically replaces destination.
-func DownloadAndReplace(ctx context.Context, sourceURL, expectedSHA256, destination string) error {
+func DownloadAndReplace(ctx context.Context, sourceURL, expectedSHA256 string, destination UpdateDestination) error {
 	parsed, err := url.ParseRequestURI(sourceURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		return fmt.Errorf("update URL must be HTTPS")
@@ -43,8 +63,11 @@ func DownloadAndReplace(ctx context.Context, sourceURL, expectedSHA256, destinat
 	return replaceFromReader(io.LimitReader(response.Body, MaxUpdateBytes+1), expected, destination)
 }
 
-func replaceFromReader(reader io.Reader, expected []byte, destination string) error {
-	dir := filepath.Dir(destination)
+func replaceFromReader(reader io.Reader, expected []byte, destination UpdateDestination) error {
+	if !destinationUnchanged(destination) {
+		return fmt.Errorf("update destination changed before download")
+	}
+	dir := filepath.Dir(destination.path)
 	temp, err := os.CreateTemp(dir, ".ocx-update-*")
 	if err != nil {
 		return fmt.Errorf("create update temporary file: %w", err)
@@ -65,11 +88,7 @@ func replaceFromReader(reader io.Reader, expected []byte, destination string) er
 		temp.Close()
 		return fmt.Errorf("update SHA-256 mismatch")
 	}
-	mode := os.FileMode(0o755)
-	if info, statErr := os.Stat(destination); statErr == nil {
-		mode = info.Mode().Perm()
-	}
-	if err := temp.Chmod(mode); err != nil {
+	if err := temp.Chmod(destination.info.Mode().Perm()); err != nil {
 		temp.Close()
 		return err
 	}
@@ -80,10 +99,26 @@ func replaceFromReader(reader io.Reader, expected []byte, destination string) er
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := atomicReplace(tempPath, destination); err != nil {
+	if !destinationUnchanged(destination) {
+		return fmt.Errorf("update destination changed during download")
+	}
+	if beforeUpdateReplace != nil {
+		beforeUpdateReplace()
+	}
+	if !destinationUnchanged(destination) {
+		return fmt.Errorf("update destination changed before replacement")
+	}
+	if err := atomicReplace(tempPath, destination.path); err != nil {
 		return fmt.Errorf("atomically replace executable: %w", err)
 	}
 	return nil
+}
+
+func destinationUnchanged(snapshot UpdateDestination) bool {
+	current, err := os.Lstat(snapshot.path)
+	return err == nil && current.Mode()&os.ModeSymlink == 0 && current.Mode().IsRegular() &&
+		os.SameFile(snapshot.info, current) && snapshot.info.Size() == current.Size() &&
+		snapshot.info.ModTime() == current.ModTime() && snapshot.info.Mode() == current.Mode()
 }
 
 func equalBytes(left, right []byte) bool {

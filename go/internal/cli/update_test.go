@@ -3,148 +3,200 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
 
-func TestUpdateTagDryRunPlansNativeReleaseArtifact(t *testing.T) {
-	restore := stubNativeReleaseUpdate(t)
-	defer restore()
-	var output bytes.Buffer
-	destination := filepath.Join(t.TempDir(), "ocx")
-	if err := runUpdate(context.Background(), []string{"--tag", "preview", "--destination", destination, "--dry-run"}, IO{Out: &output, Err: &output}); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"v2.9.0-preview.1", "ocx_2.9.0-preview.1_linux_amd64", strings.Repeat("a", 64), destination} {
-		if !strings.Contains(output.String(), want) {
-			t.Fatalf("dry-run missing %q: %s", want, output.String())
-		}
-	}
+type nativeUpdateFixture struct {
+	executable string
+	current    string
+	deps       nativeUpdateDeps
+	resolved   int
+	downloaded int
+	artifact   updatepkg.ReleaseArtifact
 }
 
-func TestUpdatePreviewDryRunResolvesManifestWithoutReplacingBinary(t *testing.T) {
-	const version = "2.9.1-preview.20260726"
-	digest := strings.Repeat("c", 64)
-	artifactName := updatepkg.ReleaseArtifactName(version, runtime.GOOS, runtime.GOARCH)
-	checksumName := updatepkg.ReleaseChecksumName(version)
-	var server *httptest.Server
-	server = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/repos/lidge-jun/opencodex/releases":
-			base := server.URL + "/lidge-jun/opencodex/releases/download/v" + version + "/"
-			_ = json.NewEncoder(writer).Encode([]map[string]any{{
-				"tag_name": "v" + version, "prerelease": true, "draft": false,
-				"assets": []map[string]string{
-					{"name": artifactName, "browser_download_url": base + artifactName},
-					{"name": checksumName, "browser_download_url": base + checksumName},
-				},
-			}})
-		case "/lidge-jun/opencodex/releases/download/v" + version + "/" + checksumName:
-			_, _ = fmt.Fprintf(writer, "%s  %s\n", digest, artifactName)
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	defer server.Close()
-
-	previousResolve, previousDownload := resolveNativeReleaseArtifact, downloadNativeUpdate
-	defer func() { resolveNativeReleaseArtifact, downloadNativeUpdate = previousResolve, previousDownload }()
-	resolveNativeReleaseArtifact = func(ctx context.Context, channel updatepkg.Channel) (updatepkg.ReleaseArtifact, error) {
-		resolver := updatepkg.GitHubReleaseResolver{
-			Client: server.Client(), APIBase: server.URL, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
-			AllowedAssetHosts: []string{strings.TrimPrefix(server.URL, "https://")},
-		}
-		return resolver.Resolve(ctx, channel)
-	}
-	replaced := false
-	downloadNativeUpdate = func(context.Context, string, string, string) error {
-		replaced = true
-		return nil
-	}
-	destination := filepath.Join(t.TempDir(), "ocx")
-	if err := os.WriteFile(destination, []byte("unchanged"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := runUpdate(context.Background(), []string{"--tag", "preview", "--destination", destination, "--dry-run"}, IO{Out: &output, Err: &output}); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"v" + version, artifactName, digest, destination} {
-		if !strings.Contains(output.String(), want) {
-			t.Fatalf("dry-run missing %q: %s", want, output.String())
-		}
-	}
-	if replaced || string(mustReadFile(t, destination)) != "unchanged" {
-		t.Fatalf("dry-run changed destination: replaced=%t body=%q", replaced, mustReadFile(t, destination))
-	}
-}
-
-func TestUpdateRejectsUnknownTagWithoutExecution(t *testing.T) {
-	if err := runUpdate(context.Background(), []string{"--tag", "nightly", "--dry-run"}, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}); err == nil {
-		t.Fatal("unknown update channel accepted")
-	}
-}
-
-func TestUpdateTagDownloadsVerifiedNativeArtifact(t *testing.T) {
-	restore := stubNativeReleaseUpdate(t)
-	defer restore()
-	destination := filepath.Join(t.TempDir(), "ocx")
-	if err := os.WriteFile(destination, []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := runUpdate(context.Background(), []string{"--tag", "latest", "--destination", destination}, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}); err != nil {
-		t.Fatal(err)
-	}
-	if got := string(mustReadFile(t, destination)); got != "downloaded:https://github.com/lidge-jun/opencodex/releases/download/v2.9.0-preview.1/ocx_2.9.0-preview.1_linux_amd64:"+strings.Repeat("a", 64) {
-		t.Fatalf("replacement=%q", got)
-	}
-}
-
-func TestUpdateTagDoesNotReplaceMatchingVersion(t *testing.T) {
-	restore := stubNativeReleaseUpdate(t)
-	defer restore()
-	previousVersion := Version
-	Version = "2.9.0-preview.1"
-	defer func() { Version = previousVersion }()
-	destination := filepath.Join(t.TempDir(), "ocx")
-	if err := os.WriteFile(destination, []byte("unchanged"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := runUpdate(context.Background(), []string{"--tag", "preview", "--destination", destination}, IO{Out: &output, Err: &output}); err != nil {
-		t.Fatal(err)
-	}
-	if got := string(mustReadFile(t, destination)); got != "unchanged" || !strings.Contains(output.String(), "Already on the latest preview release") {
-		t.Fatalf("destination=%q output=%q", got, output.String())
-	}
-}
-
-func stubNativeReleaseUpdate(t *testing.T) func() {
+func newNativeUpdateFixture(t *testing.T, current, latest string, channel updatepkg.Channel) *nativeUpdateFixture {
 	t.Helper()
-	previousResolve, previousDownload := resolveNativeReleaseArtifact, downloadNativeUpdate
-	resolveNativeReleaseArtifact = func(context.Context, updatepkg.Channel) (updatepkg.ReleaseArtifact, error) {
-		return updatepkg.ReleaseArtifact{Version: "2.9.0-preview.1", Name: "ocx_2.9.0-preview.1_linux_amd64", URL: "https://github.com/lidge-jun/opencodex/releases/download/v2.9.0-preview.1/ocx_2.9.0-preview.1_linux_amd64", SHA256: strings.Repeat("a", 64)}, nil
-	}
-	downloadNativeUpdate = func(_ context.Context, sourceURL, digest, destination string) error {
-		return os.WriteFile(destination, []byte("downloaded:"+sourceURL+":"+digest), 0o755)
-	}
-	return func() { resolveNativeReleaseArtifact, downloadNativeUpdate = previousResolve, previousDownload }
-}
-
-func mustReadFile(t *testing.T, path string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
+	root := t.TempDir()
+	goos, goarch := "linux", "amd64"
+	nativeDir := filepath.Join(root, "bin", "native")
+	if err := os.MkdirAll(nativeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return data
+	executable := filepath.Join(nativeDir, updatepkg.ReleaseArtifactName(current, goos, goarch))
+	for path, file := range map[string]struct {
+		body string
+		mode os.FileMode
+	}{
+		executable:                            {"old-native", 0o755},
+		filepath.Join(root, "bin", "ocx.mjs"): {"launcher", 0o644},
+		filepath.Join(root, "package.json"):   {`{"version":"` + current + `"}`, 0o644},
+	} {
+		if err := os.WriteFile(path, []byte(file.body), file.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture := &nativeUpdateFixture{executable: executable, current: current}
+	fixture.artifact = updatepkg.ReleaseArtifact{
+		Channel: channel, Version: latest,
+		Name:   updatepkg.ReleaseArtifactName(latest, goos, goarch),
+		URL:    "https://github.com/lidge-jun/opencodex/releases/download/v" + latest + "/" + updatepkg.ReleaseArtifactName(latest, goos, goarch),
+		SHA256: strings.Repeat("a", 64),
+	}
+	fixture.deps = nativeUpdateDeps{
+		executable: func() (string, error) { return executable, nil },
+		goos:       goos, goarch: goarch, version: current,
+		resolve: func(context.Context, updatepkg.Channel) (updatepkg.ReleaseArtifact, error) {
+			fixture.resolved++
+			return fixture.artifact, nil
+		},
+		download: func(context.Context, string, string, platform.UpdateDestination) error {
+			fixture.downloaded++
+			return nil
+		},
+	}
+	return fixture
+}
+
+func TestUpdateDefaultsToCurrentPreviewChannelAndPlansPackageDestination(t *testing.T) {
+	fixture := newNativeUpdateFixture(t, "2.7.41-preview.1", "2.7.41-preview.2", updatepkg.ChannelPreview)
+	var output bytes.Buffer
+	if err := runUpdateWithDeps(context.Background(), []string{"--dry-run"}, IO{Out: &output, Err: &output}, fixture.deps); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"v2.7.41-preview.2", fixture.artifact.Name, fixture.executable, fixture.artifact.SHA256} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("output missing %q: %s", want, output.String())
+		}
+	}
+	if fixture.resolved != 1 || fixture.downloaded != 0 {
+		t.Fatalf("resolve=%d download=%d", fixture.resolved, fixture.downloaded)
+	}
+}
+
+func TestUpdateDownloadsNewerSameChannelArtifact(t *testing.T) {
+	fixture := newNativeUpdateFixture(t, "2.7.41", "2.8.0", updatepkg.ChannelLatest)
+	var output bytes.Buffer
+	if err := runUpdateWithDeps(context.Background(), []string{"--tag", "latest"}, IO{Out: &output, Err: &output}, fixture.deps); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.downloaded != 1 || !strings.Contains(output.String(), "Package metadata remains at v2.7.41") {
+		t.Fatalf("download=%d output=%q", fixture.downloaded, output.String())
+	}
+}
+
+func TestUpdateAcceptsOldPackageNameAfterPriorNativeSelfUpdate(t *testing.T) {
+	fixture := newNativeUpdateFixture(t, "2.7.41", "2.7.43", updatepkg.ChannelLatest)
+	fixture.deps.version = "2.7.42"
+	if err := runUpdateWithDeps(context.Background(), nil, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}, fixture.deps); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.resolved != 1 || fixture.downloaded != 1 {
+		t.Fatalf("resolve=%d download=%d", fixture.resolved, fixture.downloaded)
+	}
+}
+
+func TestUpdateEqualVersionIsNoOp(t *testing.T) {
+	fixture := newNativeUpdateFixture(t, "2.7.41", "2.7.41", updatepkg.ChannelLatest)
+	var output bytes.Buffer
+	if err := runUpdateWithDeps(context.Background(), nil, IO{Out: &output, Err: &output}, fixture.deps); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.downloaded != 0 || !strings.Contains(output.String(), "Already on the latest latest release") {
+		t.Fatalf("download=%d output=%q", fixture.downloaded, output.String())
+	}
+}
+
+func TestUpdateRejectsPolicyViolationsBeforeDownload(t *testing.T) {
+	tests := []struct {
+		name, current, latest string
+		channel               updatepkg.Channel
+		args                  []string
+		mutate                func(*nativeUpdateFixture)
+		wantResolve           bool
+	}{
+		{"cross channel request", "2.7.41", "2.8.0-preview.1", updatepkg.ChannelPreview, []string{"--tag", "preview"}, nil, false},
+		{"downgrade", "2.8.0", "2.7.41", updatepkg.ChannelLatest, nil, nil, true},
+		{"cross major", "2.7.41", "3.0.0", updatepkg.ChannelLatest, nil, nil, true},
+		{"malformed release", "2.7.41", "wat", updatepkg.ChannelLatest, nil, nil, true},
+		{"wrong artifact target", "2.7.41", "2.8.0", updatepkg.ChannelLatest, nil, func(f *nativeUpdateFixture) { f.artifact.Name = "ocx_2.8.0_darwin_arm64" }, true},
+		{"wrong artifact channel", "2.7.41", "2.8.0", updatepkg.ChannelLatest, nil, func(f *nativeUpdateFixture) { f.artifact.Channel = updatepkg.ChannelPreview }, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newNativeUpdateFixture(t, test.current, test.latest, test.channel)
+			if test.mutate != nil {
+				test.mutate(fixture)
+			}
+			err := runUpdateWithDeps(context.Background(), test.args, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}, fixture.deps)
+			if err == nil || fixture.downloaded != 0 {
+				t.Fatalf("err=%v download=%d", err, fixture.downloaded)
+			}
+			if (fixture.resolved != 0) != test.wantResolve {
+				t.Fatalf("resolve=%d", fixture.resolved)
+			}
+		})
+	}
+}
+
+func TestUpdateRejectsUnpackagedExecutableBeforeResolver(t *testing.T) {
+	fixture := newNativeUpdateFixture(t, "2.7.41", "2.8.0", updatepkg.ChannelLatest)
+	fixture.deps.executable = func() (string, error) { return filepath.Join(t.TempDir(), "ocx"), nil }
+	if err := runUpdateWithDeps(context.Background(), nil, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}, fixture.deps); err == nil {
+		t.Fatal("unpackaged executable accepted")
+	}
+	if fixture.resolved != 0 || fixture.downloaded != 0 {
+		t.Fatalf("resolve=%d download=%d", fixture.resolved, fixture.downloaded)
+	}
+}
+
+func TestUpdateRejectsMalformedCurrentVersionBeforeResolver(t *testing.T) {
+	fixture := newNativeUpdateFixture(t, "2.7.41", "2.8.0", updatepkg.ChannelLatest)
+	fixture.deps.version = "development"
+	if err := runUpdateWithDeps(context.Background(), nil, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}, fixture.deps); err == nil {
+		t.Fatal("malformed current version accepted")
+	}
+	if fixture.resolved != 0 || fixture.downloaded != 0 {
+		t.Fatalf("resolve=%d download=%d", fixture.resolved, fixture.downloaded)
+	}
+}
+
+func TestUpdateWindowsReturnsExactNPMGuidanceBeforeNetwork(t *testing.T) {
+	fixture := newNativeUpdateFixture(t, "2.7.41-preview.1", "2.7.41-preview.2", updatepkg.ChannelPreview)
+	fixture.deps.goos = "windows"
+	fixture.deps.executable = func() (string, error) { return "", errors.New("must not inspect") }
+	err := runUpdateWithDeps(context.Background(), nil, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}, fixture.deps)
+	if err == nil || err.Error() != "native self-update is unavailable on Windows; run: npm install -g @bitkyc08/opencodex@preview" {
+		t.Fatalf("err=%v", err)
+	}
+	if fixture.resolved != 0 || fixture.downloaded != 0 {
+		t.Fatalf("resolve=%d download=%d", fixture.resolved, fixture.downloaded)
+	}
+}
+
+func TestUpdatePublicSurfaceRejectsRawUpdaterFlags(t *testing.T) {
+	for _, args := range [][]string{{"update", "--url", "https://example.com/ocx"}, {"update", "--sha256", strings.Repeat("a", 64)}, {"update", "--destination", "/tmp/ocx"}} {
+		var output bytes.Buffer
+		if code := Run(context.Background(), args, IO{Out: &output, Err: &output}); code == 0 || !strings.Contains(output.String(), "flag provided but not defined") {
+			t.Fatalf("args=%v code=%d output=%q", args, code, output.String())
+		}
+	}
+}
+
+func TestUpdateHelpShowsBoundedSurface(t *testing.T) {
+	var output bytes.Buffer
+	if err := PrintHelp(&output, "update"); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "ocx update [--tag latest|preview] [--dry-run]") || strings.Contains(text, "--url") || strings.Contains(text, "--destination") {
+		t.Fatalf("help=%q", text)
+	}
 }

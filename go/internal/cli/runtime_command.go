@@ -28,6 +28,13 @@ type runtimeFileSnapshot struct {
 	info os.FileInfo
 }
 
+type packagedRuntime struct {
+	executable runtimeFileSnapshot
+	manifest   runtimeFileSnapshot
+	launcher   runtimeFileSnapshot
+	version    string
+}
+
 var processRuntimeCommand = func() runtimeCommand {
 	return resolveRuntimeCommand(runtimeCommandDeps{
 		executable: os.Executable,
@@ -49,43 +56,11 @@ func resolveRuntimeCommand(deps runtimeCommandDeps) runtimeCommand {
 	}
 	direct := runtimeCommand{Executable: filepath.Clean(executable)}
 
-	nativeDir := filepath.Dir(direct.Executable)
-	binDir := filepath.Dir(nativeDir)
-	packageRoot := filepath.Dir(binDir)
-	if filepath.Base(nativeDir) != "native" || filepath.Base(binDir) != "bin" {
+	if filepath.Base(filepath.Dir(direct.Executable)) != "native" || filepath.Base(filepath.Dir(filepath.Dir(direct.Executable))) != "bin" {
 		return direct
 	}
 	invalidPackage := runtimeCommand{}
-	extension := ""
-	if deps.goos == "windows" {
-		extension = ".exe"
-	}
-	expectedName := "ocx_" + deps.version + "_" + deps.goos + "_" + deps.goarch + extension
-	if filepath.Base(direct.Executable) != expectedName {
-		return invalidPackage
-	}
-
-	nativeSnapshot, ok := snapshotRuntimeFile(direct.Executable, true, deps.goos)
-	if !ok {
-		return invalidPackage
-	}
-	manifestPath := filepath.Join(packageRoot, "package.json")
-	manifestSnapshot, ok := snapshotRuntimeFile(manifestPath, false, deps.goos)
-	if !ok {
-		return invalidPackage
-	}
-	manifestData, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return invalidPackage
-	}
-	var manifest struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(manifestData, &manifest) != nil || manifest.Version != deps.version {
-		return invalidPackage
-	}
-	launcherPath := filepath.Join(binDir, "ocx.mjs")
-	launcherSnapshot, ok := snapshotRuntimeFile(launcherPath, false, deps.goos)
+	packaged, ok := snapshotPackagedRuntime(direct.Executable, deps.goos, deps.goarch)
 	if !ok {
 		return invalidPackage
 	}
@@ -109,11 +84,55 @@ func resolveRuntimeCommand(deps runtimeCommandDeps) runtimeCommand {
 	if deps.beforeRecheck != nil {
 		deps.beforeRecheck()
 	}
-	if !runtimeFileUnchanged(nativeSnapshot) || !runtimeFileUnchanged(manifestSnapshot) ||
-		!runtimeFileUnchanged(launcherSnapshot) || !runtimeFileUnchanged(nodeSnapshot) {
+	if !packaged.unchanged() || !runtimeFileUnchanged(nodeSnapshot) {
 		return invalidPackage
 	}
-	return runtimeCommand{Executable: filepath.Clean(nodePath), Launcher: launcherPath}
+	return runtimeCommand{Executable: filepath.Clean(nodePath), Launcher: packaged.launcher.path}
+}
+
+func snapshotPackagedRuntime(executable, goos, goarch string) (packagedRuntime, bool) {
+	nativeDir := filepath.Dir(executable)
+	binDir := filepath.Dir(nativeDir)
+	packageRoot := filepath.Dir(binDir)
+	if filepath.Base(nativeDir) != "native" || filepath.Base(binDir) != "bin" {
+		return packagedRuntime{}, false
+	}
+	nativeSnapshot, ok := snapshotRuntimeFile(executable, true, goos)
+	if !ok {
+		return packagedRuntime{}, false
+	}
+	manifestPath := filepath.Join(packageRoot, "package.json")
+	manifestSnapshot, ok := snapshotRuntimeFile(manifestPath, false, goos)
+	if !ok {
+		return packagedRuntime{}, false
+	}
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return packagedRuntime{}, false
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(manifestData, &manifest) != nil || strings.TrimSpace(manifest.Version) != manifest.Version || manifest.Version == "" {
+		return packagedRuntime{}, false
+	}
+	expectedName := "ocx_" + manifest.Version + "_" + goos + "_" + goarch
+	if goos == "windows" {
+		expectedName += ".exe"
+	}
+	if filepath.Base(executable) != expectedName {
+		return packagedRuntime{}, false
+	}
+	launcherSnapshot, ok := snapshotRuntimeFile(filepath.Join(binDir, "ocx.mjs"), false, goos)
+	if !ok {
+		return packagedRuntime{}, false
+	}
+	packaged := packagedRuntime{executable: nativeSnapshot, manifest: manifestSnapshot, launcher: launcherSnapshot, version: manifest.Version}
+	return packaged, packaged.unchanged()
+}
+
+func (packaged packagedRuntime) unchanged() bool {
+	return runtimeFileUnchanged(packaged.executable) && runtimeFileUnchanged(packaged.manifest) && runtimeFileUnchanged(packaged.launcher)
 }
 
 func snapshotRuntimeFile(path string, executable bool, goos string) (runtimeFileSnapshot, bool) {
