@@ -33,6 +33,7 @@ func startTypeScriptProxyWithLookup(t *testing.T, config map[string]any, lookup 
 
 func startTypeScriptProxyWithEnvironmentLookup(t *testing.T, config map[string]any, lookup func(string) (string, error), extraEnvironment ...string) *tsProxyProcess {
 	t.Helper()
+	requireRuntimeParity(t)
 	bun, err := lookup("bun")
 	if err != nil {
 		t.Skip("Bun runtime is unavailable")

@@ -72,3 +72,66 @@ func TestNonLoopbackRemovesStaleFenceButPreservesUserBytes(t *testing.T) {
 	}
 	assertFileBytes(t, path, original)
 }
+
+func TestProviderBaseHostAndDefaultHomeResolution(t *testing.T) {
+	t.Setenv("GROK_HOME", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := resolveGrokHome(""), filepath.Join(home, ".grok"); got != want {
+		t.Fatalf("resolveGrokHome() = %q, want %q", got, want)
+	}
+	for _, test := range []struct{ input, want string }{
+		{"", "127.0.0.1"},
+		{"localhost", "127.0.0.1"},
+		{"0.0.0.0", "127.0.0.1"},
+		{"::", "127.0.0.1"},
+		{"::1", "[::1]"},
+		{"[::1]", "[::1]"},
+		{"[2001:db8::1]", "[2001:db8::1]"},
+		{"2001:db8::1", "[2001:db8::1]"},
+		{"proxy.lan", "proxy.lan"},
+	} {
+		if got := providerBaseHost(test.input); got != test.want {
+			t.Errorf("providerBaseHost(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}
+
+func TestTOMLBasicStringDecoderConservativelyHandlesEscapes(t *testing.T) {
+	for _, test := range []struct{ input, want string }{
+		{`a\tb\nc\rd\be\ff`, "a\tb\nc\rd\be\ff"},
+		{`quote\" slash\\`, `quote" slash\`},
+		{`\u006Dodel`, "model"},
+		{`\U0001F642`, "🙂"},
+		{`\U00110000`, `\U00110000`},
+		{`\uD800`, `\uD800`},
+		{`\q`, `\q`},
+		{`trailing\`, `trailing\`},
+	} {
+		if got := decodeTOMLBasicString(test.input); got != test.want {
+			t.Errorf("decodeTOMLBasicString(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}
+
+func TestMarkerLineAndBackupFailureBoundaries(t *testing.T) {
+	valid := BeginMarker + "\r\n" + EndMarker
+	region := findManagedRegion(valid)
+	if region == nil || region.orphaned || managedRegionEOL(valid, region) != "\r\n" {
+		t.Fatalf("valid CRLF region = %#v", region)
+	}
+	if markerOccupiesLine("prefix "+BeginMarker+"\n", len("prefix "), BeginMarker) {
+		t.Fatal("inline marker must not own user bytes")
+	}
+	if got := consumeLineEnding("x\r\ny", 1); got != 3 {
+		t.Fatalf("consumeLineEnding(CRLF) = %d, want 3", got)
+	}
+	if got := consumeLineEnding("x", 1); got != 1 {
+		t.Fatalf("consumeLineEnding(EOF) = %d, want 1", got)
+	}
+	if err := copyBackupOnce(filepath.Join(t.TempDir(), "missing"), filepath.Join(t.TempDir(), "backup")); !os.IsNotExist(err) {
+		t.Fatalf("copyBackupOnce missing source = %v", err)
+	}
+}

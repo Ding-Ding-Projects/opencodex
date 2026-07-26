@@ -21,6 +21,8 @@ import (
 
 var parityBinary string
 
+const runtimeParityEnv = "OCX_RUN_RUNTIME_PARITY"
+
 func TestMain(main *testing.M) {
 	if os.Getenv("GO_WANT_CODEX_SHIM_HELPER") == "1" {
 		os.Exit(main.Run())
@@ -100,6 +102,7 @@ func startProxyWithConfig(t *testing.T, config map[string]any, extraEnvironment 
 
 func startProxyWithSetup(t *testing.T, config map[string]any, setup func(string), extraEnvironment ...string) *proxyProcess {
 	t.Helper()
+	requireRuntimeParity(t)
 	home := t.TempDir()
 	if setup != nil {
 		setup(home)
@@ -153,6 +156,13 @@ func startProxyWithSetup(t *testing.T, config map[string]any, setup func(string)
 		t.Fatalf("proxy listen timeout\n%s", stderr.String())
 	}
 	return nil
+}
+
+func requireRuntimeParity(t *testing.T) {
+	t.Helper()
+	if os.Getenv(runtimeParityEnv) != "1" {
+		t.Skipf("set %s=1 for process-based TypeScript/Go runtime parity", runtimeParityEnv)
+	}
 }
 
 func (process *proxyProcess) stop(t *testing.T) {
