@@ -276,6 +276,26 @@ func TestComboWritesCanonicalConfigAndMigratesReferences(t *testing.T) {
 	}
 }
 
+func TestComboResponsesUseTypeScriptFieldOrderAndOmitMaxHops(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers["a"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://a.example", Models: []string{"m"}}
+	api := newParityAPI(t, &cfg)
+	created := serveManagement(api, http.MethodPut, "/api/combos", `{"id":"fast","combo":{"alias":"route/fast","strategy":"round-robin","stickyLimit":2,"defaultEffort":"high","targets":[{"provider":"a","model":"m","weight":3}]}}`)
+	wantCreated := `{"success":true,"id":"fast","model":"route/fast","combo":{"strategy":"round-robin","stickyLimit":2,"defaultEffort":"high","alias":"route/fast","targets":[{"provider":"a","model":"m","weight":3}]}}`
+	if created.Body.String() != wantCreated {
+		t.Fatalf("create body=%s want=%s", created.Body.String(), wantCreated)
+	}
+	listed := serveManagement(api, http.MethodGet, "/api/combos", "")
+	wantListed := `{"combos":[{"id":"fast","model":"route/fast","strategy":"round-robin","stickyLimit":2,"defaultEffort":"high","alias":"route/fast","targets":[{"provider":"a","model":"m","weight":3}]}]}`
+	if listed.Body.String() != wantListed || strings.Contains(listed.Body.String(), "maxHops") {
+		t.Fatalf("list body=%s want=%s", listed.Body.String(), wantListed)
+	}
+	deleted := serveManagement(api, http.MethodDelete, "/api/combos?id=fast", "")
+	if deleted.Body.String() != `{"success":true,"id":"fast"}` {
+		t.Fatalf("delete body=%s", deleted.Body.String())
+	}
+}
+
 func TestProviderPatchCannotDisableDefaultAndProbeErrorIsRedacted(t *testing.T) {
 	cfg := config.Default()
 	cfg.DefaultProvider = "a"

@@ -22,7 +22,7 @@ func (a *API) handleCombos(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusInternalServerError, "save combo reset failed")
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "success", value: true}})
 		return true
 	}
 	if r.URL.Path != "/api/combos" {
@@ -36,13 +36,13 @@ func (a *API) handleCombos(w http.ResponseWriter, r *http.Request) bool {
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
-		values := make([]map[string]any, 0, len(ids))
+		values := make([]orderedJSONObject, 0, len(ids))
 		for _, id := range ids {
 			combo := a.config.Combos[id]
-			values = append(values, map[string]any{"id": id, "model": comboPublicModelID(id, combo), "alias": combo.Alias, "strategy": defaultComboStrategy(combo.Strategy), "stickyLimit": combo.StickyLimit, "defaultEffort": combo.DefaultEffort, "maxHops": combo.MaxHops, "targets": combo.Targets})
+			values = append(values, append(orderedJSONObject{{name: "id", value: id}, {name: "model", value: comboPublicModelID(id, combo)}}, comboDTO(combo)...))
 		}
 		a.mu.RUnlock()
-		writeJSON(w, http.StatusOK, map[string]any{"combos": values})
+		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "combos", value: values}})
 	case http.MethodPut:
 		var body struct {
 			ID         string         `json:"id"`
@@ -112,7 +112,7 @@ func (a *API) handleCombos(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusInternalServerError, "save combo failed")
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "id": body.ID, "model": comboPublicModelID(body.ID, body.Combo), "combo": body.Combo})
+		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "success", value: true}, {name: "id", value: body.ID}, {name: "model", value: comboPublicModelID(body.ID, body.Combo)}, {name: "combo", value: comboDTO(body.Combo)}})
 	case http.MethodDelete:
 		id, err := queryRequired(r.URL.Query(), "id")
 		if err != nil {
@@ -136,11 +136,37 @@ func (a *API) handleCombos(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusInternalServerError, "save combo removal failed")
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "id": id})
+		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "success", value: true}, {name: "id", value: id}})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 	return true
+}
+
+func comboDTO(combo comboapi.Combo) orderedJSONObject {
+	stickyLimit := combo.StickyLimit
+	if stickyLimit == 0 {
+		stickyLimit = 1
+	}
+	targets := make([]orderedJSONObject, 0, len(combo.Targets))
+	for _, target := range combo.Targets {
+		weight := target.Weight
+		if weight == 0 {
+			weight = 1
+		}
+		targets = append(targets, orderedJSONObject{
+			{name: "provider", value: strings.TrimSpace(target.Provider)},
+			{name: "model", value: strings.TrimSpace(target.Model)},
+			{name: "weight", value: weight},
+		})
+	}
+	return orderedJSONObject{
+		{name: "strategy", value: defaultComboStrategy(combo.Strategy)},
+		{name: "stickyLimit", value: stickyLimit},
+		{name: "defaultEffort", value: nullable(strings.TrimSpace(combo.DefaultEffort))},
+		{name: "alias", value: nullable(strings.TrimSpace(combo.Alias))},
+		{name: "targets", value: targets},
+	}
 }
 
 func defaultComboStrategy(value string) string {
