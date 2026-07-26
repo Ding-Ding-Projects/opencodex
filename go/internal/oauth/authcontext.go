@@ -91,7 +91,7 @@ func (r *AuthResolver) resolveOAuth(ctx context.Context, provider, threadID stri
 		return nil, fmt.Errorf("%w: %s", ErrLoginRequired, provider)
 	}
 	headers := map[string]string{"Authorization": "Bearer " + credential.Access}
-	if provider == "chatgpt" && credential.AccountID != "" {
+	if (provider == "chatgpt" || config.UsePool) && credential.AccountID != "" {
 		headers["chatgpt-account-id"] = credential.AccountID
 	}
 	return &shared.AuthContext{
