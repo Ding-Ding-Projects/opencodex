@@ -31,7 +31,9 @@ type chatRequest struct {
 	Reasoning           map[string]any    `json:"reasoning"`
 	ServiceTier         string            `json:"service_tier"`
 	PromptCacheKey      string            `json:"prompt_cache_key"`
-	Metadata            map[string]any    `json:"metadata"`
+	User                string            `json:"user"`
+	ResponseFormat      json.RawMessage   `json:"response_format"`
+	Metadata            json.RawMessage   `json:"metadata"`
 }
 
 type chatMessageInput struct {
@@ -80,8 +82,17 @@ func ParseInbound(raw []byte) (*types.NormalizedRequest, error) {
 	if hostedWebSearch {
 		req.WebSearch = map[string]any{"type": "web_search"}
 	}
-	req.Options = chatOptions(body)
-	req.Metadata = stringMetadata(body.Metadata)
+	req.Options, err = chatOptions(body)
+	if err != nil {
+		return nil, err
+	}
+	var metadata map[string]any
+	if len(body.Metadata) > 0 && json.Unmarshal(body.Metadata, &metadata) == nil {
+		req.Metadata = stringMetadata(metadata)
+	}
+	if len(req.Options.ResponseText) > 0 {
+		req.StructuredOutput = true
+	}
 	return req, nil
 }
 
@@ -245,8 +256,19 @@ func parseChatTools(rawTools []json.RawMessage) ([]types.Tool, bool, error) {
 	return out, hostedWebSearch, nil
 }
 
-func chatOptions(body chatRequest) types.RequestOptions {
-	options := types.RequestOptions{Temperature: body.Temperature, TopP: body.TopP, ParallelToolCalls: body.ParallelToolCalls, ServiceTier: body.ServiceTier, PromptCacheKey: body.PromptCacheKey}
+func chatOptions(body chatRequest) (types.RequestOptions, error) {
+	options := types.RequestOptions{
+		Temperature: body.Temperature, TopP: body.TopP, ParallelToolCalls: body.ParallelToolCalls,
+		ServiceTier: body.ServiceTier, PromptCacheKey: body.PromptCacheKey, User: body.User,
+	}
+	if len(body.Metadata) > 0 && string(body.Metadata) != "null" {
+		options.RequestMetadata = append(json.RawMessage(nil), body.Metadata...)
+	}
+	responseText, err := responseFormatText(body.ResponseFormat)
+	if err != nil {
+		return types.RequestOptions{}, err
+	}
+	options.ResponseText = responseText
 	if body.MaxCompletionTokens != nil {
 		options.MaxOutputTokens = *body.MaxCompletionTokens
 	} else if body.MaxTokens != nil {
@@ -277,7 +299,41 @@ func chatOptions(body chatRequest) types.RequestOptions {
 			}
 		}
 	}
-	return options
+	return options, nil
+}
+
+func responseFormatText(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var format map[string]any
+	if json.Unmarshal(raw, &format) != nil {
+		return nil, &RequestError{Message: "response_format must be an object"}
+	}
+	kind, _ := format["type"].(string)
+	switch kind {
+	case "text":
+		return nil, nil
+	case "json_object":
+		return mustJSON(map[string]any{"format": map[string]any{"type": "json_object"}}), nil
+	case "json_schema":
+		schema, ok := format["json_schema"].(map[string]any)
+		if !ok {
+			return nil, &RequestError{Message: "response_format.json_schema is required for type json_schema"}
+		}
+		wire := map[string]any{"type": "json_schema", "name": "response"}
+		if name, ok := schema["name"].(string); ok {
+			wire["name"] = name
+		}
+		for _, key := range []string{"description", "schema", "strict"} {
+			if value, exists := schema[key]; exists {
+				wire[key] = value
+			}
+		}
+		return mustJSON(map[string]any{"format": wire}), nil
+	default:
+		return nil, &RequestError{Message: fmt.Sprintf("unsupported response_format.type: %s", kind)}
+	}
 }
 
 func normalizeToolChoice(raw json.RawMessage) json.RawMessage {

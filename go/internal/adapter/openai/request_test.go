@@ -40,6 +40,46 @@ func TestResponsesBuildRequest(t *testing.T) {
 	}
 }
 
+func TestResponsesBuildRequestPreservesTranslatedChatOptions(t *testing.T) {
+	temperature := 0.2
+	request := &types.NormalizedRequest{
+		ModelID: "gpt-test", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+		Options: types.RequestOptions{
+			Temperature: &temperature, StopSequences: []string{"END"}, PromptCacheKey: "cache-1", User: "user-1",
+			ResponseText: json.RawMessage(`{"format":{"type":"json_object"}}`), RequestMetadata: json.RawMessage(`{"attempt":2}`),
+		},
+	}
+	built, err := (&ResponsesAdapter{BaseURL: "https://api.openai.com/v1", APIKey: "key"}).BuildRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decodeRequestBody(t, built.Body)
+	if body["prompt_cache_key"] != "cache-1" || body["user"] != "user-1" || body["stop"].([]any)[0] != "END" {
+		t.Fatalf("translated options = %#v", body)
+	}
+	if body["text"].(map[string]any)["format"].(map[string]any)["type"] != "json_object" || body["metadata"].(map[string]any)["attempt"] != float64(2) {
+		t.Fatalf("structured metadata = %#v", body)
+	}
+}
+
+func TestForwardResponsesBuildRequestStripsUnsupportedTranslatedChatOptions(t *testing.T) {
+	temperature := 0.2
+	request := &types.NormalizedRequest{
+		ModelID: "gpt-test", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+		Options: types.RequestOptions{Temperature: &temperature, StopSequences: []string{"END"}, User: "user-1", RequestMetadata: json.RawMessage(`{"attempt":2}`)},
+	}
+	built, err := (&ResponsesAdapter{BaseURL: "https://chatgpt.com/backend-api/codex", ForwardAuth: true}).BuildRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decodeRequestBody(t, built.Body)
+	for _, key := range []string{"temperature", "stop", "user", "metadata"} {
+		if _, exists := body[key]; exists {
+			t.Fatalf("forward body retained %s: %#v", key, body)
+		}
+	}
+}
+
 func TestChatBuildRequestShape(t *testing.T) {
 	temperature := 0.2
 	parallel := false
@@ -289,9 +329,13 @@ func TestResponsesParseStreamAbortsWhenConsumerBacklogExceedsPolicy(t *testing.T
 	for range 1100 {
 		stream.WriteString("data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n")
 	}
-	events := (&ResponsesAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream.String())))
-	// Give the parser time to fill the production queue while this consumer is stalled.
-	time.Sleep(25 * time.Millisecond)
+	body := newCloseTrackingBody(stream.String())
+	events := (&ResponsesAdapter{}).ParseStream(context.Background(), body)
+	select {
+	case <-body.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled consumer did not trigger bounded body cancellation")
+	}
 	collected := collectEvents(events)
 	if len(collected) == 0 {
 		t.Fatal("backlogged stream emitted no terminal event")
@@ -300,6 +344,21 @@ func TestResponsesParseStreamAbortsWhenConsumerBacklogExceedsPolicy(t *testing.T
 	if last.Type != types.EventError || last.Error != "consumer backlog exceeded — turn aborted" {
 		t.Fatalf("terminal event = %#v", last)
 	}
+}
+
+type closeTrackingBody struct {
+	*strings.Reader
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newCloseTrackingBody(payload string) *closeTrackingBody {
+	return &closeTrackingBody{Reader: strings.NewReader(payload), closed: make(chan struct{})}
+}
+
+func (body *closeTrackingBody) Close() error {
+	body.closeOnce.Do(func() { close(body.closed) })
+	return nil
 }
 
 type terminalThenBlockingBody struct {

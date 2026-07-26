@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,10 @@ import (
 	"strings"
 	"time"
 
+	adapterpkg "github.com/lidge-jun/opencodex-go/internal/adapter"
+	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/combos"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -27,6 +31,7 @@ type AdapterResolver func(model *types.ResolvedModel, transport *types.Transport
 // HandlerConfig supplies the existing routing and transport owners to compatibility handlers.
 type HandlerConfig struct {
 	Registry            types.Registry
+	Combos              *combos.Resolver
 	Auth                types.AuthProvider
 	ResolveAdapter      AdapterResolver
 	Client              *http.Client
@@ -50,11 +55,86 @@ func (c HandlerConfig) runSearch(ctx context.Context, prepared *preparedRequest)
 		return nil, false, nil
 	}
 	loop := *c.SearchLoop
+	runner := loop.Runner
+	if runner == nil {
+		runner = search.HTTPRunner{Client: c.Client}
+	}
+	loop.Runner = routedTurnRunner{inner: runner, config: c, prepared: prepared}
 	if c.OnUsage != nil {
 		loop.OnUsage = c.OnUsage
 	}
 	events, err := loop.Run(ctx, prepared.normalized, prepared.adapter)
 	return events, true, err
+}
+
+type continuityRetryTurnRunner struct{ inner search.TurnRunner }
+
+func (runner continuityRetryTurnRunner) Run(ctx context.Context, request *types.NormalizedRequest, adapter types.Adapter) (search.TurnResult, error) {
+	result, err := runner.inner.Run(ctx, request, adapter)
+	if cursoradapter.IsContinuityRetry(err) || hasCursorContinuityRetry(result.Events) {
+		return runner.inner.Run(ctx, request, adapter)
+	}
+	return result, err
+}
+
+type routedTurnRunner struct {
+	inner    search.TurnRunner
+	config   HandlerConfig
+	prepared *preparedRequest
+}
+
+func (runner routedTurnRunner) Run(ctx context.Context, request *types.NormalizedRequest, adapter types.Adapter) (search.TurnResult, error) {
+	continuityRetried := false
+	for {
+		result, err := runner.inner.Run(ctx, request, adapter)
+		if !continuityRetried && (cursoradapter.IsContinuityRetry(err) || hasCursorContinuityRetry(result.Events)) {
+			continuityRetried = true
+			adapter = runner.prepared.adapter
+			continue
+		}
+		status, code, message := searchTurnFailure(result, err)
+		if status != 0 && runner.config.advanceComboRequest(ctx, runner.prepared, request, status, code, message, result.RetryAfter) {
+			adapter = runner.prepared.adapter
+			continue
+		}
+		if status == 0 {
+			runner.config.noteComboSuccess(runner.prepared)
+		}
+		return result, err
+	}
+}
+
+func searchTurnFailure(result search.TurnResult, err error) (int, string, string) {
+	if err != nil {
+		return http.StatusBadGateway, "upstream_server_error", err.Error()
+	}
+	if result.StatusCode >= 400 {
+		return result.StatusCode, "", http.StatusText(result.StatusCode)
+	}
+	for _, event := range result.Events {
+		if event.Type == types.EventHeartbeat {
+			continue
+		}
+		if event.Type == types.EventError {
+			status := event.StatusCode
+			if status == 0 {
+				status = http.StatusBadGateway
+			}
+			return status, event.Code, event.Error
+		}
+		break
+	}
+	return 0, "", ""
+}
+
+func hasCursorContinuityRetry(events []types.AdapterEvent) bool {
+	for _, event := range events {
+		if event.Type == types.EventHeartbeat {
+			continue
+		}
+		return event.Type == types.EventError && event.Code == cursoradapter.ContinuityRetryCode
+	}
+	return false
 }
 
 func (c HandlerConfig) claudeInboundConfig() *claude.InboundConfig {
@@ -106,7 +186,14 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, completion)
 		return
 	}
-	response, err := h.config.do(r.Context(), prepared)
+	var response *http.Response
+	var streamEvents <-chan types.AdapterEvent
+	var unaryEvents []types.AdapterEvent
+	if normalized.Stream {
+		response, streamEvents, err = h.config.doStream(r.Context(), prepared)
+	} else {
+		response, unaryEvents, err = h.config.doUnary(r.Context(), prepared)
+	}
 	if err != nil {
 		writeChatErrorFor(w, err)
 		return
@@ -119,23 +206,12 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if normalized.Stream {
-		if err := WriteChatStream(r.Context(), w, requestedModel, prepared.adapter.ParseStream(r.Context(), response.Body)); err != nil && !errors.Is(err, context.Canceled) {
+		if err := WriteChatStream(r.Context(), w, requestedModel, streamEvents); err != nil && !errors.Is(err, context.Canceled) {
 			return
 		}
 		return
 	}
-	defer response.Body.Close()
-	payload, err := readBounded(response.Body, h.config.ResponseLimit)
-	if err != nil {
-		writeChatError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	events, err := prepared.adapter.ParseUnary(r.Context(), payload)
-	if err != nil {
-		writeChatError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	completion, err := BuildChatCompletion(events, requestedModel)
+	completion, err := BuildChatCompletion(unaryEvents, requestedModel)
 	if err != nil {
 		writeChatError(w, http.StatusBadGateway, err.Error())
 		return
@@ -165,22 +241,51 @@ type preparedRequest struct {
 	auth       *types.AuthContext
 	adapter    types.Adapter
 	headers    http.Header
+	pick       *combos.Pick
 }
 
 func (c HandlerConfig) prepare(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest) (*preparedRequest, error) {
 	if c.Registry == nil || c.ResolveAdapter == nil {
 		return nil, statusError{status: 503, message: "routing integration is not configured"}
 	}
-	resolved, err := c.Registry.ResolveModel(normalized.ModelID)
-	if err != nil {
-		return nil, statusError{status: 404, message: err.Error()}
+	var resolved *types.ResolvedModel
+	var pick *combos.Pick
+	var err error
+	if c.Combos != nil {
+		pick, err = c.Combos.ResolveRequest(normalized)
 	}
+	if pick != nil {
+		resolved = pick.Resolved
+	} else {
+		if err != nil && combos.IsRequest(normalized.ModelID) {
+			return nil, statusError{status: 503, message: err.Error()}
+		}
+		resolved, err = c.Registry.ResolveModel(normalized.ModelID)
+		if err != nil {
+			return nil, statusError{status: 404, message: err.Error()}
+		}
+	}
+	prepared, err := c.prepareResolved(ctx, incoming, normalized, resolved)
+	if prepared != nil {
+		prepared.pick = pick
+	}
+	return prepared, err
+}
+
+func (c HandlerConfig) prepareResolved(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel) (*preparedRequest, error) {
 	var auth *types.AuthContext
+	var err error
 	if c.Auth != nil {
 		auth, err = c.Auth.ResolveAuth(ctx, resolved.Provider, threadID(incoming))
 		if err != nil {
 			return nil, statusError{status: 401, message: err.Error()}
 		}
+	}
+	if normalized.ClientThreadID == "" {
+		normalized.ClientThreadID = threadID(incoming)
+	}
+	if normalized.CursorIdentity == "" && auth != nil {
+		normalized.CursorIdentity = firstNonEmpty(strings.TrimSpace(auth.AccountID), strings.TrimSpace(auth.ChatGPTAccountID))
 	}
 	transport, err := c.Registry.ResolveTransport(resolved.Provider, auth)
 	if err != nil {
@@ -195,25 +300,141 @@ func (c HandlerConfig) prepare(ctx context.Context, incoming http.Header, normal
 }
 
 func (c HandlerConfig) do(ctx context.Context, prepared *preparedRequest) (*http.Response, error) {
-	request, err := prepared.adapter.BuildRequest(ctx, prepared.normalized)
-	if err != nil {
-		return nil, statusError{status: 400, message: err.Error()}
-	}
-	if prepared.auth != nil {
-		for name, value := range prepared.auth.Headers {
-			if strings.TrimSpace(name) != "" && strings.TrimSpace(value) != "" {
-				request.Header.Set(name, value)
+	for {
+		request, err := prepared.adapter.BuildRequest(ctx, prepared.normalized)
+		if err != nil {
+			return nil, statusError{status: 400, message: err.Error()}
+		}
+		if prepared.auth != nil {
+			for name, value := range prepared.auth.Headers {
+				if strings.TrimSpace(name) != "" && strings.TrimSpace(value) != "" {
+					request.Header.Set(name, value)
+				}
 			}
 		}
-	}
-	response, err := c.Client.Do(request)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-			return nil, statusError{status: 499, message: "client cancelled request"}
+		response, err := c.Client.Do(request)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				return nil, statusError{status: 499, message: "client cancelled request"}
+			}
+			if c.advanceCombo(ctx, prepared, http.StatusBadGateway, "upstream_server_error", err.Error(), "") {
+				continue
+			}
+			return nil, statusError{status: 502, message: err.Error()}
 		}
-		return nil, statusError{status: 502, message: err.Error()}
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			return response, nil
+		}
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, min64(c.ResponseLimit, 1<<20)+1))
+		_ = response.Body.Close()
+		response.Body = io.NopCloser(bytes.NewReader(payload))
+		details := readProviderErrorDetails(bytes.NewReader(payload), c.ResponseLimit, response.StatusCode)
+		if c.advanceCombo(ctx, prepared, response.StatusCode, details.code, details.message, response.Header.Get("Retry-After")) {
+			continue
+		}
+		return response, nil
 	}
-	return response, nil
+}
+
+func (c HandlerConfig) advanceCombo(ctx context.Context, prepared *preparedRequest, status int, code, message, retryAfter string) bool {
+	return c.advanceComboRequest(ctx, prepared, prepared.normalized, status, code, message, retryAfter)
+}
+
+func (c HandlerConfig) advanceComboRequest(ctx context.Context, prepared *preparedRequest, request *types.NormalizedRequest, status int, code, message, retryAfter string) bool {
+	if c.Combos == nil || prepared == nil || prepared.pick == nil {
+		return false
+	}
+	next, err := c.Combos.Next(request, prepared.pick, status, code, message, retryAfter)
+	if err != nil {
+		return false
+	}
+	replacement, err := c.prepareResolved(ctx, prepared.headers, request, next.Resolved)
+	if err != nil {
+		return false
+	}
+	replacement.pick = next
+	*prepared = *replacement
+	return true
+}
+
+func (c HandlerConfig) doStream(ctx context.Context, prepared *preparedRequest) (*http.Response, <-chan types.AdapterEvent, error) {
+	continuityRetried := false
+	for {
+		response, err := c.do(ctx, prepared)
+		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+			return response, nil, err
+		}
+		preflight := adapterpkg.PreflightEvents(ctx, prepared.adapter.ParseStream(ctx, response.Body))
+		if !continuityRetried && preflight.Error != nil && preflight.Error.Code == cursoradapter.ContinuityRetryCode {
+			continuityRetried = true
+			_ = response.Body.Close()
+			continue
+		}
+		if preflight.Error != nil {
+			status := preflight.Error.StatusCode
+			if status == 0 {
+				status = http.StatusBadGateway
+			}
+			if c.advanceCombo(ctx, prepared, status, preflight.Error.Code, preflight.Error.Error, "") {
+				_ = response.Body.Close()
+				continue
+			}
+		} else {
+			c.noteComboSuccess(prepared)
+		}
+		return response, preflight.Stream, nil
+	}
+}
+
+func (c HandlerConfig) doUnary(ctx context.Context, prepared *preparedRequest) (*http.Response, []types.AdapterEvent, error) {
+	continuityRetried := false
+	for {
+		response, err := c.do(ctx, prepared)
+		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+			return response, nil, err
+		}
+		payload, readErr := readBounded(response.Body, c.ResponseLimit)
+		_ = response.Body.Close()
+		if readErr != nil {
+			return response, nil, statusError{status: http.StatusBadGateway, message: readErr.Error()}
+		}
+		events, parseErr := prepared.adapter.ParseUnary(ctx, payload)
+		if !continuityRetried && cursoradapter.IsContinuityRetry(parseErr) {
+			continuityRetried = true
+			continue
+		}
+		if parseErr != nil {
+			return response, nil, statusError{status: http.StatusBadGateway, message: parseErr.Error()}
+		}
+		if failure := firstAdapterError(events); failure != nil {
+			status := failure.StatusCode
+			if status == 0 {
+				status = http.StatusBadGateway
+			}
+			if c.advanceCombo(ctx, prepared, status, failure.Code, failure.Error, "") {
+				continue
+			}
+		} else {
+			c.noteComboSuccess(prepared)
+		}
+		return response, events, nil
+	}
+}
+
+func firstAdapterError(events []types.AdapterEvent) *types.AdapterEvent {
+	for index := range events {
+		event := &events[index]
+		if event.Type == types.EventError {
+			return event
+		}
+	}
+	return nil
+}
+
+func (c HandlerConfig) noteComboSuccess(prepared *preparedRequest) {
+	if c.Combos != nil && prepared != nil && prepared.pick != nil {
+		c.Combos.NoteSuccess(prepared.pick)
+	}
 }
 
 type statusError struct {

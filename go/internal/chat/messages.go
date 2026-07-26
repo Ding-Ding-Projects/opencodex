@@ -92,7 +92,14 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, message)
 		return
 	}
-	response, err := h.config.do(r.Context(), prepared)
+	var response *http.Response
+	var streamEvents <-chan types.AdapterEvent
+	var unaryEvents []types.AdapterEvent
+	if normalized.Stream {
+		response, streamEvents, err = h.config.doStream(r.Context(), prepared)
+	} else {
+		response, unaryEvents, err = h.config.doUnary(r.Context(), prepared)
+	}
 	if err != nil {
 		recordDesktopError()
 		writeAnthropicErrorFor(w, err)
@@ -115,25 +122,12 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if normalized.Stream {
-		if err := writeAnthropicStream(r.Context(), w, requestedModel, prepared.adapter.ParseStream(r.Context(), response.Body)); err != nil {
+		if err := writeAnthropicStream(r.Context(), w, requestedModel, streamEvents); err != nil {
 			recordDesktopError()
 		}
 		return
 	}
-	defer response.Body.Close()
-	payload, err := readBounded(response.Body, h.config.ResponseLimit)
-	if err != nil {
-		recordDesktopError()
-		writeAnthropicError(w, 502, err.Error())
-		return
-	}
-	events, err := prepared.adapter.ParseUnary(r.Context(), payload)
-	if err != nil {
-		recordDesktopError()
-		writeAnthropicError(w, 502, err.Error())
-		return
-	}
-	message, err := buildAnthropicMessage(events, requestedModel)
+	message, err := buildAnthropicMessage(unaryEvents, requestedModel)
 	if err != nil {
 		recordDesktopError()
 		writeAnthropicErrorFor(w, err)

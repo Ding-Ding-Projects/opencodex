@@ -167,6 +167,11 @@ func responsesRequestBodyForProvider(req *types.NormalizedRequest, forward bool,
 		body["tools"] = responsesTools(req.Context.Tools)
 	}
 	applyResponsesOptions(body, req.Options)
+	if forward {
+		for _, key := range []string{"max_output_tokens", "temperature", "top_p", "stop", "user", "metadata"} {
+			delete(body, key)
+		}
+	}
 	return json.Marshal(sanitizeResponsesBodyForRequest(body, forward, req, provider))
 }
 
@@ -179,6 +184,9 @@ func applyResponsesOptions(body map[string]any, options types.RequestOptions) {
 	}
 	if options.TopP != nil {
 		body["top_p"] = *options.TopP
+	}
+	if len(options.StopSequences) > 0 {
+		body["stop"] = options.StopSequences
 	}
 	if len(options.ToolChoice) > 0 && json.Valid(options.ToolChoice) {
 		var choice any
@@ -194,6 +202,24 @@ func applyResponsesOptions(body map[string]any, options types.RequestOptions) {
 	}
 	if options.ServiceTier != "" {
 		body["service_tier"] = options.ServiceTier
+	}
+	if options.PromptCacheKey != "" {
+		body["prompt_cache_key"] = options.PromptCacheKey
+	}
+	if options.User != "" {
+		body["user"] = options.User
+	}
+	if len(options.ResponseText) > 0 {
+		var text any
+		if json.Unmarshal(options.ResponseText, &text) == nil {
+			body["text"] = text
+		}
+	}
+	if len(options.RequestMetadata) > 0 {
+		var metadata any
+		if json.Unmarshal(options.RequestMetadata, &metadata) == nil {
+			body["metadata"] = metadata
+		}
 	}
 }
 

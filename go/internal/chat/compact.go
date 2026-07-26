@@ -188,7 +188,7 @@ func BuildCompactReplay(userMessages []string, summary string) []json.RawMessage
 }
 
 func compactNormalizedRequest(model string, input []json.RawMessage) *types.NormalizedRequest {
-	req := &types.NormalizedRequest{ModelID: model, Stream: false}
+	req := &types.NormalizedRequest{ModelID: model, Stream: false, CompactionRequest: true, IsolateCursor: true}
 	for _, raw := range input {
 		appendResponsesItem(&req.Context.Messages, raw)
 	}

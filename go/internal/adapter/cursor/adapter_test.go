@@ -209,7 +209,8 @@ func TestAdapterPersistsSuccessfulThreadContinuity(t *testing.T) {
 		t.Fatal(err)
 	}
 	normalized := cursorNormalizedRequest("hello")
-	normalized.Metadata = map[string]string{CursorClientThreadIDMetadata: "thread-success", CursorIdentityScopeMetadata: "account-a"}
+	normalized.ClientThreadID = "thread-success"
+	normalized.CursorIdentity = "account-a"
 	request, err := adapter.BuildRequest(context.Background(), normalized)
 	if err != nil {
 		t.Fatal(err)
@@ -221,6 +222,9 @@ func TestAdapterPersistsSuccessfulThreadContinuity(t *testing.T) {
 	events := collectCursorAdapterEvents(adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(body))))
 	if len(events) != 1 || events[0].Type != types.EventDone {
 		t.Fatalf("events = %#v", events)
+	}
+	if got := events[0].ProviderState["cursor"]["conversationId"]; got != want {
+		t.Fatalf("provider continuation = %#v, want %q", events[0].ProviderState, want)
 	}
 	if got, ok := LookupCursorThreadConversation("thread-success", "account-a"); !ok || got != want {
 		t.Fatalf("remembered conversation = %q, %v; want %q", got, ok, want)
@@ -235,7 +239,8 @@ func TestAdapterInvalidArgumentPreparesFreshContinuityForNextTurn(t *testing.T) 
 		t.Fatal(err)
 	}
 	normalized := cursorNormalizedRequest("hello")
-	normalized.Metadata = map[string]string{CursorClientThreadIDMetadata: "thread-recovery", CursorIdentityScopeMetadata: "account-a"}
+	normalized.ClientThreadID = "thread-recovery"
+	normalized.CursorIdentity = "account-a"
 	request, err := adapter.BuildRequest(context.Background(), normalized)
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +249,7 @@ func TestAdapterInvalidArgumentPreparesFreshContinuityForNextTurn(t *testing.T) 
 	defer request.Body.Close()
 	body := connectFrames(t, ConnectFrame{Flags: ConnectFlagEndStream, Payload: []byte(`{"error":{"code":"invalid_argument","message":"stale conversation"}}`)})
 	events := collectCursorAdapterEvents(adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(body))))
-	if len(events) != 1 || events[0].Type != types.EventError {
+	if len(events) != 1 || events[0].Type != types.EventError || events[0].Code != ContinuityRetryCode || !events[0].Retryable {
 		t.Fatalf("events = %#v", events)
 	}
 	recovered, ok := LookupCursorThreadConversation("thread-recovery", "account-a")
@@ -257,6 +262,28 @@ func TestAdapterInvalidArgumentPreparesFreshContinuityForNextTurn(t *testing.T) 
 	}
 	if next.Run.ConversationID != recovered {
 		t.Fatalf("next conversation = %q, want %q", next.Run.ConversationID, recovered)
+	}
+}
+
+func TestAdapterUnaryInvalidArgumentReturnsRouteRetryContract(t *testing.T) {
+	ClearCursorThreadContinuity()
+	t.Cleanup(ClearCursorThreadContinuity)
+	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := cursorNormalizedRequest("hello")
+	normalized.ClientThreadID = "thread-unary-recovery"
+	normalized.CursorIdentity = "account-a"
+	request, err := adapter.BuildRequest(context.Background(), normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Body.Close()
+	body := connectFrames(t, ConnectFrame{Flags: ConnectFlagEndStream, Payload: []byte(`{"error":{"code":"invalid_argument","message":"stale conversation"}}`)})
+	_, err = adapter.ParseUnary(context.Background(), body)
+	if !IsContinuityRetry(err) {
+		t.Fatalf("ParseUnary error = %T %v, want ContinuityRetryError", err, err)
 	}
 }
 

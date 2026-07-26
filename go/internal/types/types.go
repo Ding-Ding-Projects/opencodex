@@ -70,6 +70,9 @@ type RequestOptions struct {
 	PresencePenalty     *float64        `json:"presencePenalty,omitempty"`
 	FrequencyPenalty    *float64        `json:"frequencyPenalty,omitempty"`
 	PromptCacheKey      string          `json:"promptCacheKey,omitempty"`
+	User                string          `json:"user,omitempty"`
+	ResponseText        json.RawMessage `json:"responseText,omitempty"`
+	RequestMetadata     json.RawMessage `json:"requestMetadata,omitempty"`
 }
 
 type AdapterEventType string

@@ -2,11 +2,20 @@ package cursor
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
+
+func TestContinuityRetryErrorContract(t *testing.T) {
+	cause := errors.New("invalid_argument")
+	err := &ContinuityRetryError{Err: cause}
+	if !IsContinuityRetry(err) || !errors.Is(err, cause) || err.Error() != cause.Error() {
+		t.Fatalf("retry error contract failed: %v", err)
+	}
+}
 
 func TestThreadContinuityStoreScopesRefreshesAndExpires(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
@@ -72,5 +81,23 @@ func TestResolveCursorConversationIDUsesThreadIdentityAndRecovery(t *testing.T) 
 	}
 	if isolated.Run.ConversationID == "cursor_recovered" || isolated.Run.ConversationID == first {
 		t.Fatalf("isolated conversation reused shared state: %q", isolated.Run.ConversationID)
+	}
+}
+
+func TestResolveCursorConversationIDUsesProductionRequestFields(t *testing.T) {
+	ClearCursorThreadContinuity()
+	t.Cleanup(ClearCursorThreadContinuity)
+	request := &types.NormalizedRequest{ClientThreadID: "thread-live", CursorIdentity: "account-live"}
+	want := CursorConversationIDFromClientThread("thread-live", "account-live")
+	if got := resolveCursorConversationID(request); got != want {
+		t.Fatalf("resolved conversation = %q, want %q", got, want)
+	}
+	request.CursorConversation = "cursor_previous"
+	if got := resolveCursorConversationID(request); got != "cursor_previous" {
+		t.Fatalf("continued conversation = %q", got)
+	}
+	request.IsolateCursor = true
+	if got := resolveCursorConversationID(request); got == "cursor_previous" || got == want {
+		t.Fatalf("isolated conversation reused state: %q", got)
 	}
 }

@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,13 +11,18 @@ import (
 	"strings"
 	"testing"
 
+	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/combos"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
-type handlerAdapter struct{ endpoint string }
+type handlerAdapter struct {
+	endpoint string
+	onBuild  func(*types.NormalizedRequest)
+}
 
 type incompleteHandlerAdapter struct {
 	handlerAdapter
@@ -25,6 +32,58 @@ type incompleteHandlerAdapter struct {
 type handlerAuth struct{ context *types.AuthContext }
 
 type chatSearchRunner struct{ usage *types.Usage }
+
+type retryingChatSearchRunner struct{ calls int }
+
+func (runner *retryingChatSearchRunner) Run(context.Context, *types.NormalizedRequest, types.Adapter) (search.TurnResult, error) {
+	runner.calls++
+	if runner.calls == 1 {
+		return search.TurnResult{StatusCode: http.StatusOK, Events: []types.AdapterEvent{{Type: types.EventError, Code: cursoradapter.ContinuityRetryCode}}}, nil
+	}
+	return search.TurnResult{StatusCode: http.StatusOK, Events: []types.AdapterEvent{{Type: types.EventDone}}}, nil
+}
+
+type failingComboSearchRunner struct{ calls int }
+
+func (runner *failingComboSearchRunner) Run(context.Context, *types.NormalizedRequest, types.Adapter) (search.TurnResult, error) {
+	runner.calls++
+	if runner.calls == 1 {
+		return search.TurnResult{StatusCode: http.StatusOK, Events: []types.AdapterEvent{{Type: types.EventError, StatusCode: http.StatusBadGateway, Code: "upstream_server_error", Error: "temporary"}}}, nil
+	}
+	return search.TurnResult{StatusCode: http.StatusOK, Events: []types.AdapterEvent{{Type: types.EventTextDelta, Text: "recovered"}, {Type: types.EventDone}}}, nil
+}
+
+type continuityRetryAdapter struct {
+	endpoint    string
+	builds      int
+	streamCalls int
+	unaryCalls  int
+}
+
+func (adapter *continuityRetryAdapter) BuildRequest(ctx context.Context, _ *types.NormalizedRequest) (*http.Request, error) {
+	adapter.builds++
+	return http.NewRequestWithContext(ctx, http.MethodPost, adapter.endpoint, strings.NewReader(`{}`))
+}
+
+func (adapter *continuityRetryAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
+	adapter.streamCalls++
+	events := make(chan types.AdapterEvent, 1)
+	if adapter.streamCalls == 1 {
+		events <- types.AdapterEvent{Type: types.EventError, Error: "invalid_argument", Code: cursoradapter.ContinuityRetryCode, Retryable: true}
+	} else {
+		events <- types.AdapterEvent{Type: types.EventDone}
+	}
+	close(events)
+	return events
+}
+
+func (adapter *continuityRetryAdapter) ParseUnary(context.Context, []byte) ([]types.AdapterEvent, error) {
+	adapter.unaryCalls++
+	if adapter.unaryCalls == 1 {
+		return nil, &cursoradapter.ContinuityRetryError{Err: errors.New("invalid_argument")}
+	}
+	return []types.AdapterEvent{{Type: types.EventTextDelta, Text: "recovered"}, {Type: types.EventDone}}, nil
+}
 
 func (runner chatSearchRunner) Run(context.Context, *types.NormalizedRequest, types.Adapter) (search.TurnResult, error) {
 	return search.TurnResult{StatusCode: http.StatusOK, Events: []types.AdapterEvent{
@@ -39,6 +98,9 @@ func (a handlerAuth) ResolveAuth(context.Context, string, string) (*types.AuthCo
 func (handlerAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
 
 func (a handlerAdapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest) (*http.Request, error) {
+	if a.onBuild != nil {
+		a.onBuild(req)
+	}
 	return http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, strings.NewReader(`{}`))
 }
 func (handlerAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
@@ -80,6 +142,134 @@ func TestHandlerRoutesUnaryChatCompletion(t *testing.T) {
 	handler.Handle(response, request)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"content":"unary"`) || !strings.Contains(response.Body.String(), `"total_tokens":3`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHandlerWiresProductionCursorContinuityFields(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "cursor", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	var observed *types.NormalizedRequest
+	handler := NewHandler(HandlerConfig{
+		Registry: reg, Auth: handlerAuth{context: &types.AuthContext{AccountID: "cursor-account"}},
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return handlerAdapter{endpoint: upstream.URL, onBuild: func(request *types.NormalizedRequest) {
+				clone := *request
+				observed = &clone
+			}}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"cursor/wire","messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("X-Codex-Parent-Thread-Id", "parent-thread")
+	response := httptest.NewRecorder()
+	handler.Handle(response, request)
+	if response.Code != http.StatusOK || observed == nil || observed.ClientThreadID != "parent-thread" || observed.CursorIdentity != "cursor-account" {
+		t.Fatalf("response=%d observed=%#v", response.Code, observed)
+	}
+}
+
+func TestHandlerReplaysSafeCursorContinuityFailureOnce(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "cursor", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			adapter := &continuityRetryAdapter{endpoint: upstream.URL}
+			handler := NewHandler(HandlerConfig{Registry: reg, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+				return adapter, nil
+			}})
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":"cursor/wire","stream":%v,"messages":[{"role":"user","content":"hi"}]}`, stream)))
+			response := httptest.NewRecorder()
+			handler.Handle(response, request)
+			if response.Code != http.StatusOK || adapter.builds != 2 {
+				t.Fatalf("response=%d body=%s builds=%d", response.Code, response.Body.String(), adapter.builds)
+			}
+		})
+	}
+}
+
+func TestSearchRunnerReplaysSafeCursorContinuityFailureOnce(t *testing.T) {
+	inner := &retryingChatSearchRunner{}
+	runner := continuityRetryTurnRunner{inner: inner}
+	result, err := runner.Run(context.Background(), &types.NormalizedRequest{}, handlerAdapter{})
+	if err != nil || inner.calls != 2 || len(result.Events) != 1 || result.Events[0].Type != types.EventDone {
+		t.Fatalf("calls=%d result=%#v err=%v", inner.calls, result, err)
+	}
+}
+
+func TestChatAndMessagesHandlersUseComboFailover(t *testing.T) {
+	failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":{"message":"temporary","code":"upstream_server_error"}}`)
+	}))
+	defer failed.Close()
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) }))
+	defer healthy.Close()
+	reg := registry.New(
+		registry.Provider{ID: "first", BaseURL: failed.URL, DefaultModel: "one", Models: []registry.ModelDefinition{{ID: "one"}}},
+		registry.Provider{ID: "second", BaseURL: healthy.URL, DefaultModel: "two", Models: []registry.ModelDefinition{{ID: "two"}}},
+	)
+	definitions := map[string]combos.Combo{"balanced": {
+		Strategy: combos.StrategyFailover, MaxHops: 1,
+		Targets: []combos.Target{{Provider: "first", Model: "one"}, {Provider: "second", Model: "two"}},
+	}}
+	providers := map[string]combos.Provider{"first": {}, "second": {}}
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "chat", body: `{"model":"combo/balanced","messages":[{"role":"user","content":"hi"}]}`},
+		{name: "messages", body: `{"model":"combo/balanced","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolver, err := combos.New(definitions, providers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := HandlerConfig{Registry: reg, Combos: resolver, ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+				return handlerAdapter{endpoint: transport.BaseURL}, nil
+			}}
+			run := NewHandler(config).Handle
+			if test.name == "messages" {
+				run = NewMessagesHandler(config).Handle
+			}
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			run(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestHostedSearchTurnUsesComboFailover(t *testing.T) {
+	reg := registry.New(
+		registry.Provider{ID: "first", BaseURL: "https://first.test", DefaultModel: "one", Models: []registry.ModelDefinition{{ID: "one"}}},
+		registry.Provider{ID: "second", BaseURL: "https://second.test", DefaultModel: "two", Models: []registry.ModelDefinition{{ID: "two"}}},
+	)
+	resolver, err := combos.New(map[string]combos.Combo{"balanced": {
+		Strategy: combos.StrategyFailover, MaxHops: 1,
+		Targets: []combos.Target{{Provider: "first", Model: "one"}, {Provider: "second", Model: "two"}},
+	}}, map[string]combos.Provider{"first": {}, "second": {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &failingComboSearchRunner{}
+	loop := &search.Loop{Runner: runner}
+	handler := NewHandler(HandlerConfig{
+		Registry: reg, Combos: resolver, SearchLoop: loop,
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return handlerAdapter{endpoint: transport.BaseURL}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"model":"combo/balanced","messages":[{"role":"user","content":"search"}],"tools":[{"type":"web_search"}]
+	}`))
+	response := httptest.NewRecorder()
+	handler.Handle(response, request)
+	if response.Code != http.StatusOK || runner.calls != 2 || !strings.Contains(response.Body.String(), "recovered") {
+		t.Fatalf("response=%d body=%s calls=%d", response.Code, response.Body.String(), runner.calls)
 	}
 }
 

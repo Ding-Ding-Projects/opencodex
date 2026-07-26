@@ -108,6 +108,39 @@ func TestParseInboundPreservesPromptCacheAndHostedWebSearch(t *testing.T) {
 	}
 }
 
+func TestParseInboundPreservesResponsesOnlyChatOptions(t *testing.T) {
+	req, err := ParseInbound([]byte(`{
+		"model":"m","user":"user-1","stop":"END","prompt_cache_key":"cache-1",
+		"metadata":{"tenant":"acme","attempt":2},
+		"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object"},"strict":true}},
+		"messages":[{"role":"user","content":"answer"}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Options.User != "user-1" || req.Options.PromptCacheKey != "cache-1" || len(req.Options.StopSequences) != 1 || req.Options.StopSequences[0] != "END" {
+		t.Fatalf("options = %#v", req.Options)
+	}
+	if !req.StructuredOutput || !strings.Contains(string(req.Options.ResponseText), `"name":"answer"`) {
+		t.Fatalf("structured output = %v, text=%s", req.StructuredOutput, req.Options.ResponseText)
+	}
+	if !strings.Contains(string(req.Options.RequestMetadata), `"attempt":2`) || req.Metadata["tenant"] != "acme" {
+		t.Fatalf("metadata raw=%s projected=%#v", req.Options.RequestMetadata, req.Metadata)
+	}
+}
+
+func TestParseInboundRejectsMalformedResponseFormat(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"m","messages":[{"role":"user","content":"x"}],"response_format":[]}`,
+		`{"model":"m","messages":[{"role":"user","content":"x"}],"response_format":{"type":"json_schema"}}`,
+		`{"model":"m","messages":[{"role":"user","content":"x"}],"response_format":{"type":"yaml"}}`,
+	} {
+		if _, err := ParseInbound([]byte(body)); err == nil {
+			t.Fatalf("accepted malformed response_format: %s", body)
+		}
+	}
+}
+
 func TestParseAnthropicInboundTranslatesToolAndThinking(t *testing.T) {
 	req, model, err := parseAnthropicInbound([]byte(`{
 		"model":"claude-x","max_tokens":100,"thinking":{"type":"enabled","budget_tokens":8000},

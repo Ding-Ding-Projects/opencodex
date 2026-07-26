@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -17,10 +18,23 @@ const (
 	CursorIdentityScopeMetadata          = "cursorIdentityScope"
 	CursorIsolateConversationMetadata    = "cursorIsolateConversation"
 	CursorForceFreshConversationMetadata = "cursorForceFreshConversation"
+	// ContinuityRetryCode marks a pre-output invalid_argument that is safe for
+	// the route owner to replay exactly once with the prepared fresh conversation.
+	ContinuityRetryCode = "cursor_invalid_argument_retry"
 
 	cursorContinuityTTL        = time.Hour
 	cursorContinuityMaxEntries = 2048
 )
+
+type ContinuityRetryError struct{ Err error }
+
+func (e *ContinuityRetryError) Error() string { return e.Err.Error() }
+func (e *ContinuityRetryError) Unwrap() error { return e.Err }
+
+func IsContinuityRetry(err error) bool {
+	var retry *ContinuityRetryError
+	return errors.As(err, &retry)
+}
 
 type threadContinuityEntry struct {
 	key            string
@@ -146,17 +160,28 @@ func generatedCursorConversationID() string {
 	return "cursor_" + strings.ReplaceAll(newID(), "-", "")
 }
 
+func cursorIdentityScopeForToken(token string) string {
+	digest := sha256.Sum256([]byte("ocx:cursor:acct:" + token))
+	return hex.EncodeToString(digest[:8])
+}
+
 func resolveCursorConversationID(req *types.NormalizedRequest) string {
 	metadata := req.Metadata
-	if metadata[CursorForceFreshConversationMetadata] == "true" || metadata[CursorIsolateConversationMetadata] == "true" {
+	if req.IsolateCursor || metadata[CursorForceFreshConversationMetadata] == "true" || metadata[CursorIsolateConversationMetadata] == "true" {
 		return generatedCursorConversationID()
+	}
+	if conversationID := strings.TrimSpace(req.CursorConversation); conversationID != "" {
+		return conversationID
 	}
 	if conversationID := strings.TrimSpace(metadata[CursorConversationIDMetadata]); conversationID != "" {
 		return conversationID
 	}
-	threadID := strings.TrimSpace(metadata[CursorClientThreadIDMetadata])
+	threadID := strings.TrimSpace(req.ClientThreadID)
+	if threadID == "" {
+		threadID = strings.TrimSpace(metadata[CursorClientThreadIDMetadata])
+	}
 	if threadID != "" {
-		identityScope := metadata[CursorIdentityScopeMetadata]
+		identityScope := firstNonEmpty(strings.TrimSpace(req.CursorIdentity), metadata[CursorIdentityScopeMetadata])
 		if conversationID, ok := LookupCursorThreadConversation(threadID, identityScope); ok {
 			return conversationID
 		}

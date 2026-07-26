@@ -37,6 +37,13 @@ func TestCompactionEnvelopeAndReplay(t *testing.T) {
 	}
 }
 
+func TestCompactNormalizedRequestIsolatesCursorState(t *testing.T) {
+	request := compactNormalizedRequest("cursor/model", nil)
+	if !request.CompactionRequest || !request.IsolateCursor {
+		t.Fatalf("compaction cursor flags = %v/%v", request.CompactionRequest, request.IsolateCursor)
+	}
+}
+
 func TestCompactionSummaryRejectsIncompleteTerminal(t *testing.T) {
 	events := []types.AdapterEvent{
 		{Type: types.EventHeartbeat, Text: "ignored heartbeat"},

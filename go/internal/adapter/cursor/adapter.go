@@ -93,7 +93,13 @@ func NewAdapter(config AdapterConfig) (*Adapter, error) {
 }
 
 func (a *Adapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
-	built, err := BuildAgentRunRequest(request)
+	adapterRequest := request
+	if request != nil && strings.TrimSpace(request.CursorIdentity) == "" && strings.TrimSpace(request.Metadata[CursorIdentityScopeMetadata]) == "" {
+		clone := *request
+		clone.CursorIdentity = cursorIdentityScopeForToken(a.config.Token)
+		adapterRequest = &clone
+	}
+	built, err := BuildAgentRunRequest(adapterRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -112,12 +118,12 @@ func (a *Adapter) BuildRequest(ctx context.Context, request *types.NormalizedReq
 	turn := &adapterTurn{
 		ctx: turnCtx, cancel: cancel, writer: writer, run: built.Run,
 		parser:         NewEventParser(parserOptions),
-		clientThreadID: strings.TrimSpace(request.Metadata[CursorClientThreadIDMetadata]),
-		identityScope:  request.Metadata[CursorIdentityScopeMetadata],
-		isolate:        request.Metadata[CursorIsolateConversationMetadata] == "true",
+		clientThreadID: firstNonEmpty(strings.TrimSpace(adapterRequest.ClientThreadID), strings.TrimSpace(adapterRequest.Metadata[CursorClientThreadIDMetadata])),
+		identityScope:  firstNonEmpty(strings.TrimSpace(adapterRequest.CursorIdentity), adapterRequest.Metadata[CursorIdentityScopeMetadata]),
+		isolate:        adapterRequest.IsolateCursor || adapterRequest.Metadata[CursorIsolateConversationMetadata] == "true",
 		externalModel:  IsCursorExternalWireModel(built.Run.Model.ID),
 	}
-	lastRole, _ := lastAction(request.Context.Messages)
+	lastRole, _ := lastAction(adapterRequest.Context.Messages)
 	turn.lastWasTool = lastRole == "tool"
 
 	a.mu.Lock()
@@ -186,15 +192,20 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			}
 		}()
 		err := a.consumeFrames(ctx, body, turn, func(event types.AdapterEvent) error {
-			a.observeTurnEvent(turn, event)
+			a.observeTurnEvent(turn, &event)
 			if !sendCursorAdapterEvent(ctx, out, event) {
 				return ctx.Err()
 			}
 			return nil
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
-			a.prepareContinuityRecovery(turn, err)
-			sendCursorAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: err.Error(), StatusCode: http.StatusBadGateway})
+			event := types.AdapterEvent{Type: types.EventError, Error: err.Error(), StatusCode: http.StatusBadGateway}
+			if a.prepareContinuityRecovery(turn, err) {
+				event.Code = ContinuityRetryCode
+				event.ErrorType = "upstream_error"
+				event.Retryable = true
+			}
+			sendCursorAdapterEvent(ctx, out, event)
 		}
 	}()
 	return out
@@ -208,35 +219,42 @@ func (a *Adapter) ParseUnary(ctx context.Context, body []byte) ([]types.AdapterE
 	defer a.releaseTurn(turn)
 	var events []types.AdapterEvent
 	err := a.consumeFrames(ctx, bytes.NewReader(body), turn, func(event types.AdapterEvent) error {
-		a.observeTurnEvent(turn, event)
+		a.observeTurnEvent(turn, &event)
 		events = append(events, event)
 		return nil
 	})
-	if err != nil {
-		a.prepareContinuityRecovery(turn, err)
+	if err != nil && a.prepareContinuityRecovery(turn, err) {
+		err = &ContinuityRetryError{Err: err}
 	}
 	return events, err
 }
 
-func (a *Adapter) observeTurnEvent(turn *adapterTurn, event types.AdapterEvent) {
+func (a *Adapter) observeTurnEvent(turn *adapterTurn, event *types.AdapterEvent) {
+	if event == nil {
+		return
+	}
 	if event.Type != types.EventHeartbeat {
 		turn.emittedOutput.Store(true)
 	}
 	if event.Type == types.EventDone && turn.clientThreadID != "" && !turn.isolate {
 		RememberCursorThreadConversation(turn.clientThreadID, turn.run.ConversationID, turn.identityScope)
 	}
+	if event.Type == types.EventDone && !turn.isolate {
+		event.ProviderState = types.ProviderContinuationState{"cursor": {"conversationId": turn.run.ConversationID}}
+	}
 }
 
-func (a *Adapter) prepareContinuityRecovery(turn *adapterTurn, err error) {
+func (a *Adapter) prepareContinuityRecovery(turn *adapterTurn, err error) bool {
 	if turn == nil || turn.clientThreadID == "" || turn.isolate || !turn.externalModel || turn.lastWasTool ||
 		turn.emittedOutput.Load() || turn.replayUnsafe.Load() || !isCursorInvalidArgumentError(err) {
-		return
+		return false
 	}
 	recovered := generatedCursorConversationID()
 	RememberCursorThreadConversation(turn.clientThreadID, recovered, turn.identityScope)
 	if a.usage != nil {
 		a.usage.Rekey(turn.run.ConversationID, recovered)
 	}
+	return true
 }
 
 func isCursorInvalidArgumentError(err error) bool {
