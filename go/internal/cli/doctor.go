@@ -2,93 +2,148 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"net"
+	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 )
 
-func runDoctor(ctx context.Context, args []string, streams IO) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: ocx doctor")
+type doctorStatus string
+
+const (
+	doctorPass doctorStatus = "pass"
+	doctorWarn doctorStatus = "warn"
+	doctorFail doctorStatus = "fail"
+	doctorInfo doctorStatus = "info"
+)
+
+type doctorCheck struct {
+	Name   string       `json:"name"`
+	Status doctorStatus `json:"status"`
+	Detail string       `json:"detail"`
+	Hint   string       `json:"hint,omitempty"`
+}
+
+type doctorReport struct {
+	OS              string                  `json:"os"`
+	Architecture    string                  `json:"architecture"`
+	Paths           []doctorPath            `json:"paths"`
+	Checks          []doctorCheck           `json:"checks"`
+	CurrentProxyEnv []proxyEnvironment      `json:"currentProxyEnvironment"`
+	ConfiguredProxy configuredProxy         `json:"configuredProxy"`
+	RunningProxyEnv runningProxyEnvironment `json:"runningProxyEnvironment"`
+	WSL             wslInstallDiagnostic    `json:"wsl"`
+	ProjectWarnings []projectWarning        `json:"projectWarnings,omitempty"`
+	BackupArtifacts int                     `json:"backupArtifacts"`
+	Passes          int                     `json:"passes"`
+	Warnings        int                     `json:"warnings"`
+	Failures        int                     `json:"failures"`
+	GeneratedAt     string                  `json:"generatedAt"`
+}
+
+func (r *doctorReport) add(check doctorCheck) {
+	r.Checks = append(r.Checks, check)
+	switch check.Status {
+	case doctorPass:
+		r.Passes++
+	case doctorWarn:
+		r.Warnings++
+	case doctorFail:
+		r.Failures++
 	}
-	dir, err := configDir()
+}
+
+func runDoctor(ctx context.Context, args []string, streams IO) error {
+	jsonOutput := false
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			jsonOutput = true
+		default:
+			return fmt.Errorf("usage: ocx doctor [--json]")
+		}
+	}
+	report, err := collectDoctorReport(ctx, doctorDeps{})
 	if err != nil {
 		return err
 	}
-	cfg, path, configErr := loadConfig()
-	fmt.Fprintf(streams.Out, "opencodex doctor\n\nOS: %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	home, _ := os.UserHomeDir()
-	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	paths := collectDoctorPaths(home, codexHome, dir, path)
-	mounts := readMountTable()
-	fmt.Fprintln(streams.Out, "\nPaths")
-	for _, row := range paths {
-		fs := detectFilesystem(row.Path, mounts)
+	if jsonOutput {
+		encoder := json.NewEncoder(streams.Out)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
+	}
+	return renderDoctorReport(streams.Out, report)
+}
+
+func renderDoctorReport(writer io.Writer, report doctorReport) error {
+	if _, err := fmt.Fprintf(writer, "opencodex doctor\n\nOS: %s/%s\n", report.OS, report.Architecture); err != nil {
+		return err
+	}
+	fmt.Fprintln(writer, "\nPaths")
+	for _, row := range report.Paths {
 		marker := "--"
 		if row.Exists {
 			marker = "ok"
 		}
 		flags := []string{}
-		if fs.Type != "n/a" {
-			flags = append(flags, "fs="+fs.Type)
+		if row.Filesystem.Type != "" && row.Filesystem.Type != "n/a" {
+			flags = append(flags, "fs="+row.Filesystem.Type)
 		}
-		if fs.WindowsFS || fs.MountDrive {
+		if row.Filesystem.WindowsFS || row.Filesystem.MountDrive {
 			flags = append(flags, "WSL /mnt drive")
 		}
 		suffix := ""
 		if len(flags) > 0 {
 			suffix = " (" + strings.Join(flags, ", ") + ")"
 		}
-		fmt.Fprintf(streams.Out, "  %s %s: %s%s\n", marker, row.Label, row.Path, suffix)
+		fmt.Fprintf(writer, "  %s %-28s %s%s\n", marker, row.Label+":", row.Path, suffix)
 	}
-	fmt.Fprintf(streams.Out, "\nConfiguration\n  directory: %s\n  file: %s\n", dir, path)
-	if configErr != nil {
-		fmt.Fprintf(streams.Out, "[FAIL] config: %v\n", configErr)
-	} else {
-		fmt.Fprintln(streams.Out, "[PASS] config parses and validates")
-	}
-	if info, statErr := os.Stat(dir); statErr == nil {
-		fmt.Fprintf(streams.Out, "[PASS] config directory mode: %s\n", info.Mode().Perm())
-	} else if !os.IsNotExist(statErr) {
-		fmt.Fprintf(streams.Out, "[FAIL] config directory: %v\n", statErr)
-	}
-	if cfg != nil {
-		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		connection, dialErr := (&net.Dialer{}).DialContext(probeCtx, "tcp", "chatgpt.com:443")
-		if dialErr != nil {
-			fmt.Fprintf(streams.Out, "[WARN] ChatGPT network probe: %v\n", dialErr)
-		} else {
-			connection.Close()
-			fmt.Fprintln(streams.Out, "[PASS] outbound HTTPS connectivity")
-		}
-		_, port := readRuntime()
-		fmt.Fprintf(streams.Out, "[INFO] proxy health: %t\n", probeHealth(ctx, cfg.Host, port))
-	}
-	fmt.Fprintln(streams.Out, "\nCurrent shell proxy environment")
-	for _, row := range collectProxyEnvironment(environmentMap(os.Environ())) {
-		fmt.Fprintf(streams.Out, "  %s %s\n", presenceMarker(row.Present), row.Key)
-	}
-	pid, _ := readRuntime()
-	running := collectRunningProxyEnvironment(pid, runtime.GOOS, nil)
-	fmt.Fprintln(streams.Out, "\nRunning proxy process proxy environment")
-	if running.Status == "unavailable" {
-		fmt.Fprintf(streams.Out, "  -- pid %d: %s\n", running.PID, running.Reason)
-	} else if running.Status == "not_running" {
-		fmt.Fprintln(streams.Out, "  -- proxy is not running")
-	} else {
-		fmt.Fprintf(streams.Out, "  ok pid %d\n", running.PID)
-		for _, row := range running.Rows {
-			fmt.Fprintf(streams.Out, "     %s %s\n", presenceMarker(row.Present), row.Key)
+
+	fmt.Fprintln(writer, "\nDiagnostic checks")
+	for _, check := range report.Checks {
+		fmt.Fprintf(writer, "  [%s] %-28s %s\n", strings.ToUpper(string(check.Status)), check.Name, check.Detail)
+		if check.Hint != "" {
+			fmt.Fprintf(writer, "         hint: %s\n", check.Hint)
 		}
 	}
-	if history, globErr := filepath.Glob(filepath.Join(dir, "*.bak")); globErr == nil && len(history) > 0 {
-		fmt.Fprintf(streams.Out, "\n[INFO] backup artifacts: %d\n", len(history))
+
+	fmt.Fprintln(writer, "\nCurrent doctor process proxy env (presence only)")
+	for _, row := range report.CurrentProxyEnv {
+		fmt.Fprintf(writer, "  %-5s %s\n", presenceMarker(row.Present), row.Key)
 	}
+	fmt.Fprintln(writer, "\nConfigured proxy (value hidden)")
+	fmt.Fprintf(writer, "  %-5s config.proxy (%s)\n", presenceMarker(report.ConfiguredProxy.Present), report.ConfiguredProxy.Detail)
+	fmt.Fprintln(writer, "\nRunning proxy process proxy env (presence only)")
+	switch report.RunningProxyEnv.Status {
+	case "ok":
+		fmt.Fprintf(writer, "  ok pid %d\n", report.RunningProxyEnv.PID)
+		for _, row := range report.RunningProxyEnv.Rows {
+			fmt.Fprintf(writer, "     %-5s %s\n", presenceMarker(row.Present), row.Key)
+		}
+	case "not_running":
+		fmt.Fprintln(writer, "  -- proxy is not running")
+	default:
+		fmt.Fprintf(writer, "  -- pid %d: %s\n", report.RunningProxyEnv.PID, report.RunningProxyEnv.Reason)
+	}
+
+	if report.WSL.WSL {
+		fmt.Fprintln(writer, "\nWSL Codex installs")
+		fmt.Fprintf(writer, "  Linux config: %t\n", report.WSL.LinuxConfigured)
+		fmt.Fprintf(writer, "  Effective CODEX_HOME: %s\n", report.WSL.EffectiveCodexHome)
+		for _, path := range report.WSL.WindowsCodexHomes {
+			fmt.Fprintf(writer, "  Windows config: %s\n", path)
+		}
+	}
+
+	if len(report.ProjectWarnings) > 0 {
+		fmt.Fprintln(writer, "\nProject Codex configs")
+		for _, warning := range report.ProjectWarnings {
+			fmt.Fprintf(writer, "  [WARN] %s: %s\n", warning.Path, warning.Message)
+		}
+	}
+	fmt.Fprintf(writer, "\nSummary: %d passed, %d warning(s), %d failure(s)\n", report.Passes, report.Warnings, report.Failures)
 	return nil
 }
 
@@ -96,5 +151,8 @@ func presenceMarker(present bool) string {
 	if present {
 		return "set"
 	}
-	return "--"
+	return "unset"
 }
+
+func defaultDoctorPlatform() (string, string) { return runtime.GOOS, runtime.GOARCH }
+func defaultDoctorEnvironment() []string      { return os.Environ() }

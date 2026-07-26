@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
+	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/adapter/google"
 	"github.com/lidge-jun/opencodex-go/internal/adapter/kiro"
 	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
@@ -238,8 +239,14 @@ func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.A
 		}
 		headers := transport.Headers
 		switch entry.Adapter {
-		case "openai-chat", "mimo-free", "cursor":
+		case "openai-chat", "mimo-free":
 			return &openaiadapter.ChatAdapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers}, nil
+		case "cursor":
+			return cursoradapter.NewAdapter(cursoradapter.AdapterConfig{
+				BaseURL: transport.BaseURL,
+				Token:   secret,
+				Headers: headers,
+			})
 		case "openai-responses":
 			return &openaiadapter.ResponsesAdapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers, IncomingHeaders: incoming, ForwardAuth: entry.AuthKind == registry.AuthForward}, nil
 		case "anthropic":

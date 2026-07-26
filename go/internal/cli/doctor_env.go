@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,28 +14,45 @@ import (
 var proxyEnvironmentKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}
 
 type doctorPath struct {
-	Label  string
-	Path   string
-	Exists bool
+	Label      string         `json:"label"`
+	Path       string         `json:"path"`
+	Exists     bool           `json:"exists"`
+	Filesystem filesystemInfo `json:"filesystem"`
 }
 
 type filesystemInfo struct {
-	Type       string
-	Mount      string
-	WindowsFS  bool
-	MountDrive bool
+	Type       string `json:"type"`
+	Mount      string `json:"mount,omitempty"`
+	WindowsFS  bool   `json:"windowsFilesystem"`
+	MountDrive bool   `json:"windowsMountDrive"`
 }
 
 type proxyEnvironment struct {
-	Key     string
-	Present bool
+	Key     string `json:"key"`
+	Present bool   `json:"present"`
 }
 
 type runningProxyEnvironment struct {
-	Status string
-	PID    int
-	Reason string
-	Rows   []proxyEnvironment
+	Status string             `json:"status"`
+	PID    int                `json:"pid,omitempty"`
+	Reason string             `json:"reason,omitempty"`
+	Rows   []proxyEnvironment `json:"rows"`
+}
+
+type configuredProxy struct {
+	Present    bool   `json:"present"`
+	Configured bool   `json:"configured"`
+	Detail     string `json:"detail"`
+}
+
+type wslInstallDiagnostic struct {
+	WSL                bool     `json:"wsl"`
+	AutomountRoot      string   `json:"automountRoot"`
+	EffectiveCodexHome string   `json:"effectiveCodexHome"`
+	EffectiveOnWindows bool     `json:"effectiveOnWindowsMount"`
+	LinuxConfigured    bool     `json:"linuxConfigured"`
+	WindowsCodexHomes  []string `json:"windowsCodexHomes"`
+	DualInstall        bool     `json:"dualInstall"`
 }
 
 func collectDoctorPaths(home, codexHome, ocxHome, configFile string) []doctorPath {
@@ -99,6 +117,102 @@ func collectProxyEnvironment(env map[string]string) []proxyEnvironment {
 		rows = append(rows, proxyEnvironment{Key: key, Present: value != ""})
 	}
 	return rows
+}
+
+func collectConfiguredProxy(path string, env map[string]string, readFile func(string) ([]byte, error)) configuredProxy {
+	data, err := readFile(path)
+	if os.IsNotExist(err) {
+		return configuredProxy{Detail: "config file absent"}
+	}
+	if err != nil {
+		return configuredProxy{Detail: "config unreadable"}
+	}
+	var raw struct {
+		Proxy string `json:"proxy"`
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return configuredProxy{Detail: "config invalid JSON"}
+	}
+	value := strings.TrimSpace(raw.Proxy)
+	if value == "" {
+		return configuredProxy{Detail: "not configured"}
+	}
+	result := configuredProxy{Configured: true}
+	if name, ok := environmentReference(value); ok {
+		result.Present = strings.TrimSpace(env[name]) != ""
+		if result.Present {
+			result.Detail = "environment reference " + name + " resolved"
+		} else {
+			result.Detail = "environment reference " + name + " is unset"
+		}
+		return result
+	}
+	result.Present = true
+	result.Detail = "value hidden"
+	return result
+}
+
+func environmentReference(value string) (string, bool) {
+	if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") {
+		name := value[2 : len(value)-1]
+		return name, validEnvironmentName(name)
+	}
+	if strings.HasPrefix(value, "$") {
+		name := value[1:]
+		return name, validEnvironmentName(name)
+	}
+	return "", false
+}
+
+func validEnvironmentName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index, char := range value {
+		if index == 0 && !(char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z') {
+			return false
+		}
+		if index > 0 && !(char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || char >= '0' && char <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func collectWSLInstallDiagnostic(goos, home, effective string, env map[string]string, readFile func(string) ([]byte, error)) wslInstallDiagnostic {
+	readText := func(path string) string {
+		data, _ := readFile(path)
+		return string(data)
+	}
+	options := codex.HomeOptions{
+		Env: env, GOOS: goos, HomeDir: home,
+		Release: readText("/proc/sys/kernel/osrelease"), ProcVersion: readText("/proc/version"),
+		WSLConf: readText("/etc/wsl.conf"),
+	}
+	diagnostic := wslInstallDiagnostic{
+		WSL: codex.IsWSLRuntime(options), AutomountRoot: codex.WSLAutomountRoot(options),
+		EffectiveCodexHome: effective,
+	}
+	if !diagnostic.WSL {
+		return diagnostic
+	}
+	diagnostic.LinuxConfigured = pathExists(filepath.Join(home, ".codex", "config.toml"))
+	diagnostic.WindowsCodexHomes = codex.ListWSLWindowsCodexHomes(options)
+	diagnostic.EffectiveOnWindows = isPathUnderWindowsMount(effective, diagnostic.AutomountRoot)
+	diagnostic.DualInstall = diagnostic.LinuxConfigured && len(diagnostic.WindowsCodexHomes) > 0
+	return diagnostic
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func isPathUnderWindowsMount(path, root string) bool {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	prefix := strings.TrimRight(filepath.ToSlash(filepath.Clean(root)), "/") + "/"
+	rest := strings.TrimPrefix(clean, prefix)
+	return rest != clean && len(rest) >= 2 && rest[1] == '/'
 }
 
 func environmentMap(values []string) map[string]string {
