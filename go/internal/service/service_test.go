@@ -1,9 +1,39 @@
 package service
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
+
+type switchTestManager struct {
+	installed    bool
+	installErr   error
+	uninstallErr error
+	calls        []string
+}
+
+func (m *switchTestManager) Install() error {
+	m.calls = append(m.calls, "install")
+	if m.installErr == nil {
+		m.installed = true
+	}
+	return m.installErr
+}
+func (m *switchTestManager) Start() error { return nil }
+func (m *switchTestManager) Stop() error  { return nil }
+func (m *switchTestManager) Uninstall() error {
+	m.calls = append(m.calls, "uninstall")
+	if m.uninstallErr == nil {
+		m.installed = false
+	}
+	return m.uninstallErr
+}
+func (m *switchTestManager) Status() (Status, error) {
+	m.calls = append(m.calls, "status")
+	return Status{Installed: m.installed}, nil
+}
+func (m *switchTestManager) ArtifactPath() string { return "test" }
 
 func testConfig() Config {
 	return Config{Executable: "/opt/Open Codex/ocx", Arguments: []string{"serve", "--port", "10100"}, Environment: map[string]string{"OCX_SERVICE": "1", "PATH": "/usr/bin:/bin"}, LogPath: "/tmp/open codex.log"}
@@ -83,5 +113,65 @@ func TestGeneratorsEscapeArtifactValues(t *testing.T) {
 	}
 	if !strings.Contains(plist, "/tmp/ocx&amp;proxy") || !strings.Contains(task, "wscript.exe") || !strings.Contains(launcher, "/tmp/ocx&proxy") {
 		t.Fatal("XML values were not escaped")
+	}
+}
+
+func TestParseArgsAndInstalledBackendMatchWindowsCLIContract(t *testing.T) {
+	parsed, err := ParseArgs([]string{"install", "--native"}, "windows")
+	if err != nil || parsed.Command != "install" || parsed.Backend != BackendNative {
+		t.Fatalf("native args = %#v, %v", parsed, err)
+	}
+	if _, err := ParseArgs([]string{"status", "--native"}, "windows"); err == nil {
+		t.Fatal("backend flag accepted for status")
+	}
+	if _, err := ParseArgs([]string{"--native", "--scheduler"}, "windows"); err == nil {
+		t.Fatal("conflicting backend flags accepted")
+	}
+	if _, err := ParseArgs([]string{"install", "--native"}, "linux"); err == nil {
+		t.Fatal("native backend accepted outside Windows")
+	}
+	if got := InstalledBackend(&InstallState{Version: 2, Backend: BackendNative}); got != BackendNative {
+		t.Fatalf("InstalledBackend() = %q", got)
+	}
+	if got := InstalledBackend(&InstallState{Version: 1}); got != BackendScheduler {
+		t.Fatalf("legacy InstalledBackend() = %q", got)
+	}
+}
+
+func TestNewManagerWithOptionsActivatesNativeWinSWSelection(t *testing.T) {
+	cfg := testConfig()
+	native := testWinSWConfig(t.TempDir())
+	manager, err := newManagerForOS(cfg, ManagerOptions{Backend: BackendNative, WinSW: &native}, "windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.(*WinSWManager); !ok {
+		t.Fatalf("native manager type = %T", manager)
+	}
+	manager, err = newManagerForOS(cfg, ManagerOptions{Backend: BackendScheduler}, "windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.(*taskManager); !ok {
+		t.Fatalf("scheduler manager type = %T", manager)
+	}
+	if _, err := newManagerForOS(cfg, ManagerOptions{Backend: BackendNative}, "windows"); err == nil {
+		t.Fatal("native manager accepted without WinSW configuration")
+	}
+}
+
+func TestSwitchBackendRemovesCurrentBeforeTargetAndFailsClosed(t *testing.T) {
+	current := &switchTestManager{installed: true}
+	target := &switchTestManager{}
+	if err := SwitchBackend(current, target); err != nil {
+		t.Fatal(err)
+	}
+	if current.installed || !target.installed || strings.Join(current.calls, ",") != "status,uninstall,status" || strings.Join(target.calls, ",") != "install" {
+		t.Fatalf("current=%+v target=%+v", current, target)
+	}
+	current = &switchTestManager{installed: true}
+	target = &switchTestManager{installErr: errors.New("UAC denied")}
+	if err := SwitchBackend(current, target); err == nil || !strings.Contains(err.Error(), "no service is installed") || current.installed {
+		t.Fatalf("failed switch err=%v current=%+v", err, current)
 	}
 }

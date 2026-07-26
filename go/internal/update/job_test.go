@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/server"
 )
@@ -29,6 +31,60 @@ func TestJobManagerPersistsSuccessAndFailure(t *testing.T) {
 	job, err = manager.Run(context.Background(), check, false, nil)
 	if err == nil || job.Status != JobFailed || !strings.Contains(job.Error, "install failed") {
 		t.Fatalf("failure job = %#v, err = %v", job, err)
+	}
+}
+
+func TestJobManagerStartPersistsBeforeReturnRejectsConflictAndRecoversStatus(t *testing.T) {
+	check := CheckResult{CurrentVersion: "1.0.0", LatestVersion: "1.1.0", Channel: ChannelLatest, Installer: InstallerNPM, CanUpdate: true}
+	store := &JobStore{Path: filepath.Join(t.TempDir(), "update-job.json")}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	manager := &JobManager{Store: store, Execute: func(context.Context, CheckResult) ([]byte, error) {
+		once.Do(func() { close(started) })
+		<-release
+		return []byte(strings.Repeat("x", 5000)), nil
+	}}
+	job, err := manager.Start(context.Background(), check, false, nil)
+	if err != nil || job.Status != JobRunning {
+		t.Fatalf("Start() = %#v, %v", job, err)
+	}
+	if persisted, found, err := manager.Status(job.ID); err != nil || !found || persisted.Status != JobRunning {
+		t.Fatalf("running status = %#v, %t, %v", persisted, found, err)
+	}
+	<-started
+	if _, err := manager.Start(context.Background(), check, false, nil); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("concurrent Start() error = %v", err)
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		persisted, found, statusErr := manager.Status("")
+		if statusErr != nil || !found {
+			t.Fatalf("final status = %#v, %t, %v", persisted, found, statusErr)
+		}
+		if persisted.Status == JobSucceeded {
+			if len(persisted.Log) != 2 || len(persisted.Log[1]) != 4000 {
+				t.Fatalf("bounded log lengths = %d, %#v", len(persisted.Log), persisted.Log)
+			}
+			if _, found, err := manager.Status("different-job"); err != nil || found {
+				t.Fatalf("mismatched status found=%t err=%v", found, err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job did not finish: %#v", persisted)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestJobManagerReturnsRestartFailure(t *testing.T) {
+	check := CheckResult{CurrentVersion: "1.0.0", LatestVersion: "1.1.0", Channel: ChannelLatest, Installer: InstallerNPM, CanUpdate: true}
+	manager := &JobManager{Store: &JobStore{Path: filepath.Join(t.TempDir(), "job.json")}, Runner: fakeRunner{}}
+	job, err := manager.Run(context.Background(), check, true, func(context.Context) error { return errors.New("restart failed") })
+	if err == nil || job.Status != JobFailed || job.Error != "restart failed" {
+		t.Fatalf("restart failure = %#v, %v", job, err)
 	}
 }
 

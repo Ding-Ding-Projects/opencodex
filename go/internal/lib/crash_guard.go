@@ -107,3 +107,23 @@ func RecoverCrash(logPath, kind string, tracker *SidecarTracker) func() {
 		_ = AppendCrashEntry(logPath, entry)
 	}
 }
+
+// RunGuarded executes one process-root or goroutine-root function, records a
+// redacted crash entry if it panics, and reports whether recovery occurred.
+// Callers retain control over their exit/restart policy after recovery.
+func RunGuarded(logPath, kind string, tracker *SidecarTracker, run func()) (crashed bool, err error) {
+	if run == nil {
+		return false, errors.New("guarded function is required")
+	}
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		crashed = true
+		entry := FormatCrashEntry(kind, recovered, debug.Stack(), CrashEntryOptions{Tracker: tracker})
+		err = AppendCrashEntry(logPath, entry)
+	}()
+	run()
+	return false, nil
+}

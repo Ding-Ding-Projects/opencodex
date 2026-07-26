@@ -199,15 +199,20 @@ func (s *JobStore) Write(job Job) error {
 		temporary.Close()
 		return err
 	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(name, s.Path)
+	return atomicReplace(name, s.Path)
 }
 
 type JobManager struct {
 	Store       *JobStore
 	Runner      CommandRunner
+	Execute     func(context.Context, CheckResult) ([]byte, error)
 	Now         func() time.Time
 	mu          sync.Mutex
 	RestartHost string
@@ -216,6 +221,47 @@ type JobManager struct {
 }
 
 func (m *JobManager) Run(ctx context.Context, check CheckResult, restart bool, restartFn func(context.Context) error) (Job, error) {
+	job, err := m.begin(check, restart)
+	if err != nil {
+		return Job{}, err
+	}
+	return m.execute(ctx, job, check, restartFn)
+}
+
+// Start persists the running job before returning and completes it in the
+// background. This is the management-API entry point: status survives request
+// cancellation and can be recovered from Store after a process restart.
+func (m *JobManager) Start(ctx context.Context, check CheckResult, restart bool, restartFn func(context.Context) error) (Job, error) {
+	job, err := m.begin(check, restart)
+	if err != nil {
+		return Job{}, err
+	}
+	go func() {
+		_, _ = m.execute(context.WithoutCancel(ctx), job, check, restartFn)
+	}()
+	return job, nil
+}
+
+// Status returns the latest persisted job. A non-empty id must match the
+// persisted job, which preserves the TypeScript status endpoint contract.
+func (m *JobManager) Status(id string) (Job, bool, error) {
+	if m.Store == nil {
+		return Job{}, false, errors.New("update job store is required")
+	}
+	job, err := m.Store.Read()
+	if errors.Is(err, os.ErrNotExist) {
+		return Job{}, false, nil
+	}
+	if err != nil {
+		return Job{}, false, err
+	}
+	if id != "" && job.ID != id {
+		return Job{}, false, nil
+	}
+	return *job, true, nil
+}
+
+func (m *JobManager) begin(check CheckResult, restart bool) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !check.CanUpdate {
@@ -227,24 +273,36 @@ func (m *JobManager) Run(ctx context.Context, check CheckResult, restart bool, r
 	if current, err := m.Store.Read(); err == nil && (current.Status == JobRunning || current.Status == JobRestarting) {
 		return Job{}, errors.New("an update job is already running")
 	}
-	now := time.Now
-	if m.Now != nil {
-		now = m.Now
-	}
-	started := now().UTC()
+	started := m.currentTime()
 	command := InstallCommand(check.Installer, check.Channel, check.LatestVersion)
-	job := Job{ID: fmt.Sprintf("%d", started.UnixNano()), Status: JobRunning, StartedAt: started, UpdatedAt: started, CurrentVersion: check.CurrentVersion, LatestVersion: check.LatestVersion, Channel: check.Channel, Installer: check.Installer, Restart: restart, Command: command.String(), Log: []string{"Update job started."}}
+	commandDisplay := strings.TrimSpace(check.Command)
+	if commandDisplay == "" {
+		commandDisplay = command.String()
+	}
+	job := Job{ID: fmt.Sprintf("%d", started.UnixNano()), Status: JobRunning, StartedAt: started, UpdatedAt: started, CurrentVersion: check.CurrentVersion, LatestVersion: check.LatestVersion, Channel: check.Channel, Installer: check.Installer, Restart: restart, Command: commandDisplay, Log: []string{"Update job started."}}
 	if err := m.Store.Write(job); err != nil {
 		return Job{}, err
 	}
+	return job, nil
+}
+
+func (m *JobManager) execute(ctx context.Context, job Job, check CheckResult, restartFn func(context.Context) error) (Job, error) {
+	now := m.currentTime
 	runner := m.Runner
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	output, runErr := runner.Run(ctx, command)
-	if text := strings.TrimSpace(string(output)); text != "" {
-		job.Log = append(job.Log, text)
+	var output []byte
+	var runErr error
+	if m.Execute != nil {
+		output, runErr = m.Execute(ctx, check)
+	} else {
+		output, runErr = runner.Run(ctx, InstallCommand(check.Installer, check.Channel, check.LatestVersion))
 	}
+	if text := strings.TrimSpace(string(output)); text != "" {
+		job.Log = append(job.Log, tailJobLog(text))
+	}
+	resultErr := runErr
 	if runErr != nil {
 		job.Status = JobFailed
 		job.Error = runErr.Error()
@@ -253,7 +311,7 @@ func (m *JobManager) Run(ctx context.Context, check CheckResult, restart bool, r
 			code := exitError.ExitCode()
 			job.ExitCode = &code
 		}
-	} else if restart && restartFn != nil {
+	} else if job.Restart && restartFn != nil {
 		job.Status = JobRestarting
 		job.UpdatedAt = now().UTC()
 		_ = m.Store.Write(job)
@@ -264,14 +322,16 @@ func (m *JobManager) Run(ctx context.Context, check CheckResult, restart bool, r
 			}
 			if !reclaim(ctx, m.RestartHost, m.RestartPort, server.ReclaimListenPortOptions{Timeout: 30 * time.Second}) {
 				job.Status, job.Error = JobFailed, fmt.Sprintf("listen port %d did not become available", m.RestartPort)
+				resultErr = errors.New(job.Error)
 				job.UpdatedAt = now().UTC()
 				_ = m.Store.Write(job)
-				return job, errors.New(job.Error)
+				return job, resultErr
 			}
 		}
 		if err := restartFn(ctx); err != nil {
 			job.Status = JobFailed
 			job.Error = err.Error()
+			resultErr = err
 		} else {
 			job.Status = JobSucceeded
 			job.Restarted = true
@@ -283,5 +343,24 @@ func (m *JobManager) Run(ctx context.Context, check CheckResult, restart bool, r
 	if err := m.Store.Write(job); err != nil {
 		return job, err
 	}
-	return job, runErr
+	return job, resultErr
+}
+
+func (m *JobManager) currentTime() time.Time {
+	if m.Now != nil {
+		return m.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func tailJobLog(value string) string {
+	const limit = 4000
+	if len(value) <= limit {
+		return value
+	}
+	value = value[len(value)-limit:]
+	for len(value) > 0 && value[0]&0xc0 == 0x80 {
+		value = value[1:]
+	}
+	return value
 }

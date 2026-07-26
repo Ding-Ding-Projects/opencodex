@@ -68,12 +68,66 @@ type StartupHealthDiagnostics struct {
 type HealthProbe func(context.Context) (StartupHealthDiagnostics, error)
 
 type StartupHealthCache struct {
-	mu        sync.Mutex
-	ttl       time.Duration
-	now       func() time.Time
-	value     StartupHealthDiagnostics
-	expires   time.Time
-	populated bool
+	mu         sync.Mutex
+	ttl        time.Duration
+	now        func() time.Time
+	value      StartupHealthDiagnostics
+	expires    time.Time
+	populated  bool
+	inflight   bool
+	generation uint64
+}
+
+// GetStaleWhileRevalidate never waits for a service-manager probe. It returns
+// a fresh cached value when available, otherwise a stale cached value or the
+// caller's conservative fallback, and refreshes once in the background.
+func (cache *StartupHealthCache) GetStaleWhileRevalidate(ctx context.Context, fallback StartupHealthDiagnostics, probe HealthProbe) StartupHealthDiagnostics {
+	cache.mu.Lock()
+	now := cache.now()
+	if cache.populated && now.Before(cache.expires) {
+		value := cache.value
+		cache.mu.Unlock()
+		return value
+	}
+	value := fallback
+	if cache.populated {
+		value = cache.value
+	}
+	value.Stale = true
+	if value.CheckedAt.IsZero() {
+		value.CheckedAt = now.UTC()
+	}
+	if cache.inflight || probe == nil {
+		cache.mu.Unlock()
+		return value
+	}
+	cache.inflight = true
+	generation := cache.generation
+	cache.mu.Unlock()
+
+	go cache.refresh(context.WithoutCancel(ctx), generation, probe)
+	return value
+}
+
+func (cache *StartupHealthCache) refresh(ctx context.Context, generation uint64, probe HealthProbe) {
+	value, err := probe(ctx)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if generation != cache.generation {
+		return
+	}
+	cache.inflight = false
+	if err != nil {
+		return
+	}
+	now := cache.now()
+	if value.CheckedAt.IsZero() {
+		value.CheckedAt = now.UTC()
+	}
+	value.Stale = false
+	cache.value = value
+	cache.expires = now.Add(cache.ttl)
+	cache.populated = true
 }
 
 func NewStartupHealthCache(ttl time.Duration) *StartupHealthCache {
@@ -113,5 +167,7 @@ func (cache *StartupHealthCache) Invalidate() {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	cache.populated = false
+	cache.inflight = false
+	cache.generation++
 	cache.expires = time.Time{}
 }

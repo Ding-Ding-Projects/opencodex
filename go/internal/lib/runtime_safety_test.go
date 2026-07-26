@@ -62,6 +62,27 @@ func TestCrashEntryRedactsAndIncludesBreadcrumbs(t *testing.T) {
 	}
 }
 
+func TestRunGuardedActivatesCrashLogWithLiveSidecarBreadcrumb(t *testing.T) {
+	tracker := NewSidecarTracker()
+	exit := tracker.Enter("vision")
+	defer exit()
+	path := filepath.Join(t.TempDir(), "crash.log")
+	crashed, err := RunGuarded(path, "panic", tracker, func() {
+		panic("token=abcdefghijklmnop")
+	})
+	if err != nil || !crashed {
+		t.Fatalf("RunGuarded() = %t, %v", crashed, err)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	entry := string(data)
+	if !strings.Contains(entry, "sidecar: inFlight=1 last=vision") || strings.Contains(entry, "abcdefghijklmnop") {
+		t.Fatalf("crash entry = %q", entry)
+	}
+}
+
 type countedCloser struct{ calls atomic.Int32 }
 
 func (c *countedCloser) Close() error { c.calls.Add(1); return nil }

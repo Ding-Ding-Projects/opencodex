@@ -15,10 +15,22 @@ const DefaultHeartbeatStaleAfter = 15 * time.Second
 
 type State string
 
+type Action string
+
 const (
 	StateOnline  State = "online"
 	StateWarning State = "warning"
 	StateOffline State = "offline"
+)
+
+const (
+	ActionInstall   Action = "install"
+	ActionUninstall Action = "uninstall"
+	ActionStart     Action = "start"
+	ActionStop      Action = "stop"
+	ActionRestart   Action = "restart"
+	ActionStatus    Action = "status"
+	ActionRun       Action = "run"
 )
 
 type Status struct {
@@ -68,3 +80,32 @@ type Manager interface {
 }
 
 func New(config Config) (Manager, error) { return newManager(config) }
+
+// ExecuteAction is the canonical tray lifecycle dispatcher shared by CLI and
+// management callers. Restart never starts after a failed stop.
+func ExecuteAction(ctx context.Context, manager Manager, action Action, startNow bool) (Status, error) {
+	if manager == nil {
+		return Status{}, errors.New("tray manager is required")
+	}
+	switch action {
+	case ActionInstall:
+		return manager.Install(ctx, startNow)
+	case ActionUninstall:
+		return manager.Uninstall(ctx)
+	case ActionStart:
+		return manager.Start(ctx)
+	case ActionStop:
+		return manager.Stop(ctx)
+	case ActionRestart:
+		if _, err := manager.Stop(ctx); err != nil {
+			return Status{}, err
+		}
+		return manager.Start(ctx)
+	case ActionStatus:
+		return manager.Status(ctx)
+	case ActionRun:
+		return Status{}, manager.Run(ctx)
+	default:
+		return Status{}, errors.New("unknown tray action " + string(action))
+	}
+}

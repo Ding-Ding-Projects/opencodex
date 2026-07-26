@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,18 @@ type Config struct {
 	StateDir    string
 }
 
+type ManagerOptions struct {
+	Backend     Backend
+	WinSW       *WinSWConfig
+	HTTPClient  *http.Client
+	WinSWRunner WinSWRun
+}
+
+type ParsedArgs struct {
+	Command string
+	Backend Backend
+}
+
 type Status struct {
 	Installed bool
 	Enabled   bool
@@ -46,8 +59,22 @@ type Manager interface {
 }
 
 func NewManager(cfg Config) (Manager, error) {
+	return NewManagerWithOptions(cfg, ManagerOptions{})
+}
+
+// NewManagerWithOptions selects the explicit Windows backend while preserving
+// NewManager's scheduler default. CLI callers should use the backend recorded
+// in InstallState for non-install commands.
+func NewManagerWithOptions(cfg Config, options ManagerOptions) (Manager, error) {
+	return newManagerForOS(cfg, options, runtime.GOOS)
+}
+
+func newManagerForOS(cfg Config, options ManagerOptions, goos string) (Manager, error) {
 	if err := ValidateConfig(cfg); err != nil {
 		return nil, err
+	}
+	if options.Backend != "" && options.Backend != BackendScheduler && options.Backend != BackendNative {
+		return nil, fmt.Errorf("unsupported service backend %q", options.Backend)
 	}
 	if cfg.HomeDir == "" {
 		home, err := os.UserHomeDir()
@@ -56,16 +83,102 @@ func NewManager(cfg Config) (Manager, error) {
 		}
 		cfg.HomeDir = home
 	}
-	switch runtime.GOOS {
+	switch goos {
 	case "darwin":
+		if options.Backend == BackendNative {
+			return nil, fmt.Errorf("native WinSW services are supported only on windows")
+		}
 		return &launchdManager{config: cfg}, nil
 	case "linux":
+		if options.Backend == BackendNative {
+			return nil, fmt.Errorf("native WinSW services are supported only on windows")
+		}
 		return &systemdManager{config: cfg}, nil
 	case "windows":
+		if options.Backend == BackendNative {
+			if options.WinSW == nil {
+				return nil, fmt.Errorf("native WinSW configuration is required")
+			}
+			native := *options.WinSW
+			native.Config = cfg
+			return NewWinSWManager(native, options.HTTPClient, options.WinSWRunner)
+		}
 		return &taskManager{config: cfg}, nil
 	default:
-		return nil, fmt.Errorf("services are unsupported on %s", runtime.GOOS)
+		return nil, fmt.Errorf("services are unsupported on %s", goos)
 	}
+}
+
+// ParseArgs implements the TypeScript service CLI grammar. Backend flags are
+// accepted only for install and native WinSW is Windows-only.
+func ParseArgs(args []string, goos string) (ParsedArgs, error) {
+	parsed := ParsedArgs{Command: "install"}
+	commandSet := false
+	for _, arg := range args {
+		switch arg {
+		case "--native":
+			if parsed.Backend == BackendScheduler {
+				return ParsedArgs{}, fmt.Errorf("--native conflicts with --scheduler")
+			}
+			parsed.Backend = BackendNative
+		case "--scheduler":
+			if parsed.Backend == BackendNative {
+				return ParsedArgs{}, fmt.Errorf("--scheduler conflicts with --native")
+			}
+			parsed.Backend = BackendScheduler
+		default:
+			if strings.HasPrefix(arg, "--") || commandSet {
+				return ParsedArgs{}, fmt.Errorf("unknown service option %q", arg)
+			}
+			parsed.Command, commandSet = arg, true
+		}
+	}
+	if parsed.Backend != "" && parsed.Command != "install" {
+		return ParsedArgs{}, fmt.Errorf("--native/--scheduler apply to service install only")
+	}
+	if parsed.Backend == BackendNative && goos != "windows" {
+		return ParsedArgs{}, fmt.Errorf("native WinSW services are supported only on windows")
+	}
+	return parsed, nil
+}
+
+func InstalledBackend(state *InstallState) Backend {
+	if state != nil && state.Backend == BackendNative {
+		return BackendNative
+	}
+	return BackendScheduler
+}
+
+// SwitchBackend performs the destructive half of a Windows backend switch in
+// a fail-closed order: verify and remove the old backend, verify absence, then
+// install the target. A target failure is reported explicitly as no-service;
+// this matches the TypeScript contract and never silently falls back.
+func SwitchBackend(current, target Manager) error {
+	if target == nil {
+		return fmt.Errorf("target service manager is required")
+	}
+	if current != nil {
+		status, err := current.Status()
+		if err != nil {
+			return fmt.Errorf("query current service backend: %w", err)
+		}
+		if status.Installed {
+			if err := current.Uninstall(); err != nil {
+				return fmt.Errorf("remove current service backend: %w", err)
+			}
+			status, err = current.Status()
+			if err != nil {
+				return fmt.Errorf("verify current service backend removal: %w", err)
+			}
+			if status.Installed {
+				return fmt.Errorf("current service backend remains installed; target install aborted")
+			}
+		}
+	}
+	if err := target.Install(); err != nil {
+		return fmt.Errorf("target service backend install failed after removing current backend; no service is installed: %w", err)
+	}
+	return nil
 }
 
 // ValidateConfig rejects values that cannot be represented safely across the

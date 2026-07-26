@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -36,6 +37,57 @@ func TestStartupHealthCacheTTLAndStaleFallback(t *testing.T) {
 	cache.Invalidate()
 	if _, err := cache.Get(context.Background(), failed); err == nil {
 		t.Fatal("expected probe error after invalidation")
+	}
+}
+
+func TestStartupHealthCacheStaleWhileRevalidateReturnsImmediatelyAndSingleFlights(t *testing.T) {
+	cache := NewStartupHealthCache(time.Minute)
+	fallback := StartupHealthDiagnostics{Startup: HealthDiagnostic{State: HealthWarning, Summary: "conservative"}}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	probe := func(context.Context) (StartupHealthDiagnostics, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+		return StartupHealthDiagnostics{Startup: HealthDiagnostic{State: HealthHealthy, Summary: "fresh"}}, nil
+	}
+	first := cache.GetStaleWhileRevalidate(context.Background(), fallback, probe)
+	if !first.Stale || first.Startup.Summary != "conservative" {
+		t.Fatalf("initial fallback = %+v", first)
+	}
+	<-started
+	second := cache.GetStaleWhileRevalidate(context.Background(), fallback, probe)
+	if !second.Stale || calls.Load() != 1 {
+		t.Fatalf("single-flight fallback = %+v calls=%d", second, calls.Load())
+	}
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for {
+		value := cache.GetStaleWhileRevalidate(context.Background(), fallback, probe)
+		if !value.Stale && value.Startup.Summary == "fresh" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("refresh did not publish: %+v", value)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestStartupHealthCacheInvalidateRejectsInflightGeneration(t *testing.T) {
+	cache := NewStartupHealthCache(time.Minute)
+	staleGeneration := cache.generation
+	cache.Invalidate()
+	cache.refresh(context.Background(), staleGeneration, func(context.Context) (StartupHealthDiagnostics, error) {
+		return StartupHealthDiagnostics{Startup: HealthDiagnostic{State: HealthHealthy}}, nil
+	})
+	cache.mu.Lock()
+	populated := cache.populated
+	cache.mu.Unlock()
+	if populated {
+		t.Fatal("invalidated inflight probe repopulated the cache")
 	}
 }
 

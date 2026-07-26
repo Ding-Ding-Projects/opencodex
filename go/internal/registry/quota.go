@@ -27,6 +27,17 @@ type ProviderQuota struct {
 	UpdatedAt        time.Time
 }
 
+type QuotaRequest struct {
+	Provider   string
+	Credential *types.AuthContext
+}
+
+type QuotaResult struct {
+	Provider string
+	Quota    *ProviderQuota
+	Err      error
+}
+
 type QuotaEndpoint struct {
 	URL, Source string
 	Method      string
@@ -51,6 +62,7 @@ func NewQuotaFetcher() *QuotaFetcher {
 	client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	return &QuotaFetcher{Client: client, TTL: 5 * time.Minute, cache: make(map[string]quotaCacheEntry), Endpoints: map[string]QuotaEndpoint{
 		"xai":       {URL: "https://cli-chat-proxy.grok.com/v1/billing", Source: "xai:grok-billing"},
+		"grok":      {URL: "https://cli-chat-proxy.grok.com/v1/billing", Source: "xai:grok-billing"},
 		"anthropic": {URL: "https://api.anthropic.com/api/oauth/usage", Source: "anthropic:oauth-usage", Headers: map[string]string{"anthropic-beta": "claude-code-20250219,oauth-2025-04-20"}},
 		"kimi":      {URL: "https://api.kimi.com/coding/v1/usages", Source: "kimi:usages"},
 		"kimi-code": {URL: "https://api.kimi.com/coding/v1/usages", Source: "kimi:usages"},
@@ -60,6 +72,36 @@ func NewQuotaFetcher() *QuotaFetcher {
 			Method: http.MethodPost, Body: "{}", Headers: map[string]string{"Content-Type": "application/json", "User-Agent": "opencodex-quota"},
 		},
 	}}
+}
+
+// FetchAll fetches provider quotas concurrently while preserving request order
+// and isolating provider failures. Management callers can therefore return the
+// successful reports without allowing one unavailable provider to fail all.
+func (f *QuotaFetcher) FetchAll(ctx context.Context, requests []QuotaRequest, force bool) []QuotaResult {
+	results := make([]QuotaResult, len(requests))
+	var wait sync.WaitGroup
+	for index := range requests {
+		index := index
+		request := requests[index]
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			provider := strings.TrimSpace(request.Provider)
+			results[index].Provider = provider
+			if provider == "" {
+				results[index].Err = fmt.Errorf("quota provider must not be blank")
+				return
+			}
+			quota, err := f.Fetch(ctx, provider, request.Credential, force)
+			if err != nil {
+				results[index].Err = err
+				return
+			}
+			results[index].Quota = &quota
+		}()
+	}
+	wait.Wait()
+	return results
 }
 
 func (f *QuotaFetcher) Clear(provider string) {
