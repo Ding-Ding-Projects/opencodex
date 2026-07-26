@@ -1748,6 +1748,8 @@ describe("GitHub Actions hardening", () => {
     const release = workflowStep(workflow, /^Create(?:\/reconcile)? GitHub release$/);
 
     expect(build).toContain("npm run build:publish");
+    expect(build).toContain("npm pack --json > pack.json");
+    expect(build).not.toContain("npm pack --json --ignore-scripts");
     expect(build).toContain("npm run verify:native-package");
     expect(build).toContain("npm run verify:native-install");
     expect(build).toContain("bun scripts/prepare-release-assets.ts");

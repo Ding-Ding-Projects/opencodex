@@ -211,7 +211,7 @@ jobs:
           set -euo pipefail
           npm run build:publish
           rm -f pack.json
-          npm pack --json --ignore-scripts > pack.json
+          npm pack --json > pack.json
           npm run verify:native-package
           npm run verify:native-install
 
