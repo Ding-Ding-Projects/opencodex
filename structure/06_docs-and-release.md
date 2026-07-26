@@ -118,7 +118,10 @@ before publish. A dry-run performs all archive and asset preparation but cannot 
 Git push, or GitHub Release mutations. A real run publishes the private retained archive and uses
 freshly materialized, immediately revalidated bytes as the seven GitHub Release assets. It then
 downloads the remote assets, normalizes local modes, and verifies their inventory and bytes against
-the retained archive. Docs publishing is separate.
+the retained archive. Post-notes tag and GitHub Release changes are owned by
+`scripts/reconcile-release-assets.ts`, which uses bounded argument-vector `git`/`gh` calls and
+re-reads the authoritative remote tag before every mutation and before final success. Docs
+publishing is separate.
 
 ## Release metadata invariants
 
@@ -138,11 +141,13 @@ the final exact classification happens immediately before create or repair. Any 
 unexpected asset name fails before mutation.
 
 Exact-integrity reruns recover from interruptions after npm publish, tag push, release creation, or a
-partial asset upload. Already exact mutations are skipped. Missing or mismatched expected assets are
-reconciled with `gh release upload --clobber`, after which all seven remote assets are downloaded and
-byte-verified against the retained archive. This recovery path is deliberately narrow: it never moves
-a conflicting tag, republishes different npm bytes, accepts changed release metadata, or removes an
-unexpected remote asset.
+partial asset upload. `gh release create` can leave a draft while uploading assets, so an exact draft
+is repaired by uploading only missing or mismatched expected assets, re-verifying all seven remote
+bytes against the retained archive, and explicitly publishing it with `gh release edit --draft=false`.
+An already published Release is verification-only and is never edited or uploaded to. Already exact
+mutations are skipped. This recovery path is deliberately narrow: it never moves a conflicting tag,
+republishes different npm bytes, accepts changed release metadata, or removes an unexpected remote
+asset.
 
 Do not force-move public version tags. If release metadata is inconsistent with the retained archive,
 exact commit, requested channel, generated notes, or seven-asset inventory, treat the version as

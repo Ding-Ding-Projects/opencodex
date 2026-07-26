@@ -313,7 +313,7 @@ jobs:
           npm view @bitkyc08/opencodex versions dist-tags --json || true
           exit 1
 
-      - name: Create GitHub release
+      - name: Create/reconcile GitHub release
         if: ${{ inputs.dry-run != true }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -325,12 +325,6 @@ jobs:
           release_tag="v${RELEASE_VERSION}"
 
           git fetch --force --tags origin
-
-          existing_tag_sha="$(git rev-parse -q --verify "refs/tags/${release_tag}^{commit}" || true)"
-          if [ -n "$existing_tag_sha" ] && [ "$existing_tag_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::${release_tag} already points at ${existing_tag_sha}, not ${GITHUB_SHA}"
-            exit 1
-          fi
 
           # Channel previous tag for Full Changelog + default notes baseline.
           # Preview baselines any prior release; stable baselines prior stable only.
@@ -479,131 +473,21 @@ jobs:
           upload_native_dir="$(sed -n 's/^RELEASE_NATIVE_DIR=//p' "$upload_receipt")"
           test -n "$upload_native_dir"
 
-          assets=(
-            "${upload_native_dir}/ocx_${RELEASE_VERSION}_darwin_amd64"
-            "${upload_native_dir}/ocx_${RELEASE_VERSION}_darwin_arm64"
-            "${upload_native_dir}/ocx_${RELEASE_VERSION}_linux_amd64"
-            "${upload_native_dir}/ocx_${RELEASE_VERSION}_linux_arm64"
-            "${upload_native_dir}/ocx_${RELEASE_VERSION}_windows_amd64.exe"
-            "${upload_native_dir}/ocx_${RELEASE_VERSION}_windows_arm64.exe"
-            "${upload_native_dir}/ocx_${RELEASE_VERSION}_checksums.txt"
-          )
-          expected_names=(
-            "ocx_${RELEASE_VERSION}_darwin_amd64"
-            "ocx_${RELEASE_VERSION}_darwin_arm64"
-            "ocx_${RELEASE_VERSION}_linux_amd64"
-            "ocx_${RELEASE_VERSION}_linux_arm64"
-            "ocx_${RELEASE_VERSION}_windows_amd64.exe"
-            "ocx_${RELEASE_VERSION}_windows_arm64.exe"
-            "ocx_${RELEASE_VERSION}_checksums.txt"
-          )
-          for asset in "${assets[@]}"; do
-            test -f "$asset"
-            test ! -L "$asset"
-          done
-
           bun scripts/prepare-release-assets.ts verify \
             --archive "$TARBALL" \
             --sha256 "$TARBALL_SHA256" \
             --native-dir "$upload_native_dir"
-
-          github_release_state=fresh
-          if [ "$GITHUB_RELEASE_CANDIDATE" = "present" ]; then
-            release_json="$(mktemp)"
-            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" > "$release_json"
-            expected_prerelease=false
-            if [ -n "$prerelease_flag" ]; then
-              expected_prerelease=true
-            fi
-            node - "$release_json" "$release_tag" "$notes_file" "$expected_prerelease" <<'NODE'
-          const fs = require("node:fs");
-          const [, , jsonPath, expectedName, notesPath, expectedPrerelease] = process.argv;
-          const release = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
-          const notes = fs.readFileSync(notesPath, "utf8");
-          if (release.name !== expectedName || release.body !== notes || release.prerelease !== (expectedPrerelease === "true")) {
-            console.error("existing GitHub Release metadata conflicts with the exact retry candidate");
-            process.exit(1);
-          }
-          NODE
-            github_release_state=exact
-          elif [ "$GITHUB_RELEASE_CANDIDATE" != "absent" ]; then
-            echo "::error::unknown GitHub release candidate state: ${GITHUB_RELEASE_CANDIDATE}"
-            exit 1
+          expected_prerelease=false
+          if [ -n "$prerelease_flag" ]; then
+            expected_prerelease=true
           fi
-
-          if [ "$github_release_state" = "fresh" ]; then
-            bun scripts/prepare-release-assets.ts verify \
-              --archive "$TARBALL" \
-              --sha256 "$TARBALL_SHA256" \
-              --native-dir "$upload_native_dir"
-            if [ -z "$existing_tag_sha" ]; then
-              git tag "$release_tag" "$GITHUB_SHA"
-              git push origin "refs/tags/${release_tag}"
-            fi
-            gh release create "$release_tag" "${assets[@]}" --target "$GITHUB_SHA" \
-              --title "$release_tag" --notes-file "$notes_file" ${prerelease_flag:+$prerelease_flag}
-          else
-            mapfile -t existing_names < <(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '.assets[].name' | sort)
-            for existing_name in "${existing_names[@]}"; do
-              known=false
-              for expected_name in "${expected_names[@]}"; do
-                if [ "$existing_name" = "$expected_name" ]; then
-                  known=true
-                  break
-                fi
-              done
-              if [ "$known" != "true" ]; then
-                echo "::error::GitHub Release contains unexpected asset ${existing_name}"
-                exit 1
-              fi
-            done
-
-            comparison_root="$(mktemp -d)"
-            repair_assets=()
-            for asset in "${assets[@]}"; do
-              name="$(basename "$asset")"
-              if printf '%s\n' "${existing_names[@]}" | grep -Fxq -- "$name"; then
-                gh release download "$release_tag" --pattern "$name" --dir "$comparison_root"
-                if ! cmp -s "$asset" "${comparison_root}/${name}"; then
-                  repair_assets+=("$asset")
-                fi
-              else
-                repair_assets+=("$asset")
-              fi
-            done
-
-            if [ "${#repair_assets[@]}" -gt 0 ]; then
-              bun scripts/prepare-release-assets.ts verify \
-                --archive "$TARBALL" \
-                --sha256 "$TARBALL_SHA256" \
-                --native-dir "$upload_native_dir"
-              gh release upload "$release_tag" "${repair_assets[@]}" --clobber
-            fi
-          fi
-
-          remote_names_file="$(mktemp)"
-          expected_names_file="$(mktemp)"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '.assets[].name' | sort > "$remote_names_file"
-          printf '%s\n' "${expected_names[@]}" | sort > "$expected_names_file"
-          if ! cmp -s "$remote_names_file" "$expected_names_file"; then
-            echo "::error::GitHub Release asset inventory does not contain exactly the seven expected names"
-            diff -u "$expected_names_file" "$remote_names_file" || true
-            exit 1
-          fi
-
-          remote_root="$(mktemp -d)"
-          for expected_name in "${expected_names[@]}"; do
-            gh release download "$release_tag" --pattern "$expected_name" --dir "$remote_root"
-          done
-          chmod 0755 \
-            "${remote_root}/ocx_${RELEASE_VERSION}_darwin_amd64" \
-            "${remote_root}/ocx_${RELEASE_VERSION}_darwin_arm64" \
-            "${remote_root}/ocx_${RELEASE_VERSION}_linux_amd64" \
-            "${remote_root}/ocx_${RELEASE_VERSION}_linux_arm64" \
-            "${remote_root}/ocx_${RELEASE_VERSION}_windows_amd64.exe" \
-            "${remote_root}/ocx_${RELEASE_VERSION}_windows_arm64.exe"
-          chmod 0644 "${remote_root}/ocx_${RELEASE_VERSION}_checksums.txt"
-          bun scripts/prepare-release-assets.ts verify \
+          bun scripts/reconcile-release-assets.ts \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$release_tag" \
+            --sha "$GITHUB_SHA" \
+            --title "$release_tag" \
+            --notes "$notes_file" \
+            --prerelease "$expected_prerelease" \
             --archive "$TARBALL" \
-            --sha256 "$TARBALL_SHA256" \
-            --native-dir "$remote_root"
+            --archive-sha256 "$TARBALL_SHA256" \
+            --native-dir "$upload_native_dir"

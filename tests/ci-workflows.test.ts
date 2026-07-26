@@ -25,31 +25,6 @@ function workflowStep(workflow: string, name: RegExp): string {
   return step!;
 }
 
-type ReleaseRecoveryState = {
-  dryRun?: boolean;
-  npm: "fresh" | "exact" | "conflict";
-  tag: "absent" | "exact" | "conflict";
-  release: "absent" | "exact" | "conflict";
-  repairAssets?: boolean;
-};
-
-function expectedReleaseMutations(state: ReleaseRecoveryState): string[] {
-  if (state.npm === "conflict" || state.tag === "conflict" || state.release === "conflict") {
-    throw new Error("release identity conflict");
-  }
-  if (state.dryRun) return [];
-
-  const mutations: string[] = [];
-  if (state.npm === "fresh") mutations.push("npm publish");
-  if (state.release === "absent") {
-    if (state.tag === "absent") mutations.push("git tag", "git push");
-    mutations.push("gh release create");
-  } else if (state.repairAssets) {
-    mutations.push("gh release upload --clobber");
-  }
-  return mutations;
-}
-
 describe("GitHub Actions hardening", () => {
   test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
@@ -287,9 +262,7 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("main releases must use a stable semver version");
     expect(workflow).toContain("preview releases must use a preview prerelease version");
 
-    // Release notes must include PR categories and the full channel commit range
-    // (branch merges + direct commits). Preflight forbids an existing release, so
-    // only create (not edit) is wired. Stable releases also carry matching preview notes.
+    // Release notes include PR categories and the full channel commit range.
     expect(workflow).toContain("releases/generate-notes");
     expect(workflow).toContain("git log --pretty=format:'- %s (%h)'");
     expect(workflow).toContain('commit_range="${notes_range_start}..${GITHUB_SHA}"');
@@ -324,15 +297,15 @@ describe("GitHub Actions hardening", () => {
     for (const cmd of new Set(invoked)) {
       expect(releaseNotesHelper).toContain(`"${cmd}"`);
     }
-    expect(workflow).toMatch(/gh release create[\s\S]*?--notes-file "\$notes_file"/);
+    expect(workflow).toContain("bun scripts/reconcile-release-assets.ts");
+    expect(workflow).not.toContain("gh release create");
     expect(workflow).not.toContain("gh release edit");
     expect(workflow).not.toContain("--generate-notes");
     // Notes must be assembled before tagging so a notes API failure does not leave
     // a remote tag that blocks release retries at preflight.
-    const createStep = workflow.split("- name: Create GitHub release")[1]!.split(/\n {6}- name:/)[0]!;
+    const createStep = workflow.split("- name: Create/reconcile GitHub release")[1]!.split(/\n {6}- name:/)[0]!;
     const notesAssembly = createStep.split('upload_root=')[0]!;
     // Preview carry lookup must use tag-specific API status, not `gh release view` stderr prose.
-    // Exact-retry reconciliation may use `gh release view` only after notes assembly.
     expect(notesAssembly).toContain("releases/tags/");
     expect(notesAssembly).not.toContain("gh release view");
     // Fail closed: no soft-skip in any spelling around gh api calls in this step.
@@ -341,8 +314,7 @@ describe("GitHub Actions hardening", () => {
     }
     expect(createStep).not.toContain("set +e\n            pr_notes");
     expect(createStep.indexOf("gh api")).toBeGreaterThan(-1);
-    expect(createStep.indexOf('git tag "$release_tag"')).toBeGreaterThan(-1);
-    expect(createStep.indexOf("gh api")).toBeLessThan(createStep.indexOf('git tag "$release_tag"'));
+    expect(createStep.indexOf("bun scripts/reconcile-release-assets.ts")).toBeGreaterThan(createStep.indexOf("gh api"));
     // First-channel releases must not call generate-notes without an explicit baseline
     // (GitHub would otherwise pick the newest repo tag, possibly from the other channel).
     // Scope to the single if-block that owns generate-notes; createStep has two
@@ -1745,7 +1717,7 @@ describe("GitHub Actions hardening", () => {
     const build = workflowStep(workflow, /^Build and retain exact release archive$/);
     const publish = workflowStep(workflow, /^Publish exact tarball$/);
     const smoke = workflowStep(workflow, /^Post-publish registry smoke$/);
-    const release = workflowStep(workflow, /^Create(?:\/reconcile)? GitHub release$/);
+    const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
 
     expect(build).toContain("npm run build:publish");
     expect(build).toContain("npm pack --json > pack.json");
@@ -1785,7 +1757,7 @@ describe("GitHub Actions hardening", () => {
   test("release workflow classifies exact retries only after immutable identities exist", async () => {
     const workflow = await readText(".github/workflows/release.yml");
     const classify = workflowStep(workflow, /^Classify exact release retry state$/);
-    const release = workflowStep(workflow, /^Create(?:\/reconcile)? GitHub release$/);
+    const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
 
     expect(classify).toContain("pack.json");
     expect(classify).toContain("dist.integrity");
@@ -1796,73 +1768,27 @@ describe("GitHub Actions hardening", () => {
     expect(classify).toContain("GITHUB_SHA");
 
     const notesAt = release.indexOf('notes_file=');
-    const finalStateAt = release.indexOf("github_release_state");
-    const createAt = release.indexOf("gh release create");
-    const repairAt = release.indexOf("gh release upload");
+    const reconcileAt = release.indexOf("bun scripts/reconcile-release-assets.ts");
     expect(notesAt).toBeGreaterThan(-1);
-    expect(finalStateAt).toBeGreaterThan(notesAt);
-    expect(createAt).toBeGreaterThan(finalStateAt);
-    expect(repairAt).toBeGreaterThan(finalStateAt);
-    expect(release).toContain("--clobber");
-    expect(release).toContain("unexpected");
-    expect(release).toMatch(/chmod\s+0755/);
-    expect(release).toMatch(/chmod\s+0644/);
-    expect(count(release, "prepare-release-assets.ts verify")).toBeGreaterThanOrEqual(3);
-    expect(release).toContain("gh release download");
+    expect(reconcileAt).toBeGreaterThan(notesAt);
+    expect(release).not.toContain("gh release create");
+    expect(release).not.toContain("gh release upload");
+    expect(release).not.toContain("git push origin");
+    expect(release).toContain('--archive-sha256 "$TARBALL_SHA256"');
+    expect(release).toContain('--native-dir "$upload_native_dir"');
   });
 
   test("GitHub release assets are exactly the six binaries and checksum manifest", async () => {
     const workflow = await readText(".github/workflows/release.yml");
-    const release = workflowStep(workflow, /^Create(?:\/reconcile)? GitHub release$/);
-    const assetArray = release.match(/assets=\(\n([\s\S]*?)\n\s*\)/)?.[1];
-
-    expect(assetArray).toBeDefined();
-    const expectedSuffixes = [
-      "darwin_amd64",
-      "darwin_arm64",
-      "linux_amd64",
-      "linux_arm64",
-      "windows_amd64.exe",
-      "windows_arm64.exe",
-      "checksums.txt",
-    ];
-    for (const suffix of expectedSuffixes) {
-      expect(assetArray).toContain(`ocx_\${RELEASE_VERSION}_${suffix}`);
-    }
-    const assetPaths = assetArray!.match(/"\$\{(?:RELEASE_NATIVE_DIR|upload_native_dir)\}\/ocx_\$\{RELEASE_VERSION\}_[^"]+"/g) ?? [];
-    expect(assetPaths).toHaveLength(7);
-    expect(release).toContain('gh release create "$release_tag" "${assets[@]}"');
-    expect(release).toContain("gh release upload");
-    expect(release).toContain('"${repair_assets[@]}" --clobber');
-  });
-
-  test("release retry decision table has zero dry-run mutation and bounded exact recovery", () => {
-    expect(expectedReleaseMutations({ dryRun: true, npm: "fresh", tag: "absent", release: "absent" })).toEqual([]);
-    expect(expectedReleaseMutations({ npm: "fresh", tag: "absent", release: "absent" })).toEqual([
-      "npm publish",
-      "git tag",
-      "git push",
-      "gh release create",
-    ]);
-    expect(expectedReleaseMutations({ npm: "exact", tag: "absent", release: "absent" })).toEqual([
-      "git tag",
-      "git push",
-      "gh release create",
-    ]);
-    expect(expectedReleaseMutations({ npm: "exact", tag: "exact", release: "absent" })).toEqual([
-      "gh release create",
-    ]);
-    expect(expectedReleaseMutations({ npm: "exact", tag: "exact", release: "exact" })).toEqual([]);
-    expect(expectedReleaseMutations({ npm: "exact", tag: "exact", release: "exact", repairAssets: true })).toEqual([
-      "gh release upload --clobber",
-    ]);
-    for (const conflict of [
-      { npm: "conflict", tag: "absent", release: "absent" },
-      { npm: "exact", tag: "conflict", release: "absent" },
-      { npm: "exact", tag: "exact", release: "conflict" },
-    ] as const) {
-      expect(() => expectedReleaseMutations(conflict)).toThrow("release identity conflict");
-    }
+    const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
+    const reconciler = await readText("scripts/reconcile-release-assets.ts");
+    expect(reconciler).toContain("const names = [...nativeArtifactNames(version), `ocx_${version}_checksums.txt`]");
+    expect(reconciler).toContain("paths: names.map(name => join(nativeDir, name))");
+    expect(release).toContain("reconcile-release-assets.ts");
+    expect(reconciler).toContain('"--verify-tag"');
+    expect(reconciler).toContain('"--draft=false"');
+    expect(reconciler).toContain('"--clobber"');
+    expect(reconciler).toContain("downloadAndVerify");
   });
 
   test("dev2-go changes activate both package and Go release ownership gates", async () => {
