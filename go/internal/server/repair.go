@@ -14,21 +14,62 @@ import (
 var responsesItemID = regexp.MustCompile(`^(msg|rs)_[A-Za-z0-9_-]+$`)
 
 type repairState struct {
-	scope string
-	ids   map[string]string
+	scope                 string
+	ids                   map[string]string
+	messagePlaceholders   map[string]struct{}
+	reasoningPlaceholders map[string]struct{}
+	repairMissingTerminal bool
+	repairAllInvalid      bool
+}
+
+type ResponsesItemIDRepairConfig struct {
+	Message                  []string
+	Reasoning                []string
+	RepairMissingTerminalIDs bool
+}
+
+func HasResponsesItemIDRepair(config *ResponsesItemIDRepairConfig) bool {
+	return config != nil && (config.RepairMissingTerminalIDs || len(config.Message) > 0 || len(config.Reasoning) > 0)
 }
 
 // RepairResponsesItemIDs transforms message/reasoning item IDs while preserving other SSE fields.
 func RepairResponsesItemIDs(source io.Reader) io.Reader {
+	return repairResponsesItemIDs(source, nil, true)
+}
+
+// RepairResponsesItemIDsWithConfig applies provider-local opt-in semantics.
+// Only exact configured message/reasoning placeholders are canonicalized;
+// missing lifecycle item_id fields may be filled from an earlier mapped item.
+func RepairResponsesItemIDsWithConfig(source io.Reader, config ResponsesItemIDRepairConfig) io.Reader {
+	return repairResponsesItemIDs(source, &config, false)
+}
+
+func repairResponsesItemIDs(source io.Reader, config *ResponsesItemIDRepairConfig, repairAllInvalid bool) io.Reader {
 	reader, writer := io.Pipe()
-	go func() { writer.CloseWithError(repairStream(writer, source)) }()
+	go func() { writer.CloseWithError(repairStreamConfigured(writer, source, config, repairAllInvalid)) }()
 	return reader
 }
 
 func repairStream(dst io.Writer, source io.Reader) error {
+	return repairStreamConfigured(dst, source, nil, true)
+}
+
+func repairStreamConfigured(dst io.Writer, source io.Reader, config *ResponsesItemIDRepairConfig, repairAllInvalid bool) error {
 	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
-	state := repairState{scope: shortRandom(), ids: make(map[string]string)}
+	state := repairState{
+		scope: shortRandom(), ids: make(map[string]string), repairAllInvalid: repairAllInvalid,
+		messagePlaceholders: make(map[string]struct{}), reasoningPlaceholders: make(map[string]struct{}),
+	}
+	if config != nil {
+		state.repairMissingTerminal = config.RepairMissingTerminalIDs
+		for _, value := range config.Message {
+			state.messagePlaceholders[value] = struct{}{}
+		}
+		for _, value := range config.Reasoning {
+			state.reasoningPlaceholders[value] = struct{}{}
+		}
+	}
 	var block []string
 	flush := func() error {
 		if len(block) == 0 {
@@ -91,7 +132,10 @@ func repairPayload(raw string, state *repairState) string {
 		kind := eventItemKind(event["type"])
 		if kind != "" {
 			if id := state.ids[kind+":"+strconv.Itoa(index)]; id != "" {
-				event["item_id"] = id
+				_, hasItemID := event["item_id"]
+				if hasItemID || state.repairMissingTerminal || state.repairAllInvalid {
+					event["item_id"] = id
+				}
 			}
 		}
 	}
@@ -110,15 +154,28 @@ func repairItem(item map[string]any, index int, state *repairState) {
 	key := kind + ":" + strconv.Itoa(index)
 	id, _ := item["id"].(string)
 	if mapped := state.ids[key]; mapped != "" {
-		item["id"] = mapped
+		if id != "" || state.repairMissingTerminal || state.repairAllInvalid {
+			item["id"] = mapped
+		}
 		return
 	}
-	if responsesItemID.MatchString(id) && strings.HasPrefix(id, prefixFor(kind)) {
+	_, configuredPlaceholder := state.placeholdersFor(kind)[id]
+	if configuredPlaceholder || state.repairAllInvalid && (!responsesItemID.MatchString(id) || !strings.HasPrefix(id, prefixFor(kind))) {
+		id = prefixFor(kind) + "ocx_" + state.scope + "_" + strconv.Itoa(index)
+		state.ids[key], item["id"] = id, id
+		return
+	}
+	if id != "" && state.repairMissingTerminal {
 		state.ids[key] = id
 		return
 	}
-	id = prefixFor(kind) + "ocx_" + state.scope + "_" + strconv.Itoa(index)
-	state.ids[key], item["id"] = id, id
+}
+
+func (state *repairState) placeholdersFor(kind string) map[string]struct{} {
+	if kind == "reasoning" {
+		return state.reasoningPlaceholders
+	}
+	return state.messagePlaceholders
 }
 
 func eventItemKind(value any) string {

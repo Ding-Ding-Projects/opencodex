@@ -53,7 +53,7 @@ func WebSocketBridge(target http.Handler) http.Handler {
 		_, _ = fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", base64.StdEncoding.EncodeToString(digest[:]))
 		_ = rw.Flush()
 		for {
-			opcode, payload, err := readWSFrame(rw.Reader)
+			opcode, payload, err := readWSMessage(rw.Reader)
 			if err != nil {
 				return
 			}
@@ -122,44 +122,107 @@ func WebSocketBridge(target http.Handler) http.Handler {
 }
 
 func readWSFrame(reader *bufio.Reader) (byte, []byte, error) {
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(reader, header); err != nil {
+	frame, err := readWSRawFrame(reader)
+	if err != nil {
 		return 0, nil, err
 	}
-	if header[0]&0x70 != 0 || header[0]&0x80 == 0 {
-		return 0, nil, fmt.Errorf("fragmented or extension websocket frames are unsupported")
+	if !frame.fin {
+		return 0, nil, fmt.Errorf("fragmented websocket frame requires message assembly")
 	}
-	opcode, masked, length := header[0]&0x0f, header[1]&0x80 != 0, uint64(header[1]&0x7f)
-	if length == 126 {
+	return frame.opcode, frame.payload, nil
+}
+
+type wsRawFrame struct {
+	fin     bool
+	opcode  byte
+	payload []byte
+}
+
+func readWSRawFrame(reader *bufio.Reader) (wsRawFrame, error) {
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return wsRawFrame{}, err
+	}
+	if header[0]&0x70 != 0 {
+		return wsRawFrame{}, fmt.Errorf("websocket extensions are unsupported")
+	}
+	fin, opcode, masked, lengthCode := header[0]&0x80 != 0, header[0]&0x0f, header[1]&0x80 != 0, header[1]&0x7f
+	if opcode != 0x0 && opcode != 0x1 && opcode != 0x2 && opcode != 0x8 && opcode != 0x9 && opcode != 0xA {
+		return wsRawFrame{}, fmt.Errorf("unsupported websocket opcode 0x%x", opcode)
+	}
+	length := uint64(lengthCode)
+	if lengthCode == 126 {
 		var n uint16
 		if err := binary.Read(reader, binary.BigEndian, &n); err != nil {
-			return 0, nil, err
+			return wsRawFrame{}, err
 		}
 		length = uint64(n)
-	}
-	if length == 127 {
-		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
-			return 0, nil, err
+		if length < 126 {
+			return wsRawFrame{}, fmt.Errorf("non-minimal websocket length encoding")
 		}
 	}
+	if lengthCode == 127 {
+		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
+			return wsRawFrame{}, err
+		}
+		if length < 65536 || length&(uint64(1)<<63) != 0 {
+			return wsRawFrame{}, fmt.Errorf("invalid websocket 64-bit length")
+		}
+	}
+	if opcode >= 0x8 && (!fin || length > 125) {
+		return wsRawFrame{}, fmt.Errorf("invalid fragmented or oversized websocket control frame")
+	}
 	if length > 16<<20 {
-		return 0, nil, fmt.Errorf("websocket frame exceeds limit")
+		return wsRawFrame{}, fmt.Errorf("websocket frame exceeds limit")
 	}
 	if !masked {
-		return 0, nil, fmt.Errorf("client websocket frame is not masked")
+		return wsRawFrame{}, fmt.Errorf("client websocket frame is not masked")
 	}
 	mask := make([]byte, 4)
 	if _, err := io.ReadFull(reader, mask); err != nil {
-		return 0, nil, err
+		return wsRawFrame{}, err
 	}
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(reader, payload); err != nil {
-		return 0, nil, err
+		return wsRawFrame{}, err
 	}
 	for i := range payload {
 		payload[i] ^= mask[i%4]
 	}
-	return opcode, payload, nil
+	return wsRawFrame{fin: fin, opcode: opcode, payload: payload}, nil
+}
+
+func readWSMessage(reader *bufio.Reader) (byte, []byte, error) {
+	first, err := readWSRawFrame(reader)
+	if err != nil {
+		return 0, nil, err
+	}
+	if first.opcode == 0x0 {
+		return 0, nil, fmt.Errorf("unexpected websocket continuation frame")
+	}
+	if first.fin || first.opcode >= 0x8 {
+		return first.opcode, first.payload, nil
+	}
+	if first.opcode != 0x1 && first.opcode != 0x2 {
+		return 0, nil, fmt.Errorf("unsupported fragmented websocket opcode")
+	}
+	payload := append([]byte(nil), first.payload...)
+	for {
+		next, err := readWSRawFrame(reader)
+		if err != nil {
+			return 0, nil, err
+		}
+		if next.opcode != 0x0 {
+			return 0, nil, fmt.Errorf("fragmented websocket message interrupted by opcode 0x%x", next.opcode)
+		}
+		if len(payload)+len(next.payload) > 16<<20 {
+			return 0, nil, fmt.Errorf("websocket message exceeds limit")
+		}
+		payload = append(payload, next.payload...)
+		if next.fin {
+			return first.opcode, payload, nil
+		}
+	}
 }
 
 func writeWSFrame(writer io.Writer, opcode byte, payload []byte) error {

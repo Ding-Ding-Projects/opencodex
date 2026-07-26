@@ -45,6 +45,7 @@ type Config struct {
 	Hostname          string
 	SidecarResolver   SidecarResolver
 	ShadowCall        *ShadowCallIntercept
+	LiveResolver      LiveRelayResolver
 	ReadinessChecks   map[string]func(context.Context) error
 }
 
@@ -110,6 +111,11 @@ func New(config Config) *Server {
 	mux.HandleFunc("POST /v1/responses/compact", s.delegate(config.CompactHandler))
 	mux.HandleFunc("POST /v1/chat/completions", s.delegate(config.ChatHandler))
 	mux.HandleFunc("POST /v1/messages", s.delegate(config.MessagesHandler))
+	if config.LiveResolver != nil {
+		live := NewLiveHandler(config.LiveResolver, config.Client)
+		mux.Handle("POST /v1/live", live)
+		mux.Handle("POST /v1/realtime/calls", live)
+	}
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("POST /v1/images/generations", s.handleSidecar(SidecarImageGenerations))
 	mux.HandleFunc("POST /v1/images/edits", s.handleSidecar(SidecarImageEdits))
@@ -137,7 +143,17 @@ func New(config Config) *Server {
 	mux.HandleFunc("/api/", managementStub)
 	mux.HandleFunc("/v1/", unknownV1)
 	mux.Handle("/", StaticHandler())
-	s.handler = Middleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), MiddlewareConfig{Token: config.Token, Hostname: s.config.Hostname, AllowedOrigins: config.AllowedOrigins, Logger: config.Logger})
+	middlewareConfig := MiddlewareConfig{Token: config.Token, Hostname: s.config.Hostname, AllowedOrigins: config.AllowedOrigins, Logger: config.Logger}
+	if config.ManagementConfig != nil {
+		middlewareConfig.Port = config.ManagementConfig.Port
+		if middlewareConfig.Token == "" {
+			middlewareConfig.Token = config.ManagementConfig.AuthToken
+		}
+		if len(middlewareConfig.AllowedOrigins) == 0 {
+			middlewareConfig.AllowedOrigins = config.ManagementConfig.CORSAllowOrigins
+		}
+	}
+	s.handler = Middleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), middlewareConfig)
 	return s
 }
 

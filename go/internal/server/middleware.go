@@ -16,7 +16,9 @@ import (
 // MiddlewareConfig controls the HTTP trust boundary.
 type MiddlewareConfig struct {
 	Token          string
+	APIKeys        []string
 	Hostname       string
+	Port           int
 	AllowedOrigins []string
 	Logger         *slog.Logger
 }
@@ -38,8 +40,8 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 }
 
 func authMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
-	remote := config.Hostname != "" && !isLoopbackHostname(config.Hostname)
-	if config.Token == "" && !remote {
+	remote := IsAPIAuthRequired(config.Hostname)
+	if len(proxyAdmissionSecrets(config)) == 0 && !remote {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,12 +49,15 @@ func authMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if config.Token == "" {
+		if len(proxyAdmissionSecrets(config)) == 0 {
 			writeJSONError(w, http.StatusServiceUnavailable, "server_auth_config_error", "API auth token is required for a non-loopback bind")
 			return
 		}
-		provided := admissionCredential(r, remote)
-		if !constantTimeEqual(provided, config.Token) {
+		valid := HasValidAPIAuth(r, config)
+		if remote && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact" || r.URL.Path == "/v1/responses/ws") {
+			valid = HasValidResponsesAPIAuth(r, config)
+		}
+		if !valid {
 			writeJSONError(w, http.StatusUnauthorized, "authentication_error", "opencodex API key required")
 			return
 		}
@@ -66,7 +71,7 @@ func admissionCredential(r *http.Request, remote bool) string {
 	}
 	// Responses and Chat Completions may carry an upstream bearer credential.
 	// On remote binds their admission secret must use the dedicated proxy header.
-	if remote && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact" || r.URL.Path == "/v1/chat/completions") {
+	if remote && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact" || r.URL.Path == "/v1/responses/ws") {
 		return ""
 	}
 	if value := strings.TrimSpace(r.Header.Get("X-Api-Key")); value != "" {
@@ -84,15 +89,9 @@ func constantTimeEqual(actual, expected string) bool {
 }
 
 func corsMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
-	allow := make(map[string]struct{}, len(config.AllowedOrigins))
-	for _, origin := range config.AllowedOrigins {
-		if origin != "" {
-			allow[canonicalOrigin(origin)] = struct{}{}
-		}
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && !allowedOrigin(r, origin, allow) {
+		if !IsAllowedRequestOrigin(r, config) {
 			writeJSONError(w, http.StatusForbidden, "origin_rejected", "cross-origin request blocked")
 			return
 		}
