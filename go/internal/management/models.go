@@ -26,6 +26,37 @@ func (a *API) handleModels(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, map[string]any{"models": models, "customModels": custom})
 		return true
 	}
+	if r.URL.Path == "/api/disabled-models" && r.Method == http.MethodPut {
+		var body struct {
+			Models []string `json:"models"`
+		}
+		if !decodeJSON(w, r, &body) {
+			return true
+		}
+		disabled := uniqueStrings(body.Models)
+		for _, model := range disabled {
+			if len(model) > 512 || strings.ContainsAny(model, "\x00\r\n") {
+				writeError(w, http.StatusBadRequest, "invalid disabled model")
+				return true
+			}
+		}
+		a.mu.Lock()
+		a.config.DisabledModels = disabled
+		err := a.saveLocked()
+		a.mu.Unlock()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "save disabled models failed")
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "disabled": disabled})
+		return true
+	}
+	if r.URL.Path == "/api/model-visibility" && r.Method == http.MethodPut {
+		return a.updateModelVisibility(w, r)
+	}
+	if r.URL.Path == "/api/selected-models" {
+		return a.handleSelectedModels(w, r)
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/custom-models") {
 		return a.handleCustomModels(w, r)
 	}
@@ -95,6 +126,141 @@ func (a *API) handleModels(w http.ResponseWriter, r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+func (a *API) handleSelectedModels(w http.ResponseWriter, r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet:
+		selected := map[string][]string{}
+		a.mu.RLock()
+		for name, provider := range a.config.Providers {
+			if len(provider.SelectedModels) > 0 {
+				selected[name] = append([]string(nil), provider.SelectedModels...)
+			}
+		}
+		a.mu.RUnlock()
+		available := map[string][]string{}
+		if a.registry != nil {
+			for _, model := range a.registry.ListModels() {
+				available[model.Provider] = append(available[model.Provider], model.ID)
+			}
+		}
+		for provider := range available {
+			sort.Strings(available[provider])
+			available[provider] = uniqueStrings(available[provider])
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"selected": selected, "available": available, "liveModelCounts": map[string]int{}})
+	case http.MethodPut:
+		var body struct {
+			Provider string   `json:"provider"`
+			Models   []string `json:"models"`
+		}
+		if !decodeJSON(w, r, &body) {
+			return true
+		}
+		body.Provider = strings.TrimSpace(body.Provider)
+		if validateIdentifier(body.Provider, "provider") != nil {
+			writeError(w, http.StatusBadRequest, "invalid provider")
+			return true
+		}
+		models := uniqueStrings(body.Models)
+		a.mu.Lock()
+		provider, found := a.config.Providers[body.Provider]
+		if !found {
+			a.mu.Unlock()
+			writeError(w, http.StatusNotFound, "unknown provider")
+			return true
+		}
+		provider.SelectedModels = models
+		a.config.Providers[body.Provider] = provider
+		err := a.saveLocked()
+		a.mu.Unlock()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "save selected models failed")
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "provider": body.Provider, "selected": models})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+	return true
+}
+
+func (a *API) updateModelVisibility(w http.ResponseWriter, r *http.Request) bool {
+	var body struct {
+		Scope    string `json:"scope"`
+		Provider string `json:"provider"`
+		Enabled  *bool  `json:"enabled"`
+		Targets  []struct {
+			ID     string `json:"id"`
+			Native bool   `json:"native,omitempty"`
+		} `json:"targets"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return true
+	}
+	body.Provider = strings.TrimSpace(body.Provider)
+	if (body.Scope != "models" && body.Scope != "provider") || validateIdentifier(body.Provider, "provider") != nil || body.Enabled == nil || len(body.Targets) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid model visibility request")
+		return true
+	}
+	canonical := make([]string, 0, len(body.Targets))
+	for _, target := range body.Targets {
+		id := strings.TrimSpace(target.ID)
+		if id == "" || len(id) > 512 || strings.ContainsAny(id, "\x00\r\n") {
+			writeError(w, http.StatusBadRequest, "invalid model visibility target")
+			return true
+		}
+		if target.Native {
+			if body.Provider != "openai" {
+				writeError(w, http.StatusBadRequest, "native model visibility requires openai provider")
+				return true
+			}
+			canonical = append(canonical, id)
+		} else {
+			canonical = append(canonical, body.Provider+"/"+id)
+		}
+	}
+	a.mu.Lock()
+	provider, found := a.config.Providers[body.Provider]
+	if !found && body.Provider != "openai" {
+		a.mu.Unlock()
+		writeError(w, http.StatusNotFound, "unknown model visibility provider")
+		return true
+	}
+	disabled := append([]string(nil), a.config.DisabledModels...)
+	if *body.Enabled {
+		disabled = removeStrings(disabled, canonical)
+		if body.Scope == "provider" && found {
+			provider.SelectedModels = nil
+			a.config.Providers[body.Provider] = provider
+		}
+	} else {
+		disabled = uniqueStrings(append(disabled, canonical...))
+	}
+	a.config.DisabledModels = disabled
+	err := a.saveLocked()
+	a.mu.Unlock()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "save model visibility failed")
+		return true
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "scope": body.Scope, "provider": body.Provider, "enabled": *body.Enabled, "disabled": disabled})
+	return true
+}
+
+func removeStrings(values, removals []string) []string {
+	remove := make(map[string]struct{}, len(removals))
+	for _, value := range removals {
+		remove[value] = struct{}{}
+	}
+	out := values[:0]
+	for _, value := range values {
+		if _, found := remove[value]; !found {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func (a *API) handleCustomModels(w http.ResponseWriter, r *http.Request) bool {

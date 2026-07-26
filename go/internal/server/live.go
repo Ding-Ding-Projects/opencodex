@@ -143,7 +143,12 @@ func RelayLiveSideband(ctx context.Context, client, upstream LiveSocket, observe
 	}
 	go pump("c2u", client, upstream)
 	go pump("u2c", upstream, client)
-	first := <-results
+	var first pumpResult
+	select {
+	case first = <-results:
+	case <-ctx.Done():
+		first = pumpResult{direction: "context", err: ctx.Err()}
+	}
 	cancel(first.err)
 	closeErr := first.err
 	var once sync.Once

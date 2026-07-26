@@ -22,6 +22,9 @@ type Options struct {
 	StorageHome string
 	Version     string
 	Stop        func()
+	// Authorize is an optional defense-in-depth admission hook for callers that
+	// register the management router without the server's global middleware.
+	Authorize func(*http.Request) bool
 }
 
 type API struct {
@@ -37,6 +40,7 @@ type API struct {
 	storageHome  string
 	version      string
 	stop         func()
+	authorize    func(*http.Request) bool
 	customModels map[string]CustomModel
 	aliases      map[string]string
 	contextCaps  map[string]int
@@ -62,7 +66,12 @@ func New(options Options) (*API, error) {
 		options.RequestLogs = NewRequestLog(200)
 	}
 	options.RequestLogs.SetUsageLog(options.UsageLog)
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, customModels: map[string]CustomModel{}, aliases: map[string]string{}, contextCaps: map[string]int{}, combos: map[string]Combo{}, agents: AgentSettings{MaxConcurrency: 1, MultiAgentMode: "default"}}, nil
+	mode := cfg.MultiAgentMode
+	if mode == "" {
+		mode = "default"
+	}
+	agents := AgentSettings{Models: append([]string(nil), cfg.SubagentModels...), InjectionModel: cfg.InjectionModel, InjectionEffort: cfg.InjectionEffort, InjectionPrompt: cfg.InjectionPrompt, GuidanceEnabled: cfg.MultiAgentGuidanceEnabled, EffortCap: cfg.EffortCap, SubagentEffortCap: cfg.SubagentEffortCap, MaxConcurrency: 1, MultiAgentMode: mode}
+	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, authorize: options.Authorize, customModels: map[string]CustomModel{}, aliases: map[string]string{}, contextCaps: map[string]int{}, combos: map[string]Combo{}, agents: agents}, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving
@@ -70,9 +79,9 @@ func New(options Options) (*API, error) {
 func NewAPI(options Options) (*API, error) { return New(options) }
 
 var routes = []string{
-	"GET /api/config", "PUT /api/config", "GET /api/settings", "PUT /api/settings", "GET /api/diagnostics/project-config",
+	"GET /api/config", "PUT /api/config", "GET /api/settings", "PUT /api/settings", "GET /api/diagnostics/project-config", "GET /api/sidecar-settings", "PUT /api/sidecar-settings",
 	"GET /api/providers", "POST /api/providers", "PATCH /api/providers", "DELETE /api/providers", "POST /api/providers/test", "GET /api/provider-presets",
-	"GET /api/models", "GET /api/custom-models", "POST /api/custom-models", "PUT /api/custom-models/{id}", "DELETE /api/custom-models/{id}", "GET /api/model-aliases", "PUT /api/model-aliases", "GET /api/provider-context-caps", "PUT /api/provider-context-caps",
+	"GET /api/models", "PUT /api/disabled-models", "PUT /api/model-visibility", "GET /api/selected-models", "PUT /api/selected-models", "GET /api/custom-models", "POST /api/custom-models", "PUT /api/custom-models/{id}", "DELETE /api/custom-models/{id}", "GET /api/model-aliases", "PUT /api/model-aliases", "GET /api/provider-context-caps", "PUT /api/provider-context-caps",
 	"GET /api/oauth/providers", "POST /api/oauth/login", "POST /api/oauth/login/cancel", "POST /api/oauth/login/code", "GET /api/oauth/status", "POST /api/oauth/logout", "GET /api/oauth/accounts", "PUT /api/oauth/accounts/active", "PUT /api/oauth/accounts/alias", "DELETE /api/oauth/accounts",
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
 	"GET /api/logs", "DELETE /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "DELETE /api/debug/usage-logs", "GET /api/usage", "DELETE /api/usage", "GET /api/storage",
@@ -87,6 +96,10 @@ func (a *API) Register(mux *http.ServeMux) {
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if a.authorize != nil && !a.authorize(r) {
+		writeError(w, http.StatusUnauthorized, "opencodex API key required")
+		return
+	}
 	if r.ContentLength > maxManagementBody {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return

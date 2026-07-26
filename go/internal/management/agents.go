@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-var allowedEfforts = map[string]bool{"low": true, "medium": true, "high": true, "xhigh": true}
+var allowedEfforts = map[string]bool{"none": true, "minimal": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true, "ultra": true}
+var effortList = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
 func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
@@ -29,8 +30,20 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 				body.Models = body.Models[:5]
 			}
 			a.mu.Lock()
-			a.agents.Models = body.Models
+			previousAgents := cloneAgentSettings(a.agents)
+			previousModels := append([]string(nil), a.config.SubagentModels...)
+			a.agents.Models = append([]string(nil), body.Models...)
+			a.config.SubagentModels = append([]string(nil), body.Models...)
+			err := a.saveLocked()
+			if err != nil {
+				a.agents = previousAgents
+				a.config.SubagentModels = previousModels
+			}
 			a.mu.Unlock()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "save subagent models failed")
+				return true
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "applied": body.Models})
 			return true
 		}
@@ -39,41 +52,73 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 			a.mu.RLock()
 			settings := a.agents
 			a.mu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{"model": nullable(settings.InjectionModel), "effort": nullable(settings.InjectionEffort), "efforts": []string{"low", "medium", "high", "xhigh"}})
+			writeJSON(w, http.StatusOK, map[string]any{"multiAgentGuidanceEnabled": settings.GuidanceEnabled == nil || *settings.GuidanceEnabled, "model": nullable(settings.InjectionModel), "effort": nullable(settings.InjectionEffort), "prompt": nullable(settings.InjectionPrompt), "efforts": effortList})
 			return true
 		}
 		if r.Method == http.MethodPut {
 			var body struct {
-				Model  *string `json:"model,omitempty"`
-				Effort *string `json:"effort,omitempty"`
+				MultiAgentGuidanceEnabled *bool   `json:"multiAgentGuidanceEnabled,omitempty"`
+				Model                     *string `json:"model,omitempty"`
+				Effort                    *string `json:"effort,omitempty"`
+				Prompt                    *string `json:"prompt,omitempty"`
 			}
 			if !decodeJSON(w, r, &body) {
 				return true
 			}
-			a.mu.Lock()
+			a.mu.RLock()
+			candidate := cloneAgentSettings(a.agents)
+			a.mu.RUnlock()
 			if body.Model != nil {
-				a.agents.InjectionModel = strings.TrimSpace(*body.Model)
-				if a.agents.InjectionModel == "" {
-					a.agents.InjectionEffort = ""
+				candidate.InjectionModel = strings.TrimSpace(*body.Model)
+				if candidate.InjectionModel == "" {
+					candidate.InjectionEffort = ""
 				}
 			}
 			if body.Effort != nil {
 				value := strings.TrimSpace(*body.Effort)
 				if value != "" && !allowedEfforts[value] {
-					a.mu.Unlock()
 					writeError(w, http.StatusBadRequest, "unknown reasoning effort")
 					return true
 				}
-				if a.agents.InjectionModel == "" && value != "" {
-					a.mu.Unlock()
+				if candidate.InjectionModel == "" && value != "" {
 					writeError(w, http.StatusBadRequest, "effort requires a model")
 					return true
 				}
-				a.agents.InjectionEffort = value
+				candidate.InjectionEffort = value
 			}
-			settings := a.agents
+			if body.Prompt != nil {
+				value := strings.TrimSpace(*body.Prompt)
+				if len(value) > 16<<10 {
+					writeError(w, http.StatusBadRequest, "prompt is too long")
+					return true
+				}
+				candidate.InjectionPrompt = value
+			}
+			if body.MultiAgentGuidanceEnabled != nil {
+				value := *body.MultiAgentGuidanceEnabled
+				candidate.GuidanceEnabled = &value
+			}
+			a.mu.Lock()
+			previous := cloneAgentSettings(a.agents)
+			previousModel, previousEffort := a.config.InjectionModel, a.config.InjectionEffort
+			previousPrompt, previousGuidance := a.config.InjectionPrompt, a.config.MultiAgentGuidanceEnabled
+			a.agents = candidate
+			a.config.InjectionModel = candidate.InjectionModel
+			a.config.InjectionEffort = candidate.InjectionEffort
+			a.config.InjectionPrompt = candidate.InjectionPrompt
+			a.config.MultiAgentGuidanceEnabled = candidate.GuidanceEnabled
+			err := a.saveLocked()
+			if err != nil {
+				a.agents = previous
+				a.config.InjectionModel, a.config.InjectionEffort = previousModel, previousEffort
+				a.config.InjectionPrompt, a.config.MultiAgentGuidanceEnabled = previousPrompt, previousGuidance
+			}
 			a.mu.Unlock()
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": nullable(settings.InjectionModel), "effort": nullable(settings.InjectionEffort)})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "save injection settings failed")
+				return true
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "multiAgentGuidanceEnabled": candidate.GuidanceEnabled == nil || *candidate.GuidanceEnabled, "model": nullable(candidate.InjectionModel), "effort": nullable(candidate.InjectionEffort), "prompt": nullable(candidate.InjectionPrompt)})
 			return true
 		}
 	case "/api/effort-caps":
@@ -81,7 +126,7 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 			a.mu.RLock()
 			settings := a.agents
 			a.mu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{"effortCap": nullable(settings.EffortCap), "subagentEffortCap": nullable(settings.SubagentEffortCap), "efforts": []string{"low", "medium", "high", "xhigh"}})
+			writeJSON(w, http.StatusOK, map[string]any{"effortCap": nullable(settings.EffortCap), "subagentEffortCap": nullable(settings.SubagentEffortCap), "efforts": effortList})
 			return true
 		}
 		if r.Method == http.MethodPut {
@@ -99,14 +144,27 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 				}
 			}
 			a.mu.Lock()
+			previous := cloneAgentSettings(a.agents)
+			previousEffortCap, previousSubagentEffortCap := a.config.EffortCap, a.config.SubagentEffortCap
 			if body.EffortCap != nil {
 				a.agents.EffortCap = *body.EffortCap
 			}
 			if body.SubagentEffortCap != nil {
 				a.agents.SubagentEffortCap = *body.SubagentEffortCap
 			}
-			settings := a.agents
+			a.config.EffortCap = a.agents.EffortCap
+			a.config.SubagentEffortCap = a.agents.SubagentEffortCap
+			err := a.saveLocked()
+			if err != nil {
+				a.agents = previous
+				a.config.EffortCap, a.config.SubagentEffortCap = previousEffortCap, previousSubagentEffortCap
+			}
+			settings := cloneAgentSettings(a.agents)
 			a.mu.Unlock()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "save effort caps failed")
+				return true
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "effortCap": nullable(settings.EffortCap), "subagentEffortCap": nullable(settings.SubagentEffortCap)})
 			return true
 		}
@@ -140,6 +198,8 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 				return true
 			}
 			a.mu.Lock()
+			previous := cloneAgentSettings(a.agents)
+			previousMode := a.config.MultiAgentMode
 			if body.MultiAgentMode != nil {
 				a.agents.MultiAgentMode = *body.MultiAgentMode
 			} else if body.Enabled != nil {
@@ -152,8 +212,22 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 			if body.MaxConcurrency != nil {
 				a.agents.MaxConcurrency = *body.MaxConcurrency
 			}
-			settings := a.agents
+			if settingsMode := a.agents.MultiAgentMode; settingsMode == "default" {
+				a.config.MultiAgentMode = ""
+			} else {
+				a.config.MultiAgentMode = settingsMode
+			}
+			err := a.saveLocked()
+			if err != nil {
+				a.agents = previous
+				a.config.MultiAgentMode = previousMode
+			}
+			settings := cloneAgentSettings(a.agents)
 			a.mu.Unlock()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "save multi-agent settings failed")
+				return true
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": settings.MultiAgentMode == "v2", "multiAgentMode": settings.MultiAgentMode, "maxConcurrentThreadsPerSession": settings.MaxConcurrency})
 			return true
 		}
@@ -164,6 +238,15 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 func nullable(value string) any {
 	if value == "" {
 		return nil
+	}
+	return value
+}
+
+func cloneAgentSettings(value AgentSettings) AgentSettings {
+	value.Models = append([]string(nil), value.Models...)
+	if value.GuidanceEnabled != nil {
+		enabled := *value.GuidanceEnabled
+		value.GuidanceEnabled = &enabled
 	}
 	return value
 }

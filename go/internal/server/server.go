@@ -113,8 +113,12 @@ func New(config Config) *Server {
 	mux.HandleFunc("POST /v1/messages", s.delegate(config.MessagesHandler))
 	if config.LiveResolver != nil {
 		live := NewLiveHandler(config.LiveResolver, config.Client)
+		sideband := NewLiveSidebandHandler(config.LiveResolver)
 		mux.Handle("POST /v1/live", live)
 		mux.Handle("POST /v1/realtime/calls", live)
+		mux.Handle("GET /v1/live/{callId}", sideband)
+		mux.Handle("GET /v1/realtime/calls/{callId}", sideband)
+		mux.Handle("GET /v1/realtime", sideband)
 	}
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("POST /v1/images/generations", s.handleSidecar(SidecarImageGenerations))

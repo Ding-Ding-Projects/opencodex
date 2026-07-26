@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 )
 
@@ -91,6 +92,11 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusNotFound, "unknown provider")
 			return true
 		}
+		if disabled, exists := patch["disabled"].(bool); exists && disabled && name == a.config.DefaultProvider {
+			a.mu.Unlock()
+			writeError(w, http.StatusBadRequest, "cannot disable the default provider; set another default first")
+			return true
+		}
 		if err = applyProviderPatch(&provider, patch); err == nil {
 			candidate := *a.config
 			candidate.Providers = cloneProviders(a.config.Providers)
@@ -122,6 +128,21 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 		if name == a.config.DefaultProvider {
 			a.mu.Unlock()
 			writeError(w, http.StatusConflict, "cannot delete the default provider")
+			return true
+		}
+		dependent := make([]string, 0)
+		for id, combo := range a.config.Combos {
+			for _, target := range combo.Targets {
+				if target.Provider == name {
+					dependent = append(dependent, id)
+					break
+				}
+			}
+		}
+		if len(dependent) > 0 {
+			sort.Strings(dependent)
+			a.mu.Unlock()
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot delete provider while combos depend on it", "combos": dependent})
 			return true
 		}
 		delete(a.config.Providers, name)
@@ -161,7 +182,7 @@ func (a *API) testProvider(w http.ResponseWriter, r *http.Request) bool {
 	}
 	models, err := a.fetchModels(r, name, provider)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": ocxlib.RedactSecretString(err.Error())})
 		return true
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": len(models)})
@@ -218,6 +239,12 @@ func applyProviderPatch(provider *config.ProviderConfig, patch map[string]any) e
 				return fieldError(key, "must be a boolean")
 			}
 			provider.AllowPrivateNetwork = v
+		case "liveModels":
+			v, ok := value.(bool)
+			if !ok {
+				return fieldError(key, "must be a boolean")
+			}
+			provider.LiveModels = &v
 		default:
 			return fieldError(key, "is not patchable")
 		}

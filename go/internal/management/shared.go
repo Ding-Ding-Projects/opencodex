@@ -73,6 +73,8 @@ type AgentSettings struct {
 	SubagentEffortCap string   `json:"subagentEffortCap,omitempty"`
 	MaxConcurrency    int      `json:"maxConcurrency"`
 	MultiAgentMode    string   `json:"multiAgentMode"`
+	InjectionPrompt   string   `json:"injectionPrompt,omitempty"`
+	GuidanceEnabled   *bool    `json:"multiAgentGuidanceEnabled,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -105,7 +107,23 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 }
 
 func publicProvider(name string, provider config.ProviderConfig) map[string]any {
-	return map[string]any{"name": name, "adapter": provider.Adapter, "baseUrl": provider.BaseURL, "defaultModel": provider.DefaultModel, "hasApiKey": provider.APIKey != "", "allowPrivateNetwork": provider.AllowPrivateNetwork, "models": provider.Models, "authMode": provider.AuthMode, "disabled": provider.Disabled}
+	return map[string]any{"name": name, "adapter": provider.Adapter, "baseUrl": publicProviderBaseURL(provider.BaseURL), "defaultModel": provider.DefaultModel, "hasApiKey": provider.APIKey != "", "allowPrivateNetwork": provider.AllowPrivateNetwork, "liveModels": provider.LiveModels == nil || *provider.LiveModels, "models": provider.Models, "authMode": provider.AuthMode, "disabled": provider.Disabled}
+}
+
+func publicProviderBaseURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "(invalid URL)"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	value := parsed.String()
+	if !strings.HasSuffix(trimmed, "/") {
+		value = strings.TrimSuffix(value, "/")
+	}
+	return value
 }
 
 func safeConfig(value *config.Config) map[string]any {
