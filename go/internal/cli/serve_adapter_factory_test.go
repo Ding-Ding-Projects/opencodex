@@ -329,6 +329,36 @@ func TestAdapterResolverGoogleBindsRetryingDoPath(t *testing.T) {
 	}
 }
 
+func TestProductionVertexRouteAcquiresADCWhenCredentialIsOmitted(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["google-vertex"] = config.ProviderConfig{
+		Adapter: "google", GoogleMode: "vertex", Project: "project-id", Location: "us-central1", Models: []string{"gemini-test"},
+	}
+	original := getVertexAccessToken
+	t.Cleanup(func() { getVertexAccessToken = original })
+	var calls atomic.Int32
+	getVertexAccessToken = func(context.Context) (string, error) {
+		calls.Add(1)
+		return "adc-production-token", nil
+	}
+	resolved, err := adapterResolver(configuredRegistry(cfg), cfg)(
+		&types.ResolvedModel{Provider: "google-vertex", Model: "gemini-test"},
+		&types.Transport{}, &types.AuthContext{}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := resolved.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: "gemini-test", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || request.Header.Get("Authorization") != "Bearer adc-production-token" || !strings.Contains(request.URL.String(), "/projects/project-id/locations/us-central1/") {
+		t.Fatalf("calls=%d url=%s authorization=%q", calls.Load(), request.URL, request.Header.Get("Authorization"))
+	}
+}
+
 func TestAdapterAwareClientFallsBackForOrdinaryRequests(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) }))
 	defer upstream.Close()

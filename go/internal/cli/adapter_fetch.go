@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/lidge-jun/opencodex-go/internal/adapter/google"
 	"github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -29,6 +30,28 @@ type visionBoundAdapter struct {
 type xaiRequestIDAdapter struct {
 	types.Adapter
 	configuredHeaders map[string]string
+}
+
+type vertexADCAdapter struct{ *google.Adapter }
+
+var getVertexAccessToken = lib.GetVertexAccessToken
+
+func bindVertexADC(adapter *google.Adapter) types.Adapter {
+	if adapter == nil || adapter.Mode != google.ModeVertex || adapter.AccessToken != "" || adapter.APIKey != "" {
+		return adapter
+	}
+	return &vertexADCAdapter{Adapter: adapter}
+}
+
+func (a *vertexADCAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	token, err := getVertexAccessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Resolvers create one adapter per inbound request, so retaining the token on
+	// this instance also keeps Google request/response parsing state together.
+	a.AccessToken = token
+	return a.Adapter.BuildRequest(ctx, request)
 }
 
 func bindXAIRequestID(adapter types.Adapter, configuredHeaders map[string]string) types.Adapter {
@@ -108,6 +131,8 @@ func unwrapAdapter(adapter types.Adapter) types.Adapter {
 		case *visionBoundAdapter:
 			adapter = bound.Adapter
 		case *xaiRequestIDAdapter:
+			adapter = bound.Adapter
+		case *vertexADCAdapter:
 			adapter = bound.Adapter
 		default:
 			return adapter
