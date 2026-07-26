@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -324,6 +325,61 @@ func TestVisionDescriptionLimitDistinguishesOmittedFromExplicitZero(t *testing.T
 				t.Fatalf("encoded = %s, field presence want %v", encoded, test.set)
 			}
 		})
+	}
+}
+
+func TestBackupInvalidConfigAndConcurrentAtomicSaves(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	broken := []byte(`{"providers":`)
+	if err := os.WriteFile(path, broken, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := BackupInvalidConfig(path, time.Date(2026, 7, 26, 12, 0, 0, 123, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(backup); err != nil || !bytes.Equal(data, broken) {
+		t.Fatalf("backup=%q err=%v", data, err)
+	}
+
+	const writers = 12
+	errors := make(chan error, writers)
+	for index := range writers {
+		go func(index int) {
+			cfg := FreshInstall()
+			cfg.Port = 12000 + index
+			errors <- Save(path, &cfg)
+		}(index)
+	}
+	for range writers {
+		if err := <-errors; err != nil {
+			t.Fatal(err)
+		}
+	}
+	loaded, err := Load(path)
+	if err != nil || loaded.Port < 12000 || loaded.Port >= 12000+writers {
+		t.Fatalf("concurrent load=%#v err=%v", loaded, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".config-") {
+			t.Fatalf("temporary config leaked: %s", entry.Name())
+		}
+	}
+}
+
+func TestSaveReturnsErrorWhenConfigParentIsNotDirectory(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := FreshInstall()
+	if err := Save(filepath.Join(parent, "config.json"), &cfg); err == nil {
+		t.Fatal("Save unexpectedly succeeded through a non-directory parent")
 	}
 }
 

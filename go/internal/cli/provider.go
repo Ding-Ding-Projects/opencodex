@@ -58,12 +58,29 @@ func loadConfig() (*config.Config, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	cfg, err := loadConfigFile(path, os.Stderr)
+	return cfg, path, err
+}
+
+func loadConfigFile(path string, warning io.Writer) (*config.Config, error) {
 	cfg, err := config.LoadMigrated(path)
 	if os.IsNotExist(err) || err != nil && strings.Contains(strings.ToLower(err.Error()), "no such file") {
 		defaults := config.FreshInstall()
-		return &defaults, path, nil
+		return &defaults, nil
 	}
-	return cfg, path, err
+	if err == nil {
+		return cfg, nil
+	}
+	backup, backupErr := config.BackupInvalidConfig(path, time.Now())
+	if warning != nil {
+		backupNote := ""
+		if backupErr == nil {
+			backupNote = " A backup was written to " + backup + "."
+		}
+		fmt.Fprintf(warning, "Could not load opencodex config at %s: %v. Using default config.%s\n", path, err, backupNote)
+	}
+	defaults := config.FreshInstall()
+	return &defaults, nil
 }
 
 func runProvider(args []string, streams IO) error {

@@ -62,7 +62,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	var loadedConfigPath string
 	var err error
 	if *configFile != "" {
-		cfg, err = config.LoadMigrated(*configFile)
+		cfg, err = loadConfigFile(*configFile, streams.Err)
 		loadedConfigPath, _ = filepath.Abs(*configFile)
 	} else {
 		cfg, loadedConfigPath, err = loadConfig()
@@ -122,7 +122,8 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	debugLog := usage.NewDebugLog(filepath.Join(configHome, "usage-debug.jsonl"))
 	requestLogs := management.NewRequestLog(200)
 	stop := &stopRouter{channel: make(chan struct{})}
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: auth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
+	liveAuth := &configBackedAuth{config: cfg, store: credentialStore, resolver: auth}
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
 	selectedPort := cfg.Port
 	if cfg.Port > 0 {
 		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, cfg.Port, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
@@ -233,40 +234,44 @@ func configuredAuth(cfg config.Config) (*oauth.AuthResolver, error) {
 
 func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*oauth.AuthResolver, error) {
 	configs := map[string]oauth.ProviderAuthConfig{"openai": {Mode: oauth.AuthModeForward}}
-	reg := registry.New()
-	useOpenAIPool := false
 	for name, provider := range cfg.Providers {
-		mode := oauth.AuthModeOAuth
-		keyOptional := provider.KeyOptional != nil && *provider.KeyOptional
-		preset, registered := reg.Lookup(name)
-		if registered {
-			keyOptional = keyOptional || preset.KeyOptional
+		resolved, err := configuredProviderAuth(name, provider, store)
+		if err != nil {
+			return nil, err
 		}
-		if provider.APIKey != "" || provider.AuthMode == "key" || provider.AuthMode == "api-key" {
-			mode = oauth.AuthModeAPIKey
-		} else if registered {
-			switch preset.AuthKind {
-			case registry.AuthForward:
-				mode = oauth.AuthModeForward
-			case registry.AuthKey, registry.AuthLocal:
-				mode = oauth.AuthModeAPIKey
-			}
-		}
-		usePool := false
-		if name == "openai" && provider.CodexAccountMode != "direct" {
-			if set, found, err := store.GetAccountSet("openai"); err != nil {
-				return nil, err
-			} else if found && len(set.Accounts) > 0 {
-				mode, usePool, useOpenAIPool = oauth.AuthModeOAuth, true, true
-			}
-		}
-		configs[name] = oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey, KeyOptional: keyOptional, UsePool: usePool}
+		configs[name] = resolved
 	}
 	resolver := oauth.NewAuthResolver(store, configs, nil)
-	if useOpenAIPool {
-		resolver.Pool = oauth.NewAccountPool(store, "openai")
-	}
+	resolver.Pool = oauth.NewAccountPool(store, "openai")
 	return resolver, nil
+}
+
+func configuredProviderAuth(name string, provider config.ProviderConfig, store *oauth.CredentialStore) (oauth.ProviderAuthConfig, error) {
+	mode := oauth.AuthModeOAuth
+	keyOptional := provider.KeyOptional != nil && *provider.KeyOptional
+	preset, registered := registry.New().Lookup(name)
+	if registered {
+		keyOptional = keyOptional || preset.KeyOptional
+	}
+	if provider.APIKey != "" || provider.AuthMode == "key" || provider.AuthMode == "api-key" {
+		mode = oauth.AuthModeAPIKey
+	} else if registered {
+		switch preset.AuthKind {
+		case registry.AuthForward:
+			mode = oauth.AuthModeForward
+		case registry.AuthKey, registry.AuthLocal:
+			mode = oauth.AuthModeAPIKey
+		}
+	}
+	usePool := false
+	if name == "openai" && provider.CodexAccountMode != "direct" {
+		if set, found, err := store.GetAccountSet("openai"); err != nil {
+			return oauth.ProviderAuthConfig{}, err
+		} else if found && len(set.Accounts) > 0 {
+			mode, usePool = oauth.AuthModeOAuth, true
+		}
+	}
+	return oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey, KeyOptional: keyOptional, UsePool: usePool}, nil
 }
 
 func providerFetchTimeouts(cfg config.Config) server.FetchTimeouts {
