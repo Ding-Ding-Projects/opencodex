@@ -235,7 +235,8 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		upstream, err := adapter.BuildRequest(ctx, normalized)
 		if err != nil {
-			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadRequest, kind: "request_build_error", err: err}
+			status, kind := classifyAdapterBuildFailure(err)
+			return nil, nil, auth, resolved, pick, &forwardError{status: status, kind: kind, err: err}
 		}
 		if auth != nil {
 			for name, value := range auth.Headers {

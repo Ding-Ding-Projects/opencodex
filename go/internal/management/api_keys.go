@@ -109,7 +109,7 @@ func (a *API) handleProviderKeys(w http.ResponseWriter, request *http.Request) {
 		previous := cloneProviderKeyState(provider)
 		id, err := config.AddAPIKey(a.config, body.Name, body.Key, body.Label, time.Now())
 		if err == nil {
-			err = a.saveLocked()
+			err = a.saveProviderLocked(body.Name)
 		}
 		if err != nil {
 			a.config.Providers[body.Name] = previous
@@ -138,7 +138,7 @@ func (a *API) handleProviderKeys(w http.ResponseWriter, request *http.Request) {
 		removed := config.RemoveAPIKey(a.config, name, id)
 		var err error
 		if removed {
-			err = a.saveLocked()
+			err = a.saveProviderLocked(name)
 		}
 		if err != nil {
 			a.config.Providers[name] = previous
@@ -177,7 +177,7 @@ func (a *API) handleProviderKeyActive(w http.ResponseWriter, request *http.Reque
 	updated := config.SetActiveAPIKey(a.config, body.Name, body.ID)
 	var err error
 	if updated {
-		err = a.saveLocked()
+		err = a.saveProviderLocked(body.Name)
 	}
 	if err != nil {
 		a.config.Providers[body.Name] = previous

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,9 +86,13 @@ func (a *coreAuth) RecordOutcome(_ string, status types.OutcomeStatus, _ *types.
 type coreAdapter struct {
 	endpoint string
 	stream   bool
+	buildErr error
 }
 
 func (a coreAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	if a.buildErr != nil {
+		return nil, a.buildErr
+	}
 	return http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, strings.NewReader(string(request.RawBody)))
 }
 func (a coreAdapter) ParseStream(_ context.Context, body io.ReadCloser) <-chan types.AdapterEvent {
@@ -249,5 +254,32 @@ func TestClassifyResponsesErrorStatusAndMessagePrecedence(t *testing.T) {
 		if gotType != test.wantType || gotCode != test.wantCode {
 			t.Errorf("classify(%d, %q, %q) = (%q, %v), want (%q, %v)", test.status, test.kind, test.text, gotType, gotCode, test.wantType, test.wantCode)
 		}
+	}
+}
+
+func TestResponsesCoreSeparatesBootstrapTransportFromLocalBuildErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		buildErr error
+		status   int
+		code     string
+	}{
+		{name: "MiMo bootstrap transport", buildErr: errors.New("MiMo bootstrap failed: proxy connect refused"), status: http.StatusBadGateway, code: "upstream_server_error"},
+		{name: "local request validation", buildErr: errors.New("request body cannot encode tool"), status: http.StatusBadRequest, code: "invalid_request_error"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			core := NewResponsesCore(ResponsesCoreConfig{
+				Registry: coreRegistry{endpoint: "https://example.invalid"},
+				ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+					return coreAdapter{buildErr: test.buildErr}, nil
+				},
+			})
+			response := httptest.NewRecorder()
+			core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"code":"`+test.code+`"`) {
+				t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }

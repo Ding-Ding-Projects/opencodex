@@ -115,6 +115,40 @@ func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
 	}
 }
 
+func TestMessagesHandlerReclassifiesTransientUpstreamAsOverloaded(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		retryAfter string
+		wantRetry  string
+	}{
+		{name: "default retry", status: http.StatusInternalServerError, wantRetry: "2"},
+		{name: "preserve upstream retry", status: http.StatusBadGateway, retryAfter: "9", wantRetry: "9"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if test.retryAfter != "" {
+					w.Header().Set("Retry-After", test.retryAfter)
+				}
+				w.WriteHeader(test.status)
+				_, _ = io.WriteString(w, `{"error":{"message":"provider temporarily unavailable"}}`)
+			}))
+			defer upstream.Close()
+			reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+			handler := NewMessagesHandler(HandlerConfig{Registry: reg, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+				return handlerAdapter{endpoint: upstream.URL}, nil
+			}})
+			request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"acme/wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+			response := httptest.NewRecorder()
+			handler.Handle(response, request)
+			if response.Code != 529 || response.Header().Get("Retry-After") != test.wantRetry || !strings.Contains(response.Body.String(), `"type":"overloaded_error"`) {
+				t.Fatalf("response=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+			}
+		})
+	}
+}
+
 func TestMessagesHandlerNativeAnthropicPassthrough(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != "native-key" {

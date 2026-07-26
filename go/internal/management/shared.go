@@ -18,33 +18,6 @@ const maxManagementBody = 2 << 20
 
 type ModelFetcher func(r *http.Request, provider string, providerConfig config.ProviderConfig) ([]types.ModelEntry, error)
 
-type OAuthAccount struct {
-	ID          string `json:"id"`
-	Alias       string `json:"alias,omitempty"`
-	Email       string `json:"email,omitempty"`
-	Active      bool   `json:"active"`
-	NeedsReauth bool   `json:"needsReauth,omitempty"`
-}
-type OAuthStatus struct {
-	Provider         string `json:"provider"`
-	State            string `json:"state"`
-	AuthorizationURL string `json:"authorizationUrl,omitempty"`
-	Instructions     string `json:"instructions,omitempty"`
-	Error            string `json:"error,omitempty"`
-}
-type OAuthBackend interface {
-	Providers() []string
-	Start(r *http.Request, provider string, addAccount bool) (OAuthStatus, error)
-	Cancel(provider string) error
-	SubmitCode(r *http.Request, provider, code string) (OAuthStatus, error)
-	Status(provider string) OAuthStatus
-	Logout(r *http.Request, provider string) error
-	Accounts(provider string) ([]OAuthAccount, error)
-	SetActive(r *http.Request, provider, accountID string) error
-	SetAlias(r *http.Request, provider, accountID, alias string) error
-	RemoveAccount(r *http.Request, provider, accountID string) error
-}
-
 type CustomModel = config.CustomModel
 type ComboTarget struct {
 	Provider string `json:"provider"`

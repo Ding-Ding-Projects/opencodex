@@ -24,6 +24,7 @@ type Options struct {
 	Stop             func()
 	RefreshCatalog   func() error
 	OnAPIKeysChanged func([]config.ProxyAPIKey)
+	ModelCache       ModelCacheInvalidator
 	// Authorize is an optional defense-in-depth admission hook for callers that
 	// register the management router without the server's global middleware.
 	Authorize func(*http.Request) bool
@@ -44,6 +45,7 @@ type API struct {
 	stop             func()
 	refreshCatalog   func() error
 	onAPIKeysChanged func([]config.ProxyAPIKey)
+	modelCache       ModelCacheInvalidator
 	authorize        func(*http.Request) bool
 	customModels     map[string]CustomModel
 	aliases          map[string]string
@@ -79,7 +81,7 @@ func New(options Options) (*API, error) {
 	for _, model := range cfg.CustomModels {
 		customModels[model.ID] = model
 	}
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
+	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving
@@ -129,6 +131,14 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) saveLocked() error {
+	return a.saveWithModelCacheLocked("")
+}
+
+func (a *API) saveProviderLocked(provider string) error {
+	return a.saveWithModelCacheLocked(provider)
+}
+
+func (a *API) saveWithModelCacheLocked(provider string) error {
 	if a.configPath != "" {
 		if err := config.Save(a.configPath, a.config); err != nil {
 			return err
@@ -136,6 +146,9 @@ func (a *API) saveLocked() error {
 	}
 	if a.refreshCatalog != nil {
 		_ = a.refreshCatalog()
+	}
+	if a.modelCache != nil {
+		a.modelCache.Clear(provider)
 	}
 	return nil
 }

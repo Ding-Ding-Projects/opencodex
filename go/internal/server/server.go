@@ -55,6 +55,7 @@ type Config struct {
 	WebSockets         bool
 	RefreshCatalog     func() error
 	CodexQuota         *codex.QuotaStore
+	ModelCache         management.ModelCacheInvalidator
 }
 
 type Server struct {
@@ -192,7 +193,7 @@ func New(config Config) *Server {
 	}
 	if managementRouter == nil {
 		usageLog, _ := config.UsageRecorder.(*usage.Log)
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, OAuth: config.OAuthManagement, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, OAuth: config.OAuthManagement, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {

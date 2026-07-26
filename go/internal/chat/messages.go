@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -52,8 +53,15 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		if message == "" {
 			message = fmt.Sprintf("upstream error (%d)", response.StatusCode)
 		}
+		status := response.StatusCode
 		copyRetryAfter(w.Header(), response.Header)
-		writeAnthropicError(w, response.StatusCode, message)
+		if ocxlib.IsTransientUpstreamStatus(status) {
+			status = 529
+			if w.Header().Get("Retry-After") == "" {
+				w.Header().Set("Retry-After", "2")
+			}
+		}
+		writeAnthropicError(w, status, message)
 		return
 	}
 	if normalized.Stream {
