@@ -11,6 +11,24 @@ func cooldownOnly(health UpstreamHealth) UpstreamHealth {
 	}
 }
 
+// ResetCodexRoutingForManualSelection discards transient routing evidence
+// without bypassing a real quota cooldown or its probe state.
+func (r *Router) ResetCodexRoutingForManualSelection(accountID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clear(r.threadAccounts)
+	current, exists := r.health[accountID]
+	if !exists {
+		return
+	}
+	preserved := cooldownOnly(current)
+	if preserved == (UpstreamHealth{}) {
+		delete(r.health, accountID)
+		return
+	}
+	r.health[accountID] = preserved
+}
+
 func (r *Router) RecordCodexUpstreamOutcome(config *RoutingConfig, accountID string, outcome any, meta CodexUpstreamOutcomeMeta) {
 	if accountID == "" {
 		return
@@ -96,17 +114,19 @@ func (r *Router) RecordCodexUpstreamOutcome(config *RoutingConfig, accountID str
 	if stale {
 		failures = 1
 	}
-	escalation := transientSoftAvoidEscalation[min(failures, len(transientSoftAvoidEscalation))-1]
+	failoverThreshold := failoverThresholdOrDefault(config.UpstreamFailoverThreshold)
+	failoverReady := failoverThreshold > 0 && failures >= failoverThreshold
+	escalationIndex := min(max(failures-failoverThreshold, 0), len(transientSoftAvoidEscalation)-1)
+	escalation := transientSoftAvoidEscalation[escalationIndex]
 	next := cooldownOnly(base)
 	next.ConsecutiveFailures = failures
 	next.LastFailureStatus = status
 	next.LastFailureAt = nowMillis
-	failoverEnabled := failoverThresholdOrDefault(config.UpstreamFailoverThreshold) > 0
-	if failoverEnabled {
+	if failoverReady {
 		next.SoftAvoidUntil = max(r.softAvoidUntilLocked(accountID, nowMillis), nowMillis+escalation.Milliseconds())
 	}
 	r.health[accountID] = next
-	if failoverEnabled && meta.ThreadID != "" {
+	if failoverReady && meta.ThreadID != "" {
 		if bound, ok := r.threadAccounts[meta.ThreadID]; ok && bound.accountID == accountID {
 			delete(r.threadAccounts, meta.ThreadID)
 		}

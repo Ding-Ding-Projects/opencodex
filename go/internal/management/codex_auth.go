@@ -220,7 +220,14 @@ func (a *API) putActiveCodexAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "save active Codex account failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, orderedJSONObject{{name: "ok", value: true}, {name: "activeCodexAccountId", value: nullable(active)}})
+	selected := active
+	if selected == "" {
+		selected = codex.MainCodexAccountID
+	}
+	if a.codexRouter != nil {
+		a.codexRouter.ResetCodexRoutingForManualSelection(selected)
+	}
+	writeJSON(w, http.StatusOK, orderedJSONObject{{name: "ok", value: true}, {name: "activeCodexAccountId", value: nullable(active)}, {name: "appliesImmediately", value: true}})
 }
 
 func (a *API) putCodexThreshold(w http.ResponseWriter, r *http.Request, autoSwitch bool) {

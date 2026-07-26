@@ -1,15 +1,11 @@
-# WP0 literal patch — Codex manual account selection semantics
+# 127 — Literal patch: immediate Codex manual selection
 
-Date: 2026-07-27  
-Base: `3abeadd9d503973188607f4c2d7719ef83df5e2c`  
-Predecessors: `061→071→091→101→111→121→123`  
-Successor: apply before `081`
-
-This is the complete extractable unified diff for [126_codex_manual_selection.md](./126_codex_manual_selection.md). It contains 15 hunks across seven files. Packet `123` must already provide the canonical `CodexRouter` production dependency described in the plan; this patch consumes that owner and does not recreate its wiring.
+Apply this exact independently audited candidate against
+`1934ae8b0b6d6e36183cbb83c907152cf0e3b9aa`.
 
 ```diff
 diff --git a/go/internal/cli/account.go b/go/internal/cli/account.go
-index 9a21c58..c6740b7 100644
+index 9a21c588..c6740b76 100644
 --- a/go/internal/cli/account.go
 +++ b/go/internal/cli/account.go
 @@ -363,6 +363,9 @@ func printAccountRows(writer io.Writer, rows []accountRow) {
@@ -23,7 +19,7 @@ index 9a21c58..c6740b7 100644
  		if row.NeedsReauth {
  			status = strings.TrimSpace(status + " needs-reauth")
 diff --git a/go/internal/cli/account_test.go b/go/internal/cli/account_test.go
-index a95bf7b..dc75f80 100644
+index a95bf7b2..dc75f80e 100644
 --- a/go/internal/cli/account_test.go
 +++ b/go/internal/cli/account_test.go
 @@ -70,6 +70,21 @@ func TestAccountListCurrentUseAndConfirmedRemove(t *testing.T) {
@@ -48,8 +44,25 @@ index a95bf7b..dc75f80 100644
  func TestAccountAutoSwitchPersistsValidatedThreshold(t *testing.T) {
  	home := t.TempDir()
  	t.Setenv("OPENCODEX_HOME", home)
+diff --git a/go/internal/cli/codex_routing_production_test.go b/go/internal/cli/codex_routing_production_test.go
+index ba201693..90ca30af 100644
+--- a/go/internal/cli/codex_routing_production_test.go
++++ b/go/internal/cli/codex_routing_production_test.go
+@@ -171,6 +171,12 @@ func TestCanonicalRoutingReplacesQuotaImageAndPreservesProbeProvenance(t *testin
+ 	}
+ 	quota.Clear("b")
+ 	quota.Update("a", 20, nil, nil, nil, nil)
++	if err := auth.persistence.Update(func(live *config.Config) {
++		live.ActiveCodexAccountID = "a"
++		live.AutoSwitchThreshold = 10
++	}); err != nil {
++		t.Fatal(err)
++	}
+ 	selected, err = auth.ResolveAuth(context.Background(), "openai", "quota-after-clear")
+ 	if err != nil || selected.AccountID != "a" {
+ 		t.Fatalf("replaced quota selection=%#v err=%v", selected, err)
 diff --git a/go/internal/codex/routing_outcome.go b/go/internal/codex/routing_outcome.go
-index c07c96e..fee32ad 100644
+index c07c96e7..fee32ad4 100644
 --- a/go/internal/codex/routing_outcome.go
 +++ b/go/internal/codex/routing_outcome.go
 @@ -11,6 +11,24 @@ func cooldownOnly(health UpstreamHealth) UpstreamHealth {
@@ -102,7 +115,7 @@ index c07c96e..fee32ad 100644
  			delete(r.threadAccounts, meta.ThreadID)
  		}
 diff --git a/go/internal/codex/routing_port_test.go b/go/internal/codex/routing_port_test.go
-index 64cfb7d..174e2be 100644
+index 94ac8947..89a7c4af 100644
 --- a/go/internal/codex/routing_port_test.go
 +++ b/go/internal/codex/routing_port_test.go
 @@ -36,6 +36,29 @@ func TestComputeCodexUsageScorePlanSemantics(t *testing.T) {
@@ -143,7 +156,7 @@ index 64cfb7d..174e2be 100644
 -		router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: now.Add(time.Duration(index) * time.Millisecond)})
 +	if got := router.ResolveCodexAccountForThread("thread", config, now); got != "a" {
 +		t.Fatalf("initial affinity = %q", got)
-+	}
+ 	}
 +	for index := 0; index < 2; index++ {
 +		at := now.Add(time.Duration(index) * time.Millisecond)
 +		router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: at, ThreadID: "thread"})
@@ -153,7 +166,7 @@ index 64cfb7d..174e2be 100644
 +		if got := router.ResolveCodexAccountForThread("thread", config, at); got != "a" {
 +			t.Fatalf("failure %d cleared affinity early: %q", index+1, got)
 +		}
- 	}
++	}
 +	router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: now.Add(2 * time.Millisecond), ThreadID: "thread"})
  	health, _ := router.GetCodexUpstreamHealth("a")
 -	if health.ConsecutiveFailures != 3 || health.SoftAvoidUntil != now.Add(10*time.Minute+2*time.Millisecond).UnixMilli() {
@@ -169,10 +182,33 @@ index 64cfb7d..174e2be 100644
  	router.RecordCodexUpstreamOutcome(config, "a", 200, CodexUpstreamOutcomeMeta{Now: now.Add(time.Second)})
  	health, exists := router.GetCodexUpstreamHealth("a")
  	if !exists || health.ConsecutiveSuccesses != 1 {
-@@ -115,6 +152,32 @@ func TestTransientSoftAvoidEscalationAndRecovery(t *testing.T) {
+@@ -115,6 +152,55 @@ func TestTransientSoftAvoidEscalationAndRecovery(t *testing.T) {
  	}
  }
  
++func TestTransientFailoverDisabledKeepsAffinityAndSoftAvoidEmpty(t *testing.T) {
++	now := time.UnixMilli(1_700_000_000_000)
++	router, config, _ := newRoutingFixture(t, CodexAccount{ID: "a"}, CodexAccount{ID: "b"})
++	config.ActiveCodexAccountID = "a"
++	config.UpstreamFailoverThreshold = intPointer(0)
++	if got := router.ResolveCodexAccountForThread("thread", config, now); got != "a" {
++		t.Fatalf("initial affinity = %q", got)
++	}
++	for index := 0; index < 5; index++ {
++		at := now.Add(time.Duration(index) * time.Millisecond)
++		router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: at, ThreadID: "thread"})
++		if _, avoided := router.GetCodexAccountSoftAvoidUntil("a", at); avoided {
++			t.Fatalf("failure %d soft-avoided with failover disabled", index+1)
++		}
++		if got := router.ResolveCodexAccountForThread("thread", config, at); got != "a" {
++			t.Fatalf("failure %d changed affinity: %q", index+1, got)
++		}
++	}
++	if health, found := router.GetCodexUpstreamHealth("a"); !found || health.ConsecutiveFailures != 5 {
++		t.Fatalf("disabled failover health=%#v found=%t", health, found)
++	}
++}
++
 +func TestManualSelectionClearsAffinityAndTransientHealthButPreservesCooldownProbe(t *testing.T) {
 +	router, _, _ := newRoutingFixture(t, CodexAccount{ID: "a"}, CodexAccount{ID: "b"})
 +	router.threadAccounts["a-thread"] = threadAffinityEntry{accountID: "a", generation: 1}
@@ -203,7 +239,7 @@ index 64cfb7d..174e2be 100644
  	now := time.UnixMilli(1_700_000_000_000)
  	router, config, store := newRoutingFixture(t, CodexAccount{ID: "a"}, CodexAccount{ID: "b"})
 diff --git a/go/internal/codex/routing_selection.go b/go/internal/codex/routing_selection.go
-index da2ce9b..e133afc 100644
+index da2ce9b6..e133afc4 100644
 --- a/go/internal/codex/routing_selection.go
 +++ b/go/internal/codex/routing_selection.go
 @@ -16,6 +16,10 @@ func failoverThresholdOrDefault(value *int) int {
@@ -275,7 +311,7 @@ index da2ce9b..e133afc 100644
  								r.setActiveLocked(config, best)
  								r.bindThreadLocked(threadID, best, nowMillis)
 diff --git a/go/internal/management/codex_auth.go b/go/internal/management/codex_auth.go
-index 3b0a92d..a9e357e 100644
+index 3b0a92da..a9e357e9 100644
 --- a/go/internal/management/codex_auth.go
 +++ b/go/internal/management/codex_auth.go
 @@ -220,7 +220,14 @@ func (a *API) putActiveCodexAccount(w http.ResponseWriter, r *http.Request) {
@@ -296,10 +332,10 @@ index 3b0a92d..a9e357e 100644
  func (a *API) putCodexThreshold(w http.ResponseWriter, r *http.Request, autoSwitch bool) {
 diff --git a/go/internal/server/codex_manual_selection_production_test.go b/go/internal/server/codex_manual_selection_production_test.go
 new file mode 100644
-index 0000000..f3a8ed2
+index 00000000..4bc7f9ff
 --- /dev/null
 +++ b/go/internal/server/codex_manual_selection_production_test.go
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,74 @@
 +package server
 +
 +import (
@@ -319,7 +355,7 @@ index 0000000..f3a8ed2
 +	if err := appconfig.Save(path, &cfg); err != nil {
 +		t.Fatal(err)
 +	}
-+	router := codex.NewRouter(nil, nil, nil)
++	router := codex.NewRouter(nil, nil)
 +	threshold := 3
 +	routing := &codex.RoutingConfig{ActiveCodexAccountID: "work", UpstreamFailoverThreshold: &threshold}
 +	for index := 0; index < 3; index++ {
@@ -327,6 +363,7 @@ index 0000000..f3a8ed2
 +	}
 +
 +	proxy := New(Config{ManagementConfig: &cfg, ConfigPath: path, CodexRouter: router})
++	defer proxy.Close()
 +	response := managementRequest(t, proxy.Handler(), http.MethodPut, "/api/codex-auth/active", `{"accountId":"work"}`)
 +	if response.Code != http.StatusOK || response.Body.String() != `{"ok":true,"activeCodexAccountId":"work","appliesImmediately":true}` {
 +		t.Fatalf("selection = %d %s", response.Code, response.Body.String())
@@ -338,20 +375,40 @@ index 0000000..f3a8ed2
 +	if err != nil || loaded.ActiveCodexAccountID != "work" {
 +		t.Fatalf("persisted selection = %q, error=%v", loaded.ActiveCodexAccountID, err)
 +	}
++
++	mainRouting := &codex.RoutingConfig{ActiveCodexAccountID: codex.MainCodexAccountID, UpstreamFailoverThreshold: &threshold}
++	router.RecordCodexUpstreamOutcome(mainRouting, codex.MainCodexAccountID, 503, codex.CodexUpstreamOutcomeMeta{Now: time.UnixMilli(1_700_000_000_100)})
++	response = managementRequest(t, proxy.Handler(), http.MethodPut, "/api/codex-auth/active", `{"accountId":null}`)
++	if response.Code != http.StatusOK || response.Body.String() != `{"ok":true,"activeCodexAccountId":null,"appliesImmediately":true}` {
++		t.Fatalf("main selection = %d %s", response.Code, response.Body.String())
++	}
++	if _, exists := router.GetCodexUpstreamHealth(codex.MainCodexAccountID); exists {
++		t.Fatal("null selection did not reset main router state")
++	}
++	loaded, err = appconfig.Load(path)
++	if err != nil || loaded.ActiveCodexAccountID != "" {
++		t.Fatalf("persisted main selection = %q, error=%v", loaded.ActiveCodexAccountID, err)
++	}
++}
++
++func TestProductionCodexManualSelectionDoesNotResetRouterWhenPersistenceFails(t *testing.T) {
++	cfg := appconfig.Default()
++	cfg.CodexAccounts = []appconfig.CodexAccount{{ID: "work", Email: "work@example.test"}}
++	router := codex.NewRouter(nil, nil)
++	threshold := 1
++	routing := &codex.RoutingConfig{ActiveCodexAccountID: "work", UpstreamFailoverThreshold: &threshold}
++	router.RecordCodexUpstreamOutcome(routing, "work", 503, codex.CodexUpstreamOutcomeMeta{Now: time.UnixMilli(1_700_000_000_000)})
++
++	// A directory cannot be replaced by the atomic config writer.
++	proxy := New(Config{ManagementConfig: &cfg, ConfigPath: t.TempDir(), CodexRouter: router})
++	defer proxy.Close()
++	response := managementRequest(t, proxy.Handler(), http.MethodPut, "/api/codex-auth/active", `{"accountId":"work"}`)
++	if response.Code != http.StatusInternalServerError || cfg.ActiveCodexAccountID != "" {
++		t.Fatalf("failed selection = %d %s active=%q", response.Code, response.Body.String(), cfg.ActiveCodexAccountID)
++	}
++	if health, exists := router.GetCodexUpstreamHealth("work"); !exists || health.ConsecutiveFailures != 1 {
++		t.Fatalf("failed persistence reset router: health=%#v exists=%t", health, exists)
++	}
 +}
 ```
 
-## Extraction check
-
-```bash
-awk 'BEGIN{in_diff=0} /^```diff$/{in_diff=1;next} /^```$/{if(in_diff)exit} in_diff{print}' \
-  devlog/_plan/260726_260726-go-port-r10/127_codex_manual_selection_literal_patch.md \
-  | git apply --check -
-```
-
-Apply order: `061→071→091→101→111→121→123→127→081`.
-
-The diff was first extracted against a modeled `CodexRouter` predecessor, then
-revalidated against the final 15-file packet `123`. The final disposable
-composition passed `git apply --check` at `123→127` and `127→081`; the behavior
-and pointer-sharing contract no longer depends on the model fixture.

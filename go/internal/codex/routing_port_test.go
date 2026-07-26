@@ -36,6 +36,29 @@ func TestComputeCodexUsageScorePlanSemantics(t *testing.T) {
 	}
 }
 
+func TestUnknownUsagePreservesExplicitSelectionAcrossRoutingPaths(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	router, config, _ := newRoutingFixture(t, CodexAccount{ID: "a"}, CodexAccount{ID: "b"})
+	config.ActiveCodexAccountID = "a"
+	router.SetAccountQuota("b", AccountQuota{WeeklyPercent: floatPointer(20)})
+
+	if got := router.ResolveCodexAccountForThread("apply", config, now); got != "a" {
+		t.Fatalf("apply selected %q", got)
+	}
+	if got := router.PreviewCodexAccountForRequest("preview", config, now); got != "a" {
+		t.Fatalf("preview selected %q", got)
+	}
+	if got := router.ResolveCodexAccountForThread("affinity", config, now); got != "a" {
+		t.Fatalf("affinity selected %q", got)
+	}
+	if got := router.ResolveCodexAccountForThread("affinity", config, now.Add(CodexThreadAffinityReevalInterval)); got != "a" {
+		t.Fatalf("affinity reevaluation selected %q", got)
+	}
+	if config.ActiveCodexAccountID != "a" {
+		t.Fatalf("active account changed to %q", config.ActiveCodexAccountID)
+	}
+}
+
 func TestQuotaCooldownParsingAndProbeLeaseRecovery(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000)
 	if delay, ok := ParseRetryAfter("0.001", now); !ok || delay != time.Millisecond {
@@ -94,15 +117,29 @@ func TestTransientSoftAvoidEscalationAndRecovery(t *testing.T) {
 	router, config, _ := newRoutingFixture(t, CodexAccount{ID: "a"}, CodexAccount{ID: "b"})
 	config.ActiveCodexAccountID = "a"
 	config.UpstreamFailoverThreshold = intPointer(3)
-	for index := 0; index < 3; index++ {
-		router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: now.Add(time.Duration(index) * time.Millisecond)})
+	if got := router.ResolveCodexAccountForThread("thread", config, now); got != "a" {
+		t.Fatalf("initial affinity = %q", got)
 	}
+	for index := 0; index < 2; index++ {
+		at := now.Add(time.Duration(index) * time.Millisecond)
+		router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: at, ThreadID: "thread"})
+		if _, avoided := router.GetCodexAccountSoftAvoidUntil("a", at); avoided {
+			t.Fatalf("failure %d soft-avoided before threshold", index+1)
+		}
+		if got := router.ResolveCodexAccountForThread("thread", config, at); got != "a" {
+			t.Fatalf("failure %d cleared affinity early: %q", index+1, got)
+		}
+	}
+	router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: now.Add(2 * time.Millisecond), ThreadID: "thread"})
 	health, _ := router.GetCodexUpstreamHealth("a")
-	if health.ConsecutiveFailures != 3 || health.SoftAvoidUntil != now.Add(10*time.Minute+2*time.Millisecond).UnixMilli() {
+	if health.ConsecutiveFailures != 3 || health.SoftAvoidUntil != now.Add(CodexTransientSoftAvoid+2*time.Millisecond).UnixMilli() {
 		t.Fatalf("escalated health = %#v", health)
 	}
 	if config.ActiveCodexAccountID != "b" {
 		t.Fatalf("active account did not fail over: %q", config.ActiveCodexAccountID)
+	}
+	if got := router.ResolveCodexAccountForThread("thread", config, now.Add(3*time.Millisecond)); got != "b" {
+		t.Fatalf("threshold did not clear affinity: %q", got)
 	}
 	router.RecordCodexUpstreamOutcome(config, "a", 200, CodexUpstreamOutcomeMeta{Now: now.Add(time.Second)})
 	health, exists := router.GetCodexUpstreamHealth("a")
@@ -112,6 +149,55 @@ func TestTransientSoftAvoidEscalationAndRecovery(t *testing.T) {
 	router.RecordCodexUpstreamOutcome(config, "a", 200, CodexUpstreamOutcomeMeta{Now: now.Add(2 * time.Second)})
 	if _, exists := router.GetCodexUpstreamHealth("a"); exists {
 		t.Fatal("second recovery terminal did not clear health")
+	}
+}
+
+func TestTransientFailoverDisabledKeepsAffinityAndSoftAvoidEmpty(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	router, config, _ := newRoutingFixture(t, CodexAccount{ID: "a"}, CodexAccount{ID: "b"})
+	config.ActiveCodexAccountID = "a"
+	config.UpstreamFailoverThreshold = intPointer(0)
+	if got := router.ResolveCodexAccountForThread("thread", config, now); got != "a" {
+		t.Fatalf("initial affinity = %q", got)
+	}
+	for index := 0; index < 5; index++ {
+		at := now.Add(time.Duration(index) * time.Millisecond)
+		router.RecordCodexUpstreamOutcome(config, "a", 503, CodexUpstreamOutcomeMeta{Now: at, ThreadID: "thread"})
+		if _, avoided := router.GetCodexAccountSoftAvoidUntil("a", at); avoided {
+			t.Fatalf("failure %d soft-avoided with failover disabled", index+1)
+		}
+		if got := router.ResolveCodexAccountForThread("thread", config, at); got != "a" {
+			t.Fatalf("failure %d changed affinity: %q", index+1, got)
+		}
+	}
+	if health, found := router.GetCodexUpstreamHealth("a"); !found || health.ConsecutiveFailures != 5 {
+		t.Fatalf("disabled failover health=%#v found=%t", health, found)
+	}
+}
+
+func TestManualSelectionClearsAffinityAndTransientHealthButPreservesCooldownProbe(t *testing.T) {
+	router, _, _ := newRoutingFixture(t, CodexAccount{ID: "a"}, CodexAccount{ID: "b"})
+	router.threadAccounts["a-thread"] = threadAffinityEntry{accountID: "a", generation: 1}
+	router.threadAccounts["b-thread"] = threadAffinityEntry{accountID: "b", generation: 2}
+	want := UpstreamHealth{
+		CooldownUntil: 1_700_000_120_000, CooldownSince: 1_700_000_000_000,
+		CooldownSource: CooldownResetDerived, CooldownGeneration: 4,
+		ProbeLeaseID: "probe", ProbeLeaseGeneration: 4, LastProbeAt: 1_700_000_060_000,
+	}
+	router.health["b"] = UpstreamHealth{
+		ConsecutiveFailures: 4, ConsecutiveSuccesses: 1, LastFailureStatus: 503,
+		LastFailureAt: 1_700_000_003_000, SoftAvoidUntil: 1_700_000_030_000,
+		CooldownUntil: want.CooldownUntil, CooldownSince: want.CooldownSince,
+		CooldownSource: want.CooldownSource, CooldownGeneration: want.CooldownGeneration,
+		ProbeLeaseID: want.ProbeLeaseID, ProbeLeaseGeneration: want.ProbeLeaseGeneration, LastProbeAt: want.LastProbeAt,
+	}
+
+	router.ResetCodexRoutingForManualSelection("b")
+	if len(router.threadAccounts) != 0 {
+		t.Fatalf("thread affinities remained: %#v", router.threadAccounts)
+	}
+	if got, exists := router.GetCodexUpstreamHealth("b"); !exists || got != want {
+		t.Fatalf("preserved health = %#v, exists=%t", got, exists)
 	}
 }
 

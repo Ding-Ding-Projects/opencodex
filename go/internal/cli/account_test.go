@@ -70,6 +70,21 @@ func TestAccountListCurrentUseAndConfirmedRemove(t *testing.T) {
 	}
 }
 
+func TestAccountRowsLabelSelectedCodexAccount(t *testing.T) {
+	var output bytes.Buffer
+	printAccountRows(&output, []accountRow{
+		{Provider: "openai", ID: "codex", Active: true},
+		{Provider: "kimi", ID: "oauth", Active: true},
+	})
+	text := output.String()
+	if !strings.Contains(text, "codex         -                         selected") {
+		t.Fatalf("Codex selection label missing: %q", text)
+	}
+	if !strings.Contains(text, "oauth         -                         active") {
+		t.Fatalf("OAuth active label changed: %q", text)
+	}
+}
+
 func TestAccountAutoSwitchPersistsValidatedThreshold(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("OPENCODEX_HOME", home)

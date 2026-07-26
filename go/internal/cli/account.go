@@ -363,6 +363,9 @@ func printAccountRows(writer io.Writer, rows []accountRow) {
 		status := ""
 		if row.Active {
 			status = "active"
+			if row.Provider == "openai" {
+				status = "selected"
+			}
 		}
 		if row.NeedsReauth {
 			status = strings.TrimSpace(status + " needs-reauth")

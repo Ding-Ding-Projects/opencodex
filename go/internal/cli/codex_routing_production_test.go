@@ -171,6 +171,12 @@ func TestCanonicalRoutingReplacesQuotaImageAndPreservesProbeProvenance(t *testin
 	}
 	quota.Clear("b")
 	quota.Update("a", 20, nil, nil, nil, nil)
+	if err := auth.persistence.Update(func(live *config.Config) {
+		live.ActiveCodexAccountID = "a"
+		live.AutoSwitchThreshold = 10
+	}); err != nil {
+		t.Fatal(err)
+	}
 	selected, err = auth.ResolveAuth(context.Background(), "openai", "quota-after-clear")
 	if err != nil || selected.AccountID != "a" {
 		t.Fatalf("replaced quota selection=%#v err=%v", selected, err)

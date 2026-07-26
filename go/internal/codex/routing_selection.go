@@ -16,6 +16,10 @@ func failoverThresholdOrDefault(value *int) int {
 	return *value
 }
 
+func isUnknownUsage(usage float64) bool {
+	return usage >= CodexUnknownUsageScore
+}
+
 func (r *Router) hasConfiguredPoolAccountLocked(config *RoutingConfig, accountID string, now int64) bool {
 	if accountID == MainCodexAccountID {
 		return r.isUsableLocked(config, accountID, now)
@@ -55,25 +59,15 @@ func (r *Router) applyQuotaAutoSwitchLocked(config *RoutingConfig, active string
 		pointer = &quota
 	}
 	usage := ComputeCodexUsageScore(pointer, r.accountPlanLocked(config, active))
+	if isUnknownUsage(usage) {
+		return active
+	}
 	if usage < threshold {
 		return active
 	}
 	if best := r.pickLowerUsageLocked(config, active, usage, now); best != active {
 		r.setActiveLocked(config, best)
 		return best
-	}
-	if usage >= CodexUnknownUsageScore {
-		for _, accountID := range r.eligibleAccountsLocked(config, active, now) {
-			candidate, found := r.quotas[accountID]
-			var candidatePointer *AccountQuota
-			if found {
-				candidatePointer = &candidate
-			}
-			if ComputeCodexUsageScore(candidatePointer, r.accountPlanLocked(config, accountID)) >= CodexUnknownUsageScore {
-				r.setActiveLocked(config, accountID)
-				return accountID
-			}
-		}
 	}
 	return active
 }
@@ -129,7 +123,7 @@ func (r *Router) PreviewCodexAccountForRequest(threadID string, config *RoutingC
 					quotaPointer = &quota
 				}
 				usage := ComputeCodexUsageScore(quotaPointer, r.accountPlanLocked(config, entry.accountID))
-				if usage >= threshold {
+				if !isUnknownUsage(usage) && usage >= threshold {
 					if best := r.pickLowerUsageLocked(config, entry.accountID, usage, nowMillis); best != entry.accountID {
 						return best
 					}
@@ -159,7 +153,7 @@ func (r *Router) PreviewCodexAccountForRequest(threadID string, config *RoutingC
 			quotaPointer = &quota
 		}
 		usage := ComputeCodexUsageScore(quotaPointer, r.accountPlanLocked(config, active))
-		if usage >= threshold {
+		if !isUnknownUsage(usage) && usage >= threshold {
 			active = r.pickLowerUsageLocked(config, active, usage, nowMillis)
 		}
 	}
@@ -200,7 +194,7 @@ func (r *Router) ResolveCodexAccountForThreadDetailed(threadID string, config *R
 							pointer = &quota
 						}
 						usage := ComputeCodexUsageScore(pointer, r.accountPlanLocked(config, entry.accountID))
-						if usage >= threshold {
+						if !isUnknownUsage(usage) && usage >= threshold {
 							if best := r.pickLowerUsageLocked(config, entry.accountID, usage, nowMillis); best != entry.accountID {
 								r.setActiveLocked(config, best)
 								r.bindThreadLocked(threadID, best, nowMillis)
