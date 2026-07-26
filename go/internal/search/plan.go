@@ -1,7 +1,10 @@
 package search
 
 import (
+	"fmt"
 	"math"
+	"net/http"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -47,6 +50,10 @@ type SidecarPlan struct {
 	RoutedModelStallTimeoutMS int
 	StallTimeoutSec           int
 }
+
+// SidecarExecutorFactory binds the selected backend and resolved settings to
+// an executor. Callers own credentials and transports; search owns planning.
+type SidecarExecutorFactory func(SidecarPlan) (Executor, error)
 
 func ResolveRoutedModelStallTimeoutMS(value int) int {
 	if value < 1 || value > MaxRoutedModelStallTimeoutMS {
@@ -119,6 +126,37 @@ func BuildSidecarPlan(input PlanInput) (SidecarPlan, bool) {
 		MaxSearches:    maxSearches, TimeoutMS: timeout, RoutedModelStallTimeoutMS: routedStall,
 		StallTimeoutSec: WebSearchStallTimeoutSec(input.BridgeStallTimeoutSec, connectTimeout, routedStall, timeout),
 	}, true
+}
+
+// BuildSidecarLoop is the production composition boundary for web-search
+// interception. It prevents callers from independently re-deriving defaults
+// or activating a sidecar that BuildSidecarPlan rejected.
+func BuildSidecarLoop(input PlanInput, client *http.Client, factory SidecarExecutorFactory) (*Loop, SidecarPlan, bool, error) {
+	plan, ok := BuildSidecarPlan(input)
+	if !ok {
+		return nil, SidecarPlan{}, false, nil
+	}
+	if factory == nil {
+		return nil, SidecarPlan{}, false, fmt.Errorf("web-search sidecar executor factory is unavailable")
+	}
+	executor, err := factory(plan)
+	if err != nil {
+		return nil, SidecarPlan{}, false, err
+	}
+	if executor == nil {
+		return nil, SidecarPlan{}, false, fmt.Errorf("web-search sidecar executor is unavailable")
+	}
+	return &Loop{
+		Runner: HTTPRunner{
+			Client: client,
+			Progress: ProgressOptions{
+				InactivityTimeout: time.Duration(plan.RoutedModelStallTimeoutMS) * time.Millisecond,
+			},
+		},
+		Executor:    executor,
+		HostedTool:  cloneMap(plan.HostedTool),
+		MaxSearches: plan.MaxSearches,
+	}, plan, true, nil
 }
 
 func maxInt(left, right int) int {
