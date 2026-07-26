@@ -3,8 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,6 +28,63 @@ func TestUpdateTagDryRunPlansNativeReleaseArtifact(t *testing.T) {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("dry-run missing %q: %s", want, output.String())
 		}
+	}
+}
+
+func TestUpdatePreviewDryRunResolvesManifestWithoutReplacingBinary(t *testing.T) {
+	const version = "2.9.1-preview.20260726"
+	digest := strings.Repeat("c", 64)
+	artifactName := updatepkg.ReleaseArtifactName(version, runtime.GOOS, runtime.GOARCH)
+	checksumName := updatepkg.ReleaseChecksumName(version)
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/repos/lidge-jun/opencodex/releases":
+			base := server.URL + "/lidge-jun/opencodex/releases/download/v" + version + "/"
+			_ = json.NewEncoder(writer).Encode([]map[string]any{{
+				"tag_name": "v" + version, "prerelease": true, "draft": false,
+				"assets": []map[string]string{
+					{"name": artifactName, "browser_download_url": base + artifactName},
+					{"name": checksumName, "browser_download_url": base + checksumName},
+				},
+			}})
+		case "/lidge-jun/opencodex/releases/download/v" + version + "/" + checksumName:
+			_, _ = fmt.Fprintf(writer, "%s  %s\n", digest, artifactName)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	previousResolve, previousDownload := resolveNativeReleaseArtifact, downloadNativeUpdate
+	defer func() { resolveNativeReleaseArtifact, downloadNativeUpdate = previousResolve, previousDownload }()
+	resolveNativeReleaseArtifact = func(ctx context.Context, channel updatepkg.Channel) (updatepkg.ReleaseArtifact, error) {
+		resolver := updatepkg.GitHubReleaseResolver{
+			Client: server.Client(), APIBase: server.URL, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+			AllowedAssetHosts: []string{strings.TrimPrefix(server.URL, "https://")},
+		}
+		return resolver.Resolve(ctx, channel)
+	}
+	replaced := false
+	downloadNativeUpdate = func(context.Context, string, string, string) error {
+		replaced = true
+		return nil
+	}
+	destination := filepath.Join(t.TempDir(), "ocx")
+	if err := os.WriteFile(destination, []byte("unchanged"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runUpdate(context.Background(), []string{"--tag", "preview", "--destination", destination, "--dry-run"}, IO{Out: &output, Err: &output}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"v" + version, artifactName, digest, destination} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("dry-run missing %q: %s", want, output.String())
+		}
+	}
+	if replaced || string(mustReadFile(t, destination)) != "unchanged" {
+		t.Fatalf("dry-run changed destination: replaced=%t body=%q", replaced, mustReadFile(t, destination))
 	}
 }
 
