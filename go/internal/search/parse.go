@@ -18,7 +18,8 @@ var (
 func ParseOpenAISSE(reader io.Reader) (Result, error) {
 	var deltaText, doneText, finalText strings.Builder
 	var streamError string
-	sources := make([]Source, 0, 8)
+	streamSources := make([]Source, 0, 8)
+	var finalSources []Source
 	seen := make(map[string]bool)
 	err := consumeSSE(reader, func(event protocol.SSEEvent) {
 		if event.Data == "[DONE]" {
@@ -35,22 +36,34 @@ func ParseOpenAISSE(reader io.Reader) (Result, error) {
 			doneText.WriteString(stringValue(data["text"]))
 		case "response.completed", "response.done":
 			if response, ok := data["response"].(map[string]any); ok {
-				finalText.WriteString(collectOpenAIOutput(response["output"], &sources, seen))
+				// TypeScript keeps the latest authoritative terminal snapshot.
+				finalText.Reset()
+				latestSources := make([]Source, 0, 4)
+				finalText.WriteString(collectOpenAIOutput(response["output"], &latestSources, seen))
+				finalSources = latestSources
 			}
 		case "response.failed", "response.incomplete", "error":
 			streamError = eventError(data)
 		}
 		if annotation, ok := data["annotation"].(map[string]any); ok {
-			collectOpenAIAnnotation(annotation, &sources, seen)
+			collectOpenAIAnnotation(annotation, &streamSources, seen)
 		}
 	})
 	if err != nil {
 		return Result{}, err
 	}
 	text := firstNonBlank(finalText.String(), doneText.String(), deltaText.String())
+	sources := append([]Source(nil), finalSources...)
+	resultSeen := make(map[string]bool, len(sources)+len(streamSources))
+	for _, source := range sources {
+		resultSeen[source.URL] = true
+	}
+	for _, source := range streamSources {
+		addSource(&sources, resultSeen, source.URL, source.Title)
+	}
 	body, trailing := extractTrailingSources(text)
 	for _, source := range trailing {
-		addSource(&sources, seen, source.URL, source.Title)
+		addSource(&sources, resultSeen, source.URL, source.Title)
 	}
 	if len(trailing) > 0 {
 		text = body

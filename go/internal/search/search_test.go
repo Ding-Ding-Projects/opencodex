@@ -152,3 +152,19 @@ func TestParseOpenAISSEPrefersCompletedOutputAndCitations(t *testing.T) {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
+
+func TestParseOpenAISSELatestCompletedOutputWins(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"stale","annotations":[{"type":"url_citation","url":"https://stale.test"}]}]}]}}`,
+		"",
+		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"latest","annotations":[{"type":"url_citation","url":"https://latest.test"}]}]}]}}`,
+		"",
+	}, "\n")
+	result, err := ParseOpenAISSE(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "latest" || len(result.Sources) != 1 || result.Sources[0].URL != "https://latest.test" {
+		t.Fatalf("completed snapshot precedence = %#v, want latest text/source", result)
+	}
+}
