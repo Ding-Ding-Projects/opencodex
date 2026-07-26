@@ -472,7 +472,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			continue
 		}
 		if next, ok := core.nextCombo(normalized, pick, clientStatus, upstreamCode, message, response.Header.Get("Retry-After")); ok {
-			logSession.finishAttempt(response.StatusCode)
+			logSession.finishAttempt(response.StatusCode, UsageFromComboFailureText(string(payload)))
 			pick, resolved = next, next.Resolved
 			continue
 		}

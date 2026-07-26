@@ -67,14 +67,14 @@ func (s *responsesLogSession) noteRecovery(kind string) {
 	}
 }
 
-func (s *responsesLogSession) finishAttempt(status int) {
+func (s *responsesLogSession) finishAttempt(status int, attemptUsage *types.Usage) {
 	if s == nil || s.store == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.context.ActiveAttempt != nil && s.context.ActiveAttempt.Status == 0 {
-		s.context.ActiveAttempt.Finish(status, time.Since(s.context.ActiveAttemptStartedAt), s.context.Usage)
+		s.context.ActiveAttempt.Finish(status, time.Since(s.context.ActiveAttemptStartedAt), attemptUsage)
 	}
 }
 
