@@ -22,21 +22,24 @@ const (
 
 // Provider describes one built-in upstream and its static catalog seed.
 type Provider struct {
-	ID                         string
-	Label                      string
-	Adapter                    string
-	BaseURL                    string
-	AuthKind                   AuthKind
-	DefaultModel               string
-	DashboardURL               string
-	OAuthID                    string
-	CodexAccountMode           string
-	Featured                   bool
-	DashboardPreset            bool
-	LiveModels                 bool
-	KeyOptional                bool
-	FreeTier                   bool
-	AllowBaseURLOverride       bool
+	ID                           string
+	Label                        string
+	Adapter                      string
+	BaseURL                      string
+	AuthKind                     AuthKind
+	DefaultModel                 string
+	DashboardURL                 string
+	OAuthID                      string
+	CodexAccountMode             string
+	Featured                     bool
+	DashboardPreset              bool
+	LiveModels                   bool
+	KeyOptional                  bool
+	FreeTier                     bool
+	AllowBaseURLOverride         bool
+	AllowPrivateNetworkByDefault bool
+	// AllowPrivateNetworkDefault is retained for callers using the original Go
+	// registry name. Keep it synchronized with AllowPrivateNetworkByDefault.
 	AllowPrivateNetworkDefault bool
 	StaticHeaders              map[string]string
 	Models                     []ModelDefinition
@@ -165,9 +168,9 @@ var Providers = func() []Provider {
 		case "github-copilot":
 			rows[i].LiveModels, rows[i].DefaultModel = true, "gpt-4o"
 		case "ollama", "vllm", "lm-studio":
-			rows[i].AllowPrivateNetworkDefault, rows[i].AllowBaseURLOverride = true, true
+			rows[i].AllowPrivateNetworkDefault, rows[i].AllowPrivateNetworkByDefault, rows[i].AllowBaseURLOverride = true, true, true
 		case "litellm":
-			rows[i].AllowPrivateNetworkDefault, rows[i].AllowBaseURLOverride, rows[i].KeyOptional = true, true, true
+			rows[i].AllowPrivateNetworkDefault, rows[i].AllowPrivateNetworkByDefault, rows[i].AllowBaseURLOverride, rows[i].KeyOptional = true, true, true, true
 		case "opencode-free":
 			rows[i].KeyOptional, rows[i].LiveModels = true, true
 		case "mimo-free":

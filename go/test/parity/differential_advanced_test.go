@@ -197,6 +197,66 @@ func TestTypeScriptAndGoAdvancedRequestTransforms(t *testing.T) {
 	}
 }
 
+func TestTypeScriptAndGoMalformedResponseContentTransforms(t *testing.T) {
+	upstream := newAdvancedDifferentialUpstream(t)
+	config := advancedDifferentialConfig(upstream.server.URL)
+	tsProxy := startTypeScriptProxy(t, config)
+	goProxy := startProxyWithConfig(t, config)
+	cases := []struct {
+		name  string
+		input any
+	}{
+		{name: "mixed-valid-and-missing-text", input: []any{map[string]any{
+			"type": "message", "role": "user", "content": []any{
+				map[string]any{"type": "input_text"},
+				map[string]any{"type": "input_text", "text": "kept"},
+			},
+		}}},
+		{name: "null-and-reference-less-media", input: []any{map[string]any{
+			"type": "message", "role": "user", "content": []any{
+				nil,
+				map[string]any{"type": "input_image"},
+				map[string]any{"type": "input_file"},
+			},
+		}}},
+		{name: "non-array-user-content", input: []any{map[string]any{
+			"type": "message", "role": "user", "content": map[string]any{"type": "input_text", "text": "ignored"},
+		}}},
+		{name: "malformed-assistant-blocks", input: []any{map[string]any{
+			"type": "message", "role": "assistant", "content": []any{
+				nil,
+				map[string]any{"type": "output_text"},
+				map[string]any{"type": "output_text", "text": "kept"},
+				map[string]any{"type": "refusal", "refusal": map[string]any{"bad": true}},
+			},
+		}}},
+	}
+	for _, scenario := range cases {
+		t.Run(scenario.name, func(t *testing.T) {
+			body := map[string]any{"model": "differential/final", "input": scenario.input, "stream": true}
+			goResult := captureJSON(t, goProxy.baseURL, "/v1/responses", body)
+			goRequest := receiveAdvancedRequest(t, upstream.requests, "Go")
+			tsResult := captureJSON(t, tsProxy.baseURL, "/v1/responses", body)
+			tsRequest := receiveAdvancedRequest(t, upstream.requests, "TypeScript")
+			compareRuntimeBytes(t, "malformed-content/"+scenario.name, goResult, tsResult, false)
+			if !reflect.DeepEqual(goRequest, tsRequest) {
+				t.Fatalf("malformed-content/%s upstream request differs\nGo=%s\nTS=%s", scenario.name, mustJSON(goRequest), mustJSON(tsRequest))
+			}
+		})
+	}
+}
+
+func receiveAdvancedRequest(t *testing.T, requests <-chan map[string]any, runtime string) map[string]any {
+	t.Helper()
+	select {
+	case request := <-requests:
+		return request
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s runtime did not forward malformed-content request", runtime)
+		return nil
+	}
+}
+
 func TestTypeScriptAndGoInvalidRequestMatrix(t *testing.T) {
 	upstream := newAdvancedDifferentialUpstream(t)
 	config := advancedDifferentialConfig(upstream.server.URL)

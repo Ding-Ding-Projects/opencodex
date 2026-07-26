@@ -9,7 +9,7 @@ Primary harness: `go/test/parity/`
 The Go runtime is byte-locked to the Bun TypeScript runtime across the core
 Responses, Chat Completions, and Messages scenarios covered below. This is a
 bounded claim, not whole-product byte parity. The Round 9 known-diff set reached
-zero. Rounds 10–15 deliberately expanded the oracle beyond those paths and
+zero. Rounds 10–16 deliberately expanded the oracle beyond those paths and
 found new validation, transport, config, logging, CLI, and native-shim
 differences. Those residuals are explicitly enumerated; none is hidden by
 normalization.
@@ -26,7 +26,8 @@ process and malformed-input boundary.
 | `/v1/messages` SSE | complete, mid-stream overloaded error, cancellation, event order, UUID shape |
 | `/v1/responses` WebSocket | six warmup turns on one connection and a generated eight-event terminal stream |
 | HTTP error matrix | Responses and Messages: 400, 401, 403, 404, 429, 500, 502, 503 |
-| Request transforms | multi-turn messages, image input, structured output, function-call output |
+| Request transforms | multi-turn messages, image input, structured output, function-call output, and malformed message-content repair |
+| Provider wire selection | provider-default OpenAI Chat and per-model `modelAdapters` override to Responses reach the same upstream paths and model IDs |
 | Management API | baseline reads; strict selected-model mutation, custom-model create/update/delete, and provider deletion |
 | Management controls | strict debug enable/reset, Codex auto-switch/failover thresholds, active-state read, and sidecar settings PUT/GET |
 | Long sessions | eight-turn Claude Messages stream and four-turn native Codex shim path retain routing/config state |
@@ -79,8 +80,16 @@ that Go registers three deletion routes at
 `go/internal/management/logs.go:190`, `:294`, and `:317` that do not exist in
 `src/server/management/logs-usage-routes.ts`. This produces five declared
 scenario differences: three DELETE responses and the subsequent logs/usage
-reads. The fixable known runtime set is therefore six scenarios: one config
-repair plus those five management deletion outcomes.
+reads. Round 16 rebased onto 66 new TS commits and added direct production-path
+locks for strict malformed message-content repair and per-model wire selection.
+The wire override initially exposed a Go routing gap, but the concurrent CLI
+owner fix at `go/internal/cli/serve.go:370` now matches
+`src/server/adapter-resolve.ts:20` and is a strict assertion. The same audit
+also initially found a Responses passthrough difference in empty-body handling
+and Retry-After preservation. The concurrent server owner fix now matches the
+contract at `src/server/responses/passthrough-error.ts:23`, and that scenario is
+strict as well. The fixable known runtime set remains six scenarios: one config
+repair plus five management deletion outcomes.
 Status and body dimensions are tracked independently, so a disappearing
 difference cannot silently pass as a changed known-diff shape.
 
@@ -114,22 +123,22 @@ test; it is intentionally excluded from ordinary CI.
 There are two useful coverage numbers. They are scenario-family estimates, not
 Go statement coverage:
 
-- **Core HTTP data plane: about 88%.** The harness covers the high-frequency
+- **Core HTTP data plane: about 89%.** The harness covers the high-frequency
   Responses, Messages, and Chat request/stream/error families, including tools,
   reasoning, images, structured output, Unicode splits, cancellation,
   concurrency, failover, keep-alive, and large bodies.
-- **Whole user-facing product: about 56%.** This weighted inventory includes
+- **Whole user-facing product: about 57%.** This weighted inventory includes
   management, auth, lifecycle, platform, and sidecar features that have little
   or no differential coverage. It is the appropriate denominator for a claim
   that Go can replace the complete TypeScript application.
 
 | Scenario family | Weight | Differential coverage | Evidence / principal gap |
 |---|---:|---:|---|
-| Responses data plane | 15% | full | byte-locked success, errors, SSE, tools, transforms, cancellation, malformed upstream |
+| Responses data plane | 15% | full | byte-locked success, errors, SSE, tools, transforms, cancellation, malformed upstream, and malformed content repair |
 | Messages data plane | 10% | full | byte-locked success, errors, SSE order/IDs, cancellation |
 | Chat Completions | 8% | partial | production route and error paths; fewer advanced transform fixtures than Responses |
 | Routing, pools, combos, quota failover | 10% | partial | synthetic multi-account rotation/cooldown; no real provider rate-limit service |
-| Provider-native transports | 10% | partial | adapter selection and synthetic wire fixtures; no live auth/provider contract |
+| Provider-native transports | 10% | partial | adapter selection, synthetic wire fixtures, and strict per-model Chat/Responses override; no live auth/provider contract |
 | Management API | 10% | substantial | provider/model/key mutation sequence, account-key switch, auth negative, debug controls, byte-locked sidecar settings, deletion-route audit, and persistence within one runtime session; OAuth account mutations remain |
 | Config and migrations | 7% | partial | defaults, unknown fields, wrong type; no cross-version/corrupt-disk migration matrix |
 | CLI and service lifecycle | 5% | partial | built binary, unknown command, startup, and update/restart dry-run plans; no OS service-manager execution matrix |
@@ -138,7 +147,7 @@ Go statement coverage:
 | Live WebSocket/realtime | 5% | partial | Responses WS six-turn connection and generated stream; Go live sideband text/binary byte relay; reconnect/backpressure and TS live relay fixture remain |
 | Platform, tray, update, storage, search, vision | 8% | minimal | package tests may exist, but no TS-vs-Go production-path differential lock |
 
-The weighted 56% is deliberately conservative and approximate. It must not be
+The weighted 57% is deliberately conservative and approximate. It must not be
 reported as branch or line coverage.
 
 ### Explicitly unobserved boundaries
@@ -186,6 +195,30 @@ retry or timing sleep.
 On the current workstation the Round 13 complete default parity package finishes
 in about 15–19 seconds (excluding the opt-in workloads), comfortably inside the
 repository's 300-second gate.
+
+## Round 16 TypeScript baseline audit
+
+The 66-commit `src/` range ending at `ac3af3ec` changed 57 runtime files by
+3,733 insertions and 449 deletions. Existing differential scenarios remained
+green against that new oracle. Directly relevant movement included Responses
+content validation and passthrough errors, per-model wire overrides, API access,
+provider adapters, subagent fallback/quota routing, and account lifecycle.
+
+The expanded probes produced these outcomes:
+
+- four malformed Responses message-content families match in both client bytes
+  and the exact OpenAI Chat request sent upstream;
+- provider-default Chat and per-model Responses wire selection are strict; and
+- empty Responses-passthrough 503 now matches the TS body and preserves
+  Retry-After exactly. The harness first failed on the newly discovered
+  difference, then failed again when the owner fix made its known-diff
+  declaration stale; it is now a strict regression assertion.
+
+The rebase also exposed a Go integration naming gap: new management destination
+policy reads the TS-shaped `AllowPrivateNetworkByDefault`, while the legacy Go
+registry exposed `AllowPrivateNetworkDefault`. The registry now publishes both
+names from one synchronized roster value, with a regression test covering all
+four local/private presets and a remote negative control.
 
 ## Performance measurements
 

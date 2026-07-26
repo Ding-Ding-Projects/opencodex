@@ -29,6 +29,23 @@ func TestRegistryLookupReturnsDefensiveCopy(t *testing.T) {
 	}
 }
 
+func TestRegistryPrivateNetworkDefaultAliasesStaySynchronized(t *testing.T) {
+	reg := New()
+	for _, id := range []string{"ollama", "vllm", "lm-studio", "litellm"} {
+		entry, ok := reg.Lookup(id)
+		if !ok {
+			t.Fatalf("%s missing", id)
+		}
+		if !entry.AllowPrivateNetworkByDefault || !entry.AllowPrivateNetworkDefault {
+			t.Fatalf("%s private-network defaults diverged: byDefault=%t legacy=%t", id, entry.AllowPrivateNetworkByDefault, entry.AllowPrivateNetworkDefault)
+		}
+	}
+	remote, _ := reg.Lookup("openrouter")
+	if remote.AllowPrivateNetworkByDefault || remote.AllowPrivateNetworkDefault {
+		t.Fatalf("remote provider inherited private-network default: %#v", remote)
+	}
+}
+
 func TestRegistryResolveModelDecodesKnownAlias(t *testing.T) {
 	reg := New()
 	resolved, err := reg.ResolveModel("zenmux/moonshotai-kimi-k3-free")
