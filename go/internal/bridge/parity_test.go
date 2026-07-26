@@ -81,6 +81,13 @@ func TestConvertFormatsUsageDetailsAndErrors(t *testing.T) {
 	}
 }
 
+func TestConvertInfersMalformedAdapterFailureLikeTypeScript(t *testing.T) {
+	_, response := Convert("model", []types.AdapterEvent{{Type: types.EventError, Error: "malformed upstream SSE data frame"}})
+	if response.Error["type"] != "invalid_request_error" || response.Error["code"] != "invalid_request_error" {
+		t.Fatalf("malformed adapter failure = %#v", response.Error)
+	}
+}
+
 func TestFormatErrorResponse(t *testing.T) {
 	data, err := FormatErrorResponse(401, "authentication_error", "invalid token")
 	if err != nil {

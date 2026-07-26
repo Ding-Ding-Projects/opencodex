@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"sort"
@@ -42,6 +43,38 @@ func TestTypeScriptAndGoPerformanceComparison(t *testing.T) {
 		goResult.requests, float64(goResult.requests)/goResult.duration.Seconds(), percentile(goResult.latencies, 0.50).Seconds()*1000, percentile(goResult.latencies, 0.99).Seconds()*1000, float64(goResult.peakRSSKB)/1024)
 	t.Logf("PERF_RESULT runtime=BunTS requests=%d throughput=%.1f_rps p50_ms=%.3f p99_ms=%.3f peak_rss_mib=%.1f",
 		tsResult.requests, float64(tsResult.requests)/tsResult.duration.Seconds(), percentile(tsResult.latencies, 0.50).Seconds()*1000, percentile(tsResult.latencies, 0.99).Seconds()*1000, float64(tsResult.peakRSSKB)/1024)
+}
+
+func TestTypeScriptAndGoLongStreamingPerformance(t *testing.T) {
+	if os.Getenv("OCX_RUN_STREAM_PERF") != "1" {
+		t.Skip("set OCX_RUN_STREAM_PERF=1 for long-lived SSE performance measurement")
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := writer.(http.Flusher)
+		_, _ = io.WriteString(writer, "data: {\"id\":\"chatcmpl-long\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
+		for range 100 {
+			select {
+			case <-request.Context().Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+			_, _ = io.WriteString(writer, "data: {\"id\":\"chatcmpl-long\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"stream\"},\"finish_reason\":null}]}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		_, _ = io.WriteString(writer, "data: {\"id\":\"chatcmpl-long\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":100,\"total_tokens\":101}}\n\ndata: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+	config := differentialConfig(upstream.URL, []string{"long"})
+	tsProxy := startTypeScriptProxy(t, config)
+	goProxy := startProxyWithConfig(t, config)
+	body := []byte(`{"model":"differential/long","input":"stream","stream":true}`)
+	goResult := measureRuntimePerformance(t, goProxy.baseURL, goProxy.command.Process.Pid, body, 24, 24)
+	tsResult := measureRuntimePerformance(t, tsProxy.baseURL, tsProxy.command.Process.Pid, body, 24, 24)
+	t.Logf("STREAM_PERF_RESULT runtime=Go connections=24 p50_ms=%.1f p99_ms=%.1f peak_rss_mib=%.1f", percentile(goResult.latencies, .50).Seconds()*1000, percentile(goResult.latencies, .99).Seconds()*1000, float64(goResult.peakRSSKB)/1024)
+	t.Logf("STREAM_PERF_RESULT runtime=BunTS connections=24 p50_ms=%.1f p99_ms=%.1f peak_rss_mib=%.1f", percentile(tsResult.latencies, .50).Seconds()*1000, percentile(tsResult.latencies, .99).Seconds()*1000, float64(tsResult.peakRSSKB)/1024)
 }
 
 func measureRuntimePerformance(t *testing.T, baseURL string, pid int, body []byte, requests, concurrency int) runtimePerformance {

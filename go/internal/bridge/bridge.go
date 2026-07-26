@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -326,10 +327,12 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 			m.response.Usage = usage(event.Usage)
 		}
 		status := event.StatusCode
+		errorType := event.ErrorType
 		if status == 0 {
-			status = 502
+			inferred := lib.AdapterFailureFromMessage(message)
+			status, errorType, message = inferred.HTTPStatus, inferred.Error.Type, inferred.Error.Message
 		}
-		failure := responseError(status, "", message)
+		failure := responseError(status, errorType, message)
 		out = append(out, m.finishFailure(failure, event.Retryable)...)
 	case types.EventIncomplete:
 		m.usage = cloneUsage(event.Usage)

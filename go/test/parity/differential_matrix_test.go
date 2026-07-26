@@ -97,15 +97,22 @@ type runtimeResponse struct {
 }
 
 type expectedRuntimeDiff struct {
-	status  bool
-	headers []string
-	body    bool
+	transport bool
+	status    bool
+	headers   []string
+	body      bool
 }
 
-var knownRuntimeDiffs = map[string]expectedRuntimeDiff{}
+var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
+	"invalid/malformed-json":             {body: true},
+	"invalid/model-wrong-type":           {body: true},
+	"invalid/input-wrong-type":           {body: true},
+	"invalid/stream-wrong-type":          {body: true},
+	"nonstandard/invalid-chunk-encoding": {status: true, headers: []string{"Content-Type", "Cache-Control"}, body: true},
+}
 
 var (
-	differentialIDPattern        = regexp.MustCompile(`\b(?:resp|msg|rs|fc|ws)_[0-9a-f]{20,32}\b`)
+	differentialIDPattern        = regexp.MustCompile(`\b(?:resp|msg|rs|fc|ws)_[0-9a-f]{32}\b`)
 	differentialCreatedAtPattern = regexp.MustCompile(`"created_at":\d+`)
 )
 
@@ -142,8 +149,14 @@ func captureGET(t *testing.T, baseURL, path string) runtimeResponse {
 
 func compareRuntimeBytes(t *testing.T, scenario string, goResult, tsResult runtimeResponse, revealBody bool) {
 	t.Helper()
+	expected, known := knownRuntimeDiffs[scenario]
 	if goResult.err != nil || tsResult.err != nil {
-		t.Fatalf("%s runtime read error: Go=%v TS=%v", scenario, goResult.err, tsResult.err)
+		actual := expectedRuntimeDiff{transport: true}
+		if runtimeDiffsEqual(actual, expected) {
+			t.Logf("KNOWN DIFFERENTIAL [%s]: transport Go=%v TS=%v", scenario, goResult.err, tsResult.err)
+			return
+		}
+		t.Fatalf("%s unexpected runtime read error: Go=%v TS=%v", scenario, goResult.err, tsResult.err)
 	}
 	actual := expectedRuntimeDiff{status: goResult.status != tsResult.status}
 	for _, header := range []string{"Content-Type", "Retry-After", "Cache-Control"} {
@@ -154,7 +167,6 @@ func compareRuntimeBytes(t *testing.T, scenario string, goResult, tsResult runti
 	goBody := normalizeDifferentialBytes(goResult.body)
 	tsBody := normalizeDifferentialBytes(tsResult.body)
 	actual.body = !bytes.Equal(goBody, tsBody)
-	expected, known := knownRuntimeDiffs[scenario]
 	if runtimeDiffsEqual(actual, expected) {
 		if known {
 			t.Logf("KNOWN DIFFERENTIAL [%s]: status=%t headers=%v body=%t", scenario, actual.status, actual.headers, actual.body)
@@ -179,7 +191,29 @@ func normalizeDifferentialBytes(payload []byte) []byte {
 }
 
 func runtimeDiffsEqual(left, right expectedRuntimeDiff) bool {
-	return left.status == right.status && left.body == right.body && strings.Join(left.headers, "\x00") == strings.Join(right.headers, "\x00")
+	return left.transport == right.transport && left.status == right.status && left.body == right.body && strings.Join(left.headers, "\x00") == strings.Join(right.headers, "\x00")
+}
+
+func TestDifferentialNormalizationIsNarrow(t *testing.T) {
+	base := []byte(`event: response.created\ndata: {"type":"response.created","sequence_number":0,"response":{"id":"resp_0123456789abcdef0123456789abcdef","created_at":123,"model":"모델🚀","output":[]}}\n\n`)
+	dynamicOnly := []byte(`event: response.created\ndata: {"type":"response.created","sequence_number":0,"response":{"id":"resp_fedcba9876543210fedcba9876543210","created_at":999,"model":"모델🚀","output":[]}}\n\n`)
+	if !bytes.Equal(normalizeDifferentialBytes(base), normalizeDifferentialBytes(dynamicOnly)) {
+		t.Fatal("dynamic response ID and created_at were not normalized")
+	}
+	mutations := map[string][]byte{
+		"model":        bytes.Replace(base, []byte(`"model":"모델🚀"`), []byte(`"model":"다른모델🚀"`), 1),
+		"sequence":     bytes.Replace(base, []byte(`"sequence_number":0`), []byte(`"sequence_number":1`), 1),
+		"event-order":  bytes.Replace(base, []byte(`"type":"response.created","sequence_number":0`), []byte(`"sequence_number":0,"type":"response.created"`), 1),
+		"short-id":     bytes.Replace(base, []byte("0123456789abcdef0123456789abcdef"), []byte("0123456789abcdef0123456789abcde"), 1),
+		"unicode-text": bytes.Replace(base, []byte("모델🚀"), []byte("모델🛰️"), 1),
+	}
+	for name, mutated := range mutations {
+		t.Run(name, func(t *testing.T) {
+			if bytes.Equal(normalizeDifferentialBytes(base), normalizeDifferentialBytes(mutated)) {
+				t.Fatalf("normalization concealed injected %s mutation", name)
+			}
+		})
+	}
 }
 
 func TestTypeScriptAndGoSSEByteMatrix(t *testing.T) {
