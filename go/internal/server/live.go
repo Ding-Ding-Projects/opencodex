@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -52,6 +53,118 @@ type LiveRelayTarget struct {
 }
 
 type LiveRelayResolver func(context.Context, http.Header) (LiveRelayTarget, error)
+
+type LiveFrameKind uint8
+
+const (
+	LiveFrameText LiveFrameKind = iota + 1
+	LiveFrameBinary
+)
+
+type LiveFrame struct {
+	Kind    LiveFrameKind
+	Payload []byte
+}
+
+type LiveSocket interface {
+	Receive(context.Context) (LiveFrame, error)
+	Send(context.Context, LiveFrame) error
+	Close(error) error
+}
+
+type LiveFrameMetadata struct {
+	Direction          string
+	Kind               LiveFrameKind
+	Bytes              int
+	HasUTF8Replacement bool
+}
+
+type LiveFrameObserver func(LiveFrameMetadata)
+
+type LiveSidebandPlan struct {
+	URL     string
+	Headers http.Header
+}
+
+func ResolveLiveSidebandPlan(relay LiveRelayTarget, target LiveSidebandTarget, incoming http.Header) (LiveSidebandPlan, error) {
+	upstreamURL, err := BuildLiveSidebandUpstreamWSURL(relay.ProviderBaseURL, relay.UsesBackendShape, target)
+	if err != nil {
+		return LiveSidebandPlan{}, err
+	}
+	headers := LiveClientProtocolHeaders(incoming)
+	for name, values := range relay.Headers {
+		headers.Del(name)
+		for _, value := range values {
+			headers.Add(name, value)
+		}
+	}
+	return LiveSidebandPlan{URL: upstreamURL, Headers: headers}, nil
+}
+
+// RelayLiveSideband copies complete WebSocket messages byte-for-byte in both
+// directions. Either side ending cancels the peer pump and closes both sockets.
+// The observer receives metadata only and can never inspect frame payloads.
+func RelayLiveSideband(ctx context.Context, client, upstream LiveSocket, observer LiveFrameObserver) error {
+	if client == nil || upstream == nil {
+		return errors.New("live sideband requires client and upstream sockets")
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	type pumpResult struct {
+		direction string
+		err       error
+	}
+	results := make(chan pumpResult, 2)
+	pump := func(direction string, source, destination LiveSocket) {
+		for {
+			frame, err := source.Receive(ctx)
+			if err != nil {
+				results <- pumpResult{direction: direction, err: err}
+				return
+			}
+			if frame.Kind != LiveFrameText && frame.Kind != LiveFrameBinary {
+				results <- pumpResult{direction: direction, err: fmt.Errorf("unsupported live frame kind %d", frame.Kind)}
+				return
+			}
+			if observer != nil {
+				observer(LiveFrameMetadata{
+					Direction: direction, Kind: frame.Kind, Bytes: len(frame.Payload),
+					HasUTF8Replacement: bytes.Contains(frame.Payload, []byte("\xef\xbf\xbd")),
+				})
+			}
+			// Clone before crossing ownership boundaries: socket implementations may
+			// reuse their receive buffer immediately after Send returns.
+			outbound := LiveFrame{Kind: frame.Kind, Payload: append([]byte(nil), frame.Payload...)}
+			if err := destination.Send(ctx, outbound); err != nil {
+				results <- pumpResult{direction: direction, err: err}
+				return
+			}
+		}
+	}
+	go pump("c2u", client, upstream)
+	go pump("u2c", upstream, client)
+	first := <-results
+	cancel(first.err)
+	closeErr := first.err
+	var once sync.Once
+	closeBoth := func() {
+		once.Do(func() {
+			_ = client.Close(closeErr)
+			_ = upstream.Close(closeErr)
+		})
+	}
+	closeBoth()
+	select {
+	case <-results:
+	case <-time.After(time.Second):
+		// A socket implementation that ignores context cancellation must not hold
+		// server shutdown indefinitely; Close above is the final interruption.
+	}
+	if errors.Is(first.err, io.EOF) || errors.Is(first.err, context.Canceled) {
+		return nil
+	}
+	return first.err
+}
 
 type LiveHandler struct {
 	Resolve       LiveRelayResolver

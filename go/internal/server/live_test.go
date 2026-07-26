@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -165,3 +166,107 @@ func TestLiveHandlerMapsRequestOverflowAndTimeout(t *testing.T) {
 type roundTripDoer func(*http.Request) (*http.Response, error)
 
 func (do roundTripDoer) Do(request *http.Request) (*http.Response, error) { return do(request) }
+
+type fakeLiveSocket struct {
+	receive chan LiveFrame
+	sent    chan LiveFrame
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func newFakeLiveSocket() *fakeLiveSocket {
+	return &fakeLiveSocket{receive: make(chan LiveFrame, 4), sent: make(chan LiveFrame, 4), closed: make(chan struct{})}
+}
+
+func (socket *fakeLiveSocket) Receive(ctx context.Context) (LiveFrame, error) {
+	select {
+	case frame, ok := <-socket.receive:
+		if !ok {
+			return LiveFrame{}, io.EOF
+		}
+		return frame, nil
+	case <-socket.closed:
+		return LiveFrame{}, io.EOF
+	case <-ctx.Done():
+		return LiveFrame{}, ctx.Err()
+	}
+}
+
+func (socket *fakeLiveSocket) Send(ctx context.Context, frame LiveFrame) error {
+	select {
+	case socket.sent <- frame:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (socket *fakeLiveSocket) Close(error) error {
+	socket.once.Do(func() { close(socket.closed) })
+	return nil
+}
+
+func TestRelayLiveSidebandPreservesTextAndLargeBinaryBytes(t *testing.T) {
+	client, upstream := newFakeLiveSocket(), newFakeLiveSocket()
+	textPayload := []byte("안녕하세요, live")
+	binaryPayload := bytes.Repeat([]byte{0x00, 0xff, 0x7f, 0x80}, 330_000)
+	client.receive <- LiveFrame{Kind: LiveFrameText, Payload: textPayload}
+	upstream.receive <- LiveFrame{Kind: LiveFrameBinary, Payload: binaryPayload}
+	var metadata []LiveFrameMetadata
+	var metadataMu sync.Mutex
+	done := make(chan error, 1)
+	go func() {
+		done <- RelayLiveSideband(context.Background(), client, upstream, func(value LiveFrameMetadata) {
+			metadataMu.Lock()
+			metadata = append(metadata, value)
+			metadataMu.Unlock()
+		})
+	}()
+	select {
+	case frame := <-upstream.sent:
+		if frame.Kind != LiveFrameText || !bytes.Equal(frame.Payload, textPayload) {
+			t.Fatalf("upstream frame mismatch kind=%d bytes=%d", frame.Kind, len(frame.Payload))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("client-to-upstream frame not relayed")
+	}
+	select {
+	case frame := <-client.sent:
+		if frame.Kind != LiveFrameBinary || !bytes.Equal(frame.Payload, binaryPayload) {
+			t.Fatalf("client frame mismatch kind=%d bytes=%d", frame.Kind, len(frame.Payload))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upstream-to-client frame not relayed")
+	}
+	close(client.receive)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("relay close error=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("sideband relay did not stop")
+	}
+	metadataMu.Lock()
+	defer metadataMu.Unlock()
+	if len(metadata) != 2 || metadata[0].Bytes == 0 || metadata[1].Bytes == 0 {
+		t.Fatalf("metadata=%#v", metadata)
+	}
+}
+
+func TestResolveLiveSidebandPlanDoesNotForwardAdmissionHeaders(t *testing.T) {
+	incoming := make(http.Header)
+	incoming.Set("OpenAI-Alpha", "quicksilver=v2")
+	incoming.Set("X-OpenCodex-API-Key", "proxy-secret")
+	incoming.Set("Authorization", "Bearer caller")
+	plan, err := ResolveLiveSidebandPlan(LiveRelayTarget{
+		ProviderBaseURL: "https://api.openai.com/v1",
+		Headers:         http.Header{"Authorization": {"Bearer upstream"}, "ChatGPT-Account-Id": {"acct"}},
+	}, LiveSidebandTarget{Style: LiveRealtimeQuery, CallID: "call_1"}, incoming)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Headers.Get("Authorization") != "Bearer upstream" || plan.Headers.Get("OpenAI-Alpha") != "quicksilver=v2" || plan.Headers.Get("X-OpenCodex-API-Key") != "" {
+		t.Fatalf("headers=%v", plan.Headers)
+	}
+}
