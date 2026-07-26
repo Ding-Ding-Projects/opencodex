@@ -103,6 +103,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	oauthManagement := newOAuthManagement(credentialStore)
 	providerClient := newAdapterAwareClient(server.NewProviderClient(providerFetchTimeouts(runtimeCfg)))
 	sharedModelCache := codex.NewModelCache()
+	sharedQuotaStore := codex.NewQuotaStore()
 	runtimeCfg = discoverConfiguredProviderModels(ctx, runtimeCfg, credentialStore, sharedModelCache, providerClient)
 	cursorModels, discoveryErr := discoverConfiguredCursorModels(ctx, runtimeCfg, credentialStore, nil)
 	if discoveryErr != nil && streams.Err != nil {
@@ -123,7 +124,11 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	requestLogs := management.NewRequestLog(200)
 	stop := &stopRouter{channel: make(chan struct{})}
 	liveAuth := &configBackedAuth{config: cfg, store: credentialStore, resolver: auth}
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
+	codexAuthManagement := newCodexAuthManagement(cfg, loadedConfigPath, credentialStore, sharedQuotaStore, providerClient)
+	providerQuotas := &cliProviderQuotas{config: cfg, quota: sharedQuotaStore, codexAuth: codexAuthManagement, now: time.Now}
+	claudeRuntime := newClaudeRuntime(cfg, configHome)
+	runtimeControl := newRuntimeControl(cfg)
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
 	selectedPort := cfg.Port
 	if cfg.Port > 0 {
 		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, cfg.Port, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})

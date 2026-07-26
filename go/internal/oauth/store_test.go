@@ -171,3 +171,18 @@ func TestCredentialStoreRefreshIfGenerationAdoptsWinner(t *testing.T) {
 		t.Fatalf("results = first %#v, second %#v", firstResult, secondResult)
 	}
 }
+
+func TestCredentialStoreSaveNamedAccountKeepsPublicAndPhysicalIDsSeparate(t *testing.T) {
+	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	credential := OAuthCredentials{Access: "access-secret", Refresh: "refresh-secret", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: "physical-chatgpt-id"}
+	if err := store.SaveNamedAccount(context.Background(), "openai", "work", credential); err != nil {
+		t.Fatal(err)
+	}
+	set, found, err := store.GetAccountSet("openai")
+	if err != nil || !found || set.ActiveAccountID != "work" || len(set.Accounts) != 1 {
+		t.Fatalf("set=%#v found=%t err=%v", set, found, err)
+	}
+	if set.Accounts[0].ID != "work" || set.Accounts[0].Credential.AccountID != "physical-chatgpt-id" {
+		t.Fatalf("account=%#v", set.Accounts[0])
+	}
+}

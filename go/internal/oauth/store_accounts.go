@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 func (s *CredentialStore) ListAccounts(provider string) ([]ProviderAccount, error) {
@@ -11,6 +12,33 @@ func (s *CredentialStore) ListAccounts(provider string) ([]ProviderAccount, erro
 		return nil, err
 	}
 	return append([]ProviderAccount(nil), set.Accounts...), nil
+}
+
+// SaveNamedAccount persists a credential under an API-stable account id. This
+// is used by Codex account management, where the public pool id is intentionally
+// distinct from the physical ChatGPT account id carried by the credential.
+func (s *CredentialStore) SaveNamedAccount(ctx context.Context, provider, accountID string, credential OAuthCredentials) error {
+	provider, accountID = strings.TrimSpace(provider), strings.TrimSpace(accountID)
+	if provider == "" || accountID == "" || !validCredential(credential) {
+		return errors.New("provider, account id, and a valid OAuth credential are required")
+	}
+	return s.mutate(ctx, func(store AuthStore) error {
+		set := store[provider]
+		for index := range set.Accounts {
+			if set.Accounts[index].ID != accountID {
+				continue
+			}
+			set.Accounts[index].Credential = credential
+			set.Accounts[index].NeedsReauth = false
+			set.ActiveAccountID = accountID
+			store[provider] = set
+			return nil
+		}
+		set.Accounts = append(set.Accounts, ProviderAccount{ID: accountID, Credential: credential, AddedAt: s.now().UnixMilli()})
+		set.ActiveAccountID = accountID
+		store[provider] = set
+		return nil
+	})
 }
 
 // SaveAccountCredential updates one stable account slot without changing the
