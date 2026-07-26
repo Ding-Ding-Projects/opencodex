@@ -41,9 +41,6 @@ func ProbeLiveness(ctx context.Context, client *http.Client, url string) bool {
 	if response.StatusCode != http.StatusOK {
 		return false
 	}
-	var body struct {
-		Service string `json:"service"`
-		Status  string `json:"status"`
-	}
-	return json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&body) == nil && body.Service == "opencodex" && body.Status == "ok"
+	var body HealthIdentity
+	return json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&body) == nil && IsOpenCodexHealthIdentity(&body)
 }

@@ -42,6 +42,8 @@ type ResponsesCoreConfig struct {
 	// callback owns account-mode filtering and state; ResponsesCore only extracts
 	// the authenticated account identity and an isolated header snapshot.
 	ConsumeQuotaHeaders func(context.Context, string, http.Header)
+	Guidance            MultiAgentGuidanceOptions
+	ResolveSubagents    SubagentRosterResolver
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -135,6 +137,12 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	}
 	applyResolvedResponsesModel(parsed.Normalized, resolved.Model)
 	applyResponsesEffortPolicy(parsed.Normalized, resolved, router, request.Header, core.config.EffortCap, core.config.SubagentEffortCap)
+	if guidance := MultiAgentGuidanceText(parsed.Normalized, core.config.Guidance, core.config.ResolveSubagents); guidance != "" {
+		if err := InjectDeveloperMessage(parsed.Normalized, guidance, time.Now()); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "server_error", "multi-agent guidance injection failed")
+			return
+		}
+	}
 	tracked, done := core.config.Lifecycle.Track(request.Context())
 	defer done()
 	ctx, cancel := context.WithCancelCause(tracked)

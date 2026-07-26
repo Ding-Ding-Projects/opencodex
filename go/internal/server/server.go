@@ -124,6 +124,14 @@ func New(config Config) *Server {
 		quota = codex.NewQuotaStore()
 	}
 	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota}
+	guidance := MultiAgentGuidanceOptions{}
+	if config.ManagementConfig != nil {
+		guidance = MultiAgentGuidanceOptions{
+			Enabled: config.ManagementConfig.MultiAgentGuidanceEnabled, InjectionModel: config.ManagementConfig.InjectionModel,
+			InjectionEffort: config.ManagementConfig.InjectionEffort, SubagentModels: append([]string(nil), config.ManagementConfig.SubagentModels...),
+			InjectionPrompt: config.ManagementConfig.InjectionPrompt,
+		}
+	}
 	if s.config.Hostname == "" && s.config.ManagementConfig != nil {
 		s.config.Hostname = s.config.ManagementConfig.Host
 	}
@@ -145,6 +153,7 @@ func New(config Config) *Server {
 		ConsumeQuotaHeaders: func(_ context.Context, accountID string, headers http.Header) {
 			quota.ApplyUpstreamHeaders(accountID, headers)
 		},
+		Guidance: guidance,
 	})
 	mux := http.NewServeMux()
 	websocketsEnabled := config.WebSockets

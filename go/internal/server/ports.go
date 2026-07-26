@@ -51,10 +51,23 @@ func WaitForPortAvailable(host string, port int, timeout, interval time.Duration
 
 // FindAvailablePort returns preferred when possible, otherwise an OS-selected port.
 func FindAvailablePort(host string, preferred int, allowFallback bool) (int, error) {
+	return FindAvailablePortWithOptions(host, preferred, FindAvailablePortOptions{AllowEphemeralFallback: allowFallback})
+}
+
+type FindAvailablePortOptions struct {
+	PreferRetry            time.Duration
+	PreferRetryInterval    time.Duration
+	AllowEphemeralFallback bool
+}
+
+func FindAvailablePortWithOptions(host string, preferred int, options FindAvailablePortOptions) (int, error) {
+	if preferred > 0 && options.PreferRetry > 0 && WaitForPortAvailable(host, preferred, options.PreferRetry, options.PreferRetryInterval) {
+		return preferred, nil
+	}
 	if preferred > 0 && IsPortAvailable(host, preferred) {
 		return preferred, nil
 	}
-	if !allowFallback {
+	if !options.AllowEphemeralFallback {
 		return 0, fmt.Errorf("port %d on %s is unavailable", preferred, host)
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
@@ -66,4 +79,8 @@ func FindAvailablePort(host string, preferred int, allowFallback bool) (int, err
 		return 0, err
 	}
 	return port, nil
+}
+
+func ShouldPersistSelectedPort(configPort, selectedPort, preferredPort int) bool {
+	return selectedPort == preferredPort && configPort != selectedPort
 }

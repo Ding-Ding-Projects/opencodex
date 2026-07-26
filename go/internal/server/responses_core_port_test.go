@@ -87,11 +87,15 @@ type coreAdapter struct {
 	endpoint string
 	stream   bool
 	buildErr error
+	onBuild  func(*types.NormalizedRequest)
 }
 
 func (a coreAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
 	if a.buildErr != nil {
 		return nil, a.buildErr
+	}
+	if a.onBuild != nil {
+		a.onBuild(request)
 	}
 	return http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, strings.NewReader(string(request.RawBody)))
 }
@@ -281,5 +285,28 @@ func TestResponsesCoreSeparatesBootstrapTransportFromLocalBuildErrors(t *testing
 				t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestResponsesCoreInjectsConfiguredCollaborationGuidanceBeforeBuild(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) }))
+	defer upstream.Close()
+	var contextGuidance, rawGuidance bool
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL}, Guidance: MultiAgentGuidanceOptions{InjectionPrompt: "delegate with configured guidance"},
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return coreAdapter{endpoint: upstream.URL, onBuild: func(request *types.NormalizedRequest) {
+				for _, message := range request.Context.Messages {
+					contextGuidance = contextGuidance || message.Role == "developer" && strings.Contains(string(message.Content), "configured guidance")
+				}
+				rawGuidance = strings.Contains(string(request.RawBody), "configured guidance")
+			}}, nil
+		},
+	})
+	body := `{"model":"public","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"}},{"type":"function","name":"send_message","parameters":{"type":"object"}}]}`
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+	if response.Code != http.StatusOK || !contextGuidance || !rawGuidance {
+		t.Fatalf("response=%d %s context=%v raw=%v", response.Code, response.Body.String(), contextGuidance, rawGuidance)
 	}
 }
