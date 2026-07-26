@@ -431,16 +431,20 @@ func estimateInputTokens(req *types.NormalizedRequest) int {
 }
 
 type attemptResult struct {
-	events        []types.AdapterEvent
-	usage         *types.Usage
-	sawText       bool
-	sawReasoning  bool
-	assistantText string
-	needsFallback bool
-	terminalError bool
+	events         []types.AdapterEvent
+	usage          *types.Usage
+	sawText        bool
+	sawReasoning   bool
+	assistantText  string
+	needsFallback  bool
+	terminalError  bool
+	conversationID string
 }
 
-func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, inputTokens int, nameMap map[string]string, previousText string) (result attemptResult) {
+func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, inputTokens int, nameMap map[string]string, previousText string, conversationIDs ...string) (result attemptResult) {
+	if len(conversationIDs) > 0 && IsValidConversationID(conversationIDs[0]) {
+		result.conversationID = conversationIDs[0]
+	}
 	if body == nil {
 		result.usage = &types.Usage{InputTokens: inputTokens, Estimated: true}
 		result.events = []types.AdapterEvent{{Type: types.EventError, Error: "Kiro response has no body", StatusCode: 502, Usage: result.usage}}
@@ -480,6 +484,9 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 		for i := range result.events {
 			if (result.events[i].Type == types.EventError || result.events[i].Type == types.EventDone) && result.events[i].Usage == nil {
 				result.events[i].Usage = result.usage
+			}
+			if (result.events[i].Type == types.EventError || result.events[i].Type == types.EventDone || result.events[i].Type == types.EventIncomplete) && result.conversationID != "" {
+				result.events[i].ProviderState = types.ProviderContinuationState{"kiro": {"conversationId": result.conversationID}}
 			}
 		}
 	}()
@@ -599,6 +606,10 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 		case "metadata":
 			if event.Usage != nil {
 				authoritative = event.Usage
+			}
+		case "message_metadata":
+			if IsValidConversationID(event.ConversationID) {
+				result.conversationID = event.ConversationID
 			}
 		case "content":
 			if open != nil {
@@ -740,7 +751,11 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			input = state.inputTokens
 			names = state.nameMap
 		}
-		first := parseAttempt(ctx, body, mode, input, names, "")
+		conversationID := ""
+		if state != nil {
+			conversationID = state.conversationID
+		}
+		first := parseAttempt(ctx, body, mode, input, names, "", conversationID)
 		if !first.needsFallback || state == nil {
 			sendEvents(ctx, out, first.events)
 			return
@@ -757,7 +772,11 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 		if retryReq.Metadata == nil {
 			retryReq.Metadata = map[string]string{}
 		}
-		retryReq.Metadata["kiro.conversationId"] = state.conversationID
+		retryConversationID := first.conversationID
+		if retryConversationID == "" {
+			retryConversationID = state.conversationID
+		}
+		retryReq.Metadata["kiro.conversationId"] = retryConversationID
 		httpReq, retryState, err := a.buildRequest(ctx, &retryReq, CompletionTextFallback)
 		if err != nil {
 			sendEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: err.Error(), StatusCode: 502, Retryable: true})
@@ -775,7 +794,7 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			sendEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: failure.Message, StatusCode: failure.Status, Retryable: failure.Retryable})
 			return
 		}
-		second := parseAttempt(ctx, response.Body, CompletionTextFallback, retryState.inputTokens, retryState.nameMap, first.assistantText)
+		second := parseAttempt(ctx, response.Body, CompletionTextFallback, retryState.inputTokens, retryState.nameMap, first.assistantText, retryState.conversationID)
 		for i := range second.events {
 			if second.events[i].Type == types.EventDone {
 				second.events[i].Usage = mergeUsage(first.usage, second.events[i].Usage)

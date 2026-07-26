@@ -13,6 +13,7 @@ func TestExecWireDecodesMCPArguments(t *testing.T) {
 	entry = appendBytes(entry, 2, argument)
 	mcp := appendString(nil, 1, "read_file")
 	mcp = appendMessage(mcp, 2, entry)
+	mcp = appendString(mcp, 3, "call_1")
 	mcp = appendString(mcp, 4, "opencodex")
 	mcp = appendString(mcp, 5, "workspace__read_file")
 	exec := appendVarintField(nil, 1, 42)
@@ -26,7 +27,7 @@ func TestExecWireDecodesMCPArguments(t *testing.T) {
 	if request.ID != "42" || request.ExecID != "exec-42" || request.Kind != ExecMCP {
 		t.Fatalf("unexpected envelope: %#v", request)
 	}
-	if request.Tool == nil || request.Tool.Name != "workspace__read_file" || request.Tool.ProviderIdentifier != "opencodex" {
+	if request.Tool == nil || request.Tool.Name != "workspace__read_file" || request.Tool.ProviderIdentifier != "opencodex" || request.Tool.ToolCallID != "call_1" {
 		t.Fatalf("unexpected MCP request: %#v", request.Tool)
 	}
 	input, ok := request.Tool.Arguments["input"].(map[string]any)

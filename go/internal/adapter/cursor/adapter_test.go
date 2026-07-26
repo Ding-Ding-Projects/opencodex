@@ -191,6 +191,59 @@ func TestAdapterIgnoresUnknownServerEventAndStillTerminates(t *testing.T) {
 	}
 }
 
+func TestAdapterBridgesResponsesClientToolAndFinalizesAfterGrace(t *testing.T) {
+	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := cursorNormalizedRequest("read a file")
+	normalized.Context.Tools = []types.Tool{{Namespace: "workspace", Name: "read_file", Parameters: map[string]any{"type": "object"}}}
+	request, err := adapter.BuildRequest(context.Background(), normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Body.Close()
+	turn := adapter.currentTurn()
+	turn.run.ClientToolFinalizeGrace = 10 * time.Millisecond
+
+	responseReader, responseWriter := io.Pipe()
+	events := adapter.ParseStream(context.Background(), responseReader)
+	value, _ := MarshalValue("README.md")
+	entry := appendString(nil, 1, "path")
+	entry = appendBytes(entry, 2, value)
+	args := appendString(nil, 1, "workspace__read_file")
+	args = appendMessage(args, 2, entry)
+	args = appendString(args, 3, "call_1")
+	args = appendString(args, 4, ResponsesToolProvider)
+	args = appendString(args, 5, "workspace__read_file")
+	exec := appendVarintField(nil, 1, 7)
+	exec = appendMessage(exec, 11, args)
+	exec = appendString(exec, 15, "exec_1")
+	frame, err := EncodeFrame(ConnectFrame{Payload: appendMessage(nil, 2, exec)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_, _ = responseWriter.Write(frame)
+	}()
+
+	first := <-events
+	if first.Type != types.EventToolCall || first.ToolCall == nil || first.ToolCall.ID != "call_1" || first.ToolCall.Name != "workspace__read_file" {
+		t.Fatalf("tool event = %#v", first)
+	}
+	select {
+	case done := <-events:
+		if done.Type != types.EventDone {
+			t.Fatalf("terminal event = %#v", done)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("client tool bridge did not finalize after grace")
+	}
+	_ = responseWriter.Close()
+	for range events {
+	}
+}
+
 func TestAdapterConcurrentTurnAdmissionIsRaceSafe(t *testing.T) {
 	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
 	if err != nil {

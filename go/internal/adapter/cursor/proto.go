@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
+	"time"
 )
 
 // These are the small, stable subset of agent.v1 used by the Cursor adapter.
@@ -22,6 +24,7 @@ type AgentRunRequest struct {
 	ToolSchemas              map[string]map[string]any // Responses-side schemas for returned argument normalization
 	ContextUsageReset        bool
 	DisableContextUsageStore bool
+	ClientToolFinalizeGrace  time.Duration
 }
 
 type ConversationState struct {
@@ -225,18 +228,85 @@ func marshalKVReply(data []byte, blobs map[string][]byte) ([]byte, error) {
 }
 
 func marshalEmptyInteractionReply(data []byte) ([]byte, error) {
+	reply, _, err := marshalInteractionReply(data)
+	return reply, err
+}
+
+func marshalInteractionReply(data []byte) ([]byte, string, error) {
 	fields, err := parseFields(data)
 	if err != nil {
-		return nil, fmt.Errorf("decode Cursor interaction query: %w", err)
+		return nil, "", fmt.Errorf("decode Cursor interaction query: %w", err)
 	}
 	var id uint64
+	queryKind := 0
+	var query []byte
 	for _, field := range fields {
 		if field.Number == 1 {
 			id = field.Varint
+		} else if field.Number >= 2 && field.Number <= 8 {
+			queryKind = field.Number
+			query = field.Bytes
 		}
 	}
 	response := appendVarintField(nil, 1, id)
-	return appendMessage(nil, 6, response), nil // AgentClientMessage.interaction_response
+	visibleText := ""
+	const nonInteractiveReason = "opencodex bridge is non-interactive; proceed without this interaction."
+	switch queryKind {
+	case 2, 5, 6: // webSearch, exaSearch, exaFetch: approve server-side execution.
+		response = appendMessage(response, queryKind, appendMessage(nil, 1, nil))
+	case 3: // askQuestion: reject because the proxy cannot pause for an answer.
+		result := appendMessage(nil, 3, appendString(nil, 1, nonInteractiveReason))
+		response = appendMessage(response, queryKind, appendMessage(nil, 1, result))
+	case 4: // switchMode: deterministic rejection in headless mode.
+		response = appendMessage(response, queryKind, appendMessage(nil, 2, appendString(nil, 1, nonInteractiveReason)))
+	case 7: // createPlan: acknowledge and surface its model-visible text.
+		response = appendMessage(response, queryKind, appendMessage(nil, 1, appendMessage(nil, 1, nil)))
+		visibleText = interactionPlanText(query)
+	case 8: // setupVmEnvironment and unknown queries use an empty response to unblock Cursor.
+	}
+	return appendMessage(nil, 6, response), visibleText, nil // AgentClientMessage.interaction_response
+}
+
+func interactionPlanText(query []byte) string {
+	fields, err := parseFields(query)
+	if err != nil {
+		return ""
+	}
+	var args []byte
+	for _, field := range fields {
+		if field.Number == 1 {
+			args = field.Bytes
+		}
+	}
+	fields, err = parseFields(args)
+	if err != nil {
+		return ""
+	}
+	var name, overview, plan string
+	for _, field := range fields {
+		switch field.Number {
+		case 1:
+			plan = string(field.Bytes)
+		case 3:
+			overview = string(field.Bytes)
+		case 4:
+			name = string(field.Bytes)
+		}
+	}
+	parts := make([]string, 0, 3)
+	if name != "" {
+		parts = append(parts, "Plan: "+name)
+	}
+	if strings.TrimSpace(overview) != "" {
+		parts = append(parts, strings.TrimSpace(overview))
+	}
+	if strings.TrimSpace(plan) != "" {
+		parts = append(parts, strings.TrimSpace(plan))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n\n") + "\n"
 }
 
 func MarshalGetUsableModelsRequest(customIDs []string) []byte {

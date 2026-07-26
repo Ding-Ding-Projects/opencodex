@@ -178,6 +178,52 @@ func TestKVBlobReply(t *testing.T) {
 	}
 }
 
+func TestDefaultInteractionReplyApprovesSearchAndSurfacesPlan(t *testing.T) {
+	for _, kind := range []int{2, 5, 6} {
+		query := appendMessage(appendVarintField(nil, 1, 9), kind, nil)
+		reply, visible, err := marshalInteractionReply(query)
+		if err != nil || visible != "" {
+			t.Fatalf("kind %d reply error=%v visible=%q", kind, err, visible)
+		}
+		outer, _ := parseFields(reply)
+		response, _ := parseFields(outer[0].Bytes)
+		if len(response) != 2 || response[1].Number != kind {
+			t.Fatalf("kind %d response=%#v", kind, response)
+		}
+		approval, _ := parseFields(response[1].Bytes)
+		if len(approval) != 1 || approval[0].Number != 1 {
+			t.Fatalf("kind %d approval=%#v", kind, approval)
+		}
+	}
+
+	args := appendString(nil, 1, "Step one\nStep two")
+	args = appendString(args, 3, "Overview")
+	args = appendString(args, 4, "Migration")
+	createPlan := appendMessage(appendVarintField(nil, 1, 10), 7, appendMessage(nil, 1, args))
+	_, visible, err := marshalInteractionReply(createPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visible != "Plan: Migration\n\nOverview\n\nStep one\nStep two\n" {
+		t.Fatalf("visible plan = %q", visible)
+	}
+}
+
+func TestDefaultInteractionReplyRejectsHeadlessQuestionsAndModeSwitch(t *testing.T) {
+	for _, kind := range []int{3, 4} {
+		query := appendMessage(appendVarintField(nil, 1, 11), kind, nil)
+		reply, _, err := marshalInteractionReply(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outer, _ := parseFields(reply)
+		response, _ := parseFields(outer[0].Bytes)
+		if len(response) != 2 || response[1].Number != kind || len(response[1].Bytes) == 0 {
+			t.Fatalf("kind %d response=%#v", kind, response)
+		}
+	}
+}
+
 func TestClassifyCursorErrors(t *testing.T) {
 	tests := []struct {
 		message string

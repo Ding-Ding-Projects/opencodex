@@ -13,9 +13,13 @@ import (
 )
 
 const (
-	CursorToolCountLimit = 330
-	CursorToolBytesLimit = 120_000
-	cursorToolProvider   = "opencodex-responses"
+	CursorToolCountLimit                       = 330
+	CursorToolBytesLimit                       = 120_000
+	cursorToolProvider                         = "opencodex-responses"
+	cursorClientToolFinalizeGrace              = 50 * time.Millisecond
+	cursorGenericToolCountMinFinalizeGrace     = 750 * time.Millisecond
+	cursorGenericToolCountMaxFinalizeGrace     = 1800 * time.Millisecond
+	cursorGenericToolCountPerToolFinalizeGrace = 125 * time.Millisecond
 )
 
 type BuiltRequest struct {
@@ -82,11 +86,26 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 		ToolSchemas:              cursorNormalizeSchemas(keptTools),
 		ContextUsageReset:        req.CompactionRequest || req.CompactionBoundary,
 		DisableContextUsageStore: req.CompactionRequest,
+		ClientToolFinalizeGrace:  clientToolFinalizeGrace(lastRole, activeText, keptTools),
 	}
 	if len(parameters) > 0 {
 		run.RequestedModel = &RequestedModel{ID: modelID, Parameters: parameters}
 	}
 	return &BuiltRequest{Run: run, Blobs: blobs, OmittedTools: omitted, EstimatedInputTokens: estimatedInputTokens}, nil
+}
+
+func clientToolFinalizeGrace(lastRole, activeText string, tools []types.Tool) time.Duration {
+	if lastRole == "tool" || !CursorRequestHasShellAlias(tools) || !IsGenericToolUseCountDemoPrompt(activeText) {
+		return cursorClientToolFinalizeGrace
+	}
+	count := RequestedCursorToolUseCount(activeText)
+	grace := cursorGenericToolCountMinFinalizeGrace
+	if count > 0 {
+		grace = time.Duration(count) * cursorGenericToolCountPerToolFinalizeGrace
+		grace = max(grace, cursorGenericToolCountMinFinalizeGrace)
+		grace = min(grace, cursorGenericToolCountMaxFinalizeGrace)
+	}
+	return max(cursorClientToolFinalizeGrace, grace)
 }
 
 func toolsMatchingDefinitions(input []types.Tool, definitions []MCPToolDefinition) []types.Tool {

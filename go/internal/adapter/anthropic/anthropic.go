@@ -126,6 +126,14 @@ func messagesEndpoint(baseURL string) (string, error) {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}
+	if start := strings.IndexByte(baseURL, '{'); start >= 0 {
+		end := strings.IndexByte(baseURL[start:], '}')
+		placeholder := baseURL[start:]
+		if end >= 0 {
+			placeholder = baseURL[start : start+end+1]
+		}
+		return "", fmt.Errorf("anthropic provider baseUrl contains unresolved %s", placeholder)
+	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("invalid Anthropic base URL %q", baseURL)

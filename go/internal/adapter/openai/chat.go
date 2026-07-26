@@ -39,11 +39,14 @@ func (a *ChatAdapter) BuildRequest(ctx context.Context, req *types.NormalizedReq
 	if req == nil {
 		return nil, fmt.Errorf("build chat request: nil normalized request")
 	}
-	endpoint, err := chatEndpoint(a.BaseURL)
+	provider := a.providerConfig()
+	if err := validateChatCredential(provider, a.APIKey); err != nil {
+		return nil, err
+	}
+	endpoint, err := chatEndpoint(provider.BaseURL)
 	if err != nil {
 		return nil, err
 	}
-	provider := a.providerConfig()
 	body, err := chatRequestBodyForProvider(req, a, provider)
 	if err != nil {
 		return nil, fmt.Errorf("build chat request body: %w", err)
@@ -65,6 +68,20 @@ func (a *ChatAdapter) BuildRequest(ctx context.Context, req *types.NormalizedReq
 	SetBearerAuth(httpReq.Header, a.APIKey)
 	InjectHeaders(httpReq.Header, a.Headers)
 	return httpReq, nil
+}
+
+func validateChatCredential(provider config.ProviderConfig, credential string) error {
+	mode := strings.TrimSpace(provider.AuthMode)
+	if mode != "key" && mode != "oauth" {
+		return nil
+	}
+	if strings.TrimSpace(credential) != "" {
+		return nil
+	}
+	if mode == "key" && provider.KeyOptional != nil && *provider.KeyOptional {
+		return nil
+	}
+	return fmt.Errorf("openai-chat requires a non-empty credential (authMode: %s)", mode)
 }
 
 // NewChatAdapter is the provider-aware constructor. Callers that use a struct
@@ -361,6 +378,9 @@ func (a *ChatAdapter) ParseUnary(_ context.Context, body []byte) ([]types.Adapte
 	}
 	choice, _ := choices[0].(map[string]any)
 	message, _ := choice["message"].(map[string]any)
+	if choice == nil || message == nil {
+		return []types.AdapterEvent{{Type: types.EventError, Error: "upstream response contained no choices"}}, nil
+	}
 	events := make([]types.AdapterEvent, 0)
 	if text := stringValue(message["content"]); text != "" {
 		events = append(events, types.AdapterEvent{Type: types.EventTextDelta, Text: text})

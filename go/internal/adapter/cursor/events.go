@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -18,6 +19,7 @@ type EventParserOptions struct {
 }
 
 type EventParser struct {
+	mu                   sync.Mutex
 	open                 map[string]*openToolCall
 	completed            map[string]struct{}
 	usage                types.Usage
@@ -49,6 +51,8 @@ func NewEventParser(options ...EventParserOptions) *EventParser {
 }
 
 func (p *EventParser) Parse(data []byte) ([]types.AdapterEvent, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.terminated {
 		return nil, nil
 	}
@@ -64,6 +68,69 @@ func (p *EventParser) Parse(data []byte) ([]types.AdapterEvent, error) {
 	default:
 		return nil, nil
 	}
+}
+
+// HandleClientToolExec bridges Cursor's synchronous MCP exec request back to
+// the stateless Responses client. No mcpResult may be written for this
+// provider: the real result arrives in the next normalized request.
+func (p *EventParser) HandleClientToolExec(req ExecRequest) ([]types.AdapterEvent, bool, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if req.Kind != ExecMCP || req.Tool == nil || req.Tool.ProviderIdentifier != ResponsesToolProvider {
+		return nil, false, false, nil
+	}
+	if p.terminated {
+		return nil, true, false, nil
+	}
+	tool := req.Tool
+	id := firstNonEmpty(tool.ToolCallID, req.ExecID, "exec_"+req.ID)
+	open := p.open[id]
+	if _, completed := p.completed[id]; completed {
+		return nil, true, len(p.open) == 0, nil
+	}
+	name := tool.Name
+	if open != nil && open.Name != "" {
+		name = open.Name
+	}
+	if resolved, ok := ResolveAdvertisedClientToolName(name, p.ClientToolNames); ok {
+		name = resolved
+	}
+	if id == "" || name == "" {
+		return nil, true, false, fmt.Errorf("Cursor client tool exec is missing toolCallId or name")
+	}
+	arguments := tool.Arguments
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+	encoded, err := json.Marshal(p.normalizeToolArguments(name, arguments))
+	if err != nil {
+		return nil, true, false, fmt.Errorf("encode Cursor client tool arguments: %w", err)
+	}
+	delete(p.open, id)
+	p.completed[id] = struct{}{}
+	event := types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: id, Name: name, Arguments: encoded}}
+	return []types.AdapterEvent{event}, true, len(p.open) == 0, nil
+}
+
+func (p *EventParser) FinalizeClientToolsIfDrained() []types.AdapterEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.terminated || len(p.open) > 0 {
+		return nil
+	}
+	return p.finish()
+}
+
+func (p *EventParser) OpenToolCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.open)
+}
+
+func (p *EventParser) Terminated() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.terminated
 }
 
 func (p *EventParser) parseCheckpoint(data []byte) ([]types.AdapterEvent, error) {

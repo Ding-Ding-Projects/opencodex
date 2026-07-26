@@ -99,6 +99,8 @@ func unmarshalMCPArgs(data []byte) (ToolRequest, error) {
 				}
 				req.Arguments[key] = value
 			}
+		case 3:
+			req.ToolCallID = string(field.Bytes)
 		case 4:
 			req.ProviderIdentifier = string(field.Bytes)
 		case 5:

@@ -118,9 +118,9 @@ const (
 )
 
 type ToolRequest struct {
-	Operation                             ToolOperation
-	ProviderIdentifier, Name, Server, URI string
-	Arguments                             map[string]any
+	Operation                                         ToolOperation
+	ProviderIdentifier, Name, ToolCallID, Server, URI string
+	Arguments                                         map[string]any
 }
 type ToolResult struct {
 	IsError        bool

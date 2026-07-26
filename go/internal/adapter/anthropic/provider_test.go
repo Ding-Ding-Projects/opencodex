@@ -68,6 +68,27 @@ func TestProviderConstructorAppliesOAuthToolsSchemaAndCaching(t *testing.T) {
 	}
 }
 
+func TestAnthropicProviderRejectsBlankCredentialsAndUnresolvedGateway(t *testing.T) {
+	request := &types.NormalizedRequest{ModelID: "claude-haiku-4-5", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}}}}
+	for _, test := range []struct {
+		name     string
+		provider config.ProviderConfig
+		key      string
+		want     string
+	}{
+		{name: "blank key", provider: config.ProviderConfig{BaseURL: "https://api.anthropic.com", AuthMode: "key"}, key: "   ", want: "requires a non-empty apiKey"},
+		{name: "blank oauth", provider: config.ProviderConfig{BaseURL: "https://api.anthropic.com", AuthMode: "oauth"}, want: "oauth token missing"},
+		{name: "gateway placeholder", provider: config.ProviderConfig{BaseURL: "https://gateway.ai.cloudflare.com/v1/{account-id}/{gateway}/anthropic", AuthMode: "key"}, key: "secret", want: "unresolved {account-id}"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewAdapter(test.provider, test.key, nil, "short").BuildRequest(context.Background(), request)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestCompatibilityToolEscapingRoundTripsStreamAndUnary(t *testing.T) {
 	escape := true
 	adapter := NewAdapter(config.ProviderConfig{BaseURL: "https://proxy.test", EscapeBuiltinToolNames: &escape}, "key", nil, "none")

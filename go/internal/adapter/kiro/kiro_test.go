@@ -168,6 +168,32 @@ func TestParseStreamToolUsageAndTerminalError(t *testing.T) {
 	}
 }
 
+func TestParseAttemptCarriesValidatedReturnedConversationState(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		returned string
+		want     string
+	}{
+		{name: "valid replacement", returned: "returned:conversation-2", want: "returned:conversation-2"},
+		{name: "invalid replacement", returned: "../../secret", want: "original:conversation-1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := smithyStream(t,
+				eventFrame(t, "messageMetadataEvent", map[string]any{"conversationId": test.returned}),
+				eventFrame(t, "assistantResponseEvent", map[string]any{"content": "done"}),
+			)
+			result := parseAttempt(context.Background(), io.NopCloser(bytes.NewReader(stream)), CompletionDisabled, 1, nil, "", "original:conversation-1")
+			if len(result.events) == 0 || result.events[len(result.events)-1].Type != types.EventDone {
+				t.Fatalf("events=%#v", result.events)
+			}
+			state := result.events[len(result.events)-1].ProviderState
+			if got, _ := state["kiro"]["conversationId"].(string); got != test.want {
+				t.Fatalf("conversation state = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestParseStreamFailsClosedOnEmptyTruncatedAndOversizedFrames(t *testing.T) {
 	oversized := make([]byte, 12)
 	binary.BigEndian.PutUint32(oversized[:4], 16*1024*1024+1)

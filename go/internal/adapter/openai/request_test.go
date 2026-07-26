@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -75,6 +76,61 @@ func TestChatBuildRequestShape(t *testing.T) {
 	}
 }
 
+func TestChatCredentialHardening(t *testing.T) {
+	request := &types.NormalizedRequest{ModelID: "model", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}}}}
+	optional := true
+	for _, test := range []struct {
+		name     string
+		provider config.ProviderConfig
+		key      string
+		wantErr  bool
+	}{
+		{name: "blank key", provider: config.ProviderConfig{BaseURL: "https://provider.test/v1", AuthMode: "key"}, key: "   ", wantErr: true},
+		{name: "blank oauth", provider: config.ProviderConfig{BaseURL: "https://provider.test/v1", AuthMode: "oauth"}, wantErr: true},
+		{name: "key optional", provider: config.ProviderConfig{BaseURL: "https://provider.test/v1", AuthMode: "key", KeyOptional: &optional}},
+		{name: "unspecified mode", provider: config.ProviderConfig{BaseURL: "https://provider.test/v1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			built, err := NewChatAdapter(test.provider, test.key, nil).BuildRequest(context.Background(), request)
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "requires a non-empty credential") {
+					t.Fatalf("error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if built.Header.Get("Authorization") != "" {
+				t.Fatalf("unexpected authorization: %q", built.Header.Get("Authorization"))
+			}
+		})
+	}
+}
+
+func TestChatUnaryHardeningRejectsErrorAndMissingChoices(t *testing.T) {
+	adapter := &ChatAdapter{}
+	for _, test := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "error envelope", body: `{"error":{"message":"upstream quota exhausted","code":"quota_exceeded"}}`, want: "upstream quota exhausted"},
+		{name: "empty choices", body: `{"choices":[]}`, want: "upstream response contained no choices"},
+		{name: "missing message", body: `{"choices":[{}]}`, want: "upstream response contained no choices"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			events, err := adapter.ParseUnary(context.Background(), []byte(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 1 || events[0].Type != types.EventError || events[0].Error != test.want {
+				t.Fatalf("events = %#v", events)
+			}
+		})
+	}
+}
+
 func TestAzureBuildRequest(t *testing.T) {
 	adapter := &AzureAdapter{BaseURL: "https://resource.openai.azure.com", Deployment: "gpt-4o", APIKey: "azure-key", APIVersion: "2025-01-01-preview"}
 	req := &types.NormalizedRequest{ModelID: "gpt-4o", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}}}
@@ -125,6 +181,23 @@ func TestChatParseStreamEOFWithoutTerminalSignalIsError(t *testing.T) {
 	const want = "upstream stream ended without a terminal signal ([DONE] or finish_reason) — possible truncation"
 	if events[1].Error != want {
 		t.Fatalf("error = %q, want %q", events[1].Error, want)
+	}
+}
+
+func TestChatMalformedSSEIsTerminalBeforeDoneMarker(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"partial"}}]}`,
+		`data: {not-json}`,
+		`data: [DONE]`, "",
+	}, "\n\n")
+	events := collectEvents((&ChatAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
+	if len(events) == 0 || events[len(events)-1].Type != types.EventError || events[len(events)-1].Error != "malformed upstream SSE data frame" {
+		t.Fatalf("events = %#v", events)
+	}
+	for _, event := range events {
+		if event.Type == types.EventDone {
+			t.Fatalf("malformed stream emitted done: %#v", events)
+		}
 	}
 }
 

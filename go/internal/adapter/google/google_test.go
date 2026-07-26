@@ -1,6 +1,7 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -221,6 +222,51 @@ func TestParseGeminiStreamRejectsMalformedDataFrame(t *testing.T) {
 	events := collectEvents(adapter.ParseStream(context.Background(), io.NopCloser(strings.NewReader("data: {invalid\n\n"))))
 	if len(events) != 1 || events[0].Type != types.EventError || events[0].Error != "malformed upstream SSE data frame" {
 		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestGoogleHardeningResidualFramesAndUnaryChoices(t *testing.T) {
+	adapter := &Adapter{Mode: ModeAIStudio}
+	residual := `data:{"candidates":[{"content":{"parts":[{"text":"final"}]},"finishReason":"STOP"}]}`
+	events := collectEvents(adapter.ParseStream(context.Background(), io.NopCloser(strings.NewReader(residual))))
+	if len(events) != 2 || events[0].Type != types.EventTextDelta || events[1].Type != types.EventDone {
+		t.Fatalf("residual events = %#v", events)
+	}
+
+	partialUTF8 := append([]byte("data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"), 0xe2, 0x82)
+	events = collectEvents(adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(partialUTF8))))
+	if len(events) == 0 || events[len(events)-1].Type != types.EventError {
+		t.Fatalf("partial UTF-8 events = %#v", events)
+	}
+
+	for _, body := range []json.RawMessage{json.RawMessage(`{}`), json.RawMessage(`{"candidates":[]}`)} {
+		unary, err := adapter.ParseUnary(context.Background(), body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(unary) != 1 || unary[0].Type != types.EventError || unary[0].Error != "google response contained no candidates" {
+			t.Fatalf("unary events = %#v", unary)
+		}
+	}
+}
+
+func TestGoogleHardeningRejectsBlankCredentialsAndAntigravityBaseURL(t *testing.T) {
+	request := &types.NormalizedRequest{ModelID: "gemini-test", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}}}}
+	for _, test := range []struct {
+		name    string
+		adapter *Adapter
+		want    string
+	}{
+		{name: "ai studio key", adapter: &Adapter{Mode: ModeAIStudio}, want: "non-empty API key"},
+		{name: "antigravity oauth", adapter: &Adapter{Mode: ModeCloudCodeAssist, BaseURL: "https://cloudcode.test"}, want: "oauth token missing"},
+		{name: "antigravity base URL", adapter: &Adapter{Mode: ModeCloudCodeAssist, AccessToken: "token"}, want: "non-empty baseUrl"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := test.adapter.BuildRequest(context.Background(), request)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want containing %q", err, test.want)
+			}
+		})
 	}
 }
 

@@ -46,8 +46,10 @@ type adapterTurn struct {
 	run    AgentRunRequest
 	parser *EventParser
 
-	writeMu sync.Mutex
-	once    sync.Once
+	writeMu         sync.Mutex
+	once            sync.Once
+	finalizeMu      sync.Mutex
+	pendingFinalize *time.Timer
 }
 
 var _ types.Adapter = (*Adapter)(nil)
@@ -203,7 +205,7 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 			if errors.Is(err, io.EOF) && frames == 0 {
 				return io.ErrUnexpectedEOF
 			}
-			if errors.Is(err, io.EOF) && turn.parser.terminated {
+			if (errors.Is(err, io.EOF) || errors.Is(err, context.Canceled)) && turn.parser.Terminated() {
 				return nil
 			}
 			return err
@@ -216,7 +218,7 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 			if err := ParseEndStreamTrailer(frame.Payload); err != nil {
 				return err
 			}
-			if turn.parser.terminated {
+			if turn.parser.Terminated() {
 				return nil
 			}
 			return fmt.Errorf("Cursor stream ended without terminal event")
@@ -228,10 +230,11 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 		switch server.Kind {
 		case ServerInteractionQuery:
 			var reply []byte
+			visibleText := ""
 			if a.config.Interaction != nil {
 				reply, err = a.config.Interaction(ctx, server.Payload)
 			} else {
-				reply, err = marshalEmptyInteractionReply(server.Payload)
+				reply, visibleText, err = marshalInteractionReply(server.Payload)
 			}
 			if err != nil {
 				return err
@@ -239,6 +242,11 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 			if len(reply) > 0 {
 				if err := turn.writePayload(reply); err != nil {
 					return fmt.Errorf("write Cursor interaction reply: %w", err)
+				}
+			}
+			if visibleText != "" {
+				if err := emit(types.AdapterEvent{Type: types.EventTextDelta, Text: visibleText}); err != nil {
+					return err
 				}
 			}
 			if err := emit(types.AdapterEvent{Type: types.EventHeartbeat}); err != nil {
@@ -255,14 +263,39 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 			}
 			continue
 		case ServerExec:
-			if a.config.NativeExecutor == nil {
-				continue
-			}
 			execRequest, decodeErr := UnmarshalExecServerMessage(server.Payload)
 			if decodeErr != nil {
 				return decodeErr
 			}
 			execRequest.ClientToolDefinitions = turn.run.Tools
+			clientEvents, handled, drained, handleErr := turn.parser.HandleClientToolExec(execRequest)
+			if handleErr != nil {
+				return handleErr
+			}
+			if handled {
+				for _, event := range clientEvents {
+					if err := emit(event); err != nil {
+						return err
+					}
+				}
+				if drained {
+					turn.scheduleClientToolFinalize(func() {
+						events := turn.parser.FinalizeClientToolsIfDrained()
+						for _, event := range events {
+							if emit(event) != nil {
+								return
+							}
+						}
+						if len(events) > 0 {
+							turn.cancel()
+						}
+					})
+				}
+				continue
+			}
+			if a.config.NativeExecutor == nil {
+				continue
+			}
 			for _, execResponse := range a.config.NativeExecutor.Execute(ctx, execRequest) {
 				reply, marshalErr := MarshalExecClientMessage(execResponse)
 				if marshalErr != nil {
@@ -280,6 +313,9 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 		events, err := turn.parser.Parse(frame.Payload)
 		if err != nil {
 			return err
+		}
+		if turn.parser.OpenToolCount() > 0 {
+			turn.cancelClientToolFinalize()
 		}
 		for _, event := range events {
 			if err := emit(event); err != nil {
@@ -322,8 +358,42 @@ func (t *adapterTurn) writePayload(payload []byte) error {
 	return err
 }
 
+func (t *adapterTurn) scheduleClientToolFinalize(finalize func()) {
+	grace := t.run.ClientToolFinalizeGrace
+	if grace <= 0 {
+		grace = cursorClientToolFinalizeGrace
+	}
+	t.finalizeMu.Lock()
+	if t.pendingFinalize != nil {
+		t.pendingFinalize.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(grace, func() {
+		t.finalizeMu.Lock()
+		if t.pendingFinalize != timer {
+			t.finalizeMu.Unlock()
+			return
+		}
+		t.pendingFinalize = nil
+		t.finalizeMu.Unlock()
+		finalize()
+	})
+	t.pendingFinalize = timer
+	t.finalizeMu.Unlock()
+}
+
+func (t *adapterTurn) cancelClientToolFinalize() {
+	t.finalizeMu.Lock()
+	if t.pendingFinalize != nil {
+		t.pendingFinalize.Stop()
+		t.pendingFinalize = nil
+	}
+	t.finalizeMu.Unlock()
+}
+
 func (t *adapterTurn) shutdownWithError(err error) {
 	t.once.Do(func() {
+		t.cancelClientToolFinalize()
 		t.cancel()
 		if err != nil {
 			_ = t.writer.CloseWithError(err)

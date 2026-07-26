@@ -140,6 +140,8 @@ func (t *LiveTransport) startHeartbeat(ctx context.Context) <-chan error {
 }
 
 func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(types.AdapterEvent) error) error {
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	t.committed.Store(false)
 	payload, err := MarshalAgentClientRun(run)
 	if err != nil {
@@ -214,6 +216,48 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 		parserOptions.RecordContextTokens = controls.RecordContextTokens
 	}
 	parser := NewEventParser(parserOptions)
+	var finalizeMu sync.Mutex
+	var pendingFinalize *time.Timer
+	cancelFinalize := func() {
+		finalizeMu.Lock()
+		if pendingFinalize != nil {
+			pendingFinalize.Stop()
+			pendingFinalize = nil
+		}
+		finalizeMu.Unlock()
+	}
+	defer cancelFinalize()
+	scheduleFinalize := func() {
+		grace := run.ClientToolFinalizeGrace
+		if grace <= 0 {
+			grace = cursorClientToolFinalizeGrace
+		}
+		finalizeMu.Lock()
+		if pendingFinalize != nil {
+			pendingFinalize.Stop()
+		}
+		var timer *time.Timer
+		timer = time.AfterFunc(grace, func() {
+			finalizeMu.Lock()
+			if pendingFinalize != timer {
+				finalizeMu.Unlock()
+				return
+			}
+			pendingFinalize = nil
+			finalizeMu.Unlock()
+			events := parser.FinalizeClientToolsIfDrained()
+			for _, event := range events {
+				if emit(event) != nil {
+					return
+				}
+			}
+			if len(events) > 0 {
+				cancelRun()
+			}
+		})
+		pendingFinalize = timer
+		finalizeMu.Unlock()
+	}
 	frames := 0
 	first := true
 	for {
@@ -265,7 +309,7 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 			if errors.Is(err, io.EOF) && frames == 0 {
 				return io.ErrUnexpectedEOF
 			}
-			if errors.Is(err, io.EOF) && parser.terminated {
+			if parser.Terminated() && (errors.Is(err, io.EOF) || errors.Is(err, context.Canceled)) {
 				return nil
 			}
 			return err
@@ -278,7 +322,7 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 			if err := ParseEndStreamTrailer(frame.Payload); err != nil {
 				return err
 			}
-			if parser.terminated {
+			if parser.Terminated() {
 				return nil
 			}
 			return fmt.Errorf("Cursor stream ended without terminal event")
@@ -289,10 +333,11 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 		}
 		if server.Kind == ServerInteractionQuery {
 			var reply []byte
+			visibleText := ""
 			if t.config.InteractionHandler != nil {
 				reply, err = t.config.InteractionHandler(ctx, server.Payload)
 			} else {
-				reply, err = marshalEmptyInteractionReply(server.Payload)
+				reply, visibleText, err = marshalInteractionReply(server.Payload)
 			}
 			if err != nil {
 				return err
@@ -302,17 +347,37 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 					return err
 				}
 			}
+			if visibleText != "" {
+				if err := emit(types.AdapterEvent{Type: types.EventTextDelta, Text: visibleText}); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if server.Kind == ServerExec {
-			if t.config.NativeExecutor == nil {
-				continue
-			}
 			execRequest, err := UnmarshalExecServerMessage(server.Payload)
 			if err != nil {
 				return err
 			}
 			execRequest.ClientToolDefinitions = run.Tools
+			clientEvents, handled, drained, handleErr := parser.HandleClientToolExec(execRequest)
+			if handleErr != nil {
+				return handleErr
+			}
+			if handled {
+				for _, event := range clientEvents {
+					if err := emit(event); err != nil {
+						return err
+					}
+				}
+				if drained {
+					scheduleFinalize()
+				}
+				continue
+			}
+			if t.config.NativeExecutor == nil {
+				continue
+			}
 			for _, execResponse := range t.config.NativeExecutor.Execute(ctx, execRequest) {
 				reply, err := MarshalExecClientMessage(execResponse)
 				if err != nil {
@@ -337,6 +402,9 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 		events, err := parser.Parse(frame.Payload)
 		if err != nil {
 			return err
+		}
+		if parser.OpenToolCount() > 0 {
+			cancelFinalize()
 		}
 		for _, event := range events {
 			if err := emit(event); err != nil {

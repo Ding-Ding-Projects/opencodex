@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	coretypes "github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -101,6 +102,22 @@ func TestCursorGenericToolPromptNarrowsCatalogAndAddsCountHint(t *testing.T) {
 	hinted := AppendCursorActivePromptHints(visible, "Use any 3 tools")
 	if !strings.Contains(hinted, "exactly 3 separate") {
 		t.Fatalf("hinted prompt = %q", hinted)
+	}
+}
+
+func TestClientToolFinalizeGraceMatchesGenericCountPolicy(t *testing.T) {
+	tools := []coretypes.Tool{{Name: ExecCommandTool}}
+	if got := clientToolFinalizeGrace("user", "Run: echo hi", tools); got != 50*time.Millisecond {
+		t.Fatalf("ordinary grace = %v", got)
+	}
+	if got := clientToolFinalizeGrace("user", "아무 tool 10개 써봐", tools); got != 1250*time.Millisecond {
+		t.Fatalf("count grace = %v", got)
+	}
+	if got := clientToolFinalizeGrace("user", "Use any 50 tools", tools); got != 1800*time.Millisecond {
+		t.Fatalf("capped grace = %v", got)
+	}
+	if got := clientToolFinalizeGrace("tool", "아무 tool 10개 써봐", tools); got != 50*time.Millisecond {
+		t.Fatalf("tool-result continuation grace = %v", got)
 	}
 }
 
