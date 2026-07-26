@@ -132,6 +132,68 @@ func TestHomeDiscovery(t *testing.T) {
 	}
 }
 
+func TestCollectOrcaCodexHomeDiagnostic(t *testing.T) {
+	home := `C:\Users\Alice`
+	orca := `C:\Users\Alice\AppData\Local\Orca\codex-runtime-home\home\`
+	diagnostic := CollectOrcaCodexHomeDiagnostic(OrcaCodexHomeOptions{
+		HomeOptions: HomeOptions{GOOS: "windows", HomeDir: home, Env: map[string]string{
+			"CODEX_HOME": orca, "ORCA_CODEX_HOME": strings.ReplaceAll(orca, `\`, "/"),
+		}},
+		EffectiveCodexHome: strings.TrimRight(orca, `\`),
+	})
+	if !diagnostic.Applicable || !diagnostic.Mismatch {
+		t.Fatalf("diagnostic = %#v", diagnostic)
+	}
+	if diagnostic.EffectiveCodexHome != `C:\Users\[USER]\AppData\Local\Orca\codex-runtime-home\home` || diagnostic.AppCodexHome != `C:\Users\[USER]\.codex` {
+		t.Fatalf("paths were not normalized and redacted: %#v", diagnostic)
+	}
+	if diagnostic.Warning == nil || diagnostic.Action == nil {
+		t.Fatalf("missing mismatch guidance: %#v", diagnostic)
+	}
+	if diagnostic.OrcaCodexHome == nil || strings.Contains(*diagnostic.OrcaCodexHome, "Alice") || strings.Contains(*diagnostic.OrcaCodexHome, "/") {
+		t.Fatalf("slash-variant Orca home was not normalized and redacted: %#v", diagnostic.OrcaCodexHome)
+	}
+	for _, secret := range []string{home, "Alice"} {
+		if strings.Contains(*diagnostic.Warning+*diagnostic.Action, secret) {
+			t.Fatalf("diagnostic leaked %q: %#v", secret, diagnostic)
+		}
+	}
+	if !strings.Contains(*diagnostic.Action, `set "CODEX_HOME=%USERPROFILE%\.codex"`) ||
+		!strings.Contains(*diagnostic.Action, `Remove-Item Env:ORCA_CODEX_HOME`) {
+		t.Fatalf("recovery commands missing: %q", *diagnostic.Action)
+	}
+	serviceAccount := CollectOrcaCodexHomeDiagnostic(OrcaCodexHomeOptions{
+		HomeOptions: HomeOptions{GOOS: "windows", HomeDir: `C:\Windows\System32\config\systemprofile`, Env: map[string]string{
+			"CODEX_HOME": orca, "ORCA_CODEX_HOME": orca,
+		}},
+		EffectiveCodexHome: strings.TrimRight(orca, `\`),
+	})
+	if serviceAccount.Warning == nil || strings.Contains(serviceAccount.EffectiveCodexHome+*serviceAccount.Warning, "Alice") || !strings.Contains(serviceAccount.EffectiveCodexHome, `[USER]`) {
+		t.Fatalf("service-account diagnostic was not globally redacted: %#v", serviceAccount)
+	}
+	unix := CollectOrcaCodexHomeDiagnostic(OrcaCodexHomeOptions{
+		HomeOptions:        HomeOptions{GOOS: "linux", HomeDir: "/home/alice", Env: map[string]string{}},
+		EffectiveCodexHome: "/home/alice/.codex",
+	})
+	if unix.EffectiveCodexHome != "/home/[USER]/.codex" || strings.Contains(unix.EffectiveCodexHome, `\`) {
+		t.Fatalf("unix display path = %q", unix.EffectiveCodexHome)
+	}
+
+	for name, options := range map[string]OrcaCodexHomeOptions{
+		"non-windows":         {HomeOptions: HomeOptions{GOOS: "linux", HomeDir: home, Env: map[string]string{"CODEX_HOME": orca, "ORCA_CODEX_HOME": orca}}, EffectiveCodexHome: orca},
+		"no explicit home":    {HomeOptions: HomeOptions{GOOS: "windows", HomeDir: home, Env: map[string]string{"ORCA_CODEX_HOME": orca}}, EffectiveCodexHome: orca},
+		"different effective": {HomeOptions: HomeOptions{GOOS: "windows", HomeDir: home, Env: map[string]string{"CODEX_HOME": `C:\other`, "ORCA_CODEX_HOME": orca}}, EffectiveCodexHome: `C:\other`},
+		"lookalike suffix":    {HomeOptions: HomeOptions{GOOS: "windows", HomeDir: home, Env: map[string]string{"CODEX_HOME": `C:\tmp\codex-runtime-home\home`, "ORCA_CODEX_HOME": `C:\tmp\codex-runtime-home\home`}}, EffectiveCodexHome: `C:\tmp\codex-runtime-home\home`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := CollectOrcaCodexHomeDiagnostic(options)
+			if got.Applicable || got.Mismatch || got.Warning != nil || got.Action != nil {
+				t.Fatalf("false positive: %#v", got)
+			}
+		})
+	}
+}
+
 func TestJournalCrashRecovery(t *testing.T) {
 	home := t.TempDir()
 	configPath := filepath.Join(home, "config.toml")

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -110,6 +111,50 @@ func TestCollectConfiguredProxyNeverReturnsValue(t *testing.T) {
 	}
 	if strings.Contains(result.Detail, "password") || strings.Contains(result.Detail, "proxy.test") {
 		t.Fatal("configured proxy detail leaked the value")
+	}
+}
+
+func TestDoctorReportsOrcaCodexHomeWithoutLeakingUserPath(t *testing.T) {
+	home := `C:\Users\Alice`
+	orca := `C:\Users\Alice\AppData\Local\Orca\codex-runtime-home\home`
+	report, err := collectDoctorReport(context.Background(), doctorDeps{
+		GOOS: "windows", GOARCH: "amd64", Home: home,
+		Environment:      []string{"CODEX_HOME=" + orca, "ORCA_CODEX_HOME=" + orca},
+		WorkingDirectory: home, Now: func() time.Time { return time.Unix(1, 0) },
+		HTTPClient: &http.Client{Transport: doctorRoundTrip(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(`{}`)), Header: http.Header{}}, nil
+		})},
+		LookPath: func(string) (string, error) { return "codex.exe", nil }, ReadRuntime: func() (int, int) { return 0, 0 },
+		CollectWarnings: func(string, int) ([]codex.ProjectConfigWarning, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.CodexHome.Mismatch {
+		t.Fatalf("codex home = %#v", report.CodexHome)
+	}
+	if report.CodexHome.Warning == nil || report.CodexHome.Action == nil {
+		t.Fatalf("missing guidance: %#v", report.CodexHome)
+	}
+	diagnosticText := report.CodexHome.EffectiveCodexHome + report.CodexHome.AppCodexHome + *report.CodexHome.Warning + *report.CodexHome.Action
+	if strings.Contains(diagnosticText, "Alice") {
+		t.Fatalf("Codex-home diagnostic leaked user path: %#v", report.CodexHome)
+	}
+	var rendered bytes.Buffer
+	if err := renderDoctorReport(&rendered, report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered.String(), "Codex app home targeting") || !strings.Contains(rendered.String(), "Remove-Item Env:ORCA_CODEX_HOME") {
+		t.Fatalf("doctor output = %q", rendered.String())
+	}
+	encoded, err := json.Marshal(doctorReport{CodexHome: codex.OrcaCodexHomeDiagnostic{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"orcaCodexHome":null`, `"warning":null`, `"action":null`} {
+		if !bytes.Contains(encoded, []byte(field)) {
+			t.Fatalf("doctor JSON omitted %s: %s", field, encoded)
+		}
 	}
 }
 

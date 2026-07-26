@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 )
 
 // HomeOptions makes platform detection deterministic for callers and tests.
@@ -150,9 +152,106 @@ func expandHome(path string, options HomeOptions) string {
 		}
 		path = filepath.Join(home, strings.TrimLeft(path[1:], `/\`))
 	}
+	goos := options.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goos == "windows" {
+		windowsPath := strings.ReplaceAll(path, "/", `\`)
+		if (len(windowsPath) >= 3 && windowsPath[1] == ':' && windowsPath[2] == '\\') || strings.HasPrefix(windowsPath, `\\`) {
+			return windowsPath
+		}
+	}
 	absolute, err := filepath.Abs(path)
 	if err == nil {
 		return absolute
 	}
 	return filepath.Clean(path)
+}
+
+// OrcaCodexHomeDiagnostic describes the high-confidence Windows dual-home
+// mismatch created when an Orca-owned shell redirects CODEX_HOME.
+type OrcaCodexHomeDiagnostic struct {
+	Applicable         bool    `json:"applicable"`
+	Mismatch           bool    `json:"mismatch"`
+	EffectiveCodexHome string  `json:"effectiveCodexHome"`
+	AppCodexHome       string  `json:"appCodexHome"`
+	OrcaCodexHome      *string `json:"orcaCodexHome"`
+	Warning            *string `json:"warning"`
+	Action             *string `json:"action"`
+}
+
+// OrcaCodexHomeOptions permits deterministic platform and path tests.
+type OrcaCodexHomeOptions struct {
+	HomeOptions
+	EffectiveCodexHome string
+	AppCodexHome       string
+}
+
+func normalizeWindowsPath(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "/", `\`)
+	return strings.ToLower(strings.TrimRight(value, `\`))
+}
+
+func windowsPathJoin(base, leaf string) string {
+	return strings.TrimRight(base, `/\`) + `\` + strings.TrimLeft(leaf, `/\`)
+}
+
+func redactCodexPath(value, goos string) string {
+	if goos == "windows" {
+		value = strings.ReplaceAll(value, "/", `\`)
+	}
+	return lib.RedactUserPath(value)
+}
+
+// CollectOrcaCodexHomeDiagnostic reports only the exact Orca Windows runtime
+// home shape. Explicit CODEX_HOME remains authoritative.
+func CollectOrcaCodexHomeDiagnostic(options OrcaCodexHomeOptions) OrcaCodexHomeDiagnostic {
+	goos := options.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	effective := options.EffectiveCodexHome
+	if effective == "" {
+		effective = ResolveCodexHome(options.HomeOptions)
+	}
+	home := options.HomeDir
+	if home == "" {
+		home = envValue(options.HomeOptions, "USERPROFILE")
+	}
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	appHome := options.AppCodexHome
+	if appHome == "" {
+		if goos == "windows" {
+			appHome = windowsPathJoin(home, ".codex")
+		} else {
+			appHome = filepath.Join(home, ".codex")
+		}
+	}
+	explicitHome := strings.TrimSpace(envValue(options.HomeOptions, "CODEX_HOME"))
+	orcaHome := strings.TrimSpace(envValue(options.HomeOptions, "ORCA_CODEX_HOME"))
+	normalizedEffective := normalizeWindowsPath(effective)
+	normalizedOrca := normalizeWindowsPath(orcaHome)
+	applicable := goos == "windows" && explicitHome != "" && orcaHome != "" &&
+		normalizedEffective == normalizedOrca &&
+		strings.HasSuffix(normalizedOrca, `\orca\codex-runtime-home\home`)
+	mismatch := applicable && normalizedEffective != normalizeWindowsPath(appHome)
+	diagnostic := OrcaCodexHomeDiagnostic{
+		Applicable: applicable, Mismatch: mismatch,
+		EffectiveCodexHome: redactCodexPath(effective, goos),
+		AppCodexHome:       redactCodexPath(appHome, goos),
+	}
+	if orcaHome != "" {
+		value := redactCodexPath(orcaHome, goos)
+		diagnostic.OrcaCodexHome = &value
+	}
+	if mismatch {
+		warning := "CODEX_HOME targets Orca's runtime home (" + diagnostic.EffectiveCodexHome + "), while the Windows ChatGPT/Codex app uses " + diagnostic.AppCodexHome + "; OpenCodex injection will not reach that app."
+		action := "If a service was installed from Orca, run 'ocx service uninstall' in that original Orca shell first. Then in Command Prompt run set \"ORCA_CODEX_HOME=\" and set \"CODEX_HOME=%USERPROFILE%\\.codex\"; or in PowerShell run Remove-Item Env:ORCA_CODEX_HOME -ErrorAction SilentlyContinue; $env:CODEX_HOME = Join-Path $env:USERPROFILE '.codex'. Rerun the command, then reinstall with 'ocx service install'."
+		diagnostic.Warning = &warning
+		diagnostic.Action = &action
+	}
+	return diagnostic
 }

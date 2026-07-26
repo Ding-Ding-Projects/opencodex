@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/server"
@@ -50,6 +51,8 @@ func runStatus(ctx context.Context, args []string, streams IO) error {
 		token = strings.TrimSpace(cfg.AuthToken)
 	}
 	oauthHealth := collectOAuthCLIHealth(ctx, oauthHealthCollectOptions{AuthPath: filepath.Join(mustConfigDir(), "auth.json"), BaseURL: baseURL, Token: token})
+	home, _ := os.UserHomeDir()
+	codexHome := codex.CollectOrcaCodexHomeDiagnostic(codex.OrcaCodexHomeOptions{HomeOptions: codex.HomeOptions{HomeDir: home}})
 	if jsonOutput {
 		configPath, _ := configPath()
 		pidPath, runtimePath, _ := runtimePaths()
@@ -78,6 +81,7 @@ func runStatus(ctx context.Context, args []string, streams IO) error {
 			"codexShim":    map[string]any{"summary": "not inspected"},
 			"codexPlugins": map[string]any{"status": "not_inspected"},
 			"codexRuntime": map[string]any{"path": "codex", "version": nil, "source": "fallback", "newerAvailable": nil, "warning": nil, "catalogClamp": map[string]any{"active": false, "removedEfforts": []string{}, "runtimeVersion": nil}},
+			"codexHome":    codexHome,
 		})
 	}
 	fmt.Fprintf(streams.Out, "Proxy:  healthy=%t pid=%d port=%d\n", healthy, pid, port)
@@ -86,6 +90,13 @@ func runStatus(ctx context.Context, args []string, streams IO) error {
 		fmt.Fprintln(streams.Out, "        Restart with 'ocx start', or install the persistent service: 'ocx service install'.")
 	}
 	fmt.Fprintf(streams.Out, "Service: %s\n", serviceSummary)
+	fmt.Fprintf(streams.Out, "Codex home: %s\n", codexHome.EffectiveCodexHome)
+	if codexHome.Warning != nil {
+		fmt.Fprintf(streams.Out, "            WARNING: %s\n", *codexHome.Warning)
+		if codexHome.Action != nil {
+			fmt.Fprintf(streams.Out, "            Action: %s\n", *codexHome.Action)
+		}
+	}
 	if pid > 0 && !platform.ProcessAlive(pid) {
 		fmt.Fprintln(streams.Out, "Runtime: stale PID file")
 	}

@@ -8,6 +8,8 @@ import (
 	"os"
 	"runtime"
 	"strings"
+
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 )
 
 type doctorStatus string
@@ -27,20 +29,21 @@ type doctorCheck struct {
 }
 
 type doctorReport struct {
-	OS              string                  `json:"os"`
-	Architecture    string                  `json:"architecture"`
-	Paths           []doctorPath            `json:"paths"`
-	Checks          []doctorCheck           `json:"checks"`
-	CurrentProxyEnv []proxyEnvironment      `json:"currentProxyEnvironment"`
-	ConfiguredProxy configuredProxy         `json:"configuredProxy"`
-	RunningProxyEnv runningProxyEnvironment `json:"runningProxyEnvironment"`
-	WSL             wslInstallDiagnostic    `json:"wsl"`
-	ProjectWarnings []projectWarning        `json:"projectWarnings,omitempty"`
-	BackupArtifacts int                     `json:"backupArtifacts"`
-	Passes          int                     `json:"passes"`
-	Warnings        int                     `json:"warnings"`
-	Failures        int                     `json:"failures"`
-	GeneratedAt     string                  `json:"generatedAt"`
+	OS              string                        `json:"os"`
+	Architecture    string                        `json:"architecture"`
+	Paths           []doctorPath                  `json:"paths"`
+	Checks          []doctorCheck                 `json:"checks"`
+	CurrentProxyEnv []proxyEnvironment            `json:"currentProxyEnvironment"`
+	ConfiguredProxy configuredProxy               `json:"configuredProxy"`
+	RunningProxyEnv runningProxyEnvironment       `json:"runningProxyEnvironment"`
+	WSL             wslInstallDiagnostic          `json:"wsl"`
+	CodexHome       codex.OrcaCodexHomeDiagnostic `json:"codexHome"`
+	ProjectWarnings []projectWarning              `json:"projectWarnings,omitempty"`
+	BackupArtifacts int                           `json:"backupArtifacts"`
+	Passes          int                           `json:"passes"`
+	Warnings        int                           `json:"warnings"`
+	Failures        int                           `json:"failures"`
+	GeneratedAt     string                        `json:"generatedAt"`
 }
 
 func (r *doctorReport) add(check doctorCheck) {
@@ -99,6 +102,23 @@ func renderDoctorReport(writer io.Writer, report doctorReport) error {
 			suffix = " (" + strings.Join(flags, ", ") + ")"
 		}
 		fmt.Fprintf(writer, "  %s %-28s %s%s\n", marker, row.Label+":", row.Path, suffix)
+	}
+
+	fmt.Fprintln(writer, "\nCodex app home targeting")
+	marker := "ok"
+	if report.CodexHome.Mismatch {
+		marker = "!!"
+	}
+	fmt.Fprintf(writer, "  %s Effective Codex home: %s\n", marker, report.CodexHome.EffectiveCodexHome)
+	if report.CodexHome.Mismatch {
+		if report.CodexHome.Warning != nil {
+			fmt.Fprintf(writer, "  !! %s\n", *report.CodexHome.Warning)
+		}
+		if report.CodexHome.Action != nil {
+			fmt.Fprintf(writer, "     Action: %s\n", *report.CodexHome.Action)
+		}
+	} else {
+		fmt.Fprintln(writer, "     No Orca-owned CODEX_HOME mismatch detected.")
 	}
 
 	fmt.Fprintln(writer, "\nDiagnostic checks")

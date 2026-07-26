@@ -1,23 +1,34 @@
-# WP0 — Windows Orca CODEX_HOME diagnostics
+# WP12 — Windows Orca CODEX_HOME diagnostics
 
-Base: `ddd968a0`
+Date: 2026-07-27  
+Base: `167c9b60351af2d7b66cb27d95bf60ee81be809c`  
+Class: C3 (privacy-sensitive diagnostics and public CLI JSON)
 
-## Boundary
+## Outcome
 
-This packet ports only the Windows Orca `CODEX_HOME` diagnosis already owned by the TypeScript runtime. It is independent of Claude auth-auto and guarded config persistence. Production code is not changed in WP0; [121_orca_home_literal_patch.md](./121_orca_home_literal_patch.md) is the apply-ready implementation packet.
+Port the Windows Orca `CODEX_HOME` mismatch diagnosis already owned by the
+TypeScript runtime. The Go runtime must detect only the high-confidence Orca
+shape, mask Windows and POSIX usernames with the shared redactor, preserve
+nullable JSON fields, print executable recovery commands, and report the target
+home from real sync, status, and doctor entry points.
+
+The sync path must also match the TypeScript oracle's early external-provider
+branch: detect and preserve a selected non-OpenAI provider before fetching or
+materializing the OpenCodex catalog.
 
 ## TypeScript source of truth
 
-- `src/codex/home.ts`: `collectOrcaCodexHomeDiagnostic` defines applicability, mismatch, Windows normalization, home redaction, warning text, and recovery commands.
-- `src/codex/sync.ts`: both the external-provider-preservation branch and normal catalog-injection branch report the effective target and warning.
-- `src/cli/status.ts` plus `src/cli/index.ts`: status JSON carries `codexHome`; text status prints the effective home and action.
-- `src/cli/doctor.ts`: doctor renders a dedicated Codex app home-targeting section.
+- `src/codex/home.ts`: applicability, mismatch, Windows normalization, public
+  JSON shape, warning, and recovery command text.
+- `src/lib/redact.ts`: global `C:\Users\<name>`, `/Users/<name>`, and
+  `/home/<name>` masking plus sensitive-segment and secret redaction.
+- `src/codex/sync.ts`: external-provider preservation exits before catalog
+  refresh; both that branch and normal injection report the target home.
+- `src/cli/status.ts` and `src/cli/doctor.ts`: structured `codexHome` output and
+  human-readable warning/action surfaces.
 
-No additional management, service, Claude, or config-save surface belongs in this packet.
-
-## Current Go gap
-
-`go/internal/codex/home.go` resolves `CODEX_HOME` but has no Orca-specific diagnostic. `runSync` reports only a model count, status omits the target home, and doctor has no Orca mismatch section. A host-platform `filepath.Abs` call also makes injected `GOOS=windows` drive paths nondeterministic in non-Windows tests.
+No management, service, Claude, release, GUI, or `gpt-artifacts/` change belongs
+in this phase.
 
 ## Locked contract
 
@@ -27,23 +38,56 @@ Applicability is true only when all conditions hold:
 2. explicit `CODEX_HOME` is non-empty;
 3. `ORCA_CODEX_HOME` is non-empty;
 4. normalized effective home equals normalized Orca home;
-5. normalized Orca home ends in the exact `\orca\codex-runtime-home\home` shape.
+5. normalized Orca home ends at the exact
+   `\orca\codex-runtime-home\home` component shape.
 
-Normalization trims whitespace/trailing separators, converts slash direction, and compares case-insensitively. Mismatch additionally requires the effective home to differ from `%USERPROFILE%\.codex`.
+Normalization trims whitespace and trailing separators, accepts slash variants,
+and compares case-insensitively. Mismatch additionally requires the effective
+home to differ from `%USERPROFILE%\.codex`.
 
-Returned display paths redact the user-home prefix to `~`. Warning and action text must not expose the profile name. Recovery text contains executable Command Prompt and PowerShell forms, including service uninstall/reinstall ordering.
+All displayed paths use `internal/lib.RedactUserPath`, including when the
+process account differs from the profile in `CODEX_HOME`. Windows slash variants
+are first normalized to native backslashes so the shared Windows-profile
+redactor cannot be bypassed; Unix separators remain untouched. This masks
+arbitrary Windows/POSIX profile names and secret-shaped segments.
+`orcaCodexHome`, `warning`, and `action` remain present as JSON `null` when
+inactive, matching the TypeScript contract.
 
-## Ownership and activation
+Recovery text contains executable Command Prompt and PowerShell forms and keeps
+service uninstall/reinstall ordering explicit.
 
-- `go/internal/codex/home.go`: pure diagnosis and deterministic Windows path handling.
-- `go/internal/cli/sync.go`: one post-injection reporter. Because Go's injection owner returns both normal-injection and external-provider-preserved outcomes through the same call site, this placement covers both logical sync branches.
-- `go/internal/cli/status.go`: `codexHome` JSON plus text target/warning/action.
-- `go/internal/cli/doctor.go` and `doctor_checks.go`: structured report field and text section.
-- Tests: pure positive/negative matrix, redaction and command assertions, both sync outcomes, doctor activation.
+## Production activation
+
+- `go/internal/codex/home.go`: deterministic Windows path handling and pure
+  classification using the shared redactor.
+- `go/internal/cli/sync.go`: inspect the effective Codex config before model
+  fetch. A selected external provider is passed through the real injector,
+  reported, and returned without `/api/models`, catalog, or cache mutation.
+  Normal injection reports through the same production call site.
+- `go/internal/cli/status.go`: human output plus versioned status JSON.
+- `go/internal/cli/doctor.go` and `doctor_checks.go`: structured report field
+  and dedicated text section.
+
+Production-root tests start a real identity-bearing health/model HTTP fixture,
+write the actual runtime-port/config files, and call `runSync`. They prove one
+normal model fetch and zero external-provider fetches/catalog writes. Separate
+tests call real status JSON, serialize doctor JSON, and exercise Windows doctor
+collection.
+
+## First audit and fixes
+
+The first `gpt-5.6-sol` medium-priority A audit returned `VERDICT: FAIL` and the
+packet was replanned. The corrected packet closes every verified finding:
+
+- replaces home-relative masking with the existing global Go redactor;
+- replaces label-only sync tests with real normal/external production paths;
+- uses pointer fields so inactive JSON values serialize as explicit `null`;
+- preserves Unix separators by removing Windows-only display rewriting;
+- refreshes the packet base and validation evidence to this lineage.
 
 ## Patch inventory
 
-The literal patch modifies eight files and contains 14 unified-diff hunks:
+`121_orca_home_literal_patch.md` is the exact 18-hunk diff across eight files:
 
 - `go/internal/codex/home.go`
 - `go/internal/codex/codex_test.go`
@@ -54,26 +98,28 @@ The literal patch modifies eight files and contains 14 unified-diff hunks:
 - `go/internal/cli/doctor_checks.go`
 - `go/internal/cli/doctor_test.go`
 
-## Validation receipt
+The audited candidate is 428 insertions and 16 deletions.
 
-Applied independently to a clean archive of `ddd968a0`, then formatted and tested:
+## Gates
 
-```text
-gofmt -w [8 scoped Go files]
-go test ./internal/codex -run 'TestHomeDiscovery|TestCollectOrcaCodexHomeDiagnostic' -count=1
-ok github.com/lidge-jun/opencodex-go/internal/codex
-
-go test ./internal/cli -run 'TestReportCodexHomeTargetCoversSyncOutcomes|TestDoctorReportsOrcaCodexHomeWithoutLeakingUserPath' -count=1
-ok github.com/lidge-jun/opencodex-go/internal/cli
-
-GOOS=windows GOARCH=amd64 go test -c ./internal/codex
-GOOS=windows GOARCH=amd64 go test -c ./internal/cli
+```bash
+cd go
+gofmt -d internal/codex/home.go internal/codex/codex_test.go \
+  internal/cli/sync.go internal/cli/orca_home_test.go \
+  internal/cli/status.go internal/cli/doctor.go \
+  internal/cli/doctor_checks.go internal/cli/doctor_test.go
+go test ./internal/codex ./internal/cli -count=1
+go test -race ./internal/codex ./internal/cli \
+  -run 'TestCollectOrca|TestReportCodex|TestRunSyncProduction|TestStatusJSONKeeps|TestDoctorReports' \
+  -count=10
+go test ./... -count=1 -timeout 400s
+go test -race ./... -count=1 -timeout 600s
+go vet ./...
 GOOS=windows GOARCH=amd64 go build ./...
-PASS
+GOOS=linux GOARCH=amd64 go build ./...
 ```
 
-The unscoped `./internal/cli` run in the disposable `/var/folders` archive also reached an existing crash-log redaction assertion whose stack uses the canonical `/private/var` alias. That baseline path-alias failure is unrelated to this packet; scoped CLI tests and Windows compile are green.
-
-## Apply order
-
-Apply [121_orca_home_literal_patch.md](./121_orca_home_literal_patch.md) once against `ddd968a0`, run `gofmt` on the eight listed files, then run the validation commands above. The full current-base sequence is revalidated in `009_2_full_roadmap_validation.md`.
+Before D, re-fetch `origin/dev`, keep it as an ancestor, rebase if necessary,
+and regenerate this packet against the final parent. Stop only after the exact
+packet applies to a clean clone, source `git diff --check` passes, the
+independent re-audit says PASS, and all gates above are green.

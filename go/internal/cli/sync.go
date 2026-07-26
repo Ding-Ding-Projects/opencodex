@@ -32,11 +32,28 @@ func runSync(ctx context.Context, args []string, streams IO) error {
 	if port <= 0 || !probeHealth(ctx, runtimeCfg.Host, port) {
 		return errors.New("no running proxy found; run 'ocx start' first")
 	}
+	codexHome := codexHomePath()
+	configPath := filepath.Join(codexHome, "config.toml")
+	if data, readErr := os.ReadFile(configPath); readErr == nil {
+		if external := codex.ExternalCodexModelProvider(string(data)); external != "" {
+			if _, err := codex.InjectCodexConfig(configPath, codex.InjectOptions{
+				Port: port, Hostname: runtimeCfg.Host,
+				SupportsWebSockets:   runtimeCfg.WebSockets,
+				IncludeAPIAuthHeader: codex.ShouldInjectAPIAuthHeader(runtimeCfg.Host),
+			}); err != nil {
+				return err
+			}
+			reportCodexHomeTarget(streams, collectCodexHomeDiagnostic)
+			fmt.Fprintf(streams.Out, "Preserved external Codex provider %q; skipped catalog sync.\n", external)
+			return nil
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return fmt.Errorf("read Codex config: %w", readErr)
+	}
 	models, err := fetchRuntimeModels(ctx, runtimeCfg, port)
 	if err != nil {
 		return err
 	}
-	codexHome := codexHomePath()
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return err
 	}
@@ -74,7 +91,6 @@ func runSync(ctx context.Context, args []string, streams IO) error {
 	if err := codex.SyncCatalogModels(catalogPath, codex.RawCatalog{Models: merged}); err != nil {
 		return err
 	}
-	configPath := filepath.Join(codexHome, "config.toml")
 	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
 		if err := os.WriteFile(configPath, nil, 0o600); err != nil {
 			return err
@@ -87,11 +103,28 @@ func runSync(ctx context.Context, args []string, streams IO) error {
 	}); err != nil {
 		return err
 	}
+	reportCodexHomeTarget(streams, collectCodexHomeDiagnostic)
 	if err := codex.InvalidateCodexModelsCache(catalogPath, filepath.Join(codexHome, "models_cache.json")); err != nil {
 		return err
 	}
 	fmt.Fprintf(streams.Out, "Synced %d model(s) to Codex.\n", len(models))
 	return nil
+}
+
+func reportCodexHomeTarget(streams IO, collect func() codex.OrcaCodexHomeDiagnostic) {
+	diagnostic := collect()
+	fmt.Fprintf(streams.Out, "   Target Codex home: %s\n", diagnostic.EffectiveCodexHome)
+	if diagnostic.Warning != nil {
+		fmt.Fprintf(streams.Err, "WARNING: %s\n", *diagnostic.Warning)
+		if diagnostic.Action != nil {
+			fmt.Fprintf(streams.Err, "Action: %s\n", *diagnostic.Action)
+		}
+	}
+}
+
+func collectCodexHomeDiagnostic() codex.OrcaCodexHomeDiagnostic {
+	home, _ := os.UserHomeDir()
+	return codex.CollectOrcaCodexHomeDiagnostic(codex.OrcaCodexHomeOptions{HomeOptions: codex.HomeOptions{HomeDir: home}})
 }
 
 func fetchRuntimeModels(parent context.Context, cfg config.Config, port int) ([]types.ModelEntry, error) {

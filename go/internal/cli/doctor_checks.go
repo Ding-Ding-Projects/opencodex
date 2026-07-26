@@ -112,6 +112,10 @@ func collectDoctorReport(ctx context.Context, input doctorDeps) (doctorReport, e
 		GeneratedAt:     deps.Now().UTC().Format(time.RFC3339),
 		CurrentProxyEnv: collectProxyEnvironment(env),
 		ConfiguredProxy: collectConfiguredProxy(configFile, env, deps.ReadFile),
+		CodexHome: codex.CollectOrcaCodexHomeDiagnostic(codex.OrcaCodexHomeOptions{
+			HomeOptions:        codex.HomeOptions{Env: env, GOOS: deps.GOOS, HomeDir: deps.Home},
+			EffectiveCodexHome: codexHome,
+		}),
 	}
 	for _, row := range collectDoctorPaths(deps.Home, codexHome, ocxHome, configFile) {
 		row.Filesystem = detectFilesystem(row.Path, deps.Mounts)
