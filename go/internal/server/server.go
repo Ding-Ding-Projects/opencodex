@@ -54,6 +54,7 @@ type Config struct {
 	ReadinessChecks    map[string]func(context.Context) error
 	WebSockets         bool
 	RefreshCatalog     func() error
+	CodexQuota         *codex.QuotaStore
 }
 
 type Server struct {
@@ -61,6 +62,7 @@ type Server struct {
 	lifecycle *Lifecycle
 	handler   http.Handler
 	responses *ResponsesCore
+	quota     *codex.QuotaStore
 }
 
 func New(config Config) *Server {
@@ -116,7 +118,11 @@ func New(config Config) *Server {
 	} else {
 		recorder = fanoutRecorder{requestLog: requestLogs, recorder: recorder}
 	}
-	s := &Server{config: config, lifecycle: config.Lifecycle}
+	quota := config.CodexQuota
+	if quota == nil {
+		quota = codex.NewQuotaStore()
+	}
+	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota}
 	if s.config.Hostname == "" && s.config.ManagementConfig != nil {
 		s.config.Hostname = s.config.ManagementConfig.Host
 	}
@@ -135,6 +141,9 @@ func New(config Config) *Server {
 		Lifecycle: s.config.Lifecycle, Logger: s.config.Logger, EffortCap: s.config.EffortCap,
 		SubagentEffortCap: s.config.SubagentEffortCap,
 		ShadowCall:        s.config.ShadowCall,
+		ConsumeQuotaHeaders: func(_ context.Context, accountID string, headers http.Header) {
+			quota.ApplyUpstreamHeaders(accountID, headers)
+		},
 	})
 	mux := http.NewServeMux()
 	websocketsEnabled := config.WebSockets
@@ -209,6 +218,16 @@ func New(config Config) *Server {
 	}
 	s.handler = Middleware(recoveryMiddleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), config.Logger), middlewareConfig)
 	return s
+}
+
+// QuotaStore exposes the server-owned, concurrency-safe Codex quota snapshot
+// store to management and routing composition without leaking account data over
+// HTTP. Responses updates it as soon as upstream headers arrive.
+func (s *Server) QuotaStore() *codex.QuotaStore {
+	if s == nil {
+		return nil
+	}
+	return s.quota
 }
 
 type admissionKeySnapshot struct {

@@ -168,6 +168,34 @@ func TestResponsesPreservesUpstreamErrorStatus(t *testing.T) {
 	}
 }
 
+type quotaHeaderAuth struct{}
+
+func (quotaHeaderAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
+	return &types.AuthContext{Provider: "acme", AccountID: "account-1"}, nil
+}
+func (quotaHeaderAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
+
+func TestServerConsumesResponsesQuotaHeadersIntoCodexStore(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Codex-Primary-Used-Percent", "73")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{Registry: reg, Auth: quotaHeaderAuth{}, ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return fakeAdapter{endpoint: upstream.URL}, nil
+	}})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire"}`, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	quota, ok := proxy.QuotaStore().Get("account-1")
+	if !ok || quota.WeeklyPercent == nil || *quota.WeeklyPercent != 73 {
+		t.Fatalf("quota = %#v, found=%v", quota, ok)
+	}
+}
+
 type sidecarTestAuth struct{}
 
 func (sidecarTestAuth) ResolveAuth(_ context.Context, provider, _ string) (*types.AuthContext, error) {

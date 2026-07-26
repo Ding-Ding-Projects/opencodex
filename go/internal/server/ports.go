@@ -1,10 +1,23 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
+	"syscall"
+	"time"
 )
+
+// IsAddrInUse limits ephemeral-port fallback to the one bind failure where a
+// retry is safe. Configuration and permission failures must remain visible.
+func IsAddrInUse(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(strings.ToLower(err.Error()), "eaddrinuse") || strings.Contains(strings.ToLower(err.Error()), "address already in use")
+}
 
 // IsPortAvailable reports whether an address can currently be bound.
 func IsPortAvailable(host string, port int) bool {
@@ -14,6 +27,26 @@ func IsPortAvailable(host string, port int) bool {
 	}
 	_ = listener.Close()
 	return true
+}
+
+// WaitForPortAvailable polls until the configured address can be rebound.
+func WaitForPortAvailable(host string, port int, timeout, interval time.Duration) bool {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	if interval <= 0 {
+		interval = 50 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if IsPortAvailable(host, port) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(interval)
+	}
 }
 
 // FindAvailablePort returns preferred when possible, otherwise an OS-selected port.
