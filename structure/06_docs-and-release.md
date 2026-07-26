@@ -105,10 +105,12 @@ Invariants:
 
 ## Release workflow
 
-Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`, `prepublishOnly` runs
-typecheck and GUI build, and `scripts/release.ts` now runs local typecheck, `bun test --isolate tests`, and
-`bun run privacy:scan` before the version bump, commit/push, Cross-platform CI wait, and GitHub
-Release workflow dispatch. Docs publishing is separate from npm release publishing.
+Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`;
+`prepublishOnly` rejects direct source publishing so only the release workflow may publish.
+`scripts/release.ts` runs local typecheck, the test suite, and `bun run privacy:scan`
+before the version bump, commit/push, Cross-platform CI wait, and GitHub Release workflow
+dispatch. The workflow builds the GUI, packs once, verifies that exact archive, runs the
+isolated poison-install receipt, and only then publishes it. Docs publishing is separate.
 
 ## Release metadata invariants
 
@@ -156,14 +158,14 @@ cd gui && bun install --frozen-lockfile && bun run lint && bun run build
 bun run src/cli/index.ts help
 ```
 
-and the Node-only global-install smoke path. It verifies and installs the same archive that release
-validation inspected, disables lifecycle scripts, poisons Bun compatibility execution, and then runs
-the installed launcher:
+and the Node-only global-install smoke path. It verifies and installs the same archive that
+release validation inspected, disables lifecycle scripts, poisons Bun compatibility
+execution, and then runs the installed launcher:
 
 ```bash
 npm pack --json > pack.json
-npm install -g --ignore-scripts ./bitkyc08-opencodex-*.tgz
-ocx help
+npm run verify:native-package
+npm run verify:native-install
 ```
 
 The CI intentionally does not build docs, run coverage, or perform remote Ubuntu/RDP smoke tests.

@@ -257,6 +257,7 @@ jobs:
           npm run build:publish
           npm pack --json > pack.json
           npm run verify:native-package
+          npm run verify:native-install
           tarball="$(node -e 'const report=require("./pack.json"); if (report.length !== 1) process.exit(1); process.stdout.write(report[0].filename)')"
 
           if [ "$DRY_RUN" = "true" ]; then
