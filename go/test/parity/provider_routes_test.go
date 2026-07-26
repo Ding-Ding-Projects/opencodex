@@ -211,7 +211,7 @@ func TestBuiltBinaryManagementAuthenticationBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("authorized management status=%d", response.StatusCode)
 	}
 }

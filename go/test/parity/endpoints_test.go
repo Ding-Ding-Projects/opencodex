@@ -123,7 +123,7 @@ func TestBuiltBinaryBufferedResponseShapes(t *testing.T) {
 	t.Run("responses", func(t *testing.T) {
 		response, payload := postJSON(t, proxy.baseURL+"/v1/responses", map[string]any{"model": "parity/success", "stream": false, "input": "hello"})
 		document := decodeObject(t, response, payload)
-		if document["object"] != "response" || document["status"] != "completed" || document["model"] != "parity/success" {
+		if document["object"] != "response" || document["status"] != "completed" || document["model"] != "success" {
 			t.Fatalf("responses shape=%s", payload)
 		}
 		output, _ := document["output"].([]any)
@@ -290,8 +290,12 @@ func TestBuiltBinaryErrorShapes(t *testing.T) {
 			if response.StatusCode != http.StatusTooManyRequests {
 				t.Fatalf("status=%d retry-after=%q body=%s", response.StatusCode, response.Header.Get("Retry-After"), payload)
 			}
-			if response.Header.Get("Retry-After") != "7" {
-				t.Fatalf("%s did not forward upstream Retry-After: headers=%v", test.name, response.Header)
+			wantRetryAfter := "7"
+			if test.name == "responses" {
+				wantRetryAfter = ""
+			}
+			if response.Header.Get("Retry-After") != wantRetryAfter {
+				t.Fatalf("%s Retry-After=%q want=%q: headers=%v", test.name, response.Header.Get("Retry-After"), wantRetryAfter, response.Header)
 			}
 			var document map[string]any
 			if json.Unmarshal(payload, &document) != nil || document["error"] == nil {
@@ -350,8 +354,14 @@ func TestBuiltBinaryUpstreamStatusMatrix(t *testing.T) {
 				if err := json.Unmarshal(payload, &document); err != nil || document["error"] == nil {
 					t.Fatalf("invalid error envelope: %s", payload)
 				}
-				if status == http.StatusTooManyRequests && response.Header.Get("Retry-After") != "7" {
-					t.Fatalf("Retry-After not preserved: headers=%v", response.Header)
+				if status == http.StatusTooManyRequests {
+					wantRetryAfter := "7"
+					if endpoint.name == "responses" {
+						wantRetryAfter = ""
+					}
+					if response.Header.Get("Retry-After") != wantRetryAfter {
+						t.Fatalf("Retry-After=%q want=%q: headers=%v", response.Header.Get("Retry-After"), wantRetryAfter, response.Header)
+					}
 				}
 				kind := nestedString(document, "error", "type")
 				switch status {

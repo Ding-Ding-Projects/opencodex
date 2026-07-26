@@ -203,9 +203,15 @@ func Buffered(ctx context.Context, model string, events <-chan types.AdapterEven
 }
 
 func newMachine(model string) *machine {
-	idBytes := make([]byte, 12)
-	_, _ = rand.Read(idBytes)
-	return &machine{response: Response{ID: "resp_" + hex.EncodeToString(idBytes), Object: "response", CreatedAt: time.Now().Unix(), Status: "in_progress", Model: model, Output: []map[string]any{}, Usage: usage(nil)}}
+	return &machine{response: Response{ID: "resp_" + randomID(), Object: "response", CreatedAt: time.Now().Unix(), Status: "in_progress", Model: responseModelID(model), Output: []map[string]any{}, Usage: nil}}
+}
+
+func responseModelID(model string) string {
+	model = strings.TrimSpace(model)
+	if slash := strings.IndexByte(model, '/'); slash >= 0 && slash+1 < len(model) {
+		return model[slash+1:]
+	}
+	return model
 }
 
 func (m *machine) accept(event types.AdapterEvent) []Event {
@@ -303,10 +309,8 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 	case types.EventAssistantBoundary:
 		out = append(out, m.closeCurrent()...)
 	case types.EventDone:
-		if event.Usage != nil {
-			m.usage = cloneUsage(event.Usage)
-			m.response.Usage = usage(event.Usage)
-		}
+		m.usage = cloneUsage(event.Usage)
+		m.response.Usage = usage(event.Usage)
 		if reason := doneIncompleteReason(event.StopReason); reason != "" {
 			out = append(out, m.finishIncomplete(reason, "")...)
 		} else {
@@ -328,10 +332,8 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 		failure := responseError(status, "", message)
 		out = append(out, m.finishFailure(failure, event.Retryable)...)
 	case types.EventIncomplete:
-		if event.Usage != nil {
-			m.usage = cloneUsage(event.Usage)
-			m.response.Usage = usage(event.Usage)
-		}
+		m.usage = cloneUsage(event.Usage)
+		m.response.Usage = usage(event.Usage)
 		out = append(out, m.finishIncomplete(event.Reason, event.Message)...)
 	}
 	return out
@@ -523,7 +525,9 @@ func (m *machine) emit(kind string, data map[string]any) Event {
 }
 
 func randomID() string {
-	b := make([]byte, 10)
+	b := make([]byte, 16)
 	_, _ = rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
 	return hex.EncodeToString(b)
 }

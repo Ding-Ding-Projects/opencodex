@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,45 @@ type runtimeResponse struct {
 	err    error
 }
 
+type expectedRuntimeDiff struct {
+	status  bool
+	headers []string
+	body    bool
+}
+
+var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
+	"messages/complete":  {body: true},
+	"messages/mid-error": {body: true},
+
+	"responses/status-400": {body: true},
+	"responses/status-401": {body: true},
+	"responses/status-403": {body: true},
+	"responses/status-404": {body: true},
+	"responses/status-429": {body: true},
+	"responses/status-500": {body: true},
+	"responses/status-502": {body: true},
+	"responses/status-503": {body: true},
+
+	"messages/status-400": {body: true},
+	"messages/status-401": {body: true},
+	"messages/status-403": {body: true},
+	"messages/status-404": {body: true},
+	"messages/status-429": {headers: []string{"Retry-After"}, body: true},
+	"messages/status-500": {body: true},
+	"messages/status-502": {body: true},
+	"messages/status-503": {body: true},
+
+	"management/api/system":         {body: true},
+	"management/api/system/runtime": {body: true},
+	"management/api/config":         {body: true},
+	"management/api/providers":      {body: true},
+}
+
+var (
+	differentialIDPattern        = regexp.MustCompile(`\b(?:resp|msg|rs|fc|ws)_[0-9a-f]{20,32}\b`)
+	differentialCreatedAtPattern = regexp.MustCompile(`"created_at":\d+`)
+)
+
 func captureJSON(t *testing.T, baseURL, path string, body any) runtimeResponse {
 	t.Helper()
 	encoded, err := json.Marshal(body)
@@ -131,22 +171,41 @@ func compareRuntimeBytes(t *testing.T, scenario string, goResult, tsResult runti
 	if goResult.err != nil || tsResult.err != nil {
 		t.Fatalf("%s runtime read error: Go=%v TS=%v", scenario, goResult.err, tsResult.err)
 	}
-	if goResult.status != tsResult.status {
-		t.Logf("DIFFERENTIAL GAP [%s]: status Go=%d TS=%d", scenario, goResult.status, tsResult.status)
-	}
+	actual := expectedRuntimeDiff{status: goResult.status != tsResult.status}
 	for _, header := range []string{"Content-Type", "Retry-After", "Cache-Control"} {
 		if goResult.header.Get(header) != tsResult.header.Get(header) {
-			t.Logf("DIFFERENTIAL GAP [%s]: %s Go=%q TS=%q", scenario, header, goResult.header.Get(header), tsResult.header.Get(header))
+			actual.headers = append(actual.headers, header)
 		}
 	}
-	if bytes.Equal(goResult.body, tsResult.body) {
+	goBody := normalizeDifferentialBytes(goResult.body)
+	tsBody := normalizeDifferentialBytes(tsResult.body)
+	actual.body = !bytes.Equal(goBody, tsBody)
+	expected, known := knownRuntimeDiffs[scenario]
+	if runtimeDiffsEqual(actual, expected) {
+		if known {
+			t.Logf("KNOWN DIFFERENTIAL [%s]: status=%t headers=%v body=%t", scenario, actual.status, actual.headers, actual.body)
+		}
 		return
 	}
-	t.Logf("DIFFERENTIAL GAP [%s]: bytes offset=%d Go(len=%d sha=%s) TS(len=%d sha=%s)", scenario,
-		firstDifferentByte(goResult.body, tsResult.body), len(goResult.body), payloadDigest(goResult.body), len(tsResult.body), payloadDigest(tsResult.body))
-	if revealBody {
-		t.Logf("DIFFERENTIAL BODY [%s]: Go=%s TS=%s", scenario, goResult.body, tsResult.body)
+	message := fmt.Sprintf("UNEXPECTED DIFFERENTIAL [%s]: got status=%t headers=%v body=%t; want status=%t headers=%v body=%t",
+		scenario, actual.status, actual.headers, actual.body, expected.status, expected.headers, expected.body)
+	if actual.body {
+		message += fmt.Sprintf("; bytes offset=%d Go(len=%d sha=%s) TS(len=%d sha=%s)",
+			firstDifferentByte(goBody, tsBody), len(goBody), payloadDigest(goBody), len(tsBody), payloadDigest(tsBody))
 	}
+	if revealBody {
+		message += fmt.Sprintf("\nGo=%s\nTS=%s", goResult.body, tsResult.body)
+	}
+	t.Fatal(message)
+}
+
+func normalizeDifferentialBytes(payload []byte) []byte {
+	normalized := differentialIDPattern.ReplaceAll(payload, []byte("dynamic_id"))
+	return differentialCreatedAtPattern.ReplaceAll(normalized, []byte(`"created_at":0`))
+}
+
+func runtimeDiffsEqual(left, right expectedRuntimeDiff) bool {
+	return left.status == right.status && left.body == right.body && strings.Join(left.headers, "\x00") == strings.Join(right.headers, "\x00")
 }
 
 func TestTypeScriptAndGoSSEByteMatrix(t *testing.T) {

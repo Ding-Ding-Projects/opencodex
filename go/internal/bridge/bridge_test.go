@@ -3,6 +3,7 @@ package bridge
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -87,6 +88,35 @@ func TestConvertOrdersMessageLifecycle(t *testing.T) {
 	}
 	if response.Status != "completed" || len(response.Output) != 1 {
 		t.Fatalf("unexpected response: %+v", response)
+	}
+}
+
+func TestCreatedFrameMatchesTypeScriptShape(t *testing.T) {
+	machine := newMachine("differential/success")
+	machine.response.CreatedAt = 123
+	machine.response.ID = "resp_0123456789abcdef0123456789abcdef"
+	data, err := marshalResponseEvent(machine.emit("response.created", map[string]any{"response": machine.snapshot("in_progress")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"response.created","sequence_number":0,"response":{"id":"resp_0123456789abcdef0123456789abcdef","object":"response","created_at":123,"status":"in_progress","model":"success","output":[],"usage":null}}`
+	if string(data) != want {
+		t.Fatalf("created frame = %s\nwant = %s", data, want)
+	}
+}
+
+func TestGeneratedIDsMatchTypeScriptUUIDShape(t *testing.T) {
+	for _, id := range []string{newMachine("model").response.ID, "msg_" + randomID()} {
+		prefix, encoded, ok := strings.Cut(id, "_")
+		if !ok || (prefix != "resp" && prefix != "msg") || len(encoded) != 32 {
+			t.Fatalf("generated id = %q", id)
+		}
+		if _, err := hex.DecodeString(encoded); err != nil {
+			t.Fatalf("generated id %q is not hexadecimal: %v", id, err)
+		}
+		if encoded[12] != '4' || !strings.ContainsRune("89ab", rune(encoded[16])) {
+			t.Fatalf("generated id %q is not UUIDv4-shaped", id)
+		}
 	}
 }
 
