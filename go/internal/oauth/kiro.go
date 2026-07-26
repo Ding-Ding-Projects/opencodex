@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -25,13 +26,14 @@ type KiroFlow struct {
 	Now      func() time.Time
 	Env      func(string) string
 	ReadFile func(string) ([]byte, error)
+	HomeDir  func() (string, error)
 }
 
 func NewKiroFlow(client HTTPDoer) *KiroFlow {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &KiroFlow{Client: client, Region: "us-east-1", Now: time.Now, Env: os.Getenv, ReadFile: os.ReadFile}
+	return &KiroFlow{Client: client, Region: "us-east-1", Now: time.Now, Env: os.Getenv, ReadFile: os.ReadFile, HomeDir: os.UserHomeDir}
 }
 
 func NormalizeKiroRegion(region string) string {
@@ -51,7 +53,18 @@ func InferKiroRegionFromProfileARN(arn string) string {
 }
 
 func (f *KiroFlow) Import(path string) (KiroImportedCredential, bool, error) {
+	env := f.Env
+	if env == nil {
+		env = os.Getenv
+	}
+	if path == "" {
+		path = strings.TrimSpace(env("KIRO_CREDS_FILE"))
+		if path == "" {
+			path = strings.TrimSpace(env("KIRO_CREDENTIALS_FILE"))
+		}
+	}
 	if path != "" {
+		path = f.expandPath(path)
 		read := f.ReadFile
 		if read == nil {
 			read = os.ReadFile
@@ -63,15 +76,28 @@ func (f *KiroFlow) Import(path string) (KiroImportedCredential, bool, error) {
 		credential, err := parseKiroCredential(data, f.now())
 		return credential, err == nil, err
 	}
-	env := f.Env
-	if env == nil {
-		env = os.Getenv
+	credential, found, err := f.importSQLite()
+	if err != nil || found {
+		return credential, found, err
 	}
 	access := strings.TrimSpace(env("KIRO_ACCESS_TOKEN"))
 	if access == "" {
 		return KiroImportedCredential{}, false, nil
 	}
 	return KiroImportedCredential{OAuthCredentials: OAuthCredentials{Access: access, Refresh: strings.TrimSpace(env("KIRO_REFRESH_TOKEN")), Expires: f.now().Add(time.Hour).UnixMilli(), Source: SourceEnvironment}}, true, nil
+}
+
+func (f *KiroFlow) expandPath(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home := f.HomeDir
+		if home == nil {
+			home = os.UserHomeDir
+		}
+		if value, err := home(); err == nil {
+			return filepath.Join(value, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	return path
 }
 
 func parseKiroCredential(data []byte, now time.Time) (KiroImportedCredential, error) {
@@ -99,19 +125,35 @@ func parseKiroCredential(data []byte, now time.Time) (KiroImportedCredential, er
 	if apiRegion == "" {
 		apiRegion = NormalizeKiroRegion(region)
 	}
-	expires := now.Add(time.Hour).UnixMilli()
-	if value, ok := payload["expiresAt"].(float64); ok {
-		if value < 10_000_000_000 {
-			value *= 1000
-		}
-		expires = int64(value)
+	expiryValue, expiryPresent := payload["expiresAt"]
+	if !expiryPresent {
+		expiryValue, expiryPresent = payload["expires_at"]
 	}
+	expires := parseKiroExpiry(expiryValue, expiryPresent, refresh != "", now)
 	clientID, clientSecret := field("clientId", "client_id"), field("clientSecret", "client_secret")
 	authType := "kiro_desktop"
 	if clientID != "" && clientSecret != "" {
 		authType = "aws_sso_oidc"
 	}
 	return KiroImportedCredential{OAuthCredentials: OAuthCredentials{Access: access, Refresh: refresh, Expires: expires, Source: SourceCredentialFile}, AuthType: authType, ProfileARN: profile, SSORegion: NormalizeKiroRegion(region), APIRegion: apiRegion, ClientID: clientID, ClientSecret: clientSecret}, nil
+}
+
+func parseKiroExpiry(value any, present, hasRefresh bool, now time.Time) int64 {
+	switch typed := value.(type) {
+	case float64:
+		if typed < 10_000_000_000 {
+			typed *= 1000
+		}
+		return int64(typed)
+	case string:
+		if parsed, err := time.Parse(time.RFC3339, typed); err == nil {
+			return parsed.UnixMilli()
+		}
+	}
+	if present && hasRefresh {
+		return 0
+	}
+	return now.Add(time.Hour).UnixMilli()
 }
 
 func (f *KiroFlow) Refresh(ctx context.Context, imported KiroImportedCredential) (OAuthCredentials, error) {

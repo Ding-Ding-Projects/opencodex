@@ -306,6 +306,31 @@ func (s *CredentialStore) SetActiveAccount(ctx context.Context, provider, accoun
 	return found, err
 }
 
+func (s *CredentialStore) SetAccountAlias(ctx context.Context, provider, accountID, alias string) (bool, error) {
+	alias = strings.TrimSpace(alias)
+	if len(alias) > 80 || strings.ContainsAny(alias, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f") {
+		return false, errors.New("alias must be at most 80 printable characters")
+	}
+	found := false
+	err := s.mutate(ctx, func(store AuthStore) error {
+		set, ok := store[provider]
+		if !ok {
+			return nil
+		}
+		for index := range set.Accounts {
+			if set.Accounts[index].ID != accountID {
+				continue
+			}
+			set.Accounts[index].Alias = alias
+			store[provider] = set
+			found = true
+			break
+		}
+		return nil
+	})
+	return found, err
+}
+
 func (s *CredentialStore) MarkNeedsReauth(ctx context.Context, provider, accountID string, expectedGeneration string) (bool, error) {
 	updated := false
 	err := s.mutate(ctx, func(store AuthStore) error {

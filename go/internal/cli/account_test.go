@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,5 +92,64 @@ func TestAccountAutoSwitchPersistsValidatedThreshold(t *testing.T) {
 	}
 	if err := accountAutoSwitch([]string{"openai", "threshold", "101"}, IO{Out: &output, Err: &output}); err == nil {
 		t.Fatal("out-of-range threshold succeeded")
+	}
+}
+
+func TestAccountAPIKeyPoolCRUDNeverPrintsSecret(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", home)
+	cfg := config.Default()
+	cfg.DefaultProvider = "test"
+	cfg.Providers["test"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.test/v1", APIKey: "legacy-secret-value"}
+	if err := config.Save(filepath.Join(home, "config.json"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	streams := IO{In: bytes.NewBufferString("second-secret-value\n"), Out: &output, Err: &output}
+	if err := accountAddKey([]string{"test", "--label", "backup", "--json"}, streams); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(output.Bytes(), []byte("second-secret-value")) {
+		t.Fatal("add-key output leaked secret")
+	}
+	loaded, err := config.Load(filepath.Join(home, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeID, keys := config.ListAPIKeys(loaded, "test")
+	if len(keys) != 2 || activeID == "" {
+		t.Fatalf("keys=%#v active=%q", keys, activeID)
+	}
+	output.Reset()
+	if err := accountAlias(context.Background(), oauth.NewCredentialStore(filepath.Join(home, "auth.json")), []string{"test", activeID, "renamed"}, streams); err != nil {
+		t.Fatal(err)
+	}
+	if err := accountKeyUse("test", keys[0].ID, false, streams); err != nil {
+		t.Fatal(err)
+	}
+	if err := accountKeyRemove("test", keys[0].ID, true, streams); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "legacy-secret-value") || strings.Contains(output.String(), "second-secret-value") {
+		t.Fatal("key CRUD output leaked secret")
+	}
+}
+
+func TestAccountAliasPersistsInOAuthStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", home)
+	store := oauth.NewCredentialStore(filepath.Join(home, "auth.json"))
+	credential := oauth.OAuthCredentials{Access: "secret", Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), Email: "alias@example.test"}
+	if err := store.SaveCredential(context.Background(), "kimi", credential); err != nil {
+		t.Fatal(err)
+	}
+	set, _, _ := store.GetAccountSet("kimi")
+	var output bytes.Buffer
+	if err := accountAlias(context.Background(), store, []string{"kimi", set.Accounts[0].ID, "Work"}, IO{Out: &output}); err != nil {
+		t.Fatal(err)
+	}
+	set, _, _ = store.GetAccountSet("kimi")
+	if set.Accounts[0].Alias != "Work" {
+		t.Fatalf("alias = %q", set.Accounts[0].Alias)
 	}
 }

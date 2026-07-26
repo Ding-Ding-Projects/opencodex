@@ -2,8 +2,10 @@ package oauth
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +35,75 @@ func TestAntigravityExchangeDiscoversProject(t *testing.T) {
 	}
 	if credential.ProjectID != "project-1" || credential.Refresh != "refresh" {
 		t.Fatalf("credential = %+v", credential)
+	}
+}
+
+func TestKiroImportDiscoversSQLiteCredential(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kiro data.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE auth_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO auth_kv(key,value) VALUES ('kirocli:oidc:device-registration','{"clientId":"client","clientSecret":"client-secret","region":"us-west-2"}')`,
+		`INSERT INTO auth_kv(key,value) VALUES ('kirocli:oidc:token','{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2030-01-02T03:04:05Z"}')`,
+		`INSERT INTO state(key,value) VALUES ('api.codewhisperer.profile','{"arn":"arn:aws:codewhisperer:eu-central-1:1:profile/test"}')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	flow := NewKiroFlow(nil)
+	flow.Env = func(key string) string {
+		if key == "KIROCLI_DB_PATH" {
+			return path
+		}
+		return ""
+	}
+	imported, found, err := flow.Import("")
+	if err != nil || !found {
+		t.Fatalf("Import() found=%v err=%v", found, err)
+	}
+	if imported.Access != "access-secret" || imported.Refresh != "refresh-secret" || imported.ClientID != "client" || imported.APIRegion != "eu-central-1" || imported.Source != SourceLocalCLI {
+		t.Fatalf("imported metadata mismatch: source=%s auth=%s region=%s", imported.Source, imported.AuthType, imported.APIRegion)
+	}
+	wantExpiry, _ := time.Parse(time.RFC3339, "2030-01-02T03:04:05Z")
+	if imported.Expires != wantExpiry.UnixMilli() {
+		t.Fatalf("expires=%d want=%d", imported.Expires, wantExpiry.UnixMilli())
+	}
+}
+
+func TestKiroImportRejectsAmbiguousSQLiteTokensWithoutLeakingValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE auth_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO auth_kv(key,value) VALUES ('custom:a:token','{"accessToken":"first-secret"}'),('custom:b:token','{"accessToken":"second-secret"}')`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	flow := NewKiroFlow(nil)
+	flow.Env = func(key string) string {
+		if key == "KIROCLI_DB_PATH" {
+			return path
+		}
+		return ""
+	}
+	_, found, err := flow.Import("")
+	if err == nil || found {
+		t.Fatalf("Import() found=%v err=%v", found, err)
+	}
+	if strings.Contains(err.Error(), "first-secret") || strings.Contains(err.Error(), "second-secret") {
+		t.Fatal("ambiguity error leaked token")
 	}
 }
 

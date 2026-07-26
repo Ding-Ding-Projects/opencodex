@@ -21,6 +21,8 @@ const accountUsage = `Usage:
   ocx account use <provider> <account-id> [--json]
   ocx account refresh <provider> [account-id] [--json]
   ocx account auto-switch openai <on|off|status|threshold 0-100> [--json]
+  ocx account alias <provider> <account-or-key-id> <display-name|-> [--json]
+  ocx account add-key <provider> [--label LABEL] [--json]
   ocx account add <provider> [--json-stdin]
   ocx account remove <provider> <account-id> --yes [--json]`
 
@@ -56,6 +58,10 @@ func runAccount(ctx context.Context, args []string, streams IO) error {
 		return accountRefresh(ctx, store, args[1:], streams)
 	case "auto-switch":
 		return accountAutoSwitch(args[1:], streams)
+	case "alias":
+		return accountAlias(ctx, store, args[1:], streams)
+	case "add-key":
+		return accountAddKey(args[1:], streams)
 	default:
 		return fmt.Errorf("unknown account subcommand %q\n%s", args[0], accountUsage)
 	}
@@ -81,6 +87,9 @@ func accountList(store *oauth.CredentialStore, args []string, streams IO) error 
 	filter := ""
 	if len(rest) == 1 {
 		filter = normalizeAccountProvider(rest[0])
+		if keyProvider(filter) {
+			return accountKeyList(filter, jsonOutput, streams)
+		}
 	}
 	auth, err := store.Load()
 	if err != nil {
@@ -121,6 +130,9 @@ func accountCurrent(store *oauth.CredentialStore, args []string, streams IO) err
 		return fmt.Errorf("usage: ocx account current <provider> [--json]")
 	}
 	provider := normalizeAccountProvider(rest[0])
+	if keyProvider(provider) {
+		return accountKeyCurrent(provider, jsonOutput, streams)
+	}
 	set, ok, err := store.GetAccountSet(provider)
 	if err != nil {
 		return err
@@ -148,6 +160,9 @@ func accountUse(ctx context.Context, store *oauth.CredentialStore, args []string
 		return fmt.Errorf("usage: ocx account use <provider> <account-id> [--json]")
 	}
 	provider := normalizeAccountProvider(rest[0])
+	if keyProvider(provider) {
+		return accountKeyUse(provider, rest[1], jsonOutput, streams)
+	}
 	changed, err := store.SetActiveAccount(ctx, provider, rest[1])
 	if err != nil {
 		return err
@@ -172,6 +187,9 @@ func accountRemove(ctx context.Context, store *oauth.CredentialStore, args []str
 		return fmt.Errorf("confirmation required; re-run with --yes")
 	}
 	provider := normalizeAccountProvider(rest[0])
+	if keyProvider(provider) {
+		return accountKeyRemove(provider, rest[1], jsonOutput, streams)
+	}
 	removed, err := store.RemoveAccount(ctx, provider, rest[1])
 	if err != nil {
 		return err

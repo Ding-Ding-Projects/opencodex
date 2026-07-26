@@ -95,7 +95,7 @@ func runLogin(ctx context.Context, args []string, streams IO) error {
 		return fmt.Errorf("usage: ocx login <provider>\nOAuth providers: %s", strings.Join(publicOAuthProviders, ", "))
 	}
 	flowName, storeName := normalizeLoginProvider(args[0])
-	flow, err := newLoginFlow(flowName, nil, strings.TrimSpace(os.Getenv("KIRO_CREDENTIALS_FILE")))
+	flow, err := newLoginFlow(flowName, nil, "")
 	if err != nil {
 		return err
 	}
