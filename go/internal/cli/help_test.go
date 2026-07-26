@@ -11,7 +11,7 @@ func TestHelpOutputListsLifecycleAndManagementCommands(t *testing.T) {
 	if err := PrintHelp(&output, ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"ocx start", "ocx sync", "ocx service", "ocx provider", "ocx account", "ocx models", "ocx claude"} {
+	for _, expected := range []string{"ocx start", "ocx sync", "ocx service", "ocx provider", "ocx account", "ocx models", "ocx claude", "ocx claude desktop [sub]"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("help missing %q", expected)
 		}

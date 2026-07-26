@@ -72,6 +72,21 @@ func TestRequestLogPublicDTOAddsDisplayMetricsAndHidesOrdinaryAttempt(t *testing
 	}
 }
 
+func TestFinalizedRequestUsageKeepsTotalOnlyInDTOField(t *testing.T) {
+	usageValue, status, total := finalizedRequestUsage("openai", &types.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}, nil)
+	if status != RequestUsageReported || total == nil || *total != 5 {
+		t.Fatalf("status=%q total=%v", status, total)
+	}
+	if usageValue == nil || usageValue.TotalTokens != 0 {
+		t.Fatalf("aggregate total leaked into nested usage: %#v", usageValue)
+	}
+
+	usageValue, _, total = finalizedRequestUsage("openai", &types.Usage{InputTokens: 3, OutputTokens: 2}, nil)
+	if total == nil || *total != 5 || usageValue == nil || usageValue.TotalTokens != 0 {
+		t.Fatalf("derived total leaked into nested usage: usage=%#v total=%v", usageValue, total)
+	}
+}
+
 func TestRequestLogMetadataFinalizationAndFiltering(t *testing.T) {
 	started := time.UnixMilli(1_000)
 	context := &RequestLogContext{Model: "wire", Provider: "provider", ProviderAdapter: "openai", RequestedModel: "public"}

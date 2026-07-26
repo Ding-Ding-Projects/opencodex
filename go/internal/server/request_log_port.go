@@ -780,7 +780,7 @@ func finalizedRequestUsage(adapter string, measured *types.Usage, estimate *int)
 		return nil, status, nil
 	}
 	total := canonicalUsageTotal(*result)
-	result.TotalTokens = total
+	result.TotalTokens = 0
 	return result, status, &total
 }
 

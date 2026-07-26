@@ -70,3 +70,10 @@ func TestClassifyErrorKeepsExplicitServerStatusAuthoritative(t *testing.T) {
 		t.Fatalf("mixed 500 classification=%+v", got)
 	}
 }
+
+func TestClassifyErrorPreservesMidStreamUpstreamCode(t *testing.T) {
+	got := ClassifyError(502, UpstreamStreamErrorType, "synthetic mid-stream failure")
+	if got.Type != "server_error" || got.Code == nil || *got.Code != "upstream_error" {
+		t.Fatalf("mid-stream classification=%+v", got)
+	}
+}

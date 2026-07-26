@@ -24,6 +24,10 @@ type TerminalError struct {
 	Message string  `json:"message,omitempty"`
 }
 
+// UpstreamStreamErrorType distinguishes an adapter error that arrived after a
+// successful streaming response began from a pre-stream upstream HTTP failure.
+const UpstreamStreamErrorType = "upstream_stream_error"
+
 func code(value string) *string { return &value }
 
 func IsClientClosedMessage(message string) bool {
@@ -79,6 +83,9 @@ func ClassifyError(status int, errorType, message string) ErrorPayload {
 	}
 	if containsAny(text, "validationexception", "invalid request", "model unavailable", "model not found", "unsupported model", "profile arn", "wrong region", "invalid region") {
 		return result("invalid_request_error", "invalid_request_error")
+	}
+	if errorType == UpstreamStreamErrorType {
+		return result("server_error", "upstream_error")
 	}
 	if status >= 500 {
 		return result("server_error", "upstream_server_error")

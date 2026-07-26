@@ -803,6 +803,10 @@ func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan type
 		for event := range source {
 			if event.Type == types.EventError {
 				event.Error = normalizeUpstreamDisconnectMessage(event.Error)
+				if event.StatusCode == 0 && event.ErrorType == "" {
+					event.StatusCode = http.StatusBadGateway
+					event.ErrorType = ocxlib.UpstreamStreamErrorType
+				}
 			}
 			logSession.observe(event)
 			switch event.Type {
