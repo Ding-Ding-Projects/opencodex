@@ -19,6 +19,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 const resetCreditBaseURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
@@ -41,12 +42,17 @@ type cliCodexAuthManagement struct {
 	resetBase  string
 	usageURL   string
 	mainToken  func() (codex.MainAccountToken, bool)
+	openURL    func(string) error
 	now        func() time.Time
 	mu         sync.Mutex
 	sessions   map[string]*codexLoginSession
+	mainID     string
+	mainEmail  string
+	mainPlan   string
 }
 
 var _ management.CodexAuthBackend = (*cliCodexAuthManagement)(nil)
+var _ management.CodexResetCreditConsumer = (*cliCodexAuthManagement)(nil)
 
 func newCodexAuthManagement(cfg *config.Config, configPath string, store *oauth.CredentialStore, quota *codex.QuotaStore, client *http.Client) *cliCodexAuthManagement {
 	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
@@ -57,7 +63,8 @@ func newCodexAuthManagement(cfg *config.Config, configPath string, store *oauth.
 	}
 	return &cliCodexAuthManagement{
 		config: cfg, configPath: configPath, store: store, quota: quota, client: client,
-		resetBase: resetCreditBaseURL, usageURL: codexUsageURL, now: time.Now, sessions: make(map[string]*codexLoginSession),
+		resetBase: resetCreditBaseURL, usageURL: codexUsageURL, openURL: platform.OpenURL, now: time.Now,
+		sessions: make(map[string]*codexLoginSession), mainEmail: "Codex App login",
 		mainToken: func() (codex.MainAccountToken, bool) {
 			return codex.ReadMainAccountToken(filepath.Join(codexHome, "auth.json"))
 		},
@@ -78,7 +85,17 @@ func (m *cliCodexAuthManagement) ListCodexAccounts(ctx context.Context, forceRef
 	configured := append([]config.CodexAccount(nil), m.config.CodexAccounts...)
 	m.mu.Unlock()
 	mainToken, hasMain := m.mainToken()
-	mainEmail, mainPlan := "Codex App login", ""
+	mainIdentity := ""
+	if hasMain {
+		mainIdentity = mainToken.ChatGPTAccountID
+	}
+	m.mu.Lock()
+	if mainIdentity != m.mainID {
+		m.mainID, m.mainEmail, m.mainPlan = mainIdentity, "Codex App login", ""
+		m.quota.Clear(codex.MainCodexAccountID)
+	}
+	mainEmail, mainPlan := m.mainEmail, m.mainPlan
+	m.mu.Unlock()
 	if hasMain && (forceRefresh || !m.hasQuota(codex.MainCodexAccountID)) {
 		if usage, ok := m.fetchUsage(ctx, mainToken.AccessToken, mainToken.ChatGPTAccountID); ok {
 			m.quota.SetParsed(codex.MainCodexAccountID, codex.ParseUsageQuota(usage))
@@ -88,6 +105,11 @@ func (m *cliCodexAuthManagement) ListCodexAccounts(ctx context.Context, forceRef
 			if usage.PlanType != nil {
 				mainPlan = strings.TrimSpace(*usage.PlanType)
 			}
+			m.mu.Lock()
+			if m.mainID == mainIdentity {
+				m.mainEmail, m.mainPlan = mainEmail, mainPlan
+			}
+			m.mu.Unlock()
 		}
 	}
 	result := make([]management.CodexAuthAccount, 0, len(configured)+1)
@@ -128,14 +150,19 @@ func (m *cliCodexAuthManagement) accountProjection(id, alias, email, plan, logLa
 }
 
 func (m *cliCodexAuthManagement) fetchUsage(ctx context.Context, accessToken, accountID string) (codex.WhamUsageResponse, bool) {
+	usage, _, ok := m.fetchUsageWithRemaining(ctx, accessToken, accountID)
+	return usage, ok
+}
+
+func (m *cliCodexAuthManagement) fetchUsageWithRemaining(ctx context.Context, accessToken, accountID string) (codex.WhamUsageResponse, *int, bool) {
 	if strings.TrimSpace(accessToken) == "" {
-		return codex.WhamUsageResponse{}, false
+		return codex.WhamUsageResponse{}, nil, false
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, m.usageURL, nil)
 	if err != nil {
-		return codex.WhamUsageResponse{}, false
+		return codex.WhamUsageResponse{}, nil, false
 	}
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	if accountID != "" {
@@ -143,17 +170,38 @@ func (m *cliCodexAuthManagement) fetchUsage(ctx context.Context, accessToken, ac
 	}
 	response, err := m.httpClient().Do(request)
 	if err != nil {
-		return codex.WhamUsageResponse{}, false
+		return codex.WhamUsageResponse{}, nil, false
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return codex.WhamUsageResponse{}, false
+		return codex.WhamUsageResponse{}, nil, false
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return codex.WhamUsageResponse{}, nil, false
 	}
 	var usage codex.WhamUsageResponse
-	if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&usage) != nil {
-		return codex.WhamUsageResponse{}, false
+	if json.Unmarshal(payload, &usage) != nil {
+		return codex.WhamUsageResponse{}, nil, false
 	}
-	return usage, true
+	var presence struct {
+		RateLimitResetCredits *struct {
+			AvailableCount *int `json:"available_count"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if json.Unmarshal(payload, &presence) != nil {
+		return codex.WhamUsageResponse{}, nil, false
+	}
+	var remaining *int
+	if presence.RateLimitResetCredits != nil && presence.RateLimitResetCredits.AvailableCount != nil {
+		value := *presence.RateLimitResetCredits.AvailableCount
+		remaining = &value
+	} else {
+		// codex.UsageResetCredits uses an int for compatibility. Remove an
+		// object that omitted available_count so quota parsing cannot invent 0.
+		usage.RateLimitResetCredits = nil
+	}
+	return usage, remaining, true
 }
 
 func (m *cliCodexAuthManagement) ImportCodexAccount(ctx context.Context, input management.CodexAccountImport) error {
@@ -287,47 +335,73 @@ func (m *cliCodexAuthManagement) CodexResetCredits(ctx context.Context, id strin
 	return management.ResetCredits{Credits: raw.Credits, AvailableCount: available}, nil
 }
 
-func (m *cliCodexAuthManagement) ConsumeCodexResetCredit(ctx context.Context, id string) (string, error) {
+func (m *cliCodexAuthManagement) ConsumeCodexResetCredit(ctx context.Context, id string) (management.ResetCreditConsumeResult, error) {
 	body := strings.NewReader(fmt.Sprintf(`{"redeem_request_id":%q}`, newFlowID("redeem")))
 	request, err := m.resetCreditRequest(ctx, http.MethodPost, id, body)
 	if err != nil {
-		return "", err
+		return management.ResetCreditConsumeResult{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := m.httpClient().Do(request)
 	if err != nil {
-		return "", err
+		return management.ResetCreditConsumeResult{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", &management.BackendError{Status: response.StatusCode, Message: "Upstream error " + response.Status}
+		return management.ResetCreditConsumeResult{}, &management.BackendError{Status: response.StatusCode, Message: "Upstream error " + response.Status}
 	}
 	var result struct {
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
-		return "", err
+		return management.ResetCreditConsumeResult{}, err
 	}
-	return result.Code, nil
+	consume := management.ResetCreditConsumeResult{Code: result.Code}
+	if result.Code == "reset" || result.Code == "already_redeemed" {
+		consume.Remaining = m.refreshAccountUsage(ctx, id)
+	}
+	return consume, nil
 }
 
-func (m *cliCodexAuthManagement) resetCreditRequest(ctx context.Context, method, id string, body io.Reader) (*http.Request, error) {
-	accessToken, accountID := "", ""
+// refreshAccountUsage updates shared state only from this request's fresh WHAM
+// response. A failed or credits-omitting refresh never invents a decrement.
+func (m *cliCodexAuthManagement) refreshAccountUsage(ctx context.Context, id string) *int {
+	accessToken, accountID, err := m.accountAuth(id)
+	if err != nil {
+		return nil
+	}
+	usage, remaining, ok := m.fetchUsageWithRemaining(ctx, accessToken, accountID)
+	if !ok {
+		return nil
+	}
+	if parsed := codex.ParseUsageQuota(usage); parsed != nil {
+		m.quota.SetParsed(id, parsed)
+	}
+	return remaining
+}
+
+func (m *cliCodexAuthManagement) accountAuth(id string) (string, string, error) {
 	if id == codex.MainCodexAccountID {
 		token, found := m.mainToken()
 		if !found {
-			return nil, &management.BackendError{Status: http.StatusUnauthorized, Message: "Main Codex account not logged in"}
+			return "", "", &management.BackendError{Status: http.StatusUnauthorized, Message: "Main Codex account not logged in"}
 		}
-		accessToken, accountID = token.AccessToken, token.ChatGPTAccountID
-	} else {
-		credential, found, err := m.store.GetAccountCredential("openai", id)
-		if err != nil || !found {
-			if err != nil {
-				return nil, err
-			}
-			return nil, &management.BackendError{Status: http.StatusNotFound, Message: "Unknown Codex account"}
-		}
-		accessToken, accountID = credential.Access, credential.AccountID
+		return token.AccessToken, token.ChatGPTAccountID, nil
+	}
+	credential, found, err := m.store.GetAccountCredential("openai", id)
+	if err != nil {
+		return "", "", err
+	}
+	if !found {
+		return "", "", &management.BackendError{Status: http.StatusNotFound, Message: "Unknown Codex account"}
+	}
+	return credential.Access, credential.AccountID, nil
+}
+
+func (m *cliCodexAuthManagement) resetCreditRequest(ctx context.Context, method, id string, body io.Reader) (*http.Request, error) {
+	accessToken, accountID, err := m.accountAuth(id)
+	if err != nil {
+		return nil, err
 	}
 	endpoint := strings.TrimRight(m.resetBase, "/")
 	if method == http.MethodPost {
@@ -398,6 +472,9 @@ func (m *cliCodexAuthManagement) StartCodexLogin(_ context.Context, options mana
 	select {
 	case result := <-started:
 		result.FlowID = flowID
+		if result.URL != "" && m.openURL != nil {
+			_ = m.openURL(result.URL)
+		}
 		return result, nil
 	case <-time.After(15 * time.Second):
 		return management.CodexLoginStart{FlowID: flowID, Instructions: "OAuth login is starting; poll status for progress."}, nil

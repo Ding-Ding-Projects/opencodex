@@ -61,6 +61,7 @@ type Config struct {
 	ShutdownTimeoutMS           int                        `json:"shutdownTimeoutMs,omitempty"`
 	WebSockets                  bool                       `json:"websockets,omitempty"`
 	WebSocketsSet               bool                       `json:"-"`
+	WebSocketsRaw               json.RawMessage            `json:"-"`
 	APIKeys                     []ProxyAPIKey              `json:"apiKeys,omitempty"`
 	CodexAutoStart              *bool                      `json:"codexAutoStart,omitempty"`
 	CodexShimAutoRestore        *bool                      `json:"codexShimAutoRestore,omitempty"`
@@ -184,6 +185,7 @@ type ProviderConfig struct {
 	NoPenaltyModels                 []string                                       `json:"noPenaltyModels,omitempty"`
 	AutoToolChoiceOnlyModels        []string                                       `json:"autoToolChoiceOnlyModels,omitempty"`
 	PreserveReasoningContentModels  []string                                       `json:"preserveReasoningContentModels,omitempty"`
+	ReasoningSplitModels            []string                                       `json:"reasoningSplitModels,omitempty"`
 	ThinkingToggleModels            []string                                       `json:"thinkingToggleModels,omitempty"`
 	ThinkingBudgetModels            []string                                       `json:"thinkingBudgetModels,omitempty"`
 	SelectedModels                  []string                                       `json:"selectedModels,omitempty"`
@@ -200,6 +202,78 @@ type ProviderConfig struct {
 	NativeLocalExec                 string                                         `json:"nativeLocalExec,omitempty"`
 	MCPServers                      map[string]CursorMCPServerConfig               `json:"mcpServers,omitempty"`
 	DesktopExecutor                 *CursorDesktopExecutorConfig                   `json:"desktopExecutor,omitempty"`
+}
+
+// UnmarshalJSON mirrors the TypeScript schema's passthrough treatment of the
+// legacy websockets field. A non-boolean value is preserved for round trips and
+// management diagnostics, while runtime feature checks remain safely disabled.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type wireConfig Config
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	websockets, present := fields["websockets"]
+	if !present {
+		decoded := wireConfig(*c)
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			return err
+		}
+		*c = Config(decoded)
+		return nil
+	}
+	var enabled bool
+	if err := json.Unmarshal(websockets, &enabled); err == nil {
+		decoded := wireConfig(*c)
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			return err
+		}
+		*c = Config(decoded)
+		c.WebSocketsSet = true
+		return nil
+	}
+	delete(fields, "websockets")
+	withoutWebSockets, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	decoded := wireConfig(*c)
+	if err := json.Unmarshal(withoutWebSockets, &decoded); err != nil {
+		return err
+	}
+	*c = Config(decoded)
+	c.WebSocketsSet = true
+	c.WebSocketsRaw = append(json.RawMessage(nil), websockets...)
+	return nil
+}
+
+// MarshalJSON keeps an invalid passthrough value byte-for-byte equivalent at
+// the JSON value level, matching TypeScript saveConfig instead of rewriting it.
+func (c Config) MarshalJSON() ([]byte, error) {
+	type wireConfig Config
+	encoded, err := json.Marshal(wireConfig(c))
+	if err != nil || len(c.WebSocketsRaw) == 0 {
+		return encoded, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return nil, err
+	}
+	fields["websockets"] = append(json.RawMessage(nil), c.WebSocketsRaw...)
+	return json.Marshal(fields)
+}
+
+// PublicWebSocketsValue returns the passthrough value exposed by the TS
+// management API. Runtime callers must continue using WebSockets.
+func (c Config) PublicWebSocketsValue() any {
+	if len(c.WebSocketsRaw) == 0 {
+		return c.WebSockets
+	}
+	var value any
+	if json.Unmarshal(c.WebSocketsRaw, &value) == nil {
+		return value
+	}
+	return c.WebSockets
 }
 
 type CursorMCPServerConfig struct {

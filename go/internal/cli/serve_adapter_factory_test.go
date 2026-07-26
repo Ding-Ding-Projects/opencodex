@@ -86,13 +86,13 @@ func TestAdapterResolverUsesProviderAwareOpenAIConstructors(t *testing.T) {
 	chatCfg := config.ProviderConfig{
 		Adapter: "openai-chat", BaseURL: "https://chat.example/v1", DefaultModel: "reasoner",
 		AutoToolChoiceOnlyModels: []string{"reasoner"}, ModelReasoningEffortMap: map[string]map[string]string{"reasoner": {"high": "enabled"}},
-		PreserveReasoningContentModels: []string{"reasoner"}, NoTemperatureModels: []string{"reasoner"},
+		PreserveReasoningContentModels: []string{"reasoner"}, ReasoningSplitModels: []string{"reasoner"}, NoTemperatureModels: []string{"reasoner"},
 	}
 	chat, ok := unwrapAdapter(resolveTestAdapter(t, "custom-chat", chatCfg)).(*openaiadapter.ChatAdapter)
 	if !ok {
 		t.Fatalf("chat factory returned %T", chat)
 	}
-	if chat.Provider.BaseURL != chatCfg.BaseURL || len(chat.Provider.AutoToolChoiceOnlyModels) != 1 || chat.Provider.ModelReasoningEffortMap["reasoner"]["high"] != "enabled" || len(chat.Provider.PreserveReasoningContentModels) != 1 {
+	if chat.Provider.BaseURL != chatCfg.BaseURL || len(chat.Provider.AutoToolChoiceOnlyModels) != 1 || chat.Provider.ModelReasoningEffortMap["reasoner"]["high"] != "enabled" || len(chat.Provider.PreserveReasoningContentModels) != 1 || len(chat.Provider.ReasoningSplitModels) != 1 {
 		t.Fatalf("chat provider policy was dropped: %#v", chat.Provider)
 	}
 	temperature := 0.7
@@ -126,6 +126,48 @@ func TestAdapterResolverUsesProviderAwareOpenAIConstructors(t *testing.T) {
 	if responsesRequest.URL.String() != "https://responses.example/custom/responses" {
 		t.Fatalf("responses path policy = %s", responsesRequest.URL)
 	}
+}
+
+func TestAdapterResolverAppliesPerModelWireOverridePolicy(t *testing.T) {
+	t.Run("chat provider selects responses wire", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-chat", BaseURL: "https://mixed.example/v1", DefaultModel: "responses-model",
+			ModelAdapters: map[string]string{"responses-model": "openai-responses"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "mixed", cfg)).(*openaiadapter.ResponsesAdapter); !ok {
+			t.Fatalf("model override returned %T", adapter)
+		}
+	})
+
+	t.Run("responses provider selects chat wire", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-responses", BaseURL: "https://mixed.example/v1", DefaultModel: "chat-model",
+			ModelAdapters: map[string]string{"chat-model": "openai-chat"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "mixed", cfg)).(*openaiadapter.ChatAdapter); !ok {
+			t.Fatalf("model override returned %T", adapter)
+		}
+	})
+
+	t.Run("immutable pin wins over configured override", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-chat", BaseURL: "https://opencode.ai/zen/v1", DefaultModel: "minimax-m2.5",
+			ModelAdapters: map[string]string{"minimax-m2.5": "openai-responses"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "opencode-go", cfg)).(*anthropicadapter.Adapter); !ok {
+			t.Fatalf("pinned model returned %T", adapter)
+		}
+	})
+
+	t.Run("canonical forward provider ignores unsafe override", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-responses", BaseURL: "https://chatgpt.com/backend-api/codex", AuthMode: "forward",
+			CodexAccountMode: "pool", DefaultModel: "gpt-test", ModelAdapters: map[string]string{"gpt-test": "openai-chat"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "openai", cfg)).(*openaiadapter.ResponsesAdapter); !ok {
+			t.Fatalf("canonical forward override returned %T", adapter)
+		}
+	})
 }
 
 func TestAdapterResolverAppliesOpenRouterRoutingPolicy(t *testing.T) {

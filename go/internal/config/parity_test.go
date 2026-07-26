@@ -65,6 +65,7 @@ func TestExtendedSchemaRoundTrip(t *testing.T) {
 		OpenRouterRouting:      &providers.OpenRouterProviderRouting{Order: []string{"anthropic"}, AllowFallbacks: &allowFallbacks},
 		ModelOpenRouterRouting: map[string]providers.OpenRouterProviderRouting{"model": {Only: []string{"google"}}},
 		ResponsesItemIDRepair:  &ResponsesItemIDRepairConfig{Message: []string{"msg_placeholder"}, RepairMissingTerminalIDs: true},
+		ReasoningSplitModels:   []string{"MiniMax-M3"},
 	}
 	if err := Save(path, &cfg); err != nil {
 		t.Fatal(err)

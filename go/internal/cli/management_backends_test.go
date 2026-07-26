@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,10 @@ func TestCodexAuthManagementAPIChangesPersistentPoolStateWithoutLeakingTokens(t 
 		if request.Header.Get("Authorization") != wantToken || request.Header.Get("ChatGPT-Account-Id") != wantAccount {
 			t.Errorf("reset-credit auth headers were not populated")
 		}
+		if request.URL.Path == "/usage" {
+			_, _ = io.WriteString(writer, `{"rate_limit_reset_credits":{"available_count":0}}`)
+			return
+		}
 		if request.Method == http.MethodPost {
 			_, _ = io.WriteString(writer, `{"code":"reset"}`)
 			return
@@ -48,7 +53,7 @@ func TestCodexAuthManagementAPIChangesPersistentPoolStateWithoutLeakingTokens(t 
 		_, _ = io.WriteString(writer, `{"credits":[{"granted_at":"2026-07-26T00:00:00Z","expires_at":"2026-08-01T00:00:00Z"}],"available_count":1}`)
 	}))
 	defer credits.Close()
-	backend.resetBase, backend.client = credits.URL, credits.Client()
+	backend.resetBase, backend.usageURL, backend.client = credits.URL, credits.URL+"/usage", credits.Client()
 	backend.mainToken = func() (codex.MainAccountToken, bool) {
 		return codex.MainAccountToken{AccessToken: "main-secret", ChatGPTAccountID: "main-physical", ExpiresAt: time.Now().Add(time.Hour)}, true
 	}
@@ -87,8 +92,11 @@ func TestCodexAuthManagementAPIChangesPersistentPoolStateWithoutLeakingTokens(t 
 		t.Fatalf("credits=%d %s", response.Code, response.Body.String())
 	}
 	response = callCLIManagement(t, api, http.MethodPost, "/api/codex-auth/reset-credits/consume", map[string]any{"accountId": "work"})
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"code":"reset"`) {
+	if response.Code != http.StatusOK || response.Body.String() != `{"code":"reset","remaining":0}` {
 		t.Fatalf("consume=%d %s", response.Code, response.Body.String())
+	}
+	if refreshed, found := quota.Get("work"); !found || refreshed.ResetCredits == nil || *refreshed.ResetCredits != 0 {
+		t.Fatalf("consume did not refresh authoritative quota: %#v found=%t", refreshed, found)
 	}
 	response = callCLIManagement(t, api, http.MethodGet, "/api/codex-auth/reset-credits?accountId=__main__", nil)
 	if response.Code != http.StatusOK {
@@ -122,6 +130,8 @@ func TestCodexLoginManagementAPIStartsAcceptsCodeAndPersistsAccount(t *testing.T
 	store := oauth.NewCredentialStore(filepath.Join(home, "auth.json"))
 	backend := newCodexAuthManagement(&cfg, path, store, codex.NewQuotaStore(), nil)
 	backend.loginFlow = func() (loginFlow, error) { return browserLoginFlow{flow: fakeChatGPTBrowserFlow{}}, nil }
+	opened := make(chan string, 1)
+	backend.openURL = func(rawURL string) error { opened <- rawURL; return nil }
 	api := newCLIManagementAPI(t, &cfg, path, backend, nil, nil, nil)
 	started := callCLIManagement(t, api, http.MethodPost, "/api/codex-auth/login", map[string]any{"id": "oauth-work"})
 	if started.Code != http.StatusOK {
@@ -132,6 +142,14 @@ func TestCodexLoginManagementAPIStartsAcceptsCodeAndPersistsAccount(t *testing.T
 	}
 	if json.Unmarshal(started.Body.Bytes(), &startBody) != nil || startBody.FlowID == "" {
 		t.Fatalf("start body=%s", started.Body.String())
+	}
+	select {
+	case rawURL := <-opened:
+		if rawURL != "https://example.test/authorize" {
+			t.Fatalf("opened URL=%q", rawURL)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server-side browser open was not invoked")
 	}
 	submitted := callCLIManagement(t, api, http.MethodPost, "/api/codex-auth/login/code", map[string]any{"flowId": startBody.FlowID, "input": "authorization-code"})
 	if submitted.Code != http.StatusAccepted {
@@ -167,6 +185,7 @@ func TestCodexLoginManagementAPICancelsPendingFlow(t *testing.T) {
 	backend := newCodexAuthManagement(&cfg, path, oauth.NewCredentialStore(filepath.Join(home, "auth.json")), codex.NewQuotaStore(), nil)
 	backend.mainToken = func() (codex.MainAccountToken, bool) { return codex.MainAccountToken{}, false }
 	backend.loginFlow = func() (loginFlow, error) { return browserLoginFlow{flow: fakeChatGPTBrowserFlow{}}, nil }
+	backend.openURL = func(string) error { return nil }
 	api := newCLIManagementAPI(t, &cfg, path, backend, nil, nil, nil)
 	started := callCLIManagement(t, api, http.MethodPost, "/api/codex-auth/login", map[string]any{"id": "cancelled-work"})
 	var body struct {
@@ -228,6 +247,75 @@ func TestProviderQuotaRefreshFetchesActiveCodexAccountThroughManagementAPI(t *te
 	}
 	if strings.Contains(response.Body.String(), "quota-secret") || strings.Contains(response.Body.String(), "physical-quota") {
 		t.Fatalf("quota response leaked credentials: %s", response.Body.String())
+	}
+}
+
+func TestCodexAccountListRetainsMainMetadataAndResetsOnPhysicalIdentityChange(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.json")
+	cfg := config.FreshInstall()
+	if err := config.Save(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	usage := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
+		accountID := request.Header.Get("ChatGPT-Account-Id")
+		_, _ = fmt.Fprintf(writer, `{"email":%q,"plan_type":%q,"rate_limit":{"primary_window":{"used_percent":%d}}}`, accountID+"@example.test", accountID+"-plan", 20+calls)
+	}))
+	defer usage.Close()
+	backend := newCodexAuthManagement(&cfg, path, oauth.NewCredentialStore(filepath.Join(home, "auth.json")), codex.NewQuotaStore(), usage.Client())
+	backend.usageURL = usage.URL
+	physicalID := "physical-a"
+	backend.mainToken = func() (codex.MainAccountToken, bool) {
+		return codex.MainAccountToken{AccessToken: "main-secret", ChatGPTAccountID: physicalID, ExpiresAt: time.Now().Add(time.Hour)}, true
+	}
+
+	first, err := backend.ListCodexAccounts(context.Background(), false)
+	if err != nil || first[0].Email != "physical-a@example.test" || first[0].Plan == nil || *first[0].Plan != "physical-a-plan" {
+		t.Fatalf("first=%#v err=%v", first, err)
+	}
+	second, err := backend.ListCodexAccounts(context.Background(), false)
+	if err != nil || second[0].Email != first[0].Email || second[0].Plan == nil || *second[0].Plan != "physical-a-plan" || calls != 1 {
+		t.Fatalf("cached=%#v calls=%d err=%v", second, calls, err)
+	}
+
+	physicalID = "physical-b"
+	third, err := backend.ListCodexAccounts(context.Background(), false)
+	if err != nil || third[0].Email != "physical-b@example.test" || third[0].Plan == nil || *third[0].Plan != "physical-b-plan" || calls != 2 {
+		t.Fatalf("switched=%#v calls=%d err=%v", third, calls, err)
+	}
+}
+
+func TestCodexResetCreditRemainingRequiresFreshAvailableCount(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.json")
+	cfg := config.FreshInstall()
+	store := oauth.NewCredentialStore(filepath.Join(home, "auth.json"))
+	if err := store.SaveNamedAccount(context.Background(), "openai", "work", oauth.OAuthCredentials{
+		Access: "access-secret", Refresh: "refresh-secret", AccountID: "physical-account", Expires: time.Now().Add(time.Hour).UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/usage" {
+			_, _ = io.WriteString(writer, `{"rate_limit_reset_credits":{}}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"code":"reset"}`)
+	}))
+	defer upstream.Close()
+	backend := newCodexAuthManagement(&cfg, path, store, codex.NewQuotaStore(), upstream.Client())
+	backend.resetBase, backend.usageURL = upstream.URL, upstream.URL+"/usage"
+	result, err := backend.ConsumeCodexResetCredit(context.Background(), "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Code != "reset" || result.Remaining != nil {
+		t.Fatalf("consume result = %#v", result)
+	}
+	if quota, found := backend.quota.Get("work"); found && quota.ResetCredits != nil {
+		t.Fatalf("missing available_count invented quota: %#v", quota)
 	}
 }
 

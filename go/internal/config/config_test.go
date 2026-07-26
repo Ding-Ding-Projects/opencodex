@@ -372,18 +372,48 @@ func TestBackupInvalidConfigAndConcurrentAtomicSaves(t *testing.T) {
 	}
 }
 
-func TestLoadReportsWrongKnownFieldTypeLikeTypeScript(t *testing.T) {
+func TestLoadPreservesTypeScriptPassthroughFieldWithoutDroppingProviders(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	body := []byte(`{"port":10100,"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://chatgpt.com/backend-api/codex","authMode":"forward","codexAccountMode":"pool"}},"defaultProvider":"openai","websockets":"true"}`)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("Load() succeeded with a string websockets value")
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, want := err.Error(), "websockets: Invalid input: expected boolean, received string"; got != want {
-		t.Fatalf("Load() error = %q, want %q", got, want)
+	if loaded.WebSockets || !loaded.WebSocketsSet || loaded.PublicWebSocketsValue() != "true" || len(loaded.Providers) != 1 {
+		t.Fatalf("passthrough load = %#v public=%#v", loaded, loaded.PublicWebSocketsValue())
+	}
+	if err := Save(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(path)
+	if err != nil || reloaded.PublicWebSocketsValue() != "true" || reloaded.WebSockets {
+		t.Fatalf("passthrough round trip = %#v public=%#v err=%v", reloaded, reloaded.PublicWebSocketsValue(), err)
+	}
+}
+
+func TestProviderReasoningSplitModelsBackwardCompatibleRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	legacy := `{"port":10100,"providers":{"minimax":{"adapter":"openai-chat","baseUrl":"https://api.minimax.io/v1","defaultModel":"MiniMax-M3"}},"defaultProvider":"minimax"}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil || loaded.Providers["minimax"].ReasoningSplitModels != nil {
+		t.Fatalf("legacy load = %#v err=%v", loaded, err)
+	}
+	provider := loaded.Providers["minimax"]
+	provider.ReasoningSplitModels = []string{"MiniMax-M3", "MiniMax-M2.7"}
+	loaded.Providers["minimax"] = provider
+	if err := Save(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(path)
+	if err != nil || !reflect.DeepEqual(reloaded.Providers["minimax"].ReasoningSplitModels, provider.ReasoningSplitModels) {
+		t.Fatalf("reasoning split round trip = %#v err=%v", reloaded, err)
 	}
 }
 

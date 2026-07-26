@@ -215,6 +215,27 @@ func TestBuiltBinaryRecoversMalformedAndPartialConfig(t *testing.T) {
 	if !strings.Contains(output, `"partial"`) || !strings.Contains(output, `"openai"`) || strings.Contains(output, "partial-secret") {
 		t.Fatalf("partial repair/redaction output=%s", output)
 	}
+	typedHome := filepath.Join(home, "typed-ocx")
+	if err := os.MkdirAll(typedHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	typedPath := filepath.Join(typedHome, "config.json")
+	passthrough := `{"port":0,"providers":{"typed":{"adapter":"openai-chat","baseUrl":"https://typed.example/v1","apiKey":"typed-secret","authMode":"key","models":["typed-model"]}},"defaultProvider":"typed","websockets":"true"}`
+	if err := os.WriteFile(typedPath, []byte(passthrough), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := filepath.Glob(typedPath + ".invalid-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output = runBuiltOCX(t, binary, isolatedEnvironment(typedHome, codexHome, home), "config", "show", "--json")
+	if !strings.Contains(output, `"defaultProvider": "typed"`) || !strings.Contains(output, `"websockets": "true"`) || strings.Contains(output, "typed-secret") {
+		t.Fatalf("passthrough type/redaction output=%s", output)
+	}
+	after, err := filepath.Glob(typedPath + ".invalid-*")
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("passthrough field created backup: before=%v after=%v err=%v", before, after, err)
+	}
 }
 
 func TestBuiltBinaryHandlesDiskAndPortFailuresWithoutPanic(t *testing.T) {

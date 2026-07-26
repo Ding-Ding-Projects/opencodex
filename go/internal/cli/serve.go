@@ -27,6 +27,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
+	providerpolicy "github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -366,6 +367,7 @@ func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) serv
 			return nil, fmt.Errorf("unknown provider %q", model.Provider)
 		}
 		provider := cfg.Providers[model.Provider]
+		adapterKind := configuredModelAdapter(model.Provider, model.Model, entry.Adapter, provider)
 		secret := provider.APIKey
 		if auth != nil {
 			if auth.APIKey != "" {
@@ -376,7 +378,7 @@ func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) serv
 		}
 		headers := transport.Headers
 		provider.BaseURL = transport.BaseURL
-		switch entry.Adapter {
+		switch adapterKind {
 		case "openai-chat":
 			adapter := openaiadapter.NewChatAdapter(provider, secret, headers)
 			adapter.OpenRouterRouting = provider.OpenRouterRouting
@@ -431,9 +433,26 @@ func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) serv
 		case "kiro":
 			return kiro.NewAdapter(transport.BaseURL, secret), nil
 		default:
-			return nil, fmt.Errorf("adapter %q is not supported", entry.Adapter)
+			return nil, fmt.Errorf("adapter %q is not supported", adapterKind)
 		}
 	}
+}
+
+// configuredModelAdapter mirrors TS resolveWireProtocolOverride: immutable wire
+// pins win, then a validated per-model override, then the provider default.
+// Re-checking policy here protects live/in-memory config written by older builds.
+func configuredModelAdapter(providerName, modelID, fallback string, provider config.ProviderConfig) string {
+	if pinned := types.PinnedWireAdapter(providerName, modelID); pinned != "" {
+		return pinned
+	}
+	requested := provider.ModelAdapters[modelID]
+	if requested == "" || !types.ModelAdapterOverrideAllowed[requested] {
+		return fallback
+	}
+	if providerpolicy.IsCanonicalOpenAiForwardProvider(provider.Adapter, provider.AuthMode, provider.BaseURL) {
+		return fallback
+	}
+	return requested
 }
 
 func runtimePaths() (string, string, error) {
