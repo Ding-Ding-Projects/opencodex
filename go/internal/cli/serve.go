@@ -131,7 +131,10 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	stop := &stopRouter{channel: make(chan struct{})}
 	liveAuth := &configBackedAuth{config: cfg, store: credentialStore, resolver: auth}
 	codexAuthManagement := newCodexAuthManagement(cfg, loadedConfigPath, credentialStore, sharedQuotaStore, providerClient)
-	providerQuotas := &cliProviderQuotas{config: cfg, quota: sharedQuotaStore, codexAuth: codexAuthManagement, now: time.Now}
+	providerQuotas := &cliProviderQuotas{
+		config: cfg, quota: sharedQuotaStore, codexAuth: codexAuthManagement,
+		fetcher: registry.NewQuotaFetcher(), auth: liveAuth, now: time.Now,
+	}
 	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient)
 	runtimeControl := newRuntimeControl(cfg)
 	apiStop := func() {

@@ -16,6 +16,8 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
@@ -24,6 +26,8 @@ type cliProviderQuotas struct {
 	config    *config.Config
 	quota     *codex.QuotaStore
 	codexAuth *cliCodexAuthManagement
+	fetcher   *registry.QuotaFetcher
+	auth      types.AuthProvider
 	now       func() time.Time
 }
 
@@ -45,18 +49,81 @@ func (b *cliProviderQuotas) ProviderQuotas(ctx context.Context, forceRefresh boo
 	if accountID == "" {
 		accountID = codex.MainCodexAccountID
 	}
-	if quota, found := b.quota.Get(accountID); found {
-		report := management.ProviderQuotaReport{
-			Provider: "openai", Label: "OpenAI", Source: "chatgpt:runtime", UpdatedAt: quota.UpdatedAt,
-			Quota: management.ProviderQuota{
-				WeeklyPercent: quota.WeeklyPercent, MonthlyPercent: quota.MonthlyPercent,
-				WeeklyResetAt: floatMillisToInt(quota.WeeklyResetAt), MonthlyResetAt: floatMillisToInt(quota.MonthlyResetAt),
-				UpdatedAt: quota.UpdatedAt,
-			},
+	if b.quota != nil {
+		if quota, found := b.quota.Get(accountID); found {
+			report := management.ProviderQuotaReport{
+				Provider: "openai", Label: "OpenAI", Source: "chatgpt:runtime", UpdatedAt: quota.UpdatedAt,
+				Quota: management.ProviderQuota{
+					WeeklyPercent: quota.WeeklyPercent, MonthlyPercent: quota.MonthlyPercent,
+					WeeklyResetAt: floatMillisToInt(quota.WeeklyResetAt), MonthlyResetAt: floatMillisToInt(quota.MonthlyResetAt),
+					UpdatedAt: quota.UpdatedAt,
+				},
+			}
+			reports = append(reports, report)
 		}
-		reports = append(reports, report)
+	}
+	if b.fetcher != nil && b.auth != nil {
+		requests := make([]registry.QuotaRequest, 0)
+		for _, provider := range configuredQuotaProviders(b.config, b.fetcher) {
+			credential, err := b.auth.ResolveAuth(ctx, provider, "management-quota")
+			if err != nil || credential == nil {
+				continue
+			}
+			requests = append(requests, registry.QuotaRequest{Provider: provider, Credential: credential})
+		}
+		for _, result := range b.fetcher.FetchAll(ctx, requests, forceRefresh) {
+			if result.Err != nil || result.Quota == nil {
+				continue
+			}
+			reports = append(reports, quotaReport(*result.Quota))
+		}
 	}
 	return management.ProviderQuotaResponse{GeneratedAt: generated, Reports: reports}, nil
+}
+
+func configuredQuotaProviders(cfg *config.Config, fetcher *registry.QuotaFetcher) []string {
+	if cfg == nil || fetcher == nil {
+		return nil
+	}
+	result := make([]string, 0)
+	for name, provider := range cfg.Providers {
+		if name == "openai" || provider.Disabled {
+			continue
+		}
+		if _, supported := fetcher.Endpoints[name]; supported {
+			result = append(result, name)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func quotaReport(quota registry.ProviderQuota) management.ProviderQuotaReport {
+	converted := management.ProviderQuota{UpdatedAt: quota.UpdatedAt.UnixMilli()}
+	for _, window := range quota.Windows {
+		percent := window.Percent
+		var reset *int64
+		if !window.ResetAt.IsZero() {
+			value := window.ResetAt.UnixMilli()
+			reset = &value
+		}
+		switch strings.ToLower(strings.TrimSpace(window.Label)) {
+		case "5h", "five hour", "five-hour":
+			converted.FiveHourPercent, converted.FiveHourResetAt = &percent, reset
+		case "weekly", "7d", "seven day", "seven-day":
+			converted.WeeklyPercent, converted.WeeklyResetAt = &percent, reset
+		case "monthly", "month":
+			converted.MonthlyPercent, converted.MonthlyResetAt = &percent, reset
+		default:
+			converted.CustomWindows = append(converted.CustomWindows, management.ProviderQuotaWindow{Label: window.Label, Percent: percent, ResetAt: reset})
+		}
+	}
+	label := quota.Provider
+	if entry, found := providers.GetProviderRegistryEntry(quota.Provider); found {
+		label = entry.Label
+	}
+	updated := quota.UpdatedAt.UnixMilli()
+	return management.ProviderQuotaReport{Provider: quota.Provider, Label: label, Source: quota.Source, Quota: converted, UpdatedAt: updated}
 }
 
 func floatMillisToInt(value *float64) *int64 {

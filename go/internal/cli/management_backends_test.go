@@ -19,8 +19,17 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/types"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
+
+type quotaAuth struct{ credentials map[string]*types.AuthContext }
+
+func (a quotaAuth) ResolveAuth(_ context.Context, provider, _ string) (*types.AuthContext, error) {
+	return a.credentials[provider], nil
+}
+func (quotaAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
 
 func TestCodexAuthManagementAPIChangesPersistentPoolStateWithoutLeakingTokens(t *testing.T) {
 	home := t.TempDir()
@@ -248,6 +257,33 @@ func TestProviderQuotaRefreshFetchesActiveCodexAccountThroughManagementAPI(t *te
 	}
 	if strings.Contains(response.Body.String(), "quota-secret") || strings.Contains(response.Body.String(), "physical-quota") {
 		t.Fatalf("quota response leaked credentials: %s", response.Body.String())
+	}
+}
+
+func TestProviderQuotasFetchConfiguredNonCodexProviders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer xai-secret" {
+			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(writer, `{"monthly":{"percent":64,"reset_at":"2030-01-01T00:00:00Z"}}`)
+	}))
+	defer upstream.Close()
+	cfg := config.FreshInstall()
+	cfg.Providers = map[string]config.ProviderConfig{"xai": {AuthMode: "oauth"}}
+	fetcher := registry.NewQuotaFetcher()
+	fetcher.Client = upstream.Client()
+	fetcher.Endpoints = map[string]registry.QuotaEndpoint{"xai": {URL: upstream.URL, Source: "xai:test"}}
+	backend := &cliProviderQuotas{
+		config: &cfg, quota: codex.NewQuotaStore(), fetcher: fetcher,
+		auth: quotaAuth{credentials: map[string]*types.AuthContext{"xai": {AccessToken: "xai-secret"}}},
+	}
+
+	result, err := backend.ProviderQuotas(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Reports) != 1 || result.Reports[0].Provider != "xai" || result.Reports[0].Quota.MonthlyPercent == nil || *result.Reports[0].Quota.MonthlyPercent != 64 {
+		t.Fatalf("non-Codex quota reports = %#v", result.Reports)
 	}
 }
 
