@@ -38,11 +38,11 @@ const (
 
 // TerminalTurnAnalysis is the result of analyzing a terminal turn.
 type TerminalTurnAnalysis struct {
-	Decision     TerminalGuardDecision
-	Reason       string
+	Decision      TerminalGuardDecision
+	Reason        string
 	AssistantText string
-	UserText     string
-	HasToolCall  bool
+	UserText      string
+	HasToolCall   bool
 }
 
 // messageText extracts text from a message's content (string or array of parts).

@@ -80,7 +80,7 @@ func TestGuardTerminalEventStream(t *testing.T) {
 
 		continuationCalled := false
 		opts := GuardOptions{
-			AdapterName:        "anthropic",
+			AdapterName:          "anthropic",
 			MaxAutoContinuations: 1,
 			Continuation: func(ctx context.Context, r *types.NormalizedRequest) (<-chan types.AdapterEvent, error) {
 				continuationCalled = true
