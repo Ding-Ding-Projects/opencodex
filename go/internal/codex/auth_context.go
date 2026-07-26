@@ -76,7 +76,7 @@ type ResolveCodexAuthContextOptions struct {
 
 type AuthResolver struct {
 	Router     *Router
-	Store      *AccountStore
+	Store      RoutingAccountStore
 	MainToken  func() (MainAccountToken, bool)
 	HTTPClient *http.Client
 	PrimeQuota func(*RoutingConfig, string)
@@ -140,12 +140,10 @@ func (r *AuthResolver) ResolveCodexAuthContext(
 	}
 
 	var lease *ProbeLease
-	if cooldownUntil, cooling := r.Router.GetCodexAccountCooldownUntil(accountID, now); cooling {
-		if acquired, ok := r.Router.TryAcquireCodexQuotaProbeLease(accountID, now); ok {
-			lease = &acquired
-		} else {
-			return nil, &CodexAccountCooldownError{AccountID: accountID, CooldownUntil: cooldownUntil}
-		}
+	if acquired, ok := r.Router.TryAcquireCodexQuotaProbeLease(accountID, now); ok {
+		lease = &acquired
+	} else if cooldownUntil, cooling := r.Router.GetCodexAccountCooldownUntil(accountID, now); cooling {
+		return nil, &CodexAccountCooldownError{AccountID: accountID, CooldownUntil: cooldownUntil}
 	}
 	if accountID == MainCodexAccountID {
 		mainToken := r.MainToken

@@ -77,10 +77,12 @@ type configBackedAuth struct {
 	persistence *config.LivePersistence
 	store       *oauth.CredentialStore
 	resolver    *oauth.AuthResolver
+	codex       *codexRoutingRuntime
 }
 
 func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID string) (*types.AuthContext, error) {
 	var configErr error
+	useCodexRouter := false
 	readLiveConfig(a.config, a.persistence, func(live *config.Config) {
 		snapshot, err := config.ResolveEnvironment(*live)
 		if err != nil {
@@ -93,16 +95,27 @@ func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID s
 				configErr = err
 				return
 			}
+			if provider == "openai" && authConfig.UsePool && a.codex != nil {
+				useCodexRouter = true
+				return
+			}
 			a.resolver.SetProvider(provider, authConfig, nil)
 		}
 	})
 	if configErr != nil {
 		return nil, configErr
 	}
+	if useCodexRouter {
+		return a.codex.Resolve(ctx, threadID)
+	}
 	return a.resolver.ResolveAuth(ctx, provider, threadID)
 }
 
 func (a *configBackedAuth) RecordOutcome(account string, status types.OutcomeStatus, meta *types.RetryMeta) {
+	if meta != nil && meta.Provider == "openai" && a.codex != nil {
+		a.codex.RecordOutcome(account, status, meta)
+		return
+	}
 	a.resolver.RecordOutcome(account, status, meta)
 }
 

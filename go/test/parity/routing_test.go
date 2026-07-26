@@ -35,7 +35,7 @@ func TestCanonicalCodexRouterAffinityAndRateLimitFailover(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	router := codex.NewRouter(store, func() (codex.MainAccountToken, bool) { return codex.MainAccountToken{}, false }, nil)
+	router := codex.NewRouter(store, func() (codex.MainAccountToken, bool) { return codex.MainAccountToken{}, false })
 	config := &codex.RoutingConfig{CodexAccounts: []codex.CodexAccount{{ID: "account-a"}, {ID: "account-b"}}}
 	router.SetAccountQuota("account-a", codex.AccountQuota{WeeklyPercent: float64Pointer(10)})
 	router.SetAccountQuota("account-b", codex.AccountQuota{WeeklyPercent: float64Pointer(20)})

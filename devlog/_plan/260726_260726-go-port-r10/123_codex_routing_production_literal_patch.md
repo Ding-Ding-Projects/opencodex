@@ -1,16 +1,8 @@
-# WP0 literal patch — Canonical Codex routing production activation
+# 123 — Literal patch: canonical Codex routing production activation
 
-Date: 2026-07-27  
-Base: `3abeadd9d503973188607f4c2d7719ef83df5e2c`  
-Predecessors: `061→071→091→101→111→121`  
-Successors: `126/127→080/081`
+Apply this exact independently audited B-phase candidate against
+`5483bb2cea67582240a74630353a6bb8968231e6`.
 
-This is the complete extractable unified diff for
-[122_codex_routing_production.md](./122_codex_routing_production.md). It contains
-15 files and activates the existing canonical Codex router against the unified
-production credential store. It also migrates auth-only account sets written by
-older Go previews into the router metadata list before serving. It does not
-change the TypeScript oracle.
 ```diff
 diff --git a/go/cmd/ocx/serve_integration_test.go b/go/cmd/ocx/serve_integration_test.go
 index 91457249..92ece766 100644
@@ -49,14 +41,15 @@ index 91457249..92ece766 100644
  }
 diff --git a/go/internal/cli/codex_routing_production_test.go b/go/internal/cli/codex_routing_production_test.go
 new file mode 100644
-index 00000000..043950f6
+index 00000000..ba201693
 --- /dev/null
 +++ b/go/internal/cli/codex_routing_production_test.go
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,356 @@
 +package cli
 +
 +import (
 +	"context"
++	"fmt"
 +	"io"
 +	"net/http"
 +	"net/http/httptest"
@@ -128,7 +121,7 @@ index 00000000..043950f6
 +	runtime := newCodexRoutingRuntime(&cfg, persistence, store, quota, func() (codex.MainAccountToken, bool) {
 +		return codex.MainAccountToken{}, false
 +	}, nil, http.DefaultClient)
-+	auth := &configBackedAuth{config: &cfg, store: store, resolver: generic, codex: runtime}
++	auth := &configBackedAuth{config: &cfg, persistence: persistence, store: store, resolver: generic, codex: runtime}
 +	return &cfg, store, quota, auth, runtime
 +}
 +
@@ -169,7 +162,7 @@ index 00000000..043950f6
 +}
 +
 +func TestConfigBackedAuthActivatesCanonicalCodexRouter(t *testing.T) {
-+	cfg, store, quota, auth, runtime := newRoutingAuthFixture(t)
++	_, store, quota, auth, runtime := newRoutingAuthFixture(t)
 +	quota.Update("a", 10, nil, nil, nil, nil)
 +	quota.Update("b", 20, nil, nil, nil, nil)
 +
@@ -204,10 +197,133 @@ index 00000000..043950f6
 +	}); err != nil {
 +		t.Fatal(err)
 +	}
-+	cfg.Providers["xai"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://x.ai/v1", AuthMode: "oauth"}
++	if err := auth.persistence.Update(func(live *config.Config) {
++		live.Providers["xai"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://x.ai/v1", AuthMode: "oauth"}
++	}); err != nil {
++		t.Fatal(err)
++	}
 +	xai, err := auth.ResolveAuth(context.Background(), "xai", "thread")
 +	if err != nil || xai.AccountID != "x" || xai.AccessToken != "xai-access" {
 +		t.Fatalf("generic OAuth isolation=%#v err=%v", xai, err)
++	}
++}
++
++func TestCanonicalRoutingReplacesQuotaImageAndPreservesProbeProvenance(t *testing.T) {
++	_, _, quota, auth, runtime := newRoutingAuthFixture(t)
++	quota.Update("a", 90, nil, nil, nil, nil)
++	quota.Update("b", 5, nil, nil, nil, nil)
++	selected, err := auth.ResolveAuth(context.Background(), "openai", "quota-before-clear")
++	if err != nil || selected.AccountID != "b" {
++		t.Fatalf("initial quota selection=%#v err=%v", selected, err)
++	}
++	quota.Clear("b")
++	quota.Update("a", 20, nil, nil, nil, nil)
++	selected, err = auth.ResolveAuth(context.Background(), "openai", "quota-after-clear")
++	if err != nil || selected.AccountID != "a" {
++		t.Fatalf("replaced quota selection=%#v err=%v", selected, err)
++	}
++
++	now := time.Now()
++	runtime.router.MarkAccountNeedsReauth("b")
++	routing := runtime.routingConfig()
++	routing.ActiveCodexAccountID = "a"
++	runtime.router.RecordCodexUpstreamOutcome(routing, "a", http.StatusTooManyRequests, codex.CodexUpstreamOutcomeMeta{Now: now.Add(-10 * time.Minute), ResetAt: []any{now.Add(time.Minute).UnixMilli()}})
++	if _, found := runtime.router.GetCodexUpstreamHealth("a"); !found {
++		t.Fatal("seeded probe cooldown missing")
++	}
++	probe, err := auth.ResolveAuth(context.Background(), "openai", "probe-thread")
++	if err != nil || probe.AccountID != "a" || probe.ProbeLeaseID == "" || probe.ThreadID != "probe-thread" {
++		t.Fatalf("probe auth=%#v err=%v", probe, err)
++	}
++	auth.RecordOutcome(probe.AccountID, types.OutcomeSuccess, &types.RetryMeta{
++		Provider: "openai", StatusCode: http.StatusOK,
++		ProbeLeaseID: probe.ProbeLeaseID, ThreadID: probe.ThreadID,
++	})
++	if health, found := runtime.router.GetCodexUpstreamHealth("a"); found {
++		t.Fatalf("successful probe retained health=%#v", health)
++	}
++
++	routing = runtime.routingConfig()
++	routing.ActiveCodexAccountID = "a"
++	runtime.router.RecordCodexUpstreamOutcome(routing, "a", http.StatusTooManyRequests, codex.CodexUpstreamOutcomeMeta{Now: now.Add(-10 * time.Minute), ResetAt: []any{now.Add(time.Minute).UnixMilli()}})
++	probe, err = auth.ResolveAuth(context.Background(), "openai", "failed-probe-thread")
++	if err != nil || probe.ProbeLeaseID == "" {
++		t.Fatalf("failed-probe auth=%#v err=%v", probe, err)
++	}
++	auth.RecordOutcome(probe.AccountID, types.OutcomeProviderError, &types.RetryMeta{
++		Provider: "openai", StatusCode: http.StatusServiceUnavailable,
++		ProbeLeaseID: probe.ProbeLeaseID, ThreadID: probe.ThreadID,
++	})
++	health, found := runtime.router.GetCodexUpstreamHealth("a")
++	if !found || health.ProbeLeaseID != "" || health.ConsecutiveFailures == 0 {
++		t.Fatalf("failed probe health=%#v found=%t", health, found)
++	}
++}
++
++func TestCanonicalRoutingDoesNotDeadlockConcurrentPersistence(t *testing.T) {
++	_, _, quota, auth, _ := newRoutingAuthFixture(t)
++	quota.Update("a", 10, nil, nil, nil, nil)
++	quota.Update("b", 20, nil, nil, nil, nil)
++	done := make(chan struct{})
++	go func() {
++		defer close(done)
++		var wg sync.WaitGroup
++		for index := 0; index < 40; index++ {
++			index := index
++			wg.Add(2)
++			go func() {
++				defer wg.Done()
++				resolved, err := auth.ResolveAuth(context.Background(), "openai", fmt.Sprintf("thread-%d", index))
++				if err == nil {
++					auth.RecordOutcome(resolved.AccountID, types.OutcomeSuccess, &types.RetryMeta{Provider: "openai", StatusCode: http.StatusOK, ThreadID: resolved.ThreadID, ProbeLeaseID: resolved.ProbeLeaseID})
++				}
++			}()
++			go func() {
++				defer wg.Done()
++				_ = auth.persistence.Update(func(live *config.Config) {
++					if live.ProviderContextCaps == nil {
++						live.ProviderContextCaps = make(map[string]int)
++					}
++					live.ProviderContextCaps[fmt.Sprintf("race-%d", index)] = 100_000 + index
++				})
++			}()
++		}
++		wg.Wait()
++	}()
++	select {
++	case <-done:
++	case <-time.After(10 * time.Second):
++		t.Fatal("canonical routing and persistence deadlocked")
++	}
++}
++
++func TestCanonicalRoutingFailsClosedWhenActiveSelectionCannotPersist(t *testing.T) {
++	home := t.TempDir()
++	store := oauth.NewCredentialStore(filepath.Join(home, "auth.json"))
++	saveRoutingCredential(t, store, "a", "access-a", "physical-a")
++	cfg := config.FreshInstall()
++	cfg.CodexAccounts = []config.CodexAccount{{ID: "a", Email: "a@example.test"}}
++	cfg.ActiveCodexAccountID = ""
++	cfg.AutoSwitchThreshold = 80
++	cfg.UpstreamFailoverThreshold = 3
++	// A directory cannot be atomically replaced by config.Save, so Update must
++	// roll the tentative active selection back.
++	persistence := config.NewLivePersistence(home, &cfg)
++	generic, err := configuredAuthWithStore(cfg, store)
++	if err != nil {
++		t.Fatal(err)
++	}
++	runtime := newCodexRoutingRuntime(&cfg, persistence, store, codex.NewQuotaStore(), func() (codex.MainAccountToken, bool) {
++		return codex.MainAccountToken{}, false
++	}, nil, http.DefaultClient)
++	auth := &configBackedAuth{config: &cfg, persistence: persistence, store: store, resolver: generic, codex: runtime}
++	for _, threadID := range []string{"first", "second"} {
++		if resolved, err := auth.ResolveAuth(context.Background(), "openai", threadID); err == nil || resolved != nil || !strings.Contains(err.Error(), "persist Codex active account") {
++			t.Fatalf("thread=%s resolved=%#v err=%v", threadID, resolved, err)
++		}
++		if cfg.ActiveCodexAccountID != "" {
++			t.Fatalf("failed save retained active account %q", cfg.ActiveCodexAccountID)
++		}
 +	}
 +}
 +
@@ -287,10 +403,10 @@ index 00000000..043950f6
 +}
 diff --git a/go/internal/cli/codex_routing_runtime.go b/go/internal/cli/codex_routing_runtime.go
 new file mode 100644
-index 00000000..b2dd9124
+index 00000000..5aaf096b
 --- /dev/null
 +++ b/go/internal/cli/codex_routing_runtime.go
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,238 @@
 +package cli
 +
 +import (
@@ -298,6 +414,7 @@ index 00000000..b2dd9124
 +	"fmt"
 +	"net/http"
 +	"strconv"
++	"sync"
 +	"time"
 +
 +	"github.com/lidge-jun/opencodex-go/internal/codex"
@@ -307,6 +424,7 @@ index 00000000..b2dd9124
 +)
 +
 +type codexRoutingRuntime struct {
++	mu          sync.Mutex
 +	config      *config.Config
 +	persistence *config.LivePersistence
 +	quota       *codex.QuotaStore
@@ -326,8 +444,12 @@ index 00000000..b2dd9124
 +	if err != nil || !found || len(set.Accounts) == 0 {
 +		return err
 +	}
-+	known := make(map[string]struct{}, len(cfg.CodexAccounts))
-+	for _, account := range cfg.CodexAccounts {
++	snapshot := persistence.Snapshot()
++	if snapshot == nil {
++		return fmt.Errorf("snapshot Codex routing config")
++	}
++	known := make(map[string]struct{}, len(snapshot.CodexAccounts))
++	for _, account := range snapshot.CodexAccounts {
 +		known[account.ID] = struct{}{}
 +	}
 +	missing := make([]oauth.ProviderAccount, 0, len(set.Accounts))
@@ -372,15 +494,7 @@ index 00000000..b2dd9124
 +) *codexRoutingRuntime {
 +	accountStore := codex.NewOAuthAccountStore(store, refresh)
 +	runtime := &codexRoutingRuntime{config: cfg, persistence: persistence, quota: quota}
-+	runtime.router = codex.NewRouter(accountStore, mainToken, func(updated *codex.RoutingConfig) error {
-+		if runtime.persistence == nil {
-+			runtime.config.ActiveCodexAccountID = updated.ActiveCodexAccountID
-+			return nil
-+		}
-+		return runtime.persistence.Update(func(live *config.Config) {
-+			live.ActiveCodexAccountID = updated.ActiveCodexAccountID
-+		})
-+	})
++	runtime.router = codex.NewRouter(accountStore, mainToken)
 +	runtime.resolver = &codex.AuthResolver{
 +		Router: runtime.router, Store: accountStore, MainToken: mainToken, HTTPClient: client,
 +	}
@@ -395,14 +509,21 @@ index 00000000..b2dd9124
 +}
 +
 +func (r *codexRoutingRuntime) routingConfig() *codex.RoutingConfig {
-+	autoSwitch := float64(r.config.AutoSwitchThreshold)
-+	failover := r.config.UpstreamFailoverThreshold
-+	result := &codex.RoutingConfig{
-+		ActiveCodexAccountID: r.config.ActiveCodexAccountID,
-+		AutoSwitchThreshold:  &autoSwitch, UpstreamFailoverThreshold: &failover,
-+		CodexAccounts: make([]codex.CodexAccount, 0, len(r.config.CodexAccounts)),
++	cfg := r.config
++	if r.persistence != nil {
++		cfg = r.persistence.Snapshot()
 +	}
-+	for _, account := range r.config.CodexAccounts {
++	if cfg == nil {
++		cfg = &config.Config{}
++	}
++	autoSwitch := float64(cfg.AutoSwitchThreshold)
++	failover := cfg.UpstreamFailoverThreshold
++	result := &codex.RoutingConfig{
++		ActiveCodexAccountID: cfg.ActiveCodexAccountID,
++		AutoSwitchThreshold:  &autoSwitch, UpstreamFailoverThreshold: &failover,
++		CodexAccounts: make([]codex.CodexAccount, 0, len(cfg.CodexAccounts)),
++	}
++	for _, account := range cfg.CodexAccounts {
 +		result.CodexAccounts = append(result.CodexAccounts, codex.CodexAccount{
 +			ID: account.ID, Email: account.Email, Alias: account.Alias, Plan: account.Plan,
 +			ChatGPTAccountID: account.ChatGPTAccountID, LogLabel: account.LogLabel, IsMain: account.IsMain,
@@ -415,23 +536,60 @@ index 00000000..b2dd9124
 +	if r == nil || r.quota == nil {
 +		return
 +	}
++	quotas := make(map[string]codex.AccountQuota)
 +	for accountID, snapshot := range r.quota.List() {
-+		r.router.SetAccountQuota(accountID, codex.AccountQuota{
++		quotas[accountID] = codex.AccountQuota{
 +			WeeklyPercent: snapshot.WeeklyPercent, MonthlyPercent: snapshot.MonthlyPercent,
-+		})
++		}
 +	}
++	r.router.ReplaceAccountQuotas(quotas)
++}
++
++func (r *codexRoutingRuntime) persistActiveTransition(previous, next string) error {
++	if previous == next {
++		return nil
++	}
++	if r.persistence == nil {
++		if r.config == nil {
++			return fmt.Errorf("Codex routing config is unavailable")
++		}
++		r.config.ActiveCodexAccountID = next
++		return nil
++	}
++	conflict := false
++	if err := r.persistence.Update(func(live *config.Config) {
++		if live.ActiveCodexAccountID != previous {
++			conflict = true
++			return
++		}
++		live.ActiveCodexAccountID = next
++	}); err != nil {
++		return err
++	}
++	if conflict {
++		return fmt.Errorf("Codex active account changed concurrently")
++	}
++	return nil
 +}
 +
 +func (r *codexRoutingRuntime) Resolve(ctx context.Context, threadID string) (*types.AuthContext, error) {
 +	if r == nil || r.resolver == nil {
 +		return nil, fmt.Errorf("Codex account router is unavailable")
 +	}
++	r.mu.Lock()
++	defer r.mu.Unlock()
 +	r.syncQuotas()
++	routing := r.routingConfig()
++	previousActive := routing.ActiveCodexAccountID
 +	auth, err := r.resolver.ResolveCodexAuthContext(ctx, http.Header{
 +		"X-Codex-Parent-Thread-Id": []string{threadID},
-+	}, r.routingConfig(), "pool", codex.ResolveCodexAuthContextOptions{})
++	}, routing, "pool", codex.ResolveCodexAuthContextOptions{})
 +	if err != nil {
 +		return nil, err
++	}
++	if err := r.persistActiveTransition(previousActive, routing.ActiveCodexAccountID); err != nil {
++		r.router.ClearThreadAccountMap()
++		return nil, fmt.Errorf("persist Codex active account: %w", err)
 +	}
 +	resolvedHeaders := codex.HeadersForCodexAuthContext(nil, auth)
 +	headers := make(map[string]string, len(resolvedHeaders))
@@ -444,6 +602,7 @@ index 00000000..b2dd9124
 +		Kind: string(auth.Kind), Provider: "openai", AccountID: auth.AccountID,
 +		Generation: auth.Generation, AccessToken: auth.AccessToken,
 +		ChatGPTAccountID: auth.ChatGPTAccountID, Headers: headers,
++		ProbeLeaseID: auth.ProbeLeaseID(), ThreadID: threadID,
 +	}, nil
 +}
 +
@@ -451,6 +610,8 @@ index 00000000..b2dd9124
 +	if r == nil || r.router == nil || account == "" {
 +		return
 +	}
++	r.mu.Lock()
++	defer r.mu.Unlock()
 +	code := 0
 +	if meta != nil {
 +		code = meta.StatusCode
@@ -473,29 +634,51 @@ index 00000000..b2dd9124
 +	if meta != nil && meta.RetryAfter > 0 {
 +		codexMeta.RetryAfter = strconv.FormatFloat(meta.RetryAfter.Seconds(), 'f', -1, 64)
 +	}
-+	r.router.RecordCodexUpstreamOutcome(r.routingConfig(), account, code, codexMeta)
++	if meta != nil {
++		codexMeta.ProbeLeaseID = meta.ProbeLeaseID
++		codexMeta.ThreadID = meta.ThreadID
++	}
++	routing := r.routingConfig()
++	previousActive := routing.ActiveCodexAccountID
++	r.router.RecordCodexUpstreamOutcome(routing, account, code, codexMeta)
++	if r.persistActiveTransition(previousActive, routing.ActiveCodexAccountID) != nil {
++		r.router.ClearThreadAccountMap()
++	}
 +}
 diff --git a/go/internal/cli/live_config.go b/go/internal/cli/live_config.go
-index bd45066b..e77812e4 100644
+index f490257b..886ee1a9 100644
 --- a/go/internal/cli/live_config.go
 +++ b/go/internal/cli/live_config.go
-@@ -59,6 +59,7 @@ type configBackedAuth struct {
- 	config   *config.Config
- 	store    *oauth.CredentialStore
- 	resolver *oauth.AuthResolver
-+	codex    *codexRoutingRuntime
+@@ -77,10 +77,12 @@ type configBackedAuth struct {
+ 	persistence *config.LivePersistence
+ 	store       *oauth.CredentialStore
+ 	resolver    *oauth.AuthResolver
++	codex       *codexRoutingRuntime
  }
  
  func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID string) (*types.AuthContext, error) {
-@@ -73,12 +74,19 @@ func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID s
+ 	var configErr error
++	useCodexRouter := false
+ 	readLiveConfig(a.config, a.persistence, func(live *config.Config) {
+ 		snapshot, err := config.ResolveEnvironment(*live)
  		if err != nil {
- 			return nil, err
+@@ -93,16 +95,27 @@ func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID s
+ 				configErr = err
+ 				return
+ 			}
++			if provider == "openai" && authConfig.UsePool && a.codex != nil {
++				useCodexRouter = true
++				return
++			}
+ 			a.resolver.SetProvider(provider, authConfig, nil)
  		}
-+		if provider == "openai" && authConfig.UsePool && a.codex != nil {
-+			return a.codex.Resolve(ctx, threadID)
-+		}
- 		a.resolver.SetProvider(provider, authConfig, nil)
+ 	})
+ 	if configErr != nil {
+ 		return nil, configErr
  	}
++	if useCodexRouter {
++		return a.codex.Resolve(ctx, threadID)
++	}
  	return a.resolver.ResolveAuth(ctx, provider, threadID)
  }
  
@@ -508,42 +691,40 @@ index bd45066b..e77812e4 100644
  }
  
 diff --git a/go/internal/cli/serve.go b/go/internal/cli/serve.go
-index 6200ea2a..5f5de7d1 100644
+index 978cd20d..cb391c29 100644
 --- a/go/internal/cli/serve.go
 +++ b/go/internal/cli/serve.go
-@@ -106,6 +106,10 @@ func runServe(ctx context.Context, args []string, streams IO) error {
- 		return err
+@@ -116,6 +116,9 @@ func runServe(ctx context.Context, args []string, streams IO) error {
+ 		fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; using configured catalog: %v\n", discoveryErr)
  	}
- 	credentialStore := oauth.NewCredentialStore(filepath.Join(configHome, "auth.json"))
-+	configPersistence := config.NewLivePersistence(loadedConfigPath, cfg)
+ 	configPersistence := config.NewLivePersistence(loadedConfigPath, cfg)
 +	if err := reconcileCodexRoutingAccounts(cfg, configPersistence, credentialStore); err != nil {
 +		return fmt.Errorf("reconcile Codex routing accounts: %w", err)
 +	}
- 	oauthManagement := newOAuthManagement(credentialStore)
- 	providerClient := newAdapterAwareClient(server.NewProviderClient(providerFetchTimeouts(runtimeCfg)))
- 	sharedModelCache := codex.NewModelCache()
-@@ -134,9 +138,13 @@ func runServe(ctx context.Context, args []string, streams IO) error {
+ 	reg := configuredRegistryWithCursorModels(runtimeCfg, cursorModels)
+ 	liveRegistry := &configBackedRegistry{config: cfg, persistence: configPersistence, cursorModels: cursorModels}
+ 	comboResolver, err := combos.New(runtimeCfg.Combos, configuredComboProviders(reg, runtimeCfg))
+@@ -135,8 +138,13 @@ func runServe(ctx context.Context, args []string, streams IO) error {
  	debugLog := usage.NewDebugLog(filepath.Join(configHome, "usage-debug.jsonl"))
  	requestLogs := management.NewRequestLog(200)
  	stop := &stopRouter{channel: make(chan struct{})}
--	liveAuth := &configBackedAuth{config: cfg, store: credentialStore, resolver: auth}
--	configPersistence := config.NewLivePersistence(loadedConfigPath, cfg)
+-	liveAuth := &configBackedAuth{config: cfg, persistence: configPersistence, store: credentialStore, resolver: auth}
  	codexAuthManagement := newCodexAuthManagement(cfg, loadedConfigPath, credentialStore, sharedQuotaStore, providerClient, configPersistence)
 +	refreshers := configuredOAuthRefreshers(runtimeCfg, providerClient, false)
 +	codexRouting := newCodexRoutingRuntime(
 +		cfg, configPersistence, credentialStore, sharedQuotaStore,
 +		codexAuthManagement.mainToken, refreshers["openai"], providerClient,
 +	)
-+	liveAuth := &configBackedAuth{config: cfg, store: credentialStore, resolver: auth, codex: codexRouting}
- 	providerQuotas := newProviderQuotaBackend(cfg, sharedQuotaStore, codexAuthManagement, registry.NewQuotaFetcher(), liveAuth, time.Now)
- 	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient)
++	liveAuth := &configBackedAuth{config: cfg, persistence: configPersistence, store: credentialStore, resolver: auth, codex: codexRouting}
+ 	providerQuotas := newProviderQuotaBackend(cfg, sharedQuotaStore, codexAuthManagement, registry.NewQuotaFetcher(), liveAuth, time.Now, configPersistence)
+ 	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient, configPersistence)
  	preferredPort := cfg.Port
 @@ -157,7 +165,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
  		teardownOwnedGrokFence(streams)
  		stop.Stop()
  	}
--	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop, ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
-+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, CodexRouter: codexRouting.Router(), ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop, ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
+-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolverWithPersistence(cfg, configPersistence, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore, configPersistence), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop, ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
++	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolverWithPersistence(cfg, configPersistence, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, CodexRouter: codexRouting.Router(), ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore, configPersistence), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop, ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
  		if err := configPersistence.Update(func(live *config.Config) { live.Port = port }); err != nil {
  			return fmt.Errorf("persist selected port: %w", err)
  		}
@@ -564,7 +745,7 @@ index aad118f9..6e1dc278 100644
 +	return record.Generation, true, nil
 +}
 diff --git a/go/internal/codex/auth_context.go b/go/internal/codex/auth_context.go
-index 21a60ba4..4bbae27e 100644
+index 21a60ba4..5859dc92 100644
 --- a/go/internal/codex/auth_context.go
 +++ b/go/internal/codex/auth_context.go
 @@ -76,7 +76,7 @@ type ResolveCodexAuthContextOptions struct {
@@ -576,17 +757,48 @@ index 21a60ba4..4bbae27e 100644
  	MainToken  func() (MainAccountToken, bool)
  	HTTPClient *http.Client
  	PrimeQuota func(*RoutingConfig, string)
+@@ -140,12 +140,10 @@ func (r *AuthResolver) ResolveCodexAuthContext(
+ 	}
+ 
+ 	var lease *ProbeLease
+-	if cooldownUntil, cooling := r.Router.GetCodexAccountCooldownUntil(accountID, now); cooling {
+-		if acquired, ok := r.Router.TryAcquireCodexQuotaProbeLease(accountID, now); ok {
+-			lease = &acquired
+-		} else {
+-			return nil, &CodexAccountCooldownError{AccountID: accountID, CooldownUntil: cooldownUntil}
+-		}
++	if acquired, ok := r.Router.TryAcquireCodexQuotaProbeLease(accountID, now); ok {
++		lease = &acquired
++	} else if cooldownUntil, cooling := r.Router.GetCodexAccountCooldownUntil(accountID, now); cooling {
++		return nil, &CodexAccountCooldownError{AccountID: accountID, CooldownUntil: cooldownUntil}
+ 	}
+ 	if accountID == MainCodexAccountID {
+ 		mainToken := r.MainToken
+diff --git a/go/internal/codex/auth_context_port_test.go b/go/internal/codex/auth_context_port_test.go
+index d49dbd5d..94893d7e 100644
+--- a/go/internal/codex/auth_context_port_test.go
++++ b/go/internal/codex/auth_context_port_test.go
+@@ -78,7 +78,7 @@ func TestResolveCodexMainPoolAndGenerationUsability(t *testing.T) {
+ 		return MainAccountToken{AccessToken: "main-access", ChatGPTAccountID: "main-chat", ExpiresAt: now.Add(time.Hour)}, true
+ 	}
+ 	store := NewAccountStore(t.TempDir() + "/codex-accounts.json")
+-	router := NewRouter(store, mainToken, nil)
++	router := NewRouter(store, mainToken)
+ 	resolver := &AuthResolver{Router: router, Store: store, MainToken: mainToken, Now: func() time.Time { return now }}
+ 	routingConfig := &RoutingConfig{ActiveCodexAccountID: MainCodexAccountID}
+ 	auth, err := resolver.ResolveCodexAuthContext(context.Background(), make(http.Header), routingConfig, "pool", ResolveCodexAuthContextOptions{})
 diff --git a/go/internal/codex/oauth_account_store.go b/go/internal/codex/oauth_account_store.go
 new file mode 100644
-index 00000000..0b09c319
+index 00000000..ebdcc4dd
 --- /dev/null
 +++ b/go/internal/codex/oauth_account_store.go
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,100 @@
 +package codex
 +
 +import (
 +	"context"
 +	"errors"
++	"fmt"
 +	"net/http"
 +	"time"
 +
@@ -646,6 +858,9 @@ index 00000000..0b09c319
 +		}
 +		result, refreshErr := s.store.RefreshAccountIfGeneration(ctx, "openai", id, oauth.CredentialGeneration(credential), s.refresh)
 +		if refreshErr != nil {
++			if errors.Is(refreshErr, context.Canceled) || errors.Is(refreshErr, context.DeadlineExceeded) {
++				return ValidToken{}, fmt.Errorf("%w: %v", ErrCredentialRefreshLockTimeout, refreshErr)
++			}
 +			return ValidToken{}, refreshErr
 +		}
 +		credential = result.Credential
@@ -678,8 +893,104 @@ index 00000000..0b09c319
 +}
 +
 +var _ RoutingAccountStore = (*OAuthAccountStore)(nil)
+diff --git a/go/internal/codex/oauth_account_store_test.go b/go/internal/codex/oauth_account_store_test.go
+new file mode 100644
+index 00000000..e2628a83
+--- /dev/null
++++ b/go/internal/codex/oauth_account_store_test.go
+@@ -0,0 +1,90 @@
++package codex
++
++import (
++	"context"
++	"errors"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/lidge-jun/opencodex-go/internal/oauth"
++)
++
++func saveExpiredOAuthRoutingAccount(t *testing.T, store *oauth.CredentialStore) (string, oauth.OAuthCredentials) {
++	t.Helper()
++	credential := oauth.OAuthCredentials{
++		Access: "expired-access", Refresh: "refresh-token", Expires: time.Now().Add(-time.Hour).UnixMilli(),
++		AccountID: "physical-account", Source: oauth.SourceOAuth,
++	}
++	if err := store.SaveNamedAccount(context.Background(), "openai", "account-a", credential); err != nil {
++		t.Fatal(err)
++	}
++	return "account-a", credential
++}
++
++func TestOAuthAccountStoreRefreshCannotClearConcurrentNeedsReauth(t *testing.T) {
++	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
++	accountID, observed := saveExpiredOAuthRoutingAccount(t, store)
++	adapter := NewOAuthAccountStore(store, func(ctx context.Context, _ string) (oauth.OAuthCredentials, error) {
++		updated, err := store.MarkNeedsReauth(ctx, "openai", accountID, oauth.CredentialGeneration(observed))
++		if err != nil || !updated {
++			t.Fatalf("mark needs reauth updated=%t err=%v", updated, err)
++		}
++		return oauth.OAuthCredentials{Access: "new-access", Refresh: "new-refresh", Expires: time.Now().Add(time.Hour).UnixMilli()}, nil
++	})
++	if _, err := adapter.GetValidToken(context.Background(), accountID, nil); !errors.Is(err, oauth.ErrLoginRequired) {
++		t.Fatalf("refresh error = %v", err)
++	}
++	set, found, err := store.GetAccountSet("openai")
++	if err != nil || !found || len(set.Accounts) != 1 || !set.Accounts[0].NeedsReauth || set.Accounts[0].Credential.Access != observed.Access {
++		t.Fatalf("account state=%#v found=%t err=%v", set, found, err)
++	}
++}
++
++func TestOAuthAccountStoreCancelledLockWaitIsTransient(t *testing.T) {
++	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
++	accountID, _ := saveExpiredOAuthRoutingAccount(t, store)
++	entered := make(chan struct{})
++	release := make(chan struct{})
++	adapter := NewOAuthAccountStore(store, func(context.Context, string) (oauth.OAuthCredentials, error) {
++		select {
++		case <-entered:
++		default:
++			close(entered)
++		}
++		<-release
++		return oauth.OAuthCredentials{Access: "fresh-access", Refresh: "fresh-refresh", Expires: time.Now().Add(time.Hour).UnixMilli()}, nil
++	})
++	firstDone := make(chan error, 1)
++	go func() {
++		_, err := adapter.GetValidToken(context.Background(), accountID, nil)
++		firstDone <- err
++	}()
++	<-entered
++	cancelled, cancel := context.WithCancel(context.Background())
++	cancel()
++	_, err := adapter.GetValidToken(cancelled, accountID, nil)
++	if !errors.Is(err, ErrCredentialRefreshLockTimeout) || ShouldMarkAccountNeedsReauthForCodexAuthFailure(err) {
++		t.Fatalf("cancelled lock error = %v", err)
++	}
++	close(release)
++	if err := <-firstDone; err != nil {
++		t.Fatalf("first refresh = %v", err)
++	}
++}
++
++func TestOAuthAccountStorePreCancelledRefreshNeverStarts(t *testing.T) {
++	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
++	accountID, _ := saveExpiredOAuthRoutingAccount(t, store)
++	called := false
++	adapter := NewOAuthAccountStore(store, func(context.Context, string) (oauth.OAuthCredentials, error) {
++		called = true
++		return oauth.OAuthCredentials{}, nil
++	})
++	cancelled, cancel := context.WithCancel(context.Background())
++	cancel()
++	_, err := adapter.GetValidToken(cancelled, accountID, nil)
++	if called || !errors.Is(err, ErrCredentialRefreshLockTimeout) || ShouldMarkAccountNeedsReauthForCodexAuthFailure(err) {
++		t.Fatalf("called=%t error=%v", called, err)
++	}
++}
 diff --git a/go/internal/codex/routing.go b/go/internal/codex/routing.go
-index b55aff43..1c7b1b76 100644
+index b55aff43..de5f9a0e 100644
 --- a/go/internal/codex/routing.go
 +++ b/go/internal/codex/routing.go
 @@ -1,7 +1,9 @@
@@ -692,7 +1003,7 @@ index b55aff43..1c7b1b76 100644
  	"strings"
  	"sync"
  	"time"
-@@ -59,10 +61,19 @@ type threadAffinityEntry struct {
+@@ -59,12 +61,20 @@ type threadAffinityEntry struct {
  	lastReevalAt int64
  }
  
@@ -711,18 +1022,49 @@ index b55aff43..1c7b1b76 100644
 -	store          *AccountStore
 +	store          RoutingAccountStore
  	mainToken      func() (MainAccountToken, bool)
- 	saveConfig     func(*RoutingConfig) error
+-	saveConfig     func(*RoutingConfig) error
  	threadAccounts map[string]threadAffinityEntry
-@@ -72,7 +83,7 @@ type Router struct {
+ 	health         map[string]UpstreamHealth
+ 	quotas         map[string]AccountQuota
+@@ -72,9 +82,9 @@ type Router struct {
  	mainPlan       string
  }
  
 -func NewRouter(store *AccountStore, mainToken func() (MainAccountToken, bool), saveConfig func(*RoutingConfig) error) *Router {
-+func NewRouter(store RoutingAccountStore, mainToken func() (MainAccountToken, bool), saveConfig func(*RoutingConfig) error) *Router {
++func NewRouter(store RoutingAccountStore, mainToken func() (MainAccountToken, bool)) *Router {
  	return &Router{
- 		store: store, mainToken: mainToken, saveConfig: saveConfig,
+-		store: store, mainToken: mainToken, saveConfig: saveConfig,
++		store: store, mainToken: mainToken,
  		threadAccounts: make(map[string]threadAffinityEntry),
-@@ -260,11 +271,11 @@ func (r *Router) setActiveLocked(config *RoutingConfig, accountID string) {
+ 		health:         make(map[string]UpstreamHealth), quotas: make(map[string]AccountQuota),
+ 		reauth: make(map[string]struct{}),
+@@ -87,6 +97,17 @@ func (r *Router) SetAccountQuota(accountID string, quota AccountQuota) {
+ 	r.quotas[accountID] = quota
+ }
+ 
++// ReplaceAccountQuotas reconciles the complete quota image so deleted or reset
++// accounts cannot retain stale routing scores.
++func (r *Router) ReplaceAccountQuotas(quotas map[string]AccountQuota) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	r.quotas = make(map[string]AccountQuota, len(quotas))
++	for accountID, quota := range quotas {
++		r.quotas[accountID] = quota
++	}
++}
++
+ func (r *Router) ClearAccountQuota(accountID string) {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+@@ -252,19 +273,16 @@ func (r *Router) setActiveLocked(config *RoutingConfig, accountID string) {
+ 		return
+ 	}
+ 	config.ActiveCodexAccountID = accountID
+-	if r.saveConfig != nil {
+-		_ = r.saveConfig(config)
+-	}
+ }
+ 
  func (r *Router) bindThreadLocked(threadID, accountID string, now int64) {
  	generation := int64(0)
  	if accountID != MainCodexAccountID {
@@ -737,11 +1079,50 @@ index b55aff43..1c7b1b76 100644
  	}
  	r.pruneExpiredLocked(now)
  	previous := r.threadAccounts[threadID]
+diff --git a/go/internal/codex/routing_port_test.go b/go/internal/codex/routing_port_test.go
+index 64cfb7d6..94ac8947 100644
+--- a/go/internal/codex/routing_port_test.go
++++ b/go/internal/codex/routing_port_test.go
+@@ -19,7 +19,7 @@ func newRoutingFixture(t *testing.T, accounts ...CodexAccount) (*Router, *Routin
+ 			t.Fatal(err)
+ 		}
+ 	}
+-	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false }, nil)
++	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false })
+ 	return router, &RoutingConfig{CodexAccounts: accounts}, store
+ }
+ 
+@@ -165,22 +165,21 @@ func TestCredentialFailureQuarantinesAccount(t *testing.T) {
+ 
+ func TestPreviewCodexAccountIsSideEffectFree(t *testing.T) {
+ 	now := time.UnixMilli(1_700_000_000_000)
+-	saves := 0
+ 	store := NewAccountStore(t.TempDir() + "/codex-accounts.json")
+ 	for _, id := range []string{"a", "b"} {
+ 		if err := store.SaveCredential(id, AccountCredentials{"access-" + id, "refresh-" + id, now.Add(time.Hour).UnixMilli(), "chat-" + id}); err != nil {
+ 			t.Fatal(err)
+ 		}
+ 	}
+-	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false }, func(*RoutingConfig) error { saves++; return nil })
++	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false })
+ 	config := &RoutingConfig{CodexAccounts: []CodexAccount{{ID: "a"}, {ID: "b"}}, ActiveCodexAccountID: "a"}
+ 	router.SetAccountQuota("a", AccountQuota{WeeklyPercent: floatPointer(90)})
+ 	router.SetAccountQuota("b", AccountQuota{WeeklyPercent: floatPointer(10)})
+ 	if got := router.PreviewCodexAccountForRequest("thread", config, now); got != "b" {
+ 		t.Fatalf("preview=%q", got)
+ 	}
+-	if config.ActiveCodexAccountID != "a" || saves != 0 || len(router.threadAccounts) != 0 {
+-		t.Fatalf("preview mutated state: active=%q saves=%d affinity=%v", config.ActiveCodexAccountID, saves, router.threadAccounts)
++	if config.ActiveCodexAccountID != "a" || len(router.threadAccounts) != 0 {
++		t.Fatalf("preview mutated state: active=%q affinity=%v", config.ActiveCodexAccountID, router.threadAccounts)
+ 	}
+ 	if got := router.ResolveCodexAccountForThread("thread", config, now); got != "b" {
+ 		t.Fatalf("resolve=%q", got)
 diff --git a/go/internal/management/api.go b/go/internal/management/api.go
-index b23437e0..f9cd776e 100644
+index a2810185..120533d8 100644
 --- a/go/internal/management/api.go
 +++ b/go/internal/management/api.go
-@@ -7,6 +7,7 @@ import (
+@@ -8,6 +8,7 @@ import (
  	"sync"
  
  	"github.com/lidge-jun/opencodex-go/internal/claude"
@@ -749,7 +1130,7 @@ index b23437e0..f9cd776e 100644
  	"github.com/lidge-jun/opencodex-go/internal/config"
  	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
  	"github.com/lidge-jun/opencodex-go/internal/types"
-@@ -23,6 +24,7 @@ type Options struct {
+@@ -24,6 +25,7 @@ type Options struct {
  	RequestLogs         *RequestLog
  	OAuth               OAuthBackend
  	CodexAuth           CodexAuthBackend
@@ -757,7 +1138,7 @@ index b23437e0..f9cd776e 100644
  	DebugLogs           *ocxlib.DebugLogBuffer
  	InjectionLogs       *ocxlib.DebugLogBuffer
  	ClaudeDebug         *claude.DebugRing
-@@ -67,6 +69,7 @@ type API struct {
+@@ -69,6 +71,7 @@ type API struct {
  	providerDNSLookup   ProviderDNSLookup
  	oauth               OAuthBackend
  	codexAuth           CodexAuthBackend
@@ -765,15 +1146,41 @@ index b23437e0..f9cd776e 100644
  	providerDebug       *ocxlib.DebugLogBuffer
  	injectionDebug      *ocxlib.DebugLogBuffer
  	claudeDebug         *claude.DebugRing
-@@ -127,7 +130,7 @@ func New(options Options) (*API, error) {
+@@ -129,7 +132,7 @@ func New(options Options) (*API, error) {
  	if options.InjectionLogs == nil {
  		options.InjectionLogs = ocxlib.NewDebugLogBuffer()
  	}
--	return &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
-+	return &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
- }
- 
- // NewAPI names the management composition point explicitly while preserving
+-	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}
++	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}
+ 	if api.configPersistence != nil {
+ 		api.configPersistence.BindConfigMutex(&api.mu)
+ 	}
+diff --git a/go/internal/management/codex_router_test.go b/go/internal/management/codex_router_test.go
+new file mode 100644
+index 00000000..4b179f31
+--- /dev/null
++++ b/go/internal/management/codex_router_test.go
+@@ -0,0 +1,20 @@
++package management
++
++import (
++	"testing"
++
++	"github.com/lidge-jun/opencodex-go/internal/codex"
++	"github.com/lidge-jun/opencodex-go/internal/config"
++)
++
++func TestNewAPIRetainsSharedCodexRouterIdentity(t *testing.T) {
++	cfg := config.FreshInstall()
++	router := codex.NewRouter(nil, nil)
++	api, err := NewAPI(Options{Config: &cfg, CodexRouter: router})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if api.codexRouter != router {
++		t.Fatalf("router identity changed: got=%p want=%p", api.codexRouter, router)
++	}
++}
 diff --git a/go/internal/oauth/authcontext.go b/go/internal/oauth/authcontext.go
 index 56553df1..eb3a870d 100644
 --- a/go/internal/oauth/authcontext.go
@@ -791,21 +1198,274 @@ index 56553df1..eb3a870d 100644
  func (r *AuthResolver) RecordOutcome(account string, status shared.OutcomeStatus, meta *shared.RetryMeta) {
  	if r.Pool != nil {
  		r.Pool.RecordOutcome(account, status, meta)
+diff --git a/go/internal/oauth/filelock.go b/go/internal/oauth/filelock.go
+index fc32f722..b3805f93 100644
+--- a/go/internal/oauth/filelock.go
++++ b/go/internal/oauth/filelock.go
+@@ -10,34 +10,52 @@ import (
+ 	"time"
+ )
+ 
+-// inProcessLocks provides goroutine-level mutual exclusion on top of the
++// inProcessLocks provides context-aware goroutine-level exclusion on top of the
+ // OS file lock. macOS flock is process-scoped, so two goroutines in the same
+-// process can both succeed at flock simultaneously. The in-process mutex
+-// serialises them before the file lock is even attempted.
+-var inProcessLocks sync.Map // map[string]*sync.Mutex
++// process can both succeed at flock simultaneously.
++var inProcessLocks sync.Map // map[string]*inProcessLock
+ 
+-func getInProcessMutex(path string) *sync.Mutex {
+-	v, _ := inProcessLocks.LoadOrStore(path, &sync.Mutex{})
+-	return v.(*sync.Mutex)
++type inProcessLock struct{ token chan struct{} }
++
++func newInProcessLock() *inProcessLock {
++	lock := &inProcessLock{token: make(chan struct{}, 1)}
++	lock.token <- struct{}{}
++	return lock
++}
++
++func getInProcessMutex(path string) *inProcessLock {
++	v, _ := inProcessLocks.LoadOrStore(path, newInProcessLock())
++	return v.(*inProcessLock)
+ }
+ 
+ type fileLock struct {
+ 	file *os.File
+-	mu   *sync.Mutex
++	mu   *inProcessLock
+ }
+ 
+ func acquireFileLock(ctx context.Context, path string) (*fileLock, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, fmt.Errorf("lock credential file: %w", err)
++	}
+ 	// In-process mutex: serialise goroutines within the same binary.
+ 	mu := getInProcessMutex(path)
+-	mu.Lock()
++	select {
++	case <-mu.token:
++	case <-ctx.Done():
++		return nil, fmt.Errorf("lock credential file: %w", ctx.Err())
++	}
++	if err := ctx.Err(); err != nil {
++		mu.token <- struct{}{}
++		return nil, fmt.Errorf("lock credential file: %w", err)
++	}
+ 
+ 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+-		mu.Unlock()
++		mu.token <- struct{}{}
+ 		return nil, fmt.Errorf("create lock directory: %w", err)
+ 	}
+ 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+ 	if err != nil {
+-		mu.Unlock()
++		mu.token <- struct{}{}
+ 		return nil, fmt.Errorf("open lock file: %w", err)
+ 	}
+ 	_ = f.Chmod(0o600)
+@@ -45,19 +63,24 @@ func acquireFileLock(ctx context.Context, path string) (*fileLock, error) {
+ 	ticker := time.NewTicker(25 * time.Millisecond)
+ 	defer ticker.Stop()
+ 	for {
++		if err := ctx.Err(); err != nil {
++			_ = f.Close()
++			mu.token <- struct{}{}
++			return nil, fmt.Errorf("lock credential file: %w", err)
++		}
+ 		err = tryLockFile(f)
+ 		if err == nil {
+ 			return &fileLock{file: f, mu: mu}, nil
+ 		}
+ 		if !errors.Is(err, errLockBusy) {
+ 			_ = f.Close()
+-			mu.Unlock()
++			mu.token <- struct{}{}
+ 			return nil, fmt.Errorf("lock credential file: %w", err)
+ 		}
+ 		select {
+ 		case <-ctx.Done():
+ 			_ = f.Close()
+-			mu.Unlock()
++			mu.token <- struct{}{}
+ 			return nil, fmt.Errorf("lock credential file: %w", ctx.Err())
+ 		case <-ticker.C:
+ 		}
+@@ -72,7 +95,7 @@ func (l *fileLock) release() error {
+ 	closeErr := l.file.Close()
+ 	l.file = nil
+ 	if l.mu != nil {
+-		l.mu.Unlock()
++		l.mu.token <- struct{}{}
+ 	}
+ 	if err != nil {
+ 		return err
+diff --git a/go/internal/oauth/store_refresh.go b/go/internal/oauth/store_refresh.go
+index 70ff67f5..9b9284b8 100644
+--- a/go/internal/oauth/store_refresh.go
++++ b/go/internal/oauth/store_refresh.go
+@@ -35,13 +35,17 @@ func (s *CredentialStore) RefreshAccount(ctx context.Context, provider, accountI
+ 
+ 	// Re-read inside the lock. If the generation changed, another refresher
+ 	// won the race — adopt their result.
+-	current, ok, err := s.GetAccountCredential(provider, accountID)
++	currentAccount, ok, err := s.getProviderAccount(provider, accountID)
+ 	if err != nil {
+ 		return RefreshResult{}, err
+ 	}
+ 	if !ok {
+ 		return RefreshResult{}, ErrLoginRequired
+ 	}
++	if currentAccount.NeedsReauth {
++		return RefreshResult{}, ErrLoginRequired
++	}
++	current := currentAccount.Credential
+ 	currentGen := CredentialGeneration(current)
+ 	if currentGen != observedGen {
+ 		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
+@@ -86,13 +90,17 @@ func (s *CredentialStore) RefreshAccountIfGeneration(
+ 	}
+ 	defer lock.release()
+ 
+-	current, ok, err := s.GetAccountCredential(provider, accountID)
++	currentAccount, ok, err := s.getProviderAccount(provider, accountID)
+ 	if err != nil {
+ 		return RefreshResult{}, err
+ 	}
+ 	if !ok {
+ 		return RefreshResult{}, ErrLoginRequired
+ 	}
++	if currentAccount.NeedsReauth {
++		return RefreshResult{}, ErrLoginRequired
++	}
++	current := currentAccount.Credential
+ 	expected := CredentialGeneration(current)
+ 	if expected != observedGeneration {
+ 		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
+@@ -146,6 +154,19 @@ func mergeRefreshedCredential(fresh, previous OAuthCredentials) OAuthCredentials
+ 	return fresh
+ }
+ 
++func (s *CredentialStore) getProviderAccount(provider, accountID string) (ProviderAccount, bool, error) {
++	set, found, err := s.GetAccountSet(provider)
++	if err != nil || !found {
++		return ProviderAccount{}, false, err
++	}
++	for _, account := range set.Accounts {
++		if account.ID == accountID {
++			return account, true, nil
++		}
++	}
++	return ProviderAccount{}, false, nil
++}
++
+ func (s *CredentialStore) beginRefresh(ctx context.Context, provider, accountID, generation string) error {
+ 	if pending, ok := s.ReadRefreshIntent(provider, accountID); ok {
+ 		if pending.Uncertain || pending.Generation == generation {
+@@ -169,6 +190,9 @@ func (s *CredentialStore) mergeRefreshed(ctx context.Context, provider, accountI
+ 				continue
+ 			}
+ 			stored := set.Accounts[i].Credential
++			if set.Accounts[i].NeedsReauth {
++				return ErrLoginRequired
++			}
+ 			if CredentialGeneration(stored) != expected {
+ 				result = RefreshResult{Credential: stored, Generation: CredentialGeneration(stored), Superseded: true}
+ 				return nil
 diff --git a/go/internal/server/responses_core_port.go b/go/internal/server/responses_core_port.go
-index 87d596ed..28295cec 100644
+index 87d596ed..de67f970 100644
 --- a/go/internal/server/responses_core_port.go
 +++ b/go/internal/server/responses_core_port.go
+@@ -277,7 +277,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
+ 		return
+ 	}
+ 	record := &types.UsageRecord{
+-		RequestID: core.nextRequestID(), ThreadID: request.Header.Get("thread-id"),
++		RequestID: core.nextRequestID(), ThreadID: authThreadID(request.Header),
+ 		Provider: resolved.Provider, Model: resolved.Model, StartedAt: started,
+ 	}
+ 	if auth != nil {
+@@ -372,7 +372,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
+ 		var auth *types.AuthContext
+ 		var err error
+ 		if core.config.Auth != nil {
+-			auth, err = core.config.Auth.ResolveAuth(ctx, resolved.Provider, incoming.Get("thread-id"))
++			auth, err = core.config.Auth.ResolveAuth(ctx, resolved.Provider, authThreadID(incoming))
+ 			if err != nil {
+ 				if next, ok := core.nextCombo(normalized, pick, http.StatusUnauthorized, "invalid_api_key", err.Error(), ""); ok {
+ 					pick, resolved = next, next.Resolved
 @@ -986,7 +986,7 @@ func (core *ResponsesCore) recordAuthOutcome(auth *types.AuthContext, outcome ty
  	if core.config.Auth == nil || auth == nil || auth.AccountID == "" {
  		return
  	}
 -	meta := &types.RetryMeta{StatusCode: status, Message: message}
-+	meta := &types.RetryMeta{StatusCode: status, Message: message, Provider: auth.Provider}
++	meta := &types.RetryMeta{StatusCode: status, Message: message, Provider: auth.Provider, ProbeLeaseID: auth.ProbeLeaseID, ThreadID: auth.ThreadID}
  	if delay, ok := combos.ParseRetryAfter(retryAfter, time.Now()); ok {
  		meta.RetryAfter = delay
  	}
+diff --git a/go/internal/server/responses_core_port_test.go b/go/internal/server/responses_core_port_test.go
+index f0047e27..a201c425 100644
+--- a/go/internal/server/responses_core_port_test.go
++++ b/go/internal/server/responses_core_port_test.go
+@@ -174,16 +174,25 @@ func (coreRegistry) ListModels() []types.ModelEntry {
+ }
+ 
+ type coreAuth struct {
+-	mu       sync.Mutex
+-	outcomes []types.OutcomeStatus
++	mu        sync.Mutex
++	outcomes  []types.OutcomeStatus
++	threads   []string
++	retryMeta []*types.RetryMeta
+ }
+ 
+-func (a *coreAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
+-	return &types.AuthContext{Provider: "provider", AccountID: "account", Headers: map[string]string{"X-Upstream-Auth": "ok"}}, nil
++func (a *coreAuth) ResolveAuth(_ context.Context, _ string, threadID string) (*types.AuthContext, error) {
++	a.mu.Lock()
++	a.threads = append(a.threads, threadID)
++	a.mu.Unlock()
++	return &types.AuthContext{Provider: "provider", AccountID: "account", ProbeLeaseID: "probe-lease", ThreadID: threadID, Headers: map[string]string{"X-Upstream-Auth": "ok"}}, nil
+ }
+-func (a *coreAuth) RecordOutcome(_ string, status types.OutcomeStatus, _ *types.RetryMeta) {
++func (a *coreAuth) RecordOutcome(_ string, status types.OutcomeStatus, meta *types.RetryMeta) {
+ 	a.mu.Lock()
+ 	a.outcomes = append(a.outcomes, status)
++	if meta != nil {
++		copy := *meta
++		a.retryMeta = append(a.retryMeta, &copy)
++	}
+ 	a.mu.Unlock()
+ }
+ 
+@@ -363,6 +372,23 @@ func TestResponsesCoreBufferedRoutingAndTerminalRecord(t *testing.T) {
+ 	}
+ }
+ 
++func TestResponsesCoreCarriesParentThreadAndProbeLeaseToOutcome(t *testing.T) {
++	core, auth, _, upstream := newCoreHarness(t)
++	defer upstream.Close()
++	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
++	request.Header.Set("X-Codex-Parent-Thread-Id", " parent-thread ")
++	response := httptest.NewRecorder()
++	core.ServeHTTP(response, request)
++	if response.Code != http.StatusOK {
++		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
++	}
++	auth.mu.Lock()
++	defer auth.mu.Unlock()
++	if len(auth.threads) != 1 || auth.threads[0] != "parent-thread" || len(auth.retryMeta) != 1 || auth.retryMeta[0].ThreadID != "parent-thread" || auth.retryMeta[0].ProbeLeaseID != "probe-lease" {
++		t.Fatalf("threads=%#v retryMeta=%#v", auth.threads, auth.retryMeta)
++	}
++}
++
+ func TestResponsesCoreStreamsResponsesEvents(t *testing.T) {
+ 	core, auth, recorder, upstream := newCoreHarness(t)
+ 	defer upstream.Close()
 diff --git a/go/internal/server/server.go b/go/internal/server/server.go
-index 98cd347e..c8b4c462 100644
+index 5db9b61d..a882b1b4 100644
 --- a/go/internal/server/server.go
 +++ b/go/internal/server/server.go
 @@ -50,6 +50,7 @@ type Config struct {
@@ -816,7 +1476,7 @@ index 98cd347e..c8b4c462 100644
  	StorageHome            string
  	Stop                   func()
  	Version                string
-@@ -382,7 +383,7 @@ func New(config Config) *Server {
+@@ -415,7 +416,7 @@ func New(config Config) *Server {
  		if grokPort <= 0 && config.ManagementConfig != nil {
  			grokPort = config.ManagementConfig.Port
  		}
@@ -825,43 +1485,126 @@ index 98cd347e..c8b4c462 100644
  		if err == nil {
  			managementRouter = api
  		} else if config.Logger != nil {
+diff --git a/go/internal/server/server_parity_test.go b/go/internal/server/server_parity_test.go
+index 23b1e1d4..2189b179 100644
+--- a/go/internal/server/server_parity_test.go
++++ b/go/internal/server/server_parity_test.go
+@@ -401,6 +401,23 @@ func (sidecarTestAuth) ResolveAuth(_ context.Context, provider, _ string) (*type
+ }
+ func (sidecarTestAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
+ 
++type sidecarProvenanceAuth struct {
++	thread string
++	meta   *types.RetryMeta
++}
++
++func (a *sidecarProvenanceAuth) ResolveAuth(_ context.Context, provider, threadID string) (*types.AuthContext, error) {
++	a.thread = threadID
++	return &types.AuthContext{Provider: provider, AccountID: "account", ProbeLeaseID: "sidecar-lease", ThreadID: threadID, Headers: map[string]string{"Authorization": "Bearer upstream-secret"}}, nil
++}
++
++func (a *sidecarProvenanceAuth) RecordOutcome(_ string, _ types.OutcomeStatus, meta *types.RetryMeta) {
++	if meta != nil {
++		copy := *meta
++		a.meta = &copy
++	}
++}
++
+ func TestDefaultImageSidecarUsesKeyedOpenAIProvider(t *testing.T) {
+ 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		if r.URL.Path != "/v1/images/generations" || r.Header.Get("Authorization") != "Bearer upstream-secret" {
+@@ -418,6 +435,20 @@ func TestDefaultImageSidecarUsesKeyedOpenAIProvider(t *testing.T) {
+ 	}
+ }
+ 
++func TestDefaultImageSidecarCarriesParentThreadAndProbeLease(t *testing.T) {
++	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		_, _ = w.Write([]byte(`{"data":[]}`))
++	}))
++	defer upstream.Close()
++	auth := &sidecarProvenanceAuth{}
++	reg := registry.New(registry.Provider{ID: "openai", BaseURL: upstream.URL, DefaultModel: "gpt", Models: []registry.ModelDefinition{{ID: "gpt"}}})
++	proxy := New(Config{Registry: reg, Auth: auth})
++	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/images/generations", `{"model":"gpt-image-1","prompt":"draw"}`, http.Header{"X-Codex-Parent-Thread-Id": []string{" parent-thread "}})
++	if response.Code != http.StatusOK || auth.thread != "parent-thread" || auth.meta == nil || auth.meta.ThreadID != "parent-thread" || auth.meta.ProbeLeaseID != "sidecar-lease" {
++		t.Fatalf("response=%d thread=%q meta=%#v", response.Code, auth.thread, auth.meta)
++	}
++}
++
+ func TestRemoteAdmissionAndOriginParity(t *testing.T) {
+ 	handler := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), MiddlewareConfig{
+ 		Token: "secret", Hostname: "0.0.0.0", AllowedOrigins: []string{"https://allowed.example"},
 diff --git a/go/internal/server/sidecar.go b/go/internal/server/sidecar.go
-index 264cb936..9cfa85c1 100644
+index 264cb936..46f6463f 100644
 --- a/go/internal/server/sidecar.go
 +++ b/go/internal/server/sidecar.go
+@@ -66,7 +66,7 @@ func defaultSidecarResolver(config Config) SidecarResolver {
+ 			if config.Auth == nil {
+ 				return SidecarTarget{}, &SidecarResolveError{Status: http.StatusUnauthorized, Kind: "authentication_error", Err: errors.New(sidecarLabel(kind) + " relay needs upstream authentication")}
+ 			}
+-			auth, err := config.Auth.ResolveAuth(ctx, provider, incoming.Get("Thread-Id"))
++			auth, err := config.Auth.ResolveAuth(ctx, provider, authThreadID(incoming))
+ 			if err != nil {
+ 				return SidecarTarget{}, &SidecarResolveError{Status: http.StatusUnauthorized, Kind: "authentication_error", Err: err}
+ 			}
 @@ -96,7 +96,7 @@ func defaultSidecarResolver(config Config) SidecarResolver {
  					if outcomeErr != nil || status < 200 || status >= 300 {
  						outcome = outcomeForHTTP(status)
  					}
 -					config.Auth.RecordOutcome(accountID, outcome, &types.RetryMeta{StatusCode: status})
-+					config.Auth.RecordOutcome(accountID, outcome, &types.RetryMeta{StatusCode: status, Provider: provider})
++					config.Auth.RecordOutcome(accountID, outcome, &types.RetryMeta{StatusCode: status, Provider: provider, ProbeLeaseID: auth.ProbeLeaseID, ThreadID: auth.ThreadID})
  				}
  			}
  			return target, nil
+@@ -108,6 +108,13 @@ func defaultSidecarResolver(config Config) SidecarResolver {
+ 	}
+ }
+ 
++func authThreadID(headers http.Header) string {
++	if threadID := strings.TrimSpace(headers.Get("Thread-Id")); threadID != "" {
++		return threadID
++	}
++	return strings.TrimSpace(headers.Get("X-Codex-Parent-Thread-Id"))
++}
++
+ func sidecarHandler(kind SidecarKind, resolver SidecarResolver) http.HandlerFunc {
+ 	return func(w http.ResponseWriter, request *http.Request) {
+ 		if resolver == nil {
 diff --git a/go/internal/types/types.go b/go/internal/types/types.go
-index d6515f5e..f190d20f 100644
+index d6515f5e..6f8e19a3 100644
 --- a/go/internal/types/types.go
 +++ b/go/internal/types/types.go
-@@ -217,6 +217,7 @@ type RetryMeta struct {
+@@ -173,6 +173,8 @@ type AuthContext struct {
+ 	APIKey           string            `json:"-"`
+ 	ChatGPTAccountID string            `json:"chatgptAccountId,omitempty"`
+ 	Headers          map[string]string `json:"-"`
++	ProbeLeaseID     string            `json:"-"`
++	ThreadID         string            `json:"-"`
+ }
+ 
+ type ResolvedModel struct {
+@@ -217,6 +219,9 @@ type RetryMeta struct {
  	StatusCode   int           `json:"statusCode,omitempty"`
  	ProviderCode string        `json:"providerCode,omitempty"`
  	Message      string        `json:"message,omitempty"`
 +	Provider     string        `json:"provider,omitempty"`
++	ProbeLeaseID string        `json:"-"`
++	ThreadID     string        `json:"-"`
  }
  
  type CompactionRequest struct {
+diff --git a/go/test/parity/routing_test.go b/go/test/parity/routing_test.go
+index f16ff036..7c5bc45a 100644
+--- a/go/test/parity/routing_test.go
++++ b/go/test/parity/routing_test.go
+@@ -35,7 +35,7 @@ func TestCanonicalCodexRouterAffinityAndRateLimitFailover(t *testing.T) {
+ 			t.Fatal(err)
+ 		}
+ 	}
+-	router := codex.NewRouter(store, func() (codex.MainAccountToken, bool) { return codex.MainAccountToken{}, false }, nil)
++	router := codex.NewRouter(store, func() (codex.MainAccountToken, bool) { return codex.MainAccountToken{}, false })
+ 	config := &codex.RoutingConfig{CodexAccounts: []codex.CodexAccount{{ID: "account-a"}, {ID: "account-b"}}}
+ 	router.SetAccountQuota("account-a", codex.AccountQuota{WeeklyPercent: float64Pointer(10)})
+ 	router.SetAccountQuota("account-b", codex.AccountQuota{WeeklyPercent: float64Pointer(20)})
 ```
-
-Extract only the fenced diff. On a clean `3abeadd9` clone, first apply
-`061→071→091→101→111→121`, then require:
-
-```bash
-git apply --check /tmp/123.patch
-git apply /tmp/123.patch
-gofmt -w go/cmd/ocx/serve_integration_test.go   go/internal/codex go/internal/oauth/authcontext.go   go/internal/cli/codex_routing_runtime.go   go/internal/cli/codex_routing_production_test.go   go/internal/cli/live_config.go go/internal/cli/serve.go   go/internal/types/types.go go/internal/server/responses_core_port.go   go/internal/server/sidecar.go go/internal/server/server.go   go/internal/management/api.go
-```
-
-Then run the focused commands recorded in `122`. The main composition must
-apply `127` immediately after this packet and `081` after `127`; any hunk
-drift is a blocker, not permission to duplicate the router.
 

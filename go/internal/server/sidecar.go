@@ -66,7 +66,7 @@ func defaultSidecarResolver(config Config) SidecarResolver {
 			if config.Auth == nil {
 				return SidecarTarget{}, &SidecarResolveError{Status: http.StatusUnauthorized, Kind: "authentication_error", Err: errors.New(sidecarLabel(kind) + " relay needs upstream authentication")}
 			}
-			auth, err := config.Auth.ResolveAuth(ctx, provider, incoming.Get("Thread-Id"))
+			auth, err := config.Auth.ResolveAuth(ctx, provider, authThreadID(incoming))
 			if err != nil {
 				return SidecarTarget{}, &SidecarResolveError{Status: http.StatusUnauthorized, Kind: "authentication_error", Err: err}
 			}
@@ -96,7 +96,7 @@ func defaultSidecarResolver(config Config) SidecarResolver {
 					if outcomeErr != nil || status < 200 || status >= 300 {
 						outcome = outcomeForHTTP(status)
 					}
-					config.Auth.RecordOutcome(accountID, outcome, &types.RetryMeta{StatusCode: status})
+					config.Auth.RecordOutcome(accountID, outcome, &types.RetryMeta{StatusCode: status, Provider: provider, ProbeLeaseID: auth.ProbeLeaseID, ThreadID: auth.ThreadID})
 				}
 			}
 			return target, nil
@@ -106,6 +106,13 @@ func defaultSidecarResolver(config Config) SidecarResolver {
 		}
 		return SidecarTarget{}, &SidecarResolveError{Status: http.StatusUnauthorized, Kind: "authentication_error", Err: errors.New(sidecarLabel(kind) + " relay needs upstream authentication")}
 	}
+}
+
+func authThreadID(headers http.Header) string {
+	if threadID := strings.TrimSpace(headers.Get("Thread-Id")); threadID != "" {
+		return threadID
+	}
+	return strings.TrimSpace(headers.Get("X-Codex-Parent-Thread-Id"))
 }
 
 func sidecarHandler(kind SidecarKind, resolver SidecarResolver) http.HandlerFunc {

@@ -131,6 +131,12 @@ func generationNumber(credential OAuthCredentials) int64 {
 	return int64(binary.BigEndian.Uint64(digest[:8]) & ^(uint64(1) << 63))
 }
 
+// CredentialGenerationNumber exposes the stable numeric generation used by
+// cross-package request affinity without exposing credential bytes.
+func CredentialGenerationNumber(credential OAuthCredentials) int64 {
+	return generationNumber(credential)
+}
+
 func (r *AuthResolver) RecordOutcome(account string, status shared.OutcomeStatus, meta *shared.RetryMeta) {
 	if r.Pool != nil {
 		r.Pool.RecordOutcome(account, status, meta)

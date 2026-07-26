@@ -297,7 +297,7 @@ func TestBuiltServeAppliesManagementProviderChangeToNextRequest(t *testing.T) {
 	stopIsolatedOCX(t, command, port, logs)
 }
 
-func TestBuiltServeUsesOpenAIAccountPoolAcrossThreads(t *testing.T) {
+func TestBuiltServeMigratesLegacyOpenAIAccountPoolToCanonicalSelection(t *testing.T) {
 	authorizations := make(chan string, 2)
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		authorizations <- request.Header.Get("Authorization")
@@ -339,17 +339,17 @@ func TestBuiltServeUsesOpenAIAccountPoolAcrossThreads(t *testing.T) {
 			t.Fatalf("pool response status=%d logs=%s", response.StatusCode, logs.String())
 		}
 	}
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for range 2 {
 		select {
 		case authorization := <-authorizations:
-			seen[authorization] = true
+			seen[authorization]++
 		case <-time.After(3 * time.Second):
 			t.Fatal("timed out waiting for pooled upstream request")
 		}
 	}
-	if !seen["Bearer pool-token-one"] || !seen["Bearer pool-token-two"] {
-		t.Fatalf("pooled authorizations = %#v", seen)
+	if seen["Bearer pool-token-one"] != 2 || seen["Bearer pool-token-two"] != 0 {
+		t.Fatalf("canonical authorizations = %#v", seen)
 	}
 	stopIsolatedOCX(t, command, port, logs)
 }

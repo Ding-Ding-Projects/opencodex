@@ -401,6 +401,23 @@ func (sidecarTestAuth) ResolveAuth(_ context.Context, provider, _ string) (*type
 }
 func (sidecarTestAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
 
+type sidecarProvenanceAuth struct {
+	thread string
+	meta   *types.RetryMeta
+}
+
+func (a *sidecarProvenanceAuth) ResolveAuth(_ context.Context, provider, threadID string) (*types.AuthContext, error) {
+	a.thread = threadID
+	return &types.AuthContext{Provider: provider, AccountID: "account", ProbeLeaseID: "sidecar-lease", ThreadID: threadID, Headers: map[string]string{"Authorization": "Bearer upstream-secret"}}, nil
+}
+
+func (a *sidecarProvenanceAuth) RecordOutcome(_ string, _ types.OutcomeStatus, meta *types.RetryMeta) {
+	if meta != nil {
+		copy := *meta
+		a.meta = &copy
+	}
+}
+
 func TestDefaultImageSidecarUsesKeyedOpenAIProvider(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/images/generations" || r.Header.Get("Authorization") != "Bearer upstream-secret" {
@@ -415,6 +432,20 @@ func TestDefaultImageSidecarUsesKeyedOpenAIProvider(t *testing.T) {
 	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/images/generations", `{"model":"gpt-image-1","prompt":"draw"}`, nil)
 	if response.Code != http.StatusOK || response.Body.String() != `{"data":[]}` {
 		t.Fatalf("image sidecar = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDefaultImageSidecarCarriesParentThreadAndProbeLease(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer upstream.Close()
+	auth := &sidecarProvenanceAuth{}
+	reg := registry.New(registry.Provider{ID: "openai", BaseURL: upstream.URL, DefaultModel: "gpt", Models: []registry.ModelDefinition{{ID: "gpt"}}})
+	proxy := New(Config{Registry: reg, Auth: auth})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/images/generations", `{"model":"gpt-image-1","prompt":"draw"}`, http.Header{"X-Codex-Parent-Thread-Id": []string{" parent-thread "}})
+	if response.Code != http.StatusOK || auth.thread != "parent-thread" || auth.meta == nil || auth.meta.ThreadID != "parent-thread" || auth.meta.ProbeLeaseID != "sidecar-lease" {
+		t.Fatalf("response=%d thread=%q meta=%#v", response.Code, auth.thread, auth.meta)
 	}
 }
 

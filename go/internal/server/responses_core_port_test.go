@@ -174,16 +174,25 @@ func (coreRegistry) ListModels() []types.ModelEntry {
 }
 
 type coreAuth struct {
-	mu       sync.Mutex
-	outcomes []types.OutcomeStatus
+	mu        sync.Mutex
+	outcomes  []types.OutcomeStatus
+	threads   []string
+	retryMeta []*types.RetryMeta
 }
 
-func (a *coreAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
-	return &types.AuthContext{Provider: "provider", AccountID: "account", Headers: map[string]string{"X-Upstream-Auth": "ok"}}, nil
+func (a *coreAuth) ResolveAuth(_ context.Context, _ string, threadID string) (*types.AuthContext, error) {
+	a.mu.Lock()
+	a.threads = append(a.threads, threadID)
+	a.mu.Unlock()
+	return &types.AuthContext{Provider: "provider", AccountID: "account", ProbeLeaseID: "probe-lease", ThreadID: threadID, Headers: map[string]string{"X-Upstream-Auth": "ok"}}, nil
 }
-func (a *coreAuth) RecordOutcome(_ string, status types.OutcomeStatus, _ *types.RetryMeta) {
+func (a *coreAuth) RecordOutcome(_ string, status types.OutcomeStatus, meta *types.RetryMeta) {
 	a.mu.Lock()
 	a.outcomes = append(a.outcomes, status)
+	if meta != nil {
+		copy := *meta
+		a.retryMeta = append(a.retryMeta, &copy)
+	}
 	a.mu.Unlock()
 }
 
@@ -360,6 +369,23 @@ func TestResponsesCoreBufferedRoutingAndTerminalRecord(t *testing.T) {
 	}
 	if len(auth.outcomes) != 1 || auth.outcomes[0] != types.OutcomeSuccess {
 		t.Fatalf("outcomes = %#v", auth.outcomes)
+	}
+}
+
+func TestResponsesCoreCarriesParentThreadAndProbeLeaseToOutcome(t *testing.T) {
+	core, auth, _, upstream := newCoreHarness(t)
+	defer upstream.Close()
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
+	request.Header.Set("X-Codex-Parent-Thread-Id", " parent-thread ")
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+	if len(auth.threads) != 1 || auth.threads[0] != "parent-thread" || len(auth.retryMeta) != 1 || auth.retryMeta[0].ThreadID != "parent-thread" || auth.retryMeta[0].ProbeLeaseID != "probe-lease" {
+		t.Fatalf("threads=%#v retryMeta=%#v", auth.threads, auth.retryMeta)
 	}
 }
 

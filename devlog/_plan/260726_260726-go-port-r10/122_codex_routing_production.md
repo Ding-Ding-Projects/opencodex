@@ -1,175 +1,156 @@
-# WP0 — Canonical Codex routing production activation
+# WP13 — Canonical Codex routing production activation
 
-Date: 2026-07-27  
-Base: `3abeadd9d503973188607f4c2d7719ef83df5e2c`  
-Class: C4 (credential routing, refresh, quota/failover state, public request path)  
-Predecessors: `061→071→091→101→111→121`  
-Successors: `126/127`, then `080/081`
+Date: 2026-07-27
+Base: `5483bb2cea67582240a74630353a6bb8968231e6`
+Class: C4 (credential routing, refresh, quota/failover state, public request path)
 
-## Problem and production evidence
+## Outcome
 
-The existing reachability verdict overstates the Codex routing path. A current-tree
-caller scan shows:
+Replace the generic OpenAI OAuth pool on the real Go request path with the
+canonical `codex.Router` and `codex.AuthResolver`. Keep the unified
+`oauth.CredentialStore` as the only production credential owner, preserve main
+account behavior, and leave direct OpenAI plus every non-OpenAI OAuth provider
+on the generic resolver.
 
-- `codex.NewRouter`, `Router.ResolveCodexAccountForThreadDetailed`, and
-  `AuthResolver.ResolveCodexAuthContext` have no non-test callers.
-- `go/internal/cli/live_config.go:58-82` sends the real OpenAI request path
-  through `oauth.AuthResolver`.
-- `go/internal/cli/serve.go:292-303` constructs `oauth.AccountPool` for
-  OpenAI, and `go/internal/oauth/accountpool.go:35-176` provides only
-  round-robin affinity plus one undifferentiated cooldown map.
-- `go/internal/codex/production_reachability_test.go:37-86` proves a pooled
-  bearer and physical `chatgpt-account-id` reach a real Responses route, but
-  it explicitly constructs the generic OAuth pool. The canonical quota,
-  selected-account, failure-threshold, 429 probe, and main-account branches are
-  not activated by that test.
-- `go/test/parity/routing_test.go:38-55` exercises `codex.Router` directly;
-  this is parity evidence, not production reachability.
+The phase must activate affinity, quota selection, transient failover, 429
+cooldown/probes, refresh, and outcome feedback through production request roots.
+It also passes the exact shared router pointer into management for the successor
+manual-selection phase.
 
-Packet `127` cannot honestly claim immediate manual selection until this
-predecessor makes one canonical router pointer own both data-plane selection and
-management resets.
+## Structural decisions
 
-## Structural decision
+### Unified credential adapter
 
-### Context
+`codex.OAuthAccountStore` implements the canonical `RoutingAccountStore` port
+over `oauth.CredentialStore`. It refreshes the existing named OpenAI credential
+in place and exposes only a stable numeric generation. No token is copied into
+config or a second account file.
 
-Production credentials live in the unified `oauth.CredentialStore`
-(`OPENCODEX_HOME/auth.json`), while the richer router accepts the older
-`codex.AccountStore`. Copying credentials between those files would create a
-second credential source and unsafe refresh races.
+The OAuth refresh transaction re-reads the full `ProviderAccount` while holding
+the per-account refresh lock and refuses `NeedsReauth`. The final credential
+merge checks `NeedsReauth` again under the credential-store mutation lock, so a
+concurrent reauth mark cannot be cleared. Context cancellation while waiting for
+the in-process or OS lock maps to the canonical transient refresh-lock error and
+does not mark the account permanently broken.
 
-### Rejected alternatives
+### Lock order and persistence
 
-- Enhance `oauth.AccountPool` with Codex quota/failover policy: rejected because
-  it would leave the richer `codex.Router` as a second owner and push
-  provider-specific rules into the generic OAuth package.
-- Mirror unified credentials into `codex.AccountStore`: rejected because
-  credential bytes, generations, refresh locks, and reauth state would diverge.
-- Keep the direct-router tests and only add a management pointer: rejected
-  because the API would reset state that no request consumes.
+`codex.Router` owns only in-memory routing state. It no longer accepts or invokes
+a persistence callback while holding `Router.mu`.
 
-### Chosen move
+`codexRoutingRuntime` serializes one routing decision, builds a detached
+`LivePersistence.Snapshot`, lets the router mutate only that detached
+`RoutingConfig`, then persists an active-account transition after the router
+mutex has been released. The write is compare-and-set against the active account
+observed by the snapshot. A concurrent management change or durable write
+failure clears tentative affinity and fails the request rather than using an
+uncommitted selection. Outcome-driven transitions follow the same order.
 
-Introduce one infrastructure adapter, `codex.OAuthAccountStore`, behind a
-small `RoutingAccountStore` port. The legacy `AccountStore` and production
-`OAuthAccountStore` are the two real adapters that justify this seam.
-`cli.codexRoutingRuntime` composes the canonical `codex.Router` and
-`codex.AuthResolver` for OpenAI pool mode only. Other providers continue
-through `oauth.AuthResolver`.
+`configBackedAuth` reads only enough provider config to choose the canonical
+path, releases the persistence read lock, and then calls the runtime. It never
+attempts a persistence write beneath its own read lock.
 
-The adapter reads and refreshes the existing unified credential in place. It
-exports only stable numeric generation identity, never credential bytes.
-`configBackedAuth` sends OpenAI pool resolution to the canonical runtime and
-uses the existing generic path for direct OpenAI and every non-OpenAI provider.
+### Complete quota and outcome provenance
 
-Older Go previews could persist an OpenAI account set in the unified OAuth
-store without the `config.codexAccounts` metadata required by the canonical
-router. At server startup, `reconcileCodexRoutingAccounts` appends only missing
-account identities through `LivePersistence`; existing aliases and account
-order are preserved, an already-complete list causes no config rewrite, no
-credential bytes enter config, and no active account is fabricated. A legacy
-credential without email receives the non-identifying label `OpenAI account`,
-never its opaque ID. This keeps old installs routable while adopting the source
-router's stable unknown-quota selection instead of the retired generic round
-robin.
+Each resolution replaces the router's complete quota image, so deleted/reset
+quota rows cannot survive. `types.AuthContext` and `types.RetryMeta` carry
+internal-only probe lease and thread IDs. Both Responses and sidecar producers
+prefer `Thread-Id`, fall back to `X-Codex-Parent-Thread-Id`, and return provider,
+probe, and thread provenance to the canonical outcome owner. Successful probes
+clear cooldown; failed probes release the lease and retain failure state.
 
-Request outcomes already cross `types.AuthProvider.RecordOutcome` without a
-provider argument. Rather than breaking every implementation, add a
-provider field to `types.RetryMeta`; Responses and sidecar producers fill it,
-and `configBackedAuth` routes only `provider=openai` feedback to the canonical
-router. This removes account-ID collision ambiguity without changing the public
-interface.
+### Startup transition
 
-### Consequences
+`reconcileCodexRoutingAccounts` appends only named OpenAI credentials missing
+from `config.codexAccounts` through `LivePersistence`. Existing order, aliases,
+and active selection survive. A credential without email gets the
+non-identifying label `OpenAI account`; config never receives credential bytes.
 
-Dependency direction remains acyclic:
+## Production composition
 
-`oauth ← codex ← cli → server/management`
+- `go/internal/cli/serve.go` creates one persistence owner, reconciles legacy
+  metadata, constructs one canonical runtime, and passes its router to server.
+- `go/internal/cli/live_config.go` dispatches OpenAI pool mode to that runtime;
+  direct OpenAI and non-OpenAI OAuth remain generic.
+- `go/internal/server/responses_core_port.go` and `sidecar.go` attach provider,
+  probe lease, and canonical thread provenance to every terminal outcome.
+- `go/internal/server/server.go` forwards the exact pointer to
+  `management.Options`; `management.API` retains it without constructing a
+  second owner.
 
-`oauth` does not import `codex`. The server depends only on the existing
-`types.AuthProvider` boundary plus an injected `*codex.Router` for management
-composition. No new package or dependency is added.
+## First audit and redesign
 
-## Threat model
+The first current-lineage `gpt-5.6-sol` medium-priority audit returned
+`VERDICT: FAIL`. The stale packet was not mechanically rebased. The replacement
+closes all verified blockers:
 
-- Assets: OAuth access/refresh tokens, physical ChatGPT account ID, selected
-  account, thread affinity, quota health, and 429 cooldown/probe ownership.
-- Entrypoints: `/v1/responses`, sidecar calls using OpenAI credentials, and the
-  authenticated `PUT /api/codex-auth/active` successor path.
-- Attacker/failure capability: malformed external responses, repeated 429/5xx,
-  stale credential generations, account-ID collisions across providers, and a
-  local management caller selecting an account.
-- Controls: credential values stay in the existing locked store; adapter errors
-  fail closed; provider provenance rides outcome metadata; no token is logged or
-  serialized; refresh keeps the existing per-account file lock/CAS; main-account
-  tokens retain the existing Codex-home reader.
-- Rollback: remove the runtime adapter field and server router injection; generic
-  OAuth remains intact for non-OpenAI and direct mode throughout the change.
+- removes router-to-persistence callbacks and read-to-write lock upgrades;
+- carries probe lease and thread identity end to end;
+- makes OAuth refresh CAS reauth-aware and lock waits context-cancellable;
+- replaces rather than appends quota state;
+- adds save-failure rollback, persistence concurrency, probe success/failure,
+  refresh contention, parent-thread producer, and pointer-identity tests.
 
-## Diff-level file map
+## File map
 
-| Path | Action | Before → after |
-|---|---|---|
-| `go/internal/codex/routing.go` | MODIFY | Concrete `*AccountStore` dependency → `RoutingAccountStore` port; affinity generation reads the port. |
-| `go/internal/codex/auth_context.go` | MODIFY | Resolver store uses the same port. |
-| `go/internal/codex/account_store.go` | MODIFY | Legacy adapter exposes credential generation through the port. |
-| `go/internal/codex/oauth_account_store.go` | NEW | Unified OAuth store adapter, in-place refresh, reauth rejection, stable generation. |
-| `go/internal/oauth/authcontext.go` | MODIFY | Export the existing stable numeric credential generation helper. |
-| `go/internal/cli/codex_routing_runtime.go` | NEW | Convert live config, synchronize shared quotas, resolve main/named accounts, map outcomes, persist active changes. |
-| `go/internal/cli/live_config.go` | MODIFY | Route OpenAI pool mode to canonical runtime; keep generic OAuth elsewhere; dispatch provider-aware outcomes. |
-| `go/internal/cli/serve.go` | MODIFY | Construct one runtime from the existing store/quota/persistence/main-token/refresh owners and pass its router to management. |
-| `go/cmd/ocx/serve_integration_test.go` | MODIFY | Prove auth-only legacy stores migrate before serving, unknown quota keeps the canonical first selection across threads, and 429 combo failover still reaches the second account. |
-| `go/internal/types/types.go` | MODIFY | Add internal provider provenance to `RetryMeta`. |
-| `go/internal/server/responses_core_port.go` | MODIFY | Attach selected auth provider to outcome metadata. |
-| `go/internal/server/sidecar.go` | MODIFY | Attach sidecar provider to outcome metadata. |
-| `go/internal/server/server.go` | MODIFY | Forward the shared router into automatic management composition. |
-| `go/internal/management/api.go` | MODIFY | Retain the injected router for successor packet `127`; do not construct a second one. |
-| `go/internal/cli/codex_routing_production_test.go` | NEW | Production composition and route activation evidence. |
+The exact packet modifies 24 files in 50 hunks:
 
-## Conditional activation criteria
+- production composition: `go/internal/cli/codex_routing_runtime.go` (new),
+  `live_config.go`, `serve.go`;
+- canonical ports: `go/internal/codex/routing.go`, `auth_context.go`,
+  `account_store.go`, `oauth_account_store.go` (new);
+- refresh ownership: `go/internal/oauth/authcontext.go`, `filelock.go`,
+  `store_refresh.go`;
+- outcome transport: `go/internal/types/types.go`,
+  `go/internal/server/responses_core_port.go`, `sidecar.go`;
+- management identity: `go/internal/server/server.go`,
+  `go/internal/management/api.go`;
+- production and regression tests under `go/cmd/ocx`, `internal/cli`,
+  `internal/codex`, `internal/management`, `internal/server`, and `test/parity`.
 
-- Named account: real `configBackedAuth` returns the selected named account,
-  bearer, physical account ID, and stable generation from `oauth.CredentialStore`.
-- Legacy transition: an auth-only OpenAI account set is appended to config
-  metadata before listener startup without overwriting existing aliases or
-  choosing an active account; the first canonical selection stays stable while
-  quota is unknown.
-- Main account: empty active selection with auto-switch disabled selects the live
-  Codex-home main token and forwards its physical account ID.
-- Affinity: a known quota change does not move an already bound thread before
-  reevaluation, while a new thread selects the known lower-usage account.
-- Outcome: three OpenAI transient failures reach the canonical health map;
-  non-OpenAI outcome/account IDs remain on the generic owner.
-- 429: a real Responses request returning `Retry-After` cools the first account,
-  and the next request uses the second account.
-- Isolation: an XAI OAuth credential still resolves through the generic resolver.
-- Management identity: `server.Config.CodexRouter`,
-  `management.Options.CodexRouter`, and `management.API.codexRouter` carry the
-  same pointer for packet `127`.
+Candidate size: 1,033 insertions and 59 deletions.
 
-## Literal packet and verification
+## Acceptance criteria
 
-[123_codex_routing_production_literal_patch.md](./123_codex_routing_production_literal_patch.md)
-is the complete 15-file unified diff. It was materialized after
-`061→071→091→101→111→121`, formatted, and checked with:
+- Named OpenAI accounts resolve bearer, physical account ID, and stable
+  generation from the unified store.
+- Main account mode resolves the live Codex-home token.
+- Unknown quota keeps a stable first choice; known quota moves only new or
+  reevaluated threads.
+- Removed quota entries no longer influence selection.
+- Three transient failures and 429 feedback reach canonical health, while XAI
+  and other OAuth providers remain generic.
+- Reset/default cooldown probes carry a lease and thread through real Responses
+  and sidecar outcomes; success clears and failure releases.
+- Concurrent persistence reads/writes and routing complete under race without
+  deadlock; failed active-selection persistence returns no auth context and
+  rolls config back.
+- Refresh cannot clear concurrent `NeedsReauth`; a cancelled lock wait remains
+  transient.
+- Server, management options, and management API retain one router identity.
+- No secret appears in config, logs, JSON, tests, or packet text.
 
-```text
-go test ./internal/codex ./internal/oauth ./internal/management ./internal/server -count=1 -timeout 180s
-PASS
+## Gates
 
-go test -trimpath ./internal/cli -run 'Test(ConfigBackedAuth|ProductionResponses)' -count=1 -timeout 180s
-PASS
-
+```bash
+cd go
+gofmt -d ./cmd/ocx ./internal/cli ./internal/codex ./internal/oauth \
+  ./internal/management ./internal/server ./internal/types ./test/parity
+go test ./internal/codex ./internal/oauth ./internal/management \
+  ./internal/server ./internal/cli ./test/parity -count=1 -timeout 180s
+go test -race ./internal/codex ./internal/oauth ./internal/management \
+  ./internal/server ./internal/cli \
+  -run 'TestOAuthAccountStore|TestCanonicalRouting|TestConfigBackedAuth|TestProductionResponses|TestNewAPIRetains|TestResponsesCoreCarries|TestDefaultImageSidecarCarries' \
+  -count=10 -timeout 240s
 go test ./cmd/ocx -run 'TestBuiltServe(ComboRateLimitSwitchesOpenAIAccount|MigratesLegacyOpenAIAccountPoolToCanonicalSelection)' -count=1 -timeout 180s
-PASS
-
-go vet ./internal/codex ./internal/oauth ./internal/management ./internal/server ./internal/cli
-PASS
-
+go test ./... -count=1 -timeout 400s
+go test -race ./... -count=1 -timeout 600s
+go vet ./...
 GOOS=windows GOARCH=amd64 go build ./...
-PASS
+GOOS=linux GOARCH=amd64 go build ./...
 ```
 
-The final full sequence proved `123→127→081` and every repository gate recorded
-in `009_4_post_audit_canonical_validation.md` before WP0 audit lock.
+Before D, fetch `origin/dev`, rebase if it moved, regenerate the packet against
+the final parent, and rerun proportional gates. Stop only after an independent
+re-audit passes, the exact packet applies to a clean clone, full Go/race and
+Bun/privacy gates pass, and `origin/dev` is an ancestor.

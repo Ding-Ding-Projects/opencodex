@@ -19,7 +19,7 @@ func newRoutingFixture(t *testing.T, accounts ...CodexAccount) (*Router, *Routin
 			t.Fatal(err)
 		}
 	}
-	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false }, nil)
+	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false })
 	return router, &RoutingConfig{CodexAccounts: accounts}, store
 }
 
@@ -165,22 +165,21 @@ func TestCredentialFailureQuarantinesAccount(t *testing.T) {
 
 func TestPreviewCodexAccountIsSideEffectFree(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000)
-	saves := 0
 	store := NewAccountStore(t.TempDir() + "/codex-accounts.json")
 	for _, id := range []string{"a", "b"} {
 		if err := store.SaveCredential(id, AccountCredentials{"access-" + id, "refresh-" + id, now.Add(time.Hour).UnixMilli(), "chat-" + id}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false }, func(*RoutingConfig) error { saves++; return nil })
+	router := NewRouter(store, func() (MainAccountToken, bool) { return MainAccountToken{}, false })
 	config := &RoutingConfig{CodexAccounts: []CodexAccount{{ID: "a"}, {ID: "b"}}, ActiveCodexAccountID: "a"}
 	router.SetAccountQuota("a", AccountQuota{WeeklyPercent: floatPointer(90)})
 	router.SetAccountQuota("b", AccountQuota{WeeklyPercent: floatPointer(10)})
 	if got := router.PreviewCodexAccountForRequest("thread", config, now); got != "b" {
 		t.Fatalf("preview=%q", got)
 	}
-	if config.ActiveCodexAccountID != "a" || saves != 0 || len(router.threadAccounts) != 0 {
-		t.Fatalf("preview mutated state: active=%q saves=%d affinity=%v", config.ActiveCodexAccountID, saves, router.threadAccounts)
+	if config.ActiveCodexAccountID != "a" || len(router.threadAccounts) != 0 {
+		t.Fatalf("preview mutated state: active=%q affinity=%v", config.ActiveCodexAccountID, router.threadAccounts)
 	}
 	if got := router.ResolveCodexAccountForThread("thread", config, now); got != "b" {
 		t.Fatalf("resolve=%q", got)

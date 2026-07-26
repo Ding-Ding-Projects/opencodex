@@ -173,6 +173,8 @@ type AuthContext struct {
 	APIKey           string            `json:"-"`
 	ChatGPTAccountID string            `json:"chatgptAccountId,omitempty"`
 	Headers          map[string]string `json:"-"`
+	ProbeLeaseID     string            `json:"-"`
+	ThreadID         string            `json:"-"`
 }
 
 type ResolvedModel struct {
@@ -217,6 +219,9 @@ type RetryMeta struct {
 	StatusCode   int           `json:"statusCode,omitempty"`
 	ProviderCode string        `json:"providerCode,omitempty"`
 	Message      string        `json:"message,omitempty"`
+	Provider     string        `json:"provider,omitempty"`
+	ProbeLeaseID string        `json:"-"`
+	ThreadID     string        `json:"-"`
 }
 
 type CompactionRequest struct {

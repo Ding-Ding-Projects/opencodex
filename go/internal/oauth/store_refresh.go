@@ -35,13 +35,17 @@ func (s *CredentialStore) RefreshAccount(ctx context.Context, provider, accountI
 
 	// Re-read inside the lock. If the generation changed, another refresher
 	// won the race — adopt their result.
-	current, ok, err := s.GetAccountCredential(provider, accountID)
+	currentAccount, ok, err := s.getProviderAccount(provider, accountID)
 	if err != nil {
 		return RefreshResult{}, err
 	}
 	if !ok {
 		return RefreshResult{}, ErrLoginRequired
 	}
+	if currentAccount.NeedsReauth {
+		return RefreshResult{}, ErrLoginRequired
+	}
+	current := currentAccount.Credential
 	currentGen := CredentialGeneration(current)
 	if currentGen != observedGen {
 		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
@@ -86,13 +90,17 @@ func (s *CredentialStore) RefreshAccountIfGeneration(
 	}
 	defer lock.release()
 
-	current, ok, err := s.GetAccountCredential(provider, accountID)
+	currentAccount, ok, err := s.getProviderAccount(provider, accountID)
 	if err != nil {
 		return RefreshResult{}, err
 	}
 	if !ok {
 		return RefreshResult{}, ErrLoginRequired
 	}
+	if currentAccount.NeedsReauth {
+		return RefreshResult{}, ErrLoginRequired
+	}
+	current := currentAccount.Credential
 	expected := CredentialGeneration(current)
 	if expected != observedGeneration {
 		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
@@ -146,6 +154,19 @@ func mergeRefreshedCredential(fresh, previous OAuthCredentials) OAuthCredentials
 	return fresh
 }
 
+func (s *CredentialStore) getProviderAccount(provider, accountID string) (ProviderAccount, bool, error) {
+	set, found, err := s.GetAccountSet(provider)
+	if err != nil || !found {
+		return ProviderAccount{}, false, err
+	}
+	for _, account := range set.Accounts {
+		if account.ID == accountID {
+			return account, true, nil
+		}
+	}
+	return ProviderAccount{}, false, nil
+}
+
 func (s *CredentialStore) beginRefresh(ctx context.Context, provider, accountID, generation string) error {
 	if pending, ok := s.ReadRefreshIntent(provider, accountID); ok {
 		if pending.Uncertain || pending.Generation == generation {
@@ -169,6 +190,9 @@ func (s *CredentialStore) mergeRefreshed(ctx context.Context, provider, accountI
 				continue
 			}
 			stored := set.Accounts[i].Credential
+			if set.Accounts[i].NeedsReauth {
+				return ErrLoginRequired
+			}
 			if CredentialGeneration(stored) != expected {
 				result = RefreshResult{Credential: stored, Generation: CredentialGeneration(stored), Superseded: true}
 				return nil

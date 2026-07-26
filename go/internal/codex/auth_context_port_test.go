@@ -78,7 +78,7 @@ func TestResolveCodexMainPoolAndGenerationUsability(t *testing.T) {
 		return MainAccountToken{AccessToken: "main-access", ChatGPTAccountID: "main-chat", ExpiresAt: now.Add(time.Hour)}, true
 	}
 	store := NewAccountStore(t.TempDir() + "/codex-accounts.json")
-	router := NewRouter(store, mainToken, nil)
+	router := NewRouter(store, mainToken)
 	resolver := &AuthResolver{Router: router, Store: store, MainToken: mainToken, Now: func() time.Time { return now }}
 	routingConfig := &RoutingConfig{ActiveCodexAccountID: MainCodexAccountID}
 	auth, err := resolver.ResolveCodexAuthContext(context.Background(), make(http.Header), routingConfig, "pool", ResolveCodexAuthContextOptions{})

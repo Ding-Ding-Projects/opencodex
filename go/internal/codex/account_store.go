@@ -320,3 +320,11 @@ func (s *AccountStore) IsGenerationLive(id string, generation int64) bool {
 	record, ok, err := s.ReadRecord(id)
 	return err == nil && ok && record.Credential != nil && record.DeletedAt == nil && record.Generation == generation
 }
+
+func (s *AccountStore) CredentialGeneration(id string) (int64, bool, error) {
+	record, found, err := s.ReadRecord(id)
+	if err != nil || !found || record.DeletedAt != nil || record.Credential == nil {
+		return 0, false, err
+	}
+	return record.Generation, true, nil
+}

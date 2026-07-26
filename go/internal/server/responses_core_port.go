@@ -277,7 +277,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		return
 	}
 	record := &types.UsageRecord{
-		RequestID: core.nextRequestID(), ThreadID: request.Header.Get("thread-id"),
+		RequestID: core.nextRequestID(), ThreadID: authThreadID(request.Header),
 		Provider: resolved.Provider, Model: resolved.Model, StartedAt: started,
 	}
 	if auth != nil {
@@ -372,7 +372,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		var auth *types.AuthContext
 		var err error
 		if core.config.Auth != nil {
-			auth, err = core.config.Auth.ResolveAuth(ctx, resolved.Provider, incoming.Get("thread-id"))
+			auth, err = core.config.Auth.ResolveAuth(ctx, resolved.Provider, authThreadID(incoming))
 			if err != nil {
 				if next, ok := core.nextCombo(normalized, pick, http.StatusUnauthorized, "invalid_api_key", err.Error(), ""); ok {
 					pick, resolved = next, next.Resolved
@@ -986,7 +986,7 @@ func (core *ResponsesCore) recordAuthOutcome(auth *types.AuthContext, outcome ty
 	if core.config.Auth == nil || auth == nil || auth.AccountID == "" {
 		return
 	}
-	meta := &types.RetryMeta{StatusCode: status, Message: message}
+	meta := &types.RetryMeta{StatusCode: status, Message: message, Provider: auth.Provider, ProbeLeaseID: auth.ProbeLeaseID, ThreadID: auth.ThreadID}
 	if delay, ok := combos.ParseRetryAfter(retryAfter, time.Now()); ok {
 		meta.RetryAfter = delay
 	}

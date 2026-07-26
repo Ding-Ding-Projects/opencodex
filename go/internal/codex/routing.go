@@ -1,7 +1,9 @@
 package codex
 
 import (
+	"context"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -59,12 +61,20 @@ type threadAffinityEntry struct {
 	lastReevalAt int64
 }
 
+// RoutingAccountStore is the credential seam shared by the legacy standalone
+// store and the production unified OAuth store.
+type RoutingAccountStore interface {
+	GetCredential(string) (AccountCredentials, bool, error)
+	GetValidToken(context.Context, string, *http.Client) (ValidToken, error)
+	CredentialGeneration(string) (int64, bool, error)
+	IsGenerationLive(string, int64) bool
+}
+
 // Router owns in-memory health, quota, reauth, and thread-affinity state.
 type Router struct {
 	mu             sync.Mutex
-	store          *AccountStore
+	store          RoutingAccountStore
 	mainToken      func() (MainAccountToken, bool)
-	saveConfig     func(*RoutingConfig) error
 	threadAccounts map[string]threadAffinityEntry
 	health         map[string]UpstreamHealth
 	quotas         map[string]AccountQuota
@@ -72,9 +82,9 @@ type Router struct {
 	mainPlan       string
 }
 
-func NewRouter(store *AccountStore, mainToken func() (MainAccountToken, bool), saveConfig func(*RoutingConfig) error) *Router {
+func NewRouter(store RoutingAccountStore, mainToken func() (MainAccountToken, bool)) *Router {
 	return &Router{
-		store: store, mainToken: mainToken, saveConfig: saveConfig,
+		store: store, mainToken: mainToken,
 		threadAccounts: make(map[string]threadAffinityEntry),
 		health:         make(map[string]UpstreamHealth), quotas: make(map[string]AccountQuota),
 		reauth: make(map[string]struct{}),
@@ -85,6 +95,17 @@ func (r *Router) SetAccountQuota(accountID string, quota AccountQuota) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.quotas[accountID] = quota
+}
+
+// ReplaceAccountQuotas reconciles the complete quota image so deleted or reset
+// accounts cannot retain stale routing scores.
+func (r *Router) ReplaceAccountQuotas(quotas map[string]AccountQuota) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.quotas = make(map[string]AccountQuota, len(quotas))
+	for accountID, quota := range quotas {
+		r.quotas[accountID] = quota
+	}
 }
 
 func (r *Router) ClearAccountQuota(accountID string) {
@@ -252,19 +273,16 @@ func (r *Router) setActiveLocked(config *RoutingConfig, accountID string) {
 		return
 	}
 	config.ActiveCodexAccountID = accountID
-	if r.saveConfig != nil {
-		_ = r.saveConfig(config)
-	}
 }
 
 func (r *Router) bindThreadLocked(threadID, accountID string, now int64) {
 	generation := int64(0)
 	if accountID != MainCodexAccountID {
-		record, ok, err := r.store.ReadRecord(accountID)
-		if err != nil || !ok || record.Credential == nil || record.DeletedAt != nil {
+		resolved, ok, err := r.store.CredentialGeneration(accountID)
+		if err != nil || !ok {
 			return
 		}
-		generation = record.Generation
+		generation = resolved
 	}
 	r.pruneExpiredLocked(now)
 	previous := r.threadAccounts[threadID]
