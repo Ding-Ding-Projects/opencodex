@@ -141,6 +141,14 @@ separately guarded `gh release edit --draft=false`. Draft repair likewise upload
 asset per guarded command. This trades seven short calls for an npm channel proof
 before every remote write; command and aggregate workflow deadlines remain bounded.
 
+`--clobber` is forbidden because it hides a delete and upload inside one command. A
+mismatched draft asset is repaired as two independent mutations: revalidate npm plus
+the exact draft snapshot, delete that exact asset ID with `gh api --method DELETE`,
+re-read the draft and prove the ID/name is absent, revalidate npm again, then upload the
+single local path without `--clobber`. A missing asset needs only the guarded single
+upload. Fake-npm/fake-gh tests move the tag between delete and upload and require the
+upload to remain unreachable.
+
 ### GitHub asset identity and bounds
 
 Use GitHub API release assets with typed `id`, `name`, `size`, and immutable digest
