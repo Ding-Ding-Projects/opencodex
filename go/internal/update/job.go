@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/server"
 )
 
 const (
@@ -204,10 +206,13 @@ func (s *JobStore) Write(job Job) error {
 }
 
 type JobManager struct {
-	Store  *JobStore
-	Runner CommandRunner
-	Now    func() time.Time
-	mu     sync.Mutex
+	Store       *JobStore
+	Runner      CommandRunner
+	Now         func() time.Time
+	mu          sync.Mutex
+	RestartHost string
+	RestartPort int
+	ReclaimPort func(context.Context, string, int, server.ReclaimListenPortOptions) bool
 }
 
 func (m *JobManager) Run(ctx context.Context, check CheckResult, restart bool, restartFn func(context.Context) error) (Job, error) {
@@ -252,6 +257,18 @@ func (m *JobManager) Run(ctx context.Context, check CheckResult, restart bool, r
 		job.Status = JobRestarting
 		job.UpdatedAt = now().UTC()
 		_ = m.Store.Write(job)
+		if m.RestartPort > 0 {
+			reclaim := m.ReclaimPort
+			if reclaim == nil {
+				reclaim = server.ReclaimListenPort
+			}
+			if !reclaim(ctx, m.RestartHost, m.RestartPort, server.ReclaimListenPortOptions{Timeout: 30 * time.Second}) {
+				job.Status, job.Error = JobFailed, fmt.Sprintf("listen port %d did not become available", m.RestartPort)
+				job.UpdatedAt = now().UTC()
+				_ = m.Store.Write(job)
+				return job, errors.New(job.Error)
+			}
+		}
 		if err := restartFn(ctx); err != nil {
 			job.Status = JobFailed
 			job.Error = err.Error()

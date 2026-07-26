@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/server"
 )
 
 type fakeRunner struct{ err error }
@@ -27,6 +29,22 @@ func TestJobManagerPersistsSuccessAndFailure(t *testing.T) {
 	job, err = manager.Run(context.Background(), check, false, nil)
 	if err == nil || job.Status != JobFailed || !strings.Contains(job.Error, "install failed") {
 		t.Fatalf("failure job = %#v, err = %v", job, err)
+	}
+}
+
+func TestJobManagerReclaimsPortBeforeRestart(t *testing.T) {
+	check := CheckResult{CurrentVersion: "1.0.0", LatestVersion: "1.1.0", Channel: ChannelLatest, Installer: InstallerNPM, CanUpdate: true}
+	order := []string{}
+	manager := &JobManager{
+		Store: &JobStore{Path: filepath.Join(t.TempDir(), "job.json")}, Runner: fakeRunner{}, RestartHost: "127.0.0.1", RestartPort: 10100,
+		ReclaimPort: func(context.Context, string, int, server.ReclaimListenPortOptions) bool {
+			order = append(order, "reclaim")
+			return true
+		},
+	}
+	job, err := manager.Run(context.Background(), check, true, func(context.Context) error { order = append(order, "restart"); return nil })
+	if err != nil || !job.Restarted || strings.Join(order, ",") != "reclaim,restart" {
+		t.Fatalf("job=%#v err=%v order=%v", job, err, order)
 	}
 }
 

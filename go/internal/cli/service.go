@@ -12,6 +12,7 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
+	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/service"
 )
 
@@ -44,8 +45,15 @@ func runService(args []string, streams IO) error {
 	case "start":
 		return manager.Start()
 	case "restart":
+		_, port := readRuntime()
+		if port <= 0 {
+			port = cfg.Port
+		}
 		if err := manager.Stop(); err != nil {
 			return err
+		}
+		if port > 0 && !reclaimListenPort(context.Background(), gracefulStopHost(cfg.Host), port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second}) {
+			return fmt.Errorf("listen port %d did not become available after service stop", port)
 		}
 		return manager.Start()
 	case "stop":

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	anthropicadapter "github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
 	googleadapter "github.com/lidge-jun/opencodex-go/internal/adapter/google"
@@ -295,5 +296,28 @@ func TestAdapterAwareClientFallsBackForOrdinaryRequests(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("status=%d", response.StatusCode)
+	}
+}
+
+func TestConfiguredAuthAllowsKeyOptionalMimoWithoutCredential(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["mimo-free"] = config.ProviderConfig{Adapter: "mimo-free", BaseURL: "https://api.xiaomimimo.com/api/free-ai/openai/chat", AuthMode: "key"}
+	resolver, err := configuredAuthWithStore(cfg, oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := resolver.ResolveAuth(context.Background(), "mimo-free", "")
+	if err != nil || auth.APIKey != "" {
+		t.Fatalf("MiMo auth=%#v err=%v", auth, err)
+	}
+}
+
+func TestProviderFetchTimeoutsUseConfiguredConnectBudget(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.ConnectTimeoutMS = 1234
+	timeouts := providerFetchTimeouts(cfg)
+	want := 1234 * time.Millisecond
+	if timeouts.Connect != want || timeouts.TLSHandshake != want || timeouts.ResponseHeader != want || timeouts.Overall != 10*time.Minute {
+		t.Fatalf("timeouts=%#v", timeouts)
 	}
 }

@@ -60,6 +60,20 @@ func TestAuthResolverAPIKeyAndExpiredOAuth(t *testing.T) {
 	}
 }
 
+func TestAuthResolverAllowsMissingKeyOnlyWhenOptional(t *testing.T) {
+	resolver := NewAuthResolver(NewCredentialStore(filepath.Join(t.TempDir(), "auth.json")), map[string]ProviderAuthConfig{
+		"optional": {Mode: AuthModeAPIKey, KeyOptional: true},
+		"required": {Mode: AuthModeAPIKey},
+	}, nil)
+	auth, err := resolver.ResolveAuth(context.Background(), "optional", "")
+	if err != nil || auth.Kind != "api-key" || auth.APIKey != "" {
+		t.Fatalf("optional auth=%#v err=%v", auth, err)
+	}
+	if _, err := resolver.ResolveAuth(context.Background(), "required", ""); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("required error=%v", err)
+	}
+}
+
 func TestTokenGuardianRefreshesExpiringCredential(t *testing.T) {
 	t.Parallel()
 	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))

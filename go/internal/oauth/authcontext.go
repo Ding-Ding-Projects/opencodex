@@ -50,6 +50,9 @@ func (r *AuthResolver) ResolveAuth(ctx context.Context, provider, threadID strin
 
 func apiKeyAuthContext(provider string, config ProviderAuthConfig) (*shared.AuthContext, error) {
 	if strings.TrimSpace(config.APIKey) == "" {
+		if config.KeyOptional {
+			return &shared.AuthContext{Kind: "api-key", Provider: provider}, nil
+		}
 		return nil, fmt.Errorf("%w: %s API key is empty", ErrLoginRequired, provider)
 	}
 	header := config.HeaderName

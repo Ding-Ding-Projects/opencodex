@@ -97,6 +97,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		return err
 	}
 	credentialStore := oauth.NewCredentialStore(filepath.Join(configHome, "auth.json"))
+	oauthManagement := newOAuthManagement(credentialStore)
 	cursorModels, discoveryErr := discoverConfiguredCursorModels(ctx, runtimeCfg, credentialStore, nil)
 	if discoveryErr != nil && streams.Err != nil {
 		fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; using configured catalog: %v\n", discoveryErr)
@@ -114,8 +115,8 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	debugLog := usage.NewDebugLog(filepath.Join(configHome, "usage-debug.jsonl"))
 	requestLogs := management.NewRequestLog(200)
 	stop := &stopRouter{channel: make(chan struct{})}
-	providerClient := newAdapterAwareClient(server.NewProviderClient(server.FetchTimeouts{Overall: 10 * time.Minute}))
-	proxy := server.New(server.Config{Registry: reg, Combos: comboResolver, Auth: auth, ResolveAdapter: adapterResolver(reg, runtimeCfg), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
+	providerClient := newAdapterAwareClient(server.NewProviderClient(providerFetchTimeouts(runtimeCfg)))
+	proxy := server.New(server.Config{Registry: reg, Combos: comboResolver, Auth: auth, ResolveAdapter: adapterResolver(reg, runtimeCfg), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
 	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	listener, listenErr := net.Listen("tcp", httpServer.Addr)
 	if listenErr != nil {
@@ -222,9 +223,14 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*
 	reg := registry.New()
 	for name, provider := range cfg.Providers {
 		mode := oauth.AuthModeOAuth
+		keyOptional := provider.KeyOptional != nil && *provider.KeyOptional
+		preset, registered := reg.Lookup(name)
+		if registered {
+			keyOptional = keyOptional || preset.KeyOptional
+		}
 		if provider.APIKey != "" || provider.AuthMode == "key" || provider.AuthMode == "api-key" {
 			mode = oauth.AuthModeAPIKey
-		} else if preset, ok := reg.Lookup(name); ok {
+		} else if registered {
 			switch preset.AuthKind {
 			case registry.AuthForward:
 				mode = oauth.AuthModeForward
@@ -232,9 +238,18 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*
 				mode = oauth.AuthModeAPIKey
 			}
 		}
-		configs[name] = oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey}
+		configs[name] = oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey, KeyOptional: keyOptional}
 	}
 	return oauth.NewAuthResolver(store, configs, nil), nil
+}
+
+func providerFetchTimeouts(cfg config.Config) server.FetchTimeouts {
+	timeouts := server.FetchTimeouts{Overall: 10 * time.Minute}
+	if cfg.ConnectTimeoutMS > 0 {
+		configured := time.Duration(cfg.ConnectTimeoutMS) * time.Millisecond
+		timeouts.Connect, timeouts.TLSHandshake, timeouts.ResponseHeader = configured, configured, configured
+	}
+	return timeouts
 }
 
 func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.AdapterResolver {

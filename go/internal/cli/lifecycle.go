@@ -15,7 +15,10 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
+	"github.com/lidge-jun/opencodex-go/internal/server"
 )
+
+var reclaimListenPort = server.ReclaimListenPort
 
 func runStop(ctx context.Context, args []string, streams IO) error {
 	if len(args) != 0 {
@@ -49,8 +52,19 @@ func runRestart(ctx context.Context, args []string, streams IO) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: ocx restart")
 	}
+	cfg, _, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	_, port := readRuntime()
+	if port <= 0 {
+		port = cfg.Port
+	}
 	if err := runStop(ctx, nil, streams); err != nil {
 		return err
+	}
+	if port > 0 && !reclaimListenPort(ctx, gracefulStopHost(cfg.Host), port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second}) {
+		return fmt.Errorf("listen port %d did not become available after stop", port)
 	}
 	return startDetachedAndWait(ctx, streams)
 }

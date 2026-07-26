@@ -72,6 +72,7 @@ type ProviderAuthConfig struct {
 	HeaderName   string
 	HeaderPrefix string
 	UsePool      bool
+	KeyOptional  bool
 }
 
 type Authorization struct {

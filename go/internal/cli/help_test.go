@@ -55,3 +55,24 @@ func TestSubcommandHelp(t *testing.T) {
 		t.Fatalf("unexpected help: %q", output.String())
 	}
 }
+
+func TestTypeScriptPublicFlagManifestIsDocumented(t *testing.T) {
+	checks := map[string][]string{
+		"start": {"--port"}, "status": {"--json"}, "doctor": {"--json"},
+		"health": {"--json"}, "update": {"--tag latest|preview"},
+		"tray": {"--json", "--no-start"}, "models": {"list", "add", "remove"},
+		"provider": {"list", "add", "remove", "show", "set-default"},
+		"account":  {"list", "current", "use", "refresh", "auto-switch", "alias", "remove", "add-key"},
+	}
+	for command, flags := range checks {
+		var output bytes.Buffer
+		if err := PrintHelp(&output, command); err != nil {
+			t.Fatal(err)
+		}
+		for _, flag := range flags {
+			if !strings.Contains(output.String(), flag) {
+				t.Errorf("help %s missing TS surface %q: %s", command, flag, output.String())
+			}
+		}
+	}
+}
