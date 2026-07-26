@@ -17,6 +17,38 @@ func TestRepairResponsesItemIDs(t *testing.T) {
 	}
 }
 
+func TestRepairResponsesItemIDsJoinsMultilineDataAndUsesExactEventAllowlist(t *testing.T) {
+	input := "event: response.output_item.added\n" +
+		"data: {\"type\":\"response.output_item.added\",\"output_index\":0,\n" +
+		"data: \"item\":{\"type\":\"message\",\"id\":\"placeholder\"}}\n\n" +
+		"event: vendor.output_text.delta.extra\n" +
+		"data: {\"type\":\"vendor.output_text.delta.extra\",\"output_index\":0,\"item_id\":\"placeholder\"}\n\n"
+	out, err := io.ReadAll(RepairResponsesItemIDsWithConfig(strings.NewReader(input), ResponsesItemIDRepairConfig{Message: []string{"placeholder"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if strings.Count(text, "data:") != 2 || !strings.Contains(text, `"id":"msg_ocx_`) {
+		t.Fatalf("multiline payload was not repaired as one event:\n%s", text)
+	}
+	if !strings.Contains(text, `"item_id":"placeholder"`) {
+		t.Fatalf("non-allowlisted event item_id changed:\n%s", text)
+	}
+}
+
+func TestRepairResponsesItemIDsPreservesUnchangedMultilineData(t *testing.T) {
+	input := "event: vendor.event\n" +
+		"data: {\"type\":\"vendor.event\",\n" +
+		"data: \"value\":true}\n\n"
+	out, err := io.ReadAll(RepairResponsesItemIDsWithConfig(strings.NewReader(input), ResponsesItemIDRepairConfig{Message: []string{"placeholder"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != input {
+		t.Fatalf("unchanged multiline event lost byte shape:\n got: %q\nwant: %q", out, input)
+	}
+}
+
 func TestConfiguredResponsesItemIDRepairIsSelective(t *testing.T) {
 	input := strings.Join([]string{
 		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"placeholder-message"}}`, "",

@@ -1,17 +1,84 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
+
+func TestResponsesSamePathDispatchesHTTPAndWebSocket(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{Registry: reg, WebSockets: true, ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return fakeAdapter{endpoint: upstream.URL}, nil
+	}})
+	server := httptest.NewServer(proxy.Handler())
+	defer server.Close()
+
+	httpResponse := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire","stream":false}`, nil)
+	if httpResponse.Code != http.StatusOK || !strings.Contains(httpResponse.Body.String(), `"status":"completed"`) {
+		t.Fatalf("HTTP responses=%d %s", httpResponse.Code, httpResponse.Body.String())
+	}
+
+	connection, response, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", nil)
+	if err != nil {
+		if response != nil {
+			defer response.Body.Close()
+		}
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := connection.WriteJSON(map[string]any{"type": "response.create", "model": "acme/wire", "input": []any{}, "generate": false}); err != nil {
+		t.Fatal(err)
+	}
+	foundTerminal := false
+	for i := 0; i < 8; i++ {
+		_, payload, err := connection.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(payload), `"type":"response.completed"`) {
+			foundTerminal = true
+			break
+		}
+	}
+	if !foundTerminal {
+		t.Fatal("WebSocket response did not emit response.completed")
+	}
+}
+
+func TestResponsesWebSocketDisabledAndPanicBoundary(t *testing.T) {
+	proxy := New(Config{})
+	disabled := serveRequest(proxy.Handler(), http.MethodGet, "/v1/responses", "", http.Header{"Connection": {"keep-alive, Upgrade"}, "Upgrade": {"websocket"}})
+	if disabled.Code != http.StatusUpgradeRequired || !strings.Contains(disabled.Body.String(), "WebSocket transport is disabled") {
+		t.Fatalf("disabled=%d %s", disabled.Code, disabled.Body.String())
+	}
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := Middleware(recoveryMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("secret-bearing panic text")
+	}), logger), MiddlewareConfig{Logger: logger})
+	response := serveRequest(handler, http.MethodPost, "/v1/messages", `{}`, nil)
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "Unexpected server failure") {
+		t.Fatalf("panic response=%d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "secret-bearing") || strings.Contains(logs.String(), "secret-bearing") {
+		t.Fatalf("panic value leaked: response=%s logs=%s", response.Body.String(), logs.String())
+	}
+}
 
 func TestServerPortsModelsSidecarsAndV1Guard(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +174,10 @@ func TestRemoteAdmissionAndOriginParity(t *testing.T) {
 	responses := serveRequest(handler, http.MethodPost, "/v1/responses", `{}`, wrongBearer)
 	if responses.Code != http.StatusUnauthorized {
 		t.Fatalf("responses bearer admission = %d", responses.Code)
+	}
+	chat := serveRequest(handler, http.MethodPost, "/v1/chat/completions", `{}`, wrongBearer)
+	if chat.Code != http.StatusUnauthorized {
+		t.Fatalf("chat bearer admission = %d", chat.Code)
 	}
 
 	dedicated := http.Header{"X-OpenCodex-Api-Key": []string{"secret"}}

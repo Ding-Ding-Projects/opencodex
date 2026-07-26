@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/chat"
@@ -18,35 +19,37 @@ import (
 type AdapterResolver func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error)
 
 type Config struct {
-	Registry          types.Registry
-	Combos            *combos.Resolver
-	Auth              types.AuthProvider
-	ResolveAdapter    AdapterResolver
-	Client            *http.Client
-	Token             string
-	AllowedOrigins    []string
-	Logger            *slog.Logger
-	Lifecycle         *Lifecycle
-	Management        types.ManagementRouter
-	ChatHandler       types.RouteHandler
-	MessagesHandler   types.RouteHandler
-	CompactHandler    types.RouteHandler
-	UsageRecorder     types.UsageRecorder
-	RequestLogs       *management.RequestLog
-	ManagementConfig  *appconfig.Config
-	ConfigPath        string
-	DebugLog          *usage.DebugLog
-	OAuthManagement   management.OAuthBackend
-	StorageHome       string
-	Stop              func()
-	Version           string
-	EffortCap         string
-	SubagentEffortCap string
-	Hostname          string
-	SidecarResolver   SidecarResolver
-	ShadowCall        *ShadowCallIntercept
-	LiveResolver      LiveRelayResolver
-	ReadinessChecks   map[string]func(context.Context) error
+	Registry           types.Registry
+	Combos             *combos.Resolver
+	Auth               types.AuthProvider
+	ResolveAdapter     AdapterResolver
+	Client             *http.Client
+	Token              string
+	AllowedOrigins     []string
+	Logger             *slog.Logger
+	Lifecycle          *Lifecycle
+	Management         types.ManagementRouter
+	ChatHandler        types.RouteHandler
+	MessagesHandler    types.RouteHandler
+	CountTokensHandler types.RouteHandler
+	CompactHandler     types.RouteHandler
+	UsageRecorder      types.UsageRecorder
+	RequestLogs        *management.RequestLog
+	ManagementConfig   *appconfig.Config
+	ConfigPath         string
+	DebugLog           *usage.DebugLog
+	OAuthManagement    management.OAuthBackend
+	StorageHome        string
+	Stop               func()
+	Version            string
+	EffortCap          string
+	SubagentEffortCap  string
+	Hostname           string
+	SidecarResolver    SidecarResolver
+	ShadowCall         *ShadowCallIntercept
+	LiveResolver       LiveRelayResolver
+	ReadinessChecks    map[string]func(context.Context) error
+	WebSockets         bool
 }
 
 type Server struct {
@@ -69,6 +72,9 @@ func New(config Config) *Server {
 	}
 	if config.MessagesHandler == nil {
 		config.MessagesHandler = chat.NewMessagesHandler(handlerConfig)
+	}
+	if config.CountTokensHandler == nil {
+		config.CountTokensHandler = chat.NewCountTokensHandler(handlerConfig.BodyLimit)
 	}
 	if config.CompactHandler == nil {
 		config.CompactHandler = chat.NewCompactHandler(handlerConfig)
@@ -107,10 +113,15 @@ func New(config Config) *Server {
 		ShadowCall:        s.config.ShadowCall,
 	})
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/responses", s.responses)
+	websocketsEnabled := config.WebSockets
+	if config.ManagementConfig != nil && config.ManagementConfig.WebSockets {
+		websocketsEnabled = true
+	}
+	mux.Handle("/v1/responses", s.responsesEndpoint(websocketsEnabled))
 	mux.HandleFunc("POST /v1/responses/compact", s.delegate(config.CompactHandler))
 	mux.HandleFunc("POST /v1/chat/completions", s.delegate(config.ChatHandler))
 	mux.HandleFunc("POST /v1/messages", s.delegate(config.MessagesHandler))
+	mux.HandleFunc("POST /v1/messages/count_tokens", s.delegate(config.CountTokensHandler))
 	if config.LiveResolver != nil {
 		live := NewLiveHandler(config.LiveResolver, config.Client)
 		sideband := NewLiveSidebandHandler(config.LiveResolver)
@@ -157,7 +168,7 @@ func New(config Config) *Server {
 			middlewareConfig.AllowedOrigins = config.ManagementConfig.CORSAllowOrigins
 		}
 	}
-	s.handler = Middleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), middlewareConfig)
+	s.handler = Middleware(recoveryMiddleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), config.Logger), middlewareConfig)
 	return s
 }
 
@@ -178,6 +189,38 @@ func (s *Server) Lifecycle() *Lifecycle { return s.lifecycle }
 
 func (s *Server) HTTPServer(address string) *http.Server {
 	return &http.Server{Addr: address, Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
+}
+
+func (s *Server) responsesEndpoint(websocketsEnabled bool) http.Handler {
+	bridge := WebSocketBridge(s.responses)
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if isWebSocketUpgrade(request) {
+			if !websocketsEnabled {
+				writeJSONError(w, http.StatusUpgradeRequired, "upgrade_required", "Responses WebSocket transport is disabled; use HTTP")
+				return
+			}
+			bridge.ServeHTTP(w, request)
+			return
+		}
+		if request.Method != http.MethodPost {
+			unknownV1(w, request)
+			return
+		}
+		s.responses.ServeHTTP(w, request)
+	})
+}
+
+func isWebSocketUpgrade(request *http.Request) bool {
+	return request != nil && strings.EqualFold(strings.TrimSpace(request.Header.Get("Upgrade")), "websocket") && headerHasToken(request.Header.Get("Connection"), "upgrade")
+}
+
+func headerHasToken(value, target string) bool {
+	for _, token := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(token), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) delegate(handler types.RouteHandler) http.HandlerFunc {

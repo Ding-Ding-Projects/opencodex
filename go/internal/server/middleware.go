@@ -13,6 +13,23 @@ import (
 	"time"
 )
 
+func recoveryMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		tracked := &statusWriter{ResponseWriter: w}
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if logger != nil {
+					logger.Error("http_panic", "request_id", RequestIDFromContext(request.Context()), "method", request.Method, "path", request.URL.Path, "panic_type", fmt.Sprintf("%T", recovered))
+				}
+				if tracked.status == 0 {
+					writeJSONError(tracked, http.StatusInternalServerError, "server_error", "Unexpected server failure")
+				}
+			}
+		}()
+		next.ServeHTTP(tracked, request)
+	})
+}
+
 // MiddlewareConfig controls the HTTP trust boundary.
 type MiddlewareConfig struct {
 	Token          string
@@ -54,7 +71,7 @@ func authMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
 			return
 		}
 		valid := HasValidAPIAuth(r, config)
-		if remote && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact" || r.URL.Path == "/v1/responses/ws") {
+		if remote && requiresDedicatedAdmission(r.URL.Path) {
 			valid = HasValidResponsesAPIAuth(r, config)
 		}
 		if !valid {
@@ -71,7 +88,7 @@ func admissionCredential(r *http.Request, remote bool) string {
 	}
 	// Responses and Chat Completions may carry an upstream bearer credential.
 	// On remote binds their admission secret must use the dedicated proxy header.
-	if remote && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact" || r.URL.Path == "/v1/responses/ws") {
+	if remote && requiresDedicatedAdmission(r.URL.Path) {
 		return ""
 	}
 	if value := strings.TrimSpace(r.Header.Get("X-Api-Key")); value != "" {
@@ -165,7 +182,20 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("response writer does not support hijacking")
 	}
-	return hijacker.Hijack()
+	connection, buffer, err := hijacker.Hijack()
+	if err == nil {
+		w.status = http.StatusSwitchingProtocols
+	}
+	return connection, buffer, err
+}
+
+func requiresDedicatedAdmission(path string) bool {
+	switch path {
+	case "/v1/responses", "/v1/responses/compact", "/v1/responses/ws", "/v1/chat/completions":
+		return true
+	default:
+		return false
+	}
 }
 
 func loggingMiddleware(next http.Handler, logger *slog.Logger) http.Handler {

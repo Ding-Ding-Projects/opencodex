@@ -13,6 +13,22 @@ import (
 
 var responsesItemID = regexp.MustCompile(`^(msg|rs)_[A-Za-z0-9_-]+$`)
 
+var itemIDEventTypes = map[string]string{
+	"response.content_part.added":           "message",
+	"response.content_part.done":            "message",
+	"response.output_text.annotation.added": "message",
+	"response.output_text.delta":            "message",
+	"response.output_text.done":             "message",
+	"response.refusal.delta":                "message",
+	"response.refusal.done":                 "message",
+	"response.reasoning_summary_part.added": "reasoning",
+	"response.reasoning_summary_part.done":  "reasoning",
+	"response.reasoning_summary_text.delta": "reasoning",
+	"response.reasoning_summary_text.done":  "reasoning",
+	"response.reasoning_text.delta":         "reasoning",
+	"response.reasoning_text.done":          "reasoning",
+}
+
 type repairState struct {
 	scope                 string
 	ids                   map[string]string
@@ -76,13 +92,27 @@ func repairStreamConfigured(dst io.Writer, source io.Reader, config *ResponsesIt
 			_, err := io.WriteString(dst, "\n")
 			return err
 		}
+		data := make([]string, 0, 1)
 		for _, line := range block {
 			if strings.HasPrefix(line, "data:") {
-				prefix, raw := "data:", strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-				if raw != "[DONE]" {
-					raw = repairPayload(raw, &state)
+				value := strings.TrimPrefix(line, "data:")
+				data = append(data, strings.TrimPrefix(value, " "))
+			}
+		}
+		raw := strings.Join(data, "\n")
+		repaired := raw
+		if raw != "" && raw != "[DONE]" {
+			repaired = repairPayload(raw, &state)
+		}
+		changed := repaired != raw
+		dataWritten := false
+		for _, line := range block {
+			if changed && strings.HasPrefix(line, "data:") {
+				if dataWritten {
+					continue
 				}
-				line = prefix + " " + raw
+				line = "data: " + repaired
+				dataWritten = true
 			}
 			if _, err := io.WriteString(dst, line+"\n"); err != nil {
 				return err
@@ -115,15 +145,16 @@ func repairPayload(raw string, state *repairState) string {
 	if json.Unmarshal([]byte(raw), &event) != nil {
 		return raw
 	}
+	changed := false
 	index, hasIndex := numberIndex(event["output_index"])
 	if item, ok := event["item"].(map[string]any); ok && hasIndex {
-		repairItem(item, index, state)
+		changed = repairItem(item, index, state) || changed
 	}
 	if response, ok := event["response"].(map[string]any); ok {
 		if output, ok := response["output"].([]any); ok {
 			for i, value := range output {
 				if item, ok := value.(map[string]any); ok {
-					repairItem(item, i, state)
+					changed = repairItem(item, i, state) || changed
 				}
 			}
 		}
@@ -133,11 +164,15 @@ func repairPayload(raw string, state *repairState) string {
 		if kind != "" {
 			if id := state.ids[kind+":"+strconv.Itoa(index)]; id != "" {
 				_, hasItemID := event["item_id"]
-				if hasItemID || state.repairMissingTerminal || state.repairAllInvalid {
+				if current, _ := event["item_id"].(string); current != id && (hasItemID || state.repairMissingTerminal || state.repairAllInvalid) {
 					event["item_id"] = id
+					changed = true
 				}
 			}
 		}
+	}
+	if !changed {
+		return raw
 	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
@@ -146,29 +181,31 @@ func repairPayload(raw string, state *repairState) string {
 	return string(encoded)
 }
 
-func repairItem(item map[string]any, index int, state *repairState) {
+func repairItem(item map[string]any, index int, state *repairState) bool {
 	kind, _ := item["type"].(string)
 	if kind != "message" && kind != "reasoning" {
-		return
+		return false
 	}
 	key := kind + ":" + strconv.Itoa(index)
 	id, _ := item["id"].(string)
 	if mapped := state.ids[key]; mapped != "" {
-		if id != "" || state.repairMissingTerminal || state.repairAllInvalid {
+		if id != mapped && (id != "" || state.repairMissingTerminal || state.repairAllInvalid) {
 			item["id"] = mapped
+			return true
 		}
-		return
+		return false
 	}
 	_, configuredPlaceholder := state.placeholdersFor(kind)[id]
 	if configuredPlaceholder || state.repairAllInvalid && (!responsesItemID.MatchString(id) || !strings.HasPrefix(id, prefixFor(kind))) {
 		id = prefixFor(kind) + "ocx_" + state.scope + "_" + strconv.Itoa(index)
 		state.ids[key], item["id"] = id, id
-		return
+		return true
 	}
 	if id != "" && state.repairMissingTerminal {
 		state.ids[key] = id
-		return
+		return false
 	}
+	return false
 }
 
 func (state *repairState) placeholdersFor(kind string) map[string]struct{} {
@@ -180,13 +217,7 @@ func (state *repairState) placeholdersFor(kind string) map[string]struct{} {
 
 func eventItemKind(value any) string {
 	kind, _ := value.(string)
-	if strings.Contains(kind, "reasoning_") {
-		return "reasoning"
-	}
-	if strings.Contains(kind, "output_text") || strings.Contains(kind, "content_part") || strings.Contains(kind, "refusal") {
-		return "message"
-	}
-	return ""
+	return itemIDEventTypes[kind]
 }
 func numberIndex(value any) (int, bool) {
 	n, ok := value.(float64)

@@ -63,6 +63,8 @@ func TestIntegrationWiresDataAndManagementRoutes(t *testing.T) {
 	assertRequest(t, http.MethodPost, server.URL+"/v1/responses", `{"model":"acme/wire","stream":true}`, http.StatusOK, "event: response.completed")
 	assertRequest(t, http.MethodGet, server.URL+"/api/logs", "", http.StatusOK, `"provider":"acme"`)
 	assertRequest(t, http.MethodPost, server.URL+"/v1/chat/completions", `{"model":"acme/wire","messages":[{"role":"user","content":"hello"}]}`, http.StatusOK, `"object":"chat.completion"`)
+	assertRequest(t, http.MethodPost, server.URL+"/v1/messages?beta=true", `{"model":"acme/wire","max_tokens":32,"messages":[{"role":"user","content":"hello"}]}`, http.StatusOK, `"type":"message"`)
+	assertRequest(t, http.MethodPost, server.URL+"/v1/messages/count_tokens", `{"model":"acme/wire","messages":[{"role":"user","content":"hello"}]}`, http.StatusOK, `"input_tokens":`)
 	assertRequest(t, http.MethodGet, server.URL+"/api/system", "", http.StatusOK, `"version":"integration"`)
 	assertRequest(t, http.MethodPost, server.URL+"/v1/responses/compact", `{"model":"acme/wire","input":[{"type":"message","role":"user","content":"retain me"}]}`, http.StatusOK, `"output"`)
 

@@ -59,7 +59,8 @@ func TestResponsesRemoteAdmissionUsesDedicatedHeader(t *testing.T) {
 		{name: "responses bearer is upstream domain", path: "/v1/responses", header: "Authorization", want: 401},
 		{name: "responses dedicated proxy key", path: "/v1/responses", header: "X-OpenCodex-API-Key", want: 204},
 		{name: "claude x-api-key compatibility", path: "/v1/messages", header: "X-Api-Key", want: 204},
-		{name: "chat bearer compatibility", path: "/v1/chat/completions", header: "Authorization", want: 204},
+		{name: "chat bearer is upstream domain", path: "/v1/chat/completions", header: "Authorization", want: 401},
+		{name: "chat dedicated proxy key", path: "/v1/chat/completions", header: "X-OpenCodex-API-Key", want: 204},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, test.path, nil)
