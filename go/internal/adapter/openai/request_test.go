@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -195,6 +196,31 @@ func TestChatParseStreamEOFWithoutTerminalSignalIsError(t *testing.T) {
 	}
 }
 
+func TestOpenAIStreamsSurfaceTransportFailureForPreflight(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		parse func(io.ReadCloser) <-chan types.AdapterEvent
+	}{
+		{name: "chat", parse: func(body io.ReadCloser) <-chan types.AdapterEvent {
+			return (&ChatAdapter{}).ParseStream(context.Background(), body)
+		}},
+		{name: "responses", parse: func(body io.ReadCloser) <-chan types.AdapterEvent {
+			return (&ResponsesAdapter{}).ParseStream(context.Background(), body)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := test.parse(io.NopCloser(errorReader{err: errors.New("invalid byte in chunk length")}))
+			preflight := PreflightAdapterEvents(context.Background(), stream)
+			if preflight.Error == nil || preflight.Error.Type != types.EventError {
+				t.Fatalf("preflight = %#v", preflight)
+			}
+			if preflight.Error.StatusCode != 502 || !strings.Contains(preflight.Error.Error, "invalid byte in chunk length") {
+				t.Fatalf("preflight error = %#v", preflight.Error)
+			}
+		})
+	}
+}
+
 func TestChatMalformedSSEIsTerminalBeforeDoneMarker(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"choices":[{"delta":{"content":"partial"}}]}`,
@@ -259,3 +285,7 @@ func collectEvents(stream <-chan types.AdapterEvent) []types.AdapterEvent {
 	}
 	return events
 }
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }

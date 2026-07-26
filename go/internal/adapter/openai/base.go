@@ -65,8 +65,13 @@ func ReadBodyBounded(ctx context.Context, body io.Reader, maxBytes int64) ([]byt
 	return data, nil
 }
 
-func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan protocol.SSEEvent {
-	out := make(chan protocol.SSEEvent)
+type decodedSSE struct {
+	Event protocol.SSEEvent
+	Err   error
+}
+
+func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan decodedSSE {
+	out := make(chan decodedSSE)
 	if body == nil {
 		close(out)
 		return out
@@ -76,22 +81,30 @@ func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan protocol.SSEEvent
 		defer body.Close()
 		decoded := make(chan protocol.SSEEvent)
 		decoder := protocol.NewSSEDecoderWithComments(decoded)
-		copyDone := make(chan struct{})
+		copyDone := make(chan error, 1)
 		go func() {
-			_, _ = io.Copy(decoder, body)
-			_ = decoder.Close()
+			_, copyErr := io.Copy(decoder, body)
+			closeErr := decoder.Close()
 			close(decoded)
-			close(copyDone)
+			if copyErr == nil {
+				copyErr = closeErr
+			}
+			copyDone <- copyErr
 		}()
 		for {
 			select {
 			case event, ok := <-decoded:
 				if !ok {
-					<-copyDone
+					if err := <-copyDone; err != nil && ctx.Err() == nil {
+						select {
+						case out <- decodedSSE{Err: err}:
+						case <-ctx.Done():
+						}
+					}
 					return
 				}
 				select {
-				case out <- event:
+				case out <- decodedSSE{Event: event}:
 				case <-ctx.Done():
 					_ = body.Close()
 					for range decoded {

@@ -98,6 +98,9 @@ func (reader *chunkedCommentReader) Read(target []byte) (int, error) {
 func (*chunkedCommentReader) Close() error { return nil }
 
 func BenchmarkAdapterRequestAllocations(b *testing.B) {
+	// Apple M5 Pro request-build baseline -> optimized:
+	// Cursor 612,670 -> 406,578 B/op, 8,083 -> 4,269 allocs/op.
+	// Google 234,999 -> 191,310 B/op, 2,758 -> 2,502 allocs/op.
 	request := benchmarkNormalizedRequest()
 	benchmarks := map[string]func() types.Adapter{
 		"anthropic": func() types.Adapter {
@@ -148,6 +151,40 @@ func BenchmarkAdapterRequestAllocations(b *testing.B) {
 	})
 }
 
+func BenchmarkCursorGoogleRequestScaling(b *testing.B) {
+	for _, size := range []int{8, 32, 128} {
+		request := benchmarkNormalizedRequestSized(size, size)
+		b.Run(fmt.Sprintf("google-%d", size), func(b *testing.B) {
+			b.ReportAllocs()
+			for index := 0; index < b.N; index++ {
+				adapter := googleadapter.NewAdapter(googleadapter.ModeAIStudio, &types.Transport{BaseURL: "https://google.test"}, &types.AuthContext{APIKey: "key"})
+				httpRequest, err := adapter.BuildRequest(context.Background(), request)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = httpRequest.Body.Close()
+			}
+		})
+		b.Run(fmt.Sprintf("cursor-%d", size), func(b *testing.B) {
+			terminal := cursorTerminalStream(b)
+			b.ReportAllocs()
+			for index := 0; index < b.N; index++ {
+				adapter, err := cursor.NewAdapter(cursor.AdapterConfig{BaseURL: "https://cursor.test", Token: "token", HeartbeatInterval: time.Hour})
+				if err != nil {
+					b.Fatal(err)
+				}
+				httpRequest, err := adapter.BuildRequest(context.Background(), request)
+				if err != nil {
+					b.Fatal(err)
+				}
+				for range adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(terminal))) {
+				}
+				_ = httpRequest.Body.Close()
+			}
+		})
+	}
+}
+
 func hourEquivalentSSE(terminal string) string {
 	var payload strings.Builder
 	payload.Grow(simulatedHourEvents*13 + len(terminal))
@@ -188,13 +225,17 @@ func assertNoGoroutineLeak(t *testing.T, run func()) {
 }
 
 func benchmarkNormalizedRequest() *types.NormalizedRequest {
-	messages := make([]types.Message, 0, 64)
-	for index := 0; index < 64; index++ {
+	return benchmarkNormalizedRequestSized(64, 32)
+}
+
+func benchmarkNormalizedRequestSized(messageCount, toolCount int) *types.NormalizedRequest {
+	messages := make([]types.Message, 0, messageCount)
+	for index := 0; index < messageCount; index++ {
 		content, _ := json.Marshal(fmt.Sprintf("message-%d-%s", index, strings.Repeat("x", 64)))
 		messages = append(messages, types.Message{Role: "user", Content: content})
 	}
-	tools := make([]types.Tool, 0, 32)
-	for index := 0; index < 32; index++ {
+	tools := make([]types.Tool, 0, toolCount)
+	for index := 0; index < toolCount; index++ {
 		tools = append(tools, types.Tool{Name: fmt.Sprintf("tool_%d", index), Description: "benchmark tool", Parameters: map[string]any{
 			"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}},
 		}})

@@ -60,7 +60,7 @@ func buildCursorRoots(blobs map[string][]byte, system []string, messages []types
 	if external {
 		selected, historyStart = pruneCursorRoots(entries, systemCount, len(messages))
 	}
-	state := cursorRootState{HistoryStart: historyStart}
+	state := cursorRootState{IDs: make([][]byte, 0, len(selected)), Serialized: make([]string, 0, len(selected)), HistoryStart: historyStart}
 	for _, entry := range selected {
 		state.IDs = append(state.IDs, entry.id)
 		state.Serialized = append(state.Serialized, string(entry.data))

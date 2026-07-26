@@ -35,6 +35,11 @@ const googleBrevityInstruction = "Output style for this session:\n" +
 	"- Prefer taking the next tool action over explaining; keep calling tools until the task is complete.\n" +
 	"- This applies only to intermediate progress text. Your final answer after the work is done is exempt: write it in full and at whatever length the task requires."
 
+var (
+	geminiToolCallIDInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	googleReplayInvalidPattern   = regexp.MustCompile(`(?i)signature|invalid_argument|invalid argument`)
+)
+
 type Adapter struct {
 	Mode        Mode
 	BaseURL     string
@@ -151,7 +156,7 @@ func (a *Adapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest
 		if strings.Contains(strings.ToLower(wireModel), "claude") {
 			body["toolConfig"] = map[string]any{"functionCallingConfig": map[string]any{"mode": "VALIDATED"}}
 		}
-		compiled = CompileGoogleWireBody(body)
+		compiled = compileOwnedGoogleWireBody(body)
 		contents := anySlice(compiled.Body["contents"])
 		replay := a.Replay
 		if replay == nil {
@@ -177,7 +182,7 @@ func (a *Adapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest
 		}
 
 	case ModeVertex:
-		compiled = CompileGoogleWireBody(body)
+		compiled = compileOwnedGoogleWireBody(body)
 		a.setRequestState(compiled.RestoreToolName, "", "")
 		wireBody = compiled.Body
 		apiKey := strings.TrimSpace(a.APIKey)
@@ -235,7 +240,7 @@ func (a *Adapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest
 				body["generationConfig"] = generation
 			}
 		}
-		compiled = CompileGoogleWireBody(body)
+		compiled = compileOwnedGoogleWireBody(body)
 		a.setRequestState(compiled.RestoreToolName, "", "")
 		wireBody = compiled.Body
 		endpoint = base + "/v1beta/models/" + url.PathEscape(req.ModelID) + ":" + method + streamQuery
@@ -524,7 +529,7 @@ func geminiToolCallID(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	cleaned := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(raw, "_")
+	cleaned := geminiToolCallIDInvalidChars.ReplaceAllString(raw, "_")
 	if cleaned == raw {
 		return cleaned
 	}
@@ -601,7 +606,7 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			return
 		}
 		if err != nil {
-			emitGoogleEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "read Google stream: " + err.Error()})
+			emitGoogleEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "read Google stream: " + err.Error(), StatusCode: http.StatusBadGateway})
 			return
 		}
 		if framing.End == scanSSEStopped {
@@ -772,24 +777,31 @@ type scanSSEResult struct {
 
 func scanSSE(reader io.Reader, accept func(string) scanSSEAction, heartbeat func() bool) (scanSSEResult, error) {
 	const maxPendingBytes = 8 << 20
-	buffer := make([]byte, 64<<10)
-	pending := ""
+	readBuffer := make([]byte, 64<<10)
+	var pending bytes.Buffer
 	for {
-		n, readErr := reader.Read(buffer)
+		n, readErr := reader.Read(readBuffer)
 		if n > 0 {
-			pending += string(buffer[:n])
-			lines := strings.Split(pending, "\n")
-			pending = lines[len(lines)-1]
-			if len(pending) > maxPendingBytes {
+			_, _ = pending.Write(readBuffer[:n])
+			if pending.Len() > maxPendingBytes && !bytes.Contains(pending.Bytes(), []byte{'\n'}) {
 				return scanSSEResult{}, fmt.Errorf("Google SSE line exceeds %d bytes", maxPendingBytes)
 			}
 			sawLiveness := false
 			sawContent := false
-			for _, rawLine := range lines[:len(lines)-1] {
+			data := pending.Bytes()
+			consumed := 0
+			for {
+				relativeEnd := bytes.IndexByte(data[consumed:], '\n')
+				if relativeEnd < 0 {
+					break
+				}
+				end := consumed + relativeEnd
+				rawLine := data[consumed:end]
+				consumed = end + 1
 				if len(rawLine) > maxPendingBytes {
 					return scanSSEResult{}, fmt.Errorf("Google SSE line exceeds %d bytes", maxPendingBytes)
 				}
-				line := strings.TrimSuffix(rawLine, "\r")
+				line := string(bytes.TrimSuffix(rawLine, []byte{'\r'}))
 				if strings.HasPrefix(line, "data:") {
 					payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 					if payload == "" {
@@ -808,6 +820,12 @@ func scanSSE(reader io.Reader, accept func(string) scanSSEAction, heartbeat func
 				}
 				sawLiveness = true
 			}
+			if consumed > 0 {
+				pending.Next(consumed)
+			}
+			if pending.Len() > maxPendingBytes {
+				return scanSSEResult{}, fmt.Errorf("Google SSE line exceeds %d bytes", maxPendingBytes)
+			}
 			if sawLiveness && !sawContent && !heartbeat() {
 				return scanSSEResult{End: scanSSEStopped}, nil
 			}
@@ -816,8 +834,8 @@ func scanSSE(reader io.Reader, accept func(string) scanSSEAction, heartbeat func
 			if readErr != io.EOF {
 				return scanSSEResult{}, readErr
 			}
-			if pending != "" {
-				return scanSSEResult{End: scanSSEResidual, Residual: pending}, nil
+			if pending.Len() > 0 {
+				return scanSSEResult{End: scanSSEResidual, Residual: pending.String()}, nil
 			}
 			return scanSSEResult{End: scanSSECleanEOF}, nil
 		}
@@ -854,7 +872,7 @@ func (a *Adapter) requestState() (string, string, func(string) string, *ReplaySt
 }
 
 func (a *Adapter) clearReplayOnInvalid(message string) {
-	if a.Mode != ModeCloudCodeAssist || !regexp.MustCompile(`(?i)signature|invalid_argument|invalid argument`).MatchString(message) {
+	if a.Mode != ModeCloudCodeAssist || !googleReplayInvalidPattern.MatchString(message) {
 		return
 	}
 	model, session, _, replay := a.requestState()

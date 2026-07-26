@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -520,7 +521,7 @@ func parseFields(data []byte) ([]wireField, error) {
 			if length > uint64(len(data)-offset) {
 				return nil, fmt.Errorf("truncated field %d", field.Number)
 			}
-			field.Bytes = append([]byte(nil), data[offset:offset+int(length)]...)
+			field.Bytes = data[offset : offset+int(length)]
 			offset += int(length)
 		case 5:
 			if len(data)-offset < 4 {
@@ -544,15 +545,18 @@ func appendString(dst []byte, field int, value string) []byte {
 	return appendBytes(dst, field, []byte(value))
 }
 func appendBytes(dst []byte, field int, value []byte) []byte {
+	dst = slices.Grow(dst, uvarintSize(uint64(field<<3|2))+uvarintSize(uint64(len(value)))+len(value))
 	dst = appendUvarint(dst, uint64(field<<3|2))
 	dst = appendUvarint(dst, uint64(len(value)))
 	return append(dst, value...)
 }
 func appendVarintField(dst []byte, field int, value uint64) []byte {
+	dst = slices.Grow(dst, uvarintSize(uint64(field<<3))+uvarintSize(value))
 	dst = appendUvarint(dst, uint64(field<<3))
 	return appendUvarint(dst, value)
 }
 func appendFixed64(dst []byte, field int, value uint64) []byte {
+	dst = slices.Grow(dst, uvarintSize(uint64(field<<3|1))+8)
 	dst = appendUvarint(dst, uint64(field<<3|1))
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], value)

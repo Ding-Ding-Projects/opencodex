@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -129,6 +130,13 @@ func TestParseStreamCommentEmitsHeartbeat(t *testing.T) {
 	}
 }
 
+func TestParseStreamSurfacesTransportReadError(t *testing.T) {
+	events := collectAdapterEvents((&Adapter{}).ParseStream(context.Background(), io.NopCloser(anthropicErrorReader{err: errors.New("invalid byte in chunk length")})))
+	if len(events) != 1 || events[0].Type != types.EventError || events[0].StatusCode != 502 || !strings.Contains(events[0].Error, "invalid byte in chunk length") {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
 func TestBuildRequestUsesAdaptiveThinkingForNewClaudeFamilies(t *testing.T) {
 	req := &types.NormalizedRequest{
 		ModelID: "claude-opus-4-7", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
@@ -154,3 +162,7 @@ func collectAdapterEvents(stream <-chan types.AdapterEvent) []types.AdapterEvent
 	}
 	return events
 }
+
+type anthropicErrorReader struct{ err error }
+
+func (r anthropicErrorReader) Read([]byte) (int, error) { return 0, r.err }

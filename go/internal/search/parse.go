@@ -16,7 +16,8 @@ var (
 
 // ParseOpenAISSE folds a Responses SSE stream into its authoritative answer and citations.
 func ParseOpenAISSE(reader io.Reader) (Result, error) {
-	var deltaText, doneText, finalText, streamError string
+	var deltaText, doneText, finalText strings.Builder
+	var streamError string
 	sources := make([]Source, 0, 8)
 	seen := make(map[string]bool)
 	err := consumeSSE(reader, func(event protocol.SSEEvent) {
@@ -29,12 +30,12 @@ func ParseOpenAISSE(reader io.Reader) (Result, error) {
 		}
 		switch stringValue(data["type"]) {
 		case "response.output_text.delta":
-			deltaText += stringValue(data["delta"])
+			deltaText.WriteString(stringValue(data["delta"]))
 		case "response.output_text.done":
-			doneText += stringValue(data["text"])
+			doneText.WriteString(stringValue(data["text"]))
 		case "response.completed", "response.done":
 			if response, ok := data["response"].(map[string]any); ok {
-				finalText += collectOpenAIOutput(response["output"], &sources, seen)
+				finalText.WriteString(collectOpenAIOutput(response["output"], &sources, seen))
 			}
 		case "response.failed", "response.incomplete", "error":
 			streamError = eventError(data)
@@ -46,7 +47,7 @@ func ParseOpenAISSE(reader io.Reader) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	text := firstNonBlank(finalText, doneText, deltaText)
+	text := firstNonBlank(finalText.String(), doneText.String(), deltaText.String())
 	body, trailing := extractTrailingSources(text)
 	for _, source := range trailing {
 		addSource(&sources, seen, source.URL, source.Title)
@@ -63,7 +64,7 @@ func ParseOpenAISSE(reader io.Reader) (Result, error) {
 
 // ParseAnthropicSSE folds Messages SSE text, hosted-tool results, and citation deltas.
 func ParseAnthropicSSE(reader io.Reader) (Result, error) {
-	var text string
+	var text strings.Builder
 	sources := make([]Source, 0, 8)
 	seen := make(map[string]bool)
 	sawToolError := false
@@ -92,7 +93,7 @@ func ParseAnthropicSSE(reader io.Reader) (Result, error) {
 		case "content_block_delta":
 			delta, _ := data["delta"].(map[string]any)
 			if delta["type"] == "text_delta" {
-				text += stringValue(delta["text"])
+				text.WriteString(stringValue(delta["text"]))
 			} else if delta["type"] == "citations_delta" {
 				citation, _ := delta["citation"].(map[string]any)
 				if citation["type"] == "web_search_result_location" {
@@ -104,7 +105,7 @@ func ParseAnthropicSSE(reader io.Reader) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{Text: strings.TrimSpace(text), Sources: sources}
+	result := Result{Text: strings.TrimSpace(text.String()), Sources: sources}
 	if result.Text == "" {
 		if sawToolError {
 			result.Error = "anthropic web search returned an error result"
@@ -137,7 +138,7 @@ func consumeSSE(reader io.Reader, accept func(protocol.SSEEvent)) error {
 
 func collectOpenAIOutput(raw any, sources *[]Source, seen map[string]bool) string {
 	items, _ := raw.([]any)
-	var text string
+	var text strings.Builder
 	for _, rawItem := range items {
 		item, _ := rawItem.(map[string]any)
 		if item["type"] != "message" {
@@ -149,7 +150,7 @@ func collectOpenAIOutput(raw any, sources *[]Source, seen map[string]bool) strin
 			if block["type"] != "output_text" {
 				continue
 			}
-			text += stringValue(block["text"])
+			text.WriteString(stringValue(block["text"]))
 			annotations, _ := block["annotations"].([]any)
 			for _, rawAnnotation := range annotations {
 				annotation, _ := rawAnnotation.(map[string]any)
@@ -157,7 +158,7 @@ func collectOpenAIOutput(raw any, sources *[]Source, seen map[string]bool) strin
 			}
 		}
 	}
-	return text
+	return text.String()
 }
 
 func collectOpenAIAnnotation(annotation map[string]any, sources *[]Source, seen map[string]bool) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	adapterbase "github.com/lidge-jun/opencodex-go/internal/adapter"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -140,55 +141,8 @@ func (q *TurnQueue) Collect(ctx context.Context) ([]types.AdapterEvent, error) {
 	}
 }
 
-type EventPreflight struct {
-	Stream <-chan types.AdapterEvent
-	Error  *types.AdapterEvent
-	Empty  bool
-}
+type EventPreflight = adapterbase.EventPreflight
 
 func PreflightAdapterEvents(ctx context.Context, source <-chan types.AdapterEvent) EventPreflight {
-	buffered := make([]types.AdapterEvent, 0, 1)
-	for {
-		select {
-		case event, ok := <-source:
-			if !ok {
-				return EventPreflight{Stream: replayAdapterEvents(ctx, buffered, nil), Empty: true}
-			}
-			buffered = append(buffered, event)
-			if event.Type == types.EventHeartbeat {
-				continue
-			}
-			if event.Type == types.EventError {
-				return EventPreflight{Stream: replayAdapterEvents(ctx, buffered, nil), Error: &event}
-			}
-			return EventPreflight{Stream: replayAdapterEvents(ctx, buffered, source)}
-		case <-ctx.Done():
-			return EventPreflight{Stream: replayAdapterEvents(ctx, buffered, nil), Empty: true}
-		}
-	}
-}
-
-func replayAdapterEvents(ctx context.Context, buffered []types.AdapterEvent, source <-chan types.AdapterEvent) <-chan types.AdapterEvent {
-	replay := make(chan types.AdapterEvent, len(buffered))
-	go func() {
-		defer close(replay)
-		for _, event := range buffered {
-			select {
-			case replay <- event:
-			case <-ctx.Done():
-				return
-			}
-		}
-		if source == nil {
-			return
-		}
-		for event := range source {
-			select {
-			case replay <- event:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return replay
+	return adapterbase.PreflightEvents(ctx, source)
 }

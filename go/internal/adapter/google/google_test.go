@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"regexp"
 	"strings"
@@ -225,6 +226,14 @@ func TestParseGeminiStreamRejectsMalformedDataFrame(t *testing.T) {
 	}
 }
 
+func TestParseStreamSurfacesTransportReadError(t *testing.T) {
+	adapter := &Adapter{}
+	events := collectEvents(adapter.ParseStream(context.Background(), io.NopCloser(googleErrorReader{err: errors.New("invalid byte in chunk length")})))
+	if len(events) != 1 || events[0].Type != types.EventError || events[0].StatusCode != 502 || !strings.Contains(events[0].Error, "invalid byte in chunk length") {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
 func TestGoogleHardeningResidualFramesAndUnaryChoices(t *testing.T) {
 	adapter := &Adapter{Mode: ModeAIStudio}
 	residual := `data:{"candidates":[{"content":{"parts":[{"text":"final"}]},"finishReason":"STOP"}]}`
@@ -323,6 +332,10 @@ func collectEvents(channel <-chan types.AdapterEvent) []types.AdapterEvent {
 type chunkReader struct {
 	chunks []string
 }
+
+type googleErrorReader struct{ err error }
+
+func (r googleErrorReader) Read([]byte) (int, error) { return 0, r.err }
 
 func (r *chunkReader) Read(p []byte) (int, error) {
 	if len(r.chunks) == 0 {

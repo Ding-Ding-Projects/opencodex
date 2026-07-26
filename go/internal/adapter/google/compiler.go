@@ -10,7 +10,17 @@ import (
 	"strings"
 )
 
-var googleToolNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`)
+var (
+	googleToolNamePattern      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`)
+	googleToolInvalidChars     = regexp.MustCompile(`[^A-Za-z0-9_-]`)
+	googleToolValidStart       = regexp.MustCompile(`^[A-Za-z_]`)
+	googleSchemaErrorPattern   = regexp.MustCompile(`(?i)(input[_ ]schema|json schema|function[_ ]declarations?|x-mcp-header)`)
+	googleThinkingErrorPattern = regexp.MustCompile(`(?i)thinking[_ ]?(config|level)`)
+	googleRejectedToolPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)tools(?:\.|\[)(\d+)(?:\])?\.custom\.input_schema`),
+		regexp.MustCompile(`(?i)function_?declarations(?:\.|\[)(\d+)`),
+	}
+)
 
 type CompiledBody struct {
 	Body            map[string]any
@@ -19,10 +29,20 @@ type CompiledBody struct {
 
 // CompileGoogleWireBody is the final allowlist boundary for Google-family payloads.
 func CompileGoogleWireBody(input any) CompiledBody {
+	return compileGoogleWireBody(input, true)
+}
+
+// compileOwnedGoogleWireBody may reuse content maps from a body built exclusively
+// for this request. Public callers retain the copying compiler above.
+func compileOwnedGoogleWireBody(input any) CompiledBody {
+	return compileGoogleWireBody(input, false)
+}
+
+func compileGoogleWireBody(input any, copyContents bool) CompiledBody {
 	source, _ := input.(map[string]any)
 	codec := newToolNameCodec(collectToolNames(source))
 	body := map[string]any{}
-	if contents := compileContents(source["contents"], codec.toWire); contents != nil {
+	if contents := compileContents(source["contents"], codec.toWire, copyContents); contents != nil {
 		body["contents"] = contents
 	}
 	if instruction, ok := source["systemInstruction"].(map[string]any); ok {
@@ -62,11 +82,11 @@ func newToolNameCodec(names []string) toolNameCodec {
 				continue
 			}
 		}
-		cleaned := regexp.MustCompile(`[^A-Za-z0-9_-]`).ReplaceAllString(name, "_")
+		cleaned := googleToolInvalidChars.ReplaceAllString(name, "_")
 		if cleaned == "" {
 			cleaned = "tool"
 		}
-		if !regexp.MustCompile(`^[A-Za-z_]`).MatchString(cleaned) {
+		if !googleToolValidStart.MatchString(cleaned) {
 			cleaned = "_" + cleaned
 		}
 		if len(cleaned) > 55 {
@@ -133,7 +153,7 @@ func collectToolNames(body map[string]any) []string {
 	return names
 }
 
-func compileContents(value any, toWire func(string) string) []any {
+func compileContents(value any, toWire func(string) string, copyMaps bool) []any {
 	items, ok := value.([]any)
 	if !ok {
 		return nil
@@ -145,7 +165,10 @@ func compileContents(value any, toWire func(string) string) []any {
 			out = append(out, map[string]any{})
 			continue
 		}
-		copyContent := cloneObject(content)
+		copyContent := content
+		if copyMaps {
+			copyContent = cloneObject(content)
+		}
 		parts, ok := content["parts"].([]any)
 		if !ok {
 			out = append(out, copyContent)
@@ -158,13 +181,19 @@ func compileContents(value any, toWire func(string) string) []any {
 				compiledParts = append(compiledParts, map[string]any{})
 				continue
 			}
-			copyPart := cloneObject(part)
+			copyPart := part
+			if copyMaps {
+				copyPart = cloneObject(part)
+			}
 			for _, key := range []string{"functionCall", "functionResponse"} {
 				call, ok := part[key].(map[string]any)
 				if !ok {
 					continue
 				}
-				copyCall := cloneObject(call)
+				copyCall := call
+				if copyMaps {
+					copyCall = cloneObject(call)
+				}
 				if name, ok := call["name"].(string); ok {
 					copyCall["name"] = toWire(name)
 				}
@@ -280,8 +309,8 @@ func compileToolConfig(value any, toWire func(string) string) map[string]any {
 
 // RepairGoogleInvalidRequestBody creates one known-safe compatibility replay body.
 func RepairGoogleInvalidRequestBody(body, errorPayload string) (string, bool) {
-	schemaError := regexp.MustCompile(`(?i)(input[_ ]schema|json schema|function[_ ]declarations?|x-mcp-header)`).MatchString(errorPayload)
-	thinkingError := regexp.MustCompile(`(?i)thinking[_ ]?(config|level)`).MatchString(errorPayload)
+	schemaError := googleSchemaErrorPattern.MatchString(errorPayload)
+	thinkingError := googleThinkingErrorPattern.MatchString(errorPayload)
 	if !schemaError && !thinkingError {
 		return "", false
 	}
@@ -341,11 +370,7 @@ func functionDeclarations(root map[string]any) []map[string]any {
 }
 
 func rejectedDeclarationIndex(payload string) int {
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)tools(?:\.|\[)(\d+)(?:\])?\.custom\.input_schema`),
-		regexp.MustCompile(`(?i)function_?declarations(?:\.|\[)(\d+)`),
-	}
-	for _, pattern := range patterns {
+	for _, pattern := range googleRejectedToolPatterns {
 		match := pattern.FindStringSubmatch(payload)
 		if len(match) == 2 {
 			return atoi(match[1])

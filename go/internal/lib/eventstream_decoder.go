@@ -26,6 +26,10 @@ type EventStreamMessage struct {
 func EventStreamCRC32(data []byte) uint32 { return crc32.ChecksumIEEE(data) }
 
 func DecodeEventStreamMessage(frame []byte) (EventStreamMessage, error) {
+	return decodeEventStreamMessage(frame, true)
+}
+
+func decodeEventStreamMessage(frame []byte, copyPayload bool) (EventStreamMessage, error) {
 	if len(frame) < eventMinimumLength {
 		return EventStreamMessage{}, errors.New("eventstream: frame too short")
 	}
@@ -50,14 +54,17 @@ func DecodeEventStreamMessage(frame []byte) (EventStreamMessage, error) {
 	if err != nil {
 		return EventStreamMessage{}, err
 	}
-	payload := append([]byte(nil), frame[eventHeaderOffset+headersLength:total-4]...)
+	payload := frame[eventHeaderOffset+headersLength : total-4]
+	if copyPayload {
+		payload = append([]byte(nil), payload...)
+	}
 	return EventStreamMessage{Headers: headers, Payload: payload}, nil
 }
 
 func DecodeEventStream(reader io.Reader, accept func(EventStreamMessage) error) error {
 	for {
-		prelude := make([]byte, eventHeaderOffset)
-		_, err := io.ReadFull(reader, prelude)
+		var prelude [eventHeaderOffset]byte
+		_, err := io.ReadFull(reader, prelude[:])
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -69,11 +76,13 @@ func DecodeEventStream(reader io.Reader, accept func(EventStreamMessage) error) 
 			return fmt.Errorf("eventstream: invalid total length %d", total)
 		}
 		frame := make([]byte, total)
-		copy(frame, prelude)
+		copy(frame, prelude[:])
 		if _, err := io.ReadFull(reader, frame[eventHeaderOffset:]); err != nil {
 			return errors.New("eventstream: truncated message at end of stream")
 		}
-		message, err := DecodeEventStreamMessage(frame)
+		// The stream decoder owns frame, so retaining its payload slice gives the
+		// callback stable ownership without allocating a second payload buffer.
+		message, err := decodeEventStreamMessage(frame, false)
 		if err != nil {
 			return err
 		}

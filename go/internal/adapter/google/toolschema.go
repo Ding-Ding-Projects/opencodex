@@ -121,26 +121,13 @@ func resolveLocalRef(ref string, defs map[string]any) any {
 }
 
 func normalizeSchemaType(value any, out map[string]any, preserveNull bool) {
-	values := []any{value}
-	if list, ok := value.([]any); ok {
-		values = list
-	}
 	sawNull := false
-	for _, candidate := range values {
-		raw, ok := candidate.(string)
-		if !ok {
-			continue
+	if values, ok := value.([]any); ok {
+		for _, candidate := range values {
+			normalizeSchemaTypeCandidate(candidate, out, &sawNull)
 		}
-		kind := strings.ToLower(raw)
-		if kind == "null" {
-			sawNull = true
-			continue
-		}
-		if _, exists := out["type"]; !exists {
-			if _, allowed := allowedSchemaTypes[kind]; allowed {
-				out["type"] = kind
-			}
-		}
+	} else {
+		normalizeSchemaTypeCandidate(value, out, &sawNull)
 	}
 	if sawNull {
 		if _, exists := out["type"]; exists {
@@ -149,6 +136,23 @@ func normalizeSchemaType(value any, out map[string]any, preserveNull bool) {
 			out["type"] = "null"
 		} else {
 			out["nullable"] = true
+		}
+	}
+}
+
+func normalizeSchemaTypeCandidate(candidate any, out map[string]any, sawNull *bool) {
+	raw, ok := candidate.(string)
+	if !ok {
+		return
+	}
+	kind := strings.ToLower(raw)
+	if kind == "null" {
+		*sawNull = true
+		return
+	}
+	if _, exists := out["type"]; !exists {
+		if _, allowed := allowedSchemaTypes[kind]; allowed {
+			out["type"] = kind
 		}
 	}
 }

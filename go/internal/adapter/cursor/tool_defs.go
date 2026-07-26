@@ -210,6 +210,9 @@ func uvarintSize(value uint64) int {
 
 // encodeProtoValue normalizes JSON-compatible schemas before using WP19's wire owner.
 func encodeProtoValue(value any) ([]byte, error) {
+	if encoded, err := MarshalValue(value); err == nil {
+		return encoded, nil
+	}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, err

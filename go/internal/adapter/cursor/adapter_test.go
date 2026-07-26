@@ -58,6 +58,16 @@ func TestNewAdapterBuildsProductionConnectRequest(t *testing.T) {
 	}
 }
 
+func TestNewIDProducesRFC4122Version4Shape(t *testing.T) {
+	id := newID()
+	if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
+		t.Fatalf("newID() = %q", id)
+	}
+	if id[14] != '4' || !strings.ContainsRune("89ab", rune(id[19])) {
+		t.Fatalf("newID() version or variant bits = %q", id)
+	}
+}
+
 func TestAdapterParseStreamMapsFramesAndReconnectsNextTurn(t *testing.T) {
 	adapter, err := NewAdapter(AdapterConfig{
 		BaseURL:           "https://cursor.example",

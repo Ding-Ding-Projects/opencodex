@@ -173,7 +173,7 @@ func TestProxyEndToEnd(t *testing.T) {
 	})
 	harness := startProxy(t, proxy)
 
-	response := doRequest(t, http.MethodGet, harness.baseURL+"/health", "")
+	response := doRequest(t, http.MethodGet, harness.baseURL+"/healthz", "")
 	assertStatusContains(t, response, http.StatusOK, `"status":"ok"`)
 
 	response = doRequest(t, http.MethodPost, harness.baseURL+"/v1/responses", `{"model":"openai/gpt-canned","stream":true,"input":"hello"}`)

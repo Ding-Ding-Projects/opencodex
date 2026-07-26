@@ -44,6 +44,32 @@ func TestCompileGoogleWireBodyConservativelyRewritesNamesAndConfig(t *testing.T)
 	}
 }
 
+func TestOwnedGoogleCompilerMatchesCopyingCompiler(t *testing.T) {
+	input := map[string]any{
+		"contents": []any{map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": map[string]any{"name": "bad.tool", "args": map[string]any{"x": 1}}}}}},
+		"tools":    []any{map[string]any{"functionDeclarations": []any{map[string]any{"name": "bad.tool", "parameters": map[string]any{"type": "object"}}}}},
+	}
+	copyInput, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ownedInput map[string]any
+	if err := json.Unmarshal(copyInput, &ownedInput); err != nil {
+		t.Fatal(err)
+	}
+	copying := CompileGoogleWireBody(input)
+	owned := compileOwnedGoogleWireBody(ownedInput)
+	copyingJSON, _ := json.Marshal(copying.Body)
+	ownedJSON, _ := json.Marshal(owned.Body)
+	if string(copyingJSON) != string(ownedJSON) {
+		t.Fatalf("owned compiler changed wire body:\ncopying=%s\nowned=%s", copyingJSON, ownedJSON)
+	}
+	wireName := owned.Body["tools"].([]any)[0].(map[string]any)["functionDeclarations"].([]any)[0].(map[string]any)["name"].(string)
+	if owned.RestoreToolName(wireName) != "bad.tool" {
+		t.Fatalf("restore tool name = %q", owned.RestoreToolName(wireName))
+	}
+}
+
 func TestRepairGoogleInvalidRequestBodyTargetsRejectedSchema(t *testing.T) {
 	body := `{"request":{"generationConfig":{"maxOutputTokens":4096,"thinkingConfig":{"thinkingLevel":"high"}},"tools":[{"functionDeclarations":[{"name":"safe","parameters":{"type":"object","properties":{"x":{"type":"string"}}}},{"name":"bad","parameters":{"type":"array"}}]}]}}`
 	repaired, ok := RepairGoogleInvalidRequestBody(body, `tools.1.custom.input_schema and thinking_config are invalid`)

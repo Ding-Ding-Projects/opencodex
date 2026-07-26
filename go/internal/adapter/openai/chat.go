@@ -246,7 +246,12 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 		var usage *types.Usage
 		finishReason := ""
 		flush := func() bool { return flushChatCalls(ctx, out, calls, order) }
-		for frame := range decodeSSE(streamCtx, body) {
+		for decoded := range decodeSSE(streamCtx, body) {
+			if decoded.Err != nil {
+				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
+				return
+			}
+			frame := decoded.Event
 			if frame.Comment != nil {
 				if !sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventHeartbeat}) {
 					return

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,7 +74,7 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 		action.UserMessage = &UserMessage{Text: activeText, MessageID: newID()}
 		serialized = append(serialized, activeText)
 	}
-	for _, tool := range tools {
+	for _, tool := range keptTools {
 		serialized = append(serialized, modelVisibleToolText(tool))
 	}
 	estimatedInputTokens := EstimateInputTokens(strings.Join(serialized, "\n"))
@@ -130,12 +131,12 @@ func cursorNormalizeSchemas(tools []types.Tool) map[string]map[string]any {
 	return out
 }
 
-func modelVisibleToolText(definition MCPToolDefinition) string {
-	schema, err := UnmarshalValue(definition.InputSchema)
-	if err != nil {
-		schema = nil
+func modelVisibleToolText(tool types.Tool) string {
+	schema := tool.Parameters
+	if tool.Namespace == "" && IsCodexShellBridgeToolName(tool.Name) {
+		schema = ExecCommandInputSchema
 	}
-	value := map[string]any{"name": firstNonEmpty(definition.ToolName, definition.Name), "description": definition.Description}
+	value := map[string]any{"name": wireToolName(tool), "description": tool.Description}
 	if schema != nil {
 		value["inputSchema"] = schema
 	}
@@ -145,7 +146,8 @@ func modelVisibleToolText(definition MCPToolDefinition) string {
 
 func storeBlob(store map[string][]byte, data []byte) []byte {
 	digest := sha256.Sum256(data)
-	store[hex.EncodeToString(digest[:])] = append([]byte(nil), data...)
+	// Callers hand off freshly marshaled buffers and never mutate them after storage.
+	store[hex.EncodeToString(digest[:])] = data
 	return append([]byte(nil), digest[:]...)
 }
 
@@ -192,9 +194,19 @@ func messageText(raw json.RawMessage) string {
 func newID() string {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		return hex.EncodeToString([]byte(fmt.Sprint(time.Now().UnixNano())))
+		return hex.EncodeToString([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
 	}
 	raw[6] = raw[6]&0x0f | 0x40
 	raw[8] = raw[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", raw[:4], raw[4:6], raw[6:8], raw[8:10], raw[10:])
+	var encoded [36]byte
+	hex.Encode(encoded[0:8], raw[0:4])
+	encoded[8] = '-'
+	hex.Encode(encoded[9:13], raw[4:6])
+	encoded[13] = '-'
+	hex.Encode(encoded[14:18], raw[6:8])
+	encoded[18] = '-'
+	hex.Encode(encoded[19:23], raw[8:10])
+	encoded[23] = '-'
+	hex.Encode(encoded[24:36], raw[10:16])
+	return string(encoded[:])
 }

@@ -491,7 +491,12 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 		var usage map[string]int
 		stopReason := ""
 		terminal := false
-		for frame := range decodeSSE(streamCtx, body) {
+		for decoded := range decodeSSE(streamCtx, body) {
+			if decoded.Err != nil {
+				emit(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
+				return
+			}
+			frame := decoded.Event
 			if frame.Comment != nil {
 				emit(ctx, out, types.AdapterEvent{Type: types.EventHeartbeat})
 				continue
@@ -622,8 +627,13 @@ func (a *Adapter) ParseUnary(_ context.Context, body []byte) ([]types.AdapterEve
 	return events, nil
 }
 
-func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan protocol.SSEEvent {
-	out := make(chan protocol.SSEEvent)
+type decodedSSE struct {
+	Event protocol.SSEEvent
+	Err   error
+}
+
+func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan decodedSSE {
+	out := make(chan decodedSSE)
 	if body == nil {
 		close(out)
 		return out
@@ -633,34 +643,40 @@ func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan protocol.SSEEvent
 		defer body.Close()
 		decoded := make(chan protocol.SSEEvent)
 		decoder := protocol.NewSSEDecoderWithComments(decoded)
-		copyDone := make(chan struct{})
+		copyDone := make(chan error, 1)
 		go func() {
-			_, _ = io.Copy(decoder, body)
-			_ = decoder.Close()
+			_, copyErr := io.Copy(decoder, body)
+			closeErr := decoder.Close()
 			close(decoded)
-			close(copyDone)
+			if copyErr == nil {
+				copyErr = closeErr
+			}
+			copyDone <- copyErr
 		}()
 		for {
 			select {
 			case event, ok := <-decoded:
 				if !ok {
-					<-copyDone
+					if err := <-copyDone; err != nil && ctx.Err() == nil {
+						select {
+						case out <- decodedSSE{Err: err}:
+						case <-ctx.Done():
+						}
+					}
 					return
 				}
 				select {
-				case out <- event:
+				case out <- decodedSSE{Event: event}:
 				case <-ctx.Done():
 					_ = body.Close()
 					for range decoded {
 					}
-					<-copyDone
 					return
 				}
 			case <-ctx.Done():
 				_ = body.Close()
 				for range decoded {
 				}
-				<-copyDone
 				return
 			}
 		}
