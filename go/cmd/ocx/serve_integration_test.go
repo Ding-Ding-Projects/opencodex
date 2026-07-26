@@ -96,6 +96,48 @@ func TestBuiltServeProxiesConfiguredProviderAndStops(t *testing.T) {
 	}
 }
 
+func TestBuiltServePersistsSelectedPreferredPortThroughProductionAssembly(t *testing.T) {
+	binary, ocxHome, codexHome, home := buildIsolatedOCX(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preferredPort := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.FreshInstall()
+	cfg.Port = 0
+	configPath := filepath.Join(ocxHome, "config.json")
+	if err := config.Save(configPath, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary, "serve", "--port", strconv.Itoa(preferredPort))
+	command.Env = append(os.Environ(), "OPENCODEX_HOME="+ocxHome, "CODEX_HOME="+codexHome, "HOME="+home, "USERPROFILE="+home)
+	var logs bytes.Buffer
+	command.Stdout, command.Stderr = &logs, &logs
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if command.ProcessState == nil {
+			_ = command.Process.Kill()
+			_, _ = command.Process.Wait()
+		}
+	})
+	waitHTTPReady(t, preferredPort, &logs)
+
+	persisted, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Port != preferredPort {
+		t.Fatalf("persisted port = %d, want selected preferred port %d", persisted.Port, preferredPort)
+	}
+	stopIsolatedOCX(t, command, preferredPort, &logs)
+}
+
 func waitRuntimePort(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)

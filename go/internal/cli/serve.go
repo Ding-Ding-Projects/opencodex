@@ -141,25 +141,26 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		fetcher: registry.NewQuotaFetcher(), auth: liveAuth, now: time.Now,
 	}
 	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient)
+	preferredPort := cfg.Port
+	selectedPort := preferredPort
+	if preferredPort > 0 {
+		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, preferredPort, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
+		if err != nil {
+			return err
+		}
+	}
 	runtimeControl := newRuntimeControl(cfg)
 	apiStop := func() {
 		teardownOwnedGrokFence(streams)
 		stop.Stop()
 	}
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop})
-	selectedPort := cfg.Port
-	if cfg.Port > 0 {
-		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, cfg.Port, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
-		if err != nil {
-			return err
-		}
-	}
-	if server.ShouldPersistSelectedPort(configuredPort, selectedPort, cfg.Port) {
-		cfg.Port = selectedPort
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop, ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
+		cfg.Port = port
 		if err := config.Save(loadedConfigPath, cfg); err != nil {
 			return fmt.Errorf("persist selected port: %w", err)
 		}
-	}
+		return nil
+	}})
 	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
 	listener, listenErr := net.Listen("tcp", httpServer.Addr)
 	if listenErr != nil {
