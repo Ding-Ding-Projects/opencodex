@@ -253,6 +253,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	defer cancel(nil)
 	started := time.Now()
 	logSession := newResponsesLogSession(core.config.RequestLogs, started, parsed.RequestedModel, resolved, core.providerAdapter(resolved))
+	logSession.serviceTier(parsed.Normalized.Options.ServiceTier)
 	adapter, response, auth, resolved, pick, err := core.forward(ctx, request.Header, parsed.Normalized, resolved, pick, logSession, attempt)
 	if err != nil {
 		status := http.StatusBadGateway
@@ -578,6 +579,7 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		inspector := NewSSEInspector(SSEInspectorHandlers{
 			OnFirstOutput:        logSession.firstOutput,
 			OnUsage:              logSession.usage,
+			OnPayload:            logSession.inspectPayload,
 			OnTerminal:           logSession.rawTerminal,
 			OnCompletedResponse:  rememberEager,
 			OnIncompleteResponse: rememberEager,
@@ -726,10 +728,7 @@ func (core *ResponsesCore) forceResponseState(resolved *types.ResolvedModel) boo
 	if resolved == nil {
 		return false
 	}
-	if core.config.PassthroughRoute != nil && core.config.PassthroughRoute(resolved) {
-		return true
-	}
-	return strings.EqualFold(core.providerAdapter(resolved), "kiro")
+	return AdapterNeedsForcedContinuation(strings.ToLower(core.providerAdapter(resolved)))
 }
 
 type streamProviderState struct {

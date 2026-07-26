@@ -190,7 +190,7 @@ func (m *cliOAuthManagement) Accounts(provider string) (management.OAuthAccountS
 	}
 	result := management.OAuthAccountSet{ActiveAccountID: set.ActiveAccountID, Accounts: make([]management.OAuthAccount, 0, len(set.Accounts))}
 	for _, account := range set.Accounts {
-		projected := management.OAuthAccount{ID: account.ID, Alias: account.Alias, Email: account.Credential.Email, Active: account.ID == set.ActiveAccountID, NeedsReauth: account.NeedsReauth}
+		projected := management.OAuthAccount{ID: account.ID, Alias: account.Alias, Email: account.Credential.Email, Active: account.ID == set.ActiveAccountID, NeedsReauth: account.NeedsReauth, ExpiresAt: account.Credential.Expires}
 		applyOAuthHealthFields(&projected, provider, account, m.store, time.Now())
 		result.Accounts = append(result.Accounts, projected)
 	}

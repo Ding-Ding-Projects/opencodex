@@ -30,6 +30,7 @@ type OAuthAccount struct {
 	Email         string             `json:"email,omitempty"`
 	Active        bool               `json:"active"`
 	NeedsReauth   bool               `json:"needsReauth,omitempty"`
+	ExpiresAt     int64              `json:"expiresAt"`
 	Health        OAuthAccountHealth `json:"health"`
 	HealthLabel   string             `json:"healthLabel"`
 	HealthSummary string             `json:"healthSummary"`

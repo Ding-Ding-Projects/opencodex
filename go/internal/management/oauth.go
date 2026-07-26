@@ -148,7 +148,7 @@ func (a *API) listOAuthAccounts(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	safe := safeOAuthAccountSet(accounts)
-	writeJSON(w, http.StatusOK, map[string]any{"activeAccountId": nullable(safe.ActiveAccountID), "accounts": safe.Accounts})
+	writeJSON(w, http.StatusOK, orderedJSONObject{{name: "activeAccountId", value: nullable(safe.ActiveAccountID)}, {name: "accounts", value: safe.Accounts}})
 }
 
 func (a *API) setActiveOAuthAccount(w http.ResponseWriter, request *http.Request) {

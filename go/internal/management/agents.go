@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-var allowedEfforts = map[string]bool{"none": true, "minimal": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true, "ultra": true}
-var effortList = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+var allowedEfforts = map[string]bool{"low": true, "medium": true, "high": true, "xhigh": true, "max": true, "ultra": true}
+var effortList = []string{"low", "medium", "high", "xhigh", "max", "ultra"}
 
 func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
@@ -126,7 +126,7 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 			a.mu.RLock()
 			settings := a.agents
 			a.mu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{"effortCap": nullable(settings.EffortCap), "subagentEffortCap": nullable(settings.SubagentEffortCap), "efforts": effortList})
+			writeJSON(w, http.StatusOK, orderedJSONObject{{name: "effortCap", value: nullable(settings.EffortCap)}, {name: "subagentEffortCap", value: nullable(settings.SubagentEffortCap)}, {name: "efforts", value: effortList}})
 			return true
 		}
 		if r.Method == http.MethodPut {
@@ -165,7 +165,7 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 				writeError(w, http.StatusInternalServerError, "save effort caps failed")
 				return true
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "effortCap": nullable(settings.EffortCap), "subagentEffortCap": nullable(settings.SubagentEffortCap)})
+			writeJSON(w, http.StatusOK, orderedJSONObject{{name: "ok", value: true}, {name: "effortCap", value: nullable(settings.EffortCap)}, {name: "subagentEffortCap", value: nullable(settings.SubagentEffortCap)}})
 			return true
 		}
 	case "/api/v2":

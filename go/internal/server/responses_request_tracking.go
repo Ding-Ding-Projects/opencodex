@@ -139,6 +139,25 @@ func (s *responsesLogSession) usage(value *types.Usage) {
 	s.context.Usage = &copy
 }
 
+func (s *responsesLogSession) serviceTier(value string) {
+	if s == nil || s.store == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.context.RequestedServiceTier = value
+	s.context.RequestedSpeedLabel = RequestLogSpeedLabel(value)
+}
+
+func (s *responsesLogSession) inspectPayload(payload string) {
+	if s == nil || s.store == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	InspectResponseLogSSEPayload(&s.context, payload)
+}
+
 func (s *responsesLogSession) rawTerminal(status ResponsesTerminalStatus, httpStatus int) {
 	if s == nil || s.store == nil {
 		return
@@ -166,9 +185,9 @@ func (s *responsesLogSession) finishStream(ctx context.Context, streamErr error)
 	case ctx.Err() != nil:
 		status, terminal, reason = 499, ResponsesIncomplete, RequestLogClientCancel
 	case terminal == ResponsesFailed:
-		status = http.StatusBadGateway
+		status = HTTPStatusForRequestLogTerminal(terminal, &s.context)
 	case terminal == ResponsesIncomplete:
-		status = http.StatusBadGateway
+		status = HTTPStatusForRequestLogTerminal(terminal, &s.context)
 	case terminal == "":
 		status, terminal = http.StatusBadGateway, ResponsesIncomplete
 	}

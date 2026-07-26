@@ -27,6 +27,22 @@ func (s *Server) handleModels(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 		native, routed := claudeDiscoveryModels(models, s.config.ManagementConfig)
+		nativeSlugs := make([]string, 0, len(native))
+		for _, model := range native {
+			nativeSlugs = append(nativeSlugs, model.ID)
+		}
+		desktopRouted := make([]claude.Desktop3pRoutedModel, 0, len(routed))
+		for _, model := range routed {
+			desktopRouted = append(desktopRouted, claude.Desktop3pRoutedModel{Provider: model.Provider, ID: model.ID, ContextWindow: model.ContextWindow})
+		}
+		var profile *claude.DesktopProfile
+		if s.config.ManagementConfig != nil && s.config.ManagementConfig.ClaudeCode != nil {
+			profile = s.config.ManagementConfig.ClaudeCode.DesktopProfile
+		}
+		if _, err := claude.BuildDesktop3pRegistryWithProfile(nativeSlugs, desktopRouted, profile); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
 		auto := claude.AutoContextOff
 		if s.config.ManagementConfig != nil && s.config.ManagementConfig.ClaudeCode != nil {
 			auto = claude.ResolveAutoContext(&claude.ContextConfig{
@@ -76,6 +92,7 @@ func claudeDiscoveryModels(models []types.ModelEntry, cfg *appconfig.Config) (na
 		}
 		if model.Provider == "openai" && !strings.Contains(model.ID, "/") {
 			discovery.ID, discovery.ImageInput = model.ID, true
+			discovery.ReasoningEfforts = codex.NativeReasoningEfforts(model.ID)
 			native = append(native, discovery)
 			continue
 		}
