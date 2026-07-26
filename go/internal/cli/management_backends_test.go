@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
@@ -285,6 +287,60 @@ func TestProviderQuotasFetchConfiguredNonCodexProviders(t *testing.T) {
 	}
 	if len(result.Reports) != 1 || result.Reports[0].Provider != "xai" || result.Reports[0].Quota.MonthlyPercent == nil || *result.Reports[0].Quota.MonthlyPercent != 64 {
 		t.Fatalf("non-Codex quota reports = %#v", result.Reports)
+	}
+}
+
+func TestProductionServeCompositionUsesCanonicalProviderQuotaParserAndCache(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		if request.Header.Get("Authorization") != "Bearer quota-secret" {
+			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		switch request.URL.Path {
+		case "/claude":
+			_, _ = io.WriteString(writer, `{"five_hour":{"utilization":25},"seven_day":{"utilization":60}}`)
+		case "/kimi":
+			_, _ = io.WriteString(writer, `{"data":{"usage":{"used":40,"limit":100},"limits":[{"name":"5 hour","detail":{"used":1,"limit":4}}]}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer upstream.Close()
+
+	cfg := config.FreshInstall()
+	cfg.Providers = map[string]config.ProviderConfig{
+		"anthropic": {AuthMode: "oauth"},
+		"kimi":      {AuthMode: "oauth"},
+	}
+	fetcher := registry.NewQuotaFetcher()
+	fetcher.Client = upstream.Client()
+	fetcher.Endpoints = map[string]registry.QuotaEndpoint{
+		"anthropic": {URL: upstream.URL + "/claude", Source: "anthropic:test"},
+		"kimi":      {URL: upstream.URL + "/kimi", Source: "kimi:test"},
+	}
+	auth := quotaAuth{credentials: map[string]*types.AuthContext{
+		"anthropic": {AccessToken: "quota-secret"},
+		"kimi":      {AccessToken: "quota-secret"},
+	}}
+	backend := newProviderQuotaBackend(&cfg, codex.NewQuotaStore(), nil, fetcher, auth, time.Now)
+	proxy := server.New(server.Config{ManagementConfig: &cfg, ProviderQuotas: backend, Hostname: cfg.Host})
+
+	requestQuota := func(target string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		response := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(response, request)
+		return response
+	}
+	fresh := requestQuota("/api/provider-quotas?refresh=1")
+	for _, want := range []string{`"provider":"anthropic"`, `"fiveHourPercent":25`, `"weeklyPercent":60`, `"provider":"kimi"`, `"weeklyPercent":40`} {
+		if fresh.Code != http.StatusOK || !strings.Contains(fresh.Body.String(), want) {
+			t.Fatalf("fresh quota missing %s: %d %s", want, fresh.Code, fresh.Body.String())
+		}
+	}
+	cached := requestQuota("/api/provider-quotas")
+	if cached.Code != http.StatusOK || cached.Body.String() != fresh.Body.String() || calls.Load() != 2 {
+		t.Fatalf("cached=%d %s calls=%d fresh=%s", cached.Code, cached.Body.String(), calls.Load(), fresh.Body.String())
 	}
 }
 

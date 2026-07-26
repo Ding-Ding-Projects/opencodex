@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
@@ -24,15 +26,22 @@ import (
 )
 
 type cliProviderQuotas struct {
-	config    *config.Config
-	quota     *codex.QuotaStore
-	codexAuth *cliCodexAuthManagement
-	fetcher   *registry.QuotaFetcher
-	auth      types.AuthProvider
-	now       func() time.Time
+	config     *config.Config
+	quota      *codex.QuotaStore
+	codexAuth  *cliCodexAuthManagement
+	fetcher    *registry.QuotaFetcher
+	auth       types.AuthProvider
+	now        func() time.Time
+	parsedOnce sync.Once
+	parsed     management.ProviderQuotaBackend
 }
 
 var _ management.ProviderQuotaBackend = (*cliProviderQuotas)(nil)
+var _ management.ProviderQuotaPayloadSource = (*cliProviderQuotas)(nil)
+
+func newProviderQuotaBackend(cfg *config.Config, quota *codex.QuotaStore, codexAuth *cliCodexAuthManagement, fetcher *registry.QuotaFetcher, auth types.AuthProvider, now func() time.Time) *cliProviderQuotas {
+	return &cliProviderQuotas{config: cfg, quota: quota, codexAuth: codexAuth, fetcher: fetcher, auth: auth, now: now}
+}
 
 func (b *cliProviderQuotas) ProviderQuotas(ctx context.Context, forceRefresh bool) (management.ProviderQuotaResponse, error) {
 	now := time.Now
@@ -63,23 +72,106 @@ func (b *cliProviderQuotas) ProviderQuotas(ctx context.Context, forceRefresh boo
 			reports = append(reports, report)
 		}
 	}
-	if b.fetcher != nil && b.auth != nil {
-		requests := make([]registry.QuotaRequest, 0)
-		for _, provider := range configuredQuotaProviders(b.config, b.fetcher) {
-			credential, err := b.auth.ResolveAuth(ctx, provider, "management-quota")
-			if err != nil || credential == nil {
-				continue
-			}
-			requests = append(requests, registry.QuotaRequest{Provider: provider, Credential: credential})
+	b.parsedOnce.Do(func() {
+		b.parsed = &management.ParsedProviderQuotaBackend{Source: b, Tracker: providers.NewQuotaTracker(), Now: func() time.Time { return now() }}
+	})
+	if b.parsed != nil {
+		parsed, err := b.parsed.ProviderQuotas(ctx, forceRefresh)
+		if err != nil {
+			return management.ProviderQuotaResponse{}, err
 		}
-		for _, result := range b.fetcher.FetchAll(ctx, requests, forceRefresh) {
-			if result.Err != nil || result.Quota == nil {
-				continue
-			}
-			reports = append(reports, quotaReport(*result.Quota))
+		if len(parsed.Reports) > 0 {
+			generated = parsed.GeneratedAt
 		}
+		reports = append(reports, parsed.Reports...)
 	}
 	return management.ProviderQuotaResponse{GeneratedAt: generated, Reports: reports}, nil
+}
+
+func (b *cliProviderQuotas) CacheKey() string {
+	return "configured:" + strings.Join(configuredQuotaProviders(b.config, b.fetcher), ",")
+}
+
+func (b *cliProviderQuotas) FetchProviderQuotaPayloads(ctx context.Context) ([]management.ProviderQuotaPayload, error) {
+	providerNames := configuredQuotaProviders(b.config, b.fetcher)
+	results := make([]management.ProviderQuotaPayload, len(providerNames))
+	available := make([]bool, len(providerNames))
+	var wait sync.WaitGroup
+	for index, provider := range providerNames {
+		index, provider := index, provider
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			payload, ok := b.fetchProviderQuotaPayload(ctx, provider)
+			results[index], available[index] = payload, ok
+		}()
+	}
+	wait.Wait()
+	payloads := make([]management.ProviderQuotaPayload, 0, len(results))
+	for index, payload := range results {
+		if available[index] {
+			payloads = append(payloads, payload)
+		}
+	}
+	return payloads, nil
+}
+
+func (b *cliProviderQuotas) fetchProviderQuotaPayload(ctx context.Context, provider string) (management.ProviderQuotaPayload, bool) {
+	if b.fetcher == nil || b.auth == nil {
+		return management.ProviderQuotaPayload{}, false
+	}
+	endpoint, supported := b.fetcher.Endpoints[provider]
+	if !supported {
+		return management.ProviderQuotaPayload{}, false
+	}
+	credential, err := b.auth.ResolveAuth(ctx, provider, "management-quota")
+	if err != nil || credential == nil {
+		return management.ProviderQuotaPayload{}, false
+	}
+	method := endpoint.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.URL, strings.NewReader(endpoint.Body))
+	if err != nil {
+		return management.ProviderQuotaPayload{}, false
+	}
+	request.Header.Set("Accept", "application/json")
+	for name, value := range endpoint.Headers {
+		request.Header.Set(name, value)
+	}
+	secret := credential.AccessToken
+	if secret == "" {
+		secret = credential.APIKey
+	}
+	if secret != "" {
+		request.Header.Set("Authorization", "Bearer "+secret)
+	}
+	for name, value := range credential.Headers {
+		request.Header.Set(name, value)
+	}
+	client := b.fetcher.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return management.ProviderQuotaPayload{}, false
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return management.ProviderQuotaPayload{}, false
+	}
+	var value any
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&value); err != nil {
+		return management.ProviderQuotaPayload{}, false
+	}
+	label := provider
+	if entry, found := providers.GetProviderRegistryEntry(provider); found {
+		label = entry.Label
+	}
+	return management.ProviderQuotaPayload{Provider: provider, Label: label, Source: endpoint.Source, Value: value}, true
 }
 
 func configuredQuotaProviders(cfg *config.Config, fetcher *registry.QuotaFetcher) []string {
@@ -97,34 +189,6 @@ func configuredQuotaProviders(cfg *config.Config, fetcher *registry.QuotaFetcher
 	}
 	sort.Strings(result)
 	return result
-}
-
-func quotaReport(quota registry.ProviderQuota) management.ProviderQuotaReport {
-	converted := management.ProviderQuota{UpdatedAt: quota.UpdatedAt.UnixMilli()}
-	for _, window := range quota.Windows {
-		percent := window.Percent
-		var reset *int64
-		if !window.ResetAt.IsZero() {
-			value := window.ResetAt.UnixMilli()
-			reset = &value
-		}
-		switch strings.ToLower(strings.TrimSpace(window.Label)) {
-		case "5h", "five hour", "five-hour":
-			converted.FiveHourPercent, converted.FiveHourResetAt = &percent, reset
-		case "weekly", "7d", "seven day", "seven-day":
-			converted.WeeklyPercent, converted.WeeklyResetAt = &percent, reset
-		case "monthly", "month":
-			converted.MonthlyPercent, converted.MonthlyResetAt = &percent, reset
-		default:
-			converted.CustomWindows = append(converted.CustomWindows, management.ProviderQuotaWindow{Label: window.Label, Percent: percent, ResetAt: reset})
-		}
-	}
-	label := quota.Provider
-	if entry, found := providers.GetProviderRegistryEntry(quota.Provider); found {
-		label = entry.Label
-	}
-	updated := quota.UpdatedAt.UnixMilli()
-	return management.ProviderQuotaReport{Provider: quota.Provider, Label: label, Source: quota.Source, Quota: converted, UpdatedAt: updated}
 }
 
 func floatMillisToInt(value *float64) *int64 {
