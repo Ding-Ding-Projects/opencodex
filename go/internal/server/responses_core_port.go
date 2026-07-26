@@ -407,6 +407,9 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		response, err := FetchWithHeaderTimeout(ctx, core.config.Client, upstream, 0, normalized.Stream)
 		if err != nil {
+			if core.config.Logger != nil {
+				core.config.Logger.Warn("upstream_fetch_failed", "host", SafeHostLabel(upstream.URL.String()))
+			}
 			core.noteSubagentFailure(attempt, err.Error())
 			core.recordAuthOutcome(auth, types.OutcomeProviderError, 0, err.Error(), "")
 			if next, ok := core.nextCombo(normalized, pick, http.StatusBadGateway, "upstream_server_error", err.Error(), ""); ok {

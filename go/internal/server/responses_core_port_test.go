@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +22,12 @@ import (
 )
 
 type coreRegistry struct{ endpoint string }
+
+type coreRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn coreRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func (r coreRegistry) ResolveModel(selector string) (*types.ResolvedModel, error) {
 	return &types.ResolvedModel{Selector: selector, Provider: "provider", Model: "wire"}, nil
@@ -129,6 +137,25 @@ func TestResponsesCoreAllowsIndependentProviderCredentialOnForwardRoute(t *testi
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestResponsesCoreLogsOnlySafeHostOnFetchFailure(t *testing.T) {
+	var logs bytes.Buffer
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: "https://user:secret@example.test:8443/v1"},
+		Client: &http.Client{Transport: coreRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("synthetic transport failure")
+		})},
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return coreAdapter{endpoint: transport.BaseURL}, nil
+		},
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`)))
+	if !strings.Contains(logs.String(), "host=example.test:8443") || strings.Contains(logs.String(), "user") || strings.Contains(logs.String(), "secret") {
+		t.Fatalf("unsafe upstream log = %q", logs.String())
 	}
 }
 
