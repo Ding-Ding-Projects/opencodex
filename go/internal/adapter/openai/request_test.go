@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -185,6 +186,19 @@ func TestChatParseStreamUsageOnlyEOFIsDone(t *testing.T) {
 	}
 }
 
+func TestChatParseStreamWaitsForDecoderReleaseBeforeClosing(t *testing.T) {
+	body := newTerminalThenBlockingBody("data: [DONE]\n\n")
+	events := collectEvents((&ChatAdapter{}).ParseStream(context.Background(), body))
+	if len(events) != 1 || events[0].Type != types.EventDone {
+		t.Fatalf("events = %#v", events)
+	}
+	select {
+	case <-body.readExited:
+	default:
+		t.Fatal("adapter output closed before the SSE reader goroutine exited")
+	}
+}
+
 func TestChatParseStreamEOFWithoutTerminalSignalIsError(t *testing.T) {
 	stream := `data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"
 	events := collectEvents((&ChatAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
@@ -286,6 +300,37 @@ func TestResponsesParseStreamAbortsWhenConsumerBacklogExceedsPolicy(t *testing.T
 	if last.Type != types.EventError || last.Error != "consumer backlog exceeded — turn aborted" {
 		t.Fatalf("terminal event = %#v", last)
 	}
+}
+
+type terminalThenBlockingBody struct {
+	payload    []byte
+	closed     chan struct{}
+	readExited chan struct{}
+	closeOnce  sync.Once
+	exitOnce   sync.Once
+}
+
+func newTerminalThenBlockingBody(payload string) *terminalThenBlockingBody {
+	return &terminalThenBlockingBody{
+		payload: []byte(payload), closed: make(chan struct{}), readExited: make(chan struct{}),
+	}
+}
+
+func (body *terminalThenBlockingBody) Read(target []byte) (int, error) {
+	if len(body.payload) > 0 {
+		count := copy(target, body.payload)
+		body.payload = body.payload[count:]
+		return count, nil
+	}
+	<-body.closed
+	time.Sleep(25 * time.Millisecond)
+	body.exitOnce.Do(func() { close(body.readExited) })
+	return 0, io.EOF
+}
+
+func (body *terminalThenBlockingBody) Close() error {
+	body.closeOnce.Do(func() { close(body.closed) })
+	return nil
 }
 
 func decodeRequestBody(t *testing.T, reader io.Reader) map[string]any {

@@ -528,9 +528,14 @@ func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) 
 		}
 		emit := func(event types.AdapterEvent) bool { return queue.Send(ctx, event) }
 		streamCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		decodedEvents := decodeSSE(streamCtx, body)
+		defer func() {
+			cancel()
+			for range decodedEvents {
+			}
+		}()
 		calls := make(map[string]*types.ToolCall)
-		for decoded := range decodeSSE(streamCtx, body) {
+		for decoded := range decodedEvents {
 			if decoded.Err != nil {
 				emit(types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
 				return

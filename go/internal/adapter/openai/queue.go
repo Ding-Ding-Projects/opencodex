@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	adapterbase "github.com/lidge-jun/opencodex-go/internal/adapter"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -14,6 +15,7 @@ type TurnQueue struct {
 	queued []types.AdapterEvent
 	out    chan types.AdapterEvent
 	wake   chan struct{}
+	space  chan struct{}
 	closed bool
 	stream sync.Once
 
@@ -29,6 +31,7 @@ func NewTurnQueue(capacity int) *TurnQueue {
 		queued:     make([]types.AdapterEvent, 0, capacity),
 		out:        make(chan types.AdapterEvent),
 		wake:       make(chan struct{}, 1),
+		space:      make(chan struct{}),
 		MaxBacklog: 1024,
 	}
 	return q
@@ -83,6 +86,22 @@ func (q *TurnQueue) Send(ctx context.Context, event types.AdapterEvent) bool {
 	if ctx.Err() != nil {
 		return false
 	}
+	// A live consumer can briefly trail a bursty parser even though it is draining
+	// continuously. Give it one scheduler-sized grace window at the hard limit;
+	// a truly stalled consumer still receives the same bounded abort outcome.
+	q.mu.Lock()
+	full := q.MaxBacklog > 0 && len(q.queued) >= q.MaxBacklog && !q.closed
+	q.mu.Unlock()
+	if full {
+		timer := time.NewTimer(10 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-q.space:
+		case <-timer.C:
+		case <-ctx.Done():
+			return false
+		}
+	}
 	return q.Push(event)
 }
 
@@ -130,6 +149,10 @@ func (q *TurnQueue) pump() {
 			q.mu.Lock()
 			q.queued = q.queued[1:]
 			q.mu.Unlock()
+			select {
+			case q.space <- struct{}{}:
+			default:
+			}
 		case <-q.wake:
 		}
 	}
