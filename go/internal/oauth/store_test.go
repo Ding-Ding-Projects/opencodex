@@ -122,6 +122,43 @@ func TestCredentialStoreRefreshSequential(t *testing.T) {
 	}
 }
 
+func TestCredentialStoreRefreshPreservesMetadataOmittedByProvider(t *testing.T) {
+	t.Parallel()
+	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	ctx := context.Background()
+	credential := OAuthCredentials{
+		Access: "old", Refresh: "durable", Expires: 1, ProjectID: "project-1",
+		APIBaseURL: "https://regional.example/v1", Email: "user@example.com",
+		AccountID: "physical-account", Source: SourceCredentialFile,
+	}
+	if err := store.SaveCredential(ctx, "google-antigravity", credential); err != nil {
+		t.Fatal(err)
+	}
+	set, _, _ := store.GetAccountSet("google-antigravity")
+	result, err := store.RefreshAccount(ctx, "google-antigravity", set.ActiveAccountID, func(context.Context, string) (OAuthCredentials, error) {
+		return OAuthCredentials{Access: "new", Expires: 999_999}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.Credential
+	if got.Refresh != credential.Refresh || got.ProjectID != credential.ProjectID || got.APIBaseURL != credential.APIBaseURL || got.Email != credential.Email || got.AccountID != credential.AccountID || got.Source != credential.Source {
+		t.Fatalf("metadata was not preserved: %#v", got)
+	}
+}
+
+func TestCredentialStoreRefreshKeepsFreshMetadataOverrides(t *testing.T) {
+	previous := OAuthCredentials{Refresh: "old-refresh", ProjectID: "old-project", APIBaseURL: "https://old.example", Email: "old@example.com", AccountID: "old-account", Source: SourceManual}
+	fresh := OAuthCredentials{Refresh: "new-refresh", ProjectID: "new-project", APIBaseURL: "https://new.example", Email: "new@example.com", AccountID: "new-account", Source: SourceOAuth}
+	if got := mergeRefreshedCredential(fresh, previous); got != fresh {
+		t.Fatalf("fresh metadata was overwritten: %#v", got)
+	}
+	previous.Source = SourceLocalCLI
+	if got := mergeRefreshedCredential(OAuthCredentials{}, previous); got.Source != SourceOAuth {
+		t.Fatalf("local CLI refresh did not detach to OAuth: %#v", got)
+	}
+}
+
 func TestCredentialStoreRefreshIfGenerationAdoptsWinner(t *testing.T) {
 	t.Parallel()
 	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))

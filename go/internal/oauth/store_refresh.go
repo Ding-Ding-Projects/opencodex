@@ -25,6 +25,7 @@ func (s *CredentialStore) RefreshAccount(ctx context.Context, provider, accountI
 		return RefreshResult{}, ErrLoginRequired
 	}
 	observedGen := CredentialGeneration(observed)
+	LogOAuthEvent("OAuth refresh started", map[string]any{"provider": provider, "accountId": accountID})
 
 	lock, err := acquireFileLock(ctx, s.refreshLockPath(provider, accountID))
 	if err != nil {
@@ -43,6 +44,7 @@ func (s *CredentialStore) RefreshAccount(ctx context.Context, provider, accountI
 	}
 	currentGen := CredentialGeneration(current)
 	if currentGen != observedGen {
+		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
 		return RefreshResult{Credential: current, Generation: currentGen, Superseded: true}, nil
 	}
 	if err := s.beginRefresh(ctx, provider, accountID, currentGen); err != nil {
@@ -53,15 +55,16 @@ func (s *CredentialStore) RefreshAccount(ctx context.Context, provider, accountI
 	if err != nil {
 		return RefreshResult{}, err
 	}
-	if updated.Refresh == "" {
-		updated.Refresh = current.Refresh
-	}
+	updated = mergeRefreshedCredential(updated, current)
 	if !validCredential(updated) {
 		return RefreshResult{}, errors.New("provider returned an invalid OAuth credential")
 	}
 	result, err := s.mergeRefreshed(ctx, provider, accountID, currentGen, updated)
 	if err == nil {
 		_, err = s.ClearRefreshIntent(provider, accountID, currentGen)
+		if err == nil && result.Refreshed {
+			LogOAuthEvent("OAuth credentials rotated and persisted", map[string]any{"provider": provider, "accountId": accountID})
+		}
 	}
 	return result, err
 }
@@ -76,6 +79,7 @@ func (s *CredentialStore) RefreshAccountIfGeneration(
 	observedGeneration string,
 	refresh RefreshFunc,
 ) (RefreshResult, error) {
+	LogOAuthEvent("OAuth refresh started", map[string]any{"provider": provider, "accountId": accountID})
 	lock, err := acquireFileLock(ctx, s.refreshLockPath(provider, accountID))
 	if err != nil {
 		return RefreshResult{}, err
@@ -91,6 +95,7 @@ func (s *CredentialStore) RefreshAccountIfGeneration(
 	}
 	expected := CredentialGeneration(current)
 	if expected != observedGeneration {
+		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
 		return RefreshResult{Credential: current, Generation: expected, Superseded: true}, nil
 	}
 	if err := s.beginRefresh(ctx, provider, accountID, expected); err != nil {
@@ -100,17 +105,45 @@ func (s *CredentialStore) RefreshAccountIfGeneration(
 	if err != nil {
 		return RefreshResult{}, err
 	}
-	if updated.Refresh == "" {
-		updated.Refresh = current.Refresh
-	}
+	updated = mergeRefreshedCredential(updated, current)
 	if !validCredential(updated) {
 		return RefreshResult{}, errors.New("provider returned an invalid OAuth credential")
 	}
 	result, err := s.mergeRefreshed(ctx, provider, accountID, expected, updated)
 	if err == nil {
 		_, err = s.ClearRefreshIntent(provider, accountID, expected)
+		if err == nil && result.Refreshed {
+			LogOAuthEvent("OAuth credentials rotated and persisted", map[string]any{"provider": provider, "accountId": accountID})
+		}
 	}
 	return result, err
+}
+
+func mergeRefreshedCredential(fresh, previous OAuthCredentials) OAuthCredentials {
+	if fresh.Refresh == "" {
+		fresh.Refresh = previous.Refresh
+	}
+	if previous.Source == SourceLocalCLI {
+		fresh.Source = SourceOAuth
+	} else if fresh.Source == "" {
+		fresh.Source = previous.Source
+		if fresh.Source == "" {
+			fresh.Source = SourceOAuth
+		}
+	}
+	if fresh.ProjectID == "" {
+		fresh.ProjectID = previous.ProjectID
+	}
+	if fresh.APIBaseURL == "" {
+		fresh.APIBaseURL = previous.APIBaseURL
+	}
+	if fresh.Email == "" {
+		fresh.Email = previous.Email
+	}
+	if fresh.AccountID == "" {
+		fresh.AccountID = previous.AccountID
+	}
+	return fresh
 }
 
 func (s *CredentialStore) beginRefresh(ctx context.Context, provider, accountID, generation string) error {
