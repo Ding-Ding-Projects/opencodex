@@ -521,8 +521,10 @@ func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) 
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		calls := make(map[string]*types.ToolCall)
-		for frame := range decodeSSE(ctx, body) {
+		for frame := range decodeSSE(streamCtx, body) {
 			if frame.Data == "[DONE]" {
 				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone})
 				return

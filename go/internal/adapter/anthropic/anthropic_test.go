@@ -45,12 +45,12 @@ func TestBuildRequestAnthropicMessagesShape(t *testing.T) {
 	}
 	tools := body["tools"].([]any)
 	tool := tools[0].(map[string]any)
-	if tool["name"] != "fs.read" || tool["input_schema"].(map[string]any)["type"] != "object" {
+	if tool["name"] != "fs__read" || tool["input_schema"].(map[string]any)["type"] != "object" {
 		t.Fatalf("unexpected tool: %#v", tool)
 	}
 	messages := body["messages"].([]any)
 	assistant := messages[1].(map[string]any)["content"].([]any)[0].(map[string]any)
-	if assistant["type"] != "tool_use" || assistant["name"] != "fs.read" {
+	if assistant["type"] != "tool_use" || assistant["name"] != "fs__read" {
 		t.Fatalf("unexpected assistant tool block: %#v", assistant)
 	}
 	result := messages[2].(map[string]any)["content"].([]any)[0].(map[string]any)
@@ -134,7 +134,7 @@ func TestBuildRequestUsesAdaptiveThinkingForNewClaudeFamilies(t *testing.T) {
 		ModelID: "claude-opus-4-7", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
 		Options: types.RequestOptions{Reasoning: "minimal"},
 	}
-	httpReq, err := (&Adapter{}).BuildRequest(context.Background(), req)
+	httpReq, err := (&Adapter{APIKey: "test-key"}).BuildRequest(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}

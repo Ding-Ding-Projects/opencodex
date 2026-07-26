@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
+	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/protocol"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -28,10 +30,12 @@ const (
 var anthropicModelFamilyPattern = regexp.MustCompile(`^claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?:\D|$))?`)
 
 type Adapter struct {
-	BaseURL string
-	Client  *http.Client
-	APIKey  string
-	Headers map[string]string
+	BaseURL        string
+	Client         *http.Client
+	APIKey         string
+	Headers        map[string]string
+	Provider       config.ProviderConfig
+	CacheRetention string
 }
 
 var _ types.Adapter = (*Adapter)(nil)
@@ -47,11 +51,19 @@ func (a *Adapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest
 	if req == nil {
 		return nil, fmt.Errorf("build Anthropic request: nil normalized request")
 	}
-	endpoint, err := messagesEndpoint(a.BaseURL)
+	provider := a.providerConfig()
+	apiKey := strings.TrimSpace(a.APIKey)
+	if apiKey == "" {
+		if provider.AuthMode == "oauth" {
+			return nil, fmt.Errorf("anthropic oauth token missing — run ocx login anthropic")
+		}
+		return nil, fmt.Errorf("anthropic provider requires a non-empty apiKey (authMode: key)")
+	}
+	endpoint, err := messagesEndpoint(provider.BaseURL)
 	if err != nil {
 		return nil, err
 	}
-	body, err := anthropicRequestBody(req)
+	body, err := anthropicRequestBodyForAdapter(req, provider)
 	if err != nil {
 		return nil, fmt.Errorf("build Anthropic request body: %w", err)
 	}
@@ -60,6 +72,20 @@ func (a *Adapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest
 		return nil, fmt.Errorf("normalize Anthropic images: %w", err)
 	}
 	EnforceAnthropicImageLimits(messages)
+	control := resolveCacheControl(a.CacheRetention)
+	automatic, err := usesNativeAnthropicEndpoint(provider.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	automatic = automatic && control != nil
+	explicitLimit := maxCacheBreakpoints
+	if automatic {
+		body["cache_control"] = cloneAnyMap(control)
+		explicitLimit--
+	}
+	applyPromptCaching(body, control, explicitLimit, automatic)
+	enforceCacheControlLimit(body, explicitLimit)
+	normalizeCacheTTLOrdering(body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal Anthropic request: %w", err)
@@ -70,13 +96,22 @@ func (a *Adapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("User-Agent", "@anthropic-ai/sdk/0.74.0")
 	if req.Stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	} else {
 		httpReq.Header.Set("Accept", "application/json")
 	}
-	if strings.TrimSpace(a.APIKey) != "" {
-		httpReq.Header.Set("x-api-key", strings.TrimSpace(a.APIKey))
+	if provider.AuthMode == "oauth" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("anthropic-beta", AnthropicOAuthBeta)
+		for key, value := range openaiadapter.ClaudeCodeHeaders() {
+			httpReq.Header.Set(key, value)
+		}
+		httpReq.Header.Set("X-Claude-Code-Session-Id", openaiadapter.ClaudeCodeSessionID(apiKey))
+		httpReq.Header.Set("x-client-request-id", newRequestID())
+	} else {
+		httpReq.Header.Set("x-api-key", apiKey)
 	}
 	for key, value := range a.Headers {
 		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {
@@ -103,7 +138,13 @@ func messagesEndpoint(baseURL string) (string, error) {
 }
 
 func anthropicRequestBody(req *types.NormalizedRequest) (map[string]any, error) {
-	messages, err := messagesToAnthropic(req.Context.Messages)
+	adapter := &Adapter{APIKey: "compat"}
+	return anthropicRequestBodyForAdapter(req, adapter.providerConfig())
+}
+
+func anthropicRequestBodyForAdapter(req *types.NormalizedRequest, provider config.ProviderConfig) (map[string]any, error) {
+	names := buildToolNameTransforms(provider)
+	messages, err := messagesToAnthropic(req.Context.Messages, names)
 	if err != nil {
 		return nil, err
 	}
@@ -114,11 +155,20 @@ func anthropicRequestBody(req *types.NormalizedRequest) (map[string]any, error) 
 	body := map[string]any{
 		"model": req.ModelID, "messages": messages, "stream": req.Stream, "max_tokens": maxTokens,
 	}
-	if len(req.Context.SystemPrompt) > 0 {
-		body["system"] = []any{map[string]any{"type": "text", "text": strings.Join(req.Context.SystemPrompt, "\n\n")}}
+	choice := parseAnthropicToolChoice(req.Options.ToolChoice)
+	visibleTools := filterAnthropicTools(req.Context.Tools, choice)
+	system := anthropicSystemText(req, visibleTools, names)
+	if provider.AuthMode == "oauth" {
+		blocks := []any{map[string]any{"type": "text", "text": ClaudeCodeSystemInstruction}}
+		if system != "" {
+			blocks = append(blocks, map[string]any{"type": "text", "text": system})
+		}
+		body["system"] = blocks
+	} else if system != "" {
+		body["system"] = []any{map[string]any{"type": "text", "text": system}}
 	}
-	if len(req.Context.Tools) > 0 {
-		body["tools"] = anthropicTools(req.Context.Tools)
+	if len(visibleTools) > 0 {
+		body["tools"] = anthropicTools(visibleTools, names)
 	}
 	if req.Options.Temperature != nil {
 		body["temperature"] = *req.Options.Temperature
@@ -129,12 +179,12 @@ func anthropicRequestBody(req *types.NormalizedRequest) (map[string]any, error) 
 	if len(req.Options.StopSequences) > 0 {
 		body["stop_sequences"] = req.Options.StopSequences
 	}
-	applyToolChoice(body, req.Options.ToolChoice)
+	applyToolChoice(body, choice, visibleTools, names)
 	applyThinking(body, req.Options.Reasoning, req.Options.MaxOutputTokens)
 	return body, nil
 }
 
-func messagesToAnthropic(messages []types.Message) ([]any, error) {
+func messagesToAnthropic(messages []types.Message, names toolNameTransforms) ([]any, error) {
 	out := make([]any, 0, len(messages)+1)
 	for index := 0; index < len(messages); index++ {
 		message := messages[index]
@@ -146,7 +196,7 @@ func messagesToAnthropic(messages []types.Message) ([]any, error) {
 			}
 			out = append(out, map[string]any{"role": "user", "content": content})
 		case "assistant":
-			content, toolIDs, err := assistantContent(message.Content)
+			content, toolIDs, err := assistantContent(message.Content, names)
 			if err != nil {
 				return nil, fmt.Errorf("decode assistant message content: %w", err)
 			}
@@ -233,7 +283,7 @@ func anthropicImageBlock(imageURL string) map[string]any {
 	return map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": imageURL}}
 }
 
-func assistantContent(raw json.RawMessage) ([]any, []string, error) {
+func assistantContent(raw json.RawMessage, names toolNameTransforms) ([]any, []string, error) {
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, nil, err
@@ -255,24 +305,22 @@ func assistantContent(raw json.RawMessage) ([]any, []string, error) {
 				out = append(out, map[string]any{"type": "text", "text": text})
 			}
 		case "thinking", "reasoning":
+			for _, data := range stringItems(part["redacted"]) {
+				out = append(out, map[string]any{"type": "redacted_thinking", "data": data})
+			}
 			if thinking := firstString(part, "thinking", "reasoning", "text"); thinking != "" {
-				block := map[string]any{"type": "thinking", "thinking": thinking}
-				if signature, _ := part["signature"].(string); signature != "" {
-					block["signature"] = signature
+				if signature, _ := part["signature"].(string); isLikelyRealAnthropicThinkingSignature(signature) {
+					out = append(out, map[string]any{"type": "thinking", "thinking": thinking, "signature": signature})
 				}
-				out = append(out, block)
 			}
 		case "toolCall", "tool_call":
 			id := firstString(part, "id", "call_id")
-			name := firstString(part, "name")
-			if namespace, _ := part["namespace"].(string); namespace != "" {
-				name = namespace + "." + name
-			}
+			name := types.NamespacedToolName(firstString(part, "namespace"), firstString(part, "name"))
 			input := part["arguments"]
 			if input == nil {
 				input = map[string]any{}
 			}
-			out = append(out, map[string]any{"type": "tool_use", "id": id, "name": name, "input": input})
+			out = append(out, map[string]any{"type": "tool_use", "id": id, "name": names.toWire(name), "input": input})
 			toolIDs = append(toolIDs, id)
 		}
 	}
@@ -296,48 +344,45 @@ func orphanToolResult(message types.Message) string {
 	if message.ToolName != "" {
 		label = message.ToolName + " (" + message.ToolCallID + ")"
 	}
-	return fmt.Sprintf("[tool_result without adjacent tool_use: %s]\n%s", label, string(message.Content))
+	var content any
+	if json.Unmarshal(message.Content, &content) != nil {
+		content = string(message.Content)
+	}
+	if text, ok := content.(string); ok {
+		return fmt.Sprintf("[tool_result without adjacent tool_use: %s]\n%s", label, text)
+	}
+	encoded, _ := json.Marshal(content)
+	return fmt.Sprintf("[tool_result without adjacent tool_use: %s]\n%s", label, encoded)
 }
 
-func anthropicTools(tools []types.Tool) []any {
+func anthropicTools(tools []types.Tool, names toolNameTransforms) []any {
 	out := make([]any, 0, len(tools))
 	for _, tool := range tools {
-		name := tool.Name
-		if tool.Namespace != "" {
-			name = tool.Namespace + "." + name
-		}
-		schema := make(map[string]any, len(tool.Parameters)+2)
-		for key, value := range tool.Parameters {
-			schema[key] = value
-		}
-		if schema["type"] != "object" {
-			schema["type"] = "object"
-		}
-		if schema["properties"] == nil {
-			schema["properties"] = map[string]any{}
-		}
+		name := names.toWire(types.NamespacedToolName(tool.Namespace, tool.Name))
+		schema := normalizeAnthropicInputSchema(tool.Parameters)
 		out = append(out, map[string]any{"name": name, "description": tool.Description, "input_schema": schema})
 	}
 	return out
 }
 
-func applyToolChoice(body map[string]any, raw json.RawMessage) {
-	if len(raw) == 0 || !json.Valid(raw) {
-		return
-	}
-	var choice any
-	if json.Unmarshal(raw, &choice) != nil {
-		return
-	}
-	switch value := choice.(type) {
-	case string:
+func applyToolChoice(body map[string]any, choice anthropicToolChoice, tools []types.Tool, names toolNameTransforms) {
+	if choice.Mode != "" {
 		typesByName := map[string]string{"auto": "auto", "none": "none", "required": "any"}
-		if mapped := typesByName[value]; mapped != "" {
+		if len(choice.AllowedTools) > 0 {
+			if choice.Mode == "required" {
+				body["tool_choice"] = map[string]any{"type": "any"}
+			} else {
+				body["tool_choice"] = map[string]any{"type": "auto"}
+			}
+		} else if mapped := typesByName[choice.Mode]; mapped != "" {
 			body["tool_choice"] = map[string]any{"type": mapped}
 		}
-	case map[string]any:
-		if name, _ := value["name"].(string); name != "" {
-			body["tool_choice"] = map[string]any{"type": "tool", "name": name}
+		return
+	}
+	if choice.Name != "" {
+		wireName := types.ResolveToolChoiceWireName(tools, choice.Name)
+		if wireName != "" {
+			body["tool_choice"] = map[string]any{"type": "tool", "name": names.toWire(wireName)}
 		}
 	}
 }
@@ -346,7 +391,7 @@ func applyThinking(body map[string]any, effort string, explicitMax int) {
 	if effort == "" || effort == "none" {
 		return
 	}
-	budget := map[string]int{"minimal": 1024, "low": 2048, "medium": 8192, "high": 16384, "xhigh": 24576, "max": 32000}[effort]
+	budget := map[string]int{"minimal": 1024, "low": 4096, "medium": 8192, "high": 16384, "xhigh": 24576, "max": 32000}[effort]
 	if budget == 0 {
 		budget = 8192
 	}
@@ -426,20 +471,22 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		names := a.toolNames()
 		blocks := make(map[int]*pendingTool)
 		blockTypes := make(map[int]string)
 		var usage map[string]int
 		stopReason := ""
 		terminal := false
-		for frame := range decodeSSE(ctx, body) {
+		for frame := range decodeSSE(streamCtx, body) {
 			if frame.Comment != nil {
 				emit(ctx, out, types.AdapterEvent{Type: types.EventHeartbeat})
 				continue
 			}
 			var event map[string]any
 			if json.Unmarshal([]byte(frame.Data), &event) != nil {
-				emit(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "malformed upstream SSE data frame"})
-				return
+				continue
 			}
 			eventType := frame.Event
 			if eventType == "" {
@@ -455,13 +502,15 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 				blockType, _ := block["type"].(string)
 				blockTypes[index] = blockType
 				if blockType == "tool_use" {
-					pending := &pendingTool{id: firstString(block, "id"), name: firstString(block, "name")}
+					pending := &pendingTool{id: firstString(block, "id"), name: names.fromWire(firstString(block, "name"))}
 					if input := block["input"]; input != nil {
 						if encoded, err := json.Marshal(input); err == nil && string(encoded) != "{}" {
 							pending.arguments.Write(encoded)
 						}
 					}
 					blocks[index] = pending
+				} else if blockType == "redacted_thinking" {
+					emit(ctx, out, types.AdapterEvent{Type: types.EventRedactedThinking, Data: firstString(block, "data")})
 				}
 			case "content_block_delta":
 				index := intValue(event["index"])
@@ -471,6 +520,10 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 					emit(ctx, out, types.AdapterEvent{Type: types.EventTextDelta, Text: firstString(delta, "text")})
 				case "thinking_delta", "reasoning_delta":
 					emit(ctx, out, types.AdapterEvent{Type: types.EventReasoning, Reasoning: firstString(delta, "thinking", "reasoning")})
+				case "signature_delta":
+					if blockTypes[index] == "thinking" || blockTypes[index] == "reasoning" {
+						emit(ctx, out, types.AdapterEvent{Type: types.EventThinkingSignature, Signature: firstString(delta, "signature")})
+					}
 				case "input_json_delta":
 					if pending := blocks[index]; pending != nil {
 						pending.arguments.WriteString(firstString(delta, "partial_json"))
@@ -530,6 +583,7 @@ func (a *Adapter) ParseUnary(_ context.Context, body []byte) ([]types.AdapterEve
 		return []types.AdapterEvent{{Type: types.EventError, Error: firstNonEmpty(firstString(errorValue, "message"), "Anthropic error")}}, nil
 	}
 	events := make([]types.AdapterEvent, 0)
+	names := a.toolNames()
 	for _, raw := range sliceValue(response["content"]) {
 		block, _ := raw.(map[string]any)
 		switch block["type"] {
@@ -539,12 +593,17 @@ func (a *Adapter) ParseUnary(_ context.Context, body []byte) ([]types.AdapterEve
 			}
 		case "thinking", "reasoning":
 			events = append(events, types.AdapterEvent{Type: types.EventReasoning, Reasoning: firstString(block, "thinking", "reasoning")})
+			if signature := firstString(block, "signature"); signature != "" {
+				events = append(events, types.AdapterEvent{Type: types.EventThinkingSignature, Signature: signature})
+			}
+		case "redacted_thinking":
+			events = append(events, types.AdapterEvent{Type: types.EventRedactedThinking, Data: firstString(block, "data")})
 		case "tool_use":
 			arguments, _ := json.Marshal(block["input"])
 			if !json.Valid(arguments) {
 				arguments = []byte("{}")
 			}
-			events = append(events, types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: firstString(block, "id"), Name: firstString(block, "name"), Arguments: arguments}})
+			events = append(events, types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: firstString(block, "id"), Name: names.fromWire(firstString(block, "name")), Arguments: arguments}})
 		}
 	}
 	events = append(events, types.AdapterEvent{Type: types.EventDone, Usage: anthropicUsage(mergeUsage(nil, response["usage"])), StopReason: firstString(response, "stop_reason")})
@@ -562,18 +621,34 @@ func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan protocol.SSEEvent
 		defer body.Close()
 		decoded := make(chan protocol.SSEEvent)
 		decoder := protocol.NewSSEDecoderWithComments(decoded)
+		copyDone := make(chan struct{})
 		go func() {
 			_, _ = io.Copy(decoder, body)
 			_ = decoder.Close()
 			close(decoded)
+			close(copyDone)
 		}()
-		for event := range decoded {
+		for {
 			select {
-			case out <- event:
+			case event, ok := <-decoded:
+				if !ok {
+					<-copyDone
+					return
+				}
+				select {
+				case out <- event:
+				case <-ctx.Done():
+					_ = body.Close()
+					for range decoded {
+					}
+					<-copyDone
+					return
+				}
 			case <-ctx.Done():
 				_ = body.Close()
 				for range decoded {
 				}
+				<-copyDone
 				return
 			}
 		}

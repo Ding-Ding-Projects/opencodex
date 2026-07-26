@@ -218,12 +218,14 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		calls := make(map[string]*pendingChatCall)
 		order := make([]string, 0)
 		var usage *types.Usage
 		finishReason := ""
 		flush := func() bool { return flushChatCalls(ctx, out, calls, order) }
-		for frame := range decodeSSE(ctx, body) {
+		for frame := range decodeSSE(streamCtx, body) {
 			if frame.Data == "[DONE]" {
 				flush()
 				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})
