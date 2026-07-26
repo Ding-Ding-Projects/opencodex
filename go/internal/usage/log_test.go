@@ -2,8 +2,10 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,24 +92,48 @@ func TestLogPreservesContextTotalWithoutTreatingItAsTurnTotal(t *testing.T) {
 	}
 }
 
-func TestLogSurfaceSanitizerAllowsClaudeDesktop(t *testing.T) {
+func TestLogSurfaceSanitizerAllowsKnownSurfaces(t *testing.T) {
 	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
 	base := Entry{Timestamp: 1, Provider: "p", Model: "m", Status: 200, UsageStatus: StatusUnreported}
 	desktop := base
 	desktop.RequestID, desktop.Surface = "desktop", SurfaceClaudeDesktop
+	grok := base
+	grok.RequestID, grok.Surface = "grok", SurfaceGrok
 	invalid := base
 	invalid.RequestID, invalid.Surface = "invalid", Surface("other")
 	if err := log.Append(desktop); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Append(grok); err != nil {
 		t.Fatal(err)
 	}
 	if err := log.Append(invalid); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := log.ReadAll()
-	if err != nil || len(entries) != 2 {
+	if err != nil || len(entries) != 3 {
 		t.Fatalf("entries=%#v err=%v", entries, err)
 	}
-	if entries[0].Surface != SurfaceClaudeDesktop || entries[1].Surface != "" {
-		t.Fatalf("surfaces=%q,%q", entries[0].Surface, entries[1].Surface)
+	if entries[0].Surface != SurfaceClaudeDesktop || entries[1].Surface != SurfaceGrok || entries[2].Surface != "" {
+		t.Fatalf("surfaces=%q,%q,%q", entries[0].Surface, entries[1].Surface, entries[2].Surface)
+	}
+
+	data, err := os.ReadFile(log.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var grokJSON, invalidJSON map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &grokJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[2]), &invalidJSON); err != nil {
+		t.Fatal(err)
+	}
+	if grokJSON["surface"] != "grok" {
+		t.Fatalf("serialized grok surface = %#v", grokJSON["surface"])
+	}
+	if _, ok := invalidJSON["surface"]; ok {
+		t.Fatalf("unknown surface serialized: %s", lines[2])
 	}
 }

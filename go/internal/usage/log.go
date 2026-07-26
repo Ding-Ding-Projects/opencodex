@@ -29,7 +29,16 @@ const (
 	SurfaceCodex         Surface = "codex"
 	SurfaceClaude        Surface = "claude"
 	SurfaceClaudeDesktop Surface = "claude-desktop"
+	SurfaceGrok          Surface = "grok"
 )
+
+// knownUsageSurfaces keeps persisted labels explicit without silently dropping
+// newly supported surfaces or accepting arbitrary values from hand-edited logs.
+var knownUsageSurfaces = map[Surface]struct{}{
+	SurfaceClaude:        {},
+	SurfaceClaudeDesktop: {},
+	SurfaceGrok:          {},
+}
 
 type Attempt struct {
 	Ordinal     int          `json:"ordinal"`
@@ -220,7 +229,7 @@ func validUsage(value types.Usage) bool {
 }
 
 func normalizeEntry(entry Entry) Entry {
-	if entry.Surface != SurfaceClaude && entry.Surface != SurfaceClaudeDesktop {
+	if _, ok := knownUsageSurfaces[entry.Surface]; !ok {
 		entry.Surface = ""
 	}
 	entry.UpstreamError = capString(entry.UpstreamError, 500)

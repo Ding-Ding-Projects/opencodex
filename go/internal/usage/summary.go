@@ -99,7 +99,7 @@ func ParseRange(value string) Range {
 	return Range30D
 }
 func ParseSurface(value string) string {
-	if value == "codex" || value == "claude" {
+	if value == "codex" || value == "claude" || value == "grok" {
 		return value
 	}
 	return "all"
@@ -144,7 +144,10 @@ func filterEntries(entries []Entry, window Range, now time.Time, surface string)
 		if surface == "claude" && entry.Surface != SurfaceClaude && entry.Surface != SurfaceClaudeDesktop {
 			continue
 		}
-		if surface == "codex" && entry.Surface == SurfaceClaude {
+		if surface == "grok" && entry.Surface != SurfaceGrok {
+			continue
+		}
+		if surface == "codex" && entry.Surface != "" {
 			continue
 		}
 		out = append(out, entry)

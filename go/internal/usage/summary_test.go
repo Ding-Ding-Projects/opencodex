@@ -35,6 +35,32 @@ func TestSummaryAggregatesByProviderModelDateAndSurface(t *testing.T) {
 	}
 }
 
+func TestSummarySurfaceBucketsAreDisjoint(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.Local)
+	entries := []Entry{
+		{RequestID: "codex", Timestamp: now.UnixMilli(), Provider: "codex-provider", Model: "codex-model", UsageStatus: StatusReported, Usage: &types.Usage{InputTokens: 1}},
+		{RequestID: "claude", Timestamp: now.UnixMilli(), Provider: "claude-provider", Model: "claude-model", Surface: SurfaceClaude, UsageStatus: StatusReported, Usage: &types.Usage{InputTokens: 2}},
+		{RequestID: "desktop", Timestamp: now.UnixMilli(), Provider: "desktop-provider", Model: "desktop-model", Surface: SurfaceClaudeDesktop, UsageStatus: StatusReported, Usage: &types.Usage{InputTokens: 4}},
+		{RequestID: "grok", Timestamp: now.UnixMilli(), Provider: "grok-provider", Model: "grok-model", Surface: SurfaceGrok, UsageStatus: StatusReported, Usage: &types.Usage{InputTokens: 8}},
+	}
+
+	codex := Summarize(entries, RangeAll, now, "codex")
+	if codex.Summary.Requests != 1 || codex.Summary.InputTokens != 1 {
+		t.Fatalf("codex totals = %#v", codex.Summary)
+	}
+	claude := Summarize(entries, RangeAll, now, "claude")
+	if claude.Summary.Requests != 2 || claude.Summary.InputTokens != 6 {
+		t.Fatalf("claude totals = %#v", claude.Summary)
+	}
+	grok := Summarize(entries, RangeAll, now, "grok")
+	if grok.Surface != "grok" || grok.Summary.Requests != 1 || grok.Summary.InputTokens != 8 {
+		t.Fatalf("grok summary = %#v", grok)
+	}
+	if len(grok.Models) != 1 || grok.Models[0].Provider != "grok-provider" {
+		t.Fatalf("grok models = %#v", grok.Models)
+	}
+}
+
 func TestSummaryAttributesComboAttemptsToTheirProviderAndModel(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.Local)
 	entry := Entry{
