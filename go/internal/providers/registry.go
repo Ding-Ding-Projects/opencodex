@@ -24,26 +24,26 @@ type BaseURLChoice struct{ ID, Label, BaseURL string }
 
 // ProviderRegistryEntry is the provider catalog contract shared by routing and setup.
 type ProviderRegistryEntry struct {
-	ID, Label, Adapter, BaseURL, DashboardURL, DefaultModel, OAuthID, Note   string
-	Project, Location                                                        string
-	AuthKind                                                                 ProviderAuthKind
-	CodexAccountMode, GoogleMode, JawcodeBundle, MetadataModelIDNormalize    string
-	Featured, DashboardPreset, LiveModels, KeyOptional, FreeTier             bool
-	AllowKeyAuthOverride, AllowPrivateNetworkByDefault, AllowBaseURLOverride bool
-	ModelSuffixBracketStrip, EscapeBuiltinToolNames                          bool
-	ParallelToolCalls                                                        *bool
-	StaticHeaders                                                            map[string]string
-	Models, ReasoningEfforts, NoVisionModels, NoReasoningModels              []string
-	NoTemperatureModels, NoTopPModels, NoPenaltyModels                       []string
-	AutoToolChoiceOnlyModels, PreserveReasoningContentModels                 []string
-	ThinkingToggleModels, ThinkingBudgetModels, ExtraMetadataAliases         []string
-	ContextWindow, DefaultMaxOutputTokens                                    int
-	ModelContextWindows, ModelMaxInputTokens, ModelMaxOutputTokens           map[string]int
-	ModelInputModalities, ModelReasoningEfforts                              map[string][]string
-	ModelDefaultReasoningEfforts, ReasoningEffortMap                         map[string]string
-	ModelReasoningEffortMap                                                  map[string]map[string]string
-	VirtualModels                                                            map[string]VirtualModelDefinition
-	BaseURLChoices                                                           []BaseURLChoice
+	ID, Label, Adapter, BaseURL, DashboardURL, DefaultModel, OAuthID, Note         string
+	Project, Location                                                              string
+	AuthKind                                                                       ProviderAuthKind
+	CodexAccountMode, GoogleMode, JawcodeBundle, MetadataModelIDNormalize          string
+	Featured, DashboardPreset, LiveModels, KeyOptional, FreeTier                   bool
+	AllowKeyAuthOverride, AllowPrivateNetworkByDefault, AllowBaseURLOverride       bool
+	ModelSuffixBracketStrip, EscapeBuiltinToolNames                                bool
+	ParallelToolCalls                                                              *bool
+	StaticHeaders                                                                  map[string]string
+	Models, ReasoningEfforts, NoVisionModels, NoReasoningModels                    []string
+	NoTemperatureModels, NoTopPModels, NoPenaltyModels                             []string
+	AutoToolChoiceOnlyModels, PreserveReasoningContentModels, ReasoningSplitModels []string
+	ThinkingToggleModels, ThinkingBudgetModels, ExtraMetadataAliases               []string
+	ContextWindow, DefaultMaxOutputTokens                                          int
+	ModelContextWindows, ModelMaxInputTokens, ModelMaxOutputTokens                 map[string]int
+	ModelInputModalities, ModelReasoningEfforts                                    map[string][]string
+	ModelDefaultReasoningEfforts, ReasoningEffortMap                               map[string]string
+	ModelReasoningEffortMap                                                        map[string]map[string]string
+	VirtualModels                                                                  map[string]VirtualModelDefinition
+	BaseURLChoices                                                                 []BaseURLChoice
 }
 
 type ModelCapabilities struct {
@@ -341,6 +341,7 @@ func cloneRegistryEntry(e ProviderRegistryEntry) ProviderRegistryEntry {
 	e.NoTemperatureModels, e.NoTopPModels, e.NoPenaltyModels = cloneStrings(e.NoTemperatureModels), cloneStrings(e.NoTopPModels), cloneStrings(e.NoPenaltyModels)
 	e.AutoToolChoiceOnlyModels = cloneStrings(e.AutoToolChoiceOnlyModels)
 	e.PreserveReasoningContentModels = cloneStrings(e.PreserveReasoningContentModels)
+	e.ReasoningSplitModels = cloneStrings(e.ReasoningSplitModels)
 	e.ThinkingToggleModels, e.ThinkingBudgetModels = cloneStrings(e.ThinkingToggleModels), cloneStrings(e.ThinkingBudgetModels)
 	e.ExtraMetadataAliases = cloneStrings(e.ExtraMetadataAliases)
 	e.StaticHeaders = cloneStringMap(e.StaticHeaders)

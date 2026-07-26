@@ -63,6 +63,21 @@ func TestRouteModelComboAliasAndUserCaps(t *testing.T) {
 	}
 }
 
+func TestRouteModelMergesMiniMaxReasoningSplitRoster(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers["minimax"] = config.ProviderConfig{
+		Adapter: "openai-chat", BaseURL: "https://api.minimax.io/v1", DefaultModel: "MiniMax-M3",
+		ReasoningSplitModels: []string{"user-split-model"},
+	}
+	got, err := RouteModel(cfg, "minimax/MiniMax-M3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Provider.ReasoningSplitModels) != 9 || got.Provider.ReasoningSplitModels[0] != "MiniMax-M3" || got.Provider.ReasoningSplitModels[8] != "user-split-model" {
+		t.Fatalf("reasoning split roster was not seed-first union: %#v", got.Provider.ReasoningSplitModels)
+	}
+}
+
 func TestRouteModelRejectsCustomPrivateDestination(t *testing.T) {
 	cfg := config.Default()
 	cfg.DefaultProvider = "custom"

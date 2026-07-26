@@ -247,6 +247,12 @@ registry exposed `AllowPrivateNetworkDefault`. The registry now publishes both
 names from one synchronized roster value, with a regression test covering all
 four local/private presets and a remote negative control.
 
+Bundled MiniMax metadata is also aligned with the latest TS registry. Both
+`minimax` and `minimax-cn` seed `ReasoningSplitModels` with all eight M-series
+models (`MiniMax-M3` through `MiniMax-M2`), derive defensive copies, and merge
+the seed before user additions on the runtime route. Focused tests lock the
+exact roster, clone boundary, and seed-first union order.
+
 ## Round 17 next-boundary assessment
 
 Quota-aware subagent fallback is suitable for the production differential

@@ -228,6 +228,7 @@ func applyAlibabaInternationalMetadata(e *ProviderRegistryEntry) {
 
 func applyMiniMaxMetadata(e *ProviderRegistryEntry) {
 	e.Models = []string{"MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"}
+	e.ReasoningSplitModels = cloneStrings(e.Models)
 	e.DefaultModel = "MiniMax-M3"
 	e.ModelContextWindows = make(map[string]int, len(e.Models))
 	for _, model := range e.Models {

@@ -9,22 +9,23 @@ type OpenRouterProviderRouting struct {
 // ProviderConfig is the provider-owned seed shape. Callers can translate it to their
 // persistence type without making this package depend on config (which imports providers).
 type ProviderConfig struct {
-	Adapter, BaseURL, AuthMode, CodexAccountMode, DefaultModel, GoogleMode, Project, Location, APIKey    string
-	KeyOptional, FreeTier, ModelSuffixBracketStrip, LiveModels, EscapeBuiltinToolNames                   bool
-	LiveModelsSet                                                                                        bool
-	ParallelToolCalls                                                                                    *bool
-	Models, ReasoningEfforts, NoVisionModels, NoReasoningModels                                          []string
-	NoTemperatureModels, NoTopPModels, NoPenaltyModels                                                   []string
-	AutoToolChoiceOnlyModels, PreserveReasoningContentModels, ThinkingToggleModels, ThinkingBudgetModels []string
-	Headers                                                                                              map[string]string
-	ContextWindow, DefaultMaxOutputTokens                                                                int
-	ModelContextWindows, ModelMaxInputTokens, ModelMaxOutputTokens                                       map[string]int
-	ModelInputModalities, ModelReasoningEfforts                                                          map[string][]string
-	ModelDefaultReasoningEfforts, ReasoningEffortMap                                                     map[string]string
-	ModelReasoningEffortMap                                                                              map[string]map[string]string
-	APIKeyPool                                                                                           []APIKeyEntry
-	OpenRouterRouting                                                                                    *OpenRouterProviderRouting
-	ModelOpenRouterRouting                                                                               map[string]OpenRouterProviderRouting
+	Adapter, BaseURL, AuthMode, CodexAccountMode, DefaultModel, GoogleMode, Project, Location, APIKey string
+	KeyOptional, FreeTier, ModelSuffixBracketStrip, LiveModels, EscapeBuiltinToolNames                bool
+	LiveModelsSet                                                                                     bool
+	ParallelToolCalls                                                                                 *bool
+	Models, ReasoningEfforts, NoVisionModels, NoReasoningModels                                       []string
+	NoTemperatureModels, NoTopPModels, NoPenaltyModels                                                []string
+	AutoToolChoiceOnlyModels, PreserveReasoningContentModels, ReasoningSplitModels                    []string
+	ThinkingToggleModels, ThinkingBudgetModels                                                        []string
+	Headers                                                                                           map[string]string
+	ContextWindow, DefaultMaxOutputTokens                                                             int
+	ModelContextWindows, ModelMaxInputTokens, ModelMaxOutputTokens                                    map[string]int
+	ModelInputModalities, ModelReasoningEfforts                                                       map[string][]string
+	ModelDefaultReasoningEfforts, ReasoningEffortMap                                                  map[string]string
+	ModelReasoningEffortMap                                                                           map[string]map[string]string
+	APIKeyPool                                                                                        []APIKeyEntry
+	OpenRouterRouting                                                                                 *OpenRouterProviderRouting
+	ModelOpenRouterRouting                                                                            map[string]OpenRouterProviderRouting
 }
 
 type DerivedKeyLoginProvider struct {
@@ -52,7 +53,8 @@ func ProviderConfigSeed(e ProviderRegistryEntry) ProviderConfig {
 		ParallelToolCalls: e.ParallelToolCalls, Models: cloneStrings(e.Models), ReasoningEfforts: cloneStrings(e.ReasoningEfforts), NoVisionModels: cloneStrings(e.NoVisionModels),
 		NoReasoningModels: cloneStrings(e.NoReasoningModels), NoTemperatureModels: cloneStrings(e.NoTemperatureModels), NoTopPModels: cloneStrings(e.NoTopPModels),
 		NoPenaltyModels: cloneStrings(e.NoPenaltyModels), AutoToolChoiceOnlyModels: cloneStrings(e.AutoToolChoiceOnlyModels),
-		PreserveReasoningContentModels: cloneStrings(e.PreserveReasoningContentModels), ThinkingToggleModels: cloneStrings(e.ThinkingToggleModels), ThinkingBudgetModels: cloneStrings(e.ThinkingBudgetModels),
+		PreserveReasoningContentModels: cloneStrings(e.PreserveReasoningContentModels), ReasoningSplitModels: cloneStrings(e.ReasoningSplitModels),
+		ThinkingToggleModels: cloneStrings(e.ThinkingToggleModels), ThinkingBudgetModels: cloneStrings(e.ThinkingBudgetModels),
 		Headers: cloneStringMap(e.StaticHeaders), ContextWindow: e.ContextWindow, DefaultMaxOutputTokens: e.DefaultMaxOutputTokens,
 		ModelContextWindows: cloneIntMap(e.ModelContextWindows), ModelMaxInputTokens: cloneIntMap(e.ModelMaxInputTokens), ModelMaxOutputTokens: cloneIntMap(e.ModelMaxOutputTokens),
 		ModelInputModalities: cloneStringSlices(e.ModelInputModalities), ModelReasoningEfforts: cloneStringSlices(e.ModelReasoningEfforts),

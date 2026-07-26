@@ -239,6 +239,7 @@ func routedProviderConfig(name string, user config.ProviderConfig) (config.Provi
 	out.NoPenaltyModels = union(entry.NoPenaltyModels, user.NoPenaltyModels)
 	out.AutoToolChoiceOnlyModels = union(entry.AutoToolChoiceOnlyModels, user.AutoToolChoiceOnlyModels)
 	out.PreserveReasoningContentModels = union(entry.PreserveReasoningContentModels, user.PreserveReasoningContentModels)
+	out.ReasoningSplitModels = union(entry.ReasoningSplitModels, user.ReasoningSplitModels)
 	out.ThinkingToggleModels = union(entry.ThinkingToggleModels, user.ThinkingToggleModels)
 	out.ThinkingBudgetModels = union(entry.ThinkingBudgetModels, user.ThinkingBudgetModels)
 	if out.ParallelToolCalls == nil && entry.ParallelToolCalls != nil {

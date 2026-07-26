@@ -77,6 +77,28 @@ func TestRegistryCapabilityRosterMatchesTypeScript(t *testing.T) {
 	}
 }
 
+func TestMiniMaxReasoningSplitRosterMatchesTypeScript(t *testing.T) {
+	want := []string{"MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"}
+	for _, provider := range []string{"minimax", "minimax-cn"} {
+		entry, ok := GetProviderRegistryEntry(provider)
+		if !ok {
+			t.Fatalf("provider %q missing", provider)
+		}
+		if !slices.Equal(entry.ReasoningSplitModels, want) {
+			t.Fatalf("%s reasoning split roster = %#v, want %#v", provider, entry.ReasoningSplitModels, want)
+		}
+		seed := ProviderConfigSeed(entry)
+		if !slices.Equal(seed.ReasoningSplitModels, want) {
+			t.Fatalf("%s derived reasoning split roster = %#v, want %#v", provider, seed.ReasoningSplitModels, want)
+		}
+		entry.ReasoningSplitModels[0] = "mutated"
+		again, _ := GetProviderRegistryEntry(provider)
+		if slices.Contains(again.ReasoningSplitModels, "mutated") {
+			t.Fatalf("%s reasoning split roster leaked from registry", provider)
+		}
+	}
+}
+
 func firstMatch(values []string, target string) string {
 	if slices.Contains(values, target) {
 		return target
