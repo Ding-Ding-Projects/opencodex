@@ -64,7 +64,19 @@ func TestSafeWebSocketResponseHeadersDropsCredentials(t *testing.T) {
 
 func TestBuildWarmupCompletionFrames(t *testing.T) {
 	frames := BuildWarmupCompletionFrames(map[string]any{"model": "gpt-test", "generate": false})
-	if len(frames) != 2 || !strings.Contains(string(frames[0]), "response.created") || !strings.Contains(string(frames[1]), "response.completed") {
+	wantCreated := `{"type":"response.created","sequence_number":0,"response":{"id":"","object":"response","created_at":`
+	wantCompleted := `{"type":"response.completed","sequence_number":1,"response":{"id":"","object":"response","created_at":`
+	if len(frames) != 2 || !strings.HasPrefix(string(frames[0]), wantCreated) || !strings.HasPrefix(string(frames[1]), wantCompleted) || !strings.Contains(string(frames[0]), `"model":"gpt-test","output":[],"status":"in_progress"`) || !strings.Contains(string(frames[1]), `"model":"gpt-test","output":[],"status":"completed"`) {
 		t.Fatalf("warmup frames = %q", frames)
+	}
+}
+
+func TestResponseToWebSocketFramesUsesEmptyResponseID(t *testing.T) {
+	responseID := "resp_0123456789abcdef0123456789abcdef"
+	body := []byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"" + responseID + "\",\"status\":\"in_progress\"}}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"" + responseID + "\",\"status\":\"completed\"}}\n\n")
+	frames := ResponseToWebSocketFrames(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, body)
+	if len(frames) != 2 || strings.Contains(string(frames[0]), responseID) || strings.Contains(string(frames[1]), responseID) || !strings.Contains(string(frames[0]), `"id":""`) {
+		t.Fatalf("frames = %q", frames)
 	}
 }

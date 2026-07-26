@@ -17,6 +17,7 @@ var websocketForwardHeaders = []string{
 }
 
 var safeCodexQuotaHeader = regexp.MustCompile(`^x-codex(?:-[a-z0-9-]+)?-(?:(?:primary|secondary|tertiary)-(?:used-percent|window-minutes|reset-at)|limit-name)$`)
+var generatedResponseID = regexp.MustCompile(`"id":"resp_[0-9a-f]{32}"`)
 
 var safeWebSocketResponseHeaders = map[string]struct{}{
 	"retry-after": {}, "x-request-id": {}, "openai-request-id": {},
@@ -41,12 +42,24 @@ func SafeWebSocketResponseHeaders(headers http.Header) map[string]string {
 }
 
 func BuildWarmupCompletionFrames(frame map[string]any) [][]byte {
-	base := map[string]any{
-		"id": "", "object": "response", "created_at": time.Now().Unix(),
-		"model": frame["model"], "output": []any{},
+	type warmupResponse struct {
+		ID        string `json:"id"`
+		Object    string `json:"object"`
+		CreatedAt int64  `json:"created_at"`
+		Model     any    `json:"model,omitempty"`
+		Output    []any  `json:"output"`
+		Status    string `json:"status"`
 	}
-	created := map[string]any{"type": "response.created", "sequence_number": 0, "response": cloneResponseWithStatus(base, "in_progress")}
-	completed := map[string]any{"type": "response.completed", "sequence_number": 1, "response": cloneResponseWithStatus(base, "completed")}
+	type warmupEvent struct {
+		Type           string         `json:"type"`
+		SequenceNumber int            `json:"sequence_number"`
+		Response       warmupResponse `json:"response"`
+	}
+	base := warmupResponse{ID: "", Object: "response", CreatedAt: time.Now().Unix(), Model: frame["model"], Output: []any{}}
+	created := warmupEvent{Type: "response.created", SequenceNumber: 0, Response: base}
+	created.Response.Status = "in_progress"
+	completed := warmupEvent{Type: "response.completed", SequenceNumber: 1, Response: base}
+	completed.Response.Status = "completed"
 	return [][]byte{mustJSONBytes(created), mustJSONBytes(completed)}
 }
 
@@ -68,6 +81,7 @@ func ResponseToWebSocketFrames(status int, headers http.Header, body []byte) [][
 	if json.Unmarshal(body, &response) != nil {
 		return [][]byte{mustJSONBytes(websocketProtocolError(http.StatusBadGateway, "Unexpected successful non-JSON response", headers))}
 	}
+	response["id"] = ""
 	return responseJSONWebSocketFrames(response)
 }
 
@@ -103,13 +117,17 @@ func sseWebSocketFrames(body []byte) [][]byte {
 		if terminal {
 			continue
 		}
-		frames = append(frames, []byte(payload))
+		frames = append(frames, emptyGeneratedResponseID([]byte(payload)))
 		terminal = event.Type == "response.completed" || event.Type == "response.failed" || event.Type == "response.incomplete"
 	}
 	if !terminal {
 		frames = append(frames, mustJSONBytes(websocketProtocolError(http.StatusBadGateway, "Upstream stream ended before response terminal event", nil)))
 	}
 	return frames
+}
+
+func emptyGeneratedResponseID(payload []byte) []byte {
+	return generatedResponseID.ReplaceAll(payload, []byte(`"id":""`))
 }
 
 func ParseSSEDataPayloads(body []byte) []string {
