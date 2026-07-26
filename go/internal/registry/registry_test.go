@@ -3,8 +3,8 @@ package registry
 import "testing"
 
 func TestRegistryContainsAllBuiltInProviders(t *testing.T) {
-	if got := len(Providers); got != 58 {
-		t.Fatalf("provider count = %d, want 58", got)
+	if got := len(Providers); got != 59 {
+		t.Fatalf("provider count = %d, want 59", got)
 	}
 	reg := New()
 	openrouter, ok := reg.Lookup("openrouter")

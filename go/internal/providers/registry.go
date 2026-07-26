@@ -73,6 +73,7 @@ func buildProviderRegistry() []ProviderRegistryEntry {
 		p("neuralwatt", "Neuralwatt Cloud", "openai-chat", "https://api.neuralwatt.com/v1", AuthKey),
 		p("openrouter", "OpenRouter", "openai-chat", "https://openrouter.ai/api/v1", AuthKey),
 		p("orcarouter", "OrcaRouter", "openai-chat", "https://api.orcarouter.ai/v1", AuthKey),
+		p("bizrouter", "BizRouter", "openai-chat", "https://api.bizrouter.ai/v1", AuthKey),
 		p("groq", "Groq", "openai-chat", "https://api.groq.com/openai/v1", AuthKey),
 		p("google", "Google Gemini", "google", "https://generativelanguage.googleapis.com", AuthKey),
 		p("google-vertex", "Google Vertex AI", "google", "https://aiplatform.googleapis.com", AuthKey),
@@ -121,6 +122,7 @@ func buildProviderRegistry() []ProviderRegistryEntry {
 	}
 	seedRegistryMetadata(rows)
 	enrichRegistry(rows)
+	applyProviderParityMetadata(rows)
 	return rows
 }
 

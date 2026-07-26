@@ -1,6 +1,7 @@
 package parity_test
 
 import (
+	"slices"
 	"testing"
 
 	core "github.com/lidge-jun/opencodex-go/internal"
@@ -35,8 +36,8 @@ func TestRouterBackfillsRegistryCapabilitiesWithoutOverridingUserConfig(t *testi
 	if kimi.Provider.ModelSuffixBracketStrip == nil || *kimi.Provider.ModelSuffixBracketStrip {
 		t.Fatalf("user false was overwritten: %#v", kimi.Provider.ModelSuffixBracketStrip)
 	}
-	if got := kimi.Provider.PreserveReasoningContentModels; len(got) != 1 || got[0] != "user-model" {
-		t.Fatalf("user capability list was not preserved: %v", got)
+	if got := kimi.Provider.PreserveReasoningContentModels; !slices.Contains(got, "user-model") || !slices.Contains(got, "k3") {
+		t.Fatalf("registry and user capability lists were not merged: %v", got)
 	}
 
 	litellm, err := core.RouteModel(cfg, "litellm/local-model")

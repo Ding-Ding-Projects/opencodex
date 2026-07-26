@@ -1,6 +1,9 @@
 package providers
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestRegistryResolvesEncodedNativeModelAndCapabilities(t *testing.T) {
 	e, model, err := ResolveProvider("openrouter/openai-gpt-5.6-sol")
@@ -30,4 +33,53 @@ func TestProviderModes(t *testing.T) {
 	if got := EffectiveGoogleMode("google-vertex", ProviderConfig{Adapter: "google"}); got != "vertex" {
 		t.Fatal(got)
 	}
+}
+
+func TestRegistryCapabilityRosterMatchesTypeScript(t *testing.T) {
+	tests := []struct {
+		provider string
+		auto     string
+		preserve string
+		toggle   string
+		budget   string
+	}{
+		{provider: "kimi", auto: "kimi-for-coding", preserve: "k3"},
+		{provider: "opencode-go", auto: "kimi-k2.7-code", preserve: "deepseek-v4-pro", toggle: "mimo-v2.5", budget: "qwen3.7-max"},
+		{provider: "neuralwatt", auto: "kimi-k2.7-code", preserve: "qwen3.6-35b", budget: "qwen3.5-397b"},
+		{provider: "alibaba-token-plan", preserve: "deepseek-v4-pro", budget: "qwen3.8-max-preview"},
+		{provider: "alibaba-token-plan-intl", preserve: "deepseek-v4-flash", budget: "qwen3.6-plus"},
+	}
+	for _, test := range tests {
+		entry, ok := GetProviderRegistryEntry(test.provider)
+		if !ok {
+			t.Fatalf("provider %q missing", test.provider)
+		}
+		for label, pair := range map[string][2]string{
+			"auto-tool": {test.auto, firstMatch(entry.AutoToolChoiceOnlyModels, test.auto)},
+			"preserve":  {test.preserve, firstMatch(entry.PreserveReasoningContentModels, test.preserve)},
+			"toggle":    {test.toggle, firstMatch(entry.ThinkingToggleModels, test.toggle)},
+			"budget":    {test.budget, firstMatch(entry.ThinkingBudgetModels, test.budget)},
+		} {
+			if pair[0] != "" && pair[1] == "" {
+				t.Errorf("%s %s missing %q", test.provider, label, pair[0])
+			}
+		}
+	}
+
+	kimi, _ := GetProviderRegistryEntry("kimi")
+	kimi.PreserveReasoningContentModels[0] = "mutated"
+	again, _ := GetProviderRegistryEntry("kimi")
+	if slices.Contains(again.PreserveReasoningContentModels, "mutated") {
+		t.Fatal("capability slice leaked from registry")
+	}
+	if biz, ok := GetProviderRegistryEntry("bizrouter"); !ok || biz.DefaultModel != "openai/gpt-5.6-sol" || len(biz.Models) != 3 {
+		t.Fatalf("bizrouter roster mismatch: %#v", biz)
+	}
+}
+
+func firstMatch(values []string, target string) string {
+	if slices.Contains(values, target) {
+		return target
+	}
+	return ""
 }

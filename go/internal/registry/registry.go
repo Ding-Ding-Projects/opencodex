@@ -46,7 +46,7 @@ func p(id, label, adapter, baseURL string, auth AuthKind) Provider {
 	return Provider{ID: id, Label: label, Adapter: adapter, BaseURL: baseURL, AuthKind: auth}
 }
 
-// Providers is the canonical 58-provider registry, in dashboard display order.
+// Providers is the canonical 59-provider registry, in dashboard display order.
 var Providers = func() []Provider {
 	rows := []Provider{
 		p("openai", "OpenAI (Codex login)", "openai-responses", "https://chatgpt.com/backend-api/codex", AuthForward),
@@ -62,6 +62,7 @@ var Providers = func() []Provider {
 		p("neuralwatt", "NeuralWatt", "openai-chat", "https://api.neuralwatt.com/v1", AuthKey),
 		p("openrouter", "OpenRouter", "openai-chat", "https://openrouter.ai/api/v1", AuthKey),
 		p("orcarouter", "OrcaRouter", "openai-chat", "https://api.orcarouter.ai/v1", AuthKey),
+		p("bizrouter", "BizRouter", "openai-chat", "https://api.bizrouter.ai/v1", AuthKey),
 		p("groq", "Groq", "openai-chat", "https://api.groq.com/openai/v1", AuthKey),
 		p("google", "Google Gemini", "google", "https://generativelanguage.googleapis.com", AuthKey),
 		p("google-vertex", "Google Vertex AI", "google", "https://aiplatform.googleapis.com", AuthKey),
@@ -146,6 +147,9 @@ var Providers = func() []Provider {
 			rows[i].DefaultModel = "kimi-k2.7-code"
 		case "neuralwatt":
 			rows[i].DefaultModel = "glm-5.2"
+		case "bizrouter":
+			rows[i].DefaultModel = "openai/gpt-5.6-sol"
+			rows[i].Models = []ModelDefinition{{ID: "openai/gpt-5.6-sol"}, {ID: "anthropic/claude-sonnet-5"}, {ID: "google/gemini-3.5-flash"}}
 		case "google":
 			rows[i].DefaultModel = "gemini-3.5-flash"
 		case "deepseek":
@@ -179,7 +183,7 @@ var Providers = func() []Provider {
 	dashboards := map[string]string{
 		"anthropic-apikey": "https://console.anthropic.com/settings/keys", "openai-apikey": "https://platform.openai.com/api-keys",
 		"umans": "https://app.umans.ai/billing", "opencode-go": "https://opencode.ai/auth", "neuralwatt": "https://portal.neuralwatt.com",
-		"openrouter": "https://openrouter.ai/keys", "orcarouter": "https://www.orcarouter.ai/console", "groq": "https://console.groq.com/keys",
+		"openrouter": "https://openrouter.ai/keys", "orcarouter": "https://www.orcarouter.ai/console", "bizrouter": "https://bizrouter.ai/settings/keys", "groq": "https://console.groq.com/keys",
 		"google": "https://aistudio.google.com/apikey", "google-vertex": "https://console.cloud.google.com/vertex-ai", "google-antigravity": "https://antigravity.google",
 		"azure-openai": "https://portal.azure.com", "deepseek": "https://platform.deepseek.com/api_keys", "cerebras": "https://cloud.cerebras.ai/platform/apikeys",
 		"together": "https://api.together.xyz/settings/api-keys", "fireworks": "https://fireworks.ai/account/api-keys", "firepass": "https://fireworks.ai/account/api-keys",
