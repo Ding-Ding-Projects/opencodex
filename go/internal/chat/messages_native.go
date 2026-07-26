@@ -7,26 +7,70 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
-func (h *MessagesHandler) shouldPassthrough(model *types.ResolvedModel) bool {
-	if h.config.NativeAnthropic != nil {
-		return h.config.NativeAnthropic(model)
-	}
-	provider := strings.ToLower(model.Provider)
-	return provider == "anthropic" || provider == "claude"
+var anthropicPassthroughStripHeaders = map[string]struct{}{
+	"connection": {}, "keep-alive": {}, "transfer-encoding": {}, "upgrade": {}, "te": {}, "trailer": {},
+	"proxy-authenticate": {}, "proxy-authorization": {}, "host": {}, "content-length": {},
+	"accept-encoding": {}, "x-opencodex-api-key": {}, "origin": {},
 }
 
-func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Request, raw []byte, prepared *preparedRequest) bool {
+func (h *MessagesHandler) nativeAnthropicRequest(request *http.Request, raw []byte) ([]byte, string, bool) {
+	if request == nil || !hasAnthropicNativeCredential(request.Header) {
+		return nil, "", false
+	}
+	var body map[string]any
+	if json.Unmarshal(raw, &body) != nil {
+		return nil, "", false
+	}
+	model, _ := body["model"].(string)
+	model = claude.StripOneMillionMarker(strings.TrimSpace(model))
+	if route := claude.ExtractRouteDirective(body); route != "" {
+		model = claude.StripOneMillionMarker(route)
+	}
+	lower := strings.ToLower(model)
+	if (!strings.HasPrefix(lower, "claude") && !strings.HasPrefix(lower, "anthropic")) ||
+		claude.ResolveInboundModel(model, h.config.claudeInboundConfig()) != model {
+		return nil, "", false
+	}
+	if h.config.NativeAnthropic != nil && !h.config.NativeAnthropic(&types.ResolvedModel{Provider: "anthropic", Model: model}) {
+		return nil, "", false
+	}
+	body["model"] = model
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return nil, "", false
+	}
+	return encoded, model, true
+}
+
+func hasAnthropicNativeCredential(header http.Header) bool {
+	bearer := ""
+	if fields := strings.Fields(header.Get("Authorization")); len(fields) == 2 && strings.EqualFold(fields[0], "bearer") {
+		bearer = fields[1]
+	}
+	return strings.HasPrefix(bearer, "sk-ant-") || strings.HasPrefix(strings.TrimSpace(header.Get("x-api-key")), "sk-ant-")
+}
+
+func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Request, raw []byte, model, pathname string) bool {
 	var body map[string]any
 	if json.Unmarshal(raw, &body) != nil {
 		writeAnthropicError(w, 400, "invalid request body")
 		return false
 	}
-	body["model"] = prepared.resolved.Model
+	body["model"] = model
+	if messages, ok := body["messages"].([]any); ok {
+		if err := anthropic.NormalizeAnthropicImages(messages); err != nil {
+			writeAnthropicError(w, http.StatusBadRequest, err.Error())
+			return false
+		}
+		anthropic.EnforceAnthropicImageLimits(messages)
+	}
 	payload, _ := json.Marshal(body)
-	endpoint, err := nativeMessagesURL(prepared.transport.BaseURL)
+	endpoint, err := nativeAnthropicURL(h.config.NativeAnthropicBaseURL, pathname, r.URL.RawQuery)
 	if err != nil {
 		writeAnthropicError(w, 502, err.Error())
 		return false
@@ -37,25 +81,15 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 		return false
 	}
 	request.Header.Set("Content-Type", "application/json")
-	for _, name := range []string{"anthropic-version", "anthropic-beta", "accept"} {
-		if value := r.Header.Get(name); value != "" {
-			request.Header.Set(name, value)
+	for name, values := range r.Header {
+		if _, blocked := anthropicPassthroughStripHeaders[strings.ToLower(name)]; blocked {
+			continue
+		}
+		for _, value := range values {
+			request.Header.Add(name, value)
 		}
 	}
-	for name, value := range prepared.transport.Headers {
-		request.Header.Set(name, value)
-	}
-	if prepared.auth != nil {
-		for name, value := range prepared.auth.Headers {
-			request.Header.Set(name, value)
-		}
-		if prepared.auth.APIKey != "" {
-			request.Header.Set("x-api-key", prepared.auth.APIKey)
-		}
-		if prepared.auth.AccessToken != "" {
-			request.Header.Set("Authorization", "Bearer "+prepared.auth.AccessToken)
-		}
-	}
+	request.Header.Set("Content-Type", "application/json")
 	result := DoWithHeaderDeadline(r.Context(), h.config.Client, request, h.config.ConnectTimeout)
 	if result.TimedOut {
 		writeAnthropicError(w, http.StatusGatewayTimeout, "anthropic passthrough timed out waiting for response headers")
@@ -77,7 +111,8 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
-	if prepared.normalized.Stream && strings.Contains(contentType, "text/event-stream") {
+	stream, _ := body["stream"].(bool)
+	if stream && strings.Contains(contentType, "text/event-stream") {
 		w.WriteHeader(response.StatusCode)
 		err := WriteAnthropicPassthroughStream(r.Context(), w, response.Body, h.config.BodyStall, h.config.ResponseLimit, nil)
 		return err == nil && response.StatusCode >= 200 && response.StatusCode < 300
@@ -101,15 +136,23 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 	return response.StatusCode >= 200 && response.StatusCode < 300
 }
 
-func nativeMessagesURL(base string) (string, error) {
+func nativeAnthropicURL(base, pathname, rawQuery string) (string, error) {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base == "" {
+		base = "https://api.anthropic.com"
+	}
 	parsed, err := url.Parse(base)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("invalid Anthropic base URL %q", base)
 	}
-	if strings.HasSuffix(base, "/v1/messages") {
-		return base, nil
+	if pathname == "" {
+		pathname = "/v1/messages"
 	}
 	base = strings.TrimSuffix(base, "/v1")
-	return base + "/v1/messages", nil
+	base = strings.TrimSuffix(base, "/v1/messages")
+	endpoint := base + pathname
+	if rawQuery != "" {
+		endpoint += "?" + rawQuery
+	}
+	return endpoint, nil
 }

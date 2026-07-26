@@ -48,6 +48,14 @@ func (h *CountTokensHandler) Handle(w http.ResponseWriter, request *http.Request
 	if routed := claude.ExtractRouteDirective(body); routed != "" {
 		model = claude.StripOneMillionMarker(routed)
 	}
+	body["model"] = model
+	if encoded, encodeErr := json.Marshal(body); encodeErr == nil {
+		messages := &MessagesHandler{config: h.config}
+		if nativeBody, nativeModel, ok := messages.nativeAnthropicRequest(request, encoded); ok {
+			messages.nativePassthrough(w, request, nativeBody, nativeModel, "/v1/messages/count_tokens")
+			return
+		}
+	}
 	parts := make([]string, 0, 3)
 	for _, field := range []string{"system", "messages", "tools"} {
 		value, exists := body[field]

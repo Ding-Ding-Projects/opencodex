@@ -108,6 +108,7 @@ func New(config Config) *Server {
 	handlerConfig := baseChatHandlerConfig(config, claudeDebug)
 	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
 		claudeConfig := config.ManagementConfig.ClaudeCode
+		handlerConfig.NativeAnthropicBaseURL = claudeConfig.AnthropicBaseURL
 		handlerConfig.ClaudeEnabled = claudeConfig.Enabled
 		if claudeConfig.BodyStallSec > 0 {
 			handlerConfig.BodyStall = time.Duration(claudeConfig.BodyStallSec) * time.Second
@@ -379,6 +380,19 @@ func baseChatHandlerConfig(config Config, debug *claude.DebugRing) chat.HandlerC
 	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
 		result.ClaudeModelMap = maps.Clone(config.ManagementConfig.ClaudeCode.ModelMap)
 		result.ClaudeBlockedSkills = append([]string(nil), config.ManagementConfig.ClaudeCode.BlockedSkills...)
+	}
+	if config.ManagementConfig != nil {
+		managementConfig := config.ManagementConfig
+		result.SupportedReasoningEfforts = func(model *types.ResolvedModel) []string {
+			if model == nil {
+				return nil
+			}
+			provider, ok := managementConfig.Providers[model.Provider]
+			if !ok {
+				return nil
+			}
+			return appconfig.ConfiguredReasoningEfforts(provider, model.Model)
+		}
 	}
 	return result
 }

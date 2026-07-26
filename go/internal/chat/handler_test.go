@@ -560,7 +560,7 @@ func TestMessagesHandlerWiresMetadataPromptCacheSessionHeaderOnly(t *testing.T) 
 
 func TestMessagesHandlerNativeAnthropicPassthrough(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != "native-key" {
+		if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != "sk-ant-native-key" {
 			t.Fatalf("request = %s headers=%v", r.URL.Path, r.Header)
 		}
 		payload, _ := io.ReadAll(r.Body)
@@ -571,19 +571,89 @@ func TestMessagesHandlerNativeAnthropicPassthrough(t *testing.T) {
 		_, _ = w.Write([]byte(`{"type":"message","content":[{"type":"text","text":"native"}]}`))
 	}))
 	defer upstream.Close()
-	reg := registry.New(registry.Provider{ID: "anthropic", BaseURL: upstream.URL, DefaultModel: "claude-wire", Models: []registry.ModelDefinition{{ID: "claude-wire"}}})
 	handler := NewMessagesHandler(HandlerConfig{
-		Registry: reg,
-		Auth:     handlerAuth{context: &types.AuthContext{APIKey: "native-key"}},
+		NativeAnthropicBaseURL: upstream.URL,
 		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
-			return handlerAdapter{endpoint: upstream.URL}, nil
+			t.Fatal("native subscription request entered routed adapter resolution")
+			return nil, nil
 		},
 	})
-	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"anthropic/claude-wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("x-api-key", "sk-ant-native-key")
 	response := httptest.NewRecorder()
 	handler.Handle(response, request)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"native"`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMessagesHandlerNativePassthroughRequiresCallerCredentialAndUnclaimedModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) }))
+	defer upstream.Close()
+	reg := registry.New(
+		registry.Provider{ID: "anthropic", BaseURL: upstream.URL, DefaultModel: "claude-wire", Models: []registry.ModelDefinition{{ID: "claude-wire"}}},
+		registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}},
+	)
+	for _, test := range []struct {
+		name     string
+		model    string
+		modelMap map[string]string
+		header   string
+	}{
+		{name: "missing caller credential", model: "anthropic/claude-wire"},
+		{name: "claimed model map", model: "claude-alias", modelMap: map[string]string{"claude-alias": "acme/wire"}, header: "sk-ant-caller"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			routed := false
+			handler := NewMessagesHandler(HandlerConfig{
+				Registry: reg, ClaudeModelMap: test.modelMap, NativeAnthropicBaseURL: "https://native.invalid",
+				ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+					routed = true
+					return handlerAdapter{endpoint: upstream.URL}, nil
+				},
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"`+test.model+`","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+			if test.header != "" {
+				request.Header.Set("Authorization", "Bearer "+test.header)
+			}
+			response := httptest.NewRecorder()
+			handler.Handle(response, request)
+			if response.Code != http.StatusOK || !routed || !strings.Contains(response.Body.String(), "streamed") {
+				t.Fatalf("response=%d routed=%v body=%s", response.Code, routed, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestNativeMessagesAndCountTokensNormalizeImagesBeforeForwarding(t *testing.T) {
+	paths := make(chan string, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		payload, _ := io.ReadAll(request.Body)
+		if !strings.Contains(string(payload), "image omitted") || strings.Contains(string(payload), `"type":"image"`) {
+			t.Errorf("native image pipeline was bypassed: %s", payload)
+		}
+		paths <- request.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(request.URL.Path, "count_tokens") {
+			_, _ = io.WriteString(w, `{"input_tokens":7}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"type":"message","content":[{"type":"text","text":"native"}]}`)
+	}))
+	defer upstream.Close()
+	config := HandlerConfig{NativeAnthropicBaseURL: upstream.URL}
+	body := `{"model":"claude-wire","max_tokens":10,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"not-base64"}}]}]}`
+	for _, run := range []func(http.ResponseWriter, *http.Request){NewMessagesHandler(config).Handle, NewCountTokensHandler(config).Handle} {
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer sk-ant-subscription")
+		response := httptest.NewRecorder()
+		run(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("native response=%d %s", response.Code, response.Body.String())
+		}
+	}
+	if first, second := <-paths, <-paths; first != "/v1/messages" || second != "/v1/messages/count_tokens" {
+		t.Fatalf("native paths=%q, %q", first, second)
 	}
 }
 

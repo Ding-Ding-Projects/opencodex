@@ -30,24 +30,26 @@ type AdapterResolver func(model *types.ResolvedModel, transport *types.Transport
 
 // HandlerConfig supplies the existing routing and transport owners to compatibility handlers.
 type HandlerConfig struct {
-	Registry            types.Registry
-	Combos              *combos.Resolver
-	Auth                types.AuthProvider
-	ResolveAdapter      AdapterResolver
-	Client              *http.Client
-	BodyLimit           int64
-	ResponseLimit       int64
-	Compactor           types.CompactionHandler
-	NativeAnthropic     func(*types.ResolvedModel) bool
-	NativeCompact       func(*types.ResolvedModel) bool
-	ConnectTimeout      time.Duration
-	BodyStall           time.Duration
-	ClaudeEnabled       *bool
-	ClaudeDebug         *claude.DebugRing
-	ClaudeModelMap      map[string]string
-	ClaudeBlockedSkills []string
-	SearchLoop          *search.Loop
-	OnUsage             func(*types.Usage)
+	Registry                  types.Registry
+	Combos                    *combos.Resolver
+	Auth                      types.AuthProvider
+	ResolveAdapter            AdapterResolver
+	Client                    *http.Client
+	BodyLimit                 int64
+	ResponseLimit             int64
+	Compactor                 types.CompactionHandler
+	NativeAnthropic           func(*types.ResolvedModel) bool
+	NativeAnthropicBaseURL    string
+	NativeCompact             func(*types.ResolvedModel) bool
+	SupportedReasoningEfforts func(*types.ResolvedModel) []string
+	ConnectTimeout            time.Duration
+	BodyStall                 time.Duration
+	ClaudeEnabled             *bool
+	ClaudeDebug               *claude.DebugRing
+	ClaudeModelMap            map[string]string
+	ClaudeBlockedSkills       []string
+	SearchLoop                *search.Loop
+	OnUsage                   func(*types.Usage)
 }
 
 func (c HandlerConfig) runSearch(ctx context.Context, prepared *preparedRequest) ([]types.AdapterEvent, bool, error) {
@@ -144,6 +146,15 @@ func (c HandlerConfig) claudeInboundConfig() *claude.InboundConfig {
 	return &claude.InboundConfig{ModelMap: c.ClaudeModelMap, BlockedSkills: c.ClaudeBlockedSkills}
 }
 
+func (c HandlerConfig) applyReasoningSafety(prepared *preparedRequest) {
+	if prepared == nil || prepared.normalized == nil || prepared.normalized.Options.Reasoning == "" || c.SupportedReasoningEfforts == nil {
+		return
+	}
+	if efforts := c.SupportedReasoningEfforts(prepared.resolved); efforts != nil && len(efforts) == 0 {
+		prepared.normalized.Options.Reasoning = ""
+	}
+}
+
 type Handler struct{ config HandlerConfig }
 
 var _ types.RouteHandler = (*Handler)(nil)
@@ -170,6 +181,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeChatErrorFor(w, err)
 		return
 	}
+	h.config.applyReasoningSafety(prepared)
 	if events, handled, err := h.config.runSearch(r.Context(), prepared); handled {
 		if err != nil {
 			writeChatError(w, http.StatusBadGateway, err.Error())

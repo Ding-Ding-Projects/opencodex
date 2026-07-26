@@ -40,6 +40,10 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.config.ClaudeDebug.Capture("messages", debugBody, resolved, r.Header.Get("anthropic-beta"))
 		}
 	}
+	if nativeBody, nativeModel, ok := h.nativeAnthropicRequest(r, raw); ok {
+		h.nativePassthrough(w, r, nativeBody, nativeModel, "/v1/messages")
+		return
+	}
 	translation, err := claude.TranslateAnthropicRequest(raw, h.config.claudeInboundConfig())
 	if err != nil {
 		writeAnthropicError(w, 400, err.Error())
@@ -66,15 +70,10 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicErrorFor(w, err)
 		return
 	}
-	if h.shouldPassthrough(prepared.resolved) {
-		if !h.nativePassthrough(w, r, raw, prepared) {
-			recordDesktopError()
-		}
-		return
-	}
 	internal := *normalized
 	internal.Stream = true
 	prepared.normalized = &internal
+	h.config.applyReasoningSafety(prepared)
 	if events, handled, err := h.config.runSearch(r.Context(), prepared); handled {
 		if err != nil {
 			recordDesktopError()
