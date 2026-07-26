@@ -333,7 +333,7 @@ func TestQuotaClaudeAndRuntimeBackendsMutateThroughManagementAPI(t *testing.T) {
 	quota := codex.NewQuotaStore()
 	quota.Update("work", 42, 1000, 11, 2000, nil)
 	providerQuotas := &cliProviderQuotas{config: &cfg, quota: quota, now: time.Now}
-	claudeRuntime := newClaudeRuntime(&cfg, home)
+	claudeRuntime := newClaudeRuntime(&cfg, home, nil, nil)
 	runtimeControl := newRuntimeControl(&cfg)
 	updateStarted := make(chan struct{})
 	restartStarted := make(chan struct{})

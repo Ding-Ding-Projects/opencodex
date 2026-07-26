@@ -71,6 +71,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	if err != nil {
 		return err
 	}
+	configuredPort := cfg.Port
 	if *hostOverride != "" {
 		cfg.Host = *hostOverride
 	}
@@ -95,6 +96,9 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	}
 	if token == "" {
 		token = runtimeCfg.AuthToken
+	}
+	if err := validateServeAuth(runtimeCfg, token); err != nil {
+		return err
 	}
 	configHome, err := configDir()
 	if err != nil {
@@ -127,18 +131,24 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	liveAuth := &configBackedAuth{config: cfg, store: credentialStore, resolver: auth}
 	codexAuthManagement := newCodexAuthManagement(cfg, loadedConfigPath, credentialStore, sharedQuotaStore, providerClient)
 	providerQuotas := &cliProviderQuotas{config: cfg, quota: sharedQuotaStore, codexAuth: codexAuthManagement, now: time.Now}
-	claudeRuntime := newClaudeRuntime(cfg, configHome)
+	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient)
 	runtimeControl := newRuntimeControl(cfg)
 	apiStop := func() {
 		teardownOwnedGrokFence(streams)
 		stop.Stop()
 	}
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop})
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop})
 	selectedPort := cfg.Port
 	if cfg.Port > 0 {
 		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, cfg.Port, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
 		if err != nil {
 			return err
+		}
+	}
+	if server.ShouldPersistSelectedPort(configuredPort, selectedPort, cfg.Port) {
+		cfg.Port = selectedPort
+		if err := config.Save(loadedConfigPath, cfg); err != nil {
+			return fmt.Errorf("persist selected port: %w", err)
 		}
 	}
 	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
@@ -160,6 +170,14 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		go func() { _ = applyGrokFence(ctx, cfg, actualPort, cfg.Host, false, streams) }()
 	}
 	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart)
+}
+
+func validateServeAuth(cfg config.Config, token string) error {
+	keys := make([]string, 0, len(cfg.APIKeys))
+	for _, key := range cfg.APIKeys {
+		keys = append(keys, key.Key)
+	}
+	return server.AssertServerAuthConfig(server.MiddlewareConfig{Hostname: cfg.Host, Token: token, APIKeys: keys})
 }
 
 func configuredComboProviders(reg *registry.ProviderRegistry, cfg config.Config) map[string]combos.Provider {

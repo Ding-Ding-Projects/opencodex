@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
+	"github.com/lidge-jun/opencodex-go/internal/types"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
 
@@ -70,20 +72,22 @@ type cliClaudeRuntime struct {
 	config     *config.Config
 	configHome string
 	claudeHome string
+	registry   types.Registry
+	client     *http.Client
 }
 
 var _ management.ClaudeCodeRuntime = (*cliClaudeRuntime)(nil)
 
-func newClaudeRuntime(cfg *config.Config, configHome string) *cliClaudeRuntime {
+func newClaudeRuntime(cfg *config.Config, configHome string, registry types.Registry, client *http.Client) *cliClaudeRuntime {
 	claudeHome := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
 	if claudeHome == "" {
 		home, _ := os.UserHomeDir()
 		claudeHome = filepath.Join(home, ".claude")
 	}
-	return &cliClaudeRuntime{config: cfg, configHome: configHome, claudeHome: claudeHome}
+	return &cliClaudeRuntime{config: cfg, configHome: configHome, claudeHome: claudeHome, registry: registry, client: client}
 }
 
-func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(_ context.Context) error {
+func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(ctx context.Context) error {
 	path := filepath.Join(r.configHome, "claude-env.sh")
 	if r.config.ClaudeCode == nil || !r.config.ClaudeCode.SystemEnv || r.config.ClaudeCode.Enabled != nil && !*r.config.ClaudeCode.Enabled {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -105,13 +109,9 @@ func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(_ context.Context) error {
 	} else if r.config.ClaudeCode.AuthMode == "proxy" {
 		lines = append(lines, `[ -z "${ANTHROPIC_AUTH_TOKEN+x}" ] && export ANTHROPIC_AUTH_TOKEN='opencodex-proxy'`)
 	}
-	windows := make(map[string]int)
-	for provider, configured := range r.config.Providers {
-		for model, window := range configured.ModelContextWindows {
-			windows[provider+"/"+model] = window
-			windows[model] = window
-		}
-	}
+	windows, _ := claude.BoundedContextWindows(ctx, 3*time.Second, func(context.Context) (map[string]int, error) {
+		return runtimeClaudeContextWindows(*r.config, r.registry), nil
+	})
 	tiers := claude.ClaudeTierModels{}
 	if configured := r.config.ClaudeCode.TierModels; configured != nil {
 		tiers = claude.ClaudeTierModels{Opus: configured.Opus, Sonnet: configured.Sonnet, Haiku: configured.Haiku, Fable: configured.Fable}
@@ -151,11 +151,34 @@ func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(_ context.Context) error {
 	if err := os.MkdirAll(r.configHome, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	_, _ = claude.RefreshGatewayModelCacheFromProxy(ctx, r.client, port, 3*time.Second, r.claudeHome)
+	return nil
 }
 
 func shellEnvValue(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func runtimeClaudeContextWindows(cfg config.Config, registry types.Registry) map[string]int {
+	var listed []types.ModelEntry
+	if registry != nil {
+		listed = registry.ListModels()
+	}
+	models := codex.FilterVisibleRuntimeModels(listed, cfg)
+	native := make(map[string]int)
+	routed := make([]claude.ContextModel, 0, len(models))
+	for _, model := range models {
+		id := strings.TrimPrefix(model.ID, model.Provider+"/")
+		if model.Provider == "openai" && !strings.Contains(model.ID, "/") {
+			native[model.ID] = model.ContextWindow
+			continue
+		}
+		routed = append(routed, claude.ContextModel{Provider: model.Provider, ID: id, ContextWindow: model.ContextWindow})
+	}
+	return claude.BuildClaudeContextWindows(native, routed)
 }
 
 func (r *cliClaudeRuntime) SyncClaudeAgentDefinitions(_ context.Context) error {

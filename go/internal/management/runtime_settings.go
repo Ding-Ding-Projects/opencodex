@@ -1,13 +1,17 @@
 package management
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 func (a *API) handleRuntimeSettings(w http.ResponseWriter, r *http.Request) bool {
@@ -23,7 +27,7 @@ func (a *API) handleRuntimeSettings(w http.ResponseWriter, r *http.Request) bool
 		}
 	case "/api/claude-code":
 		if r.Method == http.MethodGet {
-			a.getClaudeCode(w)
+			a.getClaudeCode(w, r)
 			return true
 		}
 		if r.Method == http.MethodPut {
@@ -143,8 +147,9 @@ type claudeAlias struct {
 	DisplayName string `json:"display_name"`
 }
 
-func (a *API) getClaudeCode(w http.ResponseWriter) {
+func (a *API) getClaudeCode(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
+	fullConfig := *a.config
 	cfg := cloneClaudeConfig(a.config.ClaudeCode)
 	fastMode := a.config.FastMode
 	port := a.config.Port
@@ -154,21 +159,27 @@ func (a *API) getClaudeCode(w http.ResponseWriter) {
 	}
 	available := a.availableModels()
 	aliases := make([]claudeAlias, 0, len(available))
-	windows := map[string]int{}
+	windows, _ := claude.BoundedContextWindows(r.Context(), 3*time.Second, func(context.Context) (map[string]int, error) {
+		return managementClaudeContextWindows(fullConfig, a.registry), nil
+	})
 	if a.registry != nil {
 		for _, m := range a.registry.ListModels() {
-			slug := m.Provider + "/" + m.ID
 			alias := m.ID
 			if !(m.Provider == "anthropic" && strings.HasPrefix(m.ID, "claude-")) && m.Provider != "" && !strings.Contains(m.Provider, "--") && !strings.Contains(m.Provider, "/") && !strings.Contains(m.ID, "/") {
 				alias = "claude-ocx-" + m.Provider + "--" + m.ID
 			}
 			aliases = append(aliases, claudeAlias{ID: alias, DisplayName: m.ID + " (" + m.Provider + ")"})
-			if m.ContextWindow > 0 {
-				windows[slug] = m.ContextWindow
-				windows[alias] = m.ContextWindow
-			}
 		}
 	}
+	tiers := claude.ClaudeTierModels{}
+	if cfg.TierModels != nil {
+		tiers = claude.ClaudeTierModels{Opus: cfg.TierModels.Opus, Sonnet: cfg.TierModels.Sonnet, Haiku: cfg.TierModels.Haiku, Fable: cfg.TierModels.Fable}
+	}
+	auto := claude.ResolveAutoContext(&claude.ContextConfig{AutoContext: cfg.AutoContext, AutoCompactWindow: cfg.AutoCompactWindow, MaxContextTokens: cfg.MaxContextTokens}, "")
+	modelEnv := claude.EffectiveModelEnv(&claude.ModelEnvConfig{
+		ContextConfig: claude.ContextConfig{AutoContext: cfg.AutoContext, AutoCompactWindow: cfg.AutoCompactWindow, MaxContextTokens: cfg.MaxContextTokens},
+		Model:         cfg.Model, SmallFastModel: cfg.SmallFastModel, TierModels: tiers,
+	}, windows, &auto)
 	fields := orderedJSONObject{{name: "enabled", value: cfg.Enabled == nil || *cfg.Enabled}, {name: "authMode", value: func() string {
 		if cfg.AuthMode == "proxy" {
 			return "proxy"
@@ -184,8 +195,27 @@ func (a *API) getClaudeCode(w http.ResponseWriter) {
 	if fastMode != nil {
 		fields = append(fields, orderedJSONField{name: "fastMode", value: *fastMode})
 	}
-	fields = append(fields, orderedJSONField{name: "contextWindows", value: windows}, orderedJSONField{name: "effectiveModelEnv", value: map[string]any{}}, orderedJSONField{name: "available", value: available}, orderedJSONField{name: "aliases", value: aliases}, orderedJSONField{name: "port", value: port})
+	fields = append(fields, orderedJSONField{name: "contextWindows", value: windows}, orderedJSONField{name: "effectiveModelEnv", value: modelEnv}, orderedJSONField{name: "available", value: available}, orderedJSONField{name: "aliases", value: aliases}, orderedJSONField{name: "port", value: port})
 	writeJSON(w, 200, fields)
+}
+
+func managementClaudeContextWindows(cfg config.Config, registry types.Registry) map[string]int {
+	var listed []types.ModelEntry
+	if registry != nil {
+		listed = registry.ListModels()
+	}
+	models := codex.FilterVisibleRuntimeModels(listed, cfg)
+	native := make(map[string]int)
+	routed := make([]claude.ContextModel, 0, len(models))
+	for _, model := range models {
+		id := strings.TrimPrefix(model.ID, model.Provider+"/")
+		if model.Provider == "openai" && !strings.Contains(model.ID, "/") {
+			native[model.ID] = model.ContextWindow
+			continue
+		}
+		routed = append(routed, claude.ContextModel{Provider: model.Provider, ID: id, ContextWindow: model.ContextWindow})
+	}
+	return claude.BuildClaudeContextWindows(native, routed)
 }
 
 func (a *API) putClaudeCode(w http.ResponseWriter, r *http.Request) {

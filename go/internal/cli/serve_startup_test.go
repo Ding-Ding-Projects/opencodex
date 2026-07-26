@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/server"
 )
 
@@ -32,5 +33,17 @@ func TestServeListenerStartsServingBeforePostListenWork(t *testing.T) {
 	}
 	if err := serveListener(httpServer, server.NewLifecycle(), listener, stop, afterStart); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidateServeAuthRejectsUnauthenticatedRemoteBind(t *testing.T) {
+	cfg := config.Default()
+	cfg.Host = "0.0.0.0"
+	if err := validateServeAuth(cfg, ""); err == nil {
+		t.Fatal("remote bind without an admission secret was accepted")
+	}
+	cfg.APIKeys = []config.ProxyAPIKey{{ID: "key", Key: "ocx_remote"}}
+	if err := validateServeAuth(cfg, ""); err != nil {
+		t.Fatalf("remote bind with an API key rejected: %v", err)
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
@@ -29,6 +31,9 @@ func runClaude(ctx context.Context, args []string, streams IO) error {
 		host = "127.0.0.1"
 	}
 	baseURL := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
+	if _, err := claude.RefreshGatewayModelCacheFromProxy(ctx, nil, port, 3*time.Second, ""); err != nil && streams.Err != nil {
+		fmt.Fprintln(streams.Err, "Warning: Claude gateway model cache could not be refreshed; the model picker may be stale:", err)
+	}
 	var command *exec.Cmd
 	if runtime.GOOS == "windows" {
 		command = platform.WindowsCommand("claude", args...)
