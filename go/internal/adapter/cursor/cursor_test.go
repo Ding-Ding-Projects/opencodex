@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -249,6 +250,37 @@ func TestBuildAgentRunRequest(t *testing.T) {
 	}
 	if len(fields) != 1 || fields[0].Number != 1 {
 		t.Fatalf("client wire fields = %#v", fields)
+	}
+}
+
+func TestBuildAgentRunRequestCarriesNormalizeSchemasAndCompactionUsageControls(t *testing.T) {
+	req := &types.NormalizedRequest{
+		ModelID: "cursor/gpt-5.6-sol", CompactionRequest: true,
+		Context: types.RequestContext{
+			Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"run: pwd"`)}},
+			Tools: []types.Tool{{Name: ShellCommandTool, Parameters: map[string]any{
+				"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "custom": map[string]any{"type": "boolean"}},
+				"required": []any{"command"},
+			}}},
+		},
+	}
+	built, err := BuildAgentRunRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !built.Run.ContextUsageReset || !built.Run.DisableContextUsageStore {
+		t.Fatalf("compaction controls = reset:%v disableStore:%v", built.Run.ContextUsageReset, built.Run.DisableContextUsageStore)
+	}
+	schema := built.Run.ToolSchemas[ShellCommandTool]
+	if schema == nil || schema["properties"].(map[string]any)["custom"] == nil {
+		t.Fatalf("normalize schema = %#v", schema)
+	}
+	options := eventParserOptionsForRun(built.Run)
+	if options.ToolSchemas[ShellCommandTool]["properties"].(map[string]any)["custom"] == nil {
+		t.Fatalf("event parser schema = %#v", options.ToolSchemas)
+	}
+	if built.Run.Action.UserMessage == nil || !strings.Contains(built.Run.Action.UserMessage.Text, CursorShellAliasUserHint) {
+		t.Fatalf("active prompt = %#v", built.Run.Action)
 	}
 }
 

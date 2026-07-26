@@ -26,6 +26,7 @@ type AdapterConfig struct {
 	HeartbeatInterval time.Duration
 	MaxFrameSize      int
 	Interaction       InteractionHandler
+	NativeExecutor    *NativeExecutor
 }
 
 // Adapter bridges Cursor's bidirectional Connect stream into the common
@@ -93,7 +94,7 @@ func (a *Adapter) BuildRequest(ctx context.Context, request *types.NormalizedReq
 	turnCtx, cancel := context.WithCancel(ctx)
 	parserOptions := eventParserOptionsForRun(built.Run)
 	if a.usage != nil {
-		controls := a.usage.ControlsForConversation(built.Run.ConversationID, false, true)
+		controls := a.usage.ControlsForConversation(built.Run.ConversationID, built.Run.ContextUsageReset, !built.Run.DisableContextUsageStore)
 		parserOptions.CarryForwardTokens = controls.CarryForwardTokens
 		parserOptions.RecordContextTokens = controls.RecordContextTokens
 	}
@@ -238,6 +239,28 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 			}
 			if err := turn.writePayload(reply); err != nil {
 				return fmt.Errorf("write Cursor KV reply: %w", err)
+			}
+			continue
+		case ServerExec:
+			if a.config.NativeExecutor == nil {
+				continue
+			}
+			execRequest, decodeErr := UnmarshalExecServerMessage(server.Payload)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			execRequest.ClientToolDefinitions = turn.run.Tools
+			for _, execResponse := range a.config.NativeExecutor.Execute(ctx, execRequest) {
+				reply, marshalErr := MarshalExecClientMessage(execResponse)
+				if marshalErr != nil {
+					return marshalErr
+				}
+				if writeErr := turn.writePayload(reply); writeErr != nil {
+					return fmt.Errorf("write Cursor native exec reply: %w", writeErr)
+				}
+			}
+			if err := emit(types.AdapterEvent{Type: types.EventHeartbeat}); err != nil {
+				return err
 			}
 			continue
 		}

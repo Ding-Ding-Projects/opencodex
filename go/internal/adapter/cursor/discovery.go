@@ -17,6 +17,19 @@ import (
 
 const cursorModelsPath = "/agent.v1.AgentService/GetUsableModels"
 
+const CursorDefaultContextWindow = 128_000
+
+var canonicalCursorEffortSuffixes = map[string]struct{}{
+	"minimal": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {},
+}
+
+type CursorModelInfo struct {
+	ID                      string
+	ContextWindow           int
+	SupportsReasoningEffort bool
+	InputModalities         []string
+}
+
 var staticModelIDs = []string{
 	"auto", "auto-cost", "auto-balance", "auto-intelligence",
 	"claude-sonnet-5", "claude-4-sonnet", "claude-4-sonnet-1m", "claude-4.5-haiku", "claude-4.5-sonnet", "claude-4.5-opus", "claude-4.6-opus", "claude-4.6-sonnet", "claude-opus-4-7", "claude-opus-4-7-fast", "claude-opus-4-8", "claude-opus-5", "claude-fable-5",
@@ -30,6 +43,89 @@ func StaticModels() []types.ModelEntry {
 		models = append(models, types.ModelEntry{ID: id, Provider: "cursor", DisplayName: id, ContextWindow: inferContextWindow(id), ReasoningEfforts: effortLadder(id)})
 	}
 	return models
+}
+
+func NormalizeCursorModels(models []CursorModelInfo) []CursorModelInfo {
+	byID := make(map[string]CursorModelInfo, len(models))
+	for _, model := range models {
+		model.ID = strings.TrimSpace(model.ID)
+		if model.ID == "" {
+			continue
+		}
+		if _, exists := byID[model.ID]; exists {
+			continue
+		}
+		if model.ContextWindow <= 0 {
+			model.ContextWindow = inferContextWindow(model.ID)
+		}
+		model.InputModalities = normalizeCursorModalities(model.InputModalities)
+		byID[model.ID] = model
+	}
+	out := make([]CursorModelInfo, 0, len(byID))
+	for _, model := range byID {
+		out = append(out, model)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func IsCursorModelAvailableForAccount(modelID string, liveIDs []string) bool {
+	for _, raw := range liveIDs {
+		liveID := strings.TrimPrefix(strings.TrimSpace(raw), "cursor-")
+		if liveID == modelID {
+			return true
+		}
+		prefix := modelID + "-"
+		if !strings.HasPrefix(liveID, prefix) {
+			continue
+		}
+		if _, canonical := canonicalCursorEffortSuffixes[strings.TrimPrefix(liveID, prefix)]; canonical {
+			return true
+		}
+	}
+	return false
+}
+
+func FilterCursorConfiguredModelsByLiveDiscovery(configured []CursorModelInfo, liveIDs []string) []CursorModelInfo {
+	out := make([]CursorModelInfo, 0, len(configured))
+	for _, model := range configured {
+		if IsCursorRouterModelID(model.ID) || IsCursorModelAvailableForAccount(model.ID, liveIDs) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
+func IsCursorRouterModelID(modelID string) bool {
+	switch strings.TrimPrefix(modelID, "cursor/") {
+	case "auto", "auto-cost", "auto-balance", "auto-intelligence":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCursorModalities(input []string) []string {
+	if len(input) == 0 {
+		return []string{"text", "image"}
+	}
+	seen := make(map[string]struct{}, len(input))
+	out := make([]string, 0, len(input))
+	for _, item := range input {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		return []string{"text", "image"}
+	}
+	return out
 }
 
 func DiscoverModels(ctx context.Context, client *http.Client, baseURL, token string) ([]string, error) {
@@ -156,7 +252,7 @@ func inferContextWindow(id string) int {
 	case strings.Contains(id, "claude"), strings.HasPrefix(id, "auto"):
 		return 200_000
 	default:
-		return 128_000
+		return CursorDefaultContextWindow
 	}
 }
 func effortLadder(id string) []string {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	coretypes "github.com/lidge-jun/opencodex-go/internal/types"
@@ -45,6 +46,72 @@ func TestParseToolChoiceAndNormalizeDisplayName(t *testing.T) {
 	}
 	if got := NormalizeCursorToolName("mcp_opencodex-responses_exec_command"); got != "exec_command" {
 		t.Fatalf("normalized = %q", got)
+	}
+}
+
+func TestParseToolChoiceAcceptsNormalizedAllowedToolsAndDottedAliases(t *testing.T) {
+	choice := ParseToolChoice(json.RawMessage(`{"allowedTools":["github.get_issue"],"mode":"required"}`))
+	if choice.Mode != "allowed" || len(choice.AllowedTools) != 1 {
+		t.Fatalf("choice = %#v", choice)
+	}
+	defs, err := BuildCursorToolDefinitions([]coretypes.Tool{
+		{Namespace: "github", Name: "get_issue"},
+		{Namespace: "github", Name: "list_issues"},
+	}, choice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 1 || defs[0].Name != "github__get_issue" {
+		t.Fatalf("definitions = %#v", defs)
+	}
+}
+
+func TestCursorShellNormalizeSchemaPreservesProviderExtensions(t *testing.T) {
+	tool := coretypes.Tool{Name: ShellCommandTool, Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"cmd": map[string]any{"type": "string"}, "sandbox_permissions": map[string]any{"type": "string"},
+		},
+		"required": []any{"cmd"},
+	}}
+	schema := CursorToolArgNormalizeSchema(tool)
+	properties := schema["properties"].(map[string]any)
+	if _, exists := properties["cmd"]; exists {
+		t.Fatalf("Cursor alias remained canonical: %#v", properties)
+	}
+	if properties["command"] == nil || properties["sandbox_permissions"] == nil {
+		t.Fatalf("normalized properties = %#v", properties)
+	}
+	required := schema["required"].([]any)
+	if len(required) != 1 || required[0] != "command" {
+		t.Fatalf("required = %#v", required)
+	}
+}
+
+func TestCursorGenericToolPromptNarrowsCatalogAndAddsCountHint(t *testing.T) {
+	tools := []coretypes.Tool{
+		{Name: ShellCommandTool},
+		{Name: "tool_search", ToolSearch: true},
+		{Namespace: "github", Name: "get_issue"},
+	}
+	visible := CursorToolsForActivePrompt(tools, "Use any 3 tools", ToolChoice{Mode: "auto"})
+	if len(visible) != 1 || visible[0].Name != ShellCommandTool {
+		t.Fatalf("visible tools = %#v", visible)
+	}
+	hinted := AppendCursorActivePromptHints(visible, "Use any 3 tools")
+	if !strings.Contains(hinted, "exactly 3 separate") {
+		t.Fatalf("hinted prompt = %q", hinted)
+	}
+}
+
+func TestCursorCatalogLimitNoteBoundsNames(t *testing.T) {
+	omitted := make([]string, 20)
+	for index := range omitted {
+		omitted[index] = fmt.Sprintf("tool_%d", index)
+	}
+	note := CursorCatalogLimitNote([]MCPToolDefinition{{Name: "tool_search"}}, omitted)
+	if !strings.Contains(note, "and 8 more") || !strings.Contains(note, "Use tool_search") {
+		t.Fatalf("catalog note = %q", note)
 	}
 }
 

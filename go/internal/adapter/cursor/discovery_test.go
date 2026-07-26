@@ -54,3 +54,26 @@ func TestDiscoverModelsDoesNotRetryAuthenticationFailure(t *testing.T) {
 		t.Fatalf("auth attempts = %d, want 1", attempts.Load())
 	}
 }
+
+func TestNormalizeAndFilterCursorModelsAgainstLiveEffortVariants(t *testing.T) {
+	models := NormalizeCursorModels([]CursorModelInfo{
+		{ID: " gpt-5.6-sol ", SupportsReasoningEffort: true, InputModalities: []string{"text", "image", "text"}},
+		{ID: "auto"},
+		{ID: "missing"},
+		{ID: "gpt-5.6-sol"},
+		{ID: ""},
+	})
+	if len(models) != 3 || models[0].ID != "auto" || models[1].ID != "gpt-5.6-sol" {
+		t.Fatalf("normalized models = %#v", models)
+	}
+	if models[1].ContextWindow != 1_000_000 || len(models[1].InputModalities) != 2 {
+		t.Fatalf("normalized gpt model = %#v", models[1])
+	}
+	filtered := FilterCursorConfiguredModelsByLiveDiscovery(models, []string{"cursor-gpt-5.6-sol-high", "missing-preview"})
+	if len(filtered) != 2 || filtered[0].ID != "auto" || filtered[1].ID != "gpt-5.6-sol" {
+		t.Fatalf("filtered models = %#v", filtered)
+	}
+	if IsCursorModelAvailableForAccount("missing", []string{"missing-preview"}) {
+		t.Fatal("noncanonical suffix admitted configured model")
+	}
+}

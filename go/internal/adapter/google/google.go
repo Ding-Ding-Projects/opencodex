@@ -279,6 +279,7 @@ func (a *Adapter) Do(ctx context.Context, request *http.Request, options RetryOp
 }
 
 func buildGeminiBody(req *types.NormalizedRequest) (map[string]any, error) {
+	visibleTools := googleToolsAllowedByChoice(req.Context.Tools, req.Options.ToolChoice)
 	contents := make([]any, 0, len(req.Context.Messages))
 	for index, message := range req.Context.Messages {
 		wire, err := messageToGemini(message, index)
@@ -291,16 +292,16 @@ func buildGeminiBody(req *types.NormalizedRequest) (map[string]any, error) {
 	}
 	body := map[string]any{"contents": contents}
 	systemParts := append([]string(nil), req.Context.SystemPrompt...)
-	if nudge := googleToolCatalogNudge(req.Context.Tools); nudge != "" {
+	if nudge := googleToolCatalogNudge(visibleTools); nudge != "" {
 		systemParts = append(systemParts, nudge)
 	}
 	systemParts = append(systemParts, googleBrevityInstruction)
 	systemText := strings.Join(systemParts, "\n\n")
 	systemText = strings.Replace(systemText, "You are Codex, a coding agent based on GPT-5.", "You are a coding agent. Do not claim to be GPT-5 or to be made by OpenAI.", 1)
 	body["systemInstruction"] = map[string]any{"parts": []any{map[string]any{"text": systemText}}}
-	if len(req.Context.Tools) > 0 {
-		declarations := make([]any, 0, len(req.Context.Tools))
-		for _, tool := range req.Context.Tools {
+	if len(visibleTools) > 0 {
+		declarations := make([]any, 0, len(visibleTools))
+		for _, tool := range visibleTools {
 			declarations = append(declarations, map[string]any{
 				"name": namespacedToolName(tool.Namespace, tool.Name), "description": tool.Description, "parameters": tool.Parameters,
 			})
@@ -339,7 +340,9 @@ func messageToGemini(message types.Message, index int) (map[string]any, error) {
 		parts := make([]any, 0)
 		switch value := content.(type) {
 		case string:
-			parts = append(parts, map[string]any{"text": value})
+			if value != "" {
+				parts = append(parts, map[string]any{"text": value})
+			}
 		case []any:
 			for _, rawPart := range value {
 				part, ok := rawPart.(map[string]any)
@@ -348,7 +351,7 @@ func messageToGemini(message types.Message, index int) (map[string]any, error) {
 				}
 				switch part["type"] {
 				case "text", "output_text":
-					if text, ok := part["text"].(string); ok {
+					if text, ok := part["text"].(string); ok && text != "" {
 						parts = append(parts, map[string]any{"text": text})
 					}
 				case "toolCall", "tool_call":
@@ -366,10 +369,13 @@ func messageToGemini(message types.Message, index int) (map[string]any, error) {
 				}
 			}
 		}
+		if len(parts) == 0 {
+			return nil, nil
+		}
 		return map[string]any{"role": "model", "parts": parts}, nil
 	case "toolResult", "tool":
-		name := message.ToolName
-		response := map[string]any{"name": name, "response": map[string]any{"result": contentPartsToText(message.Content)}}
+		name := namespacedToolName(message.ToolNamespace, message.ToolName)
+		response := map[string]any{"name": name, "response": map[string]any{"result": geminiToolResultText(message.Content)}}
 		if id := geminiToolCallID(message.ToolCallID); id != "" {
 			response["id"] = id
 		}
@@ -384,6 +390,9 @@ func messageToGemini(message types.Message, index int) (map[string]any, error) {
 func contentToGeminiParts(raw json.RawMessage) ([]any, error) {
 	var text string
 	if json.Unmarshal(raw, &text) == nil {
+		if text == "" {
+			text = "(empty)"
+		}
 		return []any{map[string]any{"text": text}}, nil
 	}
 	var input []map[string]any
@@ -401,9 +410,64 @@ func contentToGeminiParts(raw json.RawMessage) ([]any, error) {
 			}
 			continue
 		}
-		parts = append(parts, map[string]any{"text": firstString(part, "text", "input_text")})
+		if text := firstString(part, "text", "input_text"); text != "" {
+			parts = append(parts, map[string]any{"text": text})
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, map[string]any{"text": "(empty)"})
 	}
 	return parts, nil
+}
+
+func geminiToolResultText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		if text == "" {
+			return "(empty tool output)"
+		}
+		return text
+	}
+	var input []map[string]any
+	if json.Unmarshal(raw, &input) != nil {
+		return "(empty tool output)"
+	}
+	for _, part := range input {
+		if part["type"] == "image" || stringValue(part["text"]) != "" {
+			return contentPartsToText(raw)
+		}
+	}
+	return "(empty tool output)"
+}
+
+func googleToolsAllowedByChoice(tools []types.Tool, raw json.RawMessage) []types.Tool {
+	if len(raw) == 0 {
+		return tools
+	}
+	var choice struct {
+		AllowedTools []string `json:"allowedTools"`
+		AllowedWire  []string `json:"allowed_tools"`
+	}
+	if json.Unmarshal(raw, &choice) != nil {
+		return tools
+	}
+	if len(choice.AllowedTools) == 0 {
+		choice.AllowedTools = choice.AllowedWire
+	}
+	if len(choice.AllowedTools) == 0 {
+		return tools
+	}
+	allowed := make(map[string]struct{}, len(choice.AllowedTools))
+	for _, name := range choice.AllowedTools {
+		allowed[name] = struct{}{}
+	}
+	visible := make([]types.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if types.ToolAllowedByChoice(tool, allowed) {
+			visible = append(visible, tool)
+		}
+	}
+	return visible
 }
 
 func toolResultImageParts(raw json.RawMessage) []any {

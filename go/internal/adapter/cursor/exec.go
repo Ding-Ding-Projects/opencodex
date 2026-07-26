@@ -43,6 +43,8 @@ type ExecRequest struct {
 	Tool         *ToolRequest
 	ComputerUse  *ComputerUseRequest
 	RecordScreen *RecordScreenRequest
+	// ClientToolDefinitions are request-local Responses tools advertised in requestContextResult.
+	ClientToolDefinitions []MCPToolDefinition
 }
 
 type ExecResponse struct {
@@ -77,6 +79,7 @@ func (e *NativeExecutor) Execute(ctx context.Context, req ExecRequest) []ExecRes
 	switch req.Kind {
 	case ExecRequestContext:
 		defs := append([]MCPToolDefinition(nil), e.ClientToolDefinitions...)
+		defs = append(defs, req.ClientToolDefinitions...)
 		if e.Tools != nil {
 			defs = append(defs, e.Tools.Definitions(ctx)...)
 		}

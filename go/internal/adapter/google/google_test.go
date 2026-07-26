@@ -63,6 +63,49 @@ func TestAIStudioBuildRequestCompilesMessagesToolsAndAuth(t *testing.T) {
 	}
 }
 
+func TestGoogleBuildRequestFiltersAllowedToolsAndNormalizesEmptyHistory(t *testing.T) {
+	adapter := &Adapter{Mode: ModeAIStudio, APIKey: "test-key"}
+	req := &types.NormalizedRequest{
+		ModelID: "gemini-3.6-flash",
+		Options: types.RequestOptions{ToolChoice: rawJSON(map[string]any{
+			"mode": "required", "allowedTools": []string{"docs.lookup"},
+		})},
+		Context: types.RequestContext{
+			Messages: []types.Message{
+				{Role: "user", Content: rawJSON("")},
+				{Role: "assistant", Content: rawJSON([]any{map[string]any{"type": "text", "text": ""}})},
+				{Role: "toolResult", ToolCallID: "call_1", ToolNamespace: "docs", ToolName: "lookup", Content: rawJSON([]any{map[string]any{"type": "text", "text": ""}})},
+			},
+			Tools: []types.Tool{
+				{Namespace: "docs", Name: "lookup", Parameters: map[string]any{"type": "object"}},
+				{Namespace: "git", Name: "status", Parameters: map[string]any{"type": "object"}},
+			},
+		},
+	}
+	httpReq, err := adapter.BuildRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	decodeRequestBody(t, httpReq.Body, &body)
+	declarations := body["tools"].([]any)[0].(map[string]any)["functionDeclarations"].([]any)
+	if len(declarations) != 1 || declarations[0].(map[string]any)["name"] != "docs__lookup" {
+		t.Fatalf("allowed tool filter failed: %#v", declarations)
+	}
+	contents := body["contents"].([]any)
+	if len(contents) != 2 {
+		t.Fatalf("empty assistant turn was not dropped: %#v", contents)
+	}
+	userText := contents[0].(map[string]any)["parts"].([]any)[0].(map[string]any)["text"]
+	if userText != "(empty)" {
+		t.Fatalf("empty user placeholder = %#v", userText)
+	}
+	functionResponse := contents[1].(map[string]any)["parts"].([]any)[0].(map[string]any)["functionResponse"].(map[string]any)
+	if functionResponse["name"] != "docs__lookup" || functionResponse["response"].(map[string]any)["result"] != "(empty tool output)" {
+		t.Fatalf("tool result normalization failed: %#v", functionResponse)
+	}
+}
+
 var regexpToolCallID = regexp.MustCompile(`^fc_weird_id_[0-9a-f]{8}$`)
 
 func TestAntigravityBuildRequestWrapsEnvelopeAndVertexSelectsOAuth(t *testing.T) {

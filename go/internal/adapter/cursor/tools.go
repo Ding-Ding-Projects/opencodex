@@ -100,7 +100,7 @@ func cursorToolPriority(tool coretypes.Tool, selected map[string]struct{}, catal
 			return 2
 		}
 	}
-	if tool.Namespace == "" && tool.Name == "tool_search" {
+	if tool.LoadedFromToolSearch {
 		return 3
 	}
 	if tool.Namespace == "" {

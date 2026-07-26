@@ -35,7 +35,9 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 	blobs := map[string][]byte{}
 	serialized := make([]string, 0, len(req.Context.SystemPrompt)+len(req.Context.Messages)+len(req.Context.Tools)+1)
 	choice := ParseToolChoice(req.Options.ToolChoice)
-	tools, omitted, err := budgetTools(req.Context.Tools, choice)
+	lastRole, activeText := lastAction(req.Context.Messages)
+	visibleTools := CursorToolsForActivePrompt(req.Context.Tools, activeText, choice)
+	tools, omitted, err := budgetTools(visibleTools, choice)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +45,11 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 	if len(system) == 0 {
 		system = []string{"You are a helpful assistant."}
 	}
-	if guidance := BuildToolGuidance(req.Context.Tools, choice); guidance != "" {
+	keptTools := toolsMatchingDefinitions(visibleTools, tools)
+	if note := CursorCatalogLimitNote(tools, omitted); note != "" {
+		system = append(system, note)
+	}
+	if guidance := BuildToolGuidance(keptTools, choice); guidance != "" {
 		system = append(system, guidance)
 	}
 	roots, err := buildCursorRoots(blobs, system, req.Context.Messages, externalModel)
@@ -55,11 +61,11 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	lastRole, activeText := lastAction(req.Context.Messages)
 	action := ConversationAction{TimeZone: time.Local.String()}
 	if lastRole == "tool" || strings.TrimSpace(activeText) == "" {
 		action.Resume = true
 	} else {
+		activeText = AppendCursorActivePromptHints(keptTools, activeText)
 		action.UserMessage = &UserMessage{Text: activeText, MessageID: newID()}
 		serialized = append(serialized, activeText)
 	}
@@ -70,14 +76,39 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 	run := AgentRunRequest{
 		ConversationState: ConversationState{RootPromptBlobIDs: roots.IDs, Turns: turns}, Action: action,
 		Model: ModelDetails{ID: modelID, DisplayName: modelID}, Tools: tools,
-		ConversationID:       conversationID,
-		Blobs:                blobs,
-		EstimatedInputTokens: estimatedInputTokens,
+		ConversationID:           conversationID,
+		Blobs:                    blobs,
+		EstimatedInputTokens:     estimatedInputTokens,
+		ToolSchemas:              cursorNormalizeSchemas(keptTools),
+		ContextUsageReset:        req.CompactionRequest || req.CompactionBoundary,
+		DisableContextUsageStore: req.CompactionRequest,
 	}
 	if len(parameters) > 0 {
 		run.RequestedModel = &RequestedModel{ID: modelID, Parameters: parameters}
 	}
 	return &BuiltRequest{Run: run, Blobs: blobs, OmittedTools: omitted, EstimatedInputTokens: estimatedInputTokens}, nil
+}
+
+func toolsMatchingDefinitions(input []types.Tool, definitions []MCPToolDefinition) []types.Tool {
+	wanted := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		wanted[firstNonEmpty(definition.ToolName, definition.Name)] = struct{}{}
+	}
+	out := make([]types.Tool, 0, len(definitions))
+	for _, tool := range input {
+		if _, ok := wanted[wireToolName(tool)]; ok {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+func cursorNormalizeSchemas(tools []types.Tool) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(tools))
+	for _, tool := range tools {
+		out[wireToolName(tool)] = CursorToolArgNormalizeSchema(tool)
+	}
+	return out
 }
 
 func modelVisibleToolText(definition MCPToolDefinition) string {

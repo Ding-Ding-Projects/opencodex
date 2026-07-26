@@ -82,8 +82,10 @@ func ParseToolChoice(raw json.RawMessage) ToolChoice {
 		return ToolChoice{Mode: mode}
 	}
 	var object struct {
-		Type, Name   string
-		AllowedTools []string `json:"allowed_tools"`
+		Type, Mode   string
+		Name         string
+		AllowedTools []string `json:"allowedTools"`
+		AllowedWire  []string `json:"allowed_tools"`
 		Function     struct {
 			Name string `json:"name"`
 		} `json:"function"`
@@ -93,6 +95,12 @@ func ParseToolChoice(raw json.RawMessage) ToolChoice {
 	}
 	if object.Name == "" {
 		object.Name = object.Function.Name
+	}
+	if len(object.AllowedTools) == 0 {
+		object.AllowedTools = object.AllowedWire
+	}
+	if object.Type == "" {
+		object.Type = object.Mode
 	}
 	if len(object.AllowedTools) > 0 {
 		return ToolChoice{Mode: "allowed", AllowedTools: object.AllowedTools}
@@ -171,7 +179,7 @@ func cursorToolChoiceMatches(tool coretypes.Tool, choiceName string, catalog []c
 			return tool.Namespace == "" && IsCodexShellBridgeToolName(tool.Name)
 		}
 	}
-	return choiceName == wireToolName(tool) || choiceName == tool.Name
+	return choiceName == wireToolName(tool) || choiceName == tool.Name || tool.Namespace != "" && choiceName == tool.Namespace+"."+tool.Name
 }
 func NormalizeCursorToolName(name string) string {
 	prefix := "mcp_" + ResponsesToolProvider + "_"
@@ -226,17 +234,18 @@ func BuildToolGuidance(tools []coretypes.Tool, choice ToolChoice) string {
 		name := wireToolName(tool)
 		names = append(names, name)
 		hasExec = hasExec || IsCodexShellBridgeToolName(name)
-		hasPatch = hasPatch || name == ApplyPatchTool
+		hasPatch = hasPatch || tool.Namespace == "" && tool.Name == ApplyPatchTool && tool.Freeform
 	}
 	if len(names) == 0 {
 		return ""
 	}
-	parts := []string{"Cursor tool calls: available tool names are exactly `" + strings.Join(names, "`, `") + "`.", "Call only those exact names with their listed argument keys."}
+	parts := []string{"Cursor tool calls: available tool names are exactly `" + strings.Join(names, "`, `") + "`.", "Use the current tool catalog as ground truth and call only those exact names with their listed argument keys."}
 	if hasExec {
 		parts = append(parts, "`shell_command` and `exec_command` are aliases for the Codex Responses shell bridge, not external MCP server tools; call whichever name this turn lists.")
 	}
 	if hasPatch {
 		parts = append(parts, "Use `apply_patch` for file edits instead of built-in file mutation tools.")
 	}
+	parts = append(parts, "Do not count or report a tool call unless a tool result was actually returned.")
 	return strings.Join(parts, " ")
 }

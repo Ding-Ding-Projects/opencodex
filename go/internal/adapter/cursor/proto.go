@@ -11,14 +11,17 @@ import (
 // These are the small, stable subset of agent.v1 used by the Cursor adapter.
 // Keeping the wire encoder here avoids carrying the 15k-line generated schema.
 type AgentRunRequest struct {
-	ConversationState    ConversationState
-	Action               ConversationAction
-	Model                ModelDetails
-	RequestedModel       *RequestedModel
-	Tools                []MCPToolDefinition
-	ConversationID       string
-	Blobs                map[string][]byte // local KV payloads; not encoded in AgentRunRequest
-	EstimatedInputTokens int               // request-local estimate; not encoded in AgentRunRequest
+	ConversationState        ConversationState
+	Action                   ConversationAction
+	Model                    ModelDetails
+	RequestedModel           *RequestedModel
+	Tools                    []MCPToolDefinition
+	ConversationID           string
+	Blobs                    map[string][]byte         // local KV payloads; not encoded in AgentRunRequest
+	EstimatedInputTokens     int                       // request-local estimate; not encoded in AgentRunRequest
+	ToolSchemas              map[string]map[string]any // Responses-side schemas for returned argument normalization
+	ContextUsageReset        bool
+	DisableContextUsageStore bool
 }
 
 type ConversationState struct {
@@ -53,6 +56,7 @@ type ServerMessageKind uint8
 const (
 	ServerUnknown ServerMessageKind = iota
 	ServerInteractionUpdate
+	ServerExec
 	ServerKV
 	ServerCheckpoint
 	ServerInteractionQuery
@@ -149,6 +153,8 @@ func UnmarshalAgentServerMessage(data []byte) (AgentServerMessage, error) {
 		switch field.Number {
 		case 1:
 			return AgentServerMessage{Kind: ServerInteractionUpdate, Payload: field.Bytes}, nil
+		case 2:
+			return AgentServerMessage{Kind: ServerExec, Payload: field.Bytes}, nil
 		case 3:
 			return AgentServerMessage{Kind: ServerCheckpoint, Payload: field.Bytes}, nil
 		case 4:

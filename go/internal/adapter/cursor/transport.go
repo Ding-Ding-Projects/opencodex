@@ -32,6 +32,7 @@ type TransportConfig struct {
 	HeartbeatInterval                        time.Duration
 	MaxFrameSize                             int
 	InteractionHandler                       InteractionHandler
+	NativeExecutor                           *NativeExecutor
 }
 
 type LiveTransport struct {
@@ -208,7 +209,7 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 	}
 	parserOptions := eventParserOptionsForRun(run)
 	if t.usage != nil {
-		controls := t.usage.ControlsForConversation(run.ConversationID, false, true)
+		controls := t.usage.ControlsForConversation(run.ConversationID, run.ContextUsageReset, !run.DisableContextUsageStore)
 		parserOptions.CarryForwardTokens = controls.CarryForwardTokens
 		parserOptions.RecordContextTokens = controls.RecordContextTokens
 	}
@@ -303,6 +304,26 @@ func (t *LiveTransport) Run(ctx context.Context, run AgentRunRequest, emit func(
 			}
 			continue
 		}
+		if server.Kind == ServerExec {
+			if t.config.NativeExecutor == nil {
+				continue
+			}
+			execRequest, err := UnmarshalExecServerMessage(server.Payload)
+			if err != nil {
+				return err
+			}
+			execRequest.ClientToolDefinitions = run.Tools
+			for _, execResponse := range t.config.NativeExecutor.Execute(ctx, execRequest) {
+				reply, err := MarshalExecClientMessage(execResponse)
+				if err != nil {
+					return err
+				}
+				if err := t.SendClient(reply); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		if server.Kind == ServerKV {
 			reply, err := marshalKVReply(server.Payload, run.Blobs)
 			if err != nil {
@@ -334,6 +355,10 @@ func eventParserOptionsForRun(run AgentRunRequest) EventParserOptions {
 	for _, definition := range run.Tools {
 		name := firstNonEmpty(definition.ToolName, definition.Name)
 		options.ClientToolNames = append(options.ClientToolNames, name)
+		if schema := run.ToolSchemas[name]; schema != nil {
+			options.ToolSchemas[name] = schema
+			continue
+		}
 		if IsCodexShellBridgeToolName(name) {
 			options.ToolSchemas[name] = CodexShellBridgeArgNormalizeSchema
 			continue
