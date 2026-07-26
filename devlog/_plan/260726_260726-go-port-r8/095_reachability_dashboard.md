@@ -1,6 +1,6 @@
 # Go port production reachability dashboard
 
-Audit baseline: `dev2-go` through `ddb5f765`, compared with TypeScript `origin/dev` at `b4485706724f`. This is the repository-level status document; the detailed Claude history remains in [`go/internal/claude/PRODUCTION_REACHABILITY.md`](../../../go/internal/claude/PRODUCTION_REACHABILITY.md).
+Audit baseline: `dev2-go` through `d2ddae6b`, compared with TypeScript `origin/dev` at `b4485706724f`. This is the repository-level status document; the detailed Claude history remains in [`go/internal/claude/PRODUCTION_REACHABILITY.md`](../../../go/internal/claude/PRODUCTION_REACHABILITY.md).
 
 ## Completion standard
 
@@ -18,8 +18,8 @@ Inventory command: `go list ./internal/...`. Denominator: **33 packages**.
 
 | Stage | Packages | Share |
 | --- | ---: | ---: |
-| **S3 — activation locked** | **25** | **75.8%** |
-| **S2 — production reachable, incompletely locked** | **5** | **15.2%** |
+| **S3 — activation locked** | **29** | **87.9%** |
+| **S2 — production reachable, incompletely locked** | **1** | **3.0%** |
 | **S1 — ported but not production reachable** | **3** | **9.1%** |
 
 Contract-only packages are counted at S3 only when production consumers and external contract tests cover their variants (`internal/types`). Unimported generated/duplicate contracts remain S1 (`internal/adapter/cursor/gen`, `internal/generated`, and the duplicate root router).
@@ -30,27 +30,31 @@ Contract-only packages are counted at S3 only when production consumers and exte
 
 ### S2 work split
 
-The binary product-report answer is: **1 of the 5 S2 packages is the aggregate CLI surface; 4 still need substantive behavioral parity work.** All previously caller-only packages are now production-root activation locked.
+The binary product-report answer is: **the sole S2 package is the aggregate CLI surface.** Codex, providers, server, and update are now production-root activation locked; CLI still has three assembly blockers.
 
 | Remaining work class | Count | Packages | Meaning |
 | --- | ---: | --- | --- |
-| Caller wiring only | **0** | — | Vertex ADC, OAuth guardian, Darwin system-env, and concrete Windows tray callers are activated. |
-| Activation/consolidation only | **1** | `internal/cli` | The aggregate executable remains S2 while its codex/providers/server/update production roots are incomplete. |
-| Substantive parity work | **4** | `internal/codex`, `internal/providers`, `internal/server`, `internal/update` | Current production behavior omits or diverges from a TS-live policy; code changes plus production-root activation are required. |
+| Caller wiring only | **1** | `internal/cli` | The aggregate executable remains S2 pending update lifecycle deps, server port config, and quota composition. |
+| Activation/consolidation only | **0** | — | All formerly activation-only packages are locked through a production root. |
+| Substantive parity work | **0** | — | No package remains in S2 for a package-local behavioral parity gap. |
 
 ### Activation/consolidation round disposition
 
-The score is now **S3 25/33 (75.8%)** after `bbf44d91`, `8e10dbd6`, `2a28dd5b`, `b9e0531b`, and `d61cd63e`. Cursor, OpenAI adapter, config, service, Google, lib, OAuth, platform, tray, and chat all have committed production-root activation evidence. The remaining S2 packages are CLI, codex, providers, server, and update.
+The score is now **S3 29/33 (87.9%)** after the earlier activation round plus `58d283d4`, `c501fbf4`, `b76ef642`, `dcbd01b0`, and `d2ddae6b`. Codex, providers, server, and update now have committed production-root activation evidence. The only remaining S2 package is CLI.
 
 | Package | Current result | Exact S3 blocker / owner handoff |
 | --- | --- | --- |
 | `internal/adapter/cursor` | **Promoted to S3.** | `TestProductionResponsesRouteConsumesCursorConnectStream`; CLI native-exec tests lock fail-closed/explicit policy plus MCP/Desktop dispatch. |
 | `internal/adapter/kiro` | **Promoted to S3.** | `protocol_test.TestProductionKiroRouteActivatesSmithySuccessAndCorruption` drives valid and CRC-corrupt event streams through the real Responses handler and Kiro adapter, asserting text success and structured terminal failure. |
 | `internal/adapter/openai` | **Promoted to S3.** | `TestProductionResponsesRouteAbortsOpenAIBacklog` crosses the queue bound, observes upstream body cancellation, and proves handler release. |
-| `internal/cli` | Crash guard, sidecars, startup-health SWR, ADC, OAuth guardian, Darwin environment, tray/service lifecycle, quota, and persistent update jobs have CLI-root activation. | CLI remains S2 only as the aggregate caller for unfinished codex/providers/server/update behavior. |
+| `internal/cli` | Crash guard, sidecars, startup-health SWR, ADC, OAuth guardian, Darwin environment, tray/service lifecycle, quota, and persistent update jobs have CLI-root activation. | CLI remains S2 pending exactly three assembly items: update lifecycle deps, server port config, and quota composition. |
+| `internal/codex` | **Promoted to S3 in `58d283d4`.** | `TestProductionOpenAIPoolForwardsPhysicalAccountID` enters through `server.New` and `/v1/responses`, resolves the OAuth account pool, and asserts the upstream pool bearer token plus physical `chatgpt-account-id`. |
 | `internal/config` | **Promoted to S3.** | Dead `InstallCrashGuard` is deleted; `cli:TestDispatchGuardedPersistsRedactedCrash` locks canonical `lib.RunGuarded`. |
+| `internal/providers` | **Promoted to S3 in `c501fbf4`.** | `TestProductionServerActivatesProviderRoutingPolicies` locks virtual-model reasoning, Google mode, and context caps through real `/v1/responses` and `/v1/models`; `TestProductionProviderQuotaRouteUsesCanonicalParsersAndCache` locks Claude/Kimi projections and cache reuse through `/api/provider-quotas`. |
 | `internal/registry` | **Promoted to S3.** Dead API-key pool, catalog/cache, tier/virtual-model, and Codex router owners are removed; quota remains production-live. | `test/parity:TestCanonicalCodexRouterAffinityAndRateLimitFailover` activates canonical thread affinity, Retry-After cooldown, affinity eviction, and failover. |
 | `internal/service` | **Promoted to S3.** | Injected-manager `runService` tests lock switch ordering, persisted state, status/uninstall, and fail-closed replacement. |
+| `internal/server` | **Promoted to S3 in `d2ddae6b`.** | `TestProductionServerRejectsRemoteBindWithoutAdmissionSecret`, `TestProductionComboChildStripsParentEntityHeaders`, `TestProductionResponsesUsesResolvedStallTimeout`, and `TestProductionServerPersistsSelectedPreferredPort` lock admission, child headers, resolved timeout, and port persistence through `New` and the real Responses handler. |
+| `internal/update` | **Promoted to S3 in `b76ef642` + `dcbd01b0`.** | `TestProductionManagementUpdateActivatesLifecyclePolicies` enters through `/api/update/run` and `/api/update/status`, locking conflict completion, integrity preflight, tray handoff, service/direct restart planning, port refusal, stable-health failure, restoration, and persisted terminal status. |
 
 Caller-only closure is complete: `TestProductionVertexRouteAcquiresADCWhenCredentialIsOmitted`, `TestActivateTokenGuardianStartsAndStopsProductionLifecycle`, `TestDarwinSystemEnvProductionLifecycleInstallsAndRestores`, and `TestRunTrayActivatesConcreteWindowsStatusLifecycle` lock Google/lib, OAuth, platform, and tray respectively.
 
@@ -69,16 +73,17 @@ The canonical behavior is already characterized more deeply by `internal/codex/r
 
 ### Remaining S2 execution packets
 
-Activation/consolidation closure is committed for Cursor, OpenAI adapter, config, and service. The CLI aggregate remains S2 only because codex/providers/server/update roots are still incomplete; ADC, guardian, Darwin environment, and Windows tray/service activation are no longer blockers.
+Activation/consolidation closure is committed for Codex, providers, server, update, Cursor, OpenAI adapter, config, and service. The CLI aggregate is the sole S2 package.
 
-Behavioral-parity owners:
+Completed owners and remaining assembly handoff:
 
 - **Chat — completed (`d61cd63e`):** no further implementation packet. `TestMessagesHandlerNativePassthroughRequiresCallerCredentialAndUnclaimedModel`, `TestNativeMessagesAndCountTokensNormalizeImagesBeforeForwarding`, `TestMessagesHandlerFoldsProductionStreamForNonStreamingClient`, `TestProductionChatSurfacesForceInternalStreamAndStripUnsupportedReasoning`, and the billing/conflict/overload tests activate the former five gaps through real handlers. B1 should run `go test ./internal/chat -count=1 -race` and treat new failures as regressions, not add a third policy owner.
 - **Protocol — completed (`6804a789`):** no further implementation packet. Production consumers cover bounded bodies, SSE comments, Google retry, and search stalls; `TestProductionKiroRouteActivatesSmithySuccessAndCorruption` locks valid/corrupt Smithy composition. B1 should run `go test ./internal/protocol ./internal/adapter/kiro -count=1 -race` and preserve the current canonical ownership.
-- **Codex:** start with the TS-live auth-context group in `go/internal/claude/DEAD_EXPORT_AUDIT.md`: production must apply account label/headers and strip runtime-only provider fields. Then activate catalog sync/restore plus subagent roster ordering, and finally runtime resolve/persist through CLI startup. Delete wrappers only after the canonical path is named.
-- **Providers — primary owner: CLI/runtime-catalog owner, with B1 only supplying route fixtures.** Execute in dependency order: (1) call `ApplyOpenAIVirtualModel` from the canonical model resolution path and assert a real Responses request sends the resolved wire model and reasoning mode; (2) call `EffectiveGoogleMode` and `ResolveAntigravityEffortWireModel` during Google adapter construction and assert the outgoing Vertex/Antigravity URL, wire model, and effort fields; (3) apply `ApplyProviderContextCap`/`ProviderContextCap` during configured registry/catalog derivation and assert `/v1/models` plus one routed request use the capped context without mutating unrelated providers; (4) connect `NewQuotaTracker`, `ParseClaudeQuotaPayload`, and `ParseKimiQuotaPayload` to the management quota backend, then assert `/api/oauth/quotas` projects representative Claude/Kimi reset and usage values; (5) adjudicate remaining exports in `DEAD_EXPORT_AUDIT.md`, deleting wrappers only after naming and route-locking the equivalent canonical owner. Required gate: `go test ./internal/providers ./internal/cli ./internal/server ./internal/management -count=1 -race` plus the full gate.
-- **Server:** activate startup auth/forwarded-credential validation, selected-port persistence, terminal request-log mapping, forced continuation/combo callback gating, and resolved stall timeout through the built server. Management constructor wrappers may be deleted only after default route registration is proven.
-- **Update:** `planning.go` already contains integrity parsing, service/proxy restart planning, port pinning, and stable-health confirmation, but `JobManager.execute` bypasses them. Add one lifecycle dependency object used by both `Run` and `Start`: preflight integrity must fail before replacement; tray prepare must restore on replacement/restart failure and refresh on success; restart must use `BuildRestartPlan`, reclaim the captured port, and require `ConfirmRestartedProxy`. CLI must populate these dependencies from service/tray/runtime state. Activation must enter management start/status, cover conflict, anomalous integrity, tray-stop failure, service and direct-proxy restart, port refusal, flapping health, and persisted terminal status.
+- **Codex — completed (`58d283d4`):** `TestProductionOpenAIPoolForwardsPhysicalAccountID` locks pooled identity forwarding through the real Responses route.
+- **Providers — completed (`c501fbf4`):** `TestProductionServerActivatesProviderRoutingPolicies` and `TestProductionProviderQuotaRouteUsesCanonicalParsersAndCache` lock routing/model policy plus canonical quota parsing/cache through production HTTP roots.
+- **Server — completed (`d2ddae6b`):** the four `server_policy_activation_test.go` production tests lock remote-bind admission, combo child headers, resolved stall timeout, and preferred-port persistence.
+- **Update — completed (`b76ef642`, `dcbd01b0`):** `TestProductionManagementUpdateActivatesLifecyclePolicies` locks the lifecycle branches through management run/status routes and awaits conflict-job completion.
+- **CLI — remaining:** assemble the landed owners at the executable root by supplying update lifecycle deps, propagating server port config, and composing the provider quota backend. These are the exact three S3 blockers.
 
 ### S1 final disposition
 
@@ -103,26 +108,26 @@ All three S1 packages should be deleted after the named migration proof; none sh
 | `internal/bridge` | **S3** | Responses and search production roots use canonical conversion; server route, usage, terminal/error, reasoning/tool, and differential byte tests activate the observable branches. |
 | `internal/chat` | **S3** | Real Chat/Messages routes lock native Anthropic credential/model eligibility, image normalization and count-tokens passthrough, internal always-stream replay/folding, reasoning capability safety, hosted sidecars/combo continuity, and Anthropic error taxonomy. |
 | `internal/claude` | **S3** | Default Messages, model-discovery, CLI, and management roots call canonical policy; route tests lock ingress/outbound, Desktop, model-info, context composition, and gateway cache lifecycle. |
-| `internal/cli` | **S2** | The executable activation-locks crash/sidecar, health, ADC, guardian, Darwin environment, tray/service, quota, and persistent-job roots. Package-wide S3 now depends only on closing codex/providers/server/update behavioral parity. |
-| `internal/codex` | **S2** | Production auth/catalog/runtime roots exist. Adjudicate the 34 candidates in `DEAD_EXPORT_AUDIT.md`, beginning with auth-context application, catalog sync/restore/subagent roster, and runtime resolve/persist; each TS-live branch needs a CLI/server activation test or canonical duplicate deletion. |
+| `internal/cli` | **S2** | The executable activation-locks crash/sidecar, health, ADC, guardian, Darwin environment, and tray/service roots. Its exact remaining assembly blockers are update lifecycle deps, server port config, and quota composition. |
+| `internal/codex` | **S3** | Commit `58d283d4`; `TestProductionOpenAIPoolForwardsPhysicalAccountID` enters through `server.New` and `/v1/responses`, resolves the OAuth pool credential, and observes the pool bearer token plus physical account ID at the upstream server. |
 | `internal/combos` | **S3** | Responses, Chat Completions, and Messages now receive the resolver. Built Responses failover/round-robin and real chat/messages handler failover tests lock routing, cooldown, usage, and virtual selector behavior. |
 | `internal/config` | **S3** | Load/save, migration, validation, environment resolution, and management mutation are activation-locked; the dead crash-guard duplicate is removed after CLI-root proof of canonical `lib.RunGuarded`. |
 | `internal/generated` | **S1** | The embedded metadata snapshot has no production importer. Canonical metadata currently comes from `providers`/catalog owners; either consume this package there with catalog activation tests or delete it as a stale parallel snapshot. |
 | `internal/grok` | **S3** | CLI serve/service lifecycle calls canonical sync/strip; built differential crash/restart/stop tests lock fencing, byte restoration, malformed input, and atomic replacement. |
 | `internal/lib` | **S3** | CLI-root crash logging, sidecar breadcrumbs, and Vertex ADC fallback activate `RunGuarded`, `DefaultSidecarTracker`, and `GetVertexAccessToken`; focused tests lock redaction, retry, destination, and bounded helper behavior. |
-| `internal/management` | **S3** | Default server mounts `management.API`; strict route/differential tests activate provider/model/key/OAuth/combo/Claude/debug/storage/usage mutations, validation, persistence callbacks, and secret-safe errors. Missing quota/update behavior belongs to the CLI backends implementing its interfaces. |
+| `internal/management` | **S3** | Default server mounts `management.API`; strict route/differential tests activate provider/model/key/OAuth/combo/Claude/debug/storage/usage mutations, validation, persistence callbacks, and secret-safe errors. Provider quota and update lifecycle policies are additionally locked through their real management routes. |
 | `internal/oauth` | **S3** | CLI login/account/runtime reaches stores and provider flows; `TestActivateTokenGuardianStartsAndStopsProductionLifecycle` locks proactive refresh and shutdown ownership, with device-flow, CAS/locking, health, and redaction coverage. |
 | `internal/platform` | **S3** | Process/token/ACL/download and startup-health SWR paths are live; `TestDarwinSystemEnvProductionLifecycleInstallsAndRestores` locks CLI-owned install/uninstall with isolated HOME and fake launchctl. |
 | `internal/protocol` | **S3** | Production adapters consume bounded reads, SSE comments, retry, Smithy decode, and stall watchers. Existing server/search/adapter activation covers bounded failures, keepalive/comments, retry-after, and stalls; `TestProductionKiroRouteActivatesSmithySuccessAndCorruption` adds real-route valid/corrupt Smithy proof. |
-| `internal/providers` | **S2** | Registry and transport consumers are live. Adjudicate the 24 candidates in `DEAD_EXPORT_AUDIT.md`, prioritizing OpenAI virtual models, Google mode/effort, context caps, and quota parsers; route-lock the active owner or consolidate each duplicate. |
+| `internal/providers` | **S3** | Commit `c501fbf4`; `TestProductionServerActivatesProviderRoutingPolicies` locks OpenAI virtual-model reasoning, Google mode, and provider context caps through `/v1/responses` and `/v1/models`, while `TestProductionProviderQuotaRouteUsesCanonicalParsersAndCache` locks Claude/Kimi quota projection and cache reuse through `/api/provider-quotas`. |
 | `internal/registry` | **S3** | CLI management activation-locks `QuotaFetcher.FetchAll`; canonical provider/model/transport derivation is consumed by CLI/server/management. `TestCanonicalCodexRouterAffinityAndRateLimitFailover` locks the codex owner before deletion of the final parallel router. No duplicate state owner remains. |
 | `internal/search` | **S3** | CLI now builds the canonical `BuildSidecarPlan`; production handler tests activate unavailable credentials, explicit backend selection, search execution/usage, image-description policy, and stall-budget propagation. |
-| `internal/server` | **S2** | It is the main production root and its core HTTP/SSE/WebSocket routes are byte-locked. The 17 candidates in `DEAD_EXPORT_AUDIT.md` still require auth/lifecycle, terminal logging, forced continuation/combo callback, port persistence, and stall-timeout adjudication. |
+| `internal/server` | **S3** | Commit `d2ddae6b`; `TestProductionServerRejectsRemoteBindWithoutAdmissionSecret`, `TestProductionComboChildStripsParentEntityHeaders`, `TestProductionResponsesUsesResolvedStallTimeout`, and `TestProductionServerPersistsSelectedPreferredPort` lock constructor admission/persistence and real Responses-route header/timeout effects. |
 | `internal/service` | **S3** | CLI calls canonical service APIs; injected-manager tests activate scheduler→native switch, persisted selection, status/uninstall, and target-install failure with explicit no-service state. |
 | `internal/storage` | **S3** | `GET /api/storage` calls `storage.Scan`; the real management route locks bucket accounting, while SQLite tests lock immutable scanning and sidecar-free failure behavior. |
 | `internal/tray` | **S3** | CLI delegates to `ExecuteAction`; restart/status and `TestRunTrayActivatesConcreteWindowsStatusLifecycle` lock concrete Windows state/heartbeat ownership through an isolated CLI root. |
 | `internal/types` | **S3** | Consumer-locked contract: every data-plane/control-plane package imports these wire types; server/adapter differential, schema, error, usage, reasoning, and event-order tests lock their externally observable variants. No independent state owner exists. |
-| `internal/update` | **S2** | Management now calls `JobManager.Start/Status`, and route tests prove persistence across runtime-control recreation. S3 still requires TS-equivalent preflight integrity, tray prepare/restore, conflict route, service/proxy restart planning, port reclaim, and post-restart stability/health activation. |
+| `internal/update` | **S3** | Commits `b76ef642` and `dcbd01b0`; `TestProductionManagementUpdateActivatesLifecyclePolicies` drives `/api/update/run` and `/api/update/status` to lock conflict, integrity, tray, service/direct restart, port reclaim/refusal, stability, restoration, and persisted terminal-state effects. |
 | `internal/usage` | **S3** | Server finalization records JSONL and management queries it; server/differential tests lock extraction, detail fields, persistence, combo attribution, aggregation, pricing, and surface filtering. |
 | `internal/vision` | **S3** | CLI production factory now enables omitted config, selects active usable Anthropic OAuth, and falls back to OpenAI forward auth. Factory activation tests assert outgoing auth/account headers, zero limits, and omission/fallback behavior. |
 
@@ -159,8 +164,8 @@ All three S1 packages should be deleted after the named migration proof; none sh
 
 - Live family: GitHub release resolver, channel validation, CLI dry-run/checksum selection, and platform atomic replacement.
 - Production-wired family: commit `affdb459` replaced CLI's in-memory jobs with `JobManager.Start/Status`; management tests prove run/status and status recovery after runtime-control recreation.
-- Remaining TS lifecycle gap: integrity preflight, tray handoff/restore, service-vs-proxy restart planning, and post-restart stability confirmation are not represented by the current callback-only executor.
-- This is a production behavior defect, not merely dead export cleanup.
+- Production-activated lifecycle: commits `b76ef642` and `dcbd01b0` add integrity preflight, tray handoff/restore/refresh, service-vs-proxy restart planning, port reclaim, stable-health confirmation, conflict completion, and terminal persistence.
+- `TestProductionManagementUpdateActivatesLifecyclePolicies` locks those effects through management run/status routes. The remaining update work is CLI assembly of the lifecycle dependency object, not an `internal/update` S3 gap.
 
 ### `internal/tray`
 
@@ -182,14 +187,14 @@ All three S1 packages should be deleted after the named migration proof; none sh
 
 ## Priority execution order
 
-1. **P0 update lifecycle:** add integrity, tray handoff, restart planning/reclaim, and stability confirmation to the now-persistent production job.
-2. **P1 codex/providers/server:** close or consolidate the named TS-live dead-export and orchestration gaps.
-3. **S1 cleanup:** migrate the three remaining oracle tests to canonical owners, then delete the duplicate root router and two unimported generated packages.
+1. **P0 CLI assembly:** supply update lifecycle deps, propagate server port config, and compose provider quotas at the executable root.
+2. **S1 cleanup:** migrate the three remaining oracle tests to canonical owners, then delete the duplicate root router and two unimported generated packages.
 
 ## Exact caller handoff signatures
 
-- Update/CLI persistent wiring is complete through `(*update.JobManager).Start` and `Status`. The remaining extension point must carry preflight/tray/restart-health lifecycle rather than adding another state store.
-- Registry quota wiring is complete through `(*registry.QuotaFetcher).FetchAll`; remaining registry work is duplicate-owner consolidation, not another quota caller.
+- Update package wiring is complete through `(*update.JobManager).Start` and `Status`; CLI must now construct its `LifecycleDependencies` from live tray/service/runtime state.
+- Provider quota parsing/cache is complete through `management.ParsedProviderQuotaBackend`; CLI must compose that backend into its management runtime.
+- Server policy activation is complete; CLI must propagate configured/selected/preferred port state and persistence into the production `server.Config`.
 - Service/CLI wiring is complete. Remaining work is a `runService` manager-factory seam used by tests to activate `service.SwitchBackend` through the CLI root without touching the host service manager.
 - Lib/CLI and sidecars: `lib.RunGuarded(string, string, *lib.SidecarTracker, func()) (bool, error)`, `lib.GetVertexAccessToken(context.Context) (string, error)`, and `lib.DefaultSidecarTracker.Enter(string) func()`.
 - Platform/runtime management: `(*platform.StartupHealthCache).GetStaleWhileRevalidate(context.Context, platform.StartupHealthDiagnostics, platform.HealthProbe) platform.StartupHealthDiagnostics` plus `Invalidate()` after relevant mutations.
@@ -197,7 +202,7 @@ All three S1 packages should be deleted after the named migration proof; none sh
 
 ## Next-worker start here
 
-1. Select the highest-priority S2 row and write the production-root activation test first; do not import the suspected helper directly.
-2. Compare the red path to the named current TS owner, including state ownership and failure behavior.
-3. Choose one canonical implementation. If production already has an equivalent owner, consolidate/delete the dead copy instead of wiring both.
-4. Update this table only after the route test turns green and the full Go gate passes.
+1. Close the three `internal/cli` assembly blockers: update lifecycle deps, server port config, and quota composition.
+2. Enter through the executable root and assert each externally visible effect; do not import the package helper directly.
+3. Preserve the landed codex/providers/server/update owners instead of adding parallel policy implementations.
+4. Update this table only after the CLI-root activation tests turn green and the full Go gate passes.
