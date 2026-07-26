@@ -135,6 +135,9 @@ func chatRequestBodyForProvider(req *types.NormalizedRequest, adapter *ChatAdapt
 		modelID = stripBracketedModelSuffix(modelID)
 	}
 	body := map[string]any{"model": modelID, "messages": messages, "stream": req.Stream}
+	if config.ModelInList(provider.ReasoningSplitModels, req.ModelID) {
+		body["reasoning_split"] = true
+	}
 	if routing, ok := resolveChatOpenRouterRouting(adapter, provider, req.ModelID); ok {
 		body["provider"] = routing
 	}

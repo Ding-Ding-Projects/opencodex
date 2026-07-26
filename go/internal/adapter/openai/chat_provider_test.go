@@ -144,7 +144,7 @@ func TestChatStreamMapsFinishReasonAndRawReasoning(t *testing.T) {
 func TestChatAdaptiveThinkingAndUnaryReasoningOrder(t *testing.T) {
 	provider := config.ProviderConfig{
 		BaseURL: "https://api.minimax.io/v1", ThinkingToggleModels: []string{"MiniMax-M3"},
-		ReasoningEffortMap: map[string]string{"high": "adaptive"},
+		ReasoningEffortMap: map[string]string{"high": "adaptive"}, ReasoningSplitModels: []string{"MiniMax-M3"},
 	}
 	req := &types.NormalizedRequest{ModelID: "MiniMax-M3", Options: types.RequestOptions{Reasoning: "high"}, Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}}}
 	httpRequest, err := NewChatAdapter(provider, "secret", nil).BuildRequest(context.Background(), req)
@@ -154,6 +154,18 @@ func TestChatAdaptiveThinkingAndUnaryReasoningOrder(t *testing.T) {
 	body := decodeRequestBody(t, httpRequest.Body)
 	if thinking, ok := body["thinking"].(map[string]any); !ok || thinking["type"] != "adaptive" {
 		t.Fatalf("adaptive thinking=%#v", body["thinking"])
+	}
+	if body["reasoning_split"] != true {
+		t.Fatalf("reasoning_split=%#v", body["reasoning_split"])
+	}
+	other := *req
+	other.ModelID = "MiniMax-unlisted"
+	otherRequest, err := NewChatAdapter(provider, "secret", nil).BuildRequest(context.Background(), &other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherBody := decodeRequestBody(t, otherRequest.Body); otherBody["reasoning_split"] != nil {
+		t.Fatalf("unlisted model received reasoning_split: %#v", otherBody)
 	}
 	events, err := (&ChatAdapter{}).ParseUnary(context.Background(), []byte(`{"choices":[{"message":{"content":"answer","reasoning_content":"think"},"finish_reason":"stop"}]}`))
 	if err != nil {
