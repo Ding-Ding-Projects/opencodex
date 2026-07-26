@@ -51,4 +51,6 @@ Primary owner: `internal/bridge`. Producer-contract owner: `internal/adapter/ope
 
 ## Verdict
 
-The package-local Claude port is complete except for the two documented outbound conveniences (WebSearch domain sanitization and timer-driven pings). End-to-end `/v1/messages` parity remains **partial** until the active `internal/chat` translation is deduplicated or brought to parity, and until the CLI/server owners finish the already delegated Desktop command, apply/status endpoint, and request-surface logging wiring.
+The package-local Claude port is complete except for the two documented outbound conveniences (WebSearch domain sanitization and timer-driven pings). End-to-end `/v1/messages` parity remains **partial** because the active `internal/chat` translation bypasses the package implementation. Desktop CLI/management apply/status wiring is now present in the shared worktree, but request-ingress alias resolution, Desktop surface discrimination, and health recording remain unwired.
+
+The production call graph, exact unused-symbol inventory, concrete divergence list, and canonical integration proposal are maintained in [`PRODUCTION_REACHABILITY.md`](PRODUCTION_REACHABILITY.md).
