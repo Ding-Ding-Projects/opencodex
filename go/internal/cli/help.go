@@ -33,7 +33,7 @@ var commandHelp = map[string]string{
 		"  ocx claude desktop export <path|->\n" +
 		"  ocx claude desktop import <path> [--apply]",
 	"debug":   "Usage: ocx debug <status|on|off|stack-on|stack-off>",
-	"service": "Usage: ocx service [install|start|stop|status|uninstall]",
+	"service": "Usage: ocx service [install|start|stop|status|uninstall] [--native|--scheduler]\n\n--native selects the Windows WinSW service backend; --scheduler selects Task Scheduler.",
 	"tray":    "Usage: ocx tray [install|start|stop|restart|status|uninstall|run] [--json] [--no-start]\n\nManage the Windows system tray companion.",
 	"update":  "Usage: ocx update --tag latest|preview [--destination PATH] [--dry-run]\n       ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]\n\nResolve a platform-native GitHub release artifact, verify its SHA-256 manifest, and replace the current binary.",
 }

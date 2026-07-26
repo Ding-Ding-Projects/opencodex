@@ -68,6 +68,29 @@ func TestRestartManagedServiceProceedsPastStopFailure(t *testing.T) {
 	}
 }
 
+func TestServiceNativeBackendBuildsWinSWOptionsAndPersistsChoice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODEX_HOME", filepath.Join(home, "ocx"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	t.Setenv("USERNAME", "jun")
+	t.Setenv("USERDOMAIN", "DEV")
+	options := serviceManagerOptions(service.BackendNative)
+	if options.Backend != service.BackendNative || options.WinSW == nil || options.WinSW.AccountUser != "jun" || options.WinSW.AccountDomain != "DEV" || !strings.HasSuffix(options.WinSW.TokenFile, "service-api-token") {
+		t.Fatalf("native manager options=%#v", options)
+	}
+	if scheduler := serviceManagerOptions(service.BackendScheduler); scheduler.WinSW != nil {
+		t.Fatalf("scheduler unexpectedly received WinSW options: %#v", scheduler)
+	}
+	if err := writeServiceInstallState(service.BackendNative); err != nil {
+		t.Fatal(err)
+	}
+	state := readServiceInstallState()
+	if state == nil || state.Backend != service.BackendNative || state.WinSWVersion != service.WinSWVersion || state.WinSWSHA256 != service.WinSWSHA256 {
+		t.Fatalf("native install state=%#v", state)
+	}
+}
+
 func TestForeignServiceOwnershipPreservesGrokFence(t *testing.T) {
 	home := t.TempDir()
 	ocxHome := t.TempDir()

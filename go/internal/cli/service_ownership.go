@@ -35,14 +35,17 @@ func readServiceInstallState() *service.InstallState {
 	return nil
 }
 
-func writeServiceInstallState() error {
+func writeServiceInstallState(backend service.Backend) error {
 	dir, err := configDir()
 	if err != nil {
 		return err
 	}
 	state := service.InstallState{
 		Version: 2, CodexHome: codexHomePath(), OpenCodexHome: dir,
-		Backend: service.BackendScheduler,
+		Backend: backend,
+	}
+	if backend == service.BackendNative {
+		state.WinSWVersion, state.WinSWSHA256 = service.WinSWVersion, service.WinSWSHA256
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {

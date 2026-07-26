@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -18,31 +20,43 @@ import (
 )
 
 func runService(args []string, streams IO) error {
-	command := "install"
-	if len(args) > 0 {
-		command = args[0]
-		args = args[1:]
-	}
-	if len(args) != 0 {
-		return fmt.Errorf("usage: ocx service [install|start|stop|restart|status|logs|uninstall]")
+	parsed, err := service.ParseArgs(args, runtime.GOOS)
+	if err != nil {
+		return err
 	}
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	manager, err := service.NewManager(serviceConfig(*cfg))
+	installedBackend := service.InstalledBackend(readServiceInstallState())
+	backend := installedBackend
+	if parsed.Command == "install" {
+		backend = parsed.Backend
+		if backend == "" {
+			backend = service.BackendScheduler
+		}
+	}
+	manager, err := serviceManagerForBackend(*cfg, backend)
 	if err != nil {
 		return err
 	}
-	switch command {
+	switch parsed.Command {
 	case "install":
 		if err := prepareServiceToken(*cfg); err != nil {
 			return err
 		}
-		if err := manager.Install(); err != nil {
+		if runtime.GOOS == "windows" && readServiceInstallState() != nil && installedBackend != backend {
+			current, managerErr := serviceManagerForBackend(*cfg, installedBackend)
+			if managerErr != nil {
+				return managerErr
+			}
+			if err := service.SwitchBackend(current, manager); err != nil {
+				return err
+			}
+		} else if err := manager.Install(); err != nil {
 			return err
 		}
-		if err := writeServiceInstallState(); err != nil {
+		if err := writeServiceInstallState(backend); err != nil {
 			return fmt.Errorf("write service install state: %w", err)
 		}
 		fmt.Fprintf(streams.Out, "Service installed and started: %s\n", manager.ArtifactPath())
@@ -104,9 +118,39 @@ func runService(args []string, streams IO) error {
 		_, readErr = streams.Out.Write(data)
 		return readErr
 	default:
-		return fmt.Errorf("unknown service subcommand %q", command)
+		return fmt.Errorf("unknown service subcommand %q", parsed.Command)
 	}
 	return nil
+}
+
+func serviceManagerForBackend(cfg config.Config, backend service.Backend) (service.Manager, error) {
+	return service.NewManagerWithOptions(serviceConfig(cfg), serviceManagerOptions(backend))
+}
+
+func serviceManagerOptions(backend service.Backend) service.ManagerOptions {
+	options := service.ManagerOptions{Backend: backend}
+	if backend != service.BackendNative {
+		return options
+	}
+	dir, _ := configDir()
+	domain := strings.TrimSpace(os.Getenv("USERDOMAIN"))
+	account := strings.TrimSpace(os.Getenv("USERNAME"))
+	if account == "" {
+		if current, err := user.Current(); err == nil {
+			account = current.Username
+		}
+	}
+	if prefix, name, found := strings.Cut(account, `\`); found {
+		if domain == "" {
+			domain = prefix
+		}
+		account = name
+	}
+	options.WinSW = &service.WinSWConfig{
+		ConfigDir: dir, TokenFile: filepath.Join(dir, "service-api-token"),
+		AccountDomain: domain, AccountUser: account,
+	}
+	return options
 }
 
 func restartManagedService(manager service.Manager, host string, port int, streams IO) error {
