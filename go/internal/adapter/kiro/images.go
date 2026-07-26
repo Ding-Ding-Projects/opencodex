@@ -3,6 +3,9 @@ package kiro
 import (
 	"encoding/json"
 	"strings"
+	"sync"
+
+	"github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
 )
 
 type Image struct {
@@ -73,26 +76,72 @@ type imageCarrier struct {
 	Images  []Image
 }
 
-func NormalizeImageCarriers(carriers []*imageCarrier) {
+func NormalizeImageCarriers(carriers []*imageCarrier) error {
 	for _, carrier := range carriers {
 		if len(carrier.Images) > MaxImagesPerMessage {
 			carrier.Images = append([]Image(nil), carrier.Images[len(carrier.Images)-MaxImagesPerMessage:]...)
 			carrier.Content = appendImageNote(carrier.Content, "[image omitted: exceeded the 20-image per-message cap; oldest images in this message were dropped]")
 		}
 	}
-	total := 0
+	type targetRef struct {
+		state   *carrierImageState
+		index   int
+		dropped bool
+	}
+	states := make(map[*imageCarrier]*carrierImageState, len(carriers))
 	for _, carrier := range carriers {
-		for _, image := range carrier.Images {
-			total += len(image.Source.Bytes)
+		states[carrier] = &carrierImageState{carrier: carrier}
+	}
+	refs := make([]*targetRef, 0)
+	targets := make([]anthropic.NormalizeTarget, 0)
+	for _, carrier := range carriers {
+		for index := range carrier.Images {
+			ref := &targetRef{state: states[carrier], index: index}
+			refs = append(refs, ref)
+			image := carrier.Images[index]
+			targets = append(targets, anthropic.NormalizeTarget{
+				Base64: image.Source.Bytes, MediaType: "image/" + image.Format,
+				Replace: func(data, mediaType string) error {
+					ref.state.mu.Lock()
+					defer ref.state.mu.Unlock()
+					format := strings.TrimPrefix(strings.ToLower(mediaType), "image/")
+					if format == "jpg" {
+						format = "jpeg"
+					}
+					ref.state.carrier.Images[ref.index] = Image{Format: format, Source: ImageSource{Bytes: data}}
+					return nil
+				},
+				Drop: func(note string) error {
+					ref.state.mu.Lock()
+					defer ref.state.mu.Unlock()
+					ref.dropped = true
+					ref.state.carrier.Content = appendImageNote(ref.state.carrier.Content, note)
+					return nil
+				},
+			})
 		}
 	}
-	for _, carrier := range carriers {
-		for total > ImageBase64Budget && len(carrier.Images) > 0 {
-			total -= len(carrier.Images[0].Source.Bytes)
-			carrier.Images = carrier.Images[1:]
-			carrier.Content = appendImageNote(carrier.Content, "[image omitted: image budget exceeded; oldest images were dropped]")
-		}
+	if err := anthropic.NormalizeImageTargets(targets, anthropic.NormalizeOptions{
+		Budget: ImageBase64Budget, OverflowAction: anthropic.OverflowDrop,
+	}); err != nil {
+		return err
 	}
+	for _, carrier := range carriers {
+		images := carrier.Images[:0]
+		for _, ref := range refs {
+			if ref.state.carrier != carrier || ref.dropped {
+				continue
+			}
+			images = append(images, carrier.Images[ref.index])
+		}
+		carrier.Images = images
+	}
+	return nil
+}
+
+type carrierImageState struct {
+	carrier *imageCarrier
+	mu      sync.Mutex
 }
 
 func appendImageNote(content, note string) string {

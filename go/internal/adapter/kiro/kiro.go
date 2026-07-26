@@ -303,7 +303,9 @@ func BuildPayload(req *types.NormalizedRequest, profileARN string, forced Comple
 		}
 	}
 	carriers = append(carriers, &imageCarrier{Content: current.Content, Images: current.Images})
-	NormalizeImageCarriers(carriers)
+	if err := NormalizeImageCarriers(carriers); err != nil {
+		return nil, nil, "", "", fmt.Errorf("normalize Kiro images: %w", err)
+	}
 	index := 0
 	for _, item := range turns {
 		if item.kind == "user" {

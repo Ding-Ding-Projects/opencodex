@@ -84,17 +84,19 @@ func TestConvertToolsSanitizesSchemaWithoutDeletingPropertyNames(t *testing.T) {
 	}
 }
 
-func TestImagesCountAndBudgetDropOldest(t *testing.T) {
+func TestImagesCountCapAndUndecodableDrop(t *testing.T) {
 	images := make([]Image, MaxImagesPerMessage+2)
 	for i := range images {
 		images[i] = Image{Format: "jpeg", Source: ImageSource{Bytes: strings.Repeat("x", ImageBase64Budget/MaxImagesPerMessage+1)}}
 	}
 	carrier := &imageCarrier{Images: images}
-	NormalizeImageCarriers([]*imageCarrier{carrier})
-	if len(carrier.Images) >= MaxImagesPerMessage {
-		t.Fatalf("budget/count did not drop images: %d", len(carrier.Images))
+	if err := NormalizeImageCarriers([]*imageCarrier{carrier}); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(carrier.Content, "20-image") || !strings.Contains(carrier.Content, "budget exceeded") {
+	if len(carrier.Images) != 0 {
+		t.Fatalf("undecodable images were retained: %d", len(carrier.Images))
+	}
+	if !strings.Contains(carrier.Content, "20-image") || !strings.Contains(carrier.Content, "undecodable") {
 		t.Fatalf("missing omission notes: %q", carrier.Content)
 	}
 	parsed, ok := ParseDataURLImage("data:image/jpg;base64,YQ==")
@@ -114,10 +116,11 @@ func TestParseEventRejectsMalformedUsage(t *testing.T) {
 }
 
 func TestBuildPayloadConversationAndNativeReasoning(t *testing.T) {
+	const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 	parallel := false
 	req := &types.NormalizedRequest{ModelID: "kiro-gpt-5-6-sol", Metadata: map[string]string{"kiro.conversationId": "thread:123"}, Options: types.RequestOptions{Reasoning: "high", ParallelToolCalls: &parallel}, Context: types.RequestContext{
 		SystemPrompt: []string{"system"},
-		Messages:     []types.Message{{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"hello"},{"type":"image","imageUrl":"data:image/png;base64,YQ=="}]`)}},
+		Messages:     []types.Message{{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"hello"},{"type":"image","imageUrl":"data:image/png;base64,` + pixel + `"}]`)}},
 		Tools:        []types.Tool{{Name: "run", Description: "run it", Parameters: map[string]any{"type": "object"}}},
 	}}
 	payload, _, conversationID, mode, err := BuildPayload(req, "arn:test", "")
@@ -136,7 +139,7 @@ func TestBuildPayloadConversationAndNativeReasoning(t *testing.T) {
 	}
 	encoded, _ := json.Marshal(payload)
 	text := string(encoded)
-	if !strings.Contains(text, `"images":[{"format":"png","source":{"bytes":"YQ=="}}]`) || !strings.Contains(text, CompletionToolName) {
+	if !strings.Contains(text, `"images":[{"format":"png","source":{"bytes":"`+pixel+`"}}]`) || !strings.Contains(text, CompletionToolName) {
 		t.Fatalf("payload=%s", text)
 	}
 }
