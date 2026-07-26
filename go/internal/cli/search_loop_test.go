@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -35,9 +37,20 @@ func TestConfiguredSearchLoopActivatesProductionExecutor(t *testing.T) {
 	if loop == nil || loop.Executor == nil {
 		t.Fatal("default web-search sidecar loop is not wired")
 	}
+	runner, ok := loop.Runner.(search.HTTPRunner)
+	if !ok || runner.Progress.InactivityTimeout != search.DefaultRoutedModelStallTimeoutMS*time.Millisecond || loop.MaxSearches != search.DefaultMaxSearches || loop.HostedTool["type"] != "web_search" {
+		t.Fatalf("canonical sidecar plan was bypassed: loop=%#v runner=%#v", loop, runner)
+	}
 	result, err := loop.Executor.Search(context.Background(), "current facts", nil)
 	if err != nil || strings.TrimSpace(result.Text) != "live answer" {
 		t.Fatalf("search result=%#v err=%v", result, err)
+	}
+}
+
+func TestConfiguredSearchLoopFailsClosedWithoutBackendCredential(t *testing.T) {
+	reg := registry.New(registry.Provider{ID: "openai", BaseURL: "https://example.invalid", DefaultModel: "gpt-5.6-luna", Models: []registry.ModelDefinition{{ID: "gpt-5.6-luna"}}})
+	if loop := configuredSearchLoop(config.Default(), reg, nil, nil); loop != nil {
+		t.Fatalf("credential-less search loop=%#v", loop)
 	}
 }
 

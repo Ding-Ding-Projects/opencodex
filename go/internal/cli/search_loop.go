@@ -36,26 +36,49 @@ func configuredSearchLoop(cfg config.Config, registry types.Registry, auth types
 			settings.Model = override.Model
 		}
 	}
-	if settings.Enabled != nil && !*settings.Enabled {
-		return nil
-	}
 	backend := search.ResolveSidecarBackend(settings.Backend)
 	model := strings.TrimSpace(settings.Model)
-	if model == "" {
+	available := searchBackendAvailable(registry, auth, backend, model)
+	input := search.PlanInput{
+		HostedTool: map[string]any{"type": "web_search"}, Enabled: settings.Enabled,
+		Backend: settings.Backend, Model: model, Reasoning: settings.Reasoning,
+		MaxSearches: settings.MaxSearchesPerTurn, SidecarTimeoutMS: settings.TimeoutMS,
+		RoutedModelStallTimeoutMS: settings.RoutedModelStallTimeoutMS,
+		ConnectTimeoutMS:          cfg.ConnectTimeoutMS, BridgeStallTimeoutSec: cfg.StallTimeoutSec,
+		OpenAIAvailable: backend == "openai" && available, AnthropicAvailable: backend == "anthropic" && available,
+	}
+	loop, _, ok, err := search.BuildSidecarLoop(input, client, func(plan search.SidecarPlan) (search.Executor, error) {
+		return &routedSearchExecutor{registry: registry, auth: auth, client: client, backend: plan.Backend, model: plan.Model, reasoning: plan.Reasoning, timeout: time.Duration(plan.TimeoutMS) * time.Millisecond}, nil
+	})
+	if err != nil || !ok {
+		return nil
+	}
+	return loop
+}
+
+func searchBackendAvailable(registry types.Registry, auth types.AuthProvider, backend, model string) bool {
+	if registry == nil || auth == nil {
+		return false
+	}
+	if strings.TrimSpace(model) == "" {
 		if backend == "anthropic" {
 			model = search.DefaultAnthropicSidecarModel
 		} else {
 			model = search.DefaultOpenAISidecarModel
 		}
 	}
-	timeoutMS := settings.TimeoutMS
-	if timeoutMS <= 0 {
-		timeoutMS = search.DefaultSidecarTimeoutMS
+	resolved, err := registry.ResolveModel(model)
+	if err != nil && backend == "anthropic" && !strings.Contains(model, "/") {
+		resolved, err = registry.ResolveModel("anthropic/" + model)
 	}
-	return &search.Loop{
-		Executor:    &routedSearchExecutor{registry: registry, auth: auth, client: client, backend: backend, model: model, reasoning: settings.Reasoning, timeout: time.Duration(timeoutMS) * time.Millisecond},
-		MaxSearches: settings.MaxSearchesPerTurn,
+	if err != nil || resolved == nil {
+		return false
 	}
+	if projection, ok := auth.(interface{ SearchCredentialAvailable(string) bool }); ok && !projection.SearchCredentialAvailable(resolved.Provider) {
+		return false
+	}
+	_, err = registry.ResolveTransport(resolved.Provider, nil)
+	return err == nil
 }
 
 func (executor *routedSearchExecutor) Search(ctx context.Context, query string, hostedTool map[string]any) (search.Result, error) {

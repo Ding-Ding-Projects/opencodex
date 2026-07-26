@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/config"
@@ -79,4 +80,42 @@ func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID s
 
 func (a *configBackedAuth) RecordOutcome(account string, status types.OutcomeStatus, meta *types.RetryMeta) {
 	a.resolver.RecordOutcome(account, status, meta)
+}
+
+// SearchCredentialAvailable projects sidecar eligibility without selecting or
+// leasing an account. Startup planning must not perturb request-time pool order.
+func (a *configBackedAuth) SearchCredentialAvailable(provider string) bool {
+	if a == nil || a.config == nil || a.store == nil {
+		return false
+	}
+	snapshot, err := config.ResolveEnvironment(*a.config)
+	if err != nil {
+		return false
+	}
+	configured, ok := snapshot.Providers[provider]
+	if !ok || configured.Disabled {
+		return false
+	}
+	authConfig, err := configuredProviderAuth(provider, configured, a.store)
+	if err != nil {
+		return false
+	}
+	switch authConfig.Mode {
+	case oauth.AuthModeAPIKey:
+		return strings.TrimSpace(authConfig.APIKey) != "" || authConfig.KeyOptional
+	case oauth.AuthModeOAuth:
+		set, found, err := a.store.GetAccountSet(provider)
+		if err != nil || !found {
+			return false
+		}
+		for _, account := range set.Accounts {
+			if !authConfig.UsePool && account.ID != set.ActiveAccountID {
+				continue
+			}
+			if !account.NeedsReauth && strings.TrimSpace(account.Credential.Access) != "" && !account.Credential.Expired(time.Now(), time.Minute) {
+				return true
+			}
+		}
+	}
+	return false
 }
