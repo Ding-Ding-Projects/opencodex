@@ -24,6 +24,16 @@ const (
 	PackageName                   = "@bitkyc08/opencodex"
 )
 
+type JobError struct {
+	Message string
+	Status  int
+	Code    string
+}
+
+func (e *JobError) Error() string     { return e.Message }
+func (e *JobError) HTTPStatus() int   { return e.Status }
+func (e *JobError) ErrorCode() string { return e.Code }
+
 type JobStatus string
 
 const (
@@ -213,6 +223,7 @@ type JobManager struct {
 	Store       *JobStore
 	Runner      CommandRunner
 	Execute     func(context.Context, CheckResult) ([]byte, error)
+	Lifecycle   *LifecycleDependencies
 	Now         func() time.Time
 	mu          sync.Mutex
 	RestartHost string
@@ -265,13 +276,13 @@ func (m *JobManager) begin(check CheckResult, restart bool) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !check.CanUpdate {
-		return Job{}, fmt.Errorf("update unavailable: %s", check.Reason)
+		return Job{}, &JobError{Message: fmt.Sprintf("update unavailable: %s", check.Reason), Status: http.StatusConflict, Code: "update_unavailable"}
 	}
 	if m.Store == nil {
 		return Job{}, errors.New("update job store is required")
 	}
 	if current, err := m.Store.Read(); err == nil && (current.Status == JobRunning || current.Status == JobRestarting) {
-		return Job{}, errors.New("an update job is already running")
+		return Job{}, &JobError{Message: "an update job is already running", Status: http.StatusConflict, Code: "update_already_running"}
 	}
 	started := m.currentTime()
 	command := InstallCommand(check.Installer, check.Channel, check.LatestVersion)
@@ -288,6 +299,28 @@ func (m *JobManager) begin(check CheckResult, restart bool) (Job, error) {
 
 func (m *JobManager) execute(ctx context.Context, job Job, check CheckResult, restartFn func(context.Context) error) (Job, error) {
 	now := m.currentTime
+	lifecycle := m.Lifecycle
+	handoff := TrayHandoff{}
+	if lifecycle != nil {
+		if lifecycle.CheckIntegrity != nil {
+			integrity := lifecycle.CheckIntegrity(ctx, check)
+			switch integrity.Status {
+			case IntegrityFailed:
+				return m.finishFailed(job, errors.New(integrity.Reason))
+			case IntegritySkipped:
+				job.Log = append(job.Log, "Integrity pre-flight skipped: "+integrity.Reason)
+			case IntegrityVerified:
+				job.Log = append(job.Log, "Verified package integrity metadata.")
+			}
+		}
+		if lifecycle.PrepareTray != nil {
+			var err error
+			handoff, err = lifecycle.PrepareTray(ctx)
+			if err != nil {
+				return m.finishFailed(job, fmt.Errorf("could not prepare tray before package replacement: %w", err))
+			}
+		}
+	}
 	runner := m.Runner
 	if runner == nil {
 		runner = ExecRunner{}
@@ -310,6 +343,18 @@ func (m *JobManager) execute(ctx context.Context, job Job, check CheckResult, re
 		if errors.As(runErr, &exitError) {
 			code := exitError.ExitCode()
 			job.ExitCode = &code
+		}
+		m.restoreTrayAfterFailure(ctx, lifecycle, handoff, &job)
+	} else if lifecycle != nil {
+		if handoff.RefreshAfterReplacement && lifecycle.RefreshTray != nil {
+			if err := lifecycle.RefreshTray(ctx); err != nil {
+				job.Log = append(job.Log, "Tray refresh failed: "+err.Error())
+			}
+		}
+		if job.Restart {
+			resultErr = m.restartWithLifecycle(ctx, &job, check, lifecycle, handoff)
+		} else {
+			job.Status = JobSucceeded
 		}
 	} else if job.Restart && restartFn != nil {
 		job.Status = JobRestarting
@@ -344,6 +389,70 @@ func (m *JobManager) execute(ctx context.Context, job Job, check CheckResult, re
 		return job, err
 	}
 	return job, resultErr
+}
+
+func (m *JobManager) restartWithLifecycle(ctx context.Context, job *Job, check CheckResult, lifecycle *LifecycleDependencies, handoff TrayHandoff) error {
+	job.Status = JobRestarting
+	job.UpdatedAt = m.currentTime().UTC()
+	_ = m.Store.Write(*job)
+	host := lifecycle.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if lifecycle.Port > 0 {
+		reclaim := lifecycle.ReclaimPort
+		if reclaim == nil {
+			reclaim = func(ctx context.Context, host string, port int) bool {
+				return server.ReclaimListenPort(ctx, host, port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second})
+			}
+		}
+		if !reclaim(ctx, host, lifecycle.Port) {
+			err := fmt.Errorf("listen port %d did not become available", lifecycle.Port)
+			job.Status, job.Error = JobFailed, err.Error()
+			m.restoreTrayAfterFailure(ctx, lifecycle, handoff, job)
+			return err
+		}
+	}
+	plan := BuildRestartPlan(check.Installer, lifecycle.RuntimeExecutable, lifecycle.Launcher, lifecycle.ServiceInstalled, lifecycle.Port, lifecycle.ServiceArgs)
+	if lifecycle.Restart == nil {
+		err := errors.New("update restart dependency is required")
+		job.Status, job.Error = JobFailed, err.Error()
+		m.restoreTrayAfterFailure(ctx, lifecycle, handoff, job)
+		return err
+	}
+	if err := lifecycle.Restart(ctx, plan); err != nil {
+		job.Status, job.Error = JobFailed, err.Error()
+		m.restoreTrayAfterFailure(ctx, lifecycle, handoff, job)
+		return err
+	}
+	if !ConfirmRestartedProxy(ctx, lifecycle.Probe, lifecycle.StartupTimeout, lifecycle.StabilityWindow, lifecycle.ProbeInterval) {
+		err := fmt.Errorf("proxy restart did not remain healthy on %s:%d", host, lifecycle.Port)
+		job.Status, job.Error = JobFailed, err.Error()
+		m.restoreTrayAfterFailure(ctx, lifecycle, handoff, job)
+		return err
+	}
+	job.Status = JobSucceeded
+	job.Restarted = true
+	return nil
+}
+
+func (m *JobManager) restoreTrayAfterFailure(ctx context.Context, lifecycle *LifecycleDependencies, handoff TrayHandoff, job *Job) {
+	if lifecycle == nil || !handoff.RestoreOnFailure || lifecycle.RestoreTray == nil {
+		return
+	}
+	if err := lifecycle.RestoreTray(ctx); err != nil {
+		job.Log = append(job.Log, "Tray restore failed: "+err.Error())
+	}
+}
+
+func (m *JobManager) finishFailed(job Job, err error) (Job, error) {
+	job.Status = JobFailed
+	job.Error = err.Error()
+	job.UpdatedAt = m.currentTime().UTC()
+	if writeErr := m.Store.Write(job); writeErr != nil {
+		return job, writeErr
+	}
+	return job, err
 }
 
 func (m *JobManager) currentTime() time.Time {

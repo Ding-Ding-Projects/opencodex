@@ -71,6 +71,36 @@ type IntegrityResult struct {
 	Reason    string
 }
 
+// TrayHandoff records the tray state captured before package replacement.
+// LifecycleDependencies owns the platform operations; JobManager owns their
+// ordering and persisted outcome.
+type TrayHandoff struct {
+	RestoreOnFailure        bool
+	RefreshAfterReplacement bool
+}
+
+// LifecycleDependencies injects the host-specific update lifecycle used by
+// both synchronous Run and background Start jobs.
+type LifecycleDependencies struct {
+	CheckIntegrity func(context.Context, CheckResult) IntegrityResult
+	PrepareTray    func(context.Context) (TrayHandoff, error)
+	RestoreTray    func(context.Context) error
+	RefreshTray    func(context.Context) error
+
+	RuntimeExecutable string
+	Launcher          string
+	ServiceInstalled  bool
+	ServiceArgs       []string
+	Host              string
+	Port              int
+	ReclaimPort       func(context.Context, string, int) bool
+	Restart           func(context.Context, RestartPlan) error
+	Probe             func(context.Context) bool
+	StartupTimeout    time.Duration
+	StabilityWindow   time.Duration
+	ProbeInterval     time.Duration
+}
+
 // ParseIntegrityResult separates transient registry lookup failures from
 // successful queries that return anomalous integrity metadata.
 func ParseIntegrityResult(version, output string, queryErr error) IntegrityResult {

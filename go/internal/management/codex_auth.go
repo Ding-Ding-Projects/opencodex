@@ -377,5 +377,26 @@ func writeBackendError(w http.ResponseWriter, err error, fallback string) {
 		writeError(w, status, message)
 		return
 	}
+	var statusError interface {
+		error
+		HTTPStatus() int
+		ErrorCode() string
+	}
+	if errors.As(err, &statusError) {
+		status := statusError.HTTPStatus()
+		if status < 400 || status > 599 {
+			status = http.StatusInternalServerError
+		}
+		message := config.RedactString(statusError.Error())
+		if message == "" {
+			message = fallback
+		}
+		if code := statusError.ErrorCode(); code != "" {
+			writeJSON(w, status, orderedJSONObject{{name: "error", value: message}, {name: "code", value: code}})
+			return
+		}
+		writeError(w, status, message)
+		return
+	}
 	writeError(w, http.StatusInternalServerError, fallback)
 }
