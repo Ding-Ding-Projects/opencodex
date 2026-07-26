@@ -69,33 +69,65 @@ publishing, tags, and `gpt-artifacts/`.
 
 ### 1. Cross-platform retained-archive owner
 
-`scripts/prepare-release-assets.ts` reuses `validateNativeDirectory` and accepts only:
+`scripts/prepare-release-assets.ts` reuses `validateNativeDirectory` and has three
+argument-vector-only modes:
 
 ```text
 bun scripts/prepare-release-assets.ts \
+  prepare \
   --pack pack.json \
   --output <fresh-runner-owned-directory> \
-  --env-file <GITHUB_ENV>
+  --receipt <fresh-receipt-file>
+
+bun scripts/prepare-release-assets.ts \
+  verify \
+  --archive <retained-private-archive> \
+  --sha256 <expected-digest> \
+  --native-dir <freshly-materialized-native-directory>
+
+bun scripts/prepare-release-assets.ts \
+  materialize \
+  --archive <retained-private-archive> \
+  --sha256 <expected-digest> \
+  --output <second-fresh-directory> \
+  --receipt <second-fresh-receipt>
 ```
 
 It validates exactly one safe basename archive, expected package filename/version,
 regular non-symlink archive identity, report size/SHA-1/SHA-512, and a caller-fresh
-non-symlink output path. It computes SHA-256, extracts only `package/bin/native` with
-the system tar implementation, and then requires exactly the canonical six binaries
-plus the checksum manifest through `validateNativeDirectory`. It rechecks the archive
-SHA-256 after extraction and appends newline-safe absolute `TARBALL`,
-`TARBALL_SHA256`, and `RELEASE_NATIVE_DIR` values to the supplied environment file.
-It never runs npm, git, gh, or removes a caller-owned path.
+non-symlink output path. The helper reads the source archive once, validates those
+bytes, and exclusively writes a mode-0600 retained copy inside the fresh output root.
+Every later operation uses that private copy, never the mutable source-tree archive.
+
+The helper never asks tar to write into the filesystem. It first lists archive member
+names and requires each canonical `package/bin/native/<name>` exactly once with no
+extra native member. It then uses `tar -xOzf` via an argument vector to stream each
+expected member, aborting above the pack-report size, and exclusively writes those
+bytes as regular files with canonical modes. Duplicate members concatenate and fail
+the exact size check; traversal/absolute/unexpected names are never selected; symlink
+and hardlink semantics cannot escape because only stdout bytes are consumed. The
+finished directory must pass `validateNativeDirectory`.
+
+`prepare` rechecks the retained copy SHA-256 and exclusively creates an exact three-line
+receipt containing newline-safe absolute `TARBALL`, 64-hex `TARBALL_SHA256`, and
+absolute `RELEASE_NATIVE_DIR`. On failure it removes only helper-created partial paths;
+it never removes a pre-existing caller path. `verify` rechecks the retained regular
+archive and canonical directory immediately before an external mutation. `materialize`
+repeats the stdout-only member materialization from the retained archive into a second
+fresh directory and writes a fresh receipt. It never runs npm, git, or gh. Spawn failures,
+nonzero exits, excess output, and stderr are bounded and surfaced.
 
 Activation matrix:
 
 | Conditional path | Trigger | Observable proof |
 | --- | --- | --- |
 | unsafe/multiple pack result | traversal filename or two results | helper rejects before extraction |
-| archive changed | bytes differ from report or between pre/post extraction reads | digest error; no env receipt |
+| archive changed | bytes differ from report or retained private copy digest | digest error; no receipt |
 | occupied/symlink output | pre-create output or point it at a symlink | helper rejects without deletion |
-| bad native inventory/digest | remove, add, or corrupt one extracted artifact | canonical validator rejects |
-| success | synthetic valid seven-file archive | exact three-key env receipt and seven extracted regular files |
+| malformed archive member | traversal, absolute, duplicate, extra, symlink, or hardlink native entry | no filesystem tar extraction; list/size/digest gate rejects |
+| bad native inventory/digest | remove, add, or corrupt one materialized artifact | canonical validator rejects |
+| between-step mutation | alter retained archive, binary, or manifest after prepare | immediate `verify` rejects before npm/gh |
+| success | synthetic valid seven-file archive | exact receipt, private archive, and seven regular files |
 
 ### 2. Release workflow ordering
 
@@ -104,18 +136,37 @@ The setup-go cache explicitly names `go/go.sum`.
 
 The old combined `Publish (or dry-run)` step becomes:
 
-1. **Build and verify exact release archive** — `build:publish`, exactly one
-   `npm pack --json`, both WP3 verifiers, then the helper above. This step always runs,
-   including dry-run, and contains no release mutation.
-2. **Publish exact tarball** — guarded by `${{ inputs.dry-run != true }}` and runs only
-   `npm publish "$TARBALL" --ignore-scripts --tag "$NPM_DIST_TAG" --access public`.
-3. Existing post-publish registry smoke remains real-publish-only.
-4. Existing release-note/tag step remains real-publish-only. It reconstructs seven
-   explicit paths below `RELEASE_NATIVE_DIR`, checks the retained tarball SHA-256 again,
-   validates all files, and passes the seven quoted paths to `gh release create`.
+1. **Build and retain exact release archive** — `build:publish`, exactly one
+   `npm pack --json`, both WP3 verifiers, then `prepare`. This step always runs,
+   including dry-run, and contains no release mutation. Only the helper-created receipt
+   is appended to `GITHUB_ENV` after exact key/value validation.
+2. **Classify exact recovery state** — the old preflight stops rejecting same-identity
+   public state and records it as a recovery candidate. After packing, read-only
+   npm/GitHub/tag queries classify a
+   version as fresh, exact retry, or conflict. Existing npm is recoverable only when
+   registry `dist.integrity` equals `pack.json` and the requested dist-tag already maps
+   to that version. Existing tags must resolve to `GITHUB_SHA`. An existing release is
+   accepted initially only as present with a same-SHA tag; after notes assembly it must
+   match the expected tag/title/prerelease/body and same-SHA tag exactly or fail.
+3. **Publish exact tarball** — real-publish-only. It runs `verify` immediately first.
+   Fresh state runs `npm publish "$TARBALL" --ignore-scripts ...`; exact state skips npm
+   so a failed later GitHub operation can safely resume without republishing.
+4. Existing post-publish registry smoke remains real-publish-only.
+5. Existing release-note/tag step remains real-publish-only. It materializes a second
+   fresh upload directory from the retained archive, runs `verify` immediately before
+   upload, and passes the seven quoted paths to `gh release create`. On exact retry, it
+   requires byte-identical release metadata, downloads and compares every existing
+   expected asset, keeps exact bytes, and uses `gh release upload --clobber` only for
+   missing or mismatched names. Existing asset names must be a subset of the expected
+   seven before repair and exactly the expected seven afterward. It then downloads all
+   seven assets into a third fresh directory,
+   verifies the canonical inventory/digests, and only then succeeds. Same-SHA tags are
+   reusable; absent tags are created; conflicting tags/releases always fail.
 
 Thus dry-run executes every byte-producing and byte-validating operation, while
-`npm publish`, `git tag`, `git push`, and `gh release create` remain unreachable.
+`npm publish`, `git tag`, `git push`, `gh release create`, and `gh release upload`
+remain unreachable. A real run interrupted after npm, tag, release creation, or a
+partial asset upload is retryable only when every immutable identity matches.
 
 ### 3. CI ownership
 
@@ -128,10 +179,22 @@ Thus dry-run executes every byte-producing and byte-validating operation, while
 ### 4. Tests and source of truth
 
 `tests/prepare-release-assets.test.ts` executes the helper against valid and adversarial
-synthetic archives. `tests/ci-workflows.test.ts` proves exact permissions/action pins,
-required SHA, one-pack ordering, both WP3 verifiers before publish, exact real-publish
-guards, seven explicit GitHub assets, and no mutator in the unconditional build step.
+synthetic archives, including post-prepare archive/asset mutations. `tests/ci-workflows.test.ts`
+proves exact permissions/action pins, required SHA, one-pack ordering, both WP3 verifiers
+before publish, exact real-publish guards, seven explicit GitHub assets, exact-retry
+reconciliation, and no mutator in unconditional/dry-run steps. A fake-command harness
+executes the dry-run decision path and the npm/tag/release/partial-upload retry states,
+asserting the precise zero-or-resume mutation log.
 `structure/06_docs-and-release.md` records the retained-archive and asset contract.
+
+## A round 1 fold-back
+
+The first independent Sol C4 audit returned `VERDICT: FAIL` with four High findings,
+all accepted: mutable source archive identity, missing upload-time canonical validation,
+filesystem tar extraction before validation, and non-retryable partial publication.
+The private copy, stdout-only materialization, immediate verify modes, and exact-state
+reconciliation above are the resulting design replacement. Medium receipt ownership,
+bounded spawning, activation, and cleanup findings are also folded in.
 
 ## Verification
 
