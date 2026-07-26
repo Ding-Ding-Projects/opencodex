@@ -267,12 +267,12 @@ func (r *transientTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("body"))}, nil
 }
 
-func TestDoWithRetryRecoversTransientStatus(t *testing.T) {
+func TestDoWithRetryLeavesTransientStatusToCaller(t *testing.T) {
 	transport := &transientTransport{}
 	client := &http.Client{Transport: transport}
 	request, _ := http.NewRequest(http.MethodPost, "https://example.test", strings.NewReader("body"))
 	response, err := DoWithRetry(context.Background(), client, request)
-	if err != nil || response.StatusCode != http.StatusOK || transport.calls.Load() != 3 {
+	if err != nil || response.StatusCode != http.StatusServiceUnavailable || transport.calls.Load() != 1 {
 		t.Fatalf("response=%v err=%v calls=%d", response, err, transport.calls.Load())
 	}
 }

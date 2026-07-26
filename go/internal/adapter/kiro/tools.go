@@ -2,7 +2,9 @@ package kiro
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -49,15 +51,27 @@ func ConvertTools(req *types.NormalizedRequest, registry *ToolNameRegistry) ([]m
 		if description == "" {
 			description = "Tool: " + tool.Name
 		}
-		if len(description) > limit {
-			description = description[:limit-1] + "…"
-		}
+		description = truncateToolDescription(description, limit)
 		schema := ensureRootObject(sanitizeSchema(tool.Parameters))
 		out = append(out, map[string]any{"toolSpecification": map[string]any{
 			"name": name, "description": description, "inputSchema": map[string]any{"json": schema},
 		}})
 	}
 	return out, nil
+}
+
+func truncateToolDescription(description string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(description) <= limit {
+		return description
+	}
+	runes := []rune(description)
+	if limit == 1 {
+		return string(runes[:1])
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func toolChoiceNone(raw []byte) bool {
@@ -146,6 +160,7 @@ func ensureRootObject(value any) map[string]any {
 		for key := range required {
 			values = append(values, key)
 		}
+		sort.Strings(values)
 		out["required"] = values
 	}
 	return out

@@ -1,20 +1,37 @@
 package kiro
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/lidge-jun/opencodex-go/internal/protocol"
 )
 
-const resetAttempts = 3
+const (
+	resetAttempts      = 3
+	resetRetryBase     = 150 * time.Millisecond
+	resetRetryMax      = time.Second
+	maxEndpointInspect = 1 << 20
+)
+
+var canonicalRuntimeHost = regexp.MustCompile(`(?i)^runtime\.([a-z]{2}(?:-[a-z]+)+-\d)\.kiro\.dev$`)
+
+var endpointErrorMarkers = []string{
+	"unknownoperation",
+	"unknown operation",
+	"invalidsignature",
+	"invalid signature",
+	"endpoint not found",
+	"unsupported endpoint",
+}
 
 func IsConnectionReset(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -33,31 +50,66 @@ func IsConnectionReset(err error) bool {
 
 func LegacyRuntimeURL(raw string) string {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return ""
 	}
-	parts := strings.Split(parsed.Hostname(), ".")
-	if len(parts) != 4 || parts[0] != "runtime" || parts[2] != "kiro" || parts[3] != "dev" {
+	match := canonicalRuntimeHost.FindStringSubmatch(parsed.Hostname())
+	if len(match) != 2 {
 		return ""
 	}
-	parsed.Host = "q." + parts[1] + ".amazonaws.com"
+	port := parsed.Port()
+	parsed.Host = "q." + match[1] + ".amazonaws.com"
+	if port != "" {
+		parsed.Host += ":" + port
+	}
 	return parsed.String()
 }
 
+// DoWithRetry owns only replay-safe connection-reset recovery and the one
+// canonical-to-legacy Kiro endpoint fallback. Ordinary HTTP status retries are
+// deliberately left to the caller's retry policy, matching the TypeScript adapter.
 func DoWithRetry(ctx context.Context, client *http.Client, request *http.Request) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	policy := protocol.RetryPolicy{MaxAttempts: 3, BaseDelay: 150 * time.Millisecond, MaxDelay: time.Second}
-	return policy.Do(ctx, func(attemptCtx context.Context) (*http.Response, error) {
-		return doWithResetRecovery(attemptCtx, client, request)
-	})
+	legacy := LegacyRuntimeURL(request.URL.String())
+	response, err := doWithResetRecoveryAt(ctx, client, request, request.URL)
+	if err != nil {
+		if legacy == "" || !isEndpointConnectFailure(err) {
+			return nil, err
+		}
+		legacyURL, parseErr := url.Parse(legacy)
+		if parseErr != nil {
+			return nil, err
+		}
+		return doWithResetRecoveryAt(ctx, client, request, legacyURL)
+	}
+	if legacy == "" || response.StatusCode < 400 {
+		return response, nil
+	}
+	fallback, rebuilt, inspectErr := inspectEndpointHTTPFailure(response)
+	if inspectErr != nil {
+		return nil, inspectErr
+	}
+	if !fallback {
+		return rebuilt, nil
+	}
+	if rebuilt.Body != nil {
+		_ = rebuilt.Body.Close()
+	}
+	legacyURL, parseErr := url.Parse(legacy)
+	if parseErr != nil {
+		return rebuilt, nil
+	}
+	return doWithResetRecoveryAt(ctx, client, request, legacyURL)
 }
 
-func doWithResetRecovery(ctx context.Context, client *http.Client, request *http.Request) (*http.Response, error) {
+func doWithResetRecoveryAt(ctx context.Context, client *http.Client, request *http.Request, target *url.URL) (*http.Response, error) {
 	var last error
 	for attempt := 0; attempt < resetAttempts; attempt++ {
 		clone := request.Clone(ctx)
+		clone.URL = cloneURL(target)
+		clone.Host = ""
 		if request.GetBody != nil {
 			body, err := request.GetBody()
 			if err != nil {
@@ -77,9 +129,9 @@ func doWithResetRecovery(ctx context.Context, client *http.Client, request *http
 		if !IsConnectionReset(err) || attempt == resetAttempts-1 {
 			return nil, err
 		}
-		delay := 150 * time.Millisecond * time.Duration(1<<attempt)
-		if delay > time.Second {
-			delay = time.Second
+		delay := resetRetryBase * time.Duration(1<<attempt)
+		if delay > resetRetryMax {
+			delay = resetRetryMax
 		}
 		timer := time.NewTimer(delay)
 		select {
@@ -90,4 +142,63 @@ func doWithResetRecovery(ctx context.Context, client *http.Client, request *http
 		}
 	}
 	return nil, last
+}
+
+func cloneURL(source *url.URL) *url.URL {
+	if source == nil {
+		return &url.URL{}
+	}
+	copy := *source
+	return &copy
+}
+
+func isEndpointConnectFailure(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return containsAny(message,
+		"dns", "name resolution", "failed to lookup address", "connection refused",
+		"failed to connect", "connect error",
+	)
+}
+
+// inspectEndpointHTTPFailure preserves a replayable copy of the response body
+// because callers still need the original Kiro error when fallback is not selected.
+func inspectEndpointHTTPFailure(response *http.Response) (bool, *http.Response, error) {
+	if response == nil {
+		return false, nil, errors.New("inspect Kiro endpoint response: nil response")
+	}
+	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusMethodNotAllowed {
+		return true, response, nil
+	}
+	if response.StatusCode != http.StatusBadRequest && response.StatusCode != http.StatusForbidden {
+		return false, response, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxEndpointInspect+1))
+	if err != nil {
+		return false, response, fmt.Errorf("inspect Kiro endpoint response: %w", err)
+	}
+	if len(body) > maxEndpointInspect {
+		body = body[:maxEndpointInspect]
+	}
+	_ = response.Body.Close()
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	response.ContentLength = int64(len(body))
+	response.Header.Del("Content-Encoding")
+	response.Header.Del("Content-Length")
+	lower := strings.ToLower(string(body))
+	for _, marker := range endpointErrorMarkers {
+		if strings.Contains(lower, marker) {
+			return true, response, nil
+		}
+	}
+	return false, response, nil
 }

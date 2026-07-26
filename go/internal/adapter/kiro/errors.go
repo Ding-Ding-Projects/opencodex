@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
@@ -18,6 +19,7 @@ type ErrorClassification struct {
 }
 
 var detailKeys = []string{"__type", "code", "error", "name", "reason", "message", "Message", "errorMessage"}
+var rateQuotaPattern = regexp.MustCompile(`(?i)requests?\s+per\s+(?:min|minute|second)|\brpm\b|\btpm\b`)
 
 func ClassifyHTTPError(status int, headers http.Header, payload string) ErrorClassification {
 	return classifyFailure(status, headerErrorType(headers), payload)
@@ -82,7 +84,7 @@ func classifyFailure(status int, headerType, payload string) ErrorClassification
 }
 
 func classifyPrefix(status int, evidence string) string {
-	if containsAny(evidence, "insufficient_quota", "quota exhausted", "account quota exceeded", "monthly quota exceeded", "daily quota exceeded", "exceeded your current quota") {
+	if containsAny(evidence, "insufficient_quota", "quota exhausted", "account quota exceeded", "monthly quota exceeded", "daily quota exceeded", "exceeded your current quota") && !rateQuotaPattern.MatchString(evidence) {
 		return "Kiro quota exhausted"
 	}
 	if status == 429 || containsAny(evidence, "throttlingexception", "too many requests", "rate limited", "rate limit") {
