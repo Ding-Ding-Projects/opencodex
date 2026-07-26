@@ -97,22 +97,34 @@ the dynamic Codex home and `generatedAt`, all values match. Go's map-backed
 bucket marshaler orders JSON keys differently, so this new surface is tracked
 as semantic-only rather than weakening the strict known-difference map.
 
+The final coverage pass activates the production `previous_response_id` path:
+both runtimes retain the first buffered response, expand the second upstream
+request to user/assistant/user messages in the same order, return equal response
+values, and expose equal non-time response-state metrics. Buffered response JSON
+key order differs, so this path is semantic-only and does not weaken the empty
+strict known-difference map.
+
+The same pass removes parity's only direct `registry.CodexRouter` consumer.
+Account selection, thread affinity, quota ordering, 429 cooldown, and failover
+now exercise the canonical `codex.Router`, `AccountStore`, and `RoutingConfig`,
+so the registry-owned duplicate can be deleted without losing the parity guard.
+
 ## Coverage
 
 Two distinct metrics are reported and must not be interchanged.
 
 | Metric | Data plane | Whole product | Meaning |
 |---|---:|---:|---|
-| Differential scenario-family estimate | about 91% | about 69% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
-| Go statement coverage | 71.1% | 67.8% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
+| Differential scenario-family estimate | about 91% | about 70% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
+| Go statement coverage | 71.1% | 68.1% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
 
 The data-plane estimate rose modestly because multi-provider routing and
 concurrent isolation were added to an already mature HTTP/SSE/WebSocket matrix.
 The whole-product estimate rose more because migration, OAuth health, Grok,
 Desktop, lifecycle recovery, concurrent management, effort caps, and shadow
-calls were previously sparse or absent. Combo management lifecycle now raises
-the whole-product estimate again. These remain bounded estimates, not line or
-branch coverage.
+calls were previously sparse or absent. Combo management lifecycle, storage,
+and production continuation replay raise the whole-product estimate again.
+These remain bounded estimates, not line or branch coverage.
 
 Statement coverage was measured with:
 
@@ -139,7 +151,7 @@ go tool cover -func=/tmp/opencodex-product-r8.cover
 | `OCX_RUN_PERF=1` | Short local throughput/RSS measurement | Skipped |
 | `OCX_RUN_STREAM_PERF=1` | Long-lived SSE throughput/RSS plus 12,000-event adapter and Kiro resource-release soak | Skipped; default e2e runs the exact 512-event contract |
 
-The final current-oracle full runtime matrix completed in 30.766 seconds as
+The final current-oracle full runtime matrix completed in 25.758 seconds as
 reported by `go test`. Every TypeScript-dependent helper resolves Bun before
 starting and calls `t.Skip` when unavailable; the dedicated missing-Bun test
 forces that path with `exec.ErrNotFound`.
@@ -189,5 +201,8 @@ without changing the production queue policy or weakening the deep soak.
   less complete than the HTTP/SSE data plane.
 - Storage bucket report values match, but map-backed Go key order prevents raw
   byte promotion.
-- Grok catalog blocks contain the same models and fields, but Go emits the
-  static native order while TypeScript emits current-catalog order.
+- Grok catalog blocks contain the same models and fields. Go now preserves its
+  live-catalog merge order, but that order and configured-model placement still
+  differ from TypeScript's current on-disk catalog order.
+- Buffered continuation response values, expanded upstream messages, and state
+  metrics match, but Chat-to-Responses JSON object key order differs.

@@ -1,4 +1,4 @@
-# 100 — Go port final verdict
+# 100 — Go port final verdict, R7 + R8 consolidated
 
 Date: 2026-07-26
 
@@ -16,11 +16,28 @@ Evidence owners:
   `go/internal/claude/PRODUCTION_REACHABILITY.md`;
 - package-specific Claude evidence: `go/internal/claude/PARITY.md`.
 
-## Final answer
+## Direct answer
 
 The Go port is ready as a controlled-preview replacement for the core local
 proxy data plane. It is not yet ready to replace the complete TypeScript
 product by default.
+
+**Can this be called 100% complete? No.** “100%” changes meaning with the
+denominator, so the current answer is reported on four criteria; the production
+criterion is shown separately at reachability (S2) and activation lock (S3):
+
+| Completion question | Current result | What the number does and does not mean |
+|---|---:|---|
+| Has Go code been ported/audited across the internal package inventory? | **33/33 packages, 100% at S1 or above** | Every package is represented in the S1/S2/S3 inventory. This includes three S1 duplicate/generated packages with no production caller, so it is code inventory completion, not product completion. |
+| Is the code reachable from production roots? | **30/33 packages, 90.9% at S2 or above** | A default CLI/server/management/config root reaches these packages. Reachability alone does not prove the intended branch fires correctly. |
+| Is production activation fully locked? | **12/33 packages, 36.4% at S3** | This is the strict repository-level “complete package” score: production enters the canonical implementation and a test asserts its external effect. Eighteen packages remain S2 and three remain S1. |
+| Do covered TypeScript and Go bytes match? | **100% of the strict matrix; `knownRuntimeDiffs = 0`** | This is not 100% of the product. Grok ordering, storage key order, and buffered continuation serialization are explicit semantic-only observations; real provider/OS boundaries are unmeasured. |
+| How much observable product behavior has differential evidence? | **about 91% of the core data plane; about 70% of the whole product** | This is the best user-facing completion estimate. It includes the R8 lifecycle/management expansion and the final previous-response replay path, but excludes substantial external and platform boundaries. |
+
+The honest one-line answer is therefore: **code inventory is 100% represented,
+the core strict matrix is 100% green, production-reachable packages are 90.9%,
+activation-complete packages are 36.4%, and whole-product scenario evidence is
+about 70%. The product as a default TypeScript replacement is not 100% done.**
 
 The distinction is evidence-based:
 
@@ -28,11 +45,10 @@ The distinction is evidence-based:
 - the core Responses, Chat Completions, Messages, routing, and covered
   management/lifecycle scenarios are byte-locked;
 - data-plane differential coverage is about 91%;
-- whole-product differential coverage is about 69%, so a substantial
+- whole-product differential coverage is about 70%, so a substantial
   user-facing perimeter still lacks equivalent evidence;
-- the repository S1/S2/S3 dashboard marks Claude, Anthropic adapter, storage,
-  and usage complete, while several production packages remain S2 partial or
-  provisional.
+- the repository S1/S2/S3 dashboard scores the package inventory at 12 S3,
+  18 S2, and 3 S1.
 
 “Ported” therefore means two different things that must both be true before a
 default cutover:
@@ -43,6 +59,52 @@ default cutover:
 
 Passing package tests without S2/S3 reachability, or reaching production
 without current-oracle parity, is insufficient.
+
+## What R7 and R8 accomplished
+
+R7 established that the rewrite was a viable native runtime, not merely a Go
+source tree:
+
+- it achieved the first bounded byte lock for the core Responses, Chat
+  Completions, Messages, management, WebSocket, malformed-input, concurrency,
+  and large-stream matrix;
+- it expanded the differential oracle until previously hidden server/config/
+  transport gaps were either fixed or explicitly owned;
+- it measured a material and repeatable runtime advantage. The original R7
+  headline was roughly 87% lower RSS on the measured path; the final three-run
+  medians were 41.2 versus 229.8 MiB for the short workload (82.1% lower) and
+  34.1 versus 240.8 MiB for long streams (85.8% lower), while throughput was
+  2,842.7 versus 1,869.1 requests/second;
+- it prepared the native distribution transition: six darwin/linux/windows,
+  amd64/arm64 artifacts and a checksum manifest were locally rehearsed, the
+  launcher retained an explicit TypeScript fallback, and signing, provenance,
+  native-OS execution, npm packing, and release publication remained gated.
+
+R8 absorbed the product and lifecycle surfaces that a data-plane-only verdict
+could not cover:
+
+- Grok Build safe injection/strip, exact user-byte restoration, atomic writes,
+  malformed config protection, non-loopback refusal, deterministic fences, and
+  crash/restart behavior;
+- Claude Desktop apply/status/idempotent reapply/rollback and cross-feature
+  isolation with Grok;
+- migration, OAuth health, management concurrency, agent controls, combo
+  lifecycle, storage reporting, and previous-response replay through real
+  production routes;
+- registry parity no longer imports the dead `registry.CodexRouter`; affinity,
+  quota ordering, 429 cooldown, and failover are locked against the canonical
+  `codex.Router` plus its real account store/config state;
+- current-oracle replacement via `OCX_TS_ORACLE_ROOT`, fast default parity plus
+  opt-in stress/performance/12,000-event soak contracts, and Bun-safe skips;
+- the repository-wide S1/S2/S3 method, which exposed that “ported code exists”
+  and “production activates the canonical branch” are different claims;
+- concrete P0/P1 caller and platform work for update jobs, quota composition,
+  service switching, crash/ADC/sidecar ownership, startup health, tray dispatch,
+  and remaining adapter/server orchestration.
+
+R7 answered “can the Go core behave like TypeScript and outperform it?” R8
+answered “does the whole product actually reach and lock that code?” The first
+answer is broadly yes; the second remains partial.
 
 ## Completion model shared with the repository dashboard
 
@@ -77,28 +139,35 @@ the stale declaration is removed. That mechanism promoted OAuth, effort caps,
 Claude Desktop reapply, and all five combo-management responses back to strict
 bytes during R8. `knownRuntimeDiffs` is now empty.
 
-Two newly measured lifecycle/report surfaces are not included in the byte-lock:
+Three newly measured lifecycle/report surfaces are not included in the byte-lock:
 
-- Grok's managed block contains the same models and fields, but Go emits static
-  native order while TypeScript follows current on-disk catalog order.
+- Grok's managed block contains the same models and fields. Go now preserves
+  its live-catalog merge order, but that order and configured-model placement
+  still differ from TypeScript's current on-disk catalog order.
 - `/api/storage` values match after replacing only dynamic home/time fields,
   but Go's map-backed bucket marshaler emits a different JSON key order.
+- `previous_response_id` replay produces equal response values and identical
+  expanded upstream messages/state metrics, but the buffered Chat-to-Responses
+  JSON object key order differs.
 
-Both remain explicit semantic-only observations; neither is normalized into a
-false byte match.
+All three remain explicit semantic-only observations; none is normalized into
+a false byte match.
 
 ## Coverage
 
 | Metric | Data plane | Whole product | Interpretation |
 |---|---:|---:|---|
-| Differential scenario-family estimate | about 91% | about 69% | Weighted observable scenario inventory, not line coverage |
-| Go statement coverage | 71.1% | 67.8% | Instrumented Go statements under the R8 coverage commands |
+| Differential scenario-family estimate | about 91% | about 70% | Weighted observable scenario inventory, not line coverage |
+| Go statement coverage | 71.1% | 68.1% | Instrumented Go statements under the final R8 coverage commands |
 
 The whole-product estimate rose from the R7 baseline of approximately 58% by
 adding management mutations, WebSocket and large-stream cases, Grok, Claude
 Desktop, migration, OAuth health, crash/restart recovery, multi-provider and
 management concurrency, agent controls, combo management, and storage-route
-semantics. The remaining denominator is dominated by production wiring,
+semantics. The final continuation scenario additionally proves first-response
+retention, three-message replay expansion, a second response, and management
+state metrics through both real runtimes. The remaining denominator is
+dominated by production wiring,
 external auth/provider behavior, OS lifecycle, and peripheral surfaces rather
 than the core HTTP/SSE transforms.
 
@@ -140,25 +209,34 @@ OCX_RUN_PERF=1 OCX_RUN_STREAM_PERF=1 \
 
 ## Production reachability status
 
-The repository dashboard currently classifies:
+The repository dashboard enumerates 33 packages with this current scorecard:
 
-- **S3 complete:** `internal/claude`, `internal/adapter/anthropic`,
-  `internal/storage`, and `internal/usage`;
-- **S2 partial:** vision, search, combos, lib, platform, protocol, registry,
-  update, tray, service, Cursor, Google, OpenAI adapter, Codex, providers,
-  server, and chat capability families named in the dashboard;
-- **S2 provisional:** remaining production-called packages whose complete
-  export/capability audit has not yet been recorded;
-- **consumer-locked contracts:** generated Cursor wire types and shared types.
+| Stage | Packages | Share |
+|---|---:|---:|
+| S3 activation locked | 12 | 36.4% |
+| S2 production reachable, incompletely locked | 18 | 54.5% |
+| S1 ported, not production reachable | 3 | 9.1% |
 
-The dashboard's named P0 handoffs are cutover blockers until fixed or explicitly
-accepted: persistent management update state, non-Codex provider quota
-composition, Windows native/scheduler service selection, vision sidecar
-eligibility/auth planning, canonical search-sidecar planning, and combo
-routing/failover for Chat Completions and Claude Messages. Its package rows and
-dead-export audit also record concrete Cursor continuity/discovery, Google
-fingerprint, catalog/auth/lifecycle, and server-policy owner work. The dashboard
-must be re-read at cutover time because those stages are moving concurrently.
+The S3 set is `internal/adapter`, `internal/adapter/anthropic`,
+`internal/bridge`, `internal/claude`, `internal/combos`, `internal/grok`,
+`internal/management`, `internal/search`,
+`internal/storage`, `internal/types`, `internal/usage`, and `internal/vision`.
+The S1 set is the duplicate root router plus unimported generated snapshots:
+`internal`, `internal/adapter/cursor/gen`, and `internal/generated`. Every other
+package is S2.
+
+This makes two useful production numbers: 90.9% of packages are reachable at
+S2 or better, but only 36.4% satisfy the repository's full activation-locked
+definition. The latter is the defensible package-completion percentage.
+
+The dashboard's named remaining handoffs are cutover blockers until fixed or
+explicitly accepted: full update integrity/restart lifecycle beyond persistent
+jobs; crash/ADC/sidecar ownership; OAuth guardian activation;
+startup-health/system-env and tray dispatch; service switch activation;
+dead-owner consolidation in registry/config/codex/providers/server; chat
+orchestration; and built-route transport/backlog activation for Cursor, Google,
+Kiro, OpenAI, and protocol. The dashboard must be re-read at cutover time
+because these stages are moving concurrently.
 
 ## Remaining verification boundaries
 
@@ -171,7 +249,7 @@ must be re-read at cutover time because those stages are moving concurrently.
 - realtime reconnect, backpressure, close-code, and long-duration external
   networking;
 - Grok native-model ordering and storage report key order for strict bytes;
-- every package still marked S2 partial/provisional by the production dashboard.
+- every package still marked S2 or S1 by the production dashboard.
 
 ## Deployment transition conditions
 
