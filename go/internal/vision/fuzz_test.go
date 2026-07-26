@@ -40,6 +40,7 @@ func FuzzImageReference(f *testing.F) {
 		`{"imageUrl":"https://example.test/이미지.png","detail":"high"}`,
 		`{"source":{"type":"base64","media_type":"image/png","data":"aA=="}}`,
 		`{"image_url":{"url":"https://example.test/x","detail":"low"}}`,
+		`{"imageUrl":"\t"}`,
 	} {
 		f.Add([]byte(seed))
 	}

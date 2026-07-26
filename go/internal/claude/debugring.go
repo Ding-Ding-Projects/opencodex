@@ -13,6 +13,7 @@ import (
 const DefaultDebugRingLimit = 20
 
 type ClaudeInboundDebugEntry struct {
+	ID                 uint64   `json:"id"`
 	At                 int64    `json:"at"`
 	Endpoint           string   `json:"endpoint"`
 	Model              string   `json:"model"`
@@ -36,6 +37,7 @@ type DebugRing struct {
 	limit   int
 	salt    []byte
 	entries []ClaudeInboundDebugEntry
+	nextID  uint64
 }
 
 func NewDebugRing(limit int, enabled bool) *DebugRing {
@@ -78,7 +80,8 @@ func (r *DebugRing) Capture(endpoint string, body any, resolvedModel, anthropicB
 	if !r.enabled {
 		return
 	}
-	entry := ClaudeInboundDebugEntry{At: time.Now().UnixMilli(), Endpoint: endpoint, Model: "unknown", ResolvedModel: resolvedModel, AnthropicBeta: anthropicBeta}
+	r.nextID++
+	entry := ClaudeInboundDebugEntry{ID: r.nextID, At: time.Now().UnixMilli(), Endpoint: endpoint, Model: "unknown", ResolvedModel: resolvedModel, AnthropicBeta: anthropicBeta}
 	if model, ok := request["model"].(string); ok {
 		entry.Model = model
 	}

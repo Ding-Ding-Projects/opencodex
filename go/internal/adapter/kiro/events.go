@@ -19,6 +19,7 @@ type ParsedEvent struct {
 	Stop                   *bool
 	Usage                  *types.Usage
 	ContextUsagePercentage *float64
+	StopReason             *string
 	ConversationID         string
 	Message                string
 	Reason                 string
@@ -36,9 +37,6 @@ func ParseEvent(eventType string, payload []byte) (*ParsedEvent, error) {
 	if err := decoder.Decode(&object); err != nil || object == nil {
 		return nil, fmt.Errorf("invalid Kiro %s payload: expected a JSON object", eventType)
 	}
-	if reason := TruncationReason(object); reason != "" {
-		return &ParsedEvent{Type: "truncation", Data: reason}, nil
-	}
 	getString := func(key string) (string, error) {
 		value, ok := object[key]
 		if !ok || value == nil {
@@ -49,6 +47,24 @@ func ParseEvent(eventType string, payload []byte) (*ParsedEvent, error) {
 			return "", fmt.Errorf("invalid Kiro %s payload: %s must be a string", eventType, key)
 		}
 		return text, nil
+	}
+	var nativeStopReason *string
+	if eventType == "metadataEvent" {
+		if value, ok := object["stopReason"]; ok && value != nil {
+			text, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid Kiro %s payload: stopReason must be a string", eventType)
+			}
+			nativeStopReason = &text
+		}
+	}
+	// A metadata stopReason is Kiro's terminal verdict. The generic truncation
+	// scanner also matches values such as MAX_TOKENS, so only run it when that
+	// positional signal is absent.
+	if nativeStopReason == nil {
+		if reason := TruncationReason(object); reason != "" {
+			return &ParsedEvent{Type: "truncation", Data: reason}, nil
+		}
 	}
 	switch eventType {
 	case "assistantResponseEvent":
@@ -111,7 +127,7 @@ func ParseEvent(eventType string, payload []byte) (*ParsedEvent, error) {
 			}
 			percentage = &number
 		}
-		return &ParsedEvent{Type: "metadata", Usage: usage, ContextUsagePercentage: percentage}, nil
+		return &ParsedEvent{Type: "metadata", Usage: usage, ContextUsagePercentage: percentage, StopReason: nativeStopReason}, nil
 	case "invalidStateEvent":
 		message, err := getString("message")
 		return &ParsedEvent{Type: "invalid_state", Message: message}, err

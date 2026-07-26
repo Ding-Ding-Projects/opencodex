@@ -128,15 +128,38 @@ func TestChatReasoningHistoryIsProviderOptIn(t *testing.T) {
 
 func TestChatStreamMapsFinishReasonAndRawReasoning(t *testing.T) {
 	stream := strings.Join([]string{
-		`data: {"choices":[{"delta":{"reasoning_content":"think"}}]}`,
+		`data: {"choices":[{"delta":{"content":"answer","reasoning_content":"think"}}]}`,
 		`data: {"choices":[{"delta":{},"finish_reason":"length"}]}`,
 		`data: [DONE]`, "",
 	}, "\n\n")
 	events := collectEvents((&ChatAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
-	if len(events) != 2 || events[0].Type != types.EventReasoningRawDelta || events[0].Text != "think" {
+	if len(events) != 3 || events[0].Type != types.EventReasoningRawDelta || events[0].Text != "think" || events[1].Type != types.EventTextDelta || events[1].Text != "answer" {
 		t.Fatalf("events = %#v", events)
 	}
-	if events[1].Type != types.EventDone || events[1].StopReason != "max_tokens" {
-		t.Fatalf("terminal event = %#v", events[1])
+	if events[2].Type != types.EventDone || events[2].StopReason != "max_tokens" {
+		t.Fatalf("terminal event = %#v", events[2])
+	}
+}
+
+func TestChatAdaptiveThinkingAndUnaryReasoningOrder(t *testing.T) {
+	provider := config.ProviderConfig{
+		BaseURL: "https://api.minimax.io/v1", ThinkingToggleModels: []string{"MiniMax-M3"},
+		ReasoningEffortMap: map[string]string{"high": "adaptive"},
+	}
+	req := &types.NormalizedRequest{ModelID: "MiniMax-M3", Options: types.RequestOptions{Reasoning: "high"}, Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}}}
+	httpRequest, err := NewChatAdapter(provider, "secret", nil).BuildRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decodeRequestBody(t, httpRequest.Body)
+	if thinking, ok := body["thinking"].(map[string]any); !ok || thinking["type"] != "adaptive" {
+		t.Fatalf("adaptive thinking=%#v", body["thinking"])
+	}
+	events, err := (&ChatAdapter{}).ParseUnary(context.Background(), []byte(`{"choices":[{"message":{"content":"answer","reasoning_content":"think"},"finish_reason":"stop"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) < 2 || events[0].Type != types.EventReasoningRawDelta || events[1].Type != types.EventTextDelta {
+		t.Fatalf("reasoning/content order=%#v", events)
 	}
 }

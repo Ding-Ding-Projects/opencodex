@@ -180,7 +180,7 @@ func applyProviderRequestOptions(body map[string]any, req *types.NormalizedReque
 			if budget := thinkingBudgetForEffort(req.Options.Reasoning, wireEffort, maxTokens); budget >= 0 {
 				body["thinking_budget"] = budget
 			}
-		case config.ModelInList(provider.ThinkingToggleModels, req.ModelID) && (wireEffort == "enabled" || wireEffort == "disabled"):
+		case config.ModelInList(provider.ThinkingToggleModels, req.ModelID) && (wireEffort == "enabled" || wireEffort == "disabled" || wireEffort == "adaptive"):
 			body["thinking"] = map[string]any{"type": wireEffort}
 		default:
 			body["reasoning_effort"] = wireEffort
@@ -285,11 +285,11 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 				finishReason = finish
 			}
 			delta, _ := choice["delta"].(map[string]any)
-			if text := stringValue(delta["content"]); text != "" {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
-			}
 			if reasoning := stringValue(delta["reasoning_content"]); reasoning != "" {
 				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventReasoningRawDelta, Text: reasoning})
+			}
+			if text := stringValue(delta["content"]); text != "" {
+				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
 			}
 			accumulateChatCalls(delta["tool_calls"], calls, &order)
 			if stringValue(choice["finish_reason"]) != "" {
@@ -393,11 +393,11 @@ func (a *ChatAdapter) ParseUnary(_ context.Context, body []byte) ([]types.Adapte
 		return []types.AdapterEvent{{Type: types.EventError, Error: "upstream response contained no choices"}}, nil
 	}
 	events := make([]types.AdapterEvent, 0)
-	if text := stringValue(message["content"]); text != "" {
-		events = append(events, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
-	}
 	if reasoning := stringValue(message["reasoning_content"]); reasoning != "" {
 		events = append(events, types.AdapterEvent{Type: types.EventReasoningRawDelta, Text: reasoning})
+	}
+	if text := stringValue(message["content"]); text != "" {
+		events = append(events, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
 	}
 	for _, rawCall := range sliceValue(message["tool_calls"]) {
 		wire, _ := rawCall.(map[string]any)

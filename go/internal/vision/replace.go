@@ -130,11 +130,11 @@ func collectRequestImages(req *shared.NormalizedRequest, options ValidationOptio
 func imageReference(part map[string]any) (string, string, error) {
 	detail := stringValue(part["detail"])
 	for _, name := range []string{"imageUrl", "image_url", "url"} {
-		if value := stringValue(part[name]); value != "" {
+		if value := stringValue(part[name]); strings.TrimSpace(value) != "" {
 			return value, detail, nil
 		}
 		if object, ok := part[name].(map[string]any); ok {
-			if value := stringValue(object["url"]); value != "" {
+			if value := stringValue(object["url"]); strings.TrimSpace(value) != "" {
 				return value, firstNonEmpty(detail, stringValue(object["detail"])), nil
 			}
 		}
@@ -148,7 +148,7 @@ func imageReference(part map[string]any) (string, string, error) {
 				return "data:" + media + ";base64," + data, detail, nil
 			}
 		case "url":
-			if value := stringValue(source["url"]); value != "" {
+			if value := stringValue(source["url"]); strings.TrimSpace(value) != "" {
 				return value, detail, nil
 			}
 		}

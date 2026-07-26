@@ -185,6 +185,9 @@ func TestDebugRingBoundedRedactedAndDisableClears(t *testing.T) {
 	if len(entries) != 2 || entries[0].MaxTokens != 102 || entries[1].MaxTokens != 101 {
 		t.Fatalf("entries = %#v", entries)
 	}
+	if entries[0].ID == entries[1].ID || entries[0].ID <= entries[1].ID {
+		t.Fatalf("capture ids are not unique and monotonic: %#v", entries)
+	}
 	wire, err := json.Marshal(entries)
 	if err != nil {
 		t.Fatal(err)

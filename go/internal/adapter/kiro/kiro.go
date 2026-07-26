@@ -341,11 +341,11 @@ func BuildPayload(req *types.NormalizedRequest, profileARN string, forced Comple
 	if profileARN != "" {
 		payload["profileArn"] = profileARN
 	}
-	if MapModelID(req.ModelID) == "gpt-5.6-sol" && req.Options.Reasoning != "" && req.Options.Reasoning != "none" {
+	if effortField := kiroNativeEffortField(req.ModelID); effortField != "" && req.Options.Reasoning != "" && req.Options.Reasoning != "none" {
 		if !containsString([]string{"low", "medium", "high", "xhigh", "max"}, req.Options.Reasoning) {
-			return nil, nil, "", "", fmt.Errorf("Kiro gpt-5.6-sol does not support reasoning effort %q", req.Options.Reasoning)
+			return nil, nil, "", "", fmt.Errorf("Kiro %s does not support reasoning effort %q", MapModelID(req.ModelID), req.Options.Reasoning)
 		}
-		payload["additionalModelRequestFields"] = map[string]any{"reasoning": map[string]string{"effort": req.Options.Reasoning}}
+		payload["additionalModelRequestFields"] = map[string]any{effortField: map[string]string{"effort": req.Options.Reasoning}}
 	}
 	return payload, registry.NameMap(), conversationID, mode, nil
 }
@@ -392,7 +392,7 @@ func assistantContent(raw json.RawMessage, registry *ToolNameRegistry) (string, 
 }
 
 func injectThinking(content string, req *types.NormalizedRequest) string {
-	if MapModelID(req.ModelID) == "gpt-5.6-sol" || req.Options.Reasoning == "" || req.Options.Reasoning == "none" {
+	if kiroNativeEffortField(req.ModelID) != "" || req.Options.Reasoning == "" || req.Options.Reasoning == "none" {
 		return content
 	}
 	ratios := map[string]float64{"minimal": .1, "low": .2, "medium": .5, "high": .8, "xhigh": .9, "max": .95}
@@ -409,6 +409,16 @@ func injectThinking(content string, req *types.NormalizedRequest) string {
 		budget = 1
 	}
 	return fmt.Sprintf("<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>%d</max_thinking_length>\n<thinking_instruction>Think in English for better reasoning quality. Be thorough and systematic, consider edge cases, challenge assumptions, and verify reasoning before answering. After thinking, respond in the user's language.</thinking_instruction>\n\n%s", budget, content)
+}
+func kiroNativeEffortField(modelID string) string {
+	switch MapModelID(modelID) {
+	case "gpt-5.6-sol":
+		return "reasoning"
+	case "claude-opus-5":
+		return "output_config"
+	default:
+		return ""
+	}
 }
 func containsString(values []string, target string) bool {
 	for _, value := range values {
@@ -480,6 +490,7 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 	completionAnswer := ""
 	completionCalls := 0
 	sawRealTool := false
+	var nativeStopReason *string
 	defer func() {
 		result.assistantText = assistantText.String()
 		if result.usage == nil {
@@ -491,7 +502,7 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 			}
 		}
 		for i := range result.events {
-			if (result.events[i].Type == types.EventError || result.events[i].Type == types.EventDone) && result.events[i].Usage == nil {
+			if (result.events[i].Type == types.EventError || result.events[i].Type == types.EventDone || result.events[i].Type == types.EventIncomplete) && result.events[i].Usage == nil {
 				result.events[i].Usage = result.usage
 			}
 			if (result.events[i].Type == types.EventError || result.events[i].Type == types.EventDone || result.events[i].Type == types.EventIncomplete) && result.conversationID != "" {
@@ -629,6 +640,9 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 			if event.ContextUsagePercentage != nil && *event.ContextUsagePercentage > 0 {
 				contextUsagePercentage = event.ContextUsagePercentage
 			}
+			if event.StopReason != nil {
+				nativeStopReason = event.StopReason
+			}
 		case "message_metadata":
 			if IsValidConversationID(event.ConversationID) {
 				result.conversationID = event.ConversationID
@@ -713,6 +727,20 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 		}
 		result.sawText = true
 	}
+	normalizedStopReason := ""
+	if nativeStopReason != nil {
+		normalizedStopReason = strings.ToUpper(strings.TrimSpace(*nativeStopReason))
+	}
+	nativeEndTurn := (normalizedStopReason == "END_TURN" || normalizedStopReason == "STOP_SEQUENCE") && result.sawText && !sawRealTool && completionAnswer == "" && completionCalls == 0
+	if mode == CompletionRequired && nativeEndTurn {
+		for i := range result.events {
+			if result.events[i].Type == types.EventTextDelta {
+				result.events[i].Phase = "final_answer"
+			}
+		}
+		result.events = append(result.events, types.AdapterEvent{Type: types.EventDone, Usage: result.usage, StopReason: "stop", EndTurn: true})
+		return result
+	}
 	if mode == CompletionTextFallback && completionAnswer == "" && result.sawText && !sawRealTool {
 		repeated := normalizeAnswer(assistantText.String()) == normalizeAnswer(previousText)
 		filtered := result.events[:0]
@@ -726,6 +754,36 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 			filtered = append(filtered, event)
 		}
 		result.events = filtered
+	}
+	if mode == CompletionRequired && nativeStopReason != nil && completionAnswer == "" && !sawRealTool {
+		message := fmt.Sprintf("Kiro stopped with %s before an explicit final answer", normalizedStopReason)
+		incomplete := func(reason string, retryable bool) {
+			result.events = append(result.events, types.AdapterEvent{Type: types.EventIncomplete, Reason: reason, Message: message, Retryable: retryable, EndTurn: false, Usage: result.usage})
+		}
+		switch normalizedStopReason {
+		case "MODEL_CONTEXT_WINDOW_EXCEEDED":
+			result.events = append(result.events, types.AdapterEvent{Type: types.EventError, Error: "Kiro stopped because the model context window was exhausted", StatusCode: 400, ErrorType: "invalid_request_error", Code: "context_length_exceeded", Retryable: false, Usage: result.usage})
+			result.terminalError = true
+		case "MAX_TOKENS":
+			incomplete("max_output_tokens", true)
+		case "CONTENT_FILTERED", "GUARDRAIL_INTERVENED":
+			incomplete("content_filter", false)
+		case "MALFORMED_TOOL_USE":
+			incomplete("kiro_malformed_tool_use", false)
+		case "MALFORMED_MODEL_OUTPUT":
+			incomplete("kiro_malformed_model_output", false)
+		case "TOOL_USE":
+			incomplete("kiro_tool_use_without_call", false)
+		case "END_TURN", "STOP_SEQUENCE":
+			incomplete("kiro_"+strings.ToLower(normalizedStopReason)+"_without_text", false)
+		default:
+			reason := strings.ToLower(normalizedStopReason)
+			if reason == "" {
+				reason = "unknown_stop"
+			}
+			incomplete("kiro_"+reason, false)
+		}
+		return result
 	}
 	if mode == CompletionRequired && completionAnswer == "" && (result.sawText || result.sawReasoning) && !sawRealTool {
 		result.needsFallback = true

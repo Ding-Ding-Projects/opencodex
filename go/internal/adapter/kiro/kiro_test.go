@@ -115,6 +115,10 @@ func TestParseEventRejectsMalformedUsage(t *testing.T) {
 	if event, err := ParseEvent("futureEvent", []byte(`not-json`)); err != nil || event != nil {
 		t.Fatalf("unknown event parsed: %#v %v", event, err)
 	}
+	event, err := ParseEvent("metadataEvent", []byte(`{"stopReason":"MAX_TOKENS"}`))
+	if err != nil || event == nil || event.Type != "metadata" || event.StopReason == nil || *event.StopReason != "MAX_TOKENS" {
+		t.Fatalf("native stop reason was swallowed by truncation detection: %#v %v", event, err)
+	}
 }
 
 func TestBuildPayloadConversationAndNativeReasoning(t *testing.T) {
@@ -143,6 +147,25 @@ func TestBuildPayloadConversationAndNativeReasoning(t *testing.T) {
 	text := string(encoded)
 	if !strings.Contains(text, `"images":[{"format":"png","source":{"bytes":"`+pixel+`"}}]`) || !strings.Contains(text, CompletionToolName) {
 		t.Fatalf("payload=%s", text)
+	}
+}
+
+func TestBuildPayloadUsesOpusNativeEffort(t *testing.T) {
+	req := &types.NormalizedRequest{
+		ModelID: "kiro-claude-opus-5",
+		Options: types.RequestOptions{Reasoning: "xhigh"},
+		Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+	}
+	payload, _, _, _, err := BuildPayload(req, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := payload["additionalModelRequestFields"].(map[string]any)
+	if fields["output_config"].(map[string]string)["effort"] != "xhigh" || fields["reasoning"] != nil {
+		t.Fatalf("fields=%#v", fields)
+	}
+	if got := injectThinking("hello", req); got != "hello" {
+		t.Fatalf("native Opus effort received emulated thinking prompt: %q", got)
 	}
 }
 
@@ -257,6 +280,49 @@ func TestParseAttemptProgressTextWithoutCompletionIsNonterminal(t *testing.T) {
 		if event.Type == types.EventDone {
 			t.Fatalf("progress-only response emitted done: %#v", result.events)
 		}
+	}
+}
+
+func TestParseAttemptHonorsNativeStopReasons(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		content    string
+		stopReason string
+		wantType   types.AdapterEventType
+		wantReason string
+		wantCode   string
+		wantRetry  bool
+		wantEnd    bool
+	}{
+		{name: "end turn", content: "Final answer.", stopReason: "END_TURN", wantType: types.EventDone, wantEnd: true},
+		{name: "stop sequence", content: "Final answer.", stopReason: " stop_sequence ", wantType: types.EventDone, wantEnd: true},
+		{name: "max tokens", content: "partial", stopReason: "MAX_TOKENS", wantType: types.EventIncomplete, wantReason: "max_output_tokens", wantRetry: true},
+		{name: "context exhausted", content: "partial", stopReason: "MODEL_CONTEXT_WINDOW_EXCEEDED", wantType: types.EventError, wantCode: "context_length_exceeded"},
+		{name: "tool use without call", stopReason: "TOOL_USE", wantType: types.EventIncomplete, wantReason: "kiro_tool_use_without_call"},
+		{name: "end turn without text", stopReason: "END_TURN", wantType: types.EventIncomplete, wantReason: "kiro_end_turn_without_text"},
+		{name: "future reason", content: "partial", stopReason: "LENGTH_LIMIT", wantType: types.EventIncomplete, wantReason: "kiro_length_limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			frames := make([][]byte, 0, 2)
+			if test.content != "" {
+				frames = append(frames, eventFrame(t, "assistantResponseEvent", map[string]any{"content": test.content}))
+			}
+			frames = append(frames, eventFrame(t, "metadataEvent", map[string]any{"stopReason": test.stopReason}))
+			result := parseAttempt(context.Background(), io.NopCloser(bytes.NewReader(smithyStream(t, frames...))), CompletionRequired, 3, nil, "")
+			if result.needsFallback {
+				t.Fatal("explicit native stop reason requested fallback")
+			}
+			terminal := result.events[len(result.events)-1]
+			if terminal.Type != test.wantType || terminal.Reason != test.wantReason || terminal.Code != test.wantCode || terminal.Retryable != test.wantRetry || terminal.EndTurn != test.wantEnd {
+				t.Fatalf("terminal=%#v", terminal)
+			}
+			if terminal.Usage == nil {
+				t.Fatalf("terminal lost usage: %#v", terminal)
+			}
+			if test.wantEnd && (len(result.events) != 2 || result.events[0].Phase != "final_answer") {
+				t.Fatalf("native completion was not relabeled: %#v", result.events)
+			}
+		})
 	}
 }
 
