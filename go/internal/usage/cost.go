@@ -9,12 +9,23 @@ import (
 
 type CostTokens struct{ Input, Output, CacheRead, CacheWrite int }
 type CostBreakdown struct{ Input, Output, CacheRead, CacheWrite, Total float64 }
-type CostEstimate struct {
+type AttemptCostEstimate struct {
+	Ordinal            int           `json:"ordinal"`
+	Provider           string        `json:"provider"`
+	Model              string        `json:"model"`
 	Tokens             CostTokens    `json:"tokens"`
-	Cost               CostBreakdown `json:"cost"`
 	Price              PriceOverlay  `json:"price"`
+	Cost               CostBreakdown `json:"cost"`
 	Estimated          bool          `json:"estimated"`
 	PriorityMultiplier float64       `json:"priorityMultiplier,omitempty"`
+}
+type CostEstimate struct {
+	Tokens             CostTokens            `json:"tokens"`
+	Cost               CostBreakdown         `json:"cost"`
+	Price              PriceOverlay          `json:"price"`
+	Estimated          bool                  `json:"estimated"`
+	PriorityMultiplier float64               `json:"priorityMultiplier,omitempty"`
+	Attempts           []AttemptCostEstimate `json:"attempts,omitempty"`
 }
 
 var priorityMultipliers = map[string]float64{
@@ -127,6 +138,10 @@ func EstimateComboCost(attempts []Attempt, overlays []PriceOverlay, serviceTier 
 		result.Cost.CacheWrite += estimate.Cost.CacheWrite
 		result.Cost.Total += estimate.Cost.Total
 		result.Estimated = result.Estimated || estimate.Estimated
+		result.Attempts = append(result.Attempts, AttemptCostEstimate{Ordinal: attempt.Ordinal, Provider: attempt.Provider, Model: attempt.Model, Tokens: estimate.Tokens, Price: estimate.Price, Cost: estimate.Cost, Estimated: estimate.Estimated, PriorityMultiplier: estimate.PriorityMultiplier})
+		if result.PriorityMultiplier == 0 && estimate.PriorityMultiplier != 0 && estimate.PriorityMultiplier != 1 {
+			result.PriorityMultiplier = estimate.PriorityMultiplier
+		}
 	}
 	return result, true
 }

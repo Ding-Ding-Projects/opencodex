@@ -48,3 +48,17 @@ func TestComboCostFailsClosedAndSumsAttempts(t *testing.T) {
 		t.Fatal("partially unpriced combo should fail closed")
 	}
 }
+
+func TestExpectedPriceRosterAndComboAttemptDetails(t *testing.T) {
+	for _, key := range [][2]string{{"cursor", "claude-opus-5"}, {"google-antigravity", "gemini-3.5-flash-mid"}, {"moonshot", "kimi-k2.7-code-highspeed"}, {"kimi-code", "kimi-for-coding"}} {
+		if row, ok := FindPrice(key[0], key[1], ExpectedPriceOverlays); !ok || row.Status != PriceVerifiedDerived || row.Source == "" || row.VerifiedAt == "" {
+			t.Errorf("missing verified-derived overlay for %v: %+v ok=%v", key, row, ok)
+		}
+	}
+	usage := types.Usage{InputTokens: 100, OutputTokens: 50}
+	attempts := []Attempt{{Ordinal: 1, Provider: "kimi", Model: "k3", Usage: &usage, UsageStatus: StatusReported}, {Ordinal: 2, Provider: "cursor", Model: "auto", Usage: &usage, UsageStatus: StatusReported}}
+	estimate, ok := EstimateComboCost(attempts, ExpectedPriceOverlays, "")
+	if !ok || len(estimate.Attempts) != 2 || estimate.Attempts[0].Ordinal != 1 || estimate.Attempts[1].Provider != "cursor" {
+		t.Fatalf("combo estimate=%+v ok=%v", estimate, ok)
+	}
+}

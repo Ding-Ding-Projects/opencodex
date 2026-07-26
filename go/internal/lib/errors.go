@@ -13,6 +13,17 @@ type ErrorPayload struct {
 	Code    *string `json:"code"`
 }
 
+type AdapterFailure struct {
+	HTTPStatus int          `json:"httpStatus"`
+	Error      ErrorPayload `json:"error"`
+}
+
+type TerminalError struct {
+	Type    string  `json:"type,omitempty"`
+	Code    *string `json:"code,omitempty"`
+	Message string  `json:"message,omitempty"`
+}
+
 func code(value string) *string { return &value }
 
 func IsClientClosedMessage(message string) bool {
@@ -66,11 +77,14 @@ func ClassifyError(status int, errorType, message string) ErrorPayload {
 	if status == 503 || containsAny(text, "overloaded", "server is busy", "temporarily unavailable") {
 		return result("server_error", "server_is_overloaded")
 	}
-	if containsAny(text, "validationexception", "invalid request", "model unavailable", "model not found", "unsupported model", "profile arn", "wrong region", "invalid region") || status == 400 || errorType == "invalid_request_error" {
+	if containsAny(text, "validationexception", "invalid request", "model unavailable", "model not found", "unsupported model", "profile arn", "wrong region", "invalid region") {
 		return result("invalid_request_error", "invalid_request_error")
 	}
 	if status >= 500 {
 		return result("server_error", "upstream_server_error")
+	}
+	if status == 400 || errorType == "invalid_request_error" {
+		return result("invalid_request_error", "invalid_request_error")
 	}
 	if errorType == "" {
 		return ErrorPayload{Message: message}
@@ -117,6 +131,86 @@ func InferHTTPStatus(message string) int {
 		return 400
 	case containsAny(text, "timed out", "timeout", "etimedout", "deadline"):
 		return 504
+	default:
+		return 502
+	}
+}
+
+// IsRateLimitOrQuotaFailureMessage reports whether a provider failure should
+// participate in rate-limit or quota health blocking.
+func IsRateLimitOrQuotaFailureMessage(message string) bool {
+	normalized := strings.TrimSpace(message)
+	if normalized == "" {
+		return false
+	}
+	if status, err := strconv.ParseFloat(normalized, 64); err == nil && (status == 429 || status == 402) {
+		return true
+	}
+	classified := ClassifyError(0, "", normalized)
+	if classified.Type == "rate_limit_error" || classified.Type == "insufficient_quota" ||
+		classified.Code != nil && (*classified.Code == "rate_limit_exceeded" || *classified.Code == "insufficient_quota") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(normalized), "usage limit")
+}
+
+// AdapterFailureFromMessage maps an adapter terminal message to the HTTP and
+// Codex error contracts used by request logging and Responses terminal events.
+func AdapterFailureFromMessage(message string) AdapterFailure {
+	status := InferHTTPStatus(message)
+	finalMessage := message
+	if retryAfter, ok := ParseRetryAfterFromMessage(message); ok && !strings.Contains(strings.ToLower(message), "please try again in ") {
+		finalMessage += " Please try again in " + strconv.Itoa(retryAfter) + "s."
+	}
+	errorType := "upstream_error"
+	switch status {
+	case 499:
+		errorType = "client_closed_request"
+	case 429:
+		errorType = "rate_limit_error"
+	case 401:
+		errorType = "authentication_error"
+	case 403:
+		errorType = "permission_error"
+	case 503, 504:
+		errorType = "server_error"
+	case 400:
+		errorType = "invalid_request_error"
+	}
+	return AdapterFailure{HTTPStatus: status, Error: ClassifyError(status, errorType, finalMessage)}
+}
+
+// HTTPStatusFromTerminalError maps a terminal Responses error back to the
+// status recorded for the request. Nil and unclassified errors fail as 502.
+func HTTPStatusFromTerminalError(terminal *TerminalError) int {
+	if terminal == nil {
+		return 502
+	}
+	value := ""
+	if terminal.Code != nil {
+		value = *terminal.Code
+	}
+	switch {
+	case value == "client_closed_request" || value == "client_cancelled":
+		return 499
+	case terminal.Type == "rate_limit_error" || value == "rate_limit_exceeded":
+		return 429
+	case terminal.Type == "authentication_error" || value == "invalid_api_key":
+		return 401
+	case terminal.Type == "permission_error" || value == "permission_denied" || value == "subscription_required":
+		return 403
+	case terminal.Type == "insufficient_quota" || value == "insufficient_quota":
+		return 429
+	case terminal.Type == "server_error" && value == "server_is_overloaded":
+		return 503
+	case terminal.Message != "" && IsClientClosedMessage(terminal.Message):
+		return 499
+	case terminal.Type == "invalid_request_error":
+		return 400
+	case terminal.Type == "proxy_error":
+		return 500
+	case terminal.Message != "":
+		return InferHTTPStatus(terminal.Message)
 	default:
 		return 502
 	}
