@@ -19,7 +19,7 @@ func DrainAdmissionMiddleware(next http.Handler, lifecycle *Lifecycle) http.Hand
 			return
 		}
 		w.Header().Set("Retry-After", "5")
-		writeJSONError(w, http.StatusServiceUnavailable, "server_draining", "server is draining")
+		writeClassifiedJSONError(w, http.StatusServiceUnavailable, "server_error", "Service shutting down")
 	})
 }
 

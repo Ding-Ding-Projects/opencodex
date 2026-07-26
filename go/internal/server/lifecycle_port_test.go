@@ -30,6 +30,12 @@ func TestDrainAdmissionMiddlewareRejectsNewWorkButKeepsHealthAndStop(t *testing.
 		if response.Code != test.want {
 			t.Errorf("%s status = %d, want %d", test.path, response.Code, test.want)
 		}
+		if test.want == http.StatusServiceUnavailable {
+			want := `{"error":{"message":"Service shutting down","type":"server_error","code":"server_is_overloaded"}}`
+			if response.Body.String() != want || response.Header().Get("Retry-After") != "5" {
+				t.Errorf("%s headers=%v body=%q", test.path, response.Header(), response.Body.String())
+			}
+		}
 	}
 }
 

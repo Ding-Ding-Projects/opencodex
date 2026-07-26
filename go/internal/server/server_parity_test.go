@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,6 +59,64 @@ func TestResponsesSamePathDispatchesHTTPAndWebSocket(t *testing.T) {
 	}
 	if !foundTerminal {
 		t.Fatal("WebSocket response did not emit response.completed")
+	}
+}
+
+func TestEffectiveWireAdapterHonorsPinsAndSafeOverrides(t *testing.T) {
+	provider := appconfig.ProviderConfig{Adapter: "openai-chat", ModelAdapters: map[string]string{"responses-model": "openai-responses"}}
+	if got := EffectiveWireAdapter("acme", "responses-model", provider); got != "openai-responses" {
+		t.Fatalf("override adapter=%q", got)
+	}
+	provider.ModelAdapters["minimax-m2.5"] = "openai-responses"
+	if got := EffectiveWireAdapter("opencode-go", "minimax-m2.5", provider); got != "anthropic" {
+		t.Fatalf("pinned adapter=%q", got)
+	}
+	canonical := appconfig.ProviderConfig{Adapter: "openai-responses", AuthMode: "forward", BaseURL: "https://chatgpt.com/backend-api/codex", ModelAdapters: map[string]string{"gpt": "openai-chat"}}
+	if got := EffectiveWireAdapter("openai", "gpt", canonical); got != "openai-responses" {
+		t.Fatalf("canonical adapter=%q", got)
+	}
+}
+
+func TestServerWiresSubagentFallbackGuidanceIntoResponsesCore(t *testing.T) {
+	cfg := appconfig.Default()
+	cfg.SubagentModelFallback = []string{"anthropic/claude", "xai/grok"}
+	proxy := New(Config{ManagementConfig: &cfg})
+	guidance := proxy.responses.config.Guidance.FallbackGuidance
+	if !strings.Contains(guidance, `"anthropic/claude", "xai/grok"`) || !strings.Contains(guidance, "rewrites thread_spawn") {
+		t.Fatalf("fallback guidance=%q", guidance)
+	}
+}
+
+type parityRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn parityRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+func TestServerUsesNativeCompactOnlyForSupportedResponsesEndpoint(t *testing.T) {
+	var upstreamPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		upstreamPath = request.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output":[{"type":"compaction","encrypted_content":"opaque"}]}`)
+	}))
+	defer upstream.Close()
+	local, _ := url.Parse(upstream.URL)
+	client := &http.Client{Transport: parityRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		clone := request.Clone(request.Context())
+		clone.URL.Scheme, clone.URL.Host = local.Scheme, local.Host
+		return http.DefaultTransport.RoundTrip(clone)
+	})}
+	cfg := appconfig.Default()
+	cfg.DefaultProvider = "openai-apikey"
+	cfg.Providers["openai-apikey"] = appconfig.ProviderConfig{Adapter: "openai-responses", BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt"}
+	reg := registry.New(registry.Provider{ID: "openai-apikey", Adapter: "openai-responses", BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt", Models: []registry.ModelDefinition{{ID: "gpt"}}})
+	proxy := New(Config{ManagementConfig: &cfg, Registry: reg, Client: client, ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return fakeAdapter{endpoint: transport.BaseURL}, nil
+	}})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses/compact", `{"model":"openai-apikey/gpt","input":[]}`, nil)
+	if response.Code != http.StatusOK || upstreamPath != "/v1/responses/compact" || !strings.Contains(response.Body.String(), `"type":"compaction"`) {
+		t.Fatalf("response=%d %s upstreamPath=%q", response.Code, response.Body.String(), upstreamPath)
 	}
 }
 

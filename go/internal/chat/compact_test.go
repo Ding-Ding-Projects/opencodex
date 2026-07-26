@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,19 +37,23 @@ func TestCompactionEnvelopeAndReplay(t *testing.T) {
 	}
 }
 
-func TestCompactionSummaryIncompleteTerminalAndHeartbeat(t *testing.T) {
+func TestCompactionSummaryRejectsIncompleteTerminal(t *testing.T) {
 	events := []types.AdapterEvent{
 		{Type: types.EventHeartbeat, Text: "ignored heartbeat"},
 		{Type: types.EventTextDelta, Text: "summary"},
 		{Type: types.EventIncomplete, Text: "ignored incomplete"},
 	}
 
-	summary, err := compactionSummary(events)
-	if err != nil {
-		t.Fatal(err)
+	if summary, err := compactionSummary(events); err == nil || summary != "" || !strings.Contains(err.Error(), "did not complete") {
+		t.Fatalf("summary = %q, err = %v", summary, err)
 	}
-	if summary != "summary" {
-		t.Fatalf("summary = %q, want %q", summary, "summary")
+}
+
+func TestCompactionSummaryRejectsEmptyCompletedTurn(t *testing.T) {
+	_, err := compactionSummary([]types.AdapterEvent{{Type: types.EventDone}})
+	var validation *compactionResultError
+	if !errors.As(err, &validation) || validation.kind != "invalid_response_error" {
+		t.Fatalf("error = %#v", err)
 	}
 }
 

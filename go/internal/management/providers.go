@@ -7,6 +7,7 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 )
 
@@ -51,6 +52,10 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return true
 		}
+		if err := managementProviderShapeError(body.Name, body.Provider); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return true
+		}
 		a.mu.Lock()
 		candidate := *a.config
 		candidate.Providers = cloneProviders(a.config.Providers)
@@ -61,6 +66,12 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 		if err := candidate.Validate(); err != nil {
 			a.mu.Unlock()
 			writeError(w, http.StatusBadRequest, err.Error())
+			return true
+		}
+		allowBenchmark := body.Name == "openai" && providers.IsCanonicalOpenAiForwardProvider(body.Provider.Adapter, body.Provider.AuthMode, body.Provider.BaseURL)
+		if err := a.providerDestinationResolvedError(r.Context(), body.Name, body.Provider, allowBenchmark); err != nil {
+			a.mu.Unlock()
+			writeError(w, http.StatusBadRequest, "provider "+body.Name+" "+err.Error())
 			return true
 		}
 		a.config.Providers = candidate.Providers
@@ -101,11 +112,36 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusBadRequest, "cannot disable the default provider; set another default first")
 			return true
 		}
+		original := provider
+		editorTouched := false
+		for key := range patch {
+			editorTouched = editorTouched || key != "disabled"
+		}
+		enablingOpenAI := name == "openai" && original.Disabled && patch["disabled"] == false
 		if err = applyProviderPatch(&provider, patch); err == nil {
+			if enablingOpenAI && !editorTouched {
+				if !providers.IsCanonicalOpenAiForwardProvider(provider.Adapter, provider.AuthMode, provider.BaseURL) {
+					err = fieldError("provider openai", "must be the canonical built-in provider")
+				} else {
+					provider.BaseURL = "https://chatgpt.com/backend-api/codex"
+					if provider.CodexAccountMode != "pool" && provider.CodexAccountMode != "direct" {
+						provider.CodexAccountMode = "pool"
+					}
+					provider.AllowPrivateNetwork = false
+				}
+			}
+			if err == nil && (editorTouched || enablingOpenAI) {
+				err = managementProviderShapeError(name, provider)
+			}
 			candidate := *a.config
 			candidate.Providers = cloneProviders(a.config.Providers)
 			candidate.Providers[name] = provider
-			err = candidate.Validate()
+			if err == nil {
+				err = candidate.Validate()
+			}
+			if err == nil && (editorTouched || enablingOpenAI) {
+				err = a.providerDestinationResolvedError(r.Context(), name, provider, enablingOpenAI)
+			}
 			if err == nil {
 				a.config.Providers = candidate.Providers
 				err = a.saveLocked()
@@ -273,4 +309,26 @@ type fieldValidationError struct{ field, message string }
 func (e fieldValidationError) Error() string { return e.field + " " + e.message }
 func fieldError(field, message string) error {
 	return fieldValidationError{field: field, message: message}
+}
+
+func managementProviderShapeError(name string, provider config.ProviderConfig) error {
+	switch name {
+	case "chatgpt":
+		return fieldError("provider chatgpt", "is reserved for internal credential compatibility")
+	case "openai-multi":
+		return fieldError("provider openai-multi", "is reserved for legacy config migration")
+	case "openai":
+		if !providers.IsCanonicalOpenAiForwardProvider(provider.Adapter, provider.AuthMode, provider.BaseURL) ||
+			(provider.CodexAccountMode != "pool" && provider.CodexAccountMode != "direct") || provider.AllowPrivateNetwork {
+			return fieldError("provider openai", "must equal the canonical built-in provider seed")
+		}
+	default:
+		if provider.CodexAccountMode != "" {
+			return fieldError("provider "+name, "must not include codexAccountMode")
+		}
+		if provider.AuthMode == "forward" {
+			return fieldError("provider "+name, "uses reserved authMode forward")
+		}
+	}
+	return nil
 }

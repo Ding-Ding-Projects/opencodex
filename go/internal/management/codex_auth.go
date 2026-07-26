@@ -103,15 +103,28 @@ func (a *API) handleCodexAuth(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusBadRequest, "accountId required")
 			return true
 		}
-		code, err := a.codexAuth.ConsumeCodexResetCredit(r.Context(), body.AccountID)
+		var result ResetCreditConsumeResult
+		var err error
+		if backend, ok := a.codexAuth.(CodexResetCreditConsumer); ok {
+			result, err = backend.ConsumeCodexResetCredit(r.Context(), body.AccountID)
+		} else if backend, ok := a.codexAuth.(legacyCodexResetCreditConsumer); ok {
+			result.Code, err = backend.ConsumeCodexResetCredit(r.Context(), body.AccountID)
+		} else {
+			writeError(w, http.StatusNotImplemented, "Reset credit consume is not configured")
+			return true
+		}
 		if err != nil {
 			writeBackendError(w, err, "Reset credit consume failed")
 			return true
 		}
-		if code == "" {
-			code = "unknown"
+		if result.Code == "" {
+			result.Code = "unknown"
 		}
-		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "code", value: code}})
+		response := orderedJSONObject{{name: "code", value: result.Code}}
+		if result.Remaining != nil {
+			response = append(response, orderedJSONField{name: "remaining", value: *result.Remaining})
+		}
+		writeJSON(w, http.StatusOK, response)
 	case "POST /api/codex-auth/login":
 		a.startCodexLogin(w, r)
 	case "POST /api/codex-auth/login/code":

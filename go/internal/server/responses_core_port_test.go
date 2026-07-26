@@ -406,6 +406,63 @@ func TestResponsesCoreClassifiesUpstreamErrorWithoutRelayingRetryAfter(t *testin
 	}
 }
 
+func TestResponsesCorePassthroughPreservesNonEmptyErrorBytesAndHeaders(t *testing.T) {
+	const upstreamBody = "<html>tenant-safe diagnostic</html>\n"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Retry-After", "9")
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, upstreamBody)
+	}))
+	defer upstream.Close()
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL},
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return coreAdapter{endpoint: transport.BaseURL}, nil
+		},
+		PassthroughRoute: func(*types.ResolvedModel) bool { return true },
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != upstreamBody {
+		t.Fatalf("response=%d body=%q", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Retry-After") != "9" || response.Header().Get("Content-Type") != "text/html; charset=utf-8" || response.Header().Get("Connection") != "" {
+		t.Fatalf("headers=%v", response.Header())
+	}
+}
+
+func TestResponsesCorePassthroughWrapsOnlyEmptyBodyAndValidatesRetryAfter(t *testing.T) {
+	for _, test := range []struct {
+		name, retry, wantRetry string
+	}{
+		{name: "valid delay", retry: "7", wantRetry: "7"},
+		{name: "invalid value", retry: "not-a-delay", wantRetry: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", test.retry)
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer upstream.Close()
+			core := NewResponsesCore(ResponsesCoreConfig{
+				Registry: coreRegistry{endpoint: upstream.URL},
+				ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+					return coreAdapter{endpoint: transport.BaseURL}, nil
+				},
+				PassthroughRoute: func(*types.ResolvedModel) bool { return true },
+			})
+			response := httptest.NewRecorder()
+			core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+			want := `{"error":{"message":"Provider error 503: (empty body)","type":"server_error","code":"server_is_overloaded"}}`
+			if response.Code != http.StatusServiceUnavailable || response.Body.String() != want || response.Header().Get("Retry-After") != test.wantRetry {
+				t.Fatalf("response=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+			}
+		})
+	}
+}
+
 func TestClassifyResponsesErrorStatusAndMessagePrecedence(t *testing.T) {
 	tests := []struct {
 		status     int

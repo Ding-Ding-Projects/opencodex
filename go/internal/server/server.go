@@ -118,6 +118,19 @@ func New(config Config) *Server {
 			}
 		}
 	}
+	if config.ManagementConfig != nil {
+		handlerConfig.NativeCompact = func(model *types.ResolvedModel) bool {
+			if model == nil {
+				return false
+			}
+			provider, ok := config.ManagementConfig.Providers[model.Provider]
+			if !ok {
+				return false
+			}
+			adapter := EffectiveWireAdapter(model.Provider, model.Model, provider)
+			return providers.SupportsNativeResponsesCompactEndpoint(model.Provider, adapter, provider.BaseURL)
+		}
+	}
 	if config.ChatHandler == nil {
 		config.ChatHandler = chat.NewHandler(handlerConfig)
 	}
@@ -156,7 +169,8 @@ func New(config Config) *Server {
 		guidance = MultiAgentGuidanceOptions{
 			Enabled: config.ManagementConfig.MultiAgentGuidanceEnabled, InjectionModel: config.ManagementConfig.InjectionModel,
 			InjectionEffort: config.ManagementConfig.InjectionEffort, SubagentModels: append([]string(nil), config.ManagementConfig.SubagentModels...),
-			InjectionPrompt: config.ManagementConfig.InjectionPrompt,
+			InjectionPrompt:  config.ManagementConfig.InjectionPrompt,
+			FallbackGuidance: codex.SubagentFallbackGuidanceText(config.ManagementConfig.SubagentModelFallback),
 		}
 	}
 	if s.config.Hostname == "" && s.config.ManagementConfig != nil {
@@ -187,6 +201,18 @@ func New(config Config) *Server {
 				return ""
 			}
 			return strings.ToLower(strings.TrimSpace(s.config.ManagementConfig.Providers[provider].Adapter))
+		},
+		RouteAdapter: func(provider, model string) string {
+			if s.config.ManagementConfig == nil {
+				return ""
+			}
+			return EffectiveWireAdapter(provider, model, s.config.ManagementConfig.Providers[provider])
+		},
+		PassthroughRoute: func(resolved *types.ResolvedModel) bool {
+			if resolved == nil || s.config.ManagementConfig == nil {
+				return false
+			}
+			return EffectiveWireAdapter(resolved.Provider, resolved.Model, s.config.ManagementConfig.Providers[resolved.Provider]) == "openai-responses"
 		},
 		ItemIDRepair: func(provider string) *ResponsesItemIDRepairConfig {
 			if s.config.ManagementConfig == nil {
@@ -300,6 +326,22 @@ func New(config Config) *Server {
 	}
 	s.handler = oversizedHeaderMiddleware(Middleware(recoveryMiddleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), config.Logger), middlewareConfig))
 	return s
+}
+
+// EffectiveWireAdapter mirrors src/server/adapter-resolve.ts. Keeping this at
+// the server composition seam lets every protocol handler classify the final
+// model wire consistently even while adapter construction remains CLI-owned.
+func EffectiveWireAdapter(providerName, modelID string, provider appconfig.ProviderConfig) string {
+	if pinned := types.PinnedWireAdapter(providerName, modelID); pinned != "" {
+		return pinned
+	}
+	adapter := strings.ToLower(strings.TrimSpace(provider.Adapter))
+	requested := strings.ToLower(strings.TrimSpace(provider.ModelAdapters[modelID]))
+	if requested != "" && types.ModelAdapterOverrideAllowed[requested] && !types.IsWirePinnedModel(providerName, modelID) &&
+		!providers.IsCanonicalOpenAiForwardProvider(provider.Adapter, provider.AuthMode, provider.BaseURL) {
+		return requested
+	}
+	return adapter
 }
 
 // QuotaStore exposes the server-owned, concurrency-safe Codex quota snapshot
@@ -453,7 +495,7 @@ func (s *Server) handleSidecar(kind SidecarKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.lifecycle.IsDraining() {
 			w.Header().Set("Retry-After", "5")
-			writeJSONError(w, http.StatusServiceUnavailable, "server_draining", "server is draining")
+			writeClassifiedJSONError(w, http.StatusServiceUnavailable, "server_error", "Service shutting down")
 			return
 		}
 		handler.ServeHTTP(w, r)

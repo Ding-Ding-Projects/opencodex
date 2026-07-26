@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -207,7 +208,17 @@ func (a *API) handleSelectedModels(w http.ResponseWriter, r *http.Request) bool 
 			sort.Strings(available[provider])
 			available[provider] = uniqueStrings(available[provider])
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"selected": selected, "available": available, "liveModelCounts": map[string]int{}})
+		liveCounts := map[string]int{}
+		if cache, ok := a.modelCache.(interface {
+			Stale(string) ([]codex.CatalogModel, bool)
+		}); ok {
+			for provider := range a.config.Providers {
+				if models, found := cache.Stale(provider); found {
+					liveCounts[provider] = len(models)
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"selected": selected, "available": available, "liveModelCounts": liveCounts})
 	case http.MethodPut:
 		var body struct {
 			Provider string   `json:"provider"`

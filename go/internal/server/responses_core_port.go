@@ -46,11 +46,17 @@ type ResponsesCoreConfig struct {
 	Guidance            MultiAgentGuidanceOptions
 	ResolveSubagents    SubagentRosterResolver
 	ProviderAdapter     func(string) string
-	ItemIDRepair        func(string) *ResponsesItemIDRepairConfig
-	RotateAPIKeyOn429   func(string, string, string) (string, bool)
-	PrepareImageRetry   func(*types.NormalizedRequest) error
-	RequestLogs         *RequestLogStore
-	StreamMode          string
+	// RouteAdapter resolves the effective per-model wire after hard pins and
+	// modelAdapters overrides. It supersedes ProviderAdapter when configured.
+	RouteAdapter func(string, string) string
+	// PassthroughRoute identifies adapters whose non-2xx bytes are part of the
+	// public Responses contract and must be relayed without normalization.
+	PassthroughRoute  func(*types.ResolvedModel) bool
+	ItemIDRepair      func(string) *ResponsesItemIDRepairConfig
+	RotateAPIKeyOn429 func(string, string, string) (string, bool)
+	PrepareImageRetry func(*types.NormalizedRequest) error
+	RequestLogs       *RequestLogStore
+	StreamMode        string
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -159,7 +165,8 @@ func zodInputUnionError(received string) error {
 
 func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	if core.config.Lifecycle.IsDraining() {
-		writeJSONError(w, http.StatusServiceUnavailable, "server_draining", "server is draining")
+		w.Header().Set("Retry-After", "5")
+		writeClassifiedJSONError(w, http.StatusServiceUnavailable, "server_error", "Service shutting down")
 		return
 	}
 	if core.config.Registry == nil || core.config.ResolveAdapter == nil {
@@ -201,7 +208,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	ctx, cancel := context.WithCancelCause(tracked)
 	defer cancel(nil)
 	started := time.Now()
-	logSession := newResponsesLogSession(core.config.RequestLogs, started, parsed.RequestedModel, resolved, core.providerAdapter(resolved.Provider))
+	logSession := newResponsesLogSession(core.config.RequestLogs, started, parsed.RequestedModel, resolved, core.providerAdapter(resolved))
 	adapter, response, auth, resolved, pick, err := core.forward(ctx, request.Header, parsed.Normalized, resolved, pick, logSession)
 	if err != nil {
 		status := http.StatusBadGateway
@@ -227,11 +234,17 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	core.buffered(ctx, w, parsed.RequestedModel, adapter, response, auth, record, logSession)
 }
 
-func (core *ResponsesCore) providerAdapter(provider string) string {
+func (core *ResponsesCore) providerAdapter(resolved *types.ResolvedModel) string {
+	if resolved == nil {
+		return ""
+	}
+	if core.config.RouteAdapter != nil {
+		return core.config.RouteAdapter(resolved.Provider, resolved.Model)
+	}
 	if core.config.ProviderAdapter == nil {
 		return ""
 	}
-	return core.config.ProviderAdapter(provider)
+	return core.config.ProviderAdapter(resolved.Provider)
 }
 
 // applyResolvedResponsesModel keeps the normalized request and native
@@ -278,10 +291,13 @@ func applyResponsesEffortPolicy(normalized *types.NormalizedRequest, resolved *t
 }
 
 type forwardError struct {
-	status     int
-	kind       string
-	retryAfter string
-	err        error
+	status      int
+	kind        string
+	retryAfter  string
+	passthrough bool
+	body        []byte
+	headers     http.Header
+	err         error
 }
 
 func (e *forwardError) Error() string { return e.err.Error() }
@@ -290,7 +306,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 	var overrideKey string
 	imageRetryAttempted := false
 	for {
-		logSession.ensureAttempt(resolved.Provider, resolved.Model, core.providerAdapter(resolved.Provider))
+		logSession.ensureAttempt(resolved.Provider, resolved.Model, core.providerAdapter(resolved))
 		var auth *types.AuthContext
 		var err error
 		if core.config.Auth != nil {
@@ -343,9 +359,18 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			}
 			return adapter, response, auth, resolved, pick, nil
 		}
-		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		passthrough := core.config.PassthroughRoute != nil && core.config.PassthroughRoute(resolved)
+		limit := int64(1 << 20)
+		if passthrough {
+			limit = defaultResponsesResponseLimit
+		}
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, limit+1))
 		_ = response.Body.Close()
-		message := string(payload)
+		clientPayload := payload
+		if int64(len(clientPayload)) > limit {
+			clientPayload = clientPayload[:limit]
+		}
+		message := string(clientPayload)
 		if len(message) > 500 {
 			message = message[:500]
 		}
@@ -362,10 +387,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 				continue
 			}
 		}
-		adapterName := ""
-		if core.config.ProviderAdapter != nil {
-			adapterName = core.config.ProviderAdapter(resolved.Provider)
-		}
+		adapterName := core.providerAdapter(resolved)
 		if ShouldAttemptImageTierRetry(response.StatusCode, adapterName, normalized, imageRetryAttempted) && core.config.PrepareImageRetry != nil {
 			imageRetryAttempted = true
 			logSession.noteRecovery("image-413")
@@ -382,7 +404,11 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		if strings.TrimSpace(message) == "" {
 			message = http.StatusText(response.StatusCode)
 		}
-		return nil, nil, auth, resolved, pick, &forwardError{status: response.StatusCode, kind: "upstream_error", retryAfter: response.Header.Get("Retry-After"), err: fmt.Errorf("%s", message)}
+		return nil, nil, auth, resolved, pick, &forwardError{
+			status: response.StatusCode, kind: "upstream_error", retryAfter: response.Header.Get("Retry-After"),
+			passthrough: passthrough, body: append([]byte(nil), clientPayload...), headers: SanitizePassthroughHeaders(response.Header),
+			err: fmt.Errorf("%s", message),
+		}
 	}
 }
 
@@ -433,7 +459,7 @@ func (core *ResponsesCore) nextCombo(request *types.NormalizedRequest, pick *com
 
 func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession) {
 	defer response.Body.Close()
-	adapterName := core.providerAdapter(record.Provider)
+	adapterName := core.providerAdapter(resolved)
 	if useEagerResponsesRelay(core.config.StreamMode, adapterName, response) {
 		inspector := NewSSEInspector(SSEInspectorHandlers{
 			OnFirstOutput: logSession.firstOutput,
@@ -671,6 +697,19 @@ func (core *ResponsesCore) recordAuthOutcome(auth *types.AuthContext, outcome ty
 func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {
 	var failure *forwardError
 	if errors.As(err, &failure) {
+		if failure.passthrough {
+			if len(strings.TrimSpace(string(failure.body))) > 0 {
+				copyResponseHeaders(w.Header(), failure.headers)
+				w.WriteHeader(failure.status)
+				_, _ = w.Write(failure.body)
+				return
+			}
+			if retryAfter := sanitizedRetryAfter(failure.retryAfter, time.Now()); retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			writeClassifiedJSONError(w, failure.status, failure.kind, fmt.Sprintf("Provider error %d: (empty body)", failure.status))
+			return
+		}
 		message := failure.err.Error()
 		if failure.kind == "upstream_error" {
 			message = fmt.Sprintf("Provider error %d: %s", failure.status, message)
@@ -679,6 +718,25 @@ func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeJSONError(w, http.StatusBadGateway, "server_error", err.Error())
+}
+
+func copyResponseHeaders(destination, source http.Header) {
+	for name, values := range source {
+		for _, value := range values {
+			destination.Add(name, value)
+		}
+	}
+}
+
+func sanitizedRetryAfter(value string, now time.Time) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return ""
+	}
+	if _, ok := combos.ParseRetryAfter(value, now); !ok {
+		return ""
+	}
+	return value
 }
 
 func writeClassifiedJSONError(w http.ResponseWriter, status int, kind, message string) {

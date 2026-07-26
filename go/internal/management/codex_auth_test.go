@@ -117,6 +117,22 @@ type failingCodexAuthBackend struct {
 	err error
 }
 
+type remainingCodexAuthBackend struct{ codexAuthBackendStub }
+
+func (*remainingCodexAuthBackend) ConsumeCodexResetCredit(context.Context, string) (ResetCreditConsumeResult, error) {
+	remaining := 2
+	return ResetCreditConsumeResult{Code: "reset", Remaining: &remaining}, nil
+}
+
+func TestCodexResetCreditConsumeReturnsFreshRemaining(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg, func(options *Options) { options.CodexAuth = &remainingCodexAuthBackend{} })
+	response := serveManagement(api, http.MethodPost, "/api/codex-auth/reset-credits/consume", `{"accountId":"acct-1"}`)
+	if response.Code != http.StatusOK || response.Body.String() != `{"code":"reset","remaining":2}` {
+		t.Fatalf("response=%d %s", response.Code, response.Body.String())
+	}
+}
+
 func (b *failingCodexAuthBackend) StartCodexLogin(context.Context, CodexLoginOptions) (CodexLoginStart, error) {
 	return CodexLoginStart{}, b.err
 }

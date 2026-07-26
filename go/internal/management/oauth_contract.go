@@ -132,6 +132,25 @@ type ResetCredits struct {
 	AvailableCount *int          `json:"available_count,omitempty"`
 }
 
+type ResetCreditConsumeResult struct {
+	Code      string `json:"code"`
+	Remaining *int   `json:"remaining,omitempty"`
+}
+
+// CodexResetCreditConsumer is the expanded consume contract. Remaining must
+// come from the fresh post-consume WHAM response; implementations must leave it
+// nil when refresh fails or omits available_count rather than using cached quota.
+type CodexResetCreditConsumer interface {
+	ConsumeCodexResetCredit(context.Context, string) (ResetCreditConsumeResult, error)
+}
+
+// legacyCodexResetCreditConsumer keeps already-built CLI backends source
+// compatible during the contract handoff. Remove after every composition owner
+// implements CodexResetCreditConsumer.
+type legacyCodexResetCreditConsumer interface {
+	ConsumeCodexResetCredit(context.Context, string) (string, error)
+}
+
 // CodexAuthBackend is injected by CLI composition. Implementations own all
 // credential-store and OAuth state. Returned values must contain display-safe
 // metadata only; tokens and physical ChatGPT account IDs never cross this API.
@@ -141,7 +160,6 @@ type CodexAuthBackend interface {
 	DeleteCodexAccount(context.Context, string) error
 	SetCodexAccountAlias(context.Context, string, string) (bool, error)
 	CodexResetCredits(context.Context, string) (ResetCredits, error)
-	ConsumeCodexResetCredit(context.Context, string) (string, error)
 	StartCodexLogin(context.Context, CodexLoginOptions) (CodexLoginStart, error)
 	SubmitCodexLoginCode(context.Context, string, string) error
 	CancelCodexLogin(context.Context, string) (bool, error)

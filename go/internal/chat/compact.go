@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -105,7 +106,12 @@ func (h *CompactHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	summary, err := compactionSummary(events)
 	if err != nil {
-		writeResponsesError(w, 502, "server_error", err.Error())
+		kind := "upstream_error"
+		var validation *compactionResultError
+		if errors.As(err, &validation) {
+			kind = validation.kind
+		}
+		writeResponsesError(w, 502, kind, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{"output": BuildCompactReplay(ExtractCompactUserMessages(body.Input), summary)})
@@ -266,6 +272,13 @@ func responsesContentText(content any) string {
 	return out.String()
 }
 
+type compactionResultError struct {
+	kind    string
+	message string
+}
+
+func (e *compactionResultError) Error() string { return e.message }
+
 func compactionSummary(events []types.AdapterEvent) (string, error) {
 	var text, reasoning strings.Builder
 	done := false
@@ -280,20 +293,28 @@ func compactionSummary(events []types.AdapterEvent) (string, error) {
 				reasoning.WriteString(event.Text)
 			}
 		case types.EventError:
-			return "", fmt.Errorf("%s", firstNonEmpty(event.Error, "compaction turn failed"))
-		case types.EventDone, types.EventIncomplete:
+			return "", &compactionResultError{kind: "upstream_error", message: firstNonEmpty(event.Error, "compaction turn failed")}
+		case types.EventIncomplete:
+			return "", &compactionResultError{kind: "upstream_error", message: "compaction turn did not complete (status: incomplete)"}
+		case types.EventDone:
 			done = true
 		case types.EventHeartbeat:
 			continue
 		}
 	}
 	if !done {
-		return "", fmt.Errorf("compaction turn ended without a terminal event")
+		return "", &compactionResultError{kind: "upstream_error", message: "compaction turn did not complete (status: unknown)"}
 	}
+	var summary string
 	if text.Len() > 0 {
-		return text.String(), nil
+		summary = text.String()
+	} else {
+		summary = reasoning.String()
 	}
-	return reasoning.String(), nil
+	if strings.TrimSpace(summary) == "" {
+		return "", &compactionResultError{kind: "invalid_response_error", message: "compaction turn produced an empty summary"}
+	}
+	return summary, nil
 }
 
 func (h *CompactHandler) shouldNativeCompact(model *types.ResolvedModel) bool {
