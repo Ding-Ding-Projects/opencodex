@@ -45,6 +45,10 @@ func TestDesktop3pConfigGenerationRoundTrip(t *testing.T) {
 	if route, ok := ResolveDesktop3pAlias("claude-opus-4-8"); ok || route != "" {
 		t.Fatalf("native Anthropic model entered registry: %q, %v", route, ok)
 	}
+	nativeAlias := Desktop3pAlias("native", "gpt-5.6")
+	if route := ResolveInboundModel(nativeAlias, nil); route != "gpt-5.6" {
+		t.Fatalf("native desktop alias resolved to %q", route)
+	}
 }
 
 func TestDesktop3pModeArgsRejectConflictAndUnknown(t *testing.T) {

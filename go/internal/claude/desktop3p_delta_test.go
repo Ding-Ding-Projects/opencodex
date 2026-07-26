@@ -69,6 +69,27 @@ func TestDesktop3pTransactionalApplyFailureRestoresOriginal(t *testing.T) {
 	}
 }
 
+func TestDesktop3pTransactionalApplyFailureRemovesNewConfig(t *testing.T) {
+	dir := t.TempDir()
+	metadataPath := filepath.Join(dir, "_meta.json")
+	writer := func(path string, data []byte, mode os.FileMode) error {
+		if path == metadataPath {
+			return errors.New("injected metadata failure")
+		}
+		return atomicWriteFile(path, data, mode)
+	}
+	result, err := applyDesktop3pConfig(dir, 10100, nil, nil, "ocx", Desktop3pStatic, nil, writer)
+	if err == nil {
+		t.Fatal("metadata failure was accepted")
+	}
+	if _, statErr := os.Stat(result.Path); !os.IsNotExist(statErr) {
+		t.Fatalf("new config remains after rollback: %v", statErr)
+	}
+	if _, statErr := os.Stat(metadataPath); !os.IsNotExist(statErr) {
+		t.Fatalf("metadata appeared after failed write: %v", statErr)
+	}
+}
+
 func TestDesktopUnavailableRouteProtection(t *testing.T) {
 	current, err := ParseDesktopProfile(map[string]any{
 		"version":     1,
@@ -97,5 +118,34 @@ func TestDesktopSurfaceDiscriminationAndPrefer1M(t *testing.T) {
 	}
 	if got := DetectInboundSurface("claude-ocx-p--m"); got != InboundSurfaceClaude {
 		t.Fatalf("code surface = %q", got)
+	}
+}
+
+func TestDesktopStatusDetectsOnDiskDrift(t *testing.T) {
+	dir := t.TempDir()
+	result, err := ApplyDesktop3pConfig(dir, 10100, nil, nil, "ocx", Desktop3pStatic, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(result.Path, []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status := ReadDesktop3pStatus(dir, result.Fingerprint, "2026-07-26T00:00:00Z")
+	if !status.Stale || status.OnDiskFingerprint == nil || *status.OnDiskFingerprint == result.Fingerprint {
+		t.Fatalf("stale status = %#v", status)
+	}
+}
+
+func TestDesktopModelInfoUsesActiveProfileAlias(t *testing.T) {
+	profile, err := ReconcileDesktopProfile(nil, []DesktopProfileModel{{Route: "p/m", Label: "M"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateDesktop3pModelsWithProfile(nil, []Desktop3pRoutedModel{{Provider: "p", ID: "m"}}, &profile); err != nil {
+		t.Fatal(err)
+	}
+	infos := BuildModelInfosWithAlias(nil, []DiscoveryModel{{Provider: "p", ID: "m"}}, AutoContextOff, AnthropicIDDesktop3P, ActiveDesktop3pAlias)
+	if len(infos) != 1 || infos[0].ID != profile.Assignments["p/m"].Alias {
+		t.Fatalf("model infos = %#v", infos)
 	}
 }
