@@ -1,6 +1,8 @@
 # Go production reachability audit
 
-Repository audit baseline: `dev2-go` at `ec78490d6472`, compared with TypeScript `origin/dev` at `b4485706724f`. The Claude sections below retain their detailed history; this document is now the repository-wide handoff and status dashboard.
+> Repository-wide package status is now maintained in [`devlog/_plan/260726_260726-go-port-r8/095_reachability_dashboard.md`](../../../devlog/_plan/260726_260726-go-port-r8/095_reachability_dashboard.md). This file remains the detailed Claude/Anthropic audit and historical evidence ledger.
+
+Claude audit baseline: `dev2-go` through `dbc56b39e4ff`, compared with TypeScript `origin/dev` at `b4485706724f`. The repository table below is retained as a historical snapshot; `095_reachability_dashboard.md` is authoritative for cross-package status.
 
 ## Three-stage completion standard
 
