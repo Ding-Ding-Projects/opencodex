@@ -142,6 +142,34 @@ func TestTypeScriptAndGoManagementControlMutations(t *testing.T) {
 	compare("auto-switch-invalid", http.MethodPut, "/api/codex-auth/auto-switch", map[string]any{"threshold": 101})
 }
 
+func TestTypeScriptAndGoManagementLogDeletionMutations(t *testing.T) {
+	upstream := newDifferentialUpstream(t)
+	config := differentialConfig(upstream.server.URL, []string{"success"})
+	tsProxy := startTypeScriptProxy(t, config)
+	goProxy := startProxyWithConfig(t, config)
+	body := map[string]any{"model": "differential/success", "input": "ephemeral deletion fixture", "stream": true}
+	if result := captureJSON(t, goProxy.baseURL, "/v1/responses", body); result.status != http.StatusOK || result.err != nil {
+		t.Fatalf("Go deletion fixture request failed: status=%d err=%v", result.status, result.err)
+	}
+	if result := captureJSON(t, tsProxy.baseURL, "/v1/responses", body); result.status != http.StatusOK || result.err != nil {
+		t.Fatalf("TS deletion fixture request failed: status=%d err=%v", result.status, result.err)
+	}
+	compare := func(scenario, method, path string, payload any) {
+		t.Helper()
+		compareRuntimeBytes(t, "management-deletion/"+scenario,
+			captureManagementRequest(t, goProxy.baseURL, method, path, "", payload),
+			captureManagementRequest(t, tsProxy.baseURL, method, path, "", payload), true)
+	}
+	compare("logs-delete", http.MethodDelete, "/api/logs", nil)
+	compare("logs-empty", http.MethodGet, "/api/logs?tail=10", nil)
+	compare("debug-enable-usage", http.MethodPut, "/api/debug", map[string]any{"usage": true})
+	compare("debug-usage-delete", http.MethodDelete, "/api/debug/usage-logs", nil)
+	compare("debug-usage-empty", http.MethodGet, "/api/debug/usage-logs", nil)
+	compare("usage-delete", http.MethodDelete, "/api/usage", nil)
+	compare("usage-empty", http.MethodGet, "/api/usage", nil)
+	compare("debug-reset", http.MethodPut, "/api/debug", map[string]any{"reset": true})
+}
+
 func captureManagementRequest(t *testing.T, baseURL, method, path, token string, body any) runtimeResponse {
 	t.Helper()
 	var reader io.Reader

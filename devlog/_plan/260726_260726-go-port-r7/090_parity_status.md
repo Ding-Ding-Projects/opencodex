@@ -9,7 +9,7 @@ Primary harness: `go/test/parity/`
 The Go runtime is byte-locked to the Bun TypeScript runtime across the core
 Responses, Chat Completions, and Messages scenarios covered below. This is a
 bounded claim, not whole-product byte parity. The Round 9 known-diff set reached
-zero. Rounds 10–13 deliberately expanded the oracle beyond those paths and
+zero. Rounds 10–15 deliberately expanded the oracle beyond those paths and
 found new validation, transport, config, logging, CLI, and native-shim
 differences. Those residuals are explicitly enumerated; none is hidden by
 normalization.
@@ -28,7 +28,7 @@ process and malformed-input boundary.
 | HTTP error matrix | Responses and Messages: 400, 401, 403, 404, 429, 500, 502, 503 |
 | Request transforms | multi-turn messages, image input, structured output, function-call output |
 | Management API | baseline reads; strict selected-model mutation, custom-model create/update/delete, and provider deletion |
-| Management controls | strict debug enable/reset, Codex auto-switch/failover thresholds, and active-state read |
+| Management controls | strict debug enable/reset, Codex auto-switch/failover thresholds, active-state read, and sidecar settings PUT/GET |
 | Long sessions | eight-turn Claude Messages stream and four-turn native Codex shim path retain routing/config state |
 | Update planning | Bun/npm channel, immutable install command, proxy restart, and service restart plans |
 | Concurrency | 12 simultaneous uniquely tagged streams; no event or payload interleaving |
@@ -61,7 +61,8 @@ Dynamic request-log fields are normalized separately and narrowly:
 |---|---|---|---|
 | Bun HTTP server | 1.1 MiB request header | empty 431 | connection reset or empty 431; semantic lock because Bun alternates between both outcomes |
 | config | wrong known-field type | Go fallback config representation | TS repaired/default config representation |
-| sidecar settings | PUT and GET response DTO | includes `webSearch.reasoning`; alphabetic field order | omits reasoning from response DTO; insertion-order fields |
+| management | DELETE `/api/logs`, `/api/debug/usage-logs`, and `/api/usage` | returns 200 and clears the corresponding Go state | route is absent and returns 404 |
+| management | GET `/api/logs` and `/api/usage` after the extra Go DELETE routes | empty state | original request remains visible |
 
 Owner fixes promoted the unknown-command stdout/stderr contract and the
 `GET /health` 404 body to strict assertions. Socket-cut SSE status, headers,
@@ -71,9 +72,15 @@ strict assertions. Request-log response bytes now match as well. Round 13 first
 detected nine management mutation differences; owner fixes landed during the
 same round and all nine were promoted to strict. The two Responses WebSocket
 differences were also fixed and promoted to strict at the Round 14 boundary.
-The Round 14 control-mutation slice added two sidecar response-body differences.
-The fixable known runtime set is now three: wrong-field config repair plus
-sidecar PUT and GET response DTOs.
+The Round 14 control-mutation slice initially found two sidecar response-body
+differences. The owner fix now matches TS field presence and JSON order, so both
+are strict assertions. Round 15 audited destructive management paths and found
+that Go registers three deletion routes at
+`go/internal/management/logs.go:190`, `:294`, and `:317` that do not exist in
+`src/server/management/logs-usage-routes.ts`. This produces five declared
+scenario differences: three DELETE responses and the subsequent logs/usage
+reads. The fixable known runtime set is therefore six scenarios: one config
+repair plus those five management deletion outcomes.
 Status and body dimensions are tracked independently, so a disappearing
 difference cannot silently pass as a changed known-diff shape.
 
@@ -111,7 +118,7 @@ Go statement coverage:
   Responses, Messages, and Chat request/stream/error families, including tools,
   reasoning, images, structured output, Unicode splits, cancellation,
   concurrency, failover, keep-alive, and large bodies.
-- **Whole user-facing product: about 55%.** This weighted inventory includes
+- **Whole user-facing product: about 56%.** This weighted inventory includes
   management, auth, lifecycle, platform, and sidecar features that have little
   or no differential coverage. It is the appropriate denominator for a claim
   that Go can replace the complete TypeScript application.
@@ -123,7 +130,7 @@ Go statement coverage:
 | Chat Completions | 8% | partial | production route and error paths; fewer advanced transform fixtures than Responses |
 | Routing, pools, combos, quota failover | 10% | partial | synthetic multi-account rotation/cooldown; no real provider rate-limit service |
 | Provider-native transports | 10% | partial | adapter selection and synthetic wire fixtures; no live auth/provider contract |
-| Management API | 10% | substantial | provider/model/key mutation sequence, account-key switch, auth negative, debug controls, sidecar settings, and persistence within one runtime session; OAuth account mutations remain |
+| Management API | 10% | substantial | provider/model/key mutation sequence, account-key switch, auth negative, debug controls, byte-locked sidecar settings, deletion-route audit, and persistence within one runtime session; OAuth account mutations remain |
 | Config and migrations | 7% | partial | defaults, unknown fields, wrong type; no cross-version/corrupt-disk migration matrix |
 | CLI and service lifecycle | 5% | partial | built binary, unknown command, startup, and update/restart dry-run plans; no OS service-manager execution matrix |
 | Codex shim/inject integration | 5% | substantial | injected config plus four sequential shim-routed turns and backup restoration; no real Codex App session |
@@ -131,7 +138,7 @@ Go statement coverage:
 | Live WebSocket/realtime | 5% | partial | Responses WS six-turn connection and generated stream; Go live sideband text/binary byte relay; reconnect/backpressure and TS live relay fixture remain |
 | Platform, tray, update, storage, search, vision | 8% | minimal | package tests may exist, but no TS-vs-Go production-path differential lock |
 
-The weighted 55% is deliberately conservative and approximate. It must not be
+The weighted 56% is deliberately conservative and approximate. It must not be
 reported as branch or line coverage.
 
 ### Explicitly unobserved boundaries
@@ -142,7 +149,8 @@ reported as branch or line coverage.
   TS only accepts canonical OpenAI live providers, so a local frame-level
   differential fixture cannot be created without external networking or a test seam;
 - management mutations for OAuth/Codex accounts, update execution, storage,
-  startup actions, and log deletion;
+  and startup actions; log/usage deletion route presence is now observed but
+  intentionally remains a declared cross-runtime difference pending owner policy;
 - cross-version config/database migration, corrupt files, permissions, disk
   exhaustion, crash/restart recovery, and concurrent writers;
 - Windows/macOS/Linux installers, service managers, tray applications, and
