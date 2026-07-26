@@ -377,8 +377,12 @@ function runLoggedCommand(job: UpdateJobState, bin: string, args: string[], time
   return { status: result.status, signal: result.signal };
 }
 
-function spawnDetachedStart(job: UpdateJobState, installer: Installer, port?: number): void {
-  const entry = postInstallRuntimeEntry();
+function spawnDetachedStart(
+  job: UpdateJobState,
+  installer: Installer,
+  port?: number,
+  entry: DurableRuntimeEntry = postInstallRuntimeEntry(),
+): void {
   const cmd = restartCommand(false, installer, entry.cli, port, undefined, entry.runtime);
   const env = { ...process.env };
   delete env.OCX_SERVICE;
@@ -401,7 +405,14 @@ export interface RestartProxyIdentity {
 /** Test seam: the wait/spawn pair is injectable so the restart path is verifiable. */
 export interface RestartIo {
   waitForPort?: typeof reclaimListenPort;
-  spawnStart?: (job: UpdateJobState, installer: Installer, port?: number) => void;
+  /** Selects the exact post-install executable + package launcher pair once per restart. */
+  runtimeEntryFn?: () => DurableRuntimeEntry;
+  spawnStart?: (
+    job: UpdateJobState,
+    installer: Installer,
+    port: number | undefined,
+    entry: DurableRuntimeEntry,
+  ) => void;
   serviceInstalledFn?: () => boolean;
   probeProxy?: (port: number, hostname?: string) => Promise<boolean>;
   /** Richer /healthz read for update-correlated restart evidence (pid + version). */
@@ -444,7 +455,7 @@ async function restartAfterUpdate(
       svcArgs = serviceReinstallArgs();
     } catch { /* fallback to default service install */ }
   }
-  const entry = postInstallRuntimeEntry();
+  const entry = (io.runtimeEntryFn ?? postInstallRuntimeEntry)();
   const cmd = restartCommand(serviceInstalled, job.installer, entry.cli, port, svcArgs, entry.runtime);
   const waitFn = io.waitForPort ?? reclaimListenPort;
   const reclaimOpts = {
@@ -500,7 +511,7 @@ async function restartAfterUpdate(
     updateJob(job, {}, `Port ${port} still busy after ${Math.trunc(RESTART_PORT_RECLAIM_MS / 1000)}s (reclaim could not free the socket); not starting on another port. Retry 'ocx start --port ${port}'.`);
     return;
   }
-  (io.spawnStart ?? spawnDetachedStart)(job, job.installer, port);
+  (io.spawnStart ?? spawnDetachedStart)(job, job.installer, port, entry);
 }
 
 /** Exposed for tests: drives the non-service restart path with injected io. */
@@ -510,6 +521,20 @@ export function restartAfterUpdateForTests(
   io: RestartIo,
 ): Promise<void> {
   return restartAfterUpdate(job, captured, io);
+}
+
+export function windowsTrayRefreshCommands(
+  entry: DurableRuntimeEntry,
+  status: { installed?: boolean; running?: boolean },
+): {
+  install: { bin: string; args: string[] };
+  start: { bin: string; args: string[] };
+} {
+  const plan = planWindowsTrayUpdate(status);
+  return {
+    install: { bin: entry.runtime, args: [entry.cli, ...plan.installArgs] },
+    start: { bin: entry.runtime, args: [entry.cli, "tray", "start"] },
+  };
 }
 
 function restartFailureHint(port: number): string {
@@ -887,11 +912,16 @@ export async function runGuiUpdateWorker(jobId: string, channel: Channel, restar
 
     if (trayWasInstalled) {
       const entry = postInstallRuntimeEntry();
-      const trayArgs = [entry.cli, ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
-      const tray = runLoggedCommand(job, entry.runtime, trayArgs, 20_000);
+      const trayCommands = windowsTrayRefreshCommands(entry, {
+        installed: trayWasInstalled,
+        running: trayWasRunning,
+      });
+      const tray = runLoggedCommand(job, trayCommands.install.bin, trayCommands.install.args, 20_000);
       if (tray.status !== 0) {
         updateJob(job, {}, "Windows tray refresh failed; run 'ocx tray install'.");
-        if (trayWasRunning) runLoggedCommand(job, entry.runtime, [entry.cli, "tray", "start"], 15_000);
+        if (trayWasRunning) {
+          runLoggedCommand(job, trayCommands.start.bin, trayCommands.start.args, 15_000);
+        }
       }
     }
 

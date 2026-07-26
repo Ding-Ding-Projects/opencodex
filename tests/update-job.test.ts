@@ -15,6 +15,7 @@ import {
   UPDATE_JOB_LEGACY_STALE_MS,
   updateExecutionCommand,
   updateJobPath,
+  windowsTrayRefreshCommands,
   type UpdateJobState,
 } from "../src/update/job";
 import { checkUpdatePackageIntegrity, updateCommand, updateCommandStr } from "../src/update/index";
@@ -103,6 +104,39 @@ describe("GUI update execution decisions", () => {
       mode: "proxy",
       args: ["/pkg/bin/ocx.mjs", "start"],
     });
+  });
+
+  test("restart command honors the selected stable runtime and package launcher", () => {
+    expect(restartCommand(
+      true,
+      "npm",
+      "/pkg/bin/ocx.mjs",
+      10100,
+      ["service", "install", "--replace"],
+      "/stable/node",
+    )).toEqual({
+      mode: "service",
+      bin: "/stable/node",
+      args: ["/pkg/bin/ocx.mjs", "service", "install", "--replace"],
+      display: "/stable/node /pkg/bin/ocx.mjs service install --replace",
+    });
+  });
+
+  test("tray refresh commands keep install and fallback start on one durable entry", () => {
+    const entry = { runtime: "/stable/node", cli: "/pkg/bin/ocx.mjs" };
+    expect(windowsTrayRefreshCommands(entry, { installed: true, running: true })).toEqual({
+      install: {
+        bin: "/stable/node",
+        args: ["/pkg/bin/ocx.mjs", "tray", "install"],
+      },
+      start: {
+        bin: "/stable/node",
+        args: ["/pkg/bin/ocx.mjs", "tray", "start"],
+      },
+    });
+    expect(windowsTrayRefreshCommands(entry, { installed: true, running: false }).install.args).toEqual([
+      "/pkg/bin/ocx.mjs", "tray", "install", "--no-start",
+    ]);
   });
 
   test("proxy restart pins --port so post-update start does not hop to an ephemeral port", () => {
@@ -221,6 +255,7 @@ describe("GUI update execution decisions", () => {
   test("service restart waits on the captured port and clears OCX_BAKE_PORT after install", async () => {
     const waited: Array<{ port: number; hostname: string }> = [];
     const bakeDuringInstall: string[] = [];
+    const serviceCommands: Array<{ bin: string; args: string[] }> = [];
     const job: UpdateJobState = {
       id: "restart-svc",
       status: "restarting",
@@ -240,18 +275,24 @@ describe("GUI update execution decisions", () => {
     try {
       await restartAfterUpdateForTests(job, { port: 18765, hostname: "127.0.0.1" }, {
         serviceInstalledFn: () => true,
+        runtimeEntryFn: () => ({ runtime: "/stable/node", cli: "/pkg/bin/ocx.mjs" }),
         waitForPort: async (port, hostname) => {
           waited.push({ port, hostname: hostname ?? "" });
           expect(process.env.OCX_BAKE_PORT).toBeUndefined();
           return true;
         },
-        runService: () => {
+        runService: (_job, bin, args) => {
           bakeDuringInstall.push(process.env.OCX_BAKE_PORT ?? "");
+          serviceCommands.push({ bin, args });
           return { status: 0 };
         },
       });
       expect(waited).toEqual([{ port: 18765, hostname: "127.0.0.1" }]);
       expect(bakeDuringInstall).toEqual(["18765"]);
+      expect(serviceCommands).toEqual([{
+        bin: "/stable/node",
+        args: ["/pkg/bin/ocx.mjs", "service", "install"],
+      }]);
       expect(process.env.OCX_BAKE_PORT).toBeUndefined();
     } finally {
       if (prev === undefined) delete process.env.OCX_BAKE_PORT;
@@ -260,7 +301,7 @@ describe("GUI update execution decisions", () => {
   });
 
   test("service reinstall failure falls back to a direct proxy start", async () => {
-    const spawned: Array<{ port: number }> = [];
+    const spawned: Array<{ port: number; entry: { runtime: string; cli: string } }> = [];
     const job: UpdateJobState = {
       id: "svc-fallback",
       status: "restarting",
@@ -277,14 +318,18 @@ describe("GUI update execution decisions", () => {
     writeFileSync(updateJobPath(job.id), JSON.stringify(job));
     await restartAfterUpdateForTests(job, { port: 19999, hostname: "127.0.0.1" }, {
       serviceInstalledFn: () => true,
+      runtimeEntryFn: () => ({ runtime: "/stable/node", cli: "/pkg/bin/ocx.mjs" }),
       waitForPort: async () => true,
       runService: () => ({ status: 1 }),
-      spawnStart: (_job, _installer, port) => {
-        spawned.push({ port: port ?? 0 });
+      spawnStart: (_job, _installer, port, entry) => {
+        spawned.push({ port: port ?? 0, entry });
       },
     });
     // The fallback must fire: direct proxy start instead of throwing.
-    expect(spawned).toEqual([{ port: 19999 }]);
+    expect(spawned).toEqual([{
+      port: 19999,
+      entry: { runtime: "/stable/node", cli: "/pkg/bin/ocx.mjs" },
+    }]);
   });
 
   test("restart confirmation fails when the proxy never becomes healthy", async () => {
@@ -497,6 +542,62 @@ describe("GUI update execution decisions", () => {
     expect(ok).toBe(true);
     expect(restartCalls).toBe(1);
     expect(readUpdateJob(job.id)?.status).not.toBe("failed");
+    expect(readUpdateJob(job.id)?.log.some(line =>
+      line.includes("Proxy restart confirmed") && line.includes("pid changed"),
+    )).toBe(true);
+  });
+
+  test("npm finish drives the real service restart through the durable launcher before identity success", async () => {
+    let now = 0;
+    let serviceCalls = 0;
+    const serviceCommands: Array<{ bin: string; args: string[] }> = [];
+    const job: UpdateJobState = {
+      id: "npm-real-durable-restart",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+
+    const ok = await finishGuiUpdateRestart(
+      job,
+      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
+      "npm",
+      {
+        serviceInstalledFn: () => true,
+        runtimeEntryFn: () => ({ runtime: "/stable/node", cli: "/pkg/bin/ocx.mjs" }),
+        waitForPort: async () => true,
+        runService: (_job, bin, args) => {
+          serviceCommands.push({ bin, args });
+          serviceCalls += 1;
+          now = 0;
+          return { status: 0 };
+        },
+        probeProxy: async () => serviceCalls > 0,
+        probeProxyIdentity: async () => (
+          serviceCalls > 0
+            ? { pid: 222, version: "2.7.41" }
+            : null
+        ),
+        now: () => now,
+        sleepMs: async (ms) => { now += ms; },
+      },
+    );
+
+    expect(ok).toBe(true);
+    expect(serviceCalls).toBe(1);
+    expect(serviceCommands).toEqual([{
+      bin: "/stable/node",
+      args: ["/pkg/bin/ocx.mjs", "service", "install"],
+    }]);
     expect(readUpdateJob(job.id)?.log.some(line =>
       line.includes("Proxy restart confirmed") && line.includes("pid changed"),
     )).toBe(true);
