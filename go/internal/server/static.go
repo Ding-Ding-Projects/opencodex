@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//go:embed static/*
+//go:embed static/* static-manifest.json
 var staticAssets embed.FS
 
 var guiMIME = map[string]string{

@@ -1,6 +1,9 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +50,68 @@ func TestStaticHandlerSPAFallbackAndAssetBoundaries(t *testing.T) {
 	handler.ServeHTTP(traversal, httptest.NewRequest(http.MethodGet, "/%2e%2e/secret", nil))
 	if traversal.Code != http.StatusNotFound {
 		t.Fatalf("traversal = %d %s", traversal.Code, traversal.Body.String())
+	}
+}
+
+type embeddedStaticManifest struct {
+	Algorithm string `json:"algorithm"`
+	Files     []struct {
+		Path   string `json:"path"`
+		SHA256 string `json:"sha256"`
+	} `json:"files"`
+}
+
+func TestEmbeddedGUIBundleMatchesCommittedManifest(t *testing.T) {
+	manifestData, err := fs.ReadFile(staticAssets, "static-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest embeddedStaticManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode static manifest: %v", err)
+	}
+	if manifest.Algorithm != "sha256" || len(manifest.Files) == 0 {
+		t.Fatalf("invalid static manifest header: %#v", manifest)
+	}
+	want := make(map[string]string, len(manifest.Files))
+	for _, file := range manifest.Files {
+		if file.Path == "" || file.SHA256 == "" {
+			t.Fatalf("invalid static manifest row: %#v", file)
+		}
+		if _, duplicate := want[file.Path]; duplicate {
+			t.Fatalf("duplicate static manifest path: %s", file.Path)
+		}
+		want[file.Path] = file.SHA256
+	}
+	embedded, err := fs.Sub(staticAssets, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fs.WalkDir(embedded, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		data, readErr := fs.ReadFile(embedded, name)
+		if readErr != nil {
+			return readErr
+		}
+		got := fmt.Sprintf("%x", sha256.Sum256(data))
+		expected, ok := want[name]
+		if !ok {
+			t.Errorf("embedded GUI has stale unmanifested file: %s", name)
+			return nil
+		}
+		delete(want, name)
+		if got != expected {
+			t.Errorf("embedded GUI hash mismatch: %s got=%s want=%s", name, got, expected)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for missing := range want {
+		t.Errorf("manifest references missing embedded GUI file: %s", missing)
 	}
 }
 

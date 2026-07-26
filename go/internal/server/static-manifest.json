@@ -1,0 +1,189 @@
+{
+  "algorithm": "sha256",
+  "files": [
+    {
+      "path": "assets/index-B2J4t3te.css",
+      "sha256": "0836fadd0f15a54ed54c024bf9e9b35a82bef1bca5d430baa01f893533841a65"
+    },
+    {
+      "path": "assets/index-DTh7bh_K.js",
+      "sha256": "2b614720b78e05187f8753eb852f66976a7ae2113ea3a085b018e63a7c42c916"
+    },
+    {
+      "path": "favicon.png",
+      "sha256": "0dfa176e08be157972df8fc20026fdb90d2119796f3158de30c07bcefbc88ef8"
+    },
+    {
+      "path": "icons.svg",
+      "sha256": "b45fa506195cfcdef406ba9f0c77b36ddc1a7c224040926ec70abc2fdea7b93a"
+    },
+    {
+      "path": "index.html",
+      "sha256": "e72ea53c6ef4b59d90b8f18c2dfab253ea3234b6f6646c21eb913bd415d500a4"
+    },
+    {
+      "path": "logo.png",
+      "sha256": "33d8e0753ca43f1d598e49800a2a9386346469ec32edf3e93f254160e2942132"
+    },
+    {
+      "path": "provider-icons/README.md",
+      "sha256": "44da8bd21ac3f75f383ba150604500ef55c8c8058a61a5796b466b40a4d3e4f2"
+    },
+    {
+      "path": "provider-icons/alibaba-color.svg",
+      "sha256": "bd57c416a7e64e6e10a017c1589c97093d5f482179259e42811884a5fc664401"
+    },
+    {
+      "path": "provider-icons/antigravity-color.svg",
+      "sha256": "ccf54fbd7d2b7384421ed03fc980ea8e6b08bf9d616e1f49c92cf0bff9706a35"
+    },
+    {
+      "path": "provider-icons/antigravity.svg",
+      "sha256": "078f2fbe3ab6d60c62e91bad10d265c6bf796acc5fefc5ded61eb41aa44daec0"
+    },
+    {
+      "path": "provider-icons/claude-color.svg",
+      "sha256": "a3101f3047a119aa11825ad9369510f0c472428c8c52d420e31bc62db44a8364"
+    },
+    {
+      "path": "provider-icons/claude.svg",
+      "sha256": "365a70a7eb3956d9b9a96086058ebe04e1dbd8e291a756ad964e8a283fbd6d38"
+    },
+    {
+      "path": "provider-icons/cloudflare-ai-gateway-color.svg",
+      "sha256": "dc0cd6400a99a38669a66d3a8c16a6e2e6a6be3585f286c725d0dac8288ad5f1"
+    },
+    {
+      "path": "provider-icons/copilot-color.svg",
+      "sha256": "8a72bfcbb38c3ee6c8d6cead727db8fbbf6df59270758aca313f01431c91ddfc"
+    },
+    {
+      "path": "provider-icons/copilot.svg",
+      "sha256": "8a72bfcbb38c3ee6c8d6cead727db8fbbf6df59270758aca313f01431c91ddfc"
+    },
+    {
+      "path": "provider-icons/cursor-color.svg",
+      "sha256": "d8c3200003ff0e629f003f8ed19414ce8a559c851c8784f8187c318d9b24a04e"
+    },
+    {
+      "path": "provider-icons/cursor.svg",
+      "sha256": "1398c920f3d6eabca015a53736183db63a06139c723039898efa48bd5e3769a3"
+    },
+    {
+      "path": "provider-icons/deepseek-color.svg",
+      "sha256": "7c589762f606473ebe6472eb79f2189221af136f8474ed9c8e8c43549ae6d80e"
+    },
+    {
+      "path": "provider-icons/discord.svg",
+      "sha256": "eb19bf9eb26474246b8d8993556b57727a9621be5b2d42c54516302bfe2183dd"
+    },
+    {
+      "path": "provider-icons/firepass-color.svg",
+      "sha256": "ab4d12ace56969e5b829b4ae28e6c32de77cb529131aa737657ad3b8eb2fa477"
+    },
+    {
+      "path": "provider-icons/fireworks-color.svg",
+      "sha256": "ab4d12ace56969e5b829b4ae28e6c32de77cb529131aa737657ad3b8eb2fa477"
+    },
+    {
+      "path": "provider-icons/gemini-color.svg",
+      "sha256": "8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602"
+    },
+    {
+      "path": "provider-icons/gemini.svg",
+      "sha256": "87d5b3c4be75a66f54c1936482a263df68185545b741129badd1b7c2449c18d3"
+    },
+    {
+      "path": "provider-icons/github-copilot-color.svg",
+      "sha256": "1d8a4a13c08d5fa0eba2a830ba531dfadbad26dc093000fd6da734de16a011d8"
+    },
+    {
+      "path": "provider-icons/gitlab-duo-color.svg",
+      "sha256": "eea41a3fdcb9ce948412f8787a8fec356ca6d529fc39fe892d17f1f89353c37c"
+    },
+    {
+      "path": "provider-icons/grok-color.svg",
+      "sha256": "28b94bc472bc26504f8ab8c6922b36871ad3f1986aea5e378a4e3afcb417c474"
+    },
+    {
+      "path": "provider-icons/grok.svg",
+      "sha256": "28b94bc472bc26504f8ab8c6922b36871ad3f1986aea5e378a4e3afcb417c474"
+    },
+    {
+      "path": "provider-icons/groq-color.svg",
+      "sha256": "7f4650654b1ca5cd6f0c4c9249e026fdd0e0b42031a814c396512739d21c2c88"
+    },
+    {
+      "path": "provider-icons/huggingface-color.svg",
+      "sha256": "9de53676f200f24c390edbdb54892d9d5059e1880b5ee45e8281130fcc36c47c"
+    },
+    {
+      "path": "provider-icons/kimi-color.svg",
+      "sha256": "6a61b1d38b6baba60e2637f1a10074ac6823b252e2f50ac0f1ae53210ac927fc"
+    },
+    {
+      "path": "provider-icons/kiro-color.svg",
+      "sha256": "6fae5cb4a621f0f6d1c0c903d92e156c28715cdfe9d954c4260d6b9413b04ecf"
+    },
+    {
+      "path": "provider-icons/kiro.svg",
+      "sha256": "3d7376c4dfb1f47a8889ba5d0c2c8bd8cc6b0ff1c639f7b5db1be60479d0dc0a"
+    },
+    {
+      "path": "provider-icons/lm-studio-color.svg",
+      "sha256": "c7efedbfe06dc5467a6bf8eb924331daf5ee8da089ec17d1bc6cfb72c2f4cbf1"
+    },
+    {
+      "path": "provider-icons/mistral-color.svg",
+      "sha256": "35c9162a6a94a0205bece86a701cf29c21776ab42b3149d64e2a915d99bd5e83"
+    },
+    {
+      "path": "provider-icons/moonshot-color.svg",
+      "sha256": "6a61b1d38b6baba60e2637f1a10074ac6823b252e2f50ac0f1ae53210ac927fc"
+    },
+    {
+      "path": "provider-icons/nvidia-color.svg",
+      "sha256": "c2cc8b409c548cf8b24ca8a9110af8445bec470b18f1eed455b79ce8a711aa17"
+    },
+    {
+      "path": "provider-icons/ollama-color.svg",
+      "sha256": "75bd6714d474b5802f171fd7e01aa975a18057e4ea74868f62631e743a3fb5ff"
+    },
+    {
+      "path": "provider-icons/openai.svg",
+      "sha256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186"
+    },
+    {
+      "path": "provider-icons/opencode.svg",
+      "sha256": "cd7bfba5cd532ea2ab04f4cd38da807b74753bf327769f117277636108fcbbf2"
+    },
+    {
+      "path": "provider-icons/openrouter-color.svg",
+      "sha256": "25a9dffc13c2b7b51b57fa959f2ebdb69e36ae09222b07c3b3b33d1a93961d28"
+    },
+    {
+      "path": "provider-icons/qianfan-color.svg",
+      "sha256": "2ab1b388595337bb3950bb520be943404dfb9c9abcd7fb2fcab87ea30aa7f184"
+    },
+    {
+      "path": "provider-icons/qwen-portal-color.svg",
+      "sha256": "d3a18b76f02dedfdda0b5324c0a725a93db0c79aa98cb5d9f79aef20fcf7356f"
+    },
+    {
+      "path": "provider-icons/telegram.svg",
+      "sha256": "2c1711092b15e5a305480159474cb99cca21638803295740f1b4e158dfd66c44"
+    },
+    {
+      "path": "provider-icons/vercel-ai-gateway-color.svg",
+      "sha256": "79e4798fd9d404bda70aab8103f4408579094aa5cb0f6d0c535a15cc169f041f"
+    },
+    {
+      "path": "provider-icons/vllm-color.svg",
+      "sha256": "5f0fe3440618d77f80fb88575f62faf5ef34d2b95855769a7b6099adf18b47f4"
+    },
+    {
+      "path": "provider-icons/xiaomi-color.svg",
+      "sha256": "d3735c77781b564e4baaabd75ab8c6d30e74432de76c8de64e53b48d90218b8c"
+    }
+  ]
+}

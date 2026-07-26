@@ -293,17 +293,7 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 	case "GET /api/usage":
 		window := usage.ParseRange(r.URL.Query().Get("range"))
 		surface := usage.ParseSurface(r.URL.Query().Get("surface"))
-		if a.usageLog == nil {
-			writeJSON(w, http.StatusOK, usage.Summarize(nil, window, time.Now(), surface))
-			return true
-		}
-		snapshot, err := a.usageLog.ReadSnapshotForManagement(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "usage log could not be read")
-			return true
-		}
-		entries := snapshot.Entries
-		writeJSON(w, http.StatusOK, usageSummaryResponse(usage.Summarize(entries, window, time.Now(), surface), entries))
+		writeJSON(w, http.StatusOK, a.usageSummary(r.Context(), window, surface, a.now()))
 		return true
 	case "GET /api/storage":
 		home := a.storageHome
@@ -338,6 +328,12 @@ type usageModelResponse struct {
 	EstimatedCostUSD  float64 `json:"estimatedCostUsd,omitempty"`
 }
 
+type usageSummaryCacheEntry struct {
+	revisionKey string
+	expiresAt   time.Time
+	response    usageSummaryResponseDTO
+}
+
 type usageSummaryResponseDTO struct {
 	Range       usage.Range             `json:"range"`
 	Surface     string                  `json:"surface"`
@@ -347,6 +343,7 @@ type usageSummaryResponseDTO struct {
 	Days        []usage.Day             `json:"days"`
 	Models      []usageModelResponse    `json:"models"`
 	Providers   []usage.ProviderSummary `json:"providers"`
+	Error       string                  `json:"error,omitempty"`
 }
 
 func usageSummaryResponse(summary usage.Summary, entries []usage.Entry) usageSummaryResponseDTO {
@@ -370,6 +367,108 @@ func usageSummaryResponse(summary usage.Summary, entries []usage.Entry) usageSum
 		Range: summary.Range, Surface: summary.Surface, Since: summary.Since, GeneratedAt: summary.GeneratedAt,
 		Summary: summary.Summary, Days: summary.Days, Models: models, Providers: summary.Providers,
 	}
+}
+
+func (a *API) usageSummary(ctx context.Context, window usage.Range, surface string, now time.Time) usageSummaryResponseDTO {
+	if a.usageLog == nil {
+		return usageSummaryResponse(usage.Summarize(nil, window, now, surface), nil)
+	}
+
+	key := string(window) + ":" + surface
+	a.usageCacheMu.Lock()
+	defer a.usageCacheMu.Unlock()
+
+	revision, err := a.usageLog.CurrentRevision()
+	if err != nil {
+		return usageReadFailedResponse(window, surface, now)
+	}
+	if cached, ok := a.usageSummaryCache[key]; ok && cached.revisionKey == revision.Key() && now.Before(cached.expiresAt) {
+		response := cached.response
+		response.Since = usageWindowSince(window, now)
+		response.GeneratedAt = now.UnixMilli()
+		return response
+	}
+
+	snapshot, err := a.usageLog.ReadSnapshotForManagement(ctx)
+	if err != nil {
+		return usageReadFailedResponse(window, surface, now)
+	}
+	response := usageSummaryResponse(usage.Summarize(snapshot.Entries, window, now, surface), snapshot.Entries)
+	a.usageSummaryCache[key] = usageSummaryCacheEntry{
+		revisionKey: snapshot.Revision.Key(),
+		expiresAt:   usageSummaryExpiresAt(snapshot.Entries, window, surface, now),
+		response:    response,
+	}
+	return response
+}
+
+func usageWindowSince(window usage.Range, now time.Time) *int64 {
+	days := 0
+	switch window {
+	case usage.Range7D:
+		days = 7
+	case usage.Range30D:
+		days = 30
+	default:
+		return nil
+	}
+	value := now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	return &value
+}
+
+func usageSummaryExpiresAt(entries []usage.Entry, window usage.Range, surface string, now time.Time) time.Time {
+	expiresAt := nextLocalMidnight(now)
+	days := 0
+	switch window {
+	case usage.Range7D:
+		days = 7
+	case usage.Range30D:
+		days = 30
+	default:
+		return expiresAt
+	}
+	windowDuration := time.Duration(days) * 24 * time.Hour
+	for _, entry := range entries {
+		if !usageEntryMatchesSurface(entry, surface) {
+			continue
+		}
+		// Summary cutoffs are millisecond integers and include timestamp == since.
+		// Expire one millisecond after the nominal boundary, when that row first
+		// becomes ineligible, so a boundary rebuild cannot cache it until midnight.
+		expiry := time.UnixMilli(entry.Timestamp).Add(windowDuration + time.Millisecond)
+		if expiry.After(now) && expiry.Before(expiresAt) {
+			expiresAt = expiry
+		}
+	}
+	return expiresAt
+}
+
+func nextLocalMidnight(now time.Time) time.Time {
+	year, month, day := now.Date()
+	return time.Date(year, month, day+1, 0, 0, 0, 0, now.Location())
+}
+
+func usageEntryMatchesSurface(entry usage.Entry, surface string) bool {
+	switch surface {
+	case "claude":
+		return entry.Surface == usage.SurfaceClaude || entry.Surface == usage.SurfaceClaudeDesktop
+	case "grok":
+		return entry.Surface == usage.SurfaceGrok
+	case "codex":
+		return entry.Surface == ""
+	default:
+		return true
+	}
+}
+
+func usageReadFailedResponse(window usage.Range, surface string, now time.Time) usageSummaryResponseDTO {
+	response := usageSummaryResponse(usage.Summarize(nil, window, now, surface), nil)
+	response.Since = nil
+	response.Days = []usage.Day{}
+	response.Models = []usageModelResponse{}
+	response.Providers = []usage.ProviderSummary{}
+	response.Error = "read_failed"
+	return response
 }
 
 func debugLogQuery(r *http.Request) (int, int) {
