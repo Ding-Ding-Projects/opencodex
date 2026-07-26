@@ -238,6 +238,57 @@ func TestOutboundWebSearchIncompleteAndThinkingSignature(t *testing.T) {
 	}
 }
 
+func TestOutboundSanitizesWebSearchFunctionCallDomains(t *testing.T) {
+	if !IsClaudeWebSearchToolName(" WebSearch ") || !IsClaudeWebSearchToolName("web_search_preview") || IsClaudeWebSearchToolName("search") {
+		t.Fatal("WebSearch tool-name classification diverged from Claude")
+	}
+
+	events := []types.AdapterEvent{
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"go","allowed_domains":[" docs.go.dev ","",7],`)}},
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`"blocked_domains":["example.com"]}`)}},
+		{Type: types.EventDone},
+	}
+	wire, message := ConvertEvents("m", events)
+	text := string(wire)
+	if strings.Contains(text, "blocked_domains") || strings.Count(text, `"type":"input_json_delta"`) != 1 {
+		t.Fatalf("WebSearch arguments were not buffered and sanitized once: %s", text)
+	}
+	input := message.Content[0]["input"].(map[string]any)
+	allowed, ok := input["allowed_domains"].([]string)
+	if !ok || len(allowed) != 1 || allowed[0] != "docs.go.dev" || input["query"] != "go" {
+		t.Fatalf("sanitized input = %#v", input)
+	}
+	if _, exists := input["blocked_domains"]; exists {
+		t.Fatalf("blocked_domains survived allow-list preference: %#v", input)
+	}
+
+	got := SanitizeWebSearchInput(map[string]any{"blocked_domains": []any{" a.test ", ""}, "allowed_domains": []any{}})
+	blocked, ok := got["blocked_domains"].([]string)
+	if !ok || len(blocked) != 1 || blocked[0] != "a.test" {
+		t.Fatalf("blocked-only input = %#v", got)
+	}
+}
+
+func TestOutboundStreamEmitsTimerDrivenIdlePing(t *testing.T) {
+	events := make(chan types.AdapterEvent)
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		events <- types.AdapterEvent{Type: types.EventDone}
+		close(events)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var output strings.Builder
+	if err := streamEventsWithPingInterval(ctx, &output, "m", events, 5*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	// The first idle tick starts the message (which emits an initial ping) and
+	// then emits the timer ping, matching the TypeScript stream contract.
+	if count := strings.Count(output.String(), "event: ping"); count < 2 {
+		t.Fatalf("timer pings = %d, stream = %s", count, output.String())
+	}
+}
+
 func TestOutboundClosedChannelFailsClosed(t *testing.T) {
 	ch := make(chan types.AdapterEvent)
 	close(ch)

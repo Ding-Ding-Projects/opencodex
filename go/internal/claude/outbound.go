@@ -13,6 +13,8 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
+const defaultAnthropicPingInterval = 20 * time.Second
+
 type AnthropicMessage struct {
 	ID           string           `json:"id"`
 	Type         string           `json:"type"`
@@ -91,16 +93,30 @@ func ConvertEvents(model string, events []types.AdapterEvent) ([]byte, Anthropic
 }
 
 func StreamEvents(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent) error {
+	return streamEventsWithPingInterval(ctx, w, model, events, defaultAnthropicPingInterval)
+}
+
+func streamEventsWithPingInterval(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent, pingInterval time.Duration) error {
 	var writeErr error
 	m := newAnthropicMachine(model, func(name string, data map[string]any) {
 		if writeErr == nil {
 			writeErr = writeSSEFrame(w, name, data)
 		}
 	})
+	var ping <-chan time.Time
+	var ticker *time.Ticker
+	if pingInterval > 0 {
+		ticker = time.NewTicker(pingInterval)
+		ping = ticker.C
+		defer ticker.Stop()
+	}
 	for !m.terminal && writeErr == nil {
 		select {
 		case <-ctx.Done():
 			m.fail(499, ctx.Err().Error())
+		case <-ping:
+			m.start()
+			m.emit("ping", map[string]any{"type": "ping"})
 		case event, ok := <-events:
 			if !ok {
 				m.fail(502, "adapter stream ended before a terminal event")
@@ -141,6 +157,7 @@ type anthropicMachine struct {
 	open                       string
 	openIndex                  int
 	openToolID, openToolName   string
+	openToolIsWebSearch        bool
 	toolJSON                   strings.Builder
 	usage                      *types.Usage
 	webSearchRequests          int
@@ -185,14 +202,28 @@ func (m *anthropicMachine) closeBlock() {
 		}
 		m.thinkingSignature = ""
 	}
-	m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": m.openIndex})
 	if m.open == "tool_use" {
-		input := map[string]any{}
-		_ = json.Unmarshal([]byte(m.toolJSON.String()), &input)
+		var decoded any = map[string]any{}
+		if m.toolJSON.Len() > 0 && json.Unmarshal([]byte(m.toolJSON.String()), &decoded) != nil {
+			decoded = map[string]any{}
+		}
+		input, ok := decoded.(map[string]any)
+		if !ok {
+			input = map[string]any{}
+		}
+		if m.openToolIsWebSearch {
+			input = SanitizeWebSearchInput(input)
+			encoded, _ := json.Marshal(input)
+			m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(encoded)}})
+		}
+		m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": m.openIndex})
 		m.message.Content = append(m.message.Content, map[string]any{"type": "tool_use", "id": m.openToolID, "name": m.openToolName, "input": input})
 		m.toolJSON.Reset()
 		m.openToolID = ""
 		m.openToolName = ""
+		m.openToolIsWebSearch = false
+	} else {
+		m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": m.openIndex})
 	}
 	m.open = ""
 }
@@ -251,11 +282,14 @@ func (m *anthropicMachine) accept(e types.AdapterEvent) {
 			m.index++
 			m.openToolID = id
 			m.openToolName = e.ToolCall.Name
+			m.openToolIsWebSearch = IsClaudeWebSearchToolName(e.ToolCall.Name)
 			m.emit("content_block_start", map[string]any{"type": "content_block_start", "index": m.openIndex, "content_block": map[string]any{"type": "tool_use", "id": id, "name": e.ToolCall.Name, "input": map[string]any{}}})
 		}
 		if len(e.ToolCall.Arguments) > 0 {
 			m.toolJSON.Write(e.ToolCall.Arguments)
-			m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(e.ToolCall.Arguments)}})
+			if !m.openToolIsWebSearch {
+				m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(e.ToolCall.Arguments)}})
+			}
 		}
 	case types.EventUsage:
 		m.usage = e.Usage
@@ -295,6 +329,58 @@ func (m *anthropicMachine) accept(e types.AdapterEvent) {
 			m.fail(529, message)
 		}
 	}
+}
+
+// IsClaudeWebSearchToolName reports whether a client-side function call uses
+// Claude Code's WebSearch naming convention.
+func IsClaudeWebSearchToolName(name string) bool {
+	trimmed := strings.TrimSpace(name)
+	return trimmed == "WebSearch" || strings.HasPrefix(strings.ToLower(trimmed), "web_search")
+}
+
+// SanitizeWebSearchInput enforces Claude Code's optional, mutually-exclusive
+// domain filters. Empty entries are removed and an allow-list wins when both
+// non-empty filters are present.
+func SanitizeWebSearchInput(input map[string]any) map[string]any {
+	result := make(map[string]any, len(input))
+	for key, value := range input {
+		if key != "allowed_domains" && key != "blocked_domains" {
+			result[key] = value
+		}
+	}
+	allowed := normalizeWebSearchDomainList(input["allowed_domains"])
+	blocked := normalizeWebSearchDomainList(input["blocked_domains"])
+	if len(allowed) > 0 {
+		result["allowed_domains"] = allowed
+	} else if len(blocked) > 0 {
+		result["blocked_domains"] = blocked
+	}
+	return result
+}
+
+func normalizeWebSearchDomainList(value any) []string {
+	raw, ok := value.([]any)
+	if !ok {
+		if stringsList, ok := value.([]string); ok {
+			raw = make([]any, len(stringsList))
+			for index := range stringsList {
+				raw[index] = stringsList[index]
+			}
+		} else {
+			return nil
+		}
+	}
+	domains := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		domain, ok := entry.(string)
+		if !ok {
+			continue
+		}
+		if domain = strings.TrimSpace(domain); domain != "" {
+			domains = append(domains, domain)
+		}
+	}
+	return domains
 }
 func (m *anthropicMachine) appendText(kind, text string) {
 	wire := kind

@@ -146,6 +146,26 @@ func TestProductionBufferedMessagesUsesClaudeOutboundStateMachine(t *testing.T) 
 	}
 }
 
+func TestProductionStreamingMessagesSanitizesWebSearchFunctionDomains(t *testing.T) {
+	events := []types.AdapterEvent{
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"go","allowed_domains":[" docs.go.dev "],"blocked_domains":["example.com"]}`)}},
+		{Type: types.EventDone},
+	}
+	handler, upstream := productionMessagesHandler(t, nil, events)
+	defer upstream.Close()
+	response := invokeMessages(t, handler, map[string]any{
+		"model": "acme/wire", "max_tokens": 32, "stream": true,
+		"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	wire := response.Body.String()
+	if !strings.Contains(wire, `docs.go.dev`) || strings.Contains(wire, `blocked_domains`) || strings.Count(wire, `input_json_delta`) != 1 {
+		t.Fatalf("production WebSearch stream was not canonically sanitized: %s", wire)
+	}
+}
+
 func TestProductionDesktopAliasRecordsHealthAndRoutes(t *testing.T) {
 	models := []claude.Desktop3pRoutedModel{{Provider: "acme", ID: "wire"}}
 	claude.BuildDesktop3pRegistry(nil, models)
