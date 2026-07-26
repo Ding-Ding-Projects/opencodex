@@ -46,6 +46,7 @@ type Config struct {
 	RequestLogs            *management.RequestLog
 	ManagementConfig       *appconfig.Config
 	ConfigPath             string
+	ConfigPersistence      *appconfig.LivePersistence
 	DebugLog               *usage.DebugLog
 	OAuthManagement        management.OAuthBackend
 	CodexAuthManagement    management.CodexAuthBackend
@@ -96,6 +97,9 @@ type Server struct {
 
 func New(config Config) *Server {
 	backfillGoogleModes(config.ManagementConfig)
+	if config.ConfigPersistence == nil && config.ManagementConfig != nil && config.ConfigPath != "" {
+		config.ConfigPersistence = appconfig.NewLivePersistence(config.ConfigPath, config.ManagementConfig)
+	}
 	if config.PersistSelectedPort != nil && ShouldPersistSelectedPort(config.ConfiguredPort, config.SelectedPort, config.PreferredPort) {
 		if err := config.PersistSelectedPort(config.SelectedPort); err != nil {
 			panic(err)
@@ -157,7 +161,15 @@ func New(config Config) *Server {
 			if model == nil {
 				return false
 			}
-			provider, ok := config.ManagementConfig.Providers[model.Provider]
+			var provider appconfig.ProviderConfig
+			var ok bool
+			if config.ConfigPersistence != nil {
+				config.ConfigPersistence.Read(func(cfg *appconfig.Config) {
+					provider, ok = cfg.Providers[model.Provider]
+				})
+			} else {
+				provider, ok = config.ManagementConfig.Providers[model.Provider]
+			}
 			if !ok {
 				return false
 			}
@@ -240,7 +252,7 @@ func New(config Config) *Server {
 	if codexHome == "" {
 		codexHome = codex.ResolveCodexHome(codex.HomeOptions{})
 	}
-	subagentFallback := newResponseSubagentFallback(s.config.ManagementConfig, s.config.Registry, quota, codexHome, s.config.SubagentFallbackState, primeSubagentQuota)
+	subagentFallback := newResponseSubagentFallback(s.config.ManagementConfig, s.config.Registry, quota, codexHome, s.config.SubagentFallbackState, primeSubagentQuota, s.config.ConfigPersistence)
 	s.responses = NewResponsesCore(ResponsesCoreConfig{
 		Registry: s.config.Registry, Combos: s.config.Combos, Auth: s.config.Auth,
 		ResolveAdapter: s.config.ResolveAdapter, Client: s.config.Client, Recorder: recorder,
@@ -257,25 +269,41 @@ func New(config Config) *Server {
 			if s.config.ManagementConfig == nil {
 				return ""
 			}
-			return strings.ToLower(strings.TrimSpace(s.config.ManagementConfig.Providers[provider].Adapter))
+			result := ""
+			s.readManagementConfig(func(cfg *appconfig.Config) {
+				result = strings.ToLower(strings.TrimSpace(cfg.Providers[provider].Adapter))
+			})
+			return result
 		},
 		RouteAdapter: func(provider, model string) string {
 			if s.config.ManagementConfig == nil {
 				return ""
 			}
-			return EffectiveWireAdapter(provider, model, s.config.ManagementConfig.Providers[provider])
+			result := ""
+			s.readManagementConfig(func(cfg *appconfig.Config) {
+				result = EffectiveWireAdapter(provider, model, cfg.Providers[provider])
+			})
+			return result
 		},
 		PassthroughRoute: func(resolved *types.ResolvedModel) bool {
 			if resolved == nil || s.config.ManagementConfig == nil {
 				return false
 			}
-			return EffectiveWireAdapter(resolved.Provider, resolved.Model, s.config.ManagementConfig.Providers[resolved.Provider]) == "openai-responses"
+			result := false
+			s.readManagementConfig(func(cfg *appconfig.Config) {
+				result = EffectiveWireAdapter(resolved.Provider, resolved.Model, cfg.Providers[resolved.Provider]) == "openai-responses"
+			})
+			return result
 		},
 		ForwardRoute: func(resolved *types.ResolvedModel) bool {
 			if resolved == nil || s.config.ManagementConfig == nil {
 				return false
 			}
-			return s.config.ManagementConfig.Providers[resolved.Provider].AuthMode == "forward"
+			result := false
+			s.readManagementConfig(func(cfg *appconfig.Config) {
+				result = cfg.Providers[resolved.Provider].AuthMode == "forward"
+			})
+			return result
 		},
 		ValidateForwardAdmission: func(headers http.Header) error {
 			return ValidateForwardAdmissionCredential(headers, forwardAdmissionConfig)
@@ -284,30 +312,49 @@ func New(config Config) *Server {
 			if s.config.ManagementConfig == nil {
 				return nil
 			}
-			configured := s.config.ManagementConfig.Providers[provider].ResponsesItemIDRepair
-			if configured == nil {
-				return nil
-			}
-			return &ResponsesItemIDRepairConfig{Message: append([]string(nil), configured.Message...), Reasoning: append([]string(nil), configured.Reasoning...), RepairMissingTerminalIDs: configured.RepairMissingTerminalIDs}
+			var result *ResponsesItemIDRepairConfig
+			s.readManagementConfig(func(cfg *appconfig.Config) {
+				configured := cfg.Providers[provider].ResponsesItemIDRepair
+				if configured != nil {
+					result = &ResponsesItemIDRepairConfig{Message: append([]string(nil), configured.Message...), Reasoning: append([]string(nil), configured.Reasoning...), RepairMissingTerminalIDs: configured.RepairMissingTerminalIDs}
+				}
+			})
+			return result
 		},
 		RotateAPIKeyOn429: func(provider, attemptedKey, retryAfter string) (string, bool) {
 			if s.config.ManagementConfig == nil {
 				return "", false
 			}
+			if s.config.ConfigPersistence != nil {
+				nextKey, rotate := "", false
+				if err := s.config.ConfigPersistence.Update(func(cfg *appconfig.Config) {
+					configured, exists := cfg.Providers[provider]
+					if !exists {
+						return
+					}
+					rotated, ok := rotateConfiguredProviderKey(keyFailover, provider, configured, retryAfter, attemptedKey)
+					if !ok {
+						return
+					}
+					configured.APIKey = rotated
+					cfg.Providers[provider] = configured
+					nextKey, rotate = rotated, true
+				}); err != nil {
+					return "", false
+				}
+				return nextKey, rotate
+			}
 			configured, ok := s.config.ManagementConfig.Providers[provider]
 			if !ok {
 				return "", false
 			}
-			pool := make([]providers.APIKeyEntry, 0, len(configured.APIKeyPool))
-			for _, entry := range configured.APIKeyPool {
-				pool = append(pool, providers.APIKeyEntry{ID: entry.ID, Key: entry.Key, Label: entry.Label})
-			}
-			candidate := providers.ProviderConfig{AuthMode: configured.AuthMode, APIKey: configured.APIKey, APIKeyPool: pool}
-			rotated, ok := keyFailover.RotateKeyOn429(provider, &candidate, retryAfter, time.Now(), attemptedKey)
+			rotated, ok := rotateConfiguredProviderKey(keyFailover, provider, configured, retryAfter, attemptedKey)
 			if !ok {
 				return "", false
 			}
-			return rotated.APIKey, true
+			configured.APIKey = rotated
+			s.config.ManagementConfig.Providers[provider] = configured
+			return rotated, true
 		},
 		PrepareImageRetry: ApplyAnthropicImageTierRetry,
 		RequestLogs:       advancedRequestLogs,
@@ -368,7 +415,7 @@ func New(config Config) *Server {
 		if grokPort <= 0 && config.ManagementConfig != nil {
 			grokPort = config.ManagementConfig.Port
 		}
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, ConfigPersistence: config.ConfigPersistence, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {
@@ -396,6 +443,30 @@ func New(config Config) *Server {
 	return s
 }
 
+func rotateConfiguredProviderKey(keyFailover *providers.KeyFailover, provider string, configured appconfig.ProviderConfig, retryAfter, attemptedKey string) (string, bool) {
+	pool := make([]providers.APIKeyEntry, 0, len(configured.APIKeyPool))
+	for _, entry := range configured.APIKeyPool {
+		pool = append(pool, providers.APIKeyEntry{ID: entry.ID, Key: entry.Key, Label: entry.Label})
+	}
+	candidate := providers.ProviderConfig{AuthMode: configured.AuthMode, APIKey: configured.APIKey, APIKeyPool: pool}
+	rotated, ok := keyFailover.RotateKeyOn429(provider, &candidate, retryAfter, time.Now(), attemptedKey)
+	if !ok {
+		return "", false
+	}
+	return rotated.APIKey, true
+}
+
+func (s *Server) readManagementConfig(read func(*appconfig.Config)) {
+	if read == nil || s == nil || s.config.ManagementConfig == nil {
+		return
+	}
+	if s.config.ConfigPersistence != nil {
+		s.config.ConfigPersistence.Read(read)
+		return
+	}
+	read(s.config.ManagementConfig)
+}
+
 func baseChatHandlerConfig(config Config, debug *claude.DebugRing) chat.HandlerConfig {
 	result := chat.HandlerConfig{
 		Registry: config.Registry, Combos: config.Combos, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client,
@@ -412,7 +483,15 @@ func baseChatHandlerConfig(config Config, debug *claude.DebugRing) chat.HandlerC
 			if model == nil {
 				return nil
 			}
-			provider, ok := managementConfig.Providers[model.Provider]
+			var provider appconfig.ProviderConfig
+			var ok bool
+			if config.ConfigPersistence != nil {
+				config.ConfigPersistence.Read(func(cfg *appconfig.Config) {
+					provider, ok = cfg.Providers[model.Provider]
+				})
+			} else {
+				provider, ok = managementConfig.Providers[model.Provider]
+			}
 			if !ok {
 				return nil
 			}

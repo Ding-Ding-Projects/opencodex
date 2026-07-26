@@ -31,21 +31,26 @@ import (
 )
 
 type cliProviderQuotas struct {
-	config     *config.Config
-	quota      *codex.QuotaStore
-	codexAuth  *cliCodexAuthManagement
-	fetcher    *registry.QuotaFetcher
-	auth       types.AuthProvider
-	now        func() time.Time
-	parsedOnce sync.Once
-	parsed     management.ProviderQuotaBackend
+	config      *config.Config
+	persistence *config.LivePersistence
+	quota       *codex.QuotaStore
+	codexAuth   *cliCodexAuthManagement
+	fetcher     *registry.QuotaFetcher
+	auth        types.AuthProvider
+	now         func() time.Time
+	parsedOnce  sync.Once
+	parsed      management.ProviderQuotaBackend
 }
 
 var _ management.ProviderQuotaBackend = (*cliProviderQuotas)(nil)
 var _ management.ProviderQuotaPayloadSource = (*cliProviderQuotas)(nil)
 
-func newProviderQuotaBackend(cfg *config.Config, quota *codex.QuotaStore, codexAuth *cliCodexAuthManagement, fetcher *registry.QuotaFetcher, auth types.AuthProvider, now func() time.Time) *cliProviderQuotas {
-	return &cliProviderQuotas{config: cfg, quota: quota, codexAuth: codexAuth, fetcher: fetcher, auth: auth, now: now}
+func newProviderQuotaBackend(cfg *config.Config, quota *codex.QuotaStore, codexAuth *cliCodexAuthManagement, fetcher *registry.QuotaFetcher, auth types.AuthProvider, now func() time.Time, persistence ...*config.LivePersistence) *cliProviderQuotas {
+	backend := &cliProviderQuotas{config: cfg, quota: quota, codexAuth: codexAuth, fetcher: fetcher, auth: auth, now: now}
+	if len(persistence) > 0 {
+		backend.persistence = persistence[0]
+	}
+	return backend
 }
 
 func (b *cliProviderQuotas) ProviderQuotas(ctx context.Context, forceRefresh bool) (management.ProviderQuotaResponse, error) {
@@ -60,7 +65,8 @@ func (b *cliProviderQuotas) ProviderQuotas(ctx context.Context, forceRefresh boo
 			return management.ProviderQuotaResponse{}, err
 		}
 	}
-	accountID := b.config.ActiveCodexAccountID
+	accountID := ""
+	readLiveConfig(b.config, b.persistence, func(live *config.Config) { accountID = live.ActiveCodexAccountID })
 	if accountID == "" {
 		accountID = codex.MainCodexAccountID
 	}
@@ -94,11 +100,11 @@ func (b *cliProviderQuotas) ProviderQuotas(ctx context.Context, forceRefresh boo
 }
 
 func (b *cliProviderQuotas) CacheKey() string {
-	return "configured:" + strings.Join(configuredQuotaProviders(b.config, b.fetcher), ",")
+	return "configured:" + strings.Join(b.configuredProviders(), ",")
 }
 
 func (b *cliProviderQuotas) FetchProviderQuotaPayloads(ctx context.Context) ([]management.ProviderQuotaPayload, error) {
-	providerNames := configuredQuotaProviders(b.config, b.fetcher)
+	providerNames := b.configuredProviders()
 	results := make([]management.ProviderQuotaPayload, len(providerNames))
 	available := make([]bool, len(providerNames))
 	var wait sync.WaitGroup
@@ -119,6 +125,14 @@ func (b *cliProviderQuotas) FetchProviderQuotaPayloads(ctx context.Context) ([]m
 		}
 	}
 	return payloads, nil
+}
+
+func (b *cliProviderQuotas) configuredProviders() []string {
+	var providers []string
+	readLiveConfig(b.config, b.persistence, func(live *config.Config) {
+		providers = configuredQuotaProviders(live, b.fetcher)
+	})
+	return providers
 }
 
 func (b *cliProviderQuotas) fetchProviderQuotaPayload(ctx context.Context, provider string) (management.ProviderQuotaPayload, bool) {

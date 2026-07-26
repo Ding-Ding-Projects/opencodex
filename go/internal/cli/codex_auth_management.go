@@ -33,35 +33,36 @@ type codexLoginSession struct {
 }
 
 type cliCodexAuthManagement struct {
-	config     *config.Config
-	configPath string
-	store      *oauth.CredentialStore
-	quota      *codex.QuotaStore
-	client     *http.Client
-	loginFlow  func() (loginFlow, error)
-	resetBase  string
-	usageURL   string
-	mainToken  func() (codex.MainAccountToken, bool)
-	openURL    func(string) error
-	now        func() time.Time
-	mu         sync.Mutex
-	sessions   map[string]*codexLoginSession
-	mainID     string
-	mainEmail  string
-	mainPlan   string
+	config      *config.Config
+	configPath  string
+	persistence *config.LivePersistence
+	store       *oauth.CredentialStore
+	quota       *codex.QuotaStore
+	client      *http.Client
+	loginFlow   func() (loginFlow, error)
+	resetBase   string
+	usageURL    string
+	mainToken   func() (codex.MainAccountToken, bool)
+	openURL     func(string) error
+	now         func() time.Time
+	mu          sync.Mutex
+	sessions    map[string]*codexLoginSession
+	mainID      string
+	mainEmail   string
+	mainPlan    string
 }
 
 var _ management.CodexAuthBackend = (*cliCodexAuthManagement)(nil)
 var _ management.CodexResetCreditConsumer = (*cliCodexAuthManagement)(nil)
 
-func newCodexAuthManagement(cfg *config.Config, configPath string, store *oauth.CredentialStore, quota *codex.QuotaStore, client *http.Client) *cliCodexAuthManagement {
+func newCodexAuthManagement(cfg *config.Config, configPath string, store *oauth.CredentialStore, quota *codex.QuotaStore, client *http.Client, persistence ...*config.LivePersistence) *cliCodexAuthManagement {
 	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
 	if codexHome == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			codexHome = filepath.Join(home, ".codex")
 		}
 	}
-	return &cliCodexAuthManagement{
+	manager := &cliCodexAuthManagement{
 		config: cfg, configPath: configPath, store: store, quota: quota, client: client,
 		resetBase: resetCreditBaseURL, usageURL: codexUsageURL, openURL: platform.OpenURL, now: time.Now,
 		sessions: make(map[string]*codexLoginSession), mainEmail: "Codex App login",
@@ -70,6 +71,13 @@ func newCodexAuthManagement(cfg *config.Config, configPath string, store *oauth.
 		},
 		loginFlow: func() (loginFlow, error) { return newLoginFlow("chatgpt", client, "") },
 	}
+	if len(persistence) > 0 {
+		manager.persistence = persistence[0]
+	}
+	if manager.persistence == nil {
+		manager.persistence = config.NewLivePersistence(configPath, cfg)
+	}
+	return manager
 }
 
 func (m *cliCodexAuthManagement) ListCodexAccounts(ctx context.Context, forceRefresh bool) ([]management.CodexAuthAccount, error) {
@@ -250,25 +258,20 @@ func (m *cliCodexAuthManagement) DeleteCodexAccount(ctx context.Context, id stri
 	if !removed {
 		return &management.BackendError{Status: http.StatusNotFound, Message: "Account not found"}
 	}
-	m.mu.Lock()
-	previous := append([]config.CodexAccount(nil), m.config.CodexAccounts...)
-	previousActive := m.config.ActiveCodexAccountID
-	next := make([]config.CodexAccount, 0, len(previous))
-	for _, account := range previous {
-		if account.ID != id {
-			next = append(next, account)
+	err = m.persistence.Update(func(live *config.Config) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		next := make([]config.CodexAccount, 0, len(live.CodexAccounts))
+		for _, account := range live.CodexAccounts {
+			if account.ID != id {
+				next = append(next, account)
+			}
 		}
-	}
-	m.config.CodexAccounts = next
-	if m.config.ActiveCodexAccountID == id {
-		m.config.ActiveCodexAccountID = ""
-	}
-	err = config.Save(m.configPath, m.config)
-	if err != nil {
-		m.config.CodexAccounts = previous
-		m.config.ActiveCodexAccountID = previousActive
-	}
-	m.mu.Unlock()
+		live.CodexAccounts = next
+		if live.ActiveCodexAccountID == id {
+			live.ActiveCodexAccountID = ""
+		}
+	})
 	if err != nil && credentialFound {
 		_ = m.store.SaveNamedAccount(context.Background(), "openai", id, credential)
 	}
@@ -279,27 +282,23 @@ func (m *cliCodexAuthManagement) DeleteCodexAccount(ctx context.Context, id stri
 }
 
 func (m *cliCodexAuthManagement) SetCodexAccountAlias(ctx context.Context, id, alias string) (bool, error) {
-	m.mu.Lock()
-	index := -1
-	for position := range m.config.CodexAccounts {
-		if m.config.CodexAccounts[position].ID == id {
-			index = position
-			break
+	updated := false
+	err := m.persistence.Update(func(live *config.Config) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for position := range live.CodexAccounts {
+			if live.CodexAccounts[position].ID == id {
+				live.CodexAccounts[position].Alias = alias
+				updated = true
+				return
+			}
 		}
-	}
-	if index < 0 {
-		m.mu.Unlock()
-		return false, nil
-	}
-	previous := m.config.CodexAccounts[index].Alias
-	m.config.CodexAccounts[index].Alias = alias
-	err := config.Save(m.configPath, m.config)
-	if err != nil {
-		m.config.CodexAccounts[index].Alias = previous
-	}
-	m.mu.Unlock()
+	})
 	if err != nil {
 		return false, err
+	}
+	if !updated {
+		return false, nil
 	}
 	_, err = m.store.SetAccountAlias(ctx, "openai", id, alias)
 	return true, err
@@ -573,26 +572,18 @@ func (m *cliCodexAuthManagement) setCodexLoginStatus(flowID string, update func(
 }
 
 func (m *cliCodexAuthManagement) upsertConfigAccount(account config.CodexAccount) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	previous := append([]config.CodexAccount(nil), m.config.CodexAccounts...)
-	for index := range m.config.CodexAccounts {
-		if m.config.CodexAccounts[index].ID == account.ID {
-			account.Alias = m.config.CodexAccounts[index].Alias
-			m.config.CodexAccounts[index] = account
-			if err := config.Save(m.configPath, m.config); err != nil {
-				m.config.CodexAccounts = previous
-				return err
+	return m.persistence.Update(func(live *config.Config) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for index := range live.CodexAccounts {
+			if live.CodexAccounts[index].ID == account.ID {
+				account.Alias = live.CodexAccounts[index].Alias
+				live.CodexAccounts[index] = account
+				return
 			}
-			return nil
 		}
-	}
-	m.config.CodexAccounts = append(m.config.CodexAccounts, account)
-	if err := config.Save(m.configPath, m.config); err != nil {
-		m.config.CodexAccounts = previous
-		return err
-	}
-	return nil
+		live.CodexAccounts = append(live.CodexAccounts, account)
+	})
 }
 
 func (m *cliCodexAuthManagement) httpClient() *http.Client {

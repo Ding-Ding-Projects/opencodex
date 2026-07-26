@@ -40,40 +40,54 @@ func discoverConfiguredProviderModels(ctx context.Context, cfg config.Config, st
 	return cfg
 }
 
-func configuredLiveResolver(cfg *config.Config, store *oauth.CredentialStore) server.LiveRelayResolver {
+func configuredLiveResolver(cfg *config.Config, store *oauth.CredentialStore, persistence ...*config.LivePersistence) server.LiveRelayResolver {
+	var owner *config.LivePersistence
+	if len(persistence) > 0 {
+		owner = persistence[0]
+	}
 	return func(_ context.Context, incoming http.Header) (server.LiveRelayTarget, error) {
-		snapshot := *cfg
-		for name, provider := range snapshot.Providers {
-			if provider.Disabled || provider.Adapter != "openai-responses" {
-				continue
-			}
-			forward := name == "openai" || provider.AuthMode == "forward"
-			if !forward {
-				continue
-			}
-			headers := providerHeaders(provider.Headers)
-			token := strings.TrimSpace(incoming.Get("Authorization"))
-			if token == "" && store != nil {
-				if credential, found, err := store.GetCredential(name); err == nil && found && credential.Access != "" {
-					token = "Bearer " + credential.Access
+		var target server.LiveRelayTarget
+		var found bool
+		readLiveConfig(cfg, owner, func(live *config.Config) {
+			for name, provider := range live.Providers {
+				if provider.Disabled || provider.Adapter != "openai-responses" {
+					continue
 				}
+				forward := name == "openai" || provider.AuthMode == "forward"
+				if !forward {
+					continue
+				}
+				headers := providerHeaders(provider.Headers)
+				token := strings.TrimSpace(incoming.Get("Authorization"))
+				if token == "" && store != nil {
+					if credential, exists, err := store.GetCredential(name); err == nil && exists && credential.Access != "" {
+						token = "Bearer " + credential.Access
+					}
+				}
+				if token == "" {
+					continue
+				}
+				headers.Set("Authorization", token)
+				if account := strings.TrimSpace(incoming.Get("chatgpt-account-id")); account != "" {
+					headers.Set("chatgpt-account-id", account)
+				}
+				target = server.LiveRelayTarget{Headers: headers, ProviderBaseURL: provider.BaseURL, UsesBackendShape: strings.Contains(provider.BaseURL, "/backend-api")}
+				found = true
+				return
 			}
-			if token == "" {
-				continue
+			for _, provider := range live.Providers {
+				if provider.Disabled || provider.Adapter != "openai-responses" || strings.TrimSpace(provider.APIKey) == "" {
+					continue
+				}
+				headers := providerHeaders(provider.Headers)
+				headers.Set("Authorization", "Bearer "+provider.APIKey)
+				target = server.LiveRelayTarget{Headers: headers, ProviderBaseURL: provider.BaseURL, Keyed: true}
+				found = true
+				return
 			}
-			headers.Set("Authorization", token)
-			if account := strings.TrimSpace(incoming.Get("chatgpt-account-id")); account != "" {
-				headers.Set("chatgpt-account-id", account)
-			}
-			return server.LiveRelayTarget{Headers: headers, ProviderBaseURL: provider.BaseURL, UsesBackendShape: strings.Contains(provider.BaseURL, "/backend-api")}, nil
-		}
-		for _, provider := range snapshot.Providers {
-			if provider.Disabled || provider.Adapter != "openai-responses" || strings.TrimSpace(provider.APIKey) == "" {
-				continue
-			}
-			headers := providerHeaders(provider.Headers)
-			headers.Set("Authorization", "Bearer "+provider.APIKey)
-			return server.LiveRelayTarget{Headers: headers, ProviderBaseURL: provider.BaseURL, Keyed: true}, nil
+		})
+		if found {
+			return target, nil
 		}
 		return server.LiveRelayTarget{}, errors.New("voice relay needs ChatGPT auth or an OpenAI API-key provider")
 	}

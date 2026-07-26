@@ -212,11 +212,13 @@ func (a *API) handleSelectedModels(w http.ResponseWriter, r *http.Request) bool 
 		if cache, ok := a.modelCache.(interface {
 			Stale(string) ([]codex.CatalogModel, bool)
 		}); ok {
+			a.mu.RLock()
 			for provider := range a.config.Providers {
 				if models, found := cache.Stale(provider); found {
 					liveCounts[provider] = len(models)
 				}
 			}
+			a.mu.RUnlock()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"selected": selected, "available": available, "liveModelCounts": liveCounts})
 	case http.MethodPut:

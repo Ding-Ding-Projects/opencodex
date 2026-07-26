@@ -18,24 +18,30 @@ func (s *Server) handleModels(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	models := s.config.Registry.ListModels()
-	if s.config.ManagementConfig != nil {
+	managementConfig := s.config.ManagementConfig
+	if s.config.ConfigPersistence != nil {
+		if snapshot := s.config.ConfigPersistence.Snapshot(); snapshot != nil {
+			managementConfig = snapshot
+		}
+	}
+	if managementConfig != nil {
 		for index := range models {
-			cap, enabled := providers.ProviderContextCap(providers.ContextCapConfig{ProviderContextCaps: intMapToFloat(s.config.ManagementConfig.ProviderContextCaps)}, models[index].Provider)
+			cap, enabled := providers.ProviderContextCap(providers.ContextCapConfig{ProviderContextCaps: intMapToFloat(managementConfig.ProviderContextCaps)}, models[index].Provider)
 			if enabled {
 				models[index].ContextWindow = providers.ApplyProviderContextCap(models[index].ContextWindow, cap)
 			}
 		}
 	}
-	if s.config.ManagementConfig != nil {
-		models = codex.FilterVisibleRuntimeModels(models, *s.config.ManagementConfig)
+	if managementConfig != nil {
+		models = codex.FilterVisibleRuntimeModels(models, *managementConfig)
 	}
 	wantsAnthropic := request.Header.Get("anthropic-version") != "" || request.URL.Query().Get("flavor") == "anthropic"
 	if wantsAnthropic && request.URL.Query().Get("client_version") == "" {
-		if s.config.ManagementConfig != nil && s.config.ManagementConfig.ClaudeCode != nil && s.config.ManagementConfig.ClaudeCode.Enabled != nil && !*s.config.ManagementConfig.ClaudeCode.Enabled {
+		if managementConfig != nil && managementConfig.ClaudeCode != nil && managementConfig.ClaudeCode.Enabled != nil && !*managementConfig.ClaudeCode.Enabled {
 			writeModelsJSON(w, map[string]any{"data": []claude.ModelInfo{}})
 			return
 		}
-		native, routed := claudeDiscoveryModels(models, s.config.ManagementConfig)
+		native, routed := claudeDiscoveryModels(models, managementConfig)
 		nativeSlugs := make([]string, 0, len(native))
 		for _, model := range native {
 			nativeSlugs = append(nativeSlugs, model.ID)
@@ -45,18 +51,18 @@ func (s *Server) handleModels(w http.ResponseWriter, request *http.Request) {
 			desktopRouted = append(desktopRouted, claude.Desktop3pRoutedModel{Provider: model.Provider, ID: model.ID, ContextWindow: model.ContextWindow})
 		}
 		var profile *claude.DesktopProfile
-		if s.config.ManagementConfig != nil && s.config.ManagementConfig.ClaudeCode != nil {
-			profile = s.config.ManagementConfig.ClaudeCode.DesktopProfile
+		if managementConfig != nil && managementConfig.ClaudeCode != nil {
+			profile = managementConfig.ClaudeCode.DesktopProfile
 		}
 		if _, err := claude.BuildDesktop3pRegistryWithProfile(nativeSlugs, desktopRouted, profile); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
 		auto := claude.AutoContextOff
-		if s.config.ManagementConfig != nil && s.config.ManagementConfig.ClaudeCode != nil {
+		if managementConfig != nil && managementConfig.ClaudeCode != nil {
 			auto = claude.ResolveAutoContext(&claude.ContextConfig{
-				AutoContext: s.config.ManagementConfig.ClaudeCode.AutoContext, AutoCompactWindow: s.config.ManagementConfig.ClaudeCode.AutoCompactWindow,
-				MaxContextTokens: s.config.ManagementConfig.ClaudeCode.MaxContextTokens,
+				AutoContext: managementConfig.ClaudeCode.AutoContext, AutoCompactWindow: managementConfig.ClaudeCode.AutoCompactWindow,
+				MaxContextTokens: managementConfig.ClaudeCode.MaxContextTokens,
 			}, "")
 		}
 		style := claude.AnthropicIDDesktop3P

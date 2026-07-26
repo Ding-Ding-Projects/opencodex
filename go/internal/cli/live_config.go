@@ -20,11 +20,19 @@ import (
 // subsequent registry operation observes one persisted config snapshot.
 type configBackedRegistry struct {
 	config       *config.Config
+	persistence  *config.LivePersistence
 	cursorModels []cursoradapter.CursorModelInfo
 }
 
 func (r *configBackedRegistry) current() *registry.ProviderRegistry {
-	return configuredRegistryWithCursorModels(*r.config, r.cursorModels)
+	var current *registry.ProviderRegistry
+	readLiveConfig(r.config, r.persistence, func(cfg *config.Config) {
+		current = configuredRegistryWithCursorModels(*cfg, r.cursorModels)
+	})
+	if current == nil {
+		current = configuredRegistryWithCursorModels(config.Default(), r.cursorModels)
+	}
+	return current
 }
 
 func (r *configBackedRegistry) ResolveModel(selector string) (*types.ResolvedModel, error) {
@@ -45,35 +53,51 @@ func (r *configBackedRegistry) ResolveTransport(provider string, credential *typ
 func (r *configBackedRegistry) ListModels() []types.ModelEntry { return r.current().ListModels() }
 
 func configBackedAdapterResolver(cfg *config.Config, cursorModels []cursoradapter.CursorModelInfo, client *http.Client, stores ...*oauth.CredentialStore) server.AdapterResolver {
+	return configBackedAdapterResolverWithPersistence(cfg, nil, cursorModels, client, stores...)
+}
+
+func configBackedAdapterResolverWithPersistence(cfg *config.Config, persistence *config.LivePersistence, cursorModels []cursoradapter.CursorModelInfo, client *http.Client, stores ...*oauth.CredentialStore) server.AdapterResolver {
 	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
-		snapshot := *cfg
-		if resolved, err := config.ResolveEnvironment(snapshot); err == nil {
-			snapshot = resolved
-		}
-		reg := configuredRegistryWithCursorModels(snapshot, cursorModels)
-		return adapterResolverWithVisionClient(reg, snapshot, client, stores...)(model, transport, auth, incoming)
+		var adapter types.Adapter
+		var resolveErr error
+		readLiveConfig(cfg, persistence, func(live *config.Config) {
+			snapshot := *live
+			if resolved, err := config.ResolveEnvironment(snapshot); err == nil {
+				snapshot = resolved
+			}
+			reg := configuredRegistryWithCursorModels(snapshot, cursorModels)
+			adapter, resolveErr = adapterResolverWithVisionClient(reg, snapshot, client, stores...)(model, transport, auth, incoming)
+		})
+		return adapter, resolveErr
 	}
 }
 
 type configBackedAuth struct {
-	config   *config.Config
-	store    *oauth.CredentialStore
-	resolver *oauth.AuthResolver
+	config      *config.Config
+	persistence *config.LivePersistence
+	store       *oauth.CredentialStore
+	resolver    *oauth.AuthResolver
 }
 
 func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID string) (*types.AuthContext, error) {
-	snapshot := *a.config
-	resolved, err := config.ResolveEnvironment(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve provider environment: %w", err)
-	}
-	snapshot = resolved
-	if configured, ok := snapshot.Providers[provider]; ok {
-		authConfig, err := configuredProviderAuth(provider, configured, a.store)
+	var configErr error
+	readLiveConfig(a.config, a.persistence, func(live *config.Config) {
+		snapshot, err := config.ResolveEnvironment(*live)
 		if err != nil {
-			return nil, err
+			configErr = fmt.Errorf("resolve provider environment: %w", err)
+			return
 		}
-		a.resolver.SetProvider(provider, authConfig, nil)
+		if configured, ok := snapshot.Providers[provider]; ok {
+			authConfig, err := configuredProviderAuth(provider, configured, a.store)
+			if err != nil {
+				configErr = err
+				return
+			}
+			a.resolver.SetProvider(provider, authConfig, nil)
+		}
+	})
+	if configErr != nil {
+		return nil, configErr
 	}
 	return a.resolver.ResolveAuth(ctx, provider, threadID)
 }
@@ -88,11 +112,14 @@ func (a *configBackedAuth) SearchCredentialAvailable(provider string) bool {
 	if a == nil || a.config == nil || a.store == nil {
 		return false
 	}
-	snapshot, err := config.ResolveEnvironment(*a.config)
-	if err != nil {
-		return false
-	}
-	configured, ok := snapshot.Providers[provider]
+	var configured config.ProviderConfig
+	var ok bool
+	readLiveConfig(a.config, a.persistence, func(live *config.Config) {
+		snapshot, err := config.ResolveEnvironment(*live)
+		if err == nil {
+			configured, ok = snapshot.Providers[provider]
+		}
+	})
 	if !ok || configured.Disabled {
 		return false
 	}
@@ -118,4 +145,14 @@ func (a *configBackedAuth) SearchCredentialAvailable(provider string) bool {
 		}
 	}
 	return false
+}
+
+func readLiveConfig(cfg *config.Config, persistence *config.LivePersistence, read func(*config.Config)) {
+	if persistence != nil {
+		persistence.Read(read)
+		return
+	}
+	if cfg != nil && read != nil {
+		read(cfg)
+	}
 }

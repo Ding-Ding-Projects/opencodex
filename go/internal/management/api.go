@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
@@ -16,6 +17,7 @@ import (
 type Options struct {
 	Config              *config.Config
 	ConfigPath          string
+	ConfigPersistence   *config.LivePersistence
 	Registry            types.Registry
 	UsageLog            *usage.Log
 	DebugLog            *usage.DebugLog
@@ -55,6 +57,7 @@ type API struct {
 	mu                  sync.RWMutex
 	config              *config.Config
 	configPath          string
+	configPersistence   *config.LivePersistence
 	registry            types.Registry
 	usageLog            *usage.Log
 	debugLog            *usage.DebugLog
@@ -103,6 +106,9 @@ func New(options Options) (*API, error) {
 		value := config.Default()
 		cfg = &value
 	}
+	if options.ConfigPersistence == nil && options.ConfigPath != "" {
+		options.ConfigPersistence = config.NewLivePersistence(options.ConfigPath, cfg)
+	}
 	if options.RequestLogs == nil {
 		options.RequestLogs = NewRequestLog(200)
 	}
@@ -122,7 +128,11 @@ func New(options Options) (*API, error) {
 	if options.InjectionLogs == nil {
 		options.InjectionLogs = ocxlib.NewDebugLogBuffer()
 	}
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
+	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}
+	if api.configPersistence != nil {
+		api.configPersistence.BindConfigMutex(&api.mu)
+	}
+	return api, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving
@@ -154,6 +164,38 @@ func (a *API) Register(mux *http.ServeMux) {
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if a.serializesConfigMutation(r) {
+		a.configPersistence.Serialize(func() { a.serveHTTP(w, r) })
+		return
+	}
+	a.serveHTTP(w, r)
+}
+
+func (a *API) serializesConfigMutation(r *http.Request) bool {
+	if a.configPersistence == nil || r == nil {
+		return false
+	}
+	key := r.Method + " " + r.URL.Path
+	switch key {
+	case "PUT /api/settings", "PUT /api/sidecar-settings",
+		"POST /api/providers", "PATCH /api/providers", "DELETE /api/providers",
+		"POST /api/providers/keys", "DELETE /api/providers/keys",
+		"PUT /api/providers/keys/active", "PUT /api/providers/keys/alias",
+		"POST /api/keys", "DELETE /api/keys",
+		"PUT /api/codex-auth/active", "PUT /api/codex-auth/auto-switch", "PUT /api/codex-auth/failover",
+		"PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
+		"PUT /api/debug", "PUT /api/subagent-model-fallback", "PUT /api/claude-code",
+		"PUT /api/shadow-call-settings", "PUT /api/subagent-models", "PUT /api/injection-model",
+		"PUT /api/effort-caps", "PUT /api/v2", "PUT /api/claude-desktop",
+		"POST /api/claude-desktop/apply", "PUT /api/grok/selection",
+		"PUT /api/disabled-models", "PUT /api/model-visibility", "PUT /api/selected-models",
+		"POST /api/custom-models", "PUT /api/model-aliases", "PUT /api/provider-context-caps":
+		return true
+	}
+	return strings.HasPrefix(r.URL.Path, "/api/custom-models/") && (r.Method == http.MethodPut || r.Method == http.MethodDelete)
+}
+
+func (a *API) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.authorize != nil && !a.authorize(r) {
 		writeError(w, http.StatusUnauthorized, "opencodex API key required")
 		return
@@ -187,7 +229,7 @@ func (a *API) saveProviderLocked(provider string) error {
 
 func (a *API) saveWithModelCacheLocked(provider string) error {
 	if a.configPath != "" {
-		if err := config.Save(a.configPath, a.config); err != nil {
+		if err := a.configPersistence.SaveAssumingLocked(); err != nil {
 			return err
 		}
 	}

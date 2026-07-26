@@ -174,7 +174,7 @@ func (a *API) saveClaudeDesktopLocked() error {
 	if a.configPath == "" {
 		return nil
 	}
-	return config.Save(a.configPath, a.config)
+	return a.configPersistence.SaveAssumingLocked()
 }
 
 func (a *API) autoApplyClaudeDesktopBestEffort() {
@@ -202,15 +202,19 @@ func (a *API) autoApplyClaudeDesktopBestEffort() {
 	if err != nil || result.Fingerprint == "" {
 		return
 	}
-	a.mu.Lock()
-	if a.config.ClaudeCode != nil && a.config.ClaudeCode.DesktopProfile != nil {
-		a.config.ClaudeCode.DesktopProfile.AppliedFingerprint = result.Fingerprint
-		a.config.ClaudeCode.DesktopProfile.AppliedAt = time.Now().UTC().Format(time.RFC3339)
-		if a.configPath != "" {
-			_ = config.Save(a.configPath, a.config)
+	persistAppliedState := func(cfg *config.Config) {
+		if cfg.ClaudeCode != nil && cfg.ClaudeCode.DesktopProfile != nil {
+			cfg.ClaudeCode.DesktopProfile.AppliedFingerprint = result.Fingerprint
+			cfg.ClaudeCode.DesktopProfile.AppliedAt = time.Now().UTC().Format(time.RFC3339)
 		}
 	}
-	a.mu.Unlock()
+	if a.configPersistence != nil {
+		_ = a.configPersistence.Update(persistAppliedState)
+	} else {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		persistAppliedState(a.config)
+	}
 }
 
 func (a *API) buildClaudeDesktopState(stored *claude.DesktopProfile) (claudeDesktopState, error) {
