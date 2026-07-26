@@ -85,8 +85,10 @@ Required activation tests:
 - external worker launch, Bun bootstrap, nonzero exit, and zero-without-terminal-state
   failures are terminal and recoverable through status;
 - hidden worker without the internal marker fails closed;
-- a dual-runtime fixture proves Go-write → TS-compatible update → Go-read, including
-  concurrent status reads across atomic replacement;
+- a dual-runtime integration test makes a real Go `JobStore.Write`, invokes Bun against
+  an exported test seam around the actual `src/update/job.ts` `updateJob` writer while
+  real Go readers poll concurrently, then decodes the terminal file through the real Go
+  `JobStore.Read`; Go CI installs pinned Bun so this test cannot skip;
 - the no-migration poison-install `ocx help` receipt remains Bun/source-free, while the
   exact one-time legacy-shim migration remains the only other packaged Bun exception.
 
@@ -118,7 +120,8 @@ update is reachable.
 Run Go CI on `dev2-go`, `main`, and `preview` for the existing Go/package/release path
 set. The release workflow must require a successful exact-`GITHUB_SHA` `go-ci.yml` run
 in addition to `ci.yml`. Contract tests must reject removing either releasable branch
-or the exact-SHA Go gate.
+or the exact-SHA Go gate. Go CI also installs the release-tooling Bun version so the
+non-skippable Go↔TS job-store integration runs on every Go CI operating system.
 
 ### npm channel rechecks
 
@@ -130,6 +133,13 @@ mutation: tag push, release creation, asset upload, and draft publication. It al
 rechecks before final success. A moved tag therefore stops before the next public
 mutation, even when it moves during reconciliation. Fake-npm tests move the tag before
 each mutation boundary and prove later `git`/`gh` mutators are unreachable.
+
+No compound `gh` command may hide multiple mutation boundaries. Fresh state performs
+a guarded local tag push, a separately guarded `gh release create --draft` with no
+assets, seven individually guarded single-asset `gh release upload` calls, and a
+separately guarded `gh release edit --draft=false`. Draft repair likewise uploads one
+asset per guarded command. This trades seven short calls for an npm channel proof
+before every remote write; command and aggregate workflow deadlines remain bounded.
 
 ### GitHub asset identity and bounds
 
