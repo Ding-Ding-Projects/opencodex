@@ -104,6 +104,12 @@ values, and expose equal non-time response-state metrics. Buffered response JSON
 key order differs, so this path is semantic-only and does not weaken the empty
 strict known-difference map.
 
+The follow-up adds the streaming form of the same user flow. The first SSE
+response is byte-strict, its completed response ID is captured, and the second
+buffered request reproduces the same three-message upstream history and state
+metrics in both runtimes. This closes a real streaming-session gap rather than
+adding another helper-level assertion.
+
 The same pass removes parity's only direct `registry.CodexRouter` consumer.
 Account selection, thread affinity, quota ordering, 429 cooldown, and failover
 now exercise the canonical `codex.Router`, `AccountStore`, and `RoutingConfig`,
@@ -115,15 +121,15 @@ Two distinct metrics are reported and must not be interchanged.
 
 | Metric | Data plane | Whole product | Meaning |
 |---|---:|---:|---|
-| Differential scenario-family estimate | about 91% | about 70% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
-| Go statement coverage | 71.1% | 68.1% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
+| Differential scenario-family estimate | about 92% | about 71% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
+| Go statement coverage | 71.3% | 68.9% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
 
 The data-plane estimate rose modestly because multi-provider routing and
 concurrent isolation were added to an already mature HTTP/SSE/WebSocket matrix.
 The whole-product estimate rose more because migration, OAuth health, Grok,
 Desktop, lifecycle recovery, concurrent management, effort caps, and shadow
 calls were previously sparse or absent. Combo management lifecycle, storage,
-and production continuation replay raise the whole-product estimate again.
+and buffered/streaming production continuation replay raise the whole-product estimate again.
 These remain bounded estimates, not line or branch coverage.
 
 Statement coverage was measured with:
@@ -151,7 +157,7 @@ go tool cover -func=/tmp/opencodex-product-r8.cover
 | `OCX_RUN_PERF=1` | Short local throughput/RSS measurement | Skipped |
 | `OCX_RUN_STREAM_PERF=1` | Long-lived SSE throughput/RSS plus 12,000-event adapter and Kiro resource-release soak | Skipped; default e2e runs the exact 512-event contract |
 
-The final current-oracle full runtime matrix completed in 25.758 seconds as
+The final current-oracle full runtime matrix completed in 28.659 seconds as
 reported by `go test`. Every TypeScript-dependent helper resolves Bun before
 starting and calls `t.Skip` when unavailable; the dedicated missing-Bun test
 forces that path with `exec.ErrNotFound`.

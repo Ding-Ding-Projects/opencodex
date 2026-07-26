@@ -30,25 +30,62 @@ criterion is shown separately at reachability (S2) and activation lock (S3):
 |---|---:|---|
 | Has Go code been ported/audited across the internal package inventory? | **33/33 packages, 100% at S1 or above** | Every package is represented in the S1/S2/S3 inventory. This includes three S1 duplicate/generated packages with no production caller, so it is code inventory completion, not product completion. |
 | Is the code reachable from production roots? | **30/33 packages, 90.9% at S2 or above** | A default CLI/server/management/config root reaches these packages. Reachability alone does not prove the intended branch fires correctly. |
-| Is production activation fully locked? | **12/33 packages, 36.4% at S3** | This is the strict repository-level “complete package” score: production enters the canonical implementation and a test asserts its external effect. Eighteen packages remain S2 and three remain S1. |
+| Is production activation fully locked? | **15/33 packages, 45.5% at S3** | This is the strict repository-level “complete package” score: production enters the canonical implementation and a test asserts its external effect. Fifteen packages remain S2 and three remain S1. |
 | Do covered TypeScript and Go bytes match? | **100% of the strict matrix; `knownRuntimeDiffs = 0`** | This is not 100% of the product. Grok ordering, storage key order, and buffered continuation serialization are explicit semantic-only observations; real provider/OS boundaries are unmeasured. |
-| How much observable product behavior has differential evidence? | **about 91% of the core data plane; about 70% of the whole product** | This is the best user-facing completion estimate. It includes the R8 lifecycle/management expansion and the final previous-response replay path, but excludes substantial external and platform boundaries. |
+| How much observable product behavior has differential evidence? | **about 92% of the core data plane; about 71% of the whole product** | This is the best user-facing completion estimate. It includes the R8 lifecycle/management expansion plus buffered and streaming previous-response replay, but excludes substantial external and platform boundaries. |
 
 The honest one-line answer is therefore: **code inventory is 100% represented,
 the core strict matrix is 100% green, production-reachable packages are 90.9%,
-activation-complete packages are 36.4%, and whole-product scenario evidence is
-about 70%. The product as a default TypeScript replacement is not 100% done.**
+activation-complete packages are 45.5%, and whole-product scenario evidence is
+about 71%. The product as a default TypeScript replacement is not 100% done.**
+
+## How to read the percentages
+
+**Code inventory — 100% S1 or above.** All 33 internal packages have been
+placed in the TypeScript-to-Go inventory and compared at least at the S1 level.
+This means the port has an identified Go owner or an adjudicated duplicate; it
+does not mean every exported helper is production-reachable. The three S1-only
+packages are uncalled duplicate/generated owners, not 30% of the product still
+missing from Go.
+
+**Production reachability — 90.9% S2 or above.** Thirty of 33 packages are
+entered by a default CLI, server, management, or configuration root. An S2
+package is already reachable; it remains S2 if even one intended capability
+family lacks caller wiring, a production-root activation test, or duplicate-
+owner consolidation. S2 therefore does not mean “the package is unported.”
+
+**Production activation — 45.5% S3.** S3 is deliberately package-aggregate and
+strict: every intended capability family must be entered through the real root,
+the branch must fire, and its external effect must be asserted. At the requested
+13/33 snapshot, 17 packages were S2: 11 needed only wiring/activation/
+consolidation and 6 needed substantive TS behavior. The latest committed
+dashboard has already advanced to 15/33 S3; among the remaining 15 S2 packages,
+10 need no new TypeScript policy and only 5 need substantive parity work. Thus
+45.5% is the activation-evidence completion rate, not “only 45.5% of the Go port
+exists.”
+
+**Strict byte parity — 100% of the declared strict matrix.** Every scenario
+inside that matrix matches after only approved dynamic ID/time normalization,
+and `knownRuntimeDiffs` is empty. It is bounded by the matrix: Grok catalog
+ordering, storage key order, and buffered continuation object order remain
+semantic-only, while external providers and OS services are outside the oracle.
+
+**Product scenarios — about 92% data plane and 71% whole product.** This is the
+closest percentage to user-visible completion, but it is a weighted scenario-
+family estimate rather than line coverage. It credits observable routes and
+lifecycle behavior and keeps external OAuth/provider, real desktop, packaging,
+and OS service-manager boundaries in the denominator until they are exercised.
 
 The distinction is evidence-based:
 
 - the current-oracle strict runtime differential map is empty;
 - the core Responses, Chat Completions, Messages, routing, and covered
   management/lifecycle scenarios are byte-locked;
-- data-plane differential coverage is about 91%;
-- whole-product differential coverage is about 70%, so a substantial
+- data-plane differential coverage is about 92%;
+- whole-product differential coverage is about 71%, so a substantial
   user-facing perimeter still lacks equivalent evidence;
-- the repository S1/S2/S3 dashboard scores the package inventory at 12 S3,
-  18 S2, and 3 S1.
+- the repository S1/S2/S3 dashboard scores the package inventory at 15 S3,
+  15 S2, and 3 S1.
 
 “Ported” therefore means two different things that must both be true before a
 default cutover:
@@ -89,8 +126,8 @@ could not cover:
 - Claude Desktop apply/status/idempotent reapply/rollback and cross-feature
   isolation with Grok;
 - migration, OAuth health, management concurrency, agent controls, combo
-  lifecycle, storage reporting, and previous-response replay through real
-  production routes;
+  lifecycle, storage reporting, and buffered/streaming previous-response replay
+  through real production routes;
 - registry parity no longer imports the dead `registry.CodexRouter`; affinity,
   quota ordering, 429 cooldown, and failover are locked against the canonical
   `codex.Router` plus its real account store/config state;
@@ -157,16 +194,17 @@ a false byte match.
 
 | Metric | Data plane | Whole product | Interpretation |
 |---|---:|---:|---|
-| Differential scenario-family estimate | about 91% | about 70% | Weighted observable scenario inventory, not line coverage |
-| Go statement coverage | 71.1% | 68.1% | Instrumented Go statements under the final R8 coverage commands |
+| Differential scenario-family estimate | about 92% | about 71% | Weighted observable scenario inventory, not line coverage |
+| Go statement coverage | 71.3% | 68.9% | Instrumented Go statements under the final R8 coverage commands |
 
 The whole-product estimate rose from the R7 baseline of approximately 58% by
 adding management mutations, WebSocket and large-stream cases, Grok, Claude
 Desktop, migration, OAuth health, crash/restart recovery, multi-provider and
 management concurrency, agent controls, combo management, and storage-route
-semantics. The final continuation scenario additionally proves first-response
-retention, three-message replay expansion, a second response, and management
-state metrics through both real runtimes. The remaining denominator is
+semantics. The final continuation scenarios additionally prove buffered and SSE
+first-response retention, terminal-ID capture, three-message replay expansion,
+a second response, and management state metrics through both real runtimes. The
+remaining denominator is
 dominated by production wiring,
 external auth/provider behavior, OS lifecycle, and peripheral surfaces rather
 than the core HTTP/SSE transforms.
@@ -213,30 +251,29 @@ The repository dashboard enumerates 33 packages with this current scorecard:
 
 | Stage | Packages | Share |
 |---|---:|---:|
-| S3 activation locked | 12 | 36.4% |
-| S2 production reachable, incompletely locked | 18 | 54.5% |
+| S3 activation locked | 15 | 45.5% |
+| S2 production reachable, incompletely locked | 15 | 45.5% |
 | S1 ported, not production reachable | 3 | 9.1% |
 
 The S3 set is `internal/adapter`, `internal/adapter/anthropic`,
-`internal/bridge`, `internal/claude`, `internal/combos`, `internal/grok`,
-`internal/management`, `internal/search`,
-`internal/storage`, `internal/types`, `internal/usage`, and `internal/vision`.
+`internal/adapter/kiro`, `internal/bridge`, `internal/claude`,
+`internal/combos`, `internal/grok`, `internal/management`, `internal/protocol`,
+`internal/registry`, `internal/search`, `internal/storage`, `internal/types`,
+`internal/usage`, and `internal/vision`.
 The S1 set is the duplicate root router plus unimported generated snapshots:
 `internal`, `internal/adapter/cursor/gen`, and `internal/generated`. Every other
 package is S2.
 
 This makes two useful production numbers: 90.9% of packages are reachable at
-S2 or better, but only 36.4% satisfy the repository's full activation-locked
+S2 or better, but only 45.5% satisfy the repository's full activation-locked
 definition. The latter is the defensible package-completion percentage.
 
-The dashboard's named remaining handoffs are cutover blockers until fixed or
-explicitly accepted: full update integrity/restart lifecycle beyond persistent
-jobs; crash/ADC/sidecar ownership; OAuth guardian activation;
-startup-health/system-env and tray dispatch; service switch activation;
-dead-owner consolidation in registry/config/codex/providers/server; chat
-orchestration; and built-route transport/backlog activation for Cursor, Google,
-Kiro, OpenAI, and protocol. The dashboard must be re-read at cutover time
-because these stages are moving concurrently.
+At the 15/33 snapshot, the dashboard divides the remaining S2 work into ten
+packages needing only caller wiring, activation evidence, or duplicate-owner
+consolidation, and five needing substantive behavior: chat, Codex, providers,
+server, and update. The exact package rows must be re-read at cutover time
+because caller/activation promotions are moving concurrently and can raise S3
+without adding new TypeScript policy.
 
 ## Remaining verification boundaries
 

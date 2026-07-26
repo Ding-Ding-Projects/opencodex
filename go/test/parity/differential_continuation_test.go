@@ -1,10 +1,14 @@
 package parity_test
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -28,6 +32,13 @@ func newContinuationUpstream(t *testing.T) *continuationUpstream {
 		upstream.mu.Lock()
 		upstream.requests = append(upstream.requests, body)
 		upstream.mu.Unlock()
+		if streaming, _ := body["stream"].(bool); streaming {
+			writer.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(writer, "data: {\"id\":\"chatcmpl-continuation\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"remembered answer\"},\"finish_reason\":null}]}\n\n")
+			_, _ = io.WriteString(writer, "data: {\"id\":\"chatcmpl-continuation\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
+			_, _ = io.WriteString(writer, "data: [DONE]\n\n")
+			return
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"id": "chatcmpl-continuation", "object": "chat.completion", "model": "continuation",
@@ -50,18 +61,35 @@ func (upstream *continuationUpstream) snapshot(t *testing.T) []map[string]any {
 }
 
 func TestTypeScriptAndGoPreviousResponseContinuation(t *testing.T) {
+	runPreviousResponseContinuation(t, false)
+}
+
+func TestTypeScriptAndGoStreamingPreviousResponseContinuation(t *testing.T) {
+	runPreviousResponseContinuation(t, true)
+}
+
+func runPreviousResponseContinuation(t *testing.T, streamFirst bool) {
+	t.Helper()
 	goUpstream := newContinuationUpstream(t)
 	tsUpstream := newContinuationUpstream(t)
 	goProxy := startProxyWithConfig(t, differentialConfig(goUpstream.server.URL, []string{"continuation"}))
 	tsProxy := startTypeScriptProxy(t, differentialConfig(tsUpstream.server.URL, []string{"continuation"}))
 
-	firstBody := map[string]any{"model": "differential/continuation", "input": "first turn", "stream": false}
+	firstBody := map[string]any{"model": "differential/continuation", "input": "first turn", "stream": streamFirst}
 	goFirst := captureJSON(t, goProxy.baseURL, "/v1/responses", firstBody)
 	tsFirst := captureJSON(t, tsProxy.baseURL, "/v1/responses", firstBody)
-	assertContinuationSemanticParity(t, "first", goFirst, tsFirst)
+	if streamFirst {
+		compareRuntimeBytes(t, "responses/continuation-first-stream", goFirst, tsFirst, true)
+	} else {
+		assertContinuationSemanticParity(t, "first", goFirst, tsFirst)
+	}
 
-	goID := responseID(t, goFirst.body)
-	tsID := responseID(t, tsFirst.body)
+	var goID, tsID string
+	if streamFirst {
+		goID, tsID = streamResponseID(t, goFirst.body), streamResponseID(t, tsFirst.body)
+	} else {
+		goID, tsID = responseID(t, goFirst.body), responseID(t, tsFirst.body)
+	}
 	goSecond := captureJSON(t, goProxy.baseURL, "/v1/responses", map[string]any{
 		"model": "differential/continuation", "input": "second turn", "stream": false, "previous_response_id": goID,
 	})
@@ -77,6 +105,33 @@ func TestTypeScriptAndGoPreviousResponseContinuation(t *testing.T) {
 	}
 	assertExpandedContinuation(t, goRequests[1])
 	assertResponseStateParity(t, goProxy.baseURL, tsProxy.baseURL)
+}
+
+func streamResponseID(t *testing.T, body []byte) string {
+	t.Helper()
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: {") {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+			continue
+		}
+		response, _ := event["response"].(map[string]any)
+		if response["status"] != "completed" {
+			continue
+		}
+		if id, _ := response["id"].(string); id != "" {
+			return id
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan streaming response id: %v", err)
+	}
+	t.Fatalf("completed streaming response id missing: %s", body)
+	return ""
 }
 
 func assertContinuationSemanticParity(t *testing.T, stage string, goResult, tsResult runtimeResponse) {
