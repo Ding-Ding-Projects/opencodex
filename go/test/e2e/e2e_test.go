@@ -186,7 +186,7 @@ func TestProxyEndToEnd(t *testing.T) {
 	assertStatusContains(t, response, http.StatusOK, `"content":[{"text":"canned response","type":"text"}]`, `"stop_reason":"end_turn"`)
 
 	response = doRequest(t, http.MethodGet, harness.baseURL+"/api/system", "")
-	assertStatusContains(t, response, http.StatusNotFound, `"message":"management endpoint not found"`, `"type":"not_found"`)
+	assertStatusContains(t, response, http.StatusNotFound, `"message":"Unknown endpoint: GET /api/system"`, `"type":"not_found"`, `"code":"not_found"`)
 
 	response = doRequest(t, http.MethodPost, harness.baseURL+"/v1/responses/compact", `{"model":"google/gemini-canned","input":[{"type":"message","role":"user","content":"retain me"}]}`)
 	assertStatusContains(t, response, http.StatusOK, `"output"`)

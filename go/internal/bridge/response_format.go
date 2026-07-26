@@ -210,9 +210,40 @@ func nestedKeyOrder(parent string, value reflect.Value) []string {
 		return []string{"type", "text", "annotations"}
 	}
 	if parent == "item" || parent == "" || parent == "output" || parent == "content" || parent == "summary" {
+		switch jsonObjectType(value) {
+		case "function_call":
+			return []string{"type", "id", "call_id", "name", "arguments", "status", "namespace"}
+		case "message":
+			return []string{"type", "id", "status", "role", "content", "phase"}
+		case "reasoning":
+			return []string{"type", "id", "summary", "content", "encrypted_content"}
+		}
 		return []string{"type", "id", "status", "role", "content", "phase", "summary", "encrypted_content", "call_id", "execution", "name", "arguments", "input", "namespace", "action", "sources", "text", "annotations"}
 	}
 	return nil
+}
+
+func jsonObjectType(value reflect.Value) string {
+	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer) {
+		if value.IsNil() {
+			return ""
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Map || value.Type().Key().Kind() != reflect.String {
+		return ""
+	}
+	typeValue := value.MapIndex(reflect.ValueOf("type").Convert(value.Type().Key()))
+	for typeValue.IsValid() && (typeValue.Kind() == reflect.Interface || typeValue.Kind() == reflect.Pointer) {
+		if typeValue.IsNil() {
+			return ""
+		}
+		typeValue = typeValue.Elem()
+	}
+	if typeValue.IsValid() && typeValue.Kind() == reflect.String {
+		return typeValue.String()
+	}
+	return ""
 }
 
 func usage(value *types.Usage) map[string]any {

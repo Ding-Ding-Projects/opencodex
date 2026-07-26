@@ -290,9 +290,9 @@ func TestBuiltBinaryErrorShapes(t *testing.T) {
 			if response.StatusCode != http.StatusTooManyRequests {
 				t.Fatalf("status=%d retry-after=%q body=%s", response.StatusCode, response.Header.Get("Retry-After"), payload)
 			}
-			wantRetryAfter := "7"
-			if test.name == "responses" {
-				wantRetryAfter = ""
+			wantRetryAfter := ""
+			if test.name == "chat" {
+				wantRetryAfter = "7"
 			}
 			if response.Header.Get("Retry-After") != wantRetryAfter {
 				t.Fatalf("%s Retry-After=%q want=%q: headers=%v", test.name, response.Header.Get("Retry-After"), wantRetryAfter, response.Header)
@@ -355,9 +355,9 @@ func TestBuiltBinaryUpstreamStatusMatrix(t *testing.T) {
 					t.Fatalf("invalid error envelope: %s", payload)
 				}
 				if status == http.StatusTooManyRequests {
-					wantRetryAfter := "7"
-					if endpoint.name == "responses" {
-						wantRetryAfter = ""
+					wantRetryAfter := ""
+					if endpoint.name == "chat" {
+						wantRetryAfter = "7"
 					}
 					if response.Header.Get("Retry-After") != wantRetryAfter {
 						t.Fatalf("Retry-After=%q want=%q: headers=%v", response.Header.Get("Retry-After"), wantRetryAfter, response.Header)

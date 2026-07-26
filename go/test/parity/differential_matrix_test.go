@@ -102,33 +102,7 @@ type expectedRuntimeDiff struct {
 	body    bool
 }
 
-var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
-	"messages/complete":  {body: true},
-	"messages/mid-error": {body: true},
-
-	"responses/status-400": {body: true},
-	"responses/status-401": {body: true},
-	"responses/status-403": {body: true},
-	"responses/status-404": {body: true},
-	"responses/status-429": {body: true},
-	"responses/status-500": {body: true},
-	"responses/status-502": {body: true},
-	"responses/status-503": {body: true},
-
-	"messages/status-400": {body: true},
-	"messages/status-401": {body: true},
-	"messages/status-403": {body: true},
-	"messages/status-404": {body: true},
-	"messages/status-429": {headers: []string{"Retry-After"}, body: true},
-	"messages/status-500": {body: true},
-	"messages/status-502": {body: true},
-	"messages/status-503": {body: true},
-
-	"management/api/system":         {body: true},
-	"management/api/system/runtime": {body: true},
-	"management/api/config":         {body: true},
-	"management/api/providers":      {body: true},
-}
+var knownRuntimeDiffs = map[string]expectedRuntimeDiff{}
 
 var (
 	differentialIDPattern        = regexp.MustCompile(`\b(?:resp|msg|rs|fc|ws)_[0-9a-f]{20,32}\b`)

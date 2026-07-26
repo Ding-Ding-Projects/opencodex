@@ -392,7 +392,6 @@ func (m *machine) closeCurrent() []Event {
 			m.pendingSignature, m.pendingRedacted = "", nil
 		}
 	case "raw_reasoning":
-		out = append(out, m.emit("response.reasoning_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "text": text}))
 		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": text}}}
 	case "tool":
 		if text == "" {
