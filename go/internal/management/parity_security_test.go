@@ -89,6 +89,53 @@ func TestModelSelectionAndVisibilityPersistInConfig(t *testing.T) {
 	}
 }
 
+func TestCustomModelsPersistReloadAndValidateProvider(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers["acme"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://api.example.com", DefaultModel: "m1"}
+	api := newParityAPI(t, &cfg)
+	missing := serveManagement(api, http.MethodPost, "/api/custom-models", `{"provider":"missing","modelId":"m1"}`)
+	if missing.Code != http.StatusNotFound || len(cfg.CustomModels) != 0 {
+		t.Fatalf("missing=%d %s config=%#v", missing.Code, missing.Body.String(), cfg.CustomModels)
+	}
+	created := serveManagement(api, http.MethodPost, "/api/custom-models", `{"provider":"acme","modelId":"m1","displayName":"First","contextWindow":64000}`)
+	if created.Code != http.StatusCreated || len(cfg.CustomModels) != 1 {
+		t.Fatalf("created=%d %s config=%#v", created.Code, created.Body.String(), cfg.CustomModels)
+	}
+	id := cfg.CustomModels[0].ID
+	updated := serveManagement(api, http.MethodPut, "/api/custom-models/"+id, `{"modelId":"m2","displayName":"Second"}`)
+	if updated.Code != http.StatusOK || cfg.CustomModels[0].ModelID != "m2" {
+		t.Fatalf("updated=%d %s config=%#v", updated.Code, updated.Body.String(), cfg.CustomModels)
+	}
+	reloaded := newParityAPI(t, &cfg)
+	get := serveManagement(reloaded, http.MethodGet, "/api/custom-models", "")
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"modelId":"m2"`) {
+		t.Fatalf("get=%d %s", get.Code, get.Body.String())
+	}
+}
+
+func TestProviderContextCapsSupportGlobalSetAllAndPersistence(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers["a"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://a.example", DefaultModel: "m"}
+	cfg.Providers["b"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://b.example", DefaultModel: "m"}
+	api := newParityAPI(t, &cfg)
+	enabled := serveManagement(api, http.MethodPut, "/api/provider-context-caps", `{"provider":"a","enabled":true}`)
+	if enabled.Code != http.StatusOK || cfg.ProviderContextCaps["a"] != defaultProviderContextCap {
+		t.Fatalf("enabled=%d %s config=%#v", enabled.Code, enabled.Body.String(), cfg.ProviderContextCaps)
+	}
+	valued := serveManagement(api, http.MethodPut, "/api/provider-context-caps", `{"value":500000}`)
+	if valued.Code != http.StatusOK || cfg.ContextCapValue != 500000 || cfg.ProviderContextCaps["a"] != 500000 {
+		t.Fatalf("valued=%d %s config=%#v value=%d", valued.Code, valued.Body.String(), cfg.ProviderContextCaps, cfg.ContextCapValue)
+	}
+	all := serveManagement(api, http.MethodPut, "/api/provider-context-caps", `{"setAll":true}`)
+	if all.Code != http.StatusOK || cfg.ProviderContextCaps["b"] != 500000 {
+		t.Fatalf("all=%d %s config=%#v", all.Code, all.Body.String(), cfg.ProviderContextCaps)
+	}
+	unknown := serveManagement(api, http.MethodPut, "/api/provider-context-caps", `{"provider":"missing","enabled":true}`)
+	if unknown.Code != http.StatusNotFound || len(cfg.ProviderContextCaps) != 2 {
+		t.Fatalf("unknown=%d %s config=%#v", unknown.Code, unknown.Body.String(), cfg.ProviderContextCaps)
+	}
+}
+
 func TestSidecarSettingsStrictValidationAndAtomicUpdate(t *testing.T) {
 	cfg := config.Default()
 	cfg.WebSearchSidecar = &config.WebSearchSidecarConfig{Model: "before", Backend: "openai"}

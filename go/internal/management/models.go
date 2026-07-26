@@ -91,37 +91,95 @@ func (a *API) handleModels(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.Path == "/api/provider-context-caps" {
 		if r.Method == http.MethodGet {
 			a.mu.RLock()
-			caps := cloneIntMap(a.contextCaps)
+			caps := cloneIntMap(a.config.ProviderContextCaps)
+			value := globalContextCap(a.config.ContextCapValue)
 			a.mu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{"caps": caps})
+			writeJSON(w, http.StatusOK, map[string]any{"cap": defaultProviderContextCap, "value": value, "caps": caps})
 			return true
 		}
 		if r.Method == http.MethodPut {
 			var body struct {
-				Provider string `json:"provider"`
-				Enabled  bool   `json:"enabled"`
-				Value    int    `json:"value,omitempty"`
+				Provider *string `json:"provider,omitempty"`
+				Enabled  *bool   `json:"enabled,omitempty"`
+				Value    *int    `json:"value,omitempty"`
+				SetAll   *bool   `json:"setAll,omitempty"`
 			}
 			if !decodeJSON(w, r, &body) {
 				return true
 			}
-			if validateIdentifier(body.Provider, "provider") != nil {
-				writeError(w, http.StatusBadRequest, "invalid provider")
+			branches := 0
+			if body.Value != nil {
+				branches++
+			}
+			if body.SetAll != nil {
+				branches++
+			}
+			if body.Provider != nil || body.Enabled != nil {
+				branches++
+			}
+			if branches != 1 {
+				writeError(w, http.StatusBadRequest, "provide exactly one context-cap operation")
 				return true
 			}
-			if body.Enabled && body.Value <= 0 {
+			if body.Value != nil && *body.Value <= 0 {
 				writeError(w, http.StatusBadRequest, "value must be a positive integer")
 				return true
 			}
 			a.mu.Lock()
-			if body.Enabled {
-				a.contextCaps[body.Provider] = body.Value
-			} else {
-				delete(a.contextCaps, body.Provider)
+			previousCaps := cloneIntMap(a.config.ProviderContextCaps)
+			previousValue := a.config.ContextCapValue
+			if a.config.ProviderContextCaps == nil {
+				a.config.ProviderContextCaps = map[string]int{}
 			}
-			caps := cloneIntMap(a.contextCaps)
+			if body.Value != nil {
+				a.config.ContextCapValue = *body.Value
+				for provider := range a.config.ProviderContextCaps {
+					a.config.ProviderContextCaps[provider] = *body.Value
+				}
+			} else if body.SetAll != nil {
+				if *body.SetAll {
+					value := globalContextCap(a.config.ContextCapValue)
+					for provider := range a.config.Providers {
+						a.config.ProviderContextCaps[provider] = value
+					}
+				} else {
+					a.config.ProviderContextCaps = map[string]int{}
+				}
+			} else {
+				if body.Provider == nil || body.Enabled == nil {
+					a.mu.Unlock()
+					writeError(w, http.StatusBadRequest, "provider string and enabled boolean are required")
+					return true
+				}
+				provider := strings.TrimSpace(*body.Provider)
+				if validateIdentifier(provider, "provider") != nil {
+					a.mu.Unlock()
+					writeError(w, http.StatusBadRequest, "invalid provider")
+					return true
+				}
+				if _, found := a.config.Providers[provider]; !found {
+					a.mu.Unlock()
+					writeError(w, http.StatusNotFound, "unknown provider")
+					return true
+				}
+				if *body.Enabled {
+					a.config.ProviderContextCaps[provider] = globalContextCap(a.config.ContextCapValue)
+				} else {
+					delete(a.config.ProviderContextCaps, provider)
+				}
+			}
+			err := a.saveLocked()
+			if err != nil {
+				a.config.ProviderContextCaps, a.config.ContextCapValue = previousCaps, previousValue
+			}
+			caps := cloneIntMap(a.config.ProviderContextCaps)
+			value := globalContextCap(a.config.ContextCapValue)
 			a.mu.Unlock()
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "caps": caps})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "save provider context caps failed")
+				return true
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cap": defaultProviderContextCap, "value": value, "caps": caps})
 			return true
 		}
 	}
@@ -288,12 +346,17 @@ func (a *API) handleCustomModels(w http.ResponseWriter, r *http.Request) bool {
 			}
 			body.Provider = strings.TrimSpace(body.Provider)
 			body.ModelID = strings.TrimSpace(body.ModelID)
-			if validateIdentifier(body.Provider, "provider") != nil || validateIdentifier(body.ModelID, "modelId") != nil || body.ContextWindow < 0 {
+			if validateIdentifier(body.Provider, "provider") != nil || validateIdentifier(body.ModelID, "modelId") != nil || strings.Contains(body.ModelID, "/") || body.ContextWindow < 0 || strings.Contains(body.DisplayName, "/") {
 				writeError(w, http.StatusBadRequest, "invalid custom model")
 				return true
 			}
 			model := CustomModel{ID: randomID(), Provider: body.Provider, ModelID: body.ModelID, DisplayName: strings.TrimSpace(body.DisplayName), ContextWindow: body.ContextWindow, InputModalities: uniqueStrings(body.InputModalities), AddedAt: time.Now().UTC().Format(time.RFC3339)}
 			a.mu.Lock()
+			if _, found := a.config.Providers[model.Provider]; !found {
+				a.mu.Unlock()
+				writeError(w, http.StatusNotFound, "provider not configured")
+				return true
+			}
 			for _, current := range a.customModels {
 				if current.Provider == model.Provider && current.ModelID == model.ModelID {
 					a.mu.Unlock()
@@ -302,7 +365,18 @@ func (a *API) handleCustomModels(w http.ResponseWriter, r *http.Request) bool {
 				}
 			}
 			a.customModels[model.ID] = model
+			previous := append([]CustomModel(nil), a.config.CustomModels...)
+			a.config.CustomModels = sortedCustomModels(a.customModels)
+			err := a.saveLocked()
+			if err != nil {
+				delete(a.customModels, model.ID)
+				a.config.CustomModels = previous
+			}
 			a.mu.Unlock()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "save custom model failed")
+				return true
+			}
 			writeJSON(w, http.StatusCreated, model)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -323,6 +397,7 @@ func (a *API) handleCustomModels(w http.ResponseWriter, r *http.Request) bool {
 			DisplayName     *string  `json:"displayName,omitempty"`
 			ContextWindow   *int     `json:"contextWindow,omitempty"`
 			InputModalities []string `json:"inputModalities,omitempty"`
+			ModelID         *string  `json:"modelId,omitempty"`
 		}
 		if !decodeJSON(w, r, &body) {
 			return true
@@ -336,6 +411,20 @@ func (a *API) handleCustomModels(w http.ResponseWriter, r *http.Request) bool {
 		}
 		if body.DisplayName != nil {
 			model.DisplayName = strings.TrimSpace(*body.DisplayName)
+			if strings.Contains(model.DisplayName, "/") {
+				a.mu.Unlock()
+				writeError(w, http.StatusBadRequest, "displayName must not contain /")
+				return true
+			}
+		}
+		if body.ModelID != nil {
+			value := strings.TrimSpace(*body.ModelID)
+			if validateIdentifier(value, "modelId") != nil || strings.Contains(value, "/") {
+				a.mu.Unlock()
+				writeError(w, http.StatusBadRequest, "invalid modelId")
+				return true
+			}
+			model.ModelID = value
 		}
 		if body.ContextWindow != nil {
 			if *body.ContextWindow < 0 {
@@ -348,8 +437,27 @@ func (a *API) handleCustomModels(w http.ResponseWriter, r *http.Request) bool {
 		if body.InputModalities != nil {
 			model.InputModalities = uniqueStrings(body.InputModalities)
 		}
+		for otherID, other := range a.customModels {
+			if otherID != id && other.Provider == model.Provider && other.ModelID == model.ModelID {
+				a.mu.Unlock()
+				writeError(w, http.StatusConflict, "duplicate model")
+				return true
+			}
+		}
+		previous := a.customModels[id]
+		previousConfig := append([]CustomModel(nil), a.config.CustomModels...)
 		a.customModels[id] = model
+		a.config.CustomModels = sortedCustomModels(a.customModels)
+		err := a.saveLocked()
+		if err != nil {
+			a.customModels[id] = previous
+			a.config.CustomModels = previousConfig
+		}
 		a.mu.Unlock()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "save custom model failed")
+			return true
+		}
 		writeJSON(w, http.StatusOK, model)
 	case http.MethodDelete:
 		a.mu.Lock()
@@ -358,8 +466,20 @@ func (a *API) handleCustomModels(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusNotFound, "not found")
 			return true
 		}
+		model := a.customModels[id]
+		previousConfig := append([]CustomModel(nil), a.config.CustomModels...)
 		delete(a.customModels, id)
+		a.config.CustomModels = sortedCustomModels(a.customModels)
+		err := a.saveLocked()
+		if err != nil {
+			a.customModels[id] = model
+			a.config.CustomModels = previousConfig
+		}
 		a.mu.Unlock()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "save custom model removal failed")
+			return true
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -399,4 +519,25 @@ func cloneIntMap(input map[string]int) map[string]int {
 		out[key] = value
 	}
 	return out
+}
+
+const defaultProviderContextCap = 350_000
+
+func globalContextCap(value int) int {
+	if value > 0 {
+		return value
+	}
+	return defaultProviderContextCap
+}
+
+func sortedCustomModels(models map[string]CustomModel) []CustomModel {
+	values := make([]CustomModel, 0, len(models))
+	for _, model := range models {
+		values = append(values, model)
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].AddedAt < values[j].AddedAt })
+	if len(values) == 0 {
+		return nil
+	}
+	return values
 }

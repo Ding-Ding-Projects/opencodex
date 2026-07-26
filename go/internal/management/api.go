@@ -71,7 +71,11 @@ func New(options Options) (*API, error) {
 		mode = "default"
 	}
 	agents := AgentSettings{Models: append([]string(nil), cfg.SubagentModels...), InjectionModel: cfg.InjectionModel, InjectionEffort: cfg.InjectionEffort, InjectionPrompt: cfg.InjectionPrompt, GuidanceEnabled: cfg.MultiAgentGuidanceEnabled, EffortCap: cfg.EffortCap, SubagentEffortCap: cfg.SubagentEffortCap, MaxConcurrency: 1, MultiAgentMode: mode}
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, authorize: options.Authorize, customModels: map[string]CustomModel{}, aliases: map[string]string{}, contextCaps: map[string]int{}, combos: map[string]Combo{}, agents: agents}, nil
+	customModels := make(map[string]CustomModel, len(cfg.CustomModels))
+	for _, model := range cfg.CustomModels {
+		customModels[model.ID] = model
+	}
+	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving

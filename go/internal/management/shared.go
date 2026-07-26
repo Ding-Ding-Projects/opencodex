@@ -45,15 +45,7 @@ type OAuthBackend interface {
 	RemoveAccount(r *http.Request, provider, accountID string) error
 }
 
-type CustomModel struct {
-	ID              string   `json:"id"`
-	Provider        string   `json:"provider"`
-	ModelID         string   `json:"modelId"`
-	DisplayName     string   `json:"displayName,omitempty"`
-	ContextWindow   int      `json:"contextWindow,omitempty"`
-	InputModalities []string `json:"inputModalities,omitempty"`
-	AddedAt         string   `json:"addedAt"`
-}
+type CustomModel = config.CustomModel
 type ComboTarget struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`

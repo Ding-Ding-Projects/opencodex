@@ -145,8 +145,15 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot delete provider while combos depend on it", "combos": dependent})
 			return true
 		}
+		provider := a.config.Providers[name]
+		previousCaps := cloneIntMap(a.config.ProviderContextCaps)
 		delete(a.config.Providers, name)
+		delete(a.config.ProviderContextCaps, name)
 		err = a.saveLocked()
+		if err != nil {
+			a.config.Providers[name] = provider
+			a.config.ProviderContextCaps = previousCaps
+		}
 		a.mu.Unlock()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "save provider removal failed")
