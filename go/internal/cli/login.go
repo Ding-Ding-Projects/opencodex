@@ -72,7 +72,7 @@ func (f kiroImportFlow) Login(_ context.Context, onAuth func(oauth.Authorization
 		return oauth.OAuthCredentials{}, fmt.Errorf("import Kiro credential: %w", err)
 	}
 	if !found {
-		return oauth.OAuthCredentials{}, fmt.Errorf("no Kiro credential found; install the Kiro CLI (`curl -fsSL https://cli.kiro.dev/install | bash`) and run `kiro-cli login`, or set KIRO_ACCESS_TOKEN")
+		return oauth.OAuthCredentials{}, fmt.Errorf("no Kiro credential found; %s, or set KIRO_ACCESS_TOKEN", oauth.KiroCLIPrerequisite())
 	}
 	if onAuth != nil {
 		onAuth(oauth.Authorization{Instructions: "Imported an existing Kiro CLI credential."})

@@ -17,6 +17,7 @@ func applyGrokFence(ctx context.Context, cfg *config.Config, port int, hostname 
 	fence := grok.Fence{
 		Port:     port,
 		Hostname: hostname,
+		Excluded: stringSet(cfg.GrokExcludedModels),
 		FetchModels: func(fetchContext context.Context) ([]grok.InjectModel, error) {
 			models, err := fetchRuntimeModels(fetchContext, *cfg, port)
 			if err != nil {
@@ -37,6 +38,17 @@ func applyGrokFence(ctx context.Context, cfg *config.Config, port int, hostname 
 		fmt.Fprintln(streams.Err, "Grok config sync failed:", result.Message)
 	}
 	return nil
+}
+
+func stringSet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
 }
 
 // visibleGrokCatalogModels applies the shared visibility policy without

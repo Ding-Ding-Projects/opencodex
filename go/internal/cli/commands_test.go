@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -43,6 +44,18 @@ func TestProductionDispatchSurfacesProxyRestartGuidance(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "error sending request for url") || !strings.Contains(out.String(), "ocx service install") {
 		t.Fatalf("doctor output missing restart guidance: %s", out.String())
+	}
+	if !strings.Contains(out.String(), fmt.Sprintf("127.0.0.1:%d", cfg.Port)) {
+		t.Fatalf("doctor guidance used the wrong configured port: %s", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run(context.Background(), []string{"stop"}, streams); code != 0 {
+		t.Fatalf("stop exit=%d stderr=%s", code, errOut.String())
+	}
+	if strings.Contains(out.String(), "will fail until it is restarted") {
+		t.Fatalf("already-stopped proxy printed a downtime warning: %s", out.String())
 	}
 }
 

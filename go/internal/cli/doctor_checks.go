@@ -135,7 +135,7 @@ func collectDoctorReport(ctx context.Context, input doctorDeps) (doctorReport, e
 	pid, port := deps.ReadRuntime()
 	report.RunningProxyEnv = collectRunningProxyEnvironment(pid, deps.GOOS, deps.ReadProcessEnv)
 	if cfg != nil {
-		appendProxyHealthCheck(ctx, &report, cfg.Host, port)
+		appendProxyHealthCheck(ctx, &report, cfg.Host, port, cfg.Port)
 		appendServiceMemoryCheck(ctx, &report, cfg, port, deps)
 		token := strings.TrimSpace(env["OPENCODEX_API_AUTH_TOKEN"])
 		if token == "" {
@@ -215,9 +215,12 @@ func appendCodexRuntimeCheck(parent context.Context, report *doctorReport, deps 
 	report.add(doctorCheck{Name: "Codex runtime", Status: doctorPass, Detail: path + " (" + version + ")"})
 }
 
-func appendProxyHealthCheck(parent context.Context, report *doctorReport, host string, port int) {
+func appendProxyHealthCheck(parent context.Context, report *doctorReport, host string, port, configuredPort int) {
 	if port <= 0 {
-		report.add(doctorCheck{Name: "proxy health", Status: doctorInfo, Detail: "proxy is not running", Hint: proxyDownRestartHint(config.DefaultPort, false)})
+		if configuredPort <= 0 {
+			configuredPort = config.DefaultPort
+		}
+		report.add(doctorCheck{Name: "proxy health", Status: doctorInfo, Detail: "proxy is not running", Hint: proxyDownRestartHint(configuredPort, false)})
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, doctorServiceTimeout)

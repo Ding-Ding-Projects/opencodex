@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+const KiroCLIInstallCommand = "curl -fsSL https://cli.kiro.dev/install | bash"
+
+func KiroCLIPrerequisite() string {
+	return "install the Kiro CLI (`" + KiroCLIInstallCommand + "`) and run `kiro-cli login`"
+}
+
 var kiroRegionPattern = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d$`)
 
 type KiroImportedCredential struct {

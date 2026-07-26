@@ -22,20 +22,28 @@ import (
 var reclaimListenPort = server.ReclaimListenPort
 
 func runStopCommand(ctx context.Context, args []string, streams IO) error {
-	if err := runStop(ctx, args, streams); err != nil {
+	stopped, err := stopProxy(ctx, args, streams)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintln(streams.Out, "Warning: Codex/Claude requests through the proxy will fail until it is restarted ('ocx start' or 'ocx service start').")
+	if stopped {
+		fmt.Fprintln(streams.Out, "Warning: Codex/Claude requests through the proxy will fail until it is restarted ('ocx start' or 'ocx service start').")
+	}
 	return nil
 }
 
 func runStop(ctx context.Context, args []string, streams IO) error {
+	_, err := stopProxy(ctx, args, streams)
+	return err
+}
+
+func stopProxy(ctx context.Context, args []string, streams IO) (bool, error) {
 	if len(args) != 0 {
-		return fmt.Errorf("usage: ocx stop")
+		return false, fmt.Errorf("usage: ocx stop")
 	}
 	cfg, _, err := loadConfig()
 	if err != nil {
-		return err
+		return false, err
 	}
 	live := findLiveProxy(ctx, cfg)
 	if live == nil || live.PID <= 0 {
@@ -43,7 +51,7 @@ func runStop(ctx context.Context, args []string, streams IO) error {
 		_ = uninstallSystemEnv(ctx)
 		teardownOwnedGrokFence(streams)
 		fmt.Fprintln(streams.Out, "Proxy is not running.")
-		return nil
+		return false, nil
 	}
 	pid, port := live.PID, live.Port
 	baseURL := ""
@@ -53,13 +61,13 @@ func runStop(ctx context.Context, args []string, streams IO) error {
 	stopCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if err := ocxlib.StopProxy(stopCtx, pid, baseURL, cfg.AuthToken); err != nil {
-		return err
+		return false, err
 	}
 	removeRuntimeFiles()
 	_ = uninstallSystemEnv(ctx)
 	teardownOwnedGrokFence(streams)
 	fmt.Fprintln(streams.Out, "Proxy stopped.")
-	return nil
+	return true, nil
 }
 
 func runRestart(ctx context.Context, args []string, streams IO) error {

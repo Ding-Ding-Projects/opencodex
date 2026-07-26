@@ -28,6 +28,8 @@ type Options struct {
 	ProviderQuotas      ProviderQuotaBackend
 	ClaudeRuntime       ClaudeCodeRuntime
 	RuntimeControl      RuntimeControlBackend
+	GrokPort            int
+	GrokHostname        string
 	FetchModels         ModelFetcher
 	StorageHome         string
 	Version             string
@@ -69,6 +71,9 @@ type API struct {
 	providerQuotas      ProviderQuotaBackend
 	claudeRuntime       ClaudeCodeRuntime
 	runtimeControl      RuntimeControlBackend
+	grokPort            int
+	grokHostname        string
+	grokApplyMu         sync.Mutex
 	fetchModels         ModelFetcher
 	storageHome         string
 	version             string
@@ -117,7 +122,7 @@ func New(options Options) (*API, error) {
 	if options.InjectionLogs == nil {
 		options.InjectionLogs = ocxlib.NewDebugLogBuffer()
 	}
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
+	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving
@@ -137,6 +142,7 @@ var routes = []string{
 	"GET /api/system/memory", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
 	"GET /api/subagent-model-fallback", "PUT /api/subagent-model-fallback", "GET /api/claude-code", "PUT /api/claude-code", "GET /api/shadow-call-settings", "PUT /api/shadow-call-settings", "GET /api/provider-quotas",
 	"GET /api/claude-desktop", "PUT /api/claude-desktop", "POST /api/claude-desktop/apply", "GET /api/claude-desktop/status",
+	"GET /api/grok", "PUT /api/grok/selection", "POST /api/grok/apply",
 	"GET /api/startup-health", "POST /api/startup-action", "GET /api/windows-tray", "POST /api/windows-tray", "POST /api/sync", "GET /api/update/check", "POST /api/update/run", "GET /api/update/status",
 }
 
@@ -156,7 +162,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
-	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleClaudeDesktop, a.handleRuntimeSettings, a.handleRuntimeControl, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
+	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleClaudeDesktop, a.handleGrok, a.handleRuntimeSettings, a.handleRuntimeControl, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
 		if handler(w, r) {
 			return
 		}

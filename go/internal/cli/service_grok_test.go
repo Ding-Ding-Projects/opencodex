@@ -2,11 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -112,6 +117,48 @@ func TestRestartManagedServiceProceedsPastStopFailure(t *testing.T) {
 	if !manager.started || !strings.Contains(errorOutput.String(), "continuing restart") {
 		t.Fatalf("started=%t stderr=%q", manager.started, errorOutput.String())
 	}
+}
+
+func TestApplyGrokFenceThreadsConfiguredExclusions(t *testing.T) {
+	home := tempGrokHomeForCLI(t)
+	t.Setenv("GROK_HOME", home)
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/models" {
+			t.Fatalf("catalog path = %s", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"models":[{"id":"gpt-5.5","provider":"openai","contextWindow":272000},{"id":"gpt-5.4","provider":"openai","contextWindow":1000000}]}`)
+	}))
+	defer catalog.Close()
+	parsed, err := url.Parse(catalog.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.GrokExcludedModels = []string{"gpt-5.5"}
+	var output bytes.Buffer
+	if err := applyGrokFence(context.Background(), &cfg, port, "127.0.0.1", false, IO{Out: &output, Err: &output}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), `model = "gpt-5.5"`) {
+		t.Fatalf("excluded model was emitted:\n%s", content)
+	}
+}
+
+func tempGrokHomeForCLI(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("theme = \"dark\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
 
 func TestServiceNativeBackendBuildsWinSWOptionsAndPersistsChoice(t *testing.T) {

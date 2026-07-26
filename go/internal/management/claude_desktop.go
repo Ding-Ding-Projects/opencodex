@@ -19,6 +19,7 @@ type claudeDesktopModelDTO struct {
 	Available       bool                     `json:"available"`
 	ContextWindow   int                      `json:"contextWindow,omitempty"`
 	EffortSupported bool                     `json:"effortSupported"`
+	Supports1M      bool                     `json:"supports1m"`
 	Assignment      claude.DesktopAssignment `json:"assignment"`
 }
 
@@ -270,7 +271,7 @@ func (a *API) buildClaudeDesktopState(stored *claude.DesktopProfile) (claudeDesk
 		if available[route] {
 			label = desktopModelLabel(model, route)
 		}
-		dtos = append(dtos, claudeDesktopModelDTO{Route: route, Label: label, Available: available[route], ContextWindow: model.ContextWindow, EffortSupported: strings.HasPrefix(route, "native/") || len(model.ReasoningEfforts) > 0, Assignment: profile.Assignments[route]})
+		dtos = append(dtos, claudeDesktopModelDTO{Route: route, Label: label, Available: available[route], ContextWindow: model.ContextWindow, EffortSupported: strings.HasPrefix(route, "native/") || len(model.ReasoningEfforts) > 0, Supports1M: model.ContextWindow >= claude.OneMillion, Assignment: profile.Assignments[route]})
 	}
 	return claudeDesktopState{Profile: profile, Models: dtos, Rendered: rendered, Port: cfg.Port, NativeSlugs: native, Routed: routed}, nil
 }
