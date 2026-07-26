@@ -1,8 +1,10 @@
 package claude
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +14,17 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
+
+type failingAnthropicWriter struct{ err error }
+
+func (writer failingAnthropicWriter) Write([]byte) (int, error) { return 0, writer.err }
+
+type flushingAnthropicWriter struct {
+	bytes.Buffer
+	flushes int
+}
+
+func (writer *flushingAnthropicWriter) Flush() { writer.flushes++ }
 
 func TestAliasRoundTripAndGuards(t *testing.T) {
 	alias, ok := AliasForRoute("openrouter", "model--variant")
@@ -231,6 +244,27 @@ func TestOutboundClosedChannelFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(b.String(), "adapter stream ended") || strings.Contains(b.String(), "event: message_stop") {
 		t.Fatalf("wire = %s", b.String())
+	}
+}
+
+func TestOutboundStreamPropagatesWritesAndFlushesFrames(t *testing.T) {
+	writeFailure := errors.New("injected write failure")
+	events := make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{Type: types.EventDone}
+	close(events)
+	if err := StreamEvents(context.Background(), failingAnthropicWriter{err: writeFailure}, "m", events); !errors.Is(err, writeFailure) {
+		t.Fatalf("write error = %v", err)
+	}
+
+	events = make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{Type: types.EventDone}
+	close(events)
+	writer := &flushingAnthropicWriter{}
+	if err := StreamEvents(context.Background(), writer, "m", events); err != nil {
+		t.Fatal(err)
+	}
+	if writer.flushes == 0 || !strings.Contains(writer.String(), "event: message_stop") {
+		t.Fatalf("stream was not flushed: flushes=%d body=%s", writer.flushes, writer.String())
 	}
 }
 

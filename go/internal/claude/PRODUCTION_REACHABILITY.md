@@ -6,9 +6,17 @@ Production means reachable from the default server, CLI, management API, config 
 
 ## Production entry path
 
-The default server installs `chat.NewMessagesHandler` and `chat.NewCountTokensHandler` (`internal/server/server.go:141-145`) and delegates `/v1/messages` and `/v1/messages/count_tokens` to them (`internal/server/server.go:295-296`). The Messages handler calls its package-local `parseAnthropicInbound`, `writeAnthropicStream`, and `buildAnthropicMessage` (`internal/chat/messages.go:37`, `internal/chat/messages.go:72`, `internal/chat/messages.go:86`). It never calls `claude.ParseAnthropicRequest`, `claude.AnthropicToResponses`, `claude.StreamEvents`, or `claude.BufferedMessage`.
+The default server installs `chat.NewMessagesHandler` and `chat.NewCountTokensHandler` (`internal/server/server.go:141-145`) and delegates `/v1/messages` and `/v1/messages/count_tokens` to them (`internal/server/server.go:295-296`). Round 4 integration now routes Messages ingress through `claude.ParseAnthropicRequest` (`internal/chat/messages.go:153`), and records Desktop requests/errors from the returned surface classification (`internal/chat/messages.go:41-50`). Outbound still calls package-local `writeAnthropicStream` and `buildAnthropicMessage`; it does not call `claude.StreamEvents` or `claude.BufferedMessage`.
 
 TypeScript deliberately has the opposite dependency direction: `src/server/claude-messages.ts:12-24` imports the pure inbound/outbound policy from `src/claude`, calls `anthropicToResponsesTranslation` at line 561, and calls `responsesSseToAnthropicSse` at line 712. The server file owns HTTP, auth, logging, native passthrough, and replay orchestration; `src/claude` owns wire translation.
+
+## Reachability timeline
+
+| Stage | Newly production-reachable Claude symbols | Execution evidence |
+| --- | --- | --- |
+| Round 3 baseline (`a56e87c4`) | None of the Messages translators; only Responses parsing, debug, context/agents, and Desktop configuration roots were live. | Static external-reference audit. |
+| Round 4 ingress integration (shared worktree) | `ParseAnthropicRequest` → `TranslateAnthropicRequest`/`AnthropicToResponses`, `ResolveInboundModel`, `EffortForThinkingBudget`, `DetectInboundSurface`, `ExtractRouteDirective`, alias/Desktop registry readers, `RecordDesktopRequest`, `RecordDesktopError`; `PromptCacheSessionID` is exported for the remaining metadata-header wiring. | `production_reachability_test.go` invokes the real public `chat.NewMessagesHandler` and proves readable alias routing, route directives, inbound P1 policies, Desktop routing, and health transitions. |
+| Pending outbound integration | `StreamEvents`, `BufferedMessage`, `ConvertEvents`, `AnthropicErrorBody`, `AnthropicErrorType`, `AnthropicUsage`. | Not yet reachable: a real-handler probe dropped raw reasoning, signature/redacted thinking, and WebSearch events. |
 
 ## Exported-symbol reachability
 
@@ -18,14 +26,14 @@ The table groups every exported API by implementation family. Types and constant
 | --- | --- | --- | --- |
 | Responses request parsing | `ParseResponsesRequest`, `ValidateResponsesRequest`; `ResponsesRequest`; `DecodeReasoningEnvelope` is reached transitively while replayed reasoning is parsed | None in this family | **Live.** `/v1/responses` calls `ParseResponsesRequest` at `internal/server/responses_core_port.go:146`. This is not the Messages inbound path. |
 | Reasoning envelope output | `EncodeReasoningEnvelope`, `ReasoningEnvelope`, `ReasoningEnvelopePrefix` | None | **Live.** The bridge emits envelopes at `internal/bridge/bridge.go:416,514`; the Responses parser decodes them. |
-| Messages inbound translation | Only `ExtractRouteDirective`, and only from `count_tokens` (`internal/chat/messages_count.go:48`) | `ParseAnthropicRequest`, `AnthropicToResponses`, `ResolveInboundModel`, `EffortForThinkingBudget`, `DetectInboundSurface`; `InboundConfig`, `InboundTranslation`, `InboundSurface*` | **Dead for `/v1/messages`.** The main translation and all alias/model-map/Desktop-surface decisions are bypassed. |
+| Messages inbound translation | `ParseAnthropicRequest`, `AnthropicToResponses`, `ResolveInboundModel`, `EffortForThinkingBudget`, `DetectInboundSurface`, `ExtractRouteDirective`; `InboundConfig`, `InboundTranslation`, `AnthropicRequestTranslation`, `InboundSurface*` | `PromptCacheSessionID` is ready but awaits handler header wiring | **Live for `/v1/messages`.** The production handler now uses Claude translation, model-map/blocked-skill config, resolved-model debug capture, and Desktop surface classification. |
 | Messages outbound translation | None | `AnthropicErrorType`, `AnthropicErrorBody`, `AnthropicUsage`, `ConvertEvents`, `StreamEvents`, `BufferedMessage`; `AnthropicMessage` | **Dead.** Production uses the duplicate functions in `internal/chat/messages_outbound.go`. |
-| Debug capture | `DefaultDebugRingLimit`, `NewDebugRing`, `DebugRing`, `ClaudeInboundDebugEntry`; methods `Capture`, `Enabled`, `SetEnabled`, `Entries` | `DebugRing.Clear` | **Live except clear.** Server creates the ring; chat captures; management reads/controls it. The Messages call supplies an empty resolved model (`internal/chat/messages.go:34`). |
+| Debug capture | `DefaultDebugRingLimit`, `NewDebugRing`, `DebugRing`, `ClaudeInboundDebugEntry`; methods `Capture`, `Enabled`, `SetEnabled`, `Entries` | `DebugRing.Clear` | **Live except clear.** Server creates the ring; chat captures the translated resolved model; management reads/controls it. |
 | Claude Code context and agents | `ResolveAutoContext`, `EffectiveModelEnv`, `StripOneMillionMarker`, `WithOneMillionMarker`, `ShouldMarkOneMillion`, `HasOneMillionMarker`, `AutoContextOff`; `ClaudeCodeAlias`; `BuildClaudeAgentDefs`, `SyncClaudeAgentDefs`, `RenderClaudeAgentDef`; associated config/types | `BuildClaudeContextWindows`, `BoundedContextWindows` | **Partly live.** Environment and generated agent files are live, but their aliases and `ocx-route` directives are not decoded by the main Messages path. |
-| Readable aliases | `ClaudeCodeAlias`, plus `AliasForRoute`, `AliasForNative`, `ClaudeCodeNativeAlias`, and `ResolveAlias` transitively during agent generation/validation | Inbound use of `ResolveAlias` | **Generation live, consumption dead.** `internal/chat` sends the generated alias directly to the generic registry. |
+| Readable aliases | `ClaudeCodeAlias`, `AliasForRoute`, `AliasForNative`, `ClaudeCodeNativeAlias`, and `ResolveAlias`, including inbound consumption | None in the alias path | **Live.** Production translation decodes generated readable aliases before the generic registry. |
 | Desktop profile and apply | `ParseDesktop3pModeArgs`, `DesktopFamilyValues`, `DecodeDesktopProfile`, `ParseDesktopProfile`, `ReconcileDesktopProfile`, `MoveDesktopRoute`, `SetDesktopFamilyDefault`, `RenderDesktopProfile`, `DefaultDesktop3pLibraryPath`, `ApplyDesktop3pConfig`, `ReadDesktop3pStatus`, `ValidateDesktopProfileAvailability`; associated profile/apply/model types | Convenience/test APIs `PersistDesktop3pConfig`, `DecodeDesktop3pConfig`, `BuildDesktop3pRegistry`, `GenerateDesktop3pConfig`, `GenerateDesktop3pModels` | **Live management/configuration.** Atomic apply and profiles are used by CLI/management. The profile-aware `*WithProfile` helpers, fingerprinting, alias generation, and collision guards are live transitively from apply. |
-| Desktop alias consumption | `ResolveDesktop3pAlias` is reached only by agent-definition validation; generated registry state is populated during config generation | `DetectInboundSurface`, the inbound resolution branch in `ResolveInboundModel`, `ActiveDesktop3pAlias` outside tests/model-info | **Not live at request ingress.** Desktop aliases can be written to disk but are not decoded by `/v1/messages`. |
-| Desktop health | `GetDesktopHealth` is reached by `ReadDesktop3pStatus`; `NewDesktopHealthTracker` initializes the global tracker | `RecordDesktopRequest`, `RecordDesktopError`; instance methods are otherwise test-only | **Read-only live.** Counts remain zero because production records neither requests nor errors. |
+| Desktop alias consumption | `ResolveDesktop3pAlias`, `DetectInboundSurface`, and the Desktop branch in `ResolveInboundModel`; generated registry state is populated during config generation | `ActiveDesktop3pAlias` outside tests/model-info | **Live at request ingress.** A real-handler test proves the alias resolves to its routed model. |
+| Desktop health | `GetDesktopHealth`, `RecordDesktopRequest`, `RecordDesktopError`; `NewDesktopHealthTracker` and instance methods transitively | None in the global health path | **Live.** A real-handler test proves successful Desktop traffic increments request health; handler error paths call the error recorder. |
 | Desktop model information | None | `BuildModelInfos`, `BuildModelInfosWithStyle`, `BuildModelInfosWithAlias`; model-info types and `AnthropicID*` constants | **Dead.** Go serves the generic `/v1/models`; TypeScript calls `buildAnthropicModelInfos` from its server model route. |
 | Gateway model cache | None | `ClaudeConfigDir`, `WriteGatewayModelCache`, `ReadGatewayModelCache`, `GatewayModelCacheFresh`, `RefreshGatewayModelCache`; cache row/types | **Dead.** TypeScript refreshes this cache from CLI and system-environment setup; Go has tests only. |
 | Responses state compatibility | None | `NewResponseStateStore`, all `ResponseStateStore` methods, `ExpandPreviousResponseInput`, `PreviousResponseProviderState`, `RememberResponseState`, `FlushResponseState`, `ResponseStateMemoryMetrics`; state types | **Dead duplicate.** Production uses the separate `internal/server.ResponseStateStore`, not this package. |
@@ -33,7 +41,7 @@ The table groups every exported API by implementation family. Types and constant
 Exported helpers folded into those family rows are classified as follows:
 
 - Live transitively from Desktop apply/profile: `BuildDesktop3pRegistryWithProfile`, `GenerateDesktop3pConfigWithProfile`, `GenerateDesktop3pModelsWithProfile`, `DeriveDesktop3pCode`, `Desktop3pAlias`, `LegacyDesktop3pAlias`, `Desktop3pFingerprint`, `IsClaudeShapedID`, `EmptyDesktopProfile`, and `DesktopProfile.Clone`.
-- Read-only health path: `DesktopHealthTracker.Status`; `DesktopHealthTracker.RecordRequest` and `RecordError` sit behind the unused global record roots.
+- Live health path: `DesktopHealthTracker.Status`, `RecordRequest`, and `RecordError` are reached through the production global wrappers.
 - Test-only Responses-state methods: `Expand`, `ExpandWithMetadata`, `ProviderState`, `Remember`, `Flush`, `Load`, `Save`, `Metrics`, `Clear`, `ClearMemory`, and `SetByteCapForTests`.
 - Test/convenience-only Desktop decoders and wrappers: `DecodeDesktop3pConfig`, `PersistDesktop3pConfig`, and the non-profile `BuildDesktop3pRegistry`, `GenerateDesktop3pConfig`, and `GenerateDesktop3pModels` wrappers.
 
@@ -41,35 +49,57 @@ Exported helpers folded into those family rows are classified as follows:
 
 The highest-impact unused roots are:
 
-1. `ParseAnthropicRequest` / `AnthropicToResponses` — the complete TS-shaped Messages inbound translation.
-2. `ResolveInboundModel` / `DetectInboundSurface` — readable alias, Desktop alias, model-map, and request-surface policy.
-3. `StreamEvents` / `BufferedMessage` / `ConvertEvents` — the richer Anthropic outbound state machine.
-4. `RecordDesktopRequest` / `RecordDesktopError` — Desktop status transitions.
-5. `BuildModelInfos*` — Anthropic/Desktop model discovery response shaping.
-6. `RefreshGatewayModelCache` and its cache helpers — Claude gateway cache lifecycle.
-7. The entire package-local Responses state store — superseded by an independently implemented server store.
+1. `StreamEvents` / `BufferedMessage` / `ConvertEvents` — the richer Anthropic outbound state machine.
+2. `BuildModelInfos*` — Anthropic/Desktop model discovery response shaping.
+3. `RefreshGatewayModelCache` and its cache helpers — Claude gateway cache lifecycle.
+4. The entire package-local Responses state store — superseded by an independently implemented server store.
+5. `BuildClaudeContextWindows` / `BoundedContextWindows` — TS system-environment discovery composition remains unwired.
 
 ## Behavioral divergences and latent bugs
 
 | Priority | Behavior | `internal/claude` / TypeScript behavior | Active `internal/chat` behavior | Failure mode |
 | --- | --- | --- | --- | --- |
-| P0 | Readable and Desktop aliases | `ResolveInboundModel` decodes `claude-ocx-*`, Desktop aliases, model-map exact/date-stripped entries, and strips `[1m]`. TS invokes it before routing. | `parseAnthropicInbound` preserves `body.Model`; generic `Registry.ResolveModel` sees Claude-shaped IDs (`internal/chat/messages.go:121`, `internal/chat/handler.go:124`). | Generated Claude Code/Desktop aliases can route as literal Anthropic/default-provider model IDs instead of their configured route. |
-| P0 | Injected-agent route directive | `ExtractRouteDirective` overrides the model before native passthrough and translation (`origin/dev:src/server/claude-messages.ts:532-540`). | Main Messages ignores it; only count-tokens reads it. | Generated subagents can execute on the fallback model while count-tokens reports the intended model. |
-| P0 | Desktop surface and health | TS resolves the Desktop alias, marks `surface=claude-desktop`, and records the request (`origin/dev:src/server/claude-messages.ts:552-557`). | `DetectInboundSurface` and `RecordDesktopRequest` are unused. | Request logs misclassify Desktop traffic and status health counters never transition. |
-| P1 | Blocked skill elision | `AnthropicToResponses` detects blocked `Skill` calls and stubs the repeated large document bundle. | No blocked-skill policy exists in `parseAnthropicInbound`. | Routed requests can carry very large Anthropic-specific skill bundles, wasting context or exceeding limits. |
-| P1 | Prompt-cache affinity | Claude translation creates metadata- or system-derived stable `prompt_cache_key`; TS also synthesizes a native ChatGPT `session_id` only for metadata keys (`origin/dev:src/server/claude-messages.ts:643-652`). | Go keeps `metadata.user_id` only as generic metadata and creates neither cache key nor session header. | Repeated Claude/Desktop turns miss backend prompt-cache affinity. |
-| P1 | WebSearch inbound | Claude translation maps Anthropic `web_search*` tools to the hosted `web_search` sidecar. | `anthropicTools` accepts only tools with `name` and `input_schema` (`internal/chat/messages.go:263-278`). | Anthropic server-tool search silently disappears on routed requests. |
+| Resolved | Readable and Desktop aliases | `ResolveInboundModel` decodes `claude-ocx-*`, Desktop aliases, model-map exact/date-stripped entries, and strips `[1m]`. | Production now calls the Claude translator before generic registry resolution. | Real-handler tests prove readable and Desktop aliases arrive at the adapter as the routed model. |
+| Resolved | Injected-agent route directive | `ExtractRouteDirective` overrides the model before native passthrough and translation (`origin/dev:src/server/claude-messages.ts:532-540`). | Production applies the directive before `ParseAnthropicRequest`. | Real-handler test proves the fallback model is replaced by the directive route. |
+| Resolved | Desktop surface and health | TS resolves the Desktop alias, marks `surface=claude-desktop`, and records the request (`origin/dev:src/server/claude-messages.ts:552-557`). | Production classifies the surface and records request/error transitions. | Real-handler test proves request health increments and Desktop alias routing. |
+| Resolved | Blocked skill elision | `AnthropicToResponses` detects blocked `Skill` calls and stubs the repeated large document bundle. | Production passes handler model-map/blocked-skill config into Claude parsing. | Real-handler captured normalized messages contain the elision stub. |
+| Partial | Prompt-cache affinity | Claude translation creates metadata- or system-derived stable `prompt_cache_key`; TS also synthesizes a native ChatGPT `session_id` only for metadata keys (`origin/dev:src/server/claude-messages.ts:643-652`). | The normalized body key is now live, but handler header wiring does not retain `CacheKeySource`. `TranslateAnthropicRequest` and `PromptCacheSessionID` provide the missing tuple/policy. | Body-level caching is active; native ChatGPT session affinity still needs additional wiring. |
+| Resolved inbound | WebSearch inbound | Claude translation maps Anthropic `web_search*` tools to the hosted `web_search` sidecar. | Production normalized requests now carry `WebSearch`. | Real-handler capture proves hosted WebSearch is active; outbound search events remain pending. |
 | P1 | WebSearch outbound | Claude outbound maps `EventWebSearchCallBegin/End` to `server_tool_use` plus result blocks and bills successful searches. | Chat outbound has no cases for those events. | Search activity/results are dropped from Claude responses and usage. |
 | P1 | Reasoning fidelity | Claude outbound handles `EventThinkingDelta`, raw reasoning, signatures, and redacted thinking (`internal/claude/outbound.go:207-229`). | Chat handles only `EventReasoning` and synthesizes a timestamp signature (`internal/chat/messages_outbound.go:31-38,90-93`). | OpenAI raw reasoning and Anthropic signatures/redacted blocks are lost; replay fidelity breaks. |
 | P1 | Native passthrough eligibility | TS pierces to Anthropic only for a genuine caller `sk-ant-*` credential and an unclaimed native model, before routed translation. Count-tokens shares the path. | Go chooses passthrough from the resolved provider, uses configured provider auth, requires the routed parser to succeed first, and count-tokens never passes through (`internal/chat/messages_native.go:13-18`, `internal/chat/messages_count.go:13-15`). | Subscription OAuth semantics differ; unsupported native blocks may be rejected; native count estimates differ from the real API. |
 | P1 | Native image safety | TS normalizes and enforces Anthropic image/body limits before native forwarding (`origin/dev:src/server/claude-messages.ts:303-312`). | Go forwards the decoded raw body without that pipeline. | Native and routed image acceptance/limits diverge; oversized or unsupported images reach different behavior. |
-| P1 | Tool-result arrays | Claude inbound converts text/image result blocks into Responses `input_text`/`input_image` and prepends an error block. | Chat returns the Anthropic blocks unchanged (`internal/chat/messages.go:325-339`). | Downstream adapters receive incompatible content vocabulary and inconsistent error signaling. |
-| P1 | Missing tool input and documents | Claude inbound serializes missing tool input as `{}` and emits `[document]` even without a title. | Chat preserves nil input and drops untitled documents (`internal/chat/messages.go:212-215,248-255`). | Tool arguments become `null`; attachment presence can disappear. |
+| Resolved | Tool-result arrays | Claude inbound converts text/image result blocks into Responses `input_text`/`input_image` and prepends an error block. | Production uses the Claude conversion. | Real-handler capture proves error text and image data URL normalization. |
+| Resolved | Missing tool input and documents | Claude inbound serializes missing tool input as `{}` and emits `[document]` even without a title. | Production uses the Claude conversion. | Covered by package translation tests; no duplicate chat conversion runs on Messages ingress. |
 | P1 | Internal streaming contract | TS always replays internally with `stream=true`, then folds for non-stream clients (`origin/dev:src/server/claude-messages.ts:570-575`). | Go sends the client’s stream choice directly to the adapter. | Stream-only routed adapters and buffered parity can diverge by client mode. |
 | P2 | Claude-specific sidecars and effort policy | TS overlays Claude web/vision sidecars, strips unsupported native Responses sampling fields, and drops reasoning only for definitive no-effort routes (`origin/dev:src/server/claude-messages.ts:41-53,576-615`). | Active chat uses generic handler configuration and adapter building. | Claude-specific overrides and route capability safety may not apply. |
-| P2 | Debug resolved model | TS captures the resolved inbound model. | Chat calls `Capture(..., "", ...)` (`internal/chat/messages.go:34`). | Debug evidence cannot prove which route alias/model-map selected. |
+| Resolved | Debug resolved model | TS captures the resolved inbound model. | Production now passes `normalized.ModelID` to `Capture`. | Debug entries identify the translated route. |
 | P2 | Error taxonomy | Claude package includes 402/409 and preserves adapter status in its state machine. | Chat omits 402/409; buffered `EventError` always becomes 502 (`internal/chat/messages_outbound.go:52-53,286-308`). | Client retry/fatal behavior and displayed error class can differ. |
 | P2 | Idle ping and WebSearch domain sanitization | TypeScript emits timer-driven pings and sanitizes mutually exclusive/empty WebSearch domain filters. | Neither current Go outbound implementation has both policies. | Slow first tokens can hit idle intermediaries; routed WebSearch tool calls can be rejected by Claude clients. |
+
+### Round 4 P1 activation verdict
+
+| P1 policy | Activated automatically by ingress integration? | Additional wiring |
+| --- | --- | --- |
+| Blocked-skill elision | **Yes** | None beyond passing `ClaudeBlockedSkills` into `InboundConfig`. |
+| Prompt-cache affinity | **Partial** | The body `prompt_cache_key` is live. The handler must consume `AnthropicRequestTranslation.CacheKeySource` and call `PromptCacheSessionID` before adapter resolution to synthesize metadata-only `session_id`. |
+| WebSearch | **Partial** | Inbound hosted-tool selection is live. Outbound `EventWebSearchCallBegin/End` still requires the Claude state machine. |
+| Reasoning signature/redacted blocks | **No** | Replace duplicate chat outbound conversion with `StreamEvents`/`BufferedMessage` (or a single enhanced Claude encoder). |
+| Tool-result normalization | **Yes** | None; real-handler capture proves text/image/error normalization reaches the adapter. |
+
+## Cross-package dead-export survey
+
+A read-only lexical sweep checked non-test top-level exported functions under `go/internal` and then searched all non-test Go sources for any second reference to each symbol. This deliberately reports only high-confidence “declared once, referenced nowhere” candidates; it does not inspect exported methods, interface dispatch, reflection, build-tag-only entry points, or whether an API is intentionally reserved for external composition.
+
+Candidate counts by owner were: `codex` 34, `providers` 24, adapters 20, `server` 17, `types` 11, `lib` 9, `update` 8, `registry` 8, `oauth` 6, `search` 5, and `platform` 5. Representative owner-audit candidates include:
+
+- `internal/codex`: `NewAccountStore`, `ResolveAndPersistCodexRuntime`, `RestoreCodexCatalog`, `NewRouter`, catalog aggregation/sync helpers, and several config-warning formatters.
+- `internal/providers` / `internal/registry`: `ResolveProvider`, `DetectModelCapabilities`, `NewQuotaTracker`, `NewCatalogBuilder`, `NewCodexRouter`, and `NewQuotaFetcher`.
+- adapters: Cursor discovery/tool/continuity exports, Kiro fallback/error exports, OpenAI queue/error exports, and Google safe-error exports.
+- `internal/server`: `NewManagementAPI`, `ManagementRoutes`, several request-log/relay helpers, and lifecycle/port exports.
+- `internal/types` / `internal/lib`: content constructors, exported error constructors, deadline/event-stream helpers, and redaction helpers.
+
+These are investigation leads, not deletion recommendations. Each owner should repeat the Claude method: identify the real production root, write a route-level activation test, and only then wire or remove the dormant API.
 
 ## Canonical integration direction
 

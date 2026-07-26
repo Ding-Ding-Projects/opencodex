@@ -25,6 +25,18 @@ type InboundTranslation struct {
 	CacheKeySource string
 }
 
+// AnthropicRequestTranslation carries both the normalized provider request and
+// the Claude-specific provenance needed by the production HTTP handler. Keeping
+// this tuple together prevents request logging, Desktop health, and cache-header
+// wiring from independently re-parsing the Anthropic body.
+type AnthropicRequestTranslation struct {
+	Request        *types.NormalizedRequest
+	RequestedModel string
+	ResolvedModel  string
+	Surface        InboundSurface
+	CacheKeySource string
+}
+
 type InboundSurface string
 
 const (
@@ -70,6 +82,19 @@ func EffortForThinkingBudget(n int) string {
 	}
 	return "high"
 }
+
+// PromptCacheSessionID returns the ChatGPT session header value only for a
+// per-session metadata cache key. System-derived keys are shared cache cohorts
+// and must never be promoted to session identity.
+func PromptCacheSessionID(cacheKey, cacheKeySource string) (string, bool) {
+	if cacheKeySource != "metadata" || len(cacheKey) != 32 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(cacheKey); err != nil {
+		return "", false
+	}
+	return cacheKey[:8] + "-" + cacheKey[8:12] + "-4" + cacheKey[13:16] + "-8" + cacheKey[17:20] + "-" + cacheKey[20:32], true
+}
 func ExtractRouteDirective(raw any) string {
 	m, ok := raw.(map[string]any)
 	if !ok {
@@ -84,16 +109,50 @@ func ExtractRouteDirective(raw any) string {
 }
 
 func ParseAnthropicRequest(raw []byte, cfg *InboundConfig) (*types.NormalizedRequest, error) {
-	var body any
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, fmt.Errorf("anthropic request: %w", err)
-	}
-	translated, err := AnthropicToResponses(body, cfg)
+	translated, err := TranslateAnthropicRequest(raw, cfg)
 	if err != nil {
 		return nil, err
 	}
+	return translated.Request, nil
+}
+
+// TranslateAnthropicRequest is the production ingress entry point for
+// /v1/messages. It mirrors the TypeScript handler ordering: strip a leaked [1m]
+// marker, apply the first bounded ocx-route directive, classify the client
+// surface, translate aliases/model maps, then parse through the real Responses
+// schema.
+func TranslateAnthropicRequest(raw []byte, cfg *InboundConfig) (AnthropicRequestTranslation, error) {
+	var body any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return AnthropicRequestTranslation{}, fmt.Errorf("anthropic request: %w", err)
+	}
+	request, ok := body.(map[string]any)
+	if !ok {
+		return AnthropicRequestTranslation{}, fmt.Errorf("request body must be a JSON object")
+	}
+	requestedModel := StripOneMillionMarker(stringField(request, "model"))
+	request["model"] = requestedModel
+	if route := ExtractRouteDirective(request); route != "" {
+		requestedModel = StripOneMillionMarker(route)
+		request["model"] = requestedModel
+	}
+	surface := DetectInboundSurface(requestedModel)
+	translated, err := AnthropicToResponses(request, cfg)
+	if err != nil {
+		return AnthropicRequestTranslation{}, err
+	}
 	wire, _ := json.Marshal(translated.Body)
-	return ParseResponsesRequest(wire)
+	normalized, err := ParseResponsesRequest(wire)
+	if err != nil {
+		return AnthropicRequestTranslation{}, err
+	}
+	return AnthropicRequestTranslation{
+		Request:        normalized,
+		RequestedModel: requestedModel,
+		ResolvedModel:  stringField(translated.Body, "model"),
+		Surface:        surface,
+		CacheKeySource: translated.CacheKeySource,
+	}, nil
 }
 
 func AnthropicToResponses(raw any, cfg *InboundConfig) (InboundTranslation, error) {

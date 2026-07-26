@@ -1,8 +1,50 @@
 package claude
 
 import (
+	"encoding/json"
 	"testing"
 )
+
+func TestTranslateAnthropicRequestReturnsProductionProvenance(t *testing.T) {
+	BuildDesktop3pRegistry(nil, []Desktop3pRoutedModel{{Provider: "desktop", ID: "model"}})
+	desktopAlias := Desktop3pAlias("desktop", "model")
+	raw, err := json.Marshal(map[string]any{
+		"model":  "fallback[1M]",
+		"system": "<!-- ocx-route: " + desktopAlias + " -->",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	translated, err := TranslateAnthropicRequest(raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if translated.RequestedModel != desktopAlias || translated.ResolvedModel != "desktop/model" || translated.Request.ModelID != "desktop/model" {
+		t.Fatalf("models = %#v", translated)
+	}
+	if translated.Surface != InboundSurfaceClaudeDesktop || translated.CacheKeySource != "system" {
+		t.Fatalf("provenance = %#v", translated)
+	}
+}
+
+func TestPromptCacheSessionIDRequiresMetadataProvenance(t *testing.T) {
+	key := "c0de6c816aa0144f0e1a21578e48c3db"
+	if got, ok := PromptCacheSessionID(key, "metadata"); !ok || got != "c0de6c81-6aa0-444f-8e1a-21578e48c3db" {
+		t.Fatalf("metadata session = %q, %v", got, ok)
+	}
+	for _, test := range []struct{ key, source string }{
+		{key: key, source: "system"},
+		{key: "not-hex-not-hex-not-hex-not-hex!", source: "metadata"},
+		{key: "abcd", source: "metadata"},
+	} {
+		if got, ok := PromptCacheSessionID(test.key, test.source); ok || got != "" {
+			t.Fatalf("unsafe session accepted: key=%q source=%q got=%q", test.key, test.source, got)
+		}
+	}
+}
 
 func TestAnthropicInboundNormalizesReplayEdgeCasesLikeTypeScript(t *testing.T) {
 	toolResult := map[string]any{

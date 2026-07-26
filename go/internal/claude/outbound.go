@@ -91,8 +91,13 @@ func ConvertEvents(model string, events []types.AdapterEvent) ([]byte, Anthropic
 }
 
 func StreamEvents(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent) error {
-	m := newAnthropicMachine(model, func(name string, data map[string]any) { _ = writeSSEFrame(w, name, data) })
-	for !m.terminal {
+	var writeErr error
+	m := newAnthropicMachine(model, func(name string, data map[string]any) {
+		if writeErr == nil {
+			writeErr = writeSSEFrame(w, name, data)
+		}
+	})
+	for !m.terminal && writeErr == nil {
 		select {
 		case <-ctx.Done():
 			m.fail(499, ctx.Err().Error())
@@ -104,7 +109,7 @@ func StreamEvents(ctx context.Context, w io.Writer, model string, events <-chan 
 			m.accept(event)
 		}
 	}
-	return m.writeErr
+	return writeErr
 }
 
 func BufferedMessage(ctx context.Context, model string, events <-chan types.AdapterEvent) (AnthropicMessage, error) {
@@ -141,7 +146,6 @@ type anthropicMachine struct {
 	webSearchRequests          int
 	webSearchQueries           map[string][]string
 	thinkingSignature          string
-	writeErr                   error
 }
 
 func newAnthropicMachine(model string, emit func(string, map[string]any)) *anthropicMachine {
@@ -379,6 +383,11 @@ func writeFrame(b *strings.Builder, name string, data map[string]any) {
 func writeSSEFrame(w io.Writer, name string, data map[string]any) error {
 	payload, _ := json.Marshal(data)
 	_, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, payload)
+	if err == nil {
+		if flusher, ok := w.(interface{ Flush() }); ok {
+			flusher.Flush()
+		}
+	}
 	return err
 }
 func randomHex() string { b := make([]byte, 12); _, _ = rand.Read(b); return hex.EncodeToString(b) }
