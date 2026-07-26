@@ -138,7 +138,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	liveAuth := &configBackedAuth{config: cfg, persistence: configPersistence, store: credentialStore, resolver: auth}
 	codexAuthManagement := newCodexAuthManagement(cfg, loadedConfigPath, credentialStore, sharedQuotaStore, providerClient, configPersistence)
 	providerQuotas := newProviderQuotaBackend(cfg, sharedQuotaStore, codexAuthManagement, registry.NewQuotaFetcher(), liveAuth, time.Now, configPersistence)
-	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient)
+	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient, configPersistence)
 	preferredPort := cfg.Port
 	selectedPort := preferredPort
 	if preferredPort > 0 {

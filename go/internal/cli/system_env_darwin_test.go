@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 )
 
@@ -52,5 +53,64 @@ esac
 	}
 	if _, err := os.Stat(state + ".ANTHROPIC_BASE_URL"); !os.IsNotExist(err) {
 		t.Fatalf("owned launch environment survived uninstall: %v", err)
+	}
+}
+
+func TestDarwinPlainClaudeAutoAuthAndUserTokenPreservation(t *testing.T) {
+	home := t.TempDir()
+	bin := t.TempDir()
+	state := filepath.Join(home, "launchctl-state")
+	script := `#!/bin/sh
+state="$OCX_LAUNCHCTL_STATE"
+case "$1" in
+  getenv) [ -f "$state.$2" ] && cat "$state.$2" || exit 1 ;;
+  setenv) printf '%s' "$3" > "$state.$2" ;;
+  unsetenv) rm -f "$state.$2" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "launchctl"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OCX_LAUNCHCTL_STATE", state)
+	t.Setenv("SHELL", "/bin/zsh")
+	cfg := config.FreshInstall()
+	cfg.ClaudeCode = &config.ClaudeCodeConfig{SystemEnv: true}
+	installed, err := installSystemEnvWithDetector(context.Background(), cfg, 18181, fixedClaudeDetection(claude.AuthAbsent, ""))
+	if err != nil || !installed {
+		t.Fatalf("install=%t err=%v", installed, err)
+	}
+	for _, name := range []string{"ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"} {
+		data, readErr := os.ReadFile(state + "." + name)
+		if readErr != nil || (name == "ANTHROPIC_AUTH_TOKEN" && string(data) != claude.ProxyMarker) || (name != "ANTHROPIC_AUTH_TOKEN" && string(data) != "1") {
+			t.Fatalf("%s=%q err=%v", name, data, readErr)
+		}
+	}
+	installed, err = installSystemEnvWithDetector(context.Background(), cfg, 18181, fixedClaudeDetection(claude.AuthPresent, "credentials-file"))
+	if err != nil || !installed {
+		t.Fatalf("switch to subscription install=%t err=%v", installed, err)
+	}
+	for _, name := range []string{"ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"} {
+		if _, statErr := os.Stat(state + "." + name); !os.IsNotExist(statErr) {
+			t.Fatalf("stale owned %s survived subscription switch: %v", name, statErr)
+		}
+	}
+	if err := uninstallSystemEnv(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state+".ANTHROPIC_AUTH_TOKEN", []byte("user-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installed, err = installSystemEnvWithDetector(context.Background(), cfg, 18181, fixedClaudeDetection(claude.AuthPresent, "environment"))
+	if err != nil || !installed {
+		t.Fatalf("subscription install=%t err=%v", installed, err)
+	}
+	data, _ := os.ReadFile(state + ".ANTHROPIC_AUTH_TOKEN")
+	if string(data) != "user-token" {
+		t.Fatalf("user token overwritten: %q", data)
+	}
+	if _, err := os.Stat(state + ".CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"); !os.IsNotExist(err) {
+		t.Fatalf("user token was relabelled host-owned: %v", err)
 	}
 }

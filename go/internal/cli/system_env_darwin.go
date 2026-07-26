@@ -6,11 +6,16 @@ import (
 	"context"
 	"os"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 func installSystemEnv(ctx context.Context, cfg config.Config, port int) (bool, error) {
+	return installSystemEnvWithDetector(ctx, cfg, port, claude.DetectClaudeAuth)
+}
+
+func installSystemEnvWithDetector(ctx context.Context, cfg config.Config, port int, detect claudeAuthDetector) (bool, error) {
 	if cfg.ClaudeCode == nil || !cfg.ClaudeCode.SystemEnv || cfg.ClaudeCode.Enabled != nil && !*cfg.ClaudeCode.Enabled {
 		return false, nil
 	}
@@ -19,10 +24,14 @@ func installSystemEnv(ctx context.Context, cfg config.Config, port int) (bool, e
 		return false, err
 	}
 	values := map[string]string{"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"}
-	if len(cfg.APIKeys) > 0 && cfg.APIKeys[0].Key != "" {
-		values["ANTHROPIC_AUTH_TOKEN"] = cfg.APIKeys[0].Key
-	} else if cfg.ClaudeCode.AuthMode == "proxy" {
+	admission := configuredClaudeAdmissionToken(cfg)
+	resolved := resolveClaudeAuth(cfg, environmentMap(os.Environ()), detect)
+	if admission != "" {
+		values["ANTHROPIC_AUTH_TOKEN"] = admission
+		values["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] = "1"
+	} else if resolved.MarkerMode == "proxy" {
 		values["ANTHROPIC_AUTH_TOKEN"] = "opencodex-proxy"
+		values["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] = "1"
 	}
 	err = platform.InstallSystemEnv(ctx, platform.SystemEnvConfig{
 		HomeDir: home, ProxyURL: serviceBaseURLAt(cfg, port), Values: values, Shell: os.Getenv("SHELL"),

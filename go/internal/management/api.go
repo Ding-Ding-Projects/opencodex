@@ -55,6 +55,7 @@ type AdvancedRequestLogSource interface {
 
 type API struct {
 	mu                  sync.RWMutex
+	claudeSettingsMu    sync.Mutex
 	config              *config.Config
 	configPath          string
 	configPersistence   *config.LivePersistence
@@ -106,7 +107,7 @@ func New(options Options) (*API, error) {
 		value := config.Default()
 		cfg = &value
 	}
-	if options.ConfigPersistence == nil && options.ConfigPath != "" {
+	if options.ConfigPersistence == nil {
 		options.ConfigPersistence = config.NewLivePersistence(options.ConfigPath, cfg)
 	}
 	if options.RequestLogs == nil {
@@ -184,7 +185,7 @@ func (a *API) serializesConfigMutation(r *http.Request) bool {
 		"POST /api/keys", "DELETE /api/keys",
 		"PUT /api/codex-auth/active", "PUT /api/codex-auth/auto-switch", "PUT /api/codex-auth/failover",
 		"PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
-		"PUT /api/debug", "PUT /api/subagent-model-fallback", "PUT /api/claude-code",
+		"PUT /api/debug", "PUT /api/subagent-model-fallback",
 		"PUT /api/shadow-call-settings", "PUT /api/subagent-models", "PUT /api/injection-model",
 		"PUT /api/effort-caps", "PUT /api/v2", "PUT /api/claude-desktop",
 		"POST /api/claude-desktop/apply", "PUT /api/grok/selection",
@@ -233,16 +234,20 @@ func (a *API) saveWithModelCacheLocked(provider string) error {
 			return err
 		}
 	}
+	a.afterConfigSave(provider, a.config.ClaudeCode != nil && a.config.ClaudeCode.DesktopProfile != nil)
+	return nil
+}
+
+func (a *API) afterConfigSave(provider string, autoApplyClaudeDesktop bool) {
 	if a.refreshCatalog != nil {
 		_ = a.refreshCatalog()
 	}
 	if a.modelCache != nil {
 		a.modelCache.Clear(provider)
 	}
-	if a.config.ClaudeCode != nil && a.config.ClaudeCode.DesktopProfile != nil {
+	if autoApplyClaudeDesktop {
 		go a.autoApplyClaudeDesktopBestEffort()
 	}
-	return nil
 }
 func (a *API) runtimeInfo() map[string]any {
 	return map[string]any{"version": a.version, "goVersion": runtime.Version(), "platform": runtime.GOOS, "architecture": runtime.GOARCH}

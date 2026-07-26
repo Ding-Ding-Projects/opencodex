@@ -1,9 +1,10 @@
 # WP11 — Claude auth auto production activation
 
 Date: 2026-07-26  
-Base: `ddd968a0169e4c190bf1037e78a824c6780568e9`  
+Base: `4473876c5c9e3d90f10977cf1f2a1954b8079f3d`  
 Class: C4 (authentication, persisted migration, public management API)  
-Predecessors: apply `061`, then `071`, then `091`, then `101` before this packet.
+Predecessors: response-state, usage-snapshot, Claude auth-core, and guarded
+config-persistence work phases are already integrated.
 
 ## Outcome
 
@@ -31,14 +32,18 @@ host authentication when no host token exists.
 | Path | Action | Contract |
 |---|---|---|
 | `go/internal/cli/claude.go` | MODIFY | Extract deterministic child-env assembly, bind detection to the same inherited environment, preserve user variables, replace stale owned loopback URL, and tie the host-managed default to the final token. |
-| `go/internal/cli/claude_test.go` | NEW | Lock user-wins, own-marker stripping, Auto present/absent/unknown, admission-key separation, the token/flag invariant, and settings-source hijack defense. |
+| `go/internal/cli/claude_auth_activation_test.go` | NEW | Lock user-wins, own-marker stripping, Auto present/absent/unknown, admission-key separation, the token/flag invariant, and settings-source hijack defense. |
 | `go/internal/cli/runtime_management.go` | MODIFY | Resolve marker mode for generated shell env, emit the owned marker only for proxy resolution, and emit the host-managed flag only when opencodex owns the token. |
-| `go/internal/cli/runtime_claude_auth_test.go` | NEW | Exercise generated shell env for Auto present/absent/unknown and admission-key paths. |
+| `go/internal/cli/serve.go` | MODIFY | Give every production CLI runtime the same eager `LivePersistence` owner used by management writes and runtime reconciliation. |
 | `go/internal/cli/system_env_darwin.go` | MODIFY | Use the same resolver for launchctl injection and conditionally add the host-managed flag. |
 | `go/internal/cli/system_env_darwin_test.go` | MODIFY | Lock plain-Claude Auto behavior and user credential preservation on Darwin. |
+| `go/internal/management/api.go` | MODIFY | Exclude Claude auth PUT from whole-handler serialization so its nested model refresh cannot self-deadlock. |
 | `go/internal/platform/systemenv.go` | MODIFY | Reconcile previously tracked owned launchctl keys that are no longer desired, with rollback restoration; never remove changed user values. |
+| `go/internal/platform/systemenv_darwin_test.go` | MODIFY | Inject concurrent launchctl mutation and verify cleanup and rollback preserve the user's replacement. |
 | `go/internal/management/runtime_settings.go` | MODIFY | Return three-state intent plus effective resolution metadata; accept `auto`, store literal `subscription`, delete the key for Auto, stamp the migration sentinel, and reconcile system env after auth-only writes. |
-| `go/internal/management/runtime_claude_auth_test.go` | NEW | Drive real management GET/PUT and restart migration behavior at the production API root. |
+| `go/internal/management/runtime_claude_auth_activation_test.go` | NEW | Drive management GET/PUT, detached snapshots, and concurrent profile preservation. |
+| `go/internal/server/server.go` | MODIFY | Ensure pathless embedded servers also receive one persistence owner shared by their management API. |
+| `go/internal/server/claude_auth_activation_production_test.go` | NEW | Prove real-server Auto persistence, restart behavior, and lock release around nested model refresh. |
 
 ### OUT
 
@@ -78,7 +83,12 @@ Add a pure `buildClaudeLaunchEnv` helper. It starts from a copied inherited envi
 7. Set gateway discovery by default.
 8. If the final `ANTHROPIC_AUTH_TOKEN` is non-empty, default
    `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1`. Preserve an explicit inherited
-   value such as `0`; never emit the flag without a token.
+   value such as `0`; remove a stale inherited host assertion when no final
+   token exists, so the flag never travels alone.
+
+A loopback base URL is replaced as stale only when the inherited token is the
+owned `claude.ProxyMarker`. A bare localhost URL without that ownership proof
+is a custom user gateway and remains untouched.
 
 Conditional activation evidence:
 
@@ -92,6 +102,28 @@ Conditional activation evidence:
 ### 2. Plain-Claude system environment
 
 Both shell-file and Darwin launchctl paths call one resolver helper. The generated shell file uses conditional exports for the owned marker and host flag. Admission keys remain unconditional opencodex-owned exports, matching the existing auto-connect contract. Subscription/unknown never adds the marker. The Darwin injection path must never overwrite a pre-existing user token and must remove only a previously tracked `claude.ProxyMarker` when resolution switches away from proxy.
+
+Management auth-only writes run as a bounded `LivePersistence.Update`, release
+the persistence lock, and only then reconcile the shell file, launchctl owner,
+model cache, and agent definitions. This prevents the nested `/v1/models`
+refresh from self-blocking on the same persistence RW lock. The platform owner
+double-checks a tracked launchctl value before removal; rollback removes only
+unchanged values it just installed and restores an old value only while the
+slot is still empty.
+
+`launchctl` exposes only unconditional `getenv`, `setenv`, and `unsetenv`; it
+has no expected-value delete or transaction primitive. The double-read and
+value-checked rollback are therefore the strongest non-destructive policy at
+this OS boundary. Tests inject changes both during reconciliation and before
+rollback restoration.
+
+The transaction rebases fields owned by Claude Desktop and Fast-mode routes
+from the latest live config before commit, so an auth PUT cannot overwrite a
+concurrent profile update. Management GET, shell/launchctl reconciliation, and
+agent-definition sync consume detached `LivePersistence.Snapshot` values rather
+than traversing shared maps or slices after releasing their locks. A persistence
+owner exists even for pathless embedded servers so the same rule holds in tests
+and integrations.
 
 Conditional activation evidence:
 
@@ -129,13 +161,14 @@ The GET detector uses daemon process environment and excludes all configured adm
 
 ### 4. Restart and production-root proof
 
-The management activation test starts the real Go server/API owner with an isolated config root, performs PUT Auto, stops it, reloads through the normal migrated config path, starts a second server, and proves Auto remains Auto. A separate fresh-block test PUTs only `enabled` and proves restart does not pin subscription. These tests fail if the sentinel is omitted.
+The management activation test starts the real Go server/API owner with an isolated config root, performs PUT Auto, proves its nested `/v1/models` refresh is not blocked by persistence ownership, stops it, reloads through the normal migrated config path, starts a second server, and proves Auto remains Auto. A separate fresh-block test PUTs only `enabled` and proves restart does not pin subscription. These tests fail if the sentinel is omitted.
 
 CLI activation drives the actual command-env builder used by `runClaude`; system-env activation drives `ApplyClaudeCodeSystemEnv` and the Darwin install owner rather than testing only the resolver.
 
 ## Acceptance criteria
 
 - No user-provided `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, custom base URL, or explicit host-managed flag is overwritten.
+- No unowned localhost gateway is classified as an opencodex stale URL.
 - The stale owned marker is never accepted as user-auth evidence.
 - Unknown detector state is conservative: subscription marker mode, no dummy token.
 - Admission keys and marker mode remain separate axes.
@@ -151,19 +184,22 @@ CLI activation drives the actual command-env builder used by `runClaude`; system
 - PUT Auto deletes `authMode`; literal subscription survives; invalid values are rejected atomically.
 - Auto and a fresh Claude block survive a stop/reload/start cycle.
 - Auth-only PUT reconciles plain-Claude system environment.
+- Auth-only PUT releases persistence before nested model refresh; Darwin stale
+  cleanup and rollback preserve values changed by the user during reconciliation.
 - No GUI, usage, guarded-saver internals, Orca, or `gpt-artifacts/` changes.
 
 ## Composition and gates
 
-Apply literal packets in dependency order to a clean clone at `ddd968a0`:
+Apply `111_claude_auth_activation_literal_patch.md` to a clean clone at
+`4473876c5c9e3d90f10977cf1f2a1954b8079f3d`:
 
 ```bash
-for packet in 061 071 091 101 111; do
-  sed -n '/^```diff$/,/^```$/p' "devlog/_plan/260726_260726-go-port-r10/${packet}"*_literal_patch.md \
-    | sed '1d;$d' | git apply --check -
-  sed -n '/^```diff$/,/^```$/p' "devlog/_plan/260726_260726-go-port-r10/${packet}"*_literal_patch.md \
-    | sed '1d;$d' | git apply -
-done
+sed -n '/^```diff$/,/^```$/p' \
+  devlog/_plan/260726_260726-go-port-r10/111_claude_auth_activation_literal_patch.md \
+  | sed '1d;$d' | git apply --check -
+sed -n '/^```diff$/,/^```$/p' \
+  devlog/_plan/260726_260726-go-port-r10/111_claude_auth_activation_literal_patch.md \
+  | sed '1d;$d' | git apply -
 ```
 
 Then run:
@@ -173,10 +209,12 @@ cd go
 gofmt -d internal/claude internal/config internal/cli internal/management
 go test ./internal/claude ./internal/config ./internal/cli ./internal/management ./internal/server -count=1
 go test -race ./internal/claude ./internal/config ./internal/cli ./internal/management -count=1
-go test ./... -count=1 -timeout 120s
+go test ./... -count=1 -timeout 400s
 go vet ./...
 GOOS=windows GOARCH=amd64 go build ./...
 GOOS=linux GOARCH=amd64 go build ./...
 ```
 
 Stop condition: all commands pass from the composed clean clone, every conditional path above has a direct assertion, and `git diff --check` reports no errors.
+
+The independently audited literal patch is 928 insertions and 75 deletions across 13 files.

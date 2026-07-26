@@ -97,7 +97,7 @@ type Server struct {
 
 func New(config Config) *Server {
 	backfillGoogleModes(config.ManagementConfig)
-	if config.ConfigPersistence == nil && config.ManagementConfig != nil && config.ConfigPath != "" {
+	if config.ConfigPersistence == nil && config.ManagementConfig != nil {
 		config.ConfigPersistence = appconfig.NewLivePersistence(config.ConfigPath, config.ManagementConfig)
 	}
 	if config.PersistSelectedPort != nil && ShouldPersistSelectedPort(config.ConfiguredPort, config.SelectedPort, config.PreferredPort) {

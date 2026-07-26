@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -148,19 +149,21 @@ type claudeAlias struct {
 }
 
 func (a *API) getClaudeCode(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	fullConfig := *a.config
-	cfg := cloneClaudeConfig(a.config.ClaudeCode)
-	fastMode := a.config.FastMode
-	port := a.config.Port
-	a.mu.RUnlock()
+	fullConfig := a.configPersistence.Snapshot()
+	if fullConfig == nil {
+		value := config.Default()
+		fullConfig = &value
+	}
+	cfg := cloneClaudeConfig(fullConfig.ClaudeCode)
+	fastMode := fullConfig.FastMode
+	port := fullConfig.Port
 	if cfg == nil {
 		cfg = &config.ClaudeCodeConfig{}
 	}
 	available := a.availableModels()
 	aliases := make([]claudeAlias, 0, len(available))
 	windows, _ := claude.BoundedContextWindows(r.Context(), 3*time.Second, func(context.Context) (map[string]int, error) {
-		return managementClaudeContextWindows(fullConfig, a.registry), nil
+		return managementClaudeContextWindows(*fullConfig, a.registry), nil
 	})
 	if a.registry != nil {
 		for _, m := range a.registry.ListModels() {
@@ -180,12 +183,14 @@ func (a *API) getClaudeCode(w http.ResponseWriter, r *http.Request) {
 		ContextConfig: claude.ContextConfig{AutoContext: cfg.AutoContext, AutoCompactWindow: cfg.AutoCompactWindow, MaxContextTokens: cfg.MaxContextTokens},
 		Model:         cfg.Model, SmallFastModel: cfg.SmallFastModel, TierModels: tiers,
 	}, windows, &auto)
-	fields := orderedJSONObject{{name: "enabled", value: cfg.Enabled == nil || *cfg.Enabled}, {name: "authMode", value: func() string {
-		if cfg.AuthMode == "proxy" {
-			return "proxy"
-		}
-		return "subscription"
-	}()}, {name: "model", value: cfg.Model}, {name: "smallFastModel", value: cfg.SmallFastModel}, {name: "tierModels", value: claudeTierMap(cfg.TierModels)}, {name: "modelMap", value: nonNilStringMap(cfg.ModelMap)}, {name: "systemEnv", value: cfg.SystemEnv}, {name: "autoConnectSupported", value: runtime.GOOS == "darwin"}, {name: "maxContextTokens", value: nullableInt(cfg.MaxContextTokens)}, {name: "alwaysEnableEffort", value: cfg.AlwaysEnableEffort}, {name: "autoContext", value: cfg.AutoContext == nil || *cfg.AutoContext}, {name: "autoCompactWindow", value: nullableInt(cfg.AutoCompactWindow)}, {name: "blockedSkills", value: nullableStrings(cfg.BlockedSkills)}, {name: "injectAgents", value: cfg.InjectAgents == nil || *cfg.InjectAgents}}
+	admissionTokens := managementAdmissionTokens(*fullConfig)
+	detection := claude.DetectClaudeAuth(claude.DefaultAuthDetectDeps(currentManagementEnvironment(), admissionTokens))
+	resolved := claude.ResolveAuthMode(cfg.AuthMode, detection)
+	fields := orderedJSONObject{{name: "enabled", value: cfg.Enabled == nil || *cfg.Enabled}, {name: "authMode", value: claude.StoredAuthModeIntent(cfg.AuthMode)}, {name: "markerMode", value: resolved.MarkerMode}, {name: "authModeOrigin", value: resolved.Origin}}
+	if resolved.FoundBy != "" {
+		fields = append(fields, orderedJSONField{name: "authFoundBy", value: resolved.FoundBy})
+	}
+	fields = append(fields, orderedJSONField{name: "authDetectionUnknown", value: detection.Presence == claude.AuthUnknown}, orderedJSONField{name: "admissionKeyActive", value: len(admissionTokens) > 0}, orderedJSONField{name: "detectionScope", value: "daemon"}, orderedJSONField{name: "model", value: cfg.Model}, orderedJSONField{name: "smallFastModel", value: cfg.SmallFastModel}, orderedJSONField{name: "tierModels", value: claudeTierMap(cfg.TierModels)}, orderedJSONField{name: "modelMap", value: nonNilStringMap(cfg.ModelMap)}, orderedJSONField{name: "systemEnv", value: cfg.SystemEnv}, orderedJSONField{name: "autoConnectSupported", value: runtime.GOOS == "darwin"}, orderedJSONField{name: "maxContextTokens", value: nullableInt(cfg.MaxContextTokens)}, orderedJSONField{name: "alwaysEnableEffort", value: cfg.AlwaysEnableEffort}, orderedJSONField{name: "autoContext", value: cfg.AutoContext == nil || *cfg.AutoContext}, orderedJSONField{name: "autoCompactWindow", value: nullableInt(cfg.AutoCompactWindow)}, orderedJSONField{name: "blockedSkills", value: nullableStrings(cfg.BlockedSkills)}, orderedJSONField{name: "injectAgents", value: cfg.InjectAgents == nil || *cfg.InjectAgents})
 	if cfg.WebSearchSidecar != nil {
 		fields = append(fields, orderedJSONField{name: "webSearchSidecar", value: cfg.WebSearchSidecar})
 	}
@@ -219,6 +224,8 @@ func managementClaudeContextWindows(cfg config.Config, registry types.Registry) 
 }
 
 func (a *API) putClaudeCode(w http.ResponseWriter, r *http.Request) {
+	a.claudeSettingsMu.Lock()
+	defer a.claudeSettingsMu.Unlock()
 	var body map[string]json.RawMessage
 	if !decodeJSON(w, r, &body) {
 		return
@@ -263,14 +270,14 @@ func (a *API) putClaudeCode(w http.ResponseWriter, r *http.Request) {
 	}
 	if raw, ok := body["authMode"]; ok {
 		var value string
-		if json.Unmarshal(raw, &value) != nil || (value != "proxy" && value != "subscription") {
-			writeError(w, 400, "authMode must be \"proxy\" or \"subscription\"")
+		if json.Unmarshal(raw, &value) != nil || (value != "auto" && value != "proxy" && value != "subscription") {
+			writeError(w, 400, "authMode must be \"auto\", \"proxy\", or \"subscription\"")
 			return
 		}
-		if value == "proxy" {
-			next.AuthMode = "proxy"
-		} else {
+		if value == "auto" {
 			next.AuthMode = ""
+		} else {
+			next.AuthMode = value
 		}
 	}
 	for name, target := range map[string]*string{"model": &next.Model, "smallFastModel": &next.SmallFastModel} {
@@ -373,18 +380,37 @@ func (a *API) putClaudeCode(w http.ResponseWriter, r *http.Request) {
 			*target = &value
 		}
 	}
-	a.mu.Lock()
-	previous, previousFast := a.config.ClaudeCode, a.config.FastMode
-	a.config.ClaudeCode, a.config.FastMode = next, oldFast
-	err := a.saveLocked()
-	if err != nil {
-		a.config.ClaudeCode, a.config.FastMode = previous, previousFast
+	if next.AuthModeMigratedAt == "" {
+		next.AuthModeMigratedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	a.mu.Unlock()
+	var err error
+	autoApplyClaudeDesktop := false
+	claudeEnabled := true
+	if a.configPersistence != nil {
+		err = a.configPersistence.Update(func(live *config.Config) {
+			if live.ClaudeCode != nil {
+				next.DesktopProfile = live.ClaudeCode.DesktopProfile
+				next.DesktopAutoApply = live.ClaudeCode.DesktopAutoApply
+			}
+			if _, supplied := body["fastMode"]; !supplied {
+				oldFast = live.FastMode
+			}
+			live.ClaudeCode, live.FastMode = next, oldFast
+			autoApplyClaudeDesktop = next.DesktopProfile != nil
+			claudeEnabled = next.Enabled == nil || *next.Enabled
+		})
+	} else {
+		a.mu.Lock()
+		a.config.ClaudeCode, a.config.FastMode = next, oldFast
+		autoApplyClaudeDesktop = next.DesktopProfile != nil
+		claudeEnabled = next.Enabled == nil || *next.Enabled
+		a.mu.Unlock()
+	}
 	if err != nil {
 		writeError(w, 500, "save Claude Code settings failed")
 		return
 	}
+	a.afterConfigSave("", autoApplyClaudeDesktop)
 	warnings := []string{}
 	if a.claudeRuntime != nil {
 		if _, ok := body["systemEnv"]; ok {
@@ -398,7 +424,7 @@ func (a *API) putClaudeCode(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = a.claudeRuntime.SyncClaudeAgentDefinitions(r.Context())
 	}
-	writeJSON(w, 200, orderedJSONObject{{name: "ok", value: true}, {name: "enabled", value: next.Enabled == nil || *next.Enabled}, {name: "warnings", value: warnings}})
+	writeJSON(w, 200, orderedJSONObject{{name: "ok", value: true}, {name: "enabled", value: claudeEnabled}, {name: "warnings", value: warnings}})
 }
 
 func (a *API) getShadowCall(w http.ResponseWriter) {
@@ -536,4 +562,27 @@ func intStringManagement(value int) string {
 		value /= 10
 	}
 	return digits
+}
+
+func managementAdmissionTokens(cfg config.Config) []string {
+	result := make([]string, 0, len(cfg.APIKeys)+1)
+	for _, key := range cfg.APIKeys {
+		if strings.TrimSpace(key.Key) != "" {
+			result = append(result, key.Key)
+		}
+	}
+	if strings.TrimSpace(cfg.AuthToken) != "" {
+		result = append(result, cfg.AuthToken)
+	}
+	return result
+}
+
+func currentManagementEnvironment() map[string]string {
+	result := map[string]string{}
+	for _, value := range os.Environ() {
+		if index := strings.IndexByte(value, '='); index > 0 {
+			result[value[:index]] = value[index+1:]
+		}
+	}
+	return result
 }

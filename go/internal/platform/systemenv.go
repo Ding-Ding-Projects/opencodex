@@ -57,11 +57,39 @@ func InstallSystemEnv(ctx context.Context, config SystemEnvConfig) error {
 	}
 	ownedValues := make(map[string]string, len(values))
 	newValues := make(map[string]string, len(values))
+	removedValues := make(map[string]string)
 	rollback := func() {
 		_ = revertLaunchctlValues(ctx, newValues)
+		_ = restoreLaunchctlValuesIfAbsent(ctx, removedValues)
 		_ = profileSnapshot.restore(profile)
 		_ = envSnapshot.restore(envPath)
 		_ = trackingSnapshot.restore(trackingPath)
+	}
+	for _, name := range sortedEnvironmentKeys(previousTracking.Values) {
+		if _, stillOwned := values[name]; stillOwned {
+			continue
+		}
+		current, getErr := launchctlGetenv(ctx, name)
+		if getErr != nil {
+			rollback()
+			return getErr
+		}
+		if current != previousTracking.Values[name] {
+			continue
+		}
+		confirmed, confirmErr := launchctlGetenv(ctx, name)
+		if confirmErr != nil {
+			rollback()
+			return confirmErr
+		}
+		if confirmed != current {
+			continue
+		}
+		if err := exec.CommandContext(ctx, "launchctl", "unsetenv", name).Run(); err != nil {
+			rollback()
+			return fmt.Errorf("launchctl unsetenv stale %s: %w", name, err)
+		}
+		removedValues[name] = current
 	}
 	for _, name := range sortedEnvironmentKeys(values) {
 		current, getErr := launchctlGetenv(ctx, name)
@@ -323,7 +351,33 @@ func launchctlGetenv(ctx context.Context, name string) (string, error) {
 func revertLaunchctlValues(ctx context.Context, values map[string]string) error {
 	var result error
 	for _, name := range sortedEnvironmentKeys(values) {
+		current, getErr := launchctlGetenv(ctx, name)
+		if getErr != nil {
+			result = errors.Join(result, getErr)
+			continue
+		}
+		if current != values[name] {
+			continue
+		}
 		if err := exec.CommandContext(ctx, "launchctl", "unsetenv", name).Run(); err != nil {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
+}
+
+func restoreLaunchctlValuesIfAbsent(ctx context.Context, values map[string]string) error {
+	var result error
+	for _, name := range sortedEnvironmentKeys(values) {
+		current, getErr := launchctlGetenv(ctx, name)
+		if getErr != nil {
+			result = errors.Join(result, getErr)
+			continue
+		}
+		if current != "" {
+			continue
+		}
+		if err := exec.CommandContext(ctx, "launchctl", "setenv", name, values[name]).Run(); err != nil {
 			result = errors.Join(result, err)
 		}
 	}

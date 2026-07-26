@@ -219,33 +219,50 @@ func floatMillisToInt(value *float64) *int64 {
 }
 
 type cliClaudeRuntime struct {
-	config     *config.Config
-	configHome string
-	claudeHome string
-	registry   types.Registry
-	client     *http.Client
+	config       *config.Config
+	configHome   string
+	claudeHome   string
+	registry     types.Registry
+	client       *http.Client
+	authDetect   claudeAuthDetector
+	persistence  *config.LivePersistence
+	installEnv   func(context.Context, config.Config, int) (bool, error)
+	uninstallEnv func(context.Context) error
 }
 
 var _ management.ClaudeCodeRuntime = (*cliClaudeRuntime)(nil)
 
-func newClaudeRuntime(cfg *config.Config, configHome string, registry types.Registry, client *http.Client) *cliClaudeRuntime {
+func newClaudeRuntime(cfg *config.Config, configHome string, registry types.Registry, client *http.Client, persistence ...*config.LivePersistence) *cliClaudeRuntime {
 	claudeHome := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
 	if claudeHome == "" {
 		home, _ := os.UserHomeDir()
 		claudeHome = filepath.Join(home, ".claude")
 	}
-	return &cliClaudeRuntime{config: cfg, configHome: configHome, claudeHome: claudeHome, registry: registry, client: client}
+	runtime := &cliClaudeRuntime{config: cfg, configHome: configHome, claudeHome: claudeHome, registry: registry, client: client, installEnv: installSystemEnv, uninstallEnv: uninstallSystemEnv}
+	if len(persistence) > 0 {
+		runtime.persistence = persistence[0]
+	}
+	return runtime
 }
 
 func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(ctx context.Context) error {
+	cfg := r.config
+	if r.persistence != nil {
+		if snapshot := r.persistence.Snapshot(); snapshot != nil {
+			cfg = snapshot
+		}
+	}
 	path := filepath.Join(r.configHome, "claude-env.sh")
-	if r.config.ClaudeCode == nil || !r.config.ClaudeCode.SystemEnv || r.config.ClaudeCode.Enabled != nil && !*r.config.ClaudeCode.Enabled {
+	if cfg.ClaudeCode == nil || !cfg.ClaudeCode.SystemEnv || cfg.ClaudeCode.Enabled != nil && !*cfg.ClaudeCode.Enabled {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		if r.uninstallEnv != nil {
+			return r.uninstallEnv(ctx)
+		}
 		return nil
 	}
-	port := r.config.Port
+	port := cfg.Port
 	if port <= 0 {
 		port = config.DefaultPort
 	}
@@ -254,25 +271,29 @@ func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(ctx context.Context) error {
 		"export ANTHROPIC_BASE_URL=" + shellEnvValue(fmt.Sprintf("http://127.0.0.1:%d", port)),
 		"export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY='1'",
 	}
-	if len(r.config.APIKeys) > 0 && strings.TrimSpace(r.config.APIKeys[0].Key) != "" {
-		lines = append(lines, "export ANTHROPIC_AUTH_TOKEN="+shellEnvValue(r.config.APIKeys[0].Key))
-	} else if r.config.ClaudeCode.AuthMode == "proxy" {
+	admission := configuredClaudeAdmissionToken(*cfg)
+	resolved := resolveClaudeAuth(*cfg, environmentMap(os.Environ()), r.authDetect)
+	if admission != "" {
+		lines = append(lines, "export ANTHROPIC_AUTH_TOKEN="+shellEnvValue(admission))
+		lines = append(lines, `[ -z "${CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST+x}" ] && export CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST='1'`)
+	} else if resolved.MarkerMode == "proxy" {
 		lines = append(lines, `[ -z "${ANTHROPIC_AUTH_TOKEN+x}" ] && export ANTHROPIC_AUTH_TOKEN='opencodex-proxy'`)
+		lines = append(lines, `[ -z "${CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST+x}" ] && export CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST='1'`)
 	}
 	windows, _ := claude.BoundedContextWindows(ctx, 3*time.Second, func(context.Context) (map[string]int, error) {
-		return runtimeClaudeContextWindows(*r.config, r.registry), nil
+		return runtimeClaudeContextWindows(*cfg, r.registry), nil
 	})
 	tiers := claude.ClaudeTierModels{}
-	if configured := r.config.ClaudeCode.TierModels; configured != nil {
+	if configured := cfg.ClaudeCode.TierModels; configured != nil {
 		tiers = claude.ClaudeTierModels{Opus: configured.Opus, Sonnet: configured.Sonnet, Haiku: configured.Haiku, Fable: configured.Fable}
 	}
 	auto := claude.ResolveAutoContext(&claude.ContextConfig{
-		AutoContext: r.config.ClaudeCode.AutoContext, AutoCompactWindow: r.config.ClaudeCode.AutoCompactWindow,
-		MaxContextTokens: r.config.ClaudeCode.MaxContextTokens,
+		AutoContext: cfg.ClaudeCode.AutoContext, AutoCompactWindow: cfg.ClaudeCode.AutoCompactWindow,
+		MaxContextTokens: cfg.ClaudeCode.MaxContextTokens,
 	}, os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))
 	modelEnv := claude.EffectiveModelEnv(&claude.ModelEnvConfig{
-		ContextConfig: claude.ContextConfig{AutoContext: r.config.ClaudeCode.AutoContext, AutoCompactWindow: r.config.ClaudeCode.AutoCompactWindow, MaxContextTokens: r.config.ClaudeCode.MaxContextTokens},
-		Model:         r.config.ClaudeCode.Model, SmallFastModel: r.config.ClaudeCode.SmallFastModel, TierModels: tiers,
+		ContextConfig: claude.ContextConfig{AutoContext: cfg.ClaudeCode.AutoContext, AutoCompactWindow: cfg.ClaudeCode.AutoCompactWindow, MaxContextTokens: cfg.ClaudeCode.MaxContextTokens},
+		Model:         cfg.ClaudeCode.Model, SmallFastModel: cfg.ClaudeCode.SmallFastModel, TierModels: tiers,
 	}, windows, &auto)
 	modelNames := make([]string, 0, len(modelEnv))
 	for name := range modelEnv {
@@ -287,7 +308,7 @@ func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(ctx context.Context) error {
 			lines = append(lines, `[ -z "${`+name+`+x}" ] && export `+name+`=`+shellEnvValue(value))
 		}
 	}
-	if maxContext := r.config.ClaudeCode.MaxContextTokens; maxContext > 0 {
+	if maxContext := cfg.ClaudeCode.MaxContextTokens; maxContext > 0 {
 		lines = append(lines,
 			`[ -z "${CLAUDE_CODE_MAX_CONTEXT_TOKENS+x}" ] && export CLAUDE_CODE_MAX_CONTEXT_TOKENS=`+shellEnvValue(fmt.Sprint(maxContext)),
 			`[ -z "${DISABLE_COMPACT+x}" ] && export DISABLE_COMPACT='1'`,
@@ -295,7 +316,7 @@ func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(ctx context.Context) error {
 	} else if auto.Enabled {
 		lines = append(lines, `[ -z "${CLAUDE_CODE_AUTO_COMPACT_WINDOW+x}" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW=`+shellEnvValue(fmt.Sprint(auto.CompactWindow)))
 	}
-	if r.config.ClaudeCode.AlwaysEnableEffort {
+	if cfg.ClaudeCode.AlwaysEnableEffort {
 		lines = append(lines, `[ -z "${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT+x}" ] && export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT='1'`)
 	}
 	if err := os.MkdirAll(r.configHome, 0o700); err != nil {
@@ -303,6 +324,11 @@ func (r *cliClaudeRuntime) ApplyClaudeCodeSystemEnv(ctx context.Context) error {
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		return err
+	}
+	if r.installEnv != nil {
+		if _, err := r.installEnv(ctx, *cfg, port); err != nil {
+			return err
+		}
 	}
 	_, _ = claude.RefreshGatewayModelCacheFromProxy(ctx, r.client, port, 3*time.Second, r.claudeHome)
 	return nil
@@ -332,19 +358,25 @@ func runtimeClaudeContextWindows(cfg config.Config, registry types.Registry) map
 }
 
 func (r *cliClaudeRuntime) SyncClaudeAgentDefinitions(_ context.Context) error {
-	if r.config.ClaudeCode != nil && r.config.ClaudeCode.InjectAgents != nil && !*r.config.ClaudeCode.InjectAgents {
+	cfg := r.config
+	if r.persistence != nil {
+		if snapshot := r.persistence.Snapshot(); snapshot != nil {
+			cfg = snapshot
+		}
+	}
+	if cfg.ClaudeCode != nil && cfg.ClaudeCode.InjectAgents != nil && !*cfg.ClaudeCode.InjectAgents {
 		_, err := claude.SyncClaudeAgentDefs(nil, r.claudeHome)
 		return err
 	}
-	models := make([]claude.AgentModel, 0, len(r.config.SubagentModels))
+	models := make([]claude.AgentModel, 0, len(cfg.SubagentModels))
 	windows := make(map[string]int)
-	for _, qualified := range r.config.SubagentModels {
+	for _, qualified := range cfg.SubagentModels {
 		provider, model, found := strings.Cut(qualified, "/")
 		if !found {
 			provider, model = "native", qualified
 		}
 		models = append(models, claude.AgentModel{Provider: provider, ID: model})
-		if configured, ok := r.config.Providers[provider]; ok {
+		if configured, ok := cfg.Providers[provider]; ok {
 			if value := configured.ModelContextWindows[model]; value > 0 {
 				windows[claude.ClaudeCodeAlias(provider, model)] = value
 			}
@@ -353,12 +385,12 @@ func (r *cliClaudeRuntime) SyncClaudeAgentDefinitions(_ context.Context) error {
 	blocked := []string{}
 	defaultModel := ""
 	auto := claude.AutoContextOff
-	if r.config.ClaudeCode != nil {
-		blocked = append(blocked, r.config.ClaudeCode.BlockedSkills...)
-		defaultModel = r.config.ClaudeCode.Model
+	if cfg.ClaudeCode != nil {
+		blocked = append(blocked, cfg.ClaudeCode.BlockedSkills...)
+		defaultModel = cfg.ClaudeCode.Model
 		auto = claude.ResolveAutoContext(&claude.ContextConfig{
-			AutoContext: r.config.ClaudeCode.AutoContext, AutoCompactWindow: r.config.ClaudeCode.AutoCompactWindow,
-			MaxContextTokens: r.config.ClaudeCode.MaxContextTokens,
+			AutoContext: cfg.ClaudeCode.AutoContext, AutoCompactWindow: cfg.ClaudeCode.AutoCompactWindow,
+			MaxContextTokens: cfg.ClaudeCode.MaxContextTokens,
 		}, os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))
 	}
 	defs := claude.BuildClaudeAgentDefs(claude.AgentConfig{Models: models, DefaultModel: defaultModel, ConfigDir: r.claudeHome, AutoContext: auto, BlockedSkills: blocked}, windows)
