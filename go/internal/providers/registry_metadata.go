@@ -33,6 +33,12 @@ func applyProviderParityMetadata(rows []ProviderRegistryEntry) {
 			e.JawcodeBundle = "xai"
 			e.NoReasoningModels = []string{"grok-4.20-0309-non-reasoning", "grok-build-0.1", "grok-composer-2.5-fast"}
 			e.NoVisionModels = []string{"grok-build-0.1", "grok-composer-2.5-fast"}
+			e.ModelInputModalities = map[string][]string{
+				"grok-4.5":                     {"text", "image"},
+				"grok-4.3":                     {"text", "image"},
+				"grok-4.20-0309-reasoning":     {"text", "image"},
+				"grok-4.20-0309-non-reasoning": {"text", "image"},
+			}
 			e.PreserveReasoningContentModels = []string{"grok-4.5", "grok-4.3", "grok-4.20-0309-reasoning"}
 			e.ModelReasoningEfforts = map[string][]string{"grok-4.5": {"low", "medium", "high"}}
 			e.ModelContextWindows = map[string]int{"grok-4.5": 500_000, "grok-4.3": 1_000_000, "grok-4.20-0309-reasoning": 1_000_000, "grok-4.20-0309-non-reasoning": 1_000_000, "grok-build-0.1": 256_000}

@@ -57,6 +57,33 @@ func TestParseResponsesRequestPreservesCanonicalContextAndTools(t *testing.T) {
 	}
 }
 
+func TestResponsesCoreStripsUnsupportedForwardParamsOnlyForAdapterCopy(t *testing.T) {
+	raw := json.RawMessage(`{"model":"wire","input":"ping","max_output_tokens":32000,"metadata":{"user_id":"u-1"},"reasoning":{"effort":"low"}}`)
+	request := &types.NormalizedRequest{ModelID: "wire", RawBody: raw}
+	forward := requestWithoutUnsupportedForwardParams(request)
+	var body map[string]any
+	if err := json.Unmarshal(forward.RawBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body["max_output_tokens"]; ok {
+		t.Fatalf("forward body retained max_output_tokens: %s", forward.RawBody)
+	}
+	if _, ok := body["metadata"]; ok {
+		t.Fatalf("forward body retained metadata: %s", forward.RawBody)
+	}
+	if body["model"] != "wire" || body["reasoning"] == nil {
+		t.Fatalf("forward body lost supported fields: %#v", body)
+	}
+	if string(request.RawBody) != string(raw) || forward == request {
+		t.Fatal("forward sanitization mutated the original request")
+	}
+
+	plain := &types.NormalizedRequest{RawBody: json.RawMessage(`{"model":"wire","input":"ping"}`)}
+	if requestWithoutUnsupportedForwardParams(plain) != plain {
+		t.Fatal("parameter-free forward request should remain allocation-free")
+	}
+}
+
 func TestParseResponsesRequestRejectsMalformedInputBeforeDispatch(t *testing.T) {
 	body := `{"model":"public","input":[{"type":"function_call","name":"missing-call-id"}]}`
 	_, err := parseResponsesRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)), 1<<20)
@@ -430,6 +457,28 @@ func TestResponsesCorePassthroughPreservesNonEmptyErrorBytesAndHeaders(t *testin
 	}
 	if response.Header().Get("Retry-After") != "9" || response.Header().Get("Content-Type") != "text/html; charset=utf-8" || response.Header().Get("Connection") != "" {
 		t.Fatalf("headers=%v", response.Header())
+	}
+}
+
+func TestResponsesCoreCyberPolicyOverridesPassthroughServerStatus(t *testing.T) {
+	const upstreamBody = `{"error":{"message":"blocked","type":"server_error","code":"cyber_policy"}}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, upstreamBody)
+	}))
+	defer upstream.Close()
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL},
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return coreAdapter{endpoint: transport.BaseURL}, nil
+		},
+		PassthroughRoute: func(*types.ResolvedModel) bool { return true },
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+	if response.Code != http.StatusBadRequest || response.Body.String() != upstreamBody {
+		t.Fatalf("response=%d body=%q", response.Code, response.Body.String())
 	}
 }
 

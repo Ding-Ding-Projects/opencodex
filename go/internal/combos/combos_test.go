@@ -82,6 +82,7 @@ func TestFailureDecisionAndRetryAfter(t *testing.T) {
 		{400, "invalid_request_error", "bad parameter", DecisionStop},
 		{499, "", "cancelled", DecisionStop},
 		{403, "", "origin_rejected", DecisionStop},
+		{503, "cyber_policy", "blocked", DecisionStop},
 	} {
 		if got := FailureDecision(tc.status, tc.code, tc.msg); got != tc.want {
 			t.Errorf("FailureDecision(%d, %q, %q) = %q, want %q", tc.status, tc.code, tc.msg, got, tc.want)

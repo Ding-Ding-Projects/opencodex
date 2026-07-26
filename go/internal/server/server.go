@@ -238,6 +238,12 @@ func New(config Config) *Server {
 			}
 			return EffectiveWireAdapter(resolved.Provider, resolved.Model, s.config.ManagementConfig.Providers[resolved.Provider]) == "openai-responses"
 		},
+		ForwardRoute: func(resolved *types.ResolvedModel) bool {
+			if resolved == nil || s.config.ManagementConfig == nil {
+				return false
+			}
+			return s.config.ManagementConfig.Providers[resolved.Provider].AuthMode == "forward"
+		},
 		ItemIDRepair: func(provider string) *ResponsesItemIDRepairConfig {
 			if s.config.ManagementConfig == nil {
 				return nil

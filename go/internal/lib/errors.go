@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+const CyberPolicyErrorCode = "cyber_policy"
+
+var cyberPolicyCodePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)"code"\s*:\s*"cyber_policy"`),
+	regexp.MustCompile(`(?i)\bcode\s*[:=]\s*["']?cyber_policy\b`),
+}
+
 type ErrorPayload struct {
 	Message string  `json:"message"`
 	Type    string  `json:"type"`
@@ -40,6 +47,25 @@ func IsClientClosedMessage(message string) bool {
 	return false
 }
 
+func IsCyberPolicyCode(value string) bool {
+	return value == CyberPolicyErrorCode
+}
+
+func IsCyberPolicyMessage(message string) bool {
+	text := strings.ToLower(message)
+	for _, pattern := range cyberPolicyCodePatterns {
+		if pattern.MatchString(text) {
+			return true
+		}
+	}
+	return containsAny(text,
+		"high-risk cybersecurity",
+		"high-risk cyber activity",
+		"high-risk cyber ",
+		"possible cybersecurity risk",
+	) || strings.Contains(text, "flagged") && containsAny(text, "cybersecurity", "cyber activity")
+}
+
 func ClassifyError(status int, errorType, message string) ErrorPayload {
 	text := strings.ToLower(message)
 	result := func(kind, value string) ErrorPayload {
@@ -50,6 +76,9 @@ func ClassifyError(status int, errorType, message string) ErrorPayload {
 	}
 	if status == 499 || errorType == "client_closed_request" || IsClientClosedMessage(text) {
 		return result("invalid_request_error", "client_closed_request")
+	}
+	if IsCyberPolicyCode(errorType) || IsCyberPolicyMessage(text) {
+		return result("invalid_request_error", CyberPolicyErrorCode)
 	}
 	if containsAny(text, "context_length_exceeded", "context window", "context length", "maximum context", "too many tokens") {
 		return result("invalid_request_error", "context_length_exceeded")
@@ -124,6 +153,8 @@ func InferHTTPStatus(message string) int {
 	switch {
 	case IsClientClosedMessage(text):
 		return 499
+	case IsCyberPolicyMessage(text):
+		return 400
 	case strings.Contains(text, "cursor resource limit exceeded"):
 		return 400
 	case containsAny(text, "resource_exhausted", "resource exhausted", "rate limit", "too many requests", "throttling"):
@@ -200,6 +231,8 @@ func HTTPStatusFromTerminalError(terminal *TerminalError) int {
 	switch {
 	case value == "client_closed_request" || value == "client_cancelled":
 		return 499
+	case IsCyberPolicyCode(value) || IsCyberPolicyMessage(terminal.Message):
+		return 400
 	case terminal.Type == "rate_limit_error" || value == "rate_limit_exceeded":
 		return 429
 	case terminal.Type == "authentication_error" || value == "invalid_api_key":

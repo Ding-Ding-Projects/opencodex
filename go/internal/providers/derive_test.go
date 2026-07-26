@@ -26,3 +26,14 @@ func TestEnrichPreservesExplicitConfig(t *testing.T) {
 		t.Fatal(p)
 	}
 }
+
+func TestEnrichFillsModelModalitiesBelowUserOverrides(t *testing.T) {
+	p := ProviderConfig{ModelInputModalities: map[string][]string{"grok-4.5": {"text"}}}
+	EnrichProviderFromRegistry("xai", &p)
+	if got := p.ModelInputModalities["grok-4.5"]; len(got) != 1 || got[0] != "text" {
+		t.Fatalf("user override=%v", got)
+	}
+	if got := p.ModelInputModalities["grok-4.3"]; len(got) != 2 || got[0] != "text" || got[1] != "image" {
+		t.Fatalf("registry default=%v", got)
+	}
+}

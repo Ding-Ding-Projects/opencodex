@@ -50,7 +50,7 @@ func ParseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 // different target. Request-shape and caller-cancellation failures stop.
 func FailureDecision(status int, code, message string) string {
 	normalized := strings.ToLower(code + " " + message)
-	if status == 499 || strings.Contains(normalized, "origin_rejected") || strings.Contains(normalized, "context_length_exceeded") || strings.Contains(normalized, "invalid_request") {
+	if status == 499 || code == "cyber_policy" || strings.Contains(normalized, "origin_rejected") || strings.Contains(normalized, "context_length_exceeded") || strings.Contains(normalized, "invalid_request") {
 		return DecisionStop
 	}
 	if status == 401 || status == 403 || status == 404 || status == 408 || status == 429 || status >= 500 {

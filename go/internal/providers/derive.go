@@ -152,8 +152,12 @@ func EnrichProviderFromRegistry(name string, p *ProviderConfig) {
 	if p.ModelContextWindows == nil {
 		p.ModelContextWindows = cloneIntMap(s.ModelContextWindows)
 	}
-	if p.ModelInputModalities == nil {
-		p.ModelInputModalities = cloneStringSlices(s.ModelInputModalities)
+	if s.ModelInputModalities != nil {
+		modalities := cloneStringSlices(s.ModelInputModalities)
+		for model, values := range p.ModelInputModalities {
+			modalities[model] = cloneStrings(values)
+		}
+		p.ModelInputModalities = modalities
 	}
 	if p.ModelReasoningEfforts == nil {
 		p.ModelReasoningEfforts = cloneStringSlices(s.ModelReasoningEfforts)

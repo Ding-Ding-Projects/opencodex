@@ -52,6 +52,7 @@ type ResponsesCoreConfig struct {
 	// PassthroughRoute identifies adapters whose non-2xx bytes are part of the
 	// public Responses contract and must be relayed without normalization.
 	PassthroughRoute  func(*types.ResolvedModel) bool
+	ForwardRoute      func(*types.ResolvedModel) bool
 	ItemIDRepair      func(string) *ResponsesItemIDRepairConfig
 	RotateAPIKeyOn429 func(string, string, string) (string, bool)
 	PrepareImageRetry func(*types.NormalizedRequest) error
@@ -378,7 +379,11 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			core.noteSubagentFailure(attempt, err.Error())
 			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "adapter_error", err: err}
 		}
-		upstream, err := adapter.BuildRequest(ctx, normalized)
+		adapterRequest := normalized
+		if core.config.ForwardRoute != nil && core.config.ForwardRoute(resolved) {
+			adapterRequest = requestWithoutUnsupportedForwardParams(normalized)
+		}
+		upstream, err := adapter.BuildRequest(ctx, adapterRequest)
 		if err != nil {
 			core.noteSubagentFailure(attempt, err.Error())
 			status, kind := classifyAdapterBuildFailure(err)
@@ -425,6 +430,12 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			message = message[:500]
 		}
 		message = ocxlib.RedactSecretString(message)
+		upstreamCode := responseErrorCode(payload)
+		clientStatus := response.StatusCode
+		if ocxlib.IsCyberPolicyCode(upstreamCode) || ocxlib.IsCyberPolicyMessage(message) {
+			upstreamCode = ocxlib.CyberPolicyErrorCode
+			clientStatus = http.StatusBadRequest
+		}
 		failureMessage := message
 		if response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusPaymentRequired {
 			failureMessage = fmt.Sprintf("quota exhausted (%d): %s", response.StatusCode, message)
@@ -450,7 +461,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			}
 			continue
 		}
-		if next, ok := core.nextCombo(normalized, pick, response.StatusCode, "upstream_error", message, response.Header.Get("Retry-After")); ok {
+		if next, ok := core.nextCombo(normalized, pick, clientStatus, upstreamCode, message, response.Header.Get("Retry-After")); ok {
 			logSession.finishAttempt(response.StatusCode)
 			pick, resolved = next, next.Resolved
 			continue
@@ -460,11 +471,54 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			message = http.StatusText(response.StatusCode)
 		}
 		return nil, nil, auth, resolved, pick, &forwardError{
-			status: response.StatusCode, kind: "upstream_error", retryAfter: response.Header.Get("Retry-After"),
+			status: clientStatus, kind: upstreamFailureKind(upstreamCode), retryAfter: response.Header.Get("Retry-After"),
 			passthrough: passthrough, body: append([]byte(nil), clientPayload...), headers: SanitizePassthroughHeaders(response.Header),
 			err: fmt.Errorf("%s", message),
 		}
 	}
+}
+
+func requestWithoutUnsupportedForwardParams(request *types.NormalizedRequest) *types.NormalizedRequest {
+	if request == nil || len(request.RawBody) == 0 {
+		return request
+	}
+	var body map[string]any
+	if json.Unmarshal(request.RawBody, &body) != nil {
+		return request
+	}
+	_, hasMaxOutputTokens := body["max_output_tokens"]
+	_, hasMetadata := body["metadata"]
+	if !hasMaxOutputTokens && !hasMetadata {
+		return request
+	}
+	delete(body, "max_output_tokens")
+	delete(body, "metadata")
+	updated, err := json.Marshal(body)
+	if err != nil {
+		return request
+	}
+	clone := *request
+	clone.RawBody = updated
+	return &clone
+}
+
+func responseErrorCode(payload []byte) string {
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil {
+		return ""
+	}
+	return envelope.Error.Code
+}
+
+func upstreamFailureKind(code string) string {
+	if ocxlib.IsCyberPolicyCode(code) {
+		return ocxlib.CyberPolicyErrorCode
+	}
+	return "upstream_error"
 }
 
 func authWithAPIKey(auth *types.AuthContext, key string) *types.AuthContext {

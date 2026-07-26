@@ -18,6 +18,23 @@ func TestRegistryResolvesEncodedNativeModelAndCapabilities(t *testing.T) {
 		t.Fatalf("capabilities: %#v", c)
 	}
 }
+
+func TestGrokRegistryDeclaresImageInputForVisionModels(t *testing.T) {
+	entry, ok := GetProviderRegistryEntry("xai")
+	if !ok {
+		t.Fatal("xai registry entry missing")
+	}
+	for _, model := range []string{"grok-4.5", "grok-4.3", "grok-4.20-0309-reasoning", "grok-4.20-0309-non-reasoning"} {
+		if !slices.Equal(entry.ModelInputModalities[model], []string{"text", "image"}) {
+			t.Errorf("%s modalities=%v", model, entry.ModelInputModalities[model])
+		}
+	}
+	for _, model := range []string{"grok-build-0.1", "grok-composer-2.5-fast"} {
+		if entry.ModelInputModalities[model] != nil {
+			t.Errorf("text-only %s unexpectedly declares modalities=%v", model, entry.ModelInputModalities[model])
+		}
+	}
+}
 func TestRegistryReturnsDefensiveCopies(t *testing.T) {
 	a, _ := GetProviderRegistryEntry("openrouter")
 	a.Models[0] = "changed"
