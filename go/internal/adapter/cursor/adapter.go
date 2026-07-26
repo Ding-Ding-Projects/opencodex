@@ -149,12 +149,25 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 	turn := a.currentTurn()
 	go func() {
 		defer close(out)
-		defer body.Close()
 		if turn == nil {
 			sendCursorAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "Cursor adapter has no active turn", StatusCode: http.StatusBadGateway})
 			return
 		}
 		defer a.releaseTurn(turn)
+		if body == nil {
+			sendCursorAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "Cursor response has no body", StatusCode: http.StatusBadGateway})
+			return
+		}
+		defer body.Close()
+		stopCancelClose := make(chan struct{})
+		defer close(stopCancelClose)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = body.Close()
+			case <-stopCancelClose:
+			}
+		}()
 		err := a.consumeFrames(ctx, body, turn, func(event types.AdapterEvent) error {
 			if !sendCursorAdapterEvent(ctx, out, event) {
 				return ctx.Err()

@@ -7,10 +7,40 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"sync"
 	"testing"
 )
 
 const onePixelPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+func TestNormalizeAnthropicImagesCacheIsRaceSafe(t *testing.T) {
+	ResetNormalizeStateForTests()
+	const workers = 32
+	start := make(chan struct{})
+	errors := make(chan error, workers)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			messages := []any{map[string]any{"role": "user", "content": []any{imageBlock(onePixelPNG)}}}
+			errors <- NormalizeAnthropicImages(messages)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats := GetNormalizeStatsForTests()
+	if stats.CacheEntries != 1 {
+		t.Fatalf("cache stats = %#v", stats)
+	}
+}
 
 func TestNormalizeAnthropicImagesResizesOversizedImage(t *testing.T) {
 	source := image.NewRGBA(image.Rect(0, 0, 2401, 20))

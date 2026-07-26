@@ -3,7 +3,9 @@ package kiro
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -163,6 +165,31 @@ func TestParseStreamToolUsageAndTerminalError(t *testing.T) {
 	errorEvents := collect(adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(errorStream))))
 	if len(errorEvents) != 1 || errorEvents[0].Type != types.EventError || !errorEvents[0].Retryable {
 		t.Fatalf("error events=%#v", errorEvents)
+	}
+}
+
+func TestParseStreamFailsClosedOnEmptyTruncatedAndOversizedFrames(t *testing.T) {
+	oversized := make([]byte, 12)
+	binary.BigEndian.PutUint32(oversized[:4], 16*1024*1024+1)
+	truncated := make([]byte, 12)
+	binary.BigEndian.PutUint32(truncated[:4], 20)
+	binary.BigEndian.PutUint32(truncated[8:], crc32.ChecksumIEEE(truncated[:8]))
+	for _, test := range []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{name: "empty", want: "empty response stream"},
+		{name: "truncated prelude", body: []byte{0, 0, 0}, want: "read prelude"},
+		{name: "truncated frame", body: truncated, want: "truncated frame"},
+		{name: "oversized frame", body: oversized, want: "exceeds maximum"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			events := collect((&Adapter{}).ParseStream(context.Background(), io.NopCloser(bytes.NewReader(test.body))))
+			if len(events) != 1 || events[0].Type != types.EventError || !strings.Contains(events[0].Error, test.want) {
+				t.Fatalf("events=%#v, want error containing %q", events, test.want)
+			}
+		})
 	}
 }
 

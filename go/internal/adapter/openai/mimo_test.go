@@ -3,10 +3,12 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -83,5 +85,60 @@ func TestMimoDoDoesNotRetry403(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusForbidden || calls.Load() != 1 {
 		t.Fatalf("status=%d calls=%d", response.StatusCode, calls.Load())
+	}
+}
+
+func TestMimoJWTBootstrapIsSingleflightUnderParallelBuilds(t *testing.T) {
+	var bootstraps atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if bootstraps.Add(1) == 1 {
+			close(entered)
+		}
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]string{"jwt": "shared-jwt"})
+	}))
+	defer server.Close()
+
+	adapter := NewMimoAdapter()
+	adapter.Client = server.Client()
+	adapter.BootstrapURL = server.URL
+	adapter.ChatURL = server.URL + "/chat"
+	adapter.ConfigDir = t.TempDir()
+	const workers = 24
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			request, err := adapter.BuildRequest(context.Background(), &types.NormalizedRequest{
+				ModelID: "mimo",
+				Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"parallel"`)}}},
+			})
+			if err == nil {
+				if got := request.Header.Get("Authorization"); got != "Bearer shared-jwt" {
+					err = errors.New("unexpected shared JWT authorization")
+				}
+				_ = request.Body.Close()
+			}
+			results <- err
+		}(index)
+	}
+	close(start)
+	<-entered
+	close(release)
+	wait.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := bootstraps.Load(); got != 1 {
+		t.Fatalf("bootstrap calls = %d, want 1", got)
 	}
 }

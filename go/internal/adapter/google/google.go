@@ -541,6 +541,15 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			return
 		}
 		defer body.Close()
+		stopCancelClose := make(chan struct{})
+		defer close(stopCancelClose)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = body.Close()
+			case <-stopCancelClose:
+			}
+		}()
 		var pendingUsage *types.Usage
 		toolCalls := 0
 		finishReason := ""

@@ -218,6 +218,10 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
+		if body == nil {
+			sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "No response body"})
+			return
+		}
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		calls := make(map[string]*pendingChatCall)

@@ -3,8 +3,13 @@ package cursor
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,6 +136,144 @@ func TestAdapterParseStreamRejectsTruncatedAndCompressedFrames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdapterParseStreamRejectsMissingAndOversizedFrames(t *testing.T) {
+	oversized := make([]byte, 5)
+	binary.BigEndian.PutUint32(oversized[1:], uint32(DefaultMaxFrameSize+1))
+	for _, test := range []struct {
+		name string
+		body io.ReadCloser
+		want string
+	}{
+		{name: "missing body", want: "no body"},
+		{name: "empty body", body: io.NopCloser(bytes.NewReader(nil)), want: "unexpected EOF"},
+		{name: "oversized frame", body: io.NopCloser(bytes.NewReader(oversized)), want: "exceeds limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := adapter.BuildRequest(context.Background(), cursorNormalizedRequest("hello"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer request.Body.Close()
+			events := collectCursorAdapterEvents(adapter.ParseStream(context.Background(), test.body))
+			if len(events) != 1 || events[0].Type != types.EventError || !strings.Contains(events[0].Error, test.want) {
+				t.Fatalf("events = %#v, want error containing %q", events, test.want)
+			}
+		})
+	}
+}
+
+func TestAdapterIgnoresUnknownServerEventAndStillTerminates(t *testing.T) {
+	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := adapter.BuildRequest(context.Background(), cursorNormalizedRequest("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Body.Close()
+	unknown := appendMessage(nil, 1, appendMessage(nil, 99, []byte("future")))
+	terminal := appendMessage(nil, 1, appendMessage(nil, 14, nil))
+	body := connectFrames(t,
+		ConnectFrame{Payload: unknown},
+		ConnectFrame{Payload: terminal},
+		ConnectFrame{Flags: ConnectFlagEndStream, Payload: []byte(`{}`)},
+	)
+	events := collectCursorAdapterEvents(adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(body))))
+	if len(events) != 1 || events[0].Type != types.EventDone {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestAdapterConcurrentTurnAdmissionIsRaceSafe(t *testing.T) {
+	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const workers = 24
+	start := make(chan struct{})
+	results := make(chan *http.Request, workers)
+	errors := make(chan error, workers)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			request, buildErr := adapter.BuildRequest(context.Background(), cursorNormalizedRequest(fmt.Sprintf("turn-%d", index)))
+			results <- request
+			errors <- buildErr
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	close(errors)
+
+	var admitted []*http.Request
+	for request := range results {
+		if request != nil {
+			admitted = append(admitted, request)
+		}
+	}
+	rejected := 0
+	for err := range errors {
+		if err != nil {
+			if !strings.Contains(err.Error(), "already has an active turn") {
+				t.Fatalf("unexpected admission error: %v", err)
+			}
+			rejected++
+		}
+	}
+	if len(admitted) != 1 || rejected != workers-1 {
+		t.Fatalf("admitted=%d rejected=%d", len(admitted), rejected)
+	}
+	_ = admitted[0].Body.Close()
+	adapter.releaseTurn(adapter.currentTurn())
+}
+
+func TestAdapterCancellationClosesBlockedUpstreamBody(t *testing.T) {
+	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := adapter.BuildRequest(context.Background(), cursorNormalizedRequest("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Body.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &cursorBlockingBody{closed: make(chan struct{})}
+	events := adapter.ParseStream(ctx, body)
+	cancel()
+	for range events {
+	}
+	select {
+	case <-body.closed:
+	case <-time.After(time.Second):
+		t.Fatal("context cancellation did not close Cursor upstream body")
+	}
+}
+
+type cursorBlockingBody struct {
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (body *cursorBlockingBody) Read([]byte) (int, error) {
+	<-body.closed
+	return 0, io.EOF
+}
+
+func (body *cursorBlockingBody) Close() error {
+	body.once.Do(func() { close(body.closed) })
+	return nil
 }
 
 func TestAdapterEmitsHeartbeatAndWritesInteractionReply(t *testing.T) {

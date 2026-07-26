@@ -471,6 +471,10 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
+		if body == nil {
+			emit(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "No response body"})
+			return
+		}
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		names := a.toolNames()

@@ -448,6 +448,15 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 		return result
 	}
 	defer body.Close()
+	stopCancelClose := make(chan struct{})
+	defer close(stopCancelClose)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = body.Close()
+		case <-stopCancelClose:
+		}
+	}()
 	var open *struct {
 		id, name   string
 		chunks     []string
@@ -551,7 +560,10 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 			return result
 		}
 		frame, err := protocol.DecodeSmithyFrame(body)
-		if errors.Is(err, io.EOF) {
+		// DecodeSmithyFrame wraps both a clean EOF at the next prelude and an
+		// EOF inside a declared frame. Only the former is a valid stream end;
+		// treating a truncated payload as clean EOF silently loses corruption.
+		if errors.Is(err, io.EOF) && strings.Contains(err.Error(), "read prelude") {
 			break
 		}
 		if err != nil {

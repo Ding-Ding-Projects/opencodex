@@ -521,6 +521,10 @@ func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) 
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
+		if body == nil {
+			sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "passthrough adapter received no response body"})
+			return
+		}
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		calls := make(map[string]*types.ToolCall)

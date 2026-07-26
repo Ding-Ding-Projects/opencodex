@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
+	googleadapter "github.com/lidge-jun/opencodex-go/internal/adapter/google"
+	"github.com/lidge-jun/opencodex-go/internal/adapter/kiro"
 	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -146,6 +148,9 @@ func TestAdapterStreamCancellationClosesBlockedBody(t *testing.T) {
 		{name: "chat", parse: (&openaiadapter.ChatAdapter{}).ParseStream},
 		{name: "responses", parse: (&openaiadapter.ResponsesAdapter{}).ParseStream},
 		{name: "anthropic", parse: (&anthropic.Adapter{}).ParseStream},
+		{name: "google", parse: (&googleadapter.Adapter{}).ParseStream},
+		{name: "kiro", parse: kiro.NewAdapter("https://runtime.test", "token").ParseStream},
+		{name: "mimo", parse: openaiadapter.NewMimoAdapter().ParseStream},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
