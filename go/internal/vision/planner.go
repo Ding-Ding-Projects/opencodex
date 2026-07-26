@@ -2,6 +2,8 @@ package vision
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"sync"
 
@@ -32,6 +34,9 @@ type PreprocessorConfig struct {
 	SupportsVision         func(modelID string) bool
 	MaxConcurrency         int
 	MaxDescriptionsPerTurn int
+	// MaxDescriptionsPerTurnSet distinguishes an explicitly configured zero
+	// (disable descriptions for this turn) from the omitted zero value.
+	MaxDescriptionsPerTurnSet bool
 }
 
 // VisionPreprocessor describes images before adapters build requests for
@@ -44,6 +49,7 @@ type VisionPreprocessor struct {
 	supportsVision         func(string) bool
 	maxConcurrency         int
 	maxDescriptionsPerTurn int
+	identityNamespace      string
 }
 
 func NewVisionPreprocessor(config PreprocessorConfig) *VisionPreprocessor {
@@ -69,13 +75,29 @@ func NewVisionPreprocessor(config PreprocessorConfig) *VisionPreprocessor {
 		concurrency = MaxVisionConcurrency
 	}
 	maxDescriptions := config.MaxDescriptionsPerTurn
-	if maxDescriptions <= 0 {
+	if !config.MaxDescriptionsPerTurnSet && maxDescriptions == 0 {
 		maxDescriptions = DefaultMaxDescriptionsPerTurn
+	} else if maxDescriptions < 0 {
+		maxDescriptions = DefaultMaxDescriptionsPerTurn
+	}
+	backend := selectBackend(config)
+	model := ""
+	if backend == BackendAnthropic && config.Anthropic != nil {
+		model = config.Anthropic.Model
+		if model == "" {
+			model = DefaultAnthropicVisionModel
+		}
+	} else if config.OpenAI != nil {
+		model = config.OpenAI.Model
+		if model == "" {
+			model = DefaultOpenAIVisionModel
+		}
 	}
 	return &VisionPreprocessor{
 		describer: describer, cache: cache, validation: config.Validation,
 		textOnlyModels: append([]string(nil), config.TextOnlyModels...), supportsVision: config.SupportsVision,
 		maxConcurrency: concurrency, maxDescriptionsPerTurn: maxDescriptions,
+		identityNamespace: string(backend) + "\x00" + model,
 	}
 }
 
@@ -123,10 +145,13 @@ func (p *VisionPreprocessor) PreprocessForModel(ctx context.Context, req *shared
 		_, err = ReplaceImages(req, nil)
 		return err
 	}
+	for index := range images {
+		images[index].descriptionKey, images[index].persistent = p.descriptionIdentity(images[index])
+	}
 	descriptions := p.describeUnique(ctx, images)
 	replacements := make(map[imageLocation]string, len(images))
 	for _, item := range images {
-		replacements[imageLocation{item.messageIndex, item.partIndex}] = descriptions[item.key]
+		replacements[imageLocation{item.messageIndex, item.partIndex}] = descriptions[item.descriptionKey]
 	}
 	_, err = replaceRequestImages(req, replacements, sidecarFailedText)
 	return err
@@ -137,14 +162,16 @@ func (p *VisionPreprocessor) describeUnique(ctx context.Context, images []reques
 	unique := make([]requestImage, 0, len(images))
 	seen := make(map[string]bool, len(images))
 	for _, item := range images {
-		if description, ok := p.cache.Get(item.key); ok {
-			descriptions[item.key] = description
+		if item.persistent {
+			if description, ok := p.cache.Get(item.descriptionKey); ok {
+				descriptions[item.descriptionKey] = description
+				continue
+			}
+		}
+		if seen[item.descriptionKey] || len(unique) >= p.maxDescriptionsPerTurn {
 			continue
 		}
-		if seen[item.key] || len(unique) >= p.maxDescriptionsPerTurn {
-			continue
-		}
-		seen[item.key] = true
+		seen[item.descriptionKey] = true
 		unique = append(unique, item)
 	}
 	if len(unique) == 0 {
@@ -165,9 +192,11 @@ func (p *VisionPreprocessor) describeUnique(ctx context.Context, images []reques
 					continue
 				}
 				description = clampDescription(description)
-				p.cache.Set(item.key, description)
+				if item.persistent {
+					p.cache.Set(item.descriptionKey, description)
+				}
 				mu.Lock()
-				descriptions[item.key] = description
+				descriptions[item.descriptionKey] = description
 				mu.Unlock()
 			}
 		}()
@@ -178,6 +207,22 @@ func (p *VisionPreprocessor) describeUnique(ctx context.Context, images []reques
 	close(jobs)
 	wg.Wait()
 	return descriptions
+}
+
+func (p *VisionPreprocessor) descriptionIdentity(item requestImage) (string, bool) {
+	detail := defaultDetail(item.image.Detail)
+	contextHash := sha256.Sum256([]byte(normalizedDescriptionContext(item.contextText)))
+	keyHash := sha256.Sum256([]byte(strings.Join([]string{
+		p.identityNamespace,
+		detail,
+		item.key,
+		hex.EncodeToString(contextHash[:]),
+	}, "\x00")))
+	return hex.EncodeToString(keyHash[:]), len(item.image.Data) > 0
+}
+
+func normalizedDescriptionContext(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func matchesModel(models []string, modelID string) bool {

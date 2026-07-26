@@ -153,6 +153,7 @@ type Usage struct {
 	InputTokens              int  `json:"inputTokens"`
 	OutputTokens             int  `json:"outputTokens"`
 	TotalTokens              int  `json:"totalTokens,omitempty"`
+	ContextTotalTokens       int  `json:"contextTotalTokens,omitempty"`
 	CachedInputTokens        int  `json:"cachedInputTokens,omitempty"`
 	CacheReadInputTokens     int  `json:"cacheReadInputTokens,omitempty"`
 	CacheCreationInputTokens int  `json:"cacheCreationInputTokens,omitempty"`

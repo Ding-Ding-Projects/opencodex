@@ -14,11 +14,13 @@ const (
 )
 
 type requestImage struct {
-	messageIndex int
-	partIndex    int
-	image        Image
-	key          string
-	contextText  string
+	messageIndex   int
+	partIndex      int
+	image          Image
+	key            string
+	descriptionKey string
+	persistent     bool
+	contextText    string
 }
 
 // ReplaceImages replaces image blocks with descriptions keyed by ImageHash. A

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/protocol"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -445,6 +447,11 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 	if len(conversationIDs) > 0 && IsValidConversationID(conversationIDs[0]) {
 		result.conversationID = conversationIDs[0]
 	}
+	contextWindow := 0
+	if len(conversationIDs) > 1 {
+		contextWindow = kiroContextWindow(conversationIDs[1])
+	}
+	var contextUsagePercentage *float64
 	if body == nil {
 		result.usage = &types.Usage{InputTokens: inputTokens, Estimated: true}
 		result.events = []types.AdapterEvent{{Type: types.EventError, Error: "Kiro response has no body", StatusCode: 502, Usage: result.usage}}
@@ -487,6 +494,16 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 			}
 			if (result.events[i].Type == types.EventError || result.events[i].Type == types.EventDone || result.events[i].Type == types.EventIncomplete) && result.conversationID != "" {
 				result.events[i].ProviderState = types.ProviderContinuationState{"kiro": {"conversationId": result.conversationID}}
+			}
+		}
+		if result.usage != nil {
+			contextTotal := max(result.usage.InputTokens+result.usage.OutputTokens, inputTokens+result.usage.OutputTokens)
+			if contextUsagePercentage != nil && *contextUsagePercentage > 0 && contextWindow > 0 {
+				floor := int(math.Ceil(float64(contextWindow) * math.Min(*contextUsagePercentage, 100) / 100))
+				contextTotal = max(contextTotal, floor)
+			}
+			if contextTotal > 0 {
+				result.usage.ContextTotalTokens = contextTotal
 			}
 		}
 	}()
@@ -607,11 +624,19 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 			if event.Usage != nil {
 				authoritative = event.Usage
 			}
+			if event.ContextUsagePercentage != nil && *event.ContextUsagePercentage > 0 {
+				contextUsagePercentage = event.ContextUsagePercentage
+			}
 		case "message_metadata":
 			if IsValidConversationID(event.ConversationID) {
 				result.conversationID = event.ConversationID
 			}
 		case "content":
+			if event.ModelID != "" {
+				if resolved := kiroContextWindow(event.ModelID); resolved > 0 {
+					contextWindow = resolved
+				}
+			}
 			if open != nil {
 				fail(TruncationErrorMessage("content arrived before tool stop"), false)
 				return result
@@ -725,15 +750,30 @@ func smithyHeaders(frame *protocol.SmithyFrame) map[string]string {
 	}
 	return out
 }
+func kiroContextWindow(modelID string) int {
+	normalized := providers.NormalizeKiroModelID(modelID)
+	if normalized == "auto" {
+		return 0
+	}
+	return providers.KiroModelContextWindows[normalized]
+}
 func normalizeAnswer(value string) string { return strings.Join(strings.Fields(value), " ") }
-func mergeUsage(first, second *types.Usage) *types.Usage {
+func mergeUsage(first, second *types.Usage, preserveFirstContextGrowth bool) *types.Usage {
 	if first == nil {
 		return second
 	}
 	if second == nil {
 		return first
 	}
-	return &types.Usage{InputTokens: first.InputTokens + second.InputTokens, OutputTokens: first.OutputTokens + second.OutputTokens, TotalTokens: first.TotalTokens + second.TotalTokens, CachedInputTokens: first.CachedInputTokens + second.CachedInputTokens, CacheReadInputTokens: first.CacheReadInputTokens + second.CacheReadInputTokens, CacheCreationInputTokens: first.CacheCreationInputTokens + second.CacheCreationInputTokens, ReasoningOutputTokens: first.ReasoningOutputTokens + second.ReasoningOutputTokens, Estimated: first.Estimated || second.Estimated}
+	combinedOutput := first.OutputTokens + second.OutputTokens
+	contextTotal := 0
+	if first.ContextTotalTokens > 0 || second.ContextTotalTokens > 0 {
+		contextTotal = max(first.ContextTotalTokens, second.ContextTotalTokens, combinedOutput)
+		if preserveFirstContextGrowth && first.ContextTotalTokens > 0 {
+			contextTotal = max(contextTotal, first.ContextTotalTokens+second.OutputTokens)
+		}
+	}
+	return &types.Usage{InputTokens: first.InputTokens + second.InputTokens, OutputTokens: combinedOutput, TotalTokens: first.TotalTokens + second.TotalTokens, ContextTotalTokens: contextTotal, CachedInputTokens: first.CachedInputTokens + second.CachedInputTokens, CacheReadInputTokens: first.CacheReadInputTokens + second.CacheReadInputTokens, CacheCreationInputTokens: first.CacheCreationInputTokens + second.CacheCreationInputTokens, ReasoningOutputTokens: first.ReasoningOutputTokens + second.ReasoningOutputTokens, Estimated: first.Estimated || second.Estimated}
 }
 
 func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan types.AdapterEvent {
@@ -755,7 +795,11 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 		if state != nil {
 			conversationID = state.conversationID
 		}
-		first := parseAttempt(ctx, body, mode, input, names, "", conversationID)
+		modelID := ""
+		if state != nil {
+			modelID = state.req.ModelID
+		}
+		first := parseAttempt(ctx, body, mode, input, names, "", conversationID, modelID)
 		if !first.needsFallback || state == nil {
 			sendEvents(ctx, out, first.events)
 			return
@@ -794,12 +838,12 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			sendEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: failure.Message, StatusCode: failure.Status, Retryable: failure.Retryable})
 			return
 		}
-		second := parseAttempt(ctx, response.Body, CompletionTextFallback, retryState.inputTokens, retryState.nameMap, first.assistantText, retryState.conversationID)
+		second := parseAttempt(ctx, response.Body, CompletionTextFallback, retryState.inputTokens, retryState.nameMap, first.assistantText, retryState.conversationID, retryState.req.ModelID)
 		for i := range second.events {
 			if second.events[i].Type == types.EventDone {
-				second.events[i].Usage = mergeUsage(first.usage, second.events[i].Usage)
+				second.events[i].Usage = mergeUsage(first.usage, second.events[i].Usage, first.assistantText != "")
 			} else if second.events[i].Type == types.EventError {
-				second.events[i].Usage = mergeUsage(first.usage, second.usage)
+				second.events[i].Usage = mergeUsage(first.usage, second.usage, first.assistantText != "")
 			}
 		}
 		sendEvents(ctx, out, second.events)

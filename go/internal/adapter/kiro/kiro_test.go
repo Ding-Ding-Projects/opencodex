@@ -194,6 +194,30 @@ func TestParseAttemptCarriesValidatedReturnedConversationState(t *testing.T) {
 	}
 }
 
+func TestKiroContextUsagePercentageProducesSeparateAbsoluteContextTotal(t *testing.T) {
+	stream := smithyStream(t,
+		eventFrame(t, "assistantResponseEvent", map[string]any{"content": "done", "modelId": "claude-sonnet-4.5"}),
+		eventFrame(t, "metadataEvent", map[string]any{
+			"contextUsagePercentage": 50,
+			"tokenUsage":             map[string]any{"uncachedInputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+		}),
+	)
+	result := parseAttempt(context.Background(), io.NopCloser(bytes.NewReader(stream)), CompletionDisabled, 7, nil, "", "conversation-1", "kiro-auto")
+	usage := result.events[len(result.events)-1].Usage
+	if usage == nil || usage.TotalTokens != 15 || usage.ContextTotalTokens != 100_000 {
+		t.Fatalf("usage=%#v", usage)
+	}
+}
+
+func TestMergeKiroUsageCarriesAbsoluteContextWithoutChangingTurnTotal(t *testing.T) {
+	first := &types.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15, ContextTotalTokens: 100}
+	second := &types.Usage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5, ContextTotalTokens: 90}
+	merged := mergeUsage(first, second, true)
+	if merged.InputTokens != 12 || merged.OutputTokens != 8 || merged.TotalTokens != 20 || merged.ContextTotalTokens != 103 {
+		t.Fatalf("merged=%#v", merged)
+	}
+}
+
 func TestParseStreamFailsClosedOnEmptyTruncatedAndOversizedFrames(t *testing.T) {
 	oversized := make([]byte, 12)
 	binary.BigEndian.PutUint32(oversized[:4], 16*1024*1024+1)

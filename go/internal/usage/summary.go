@@ -3,6 +3,9 @@ package usage
 import (
 	"sort"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 type Range string
@@ -226,6 +229,7 @@ func buildDays(entries []Entry, window Range, now time.Time) []Day {
 		grid[key] = &Day{Date: key, Models: []DayModel{}}
 	}
 	modelMaps := make(map[string]map[string]*DayModel)
+	modelRequests := make(map[string]map[string]bool)
 	for _, entry := range entries {
 		key := time.UnixMilli(entry.Timestamp).In(now.Location()).Format("2006-01-02")
 		day := grid[key]
@@ -245,19 +249,24 @@ func buildDays(entries []Entry, window Range, now time.Time) []Day {
 		if modelMaps[key] == nil {
 			modelMaps[key] = map[string]*DayModel{}
 		}
-		mkey := BaseProvider(entry.Provider) + "/" + entry.Model
-		dm := modelMaps[key][mkey]
-		if dm == nil {
-			dm = &DayModel{Model: entry.Model, Provider: BaseProvider(entry.Provider)}
-			modelMaps[key][mkey] = dm
-		}
-		dm.Requests++
-		if len(entry.Attempts) > 0 {
-			dm.AttemptCount += len(entry.Attempts)
-		} else {
+		for _, attribution := range usageAttributions(entry) {
+			provider := BaseProvider(attribution.Provider)
+			mkey := provider + "/" + attribution.Model
+			dm := modelMaps[key][mkey]
+			if dm == nil {
+				dm = &DayModel{Model: attribution.Model, Provider: provider}
+				modelMaps[key][mkey] = dm
+			}
+			requestKey := key + "\x00" + mkey
+			if modelRequests[requestKey] == nil {
+				modelRequests[requestKey] = map[string]bool{}
+			}
+			modelRequests[requestKey][attribution.RequestID] = true
+			dm.Requests = len(modelRequests[requestKey])
 			dm.AttemptCount++
+			attributedTotal, _ := DisplayTotal(attribution.Usage, attribution.TotalTokens)
+			dm.TotalTokens += attributedTotal
 		}
-		dm.TotalTokens += value
 	}
 	out := make([]Day, 0, len(grid))
 	for key, day := range grid {
@@ -287,38 +296,45 @@ func allDayCount(entries []Entry, now time.Time) int {
 
 func buildModels(entries []Entry, grand int) []ModelSummary {
 	rows := map[string]*ModelSummary{}
+	statuses := map[string]map[string][]Status{}
 	for _, entry := range entries {
-		key := BaseProvider(entry.Provider) + "/" + entry.Model
-		row := rows[key]
-		if row == nil {
-			row = &ModelSummary{Provider: BaseProvider(entry.Provider), Model: entry.Model}
-			rows[key] = row
-		}
-		row.Requests++
-		if len(entry.Attempts) > 0 {
-			row.AttemptCount += len(entry.Attempts)
-		} else {
+		for _, attribution := range usageAttributions(entry) {
+			provider := BaseProvider(attribution.Provider)
+			key := provider + "/" + attribution.Model
+			row := rows[key]
+			if row == nil {
+				row = &ModelSummary{Provider: provider, Model: attribution.Model}
+				rows[key] = row
+			}
 			row.AttemptCount++
-		}
-		if measured(entry.UsageStatus) {
-			row.MeasuredRequests++
-		}
-		if entry.UsageStatus == StatusReported {
-			row.ReportedRequests++
-		}
-		if entry.UsageStatus == StatusEstimated {
-			row.EstimatedRequests++
-		}
-		if entry.Usage != nil {
-			row.InputTokens += entry.Usage.InputTokens
-			row.OutputTokens += entry.Usage.OutputTokens
-			value, _ := DisplayTotal(entry.Usage, entry.TotalTokens)
-			row.TotalTokens += value
-			if est, ok := EstimateCostWithTier(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil, EffectiveServiceTier(entry)); ok {
-				row.EstimatedCostUSD += est.Cost.Total
+			if statuses[key] == nil {
+				statuses[key] = map[string][]Status{}
+			}
+			statuses[key][attribution.RequestID] = append(statuses[key][attribution.RequestID], attribution.UsageStatus)
+			if attribution.Usage != nil {
+				row.InputTokens += attribution.Usage.InputTokens
+				row.OutputTokens += attribution.Usage.OutputTokens
+				value, _ := DisplayTotal(attribution.Usage, attribution.TotalTokens)
+				row.TotalTokens += value
 			}
 		}
 	}
+	for key, groups := range statuses {
+		row := rows[key]
+		row.Requests = len(groups)
+		for _, values := range groups {
+			status := foldAttributionStatuses(values)
+			if measured(status) {
+				row.MeasuredRequests++
+			}
+			if status == StatusReported {
+				row.ReportedRequests++
+			} else if status == StatusEstimated {
+				row.EstimatedRequests++
+			}
+		}
+	}
+	attributeModelCosts(rows, entries)
 	out := make([]ModelSummary, 0, len(rows))
 	for _, row := range rows {
 		if grand > 0 {
@@ -332,36 +348,40 @@ func buildModels(entries []Entry, grand int) []ModelSummary {
 
 func buildProviders(entries []Entry, grand int) []ProviderSummary {
 	rows := map[string]*ProviderSummary{}
+	statuses := map[string]map[string][]Status{}
 	for _, entry := range entries {
-		key := BaseProvider(entry.Provider)
-		row := rows[key]
-		if row == nil {
-			row = &ProviderSummary{Provider: key}
-			rows[key] = row
-		}
-		row.Requests++
-		if len(entry.Attempts) > 0 {
-			row.AttemptCount += len(entry.Attempts)
-		} else {
+		for _, attribution := range usageAttributions(entry) {
+			key := BaseProvider(attribution.Provider)
+			row := rows[key]
+			if row == nil {
+				row = &ProviderSummary{Provider: key}
+				rows[key] = row
+			}
 			row.AttemptCount++
+			if statuses[key] == nil {
+				statuses[key] = map[string][]Status{}
+			}
+			statuses[key][attribution.RequestID] = append(statuses[key][attribution.RequestID], attribution.UsageStatus)
+			value, _ := DisplayTotal(attribution.Usage, attribution.TotalTokens)
+			row.TotalTokens += value
 		}
-		if measured(entry.UsageStatus) {
-			row.MeasuredRequests++
-		}
-		if entry.UsageStatus == StatusReported {
-			row.ReportedRequests++
-		}
-		if entry.UsageStatus == StatusEstimated {
-			row.EstimatedRequests++
-		}
-		value, _ := DisplayTotal(entry.Usage, entry.TotalTokens)
-		row.TotalTokens += value
-		if entry.Usage != nil {
-			if est, ok := EstimateCostWithTier(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil, EffectiveServiceTier(entry)); ok {
-				row.EstimatedCostUSD += est.Cost.Total
+	}
+	for key, groups := range statuses {
+		row := rows[key]
+		row.Requests = len(groups)
+		for _, values := range groups {
+			status := foldAttributionStatuses(values)
+			if measured(status) {
+				row.MeasuredRequests++
+			}
+			if status == StatusReported {
+				row.ReportedRequests++
+			} else if status == StatusEstimated {
+				row.EstimatedRequests++
 			}
 		}
 	}
+	attributeProviderCosts(rows, entries)
 	out := make([]ProviderSummary, 0, len(rows))
 	for _, row := range rows {
 		if grand > 0 {
@@ -374,3 +394,103 @@ func buildProviders(entries []Entry, grand int) []ProviderSummary {
 }
 
 func measured(status Status) bool { return status == StatusReported || status == StatusEstimated }
+
+type usageAttribution struct {
+	RequestID   string
+	Provider    string
+	Model       string
+	UsageStatus Status
+	Usage       *types.Usage
+	TotalTokens *int
+}
+
+func usageAttributions(entry Entry) []usageAttribution {
+	if len(entry.Attempts) == 0 {
+		return []usageAttribution{{entry.RequestID, entry.Provider, canonicalUsageModel(entry.Provider, entry.Model), entry.UsageStatus, entry.Usage, entry.TotalTokens}}
+	}
+	result := make([]usageAttribution, 0, len(entry.Attempts))
+	for _, attempt := range entry.Attempts {
+		result = append(result, usageAttribution{entry.RequestID, attempt.Provider, canonicalUsageModel(attempt.Provider, attempt.Model), attempt.UsageStatus, attempt.Usage, attempt.TotalTokens})
+	}
+	return result
+}
+
+func canonicalUsageModel(provider, model string) string {
+	if BaseProvider(provider) == "google-antigravity" {
+		return providers.CanonicalAntigravityUsageModel(model)
+	}
+	return model
+}
+
+func foldAttributionStatuses(statuses []Status) Status {
+	allUnsupported := len(statuses) > 0
+	for _, status := range statuses {
+		if status != StatusUnsupported {
+			allUnsupported = false
+		}
+	}
+	if allUnsupported {
+		return StatusUnsupported
+	}
+	for _, status := range statuses {
+		if status == StatusUnreported || status == StatusUnsupported {
+			return StatusUnreported
+		}
+	}
+	for _, status := range statuses {
+		if status == StatusEstimated {
+			return StatusEstimated
+		}
+	}
+	if len(statuses) > 0 {
+		return StatusReported
+	}
+	return StatusUnreported
+}
+
+func attributeModelCosts(rows map[string]*ModelSummary, entries []Entry) {
+	for _, entry := range entries {
+		estimate, ok := entryCostEstimate(entry)
+		if !ok {
+			continue
+		}
+		if len(entry.Attempts) > 0 {
+			for _, attempt := range estimate.Attempts {
+				key := BaseProvider(attempt.Provider) + "/" + canonicalUsageModel(attempt.Provider, attempt.Model)
+				if row := rows[key]; row != nil {
+					row.EstimatedCostUSD += attempt.Cost.Total
+				}
+			}
+		} else if row := rows[BaseProvider(entry.Provider)+"/"+canonicalUsageModel(entry.Provider, entry.Model)]; row != nil {
+			row.EstimatedCostUSD += estimate.Cost.Total
+		}
+	}
+}
+
+func attributeProviderCosts(rows map[string]*ProviderSummary, entries []Entry) {
+	for _, entry := range entries {
+		estimate, ok := entryCostEstimate(entry)
+		if !ok {
+			continue
+		}
+		if len(entry.Attempts) > 0 {
+			for _, attempt := range estimate.Attempts {
+				if row := rows[BaseProvider(attempt.Provider)]; row != nil {
+					row.EstimatedCostUSD += attempt.Cost.Total
+				}
+			}
+		} else if row := rows[BaseProvider(entry.Provider)]; row != nil {
+			row.EstimatedCostUSD += estimate.Cost.Total
+		}
+	}
+}
+
+func entryCostEstimate(entry Entry) (CostEstimate, bool) {
+	if len(entry.Attempts) > 0 {
+		return EstimateComboCost(entry.Attempts, nil, EffectiveServiceTier(entry))
+	}
+	if entry.Usage == nil {
+		return CostEstimate{}, false
+	}
+	return EstimateCostWithTier(entry.Provider, entry.Model, *entry.Usage, entry.UsageStatus, nil, EffectiveServiceTier(entry))
+}

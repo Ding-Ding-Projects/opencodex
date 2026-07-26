@@ -60,3 +60,32 @@ func TestLogSkipsMalformedJSONLRows(t *testing.T) {
 		t.Fatalf("ReadAll() = %#v, %v", entries, err)
 	}
 }
+
+func TestLogPreservesContextTotalWithoutTreatingItAsTurnTotal(t *testing.T) {
+	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
+	contextTotal := 100_000
+	entry := Entry{
+		RequestID: "kiro-context", Timestamp: 1, Provider: "kiro", Model: "claude-sonnet-4.5",
+		Status: 200, UsageStatus: StatusReported,
+		Usage: &types.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15, ContextTotalTokens: contextTotal},
+	}
+	if err := log.Append(entry); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	entries, err := log.ReadAll()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ReadAll = %#v, %v", entries, err)
+	}
+	if entries[0].Usage.ContextTotalTokens != contextTotal {
+		t.Fatalf("contextTotalTokens = %d", entries[0].Usage.ContextTotalTokens)
+	}
+	if total := CanonicalTotal(*entries[0].Usage); total != 15 {
+		t.Fatalf("CanonicalTotal = %d, want per-turn total 15", total)
+	}
+
+	entry.RequestID = "invalid-context"
+	entry.Usage.ContextTotalTokens = -1
+	if err := log.Append(entry); err == nil {
+		t.Fatal("negative contextTotalTokens was accepted")
+	}
+}

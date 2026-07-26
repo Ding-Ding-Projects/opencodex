@@ -101,6 +101,56 @@ func TestVisionPreprocessorConcurrentDescriptionDeduplicates(t *testing.T) {
 	}
 }
 
+func TestVisionDescriptionCacheIncludesContextAndDoesNotPersistURLs(t *testing.T) {
+	describer := &recordingDescriber{}
+	preprocessor := NewVisionPreprocessor(PreprocessorConfig{
+		Describer: describer, TextOnlyModels: []string{"text-only"},
+	})
+	image := dataURL(onePixelPNG)
+	requests := []*shared.NormalizedRequest{
+		imageRequestWithContext("text-only", image, "read the title"),
+		imageRequestWithContext("text-only", image, "count the icons"),
+		imageRequestWithContext("text-only", image, "read   the title"),
+	}
+	for _, request := range requests {
+		if err := preprocessor.Preprocess(context.Background(), request); err != nil {
+			t.Fatalf("Preprocess: %v", err)
+		}
+	}
+	if describer.callCount() != 2 {
+		t.Fatalf("Describe calls = %d, want two context-sensitive cache entries", describer.callCount())
+	}
+
+	remote := "https://example.com/changeable.png"
+	for range 2 {
+		request := imageRequestWithContext("text-only", remote, "describe it")
+		if err := preprocessor.Preprocess(context.Background(), request); err != nil {
+			t.Fatalf("remote Preprocess: %v", err)
+		}
+	}
+	if describer.callCount() != 4 {
+		t.Fatalf("Describe calls = %d, remote URL was incorrectly persisted", describer.callCount())
+	}
+}
+
+func TestVisionExplicitZeroDescriptionCap(t *testing.T) {
+	describer := &recordingDescriber{}
+	preprocessor := NewVisionPreprocessor(PreprocessorConfig{
+		Describer: describer, TextOnlyModels: []string{"text-only"},
+		MaxDescriptionsPerTurn: 0, MaxDescriptionsPerTurnSet: true,
+	})
+	request := imageRequest("text-only", []string{dataURL(onePixelPNG)})
+	if err := preprocessor.Preprocess(context.Background(), request); err != nil {
+		t.Fatalf("Preprocess: %v", err)
+	}
+	if describer.callCount() != 0 {
+		t.Fatalf("Describe calls = %d, explicit zero must disable sidecar calls", describer.callCount())
+	}
+	if !strings.Contains(string(request.Context.Messages[0].Content), sidecarFailedText) {
+		t.Fatalf("content = %s", request.Context.Messages[0].Content)
+	}
+}
+
 func TestReplaceImagesAndNoSidecarFallback(t *testing.T) {
 	url := dataURL(onePixelPNG)
 	request := imageRequest("text-only", []string{url})
@@ -134,6 +184,24 @@ type barrierDescriber struct {
 	maxActive int
 	release   chan struct{}
 	once      sync.Once
+}
+
+type recordingDescriber struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (d *recordingDescriber) Describe(_ context.Context, _ Image, contextText string) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	return "description for " + contextText, nil
+}
+
+func (d *recordingDescriber) callCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
 }
 
 func newBarrierDescriber(want int) *barrierDescriber {
@@ -178,5 +246,13 @@ func imageRequest(model string, urls []string) *shared.NormalizedRequest {
 		parts = append(parts, map[string]any{"type": "image", "imageUrl": value, "detail": "high"})
 	}
 	content, _ := json.Marshal(parts)
+	return &shared.NormalizedRequest{ModelID: model, Context: shared.RequestContext{Messages: []shared.Message{{Role: "user", Content: content}}}}
+}
+
+func imageRequestWithContext(model, imageURL, contextText string) *shared.NormalizedRequest {
+	content, _ := json.Marshal([]any{
+		map[string]any{"type": "text", "text": contextText},
+		map[string]any{"type": "image", "imageUrl": imageURL, "detail": "high"},
+	})
 	return &shared.NormalizedRequest{ModelID: model, Context: shared.RequestContext{Messages: []shared.Message{{Role: "user", Content: content}}}}
 }

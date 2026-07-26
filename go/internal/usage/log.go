@@ -213,6 +213,7 @@ func validStatus(status Status) bool {
 
 func validUsage(value types.Usage) bool {
 	return value.InputTokens >= 0 && value.OutputTokens >= 0 && value.TotalTokens >= 0 &&
+		value.ContextTotalTokens >= 0 &&
 		value.CachedInputTokens >= 0 && value.CacheReadInputTokens >= 0 &&
 		value.CacheCreationInputTokens >= 0 && value.ReasoningOutputTokens >= 0
 }
