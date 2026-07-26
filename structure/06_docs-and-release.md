@@ -96,8 +96,11 @@ Invariants:
 - Service, tray, and shim artifacts retain a stable Node-plus-launcher command so package updates can
   change the versioned Go filename without leaving stale durable paths.
 - The `bun` dependency remains installed but dormant for ordinary supported-target commands. Its
-  bounded exceptions are an old updater, a one-time legacy-shim refresh after Go validation, explicit
-  Bun package API use, and the unsupported-platform bridge. Dependency removal is deferred.
+  bounded exceptions are the marker-gated external GUI package-update worker, a one-time legacy-shim
+  refresh after Go validation, explicit Bun package API use, and the unsupported-platform bridge.
+  The update supervisor copies the validated Bun executable outside the package before launch so
+  Windows npm replacement never has to overwrite a running package-local executable. Dependency
+  removal is deferred.
 - Source development still requires the local `bun` CLI for install, tests, builds, and TypeScript
   entrypoints. This requirement must not be presented as an npm-user prerequisite.
 - Public docs (root READMEs + `docs-site` installation pages, all locales) state Node 18+ as the only
@@ -141,10 +144,12 @@ Release presence is only a candidate until generated title, prerelease flag, and
 the final exact classification happens immediately before create or repair. Any identity mismatch or
 unexpected asset name fails before mutation.
 
-Exact-integrity reruns recover from interruptions after npm publish, tag push, release creation, or a
-partial asset upload. `gh release create` can leave a draft while uploading assets, so an exact draft
-is repaired by uploading only missing or mismatched expected assets, re-verifying all seven remote
-bytes against the retained archive, and explicitly publishing it with `gh release edit --draft=false`.
+Exact-integrity reruns recover from interruptions after npm publish, tag push, empty-draft creation,
+or a partial asset upload. Creation, each asset write, and publication are separate npm-guarded
+mutations. A mismatched draft asset is deleted by exact asset ID, npm identity is checked again, and
+the replacement is uploaded without `--clobber`; missing assets are uploaded individually. The
+reconciler re-verifies all seven remote bytes against the retained archive, then explicitly publishes
+the complete draft with `gh release edit --draft=false`.
 An already published Release is verification-only and is never edited or uploaded to. Already exact
 mutations are skipped. This recovery path is deliberately narrow: it never moves a conflicting tag,
 republishes different npm bytes, accepts changed release metadata, or removes an unexpected remote

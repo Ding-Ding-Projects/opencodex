@@ -1831,6 +1831,7 @@ describe("GitHub Actions hardening", () => {
 
     for (const path of [
       '"bin/**"',
+      '"src/update/job.ts"',
       '"scripts/build-go-release.go"',
       '"scripts/prepare-package.ts"',
       '"scripts/prepare-release-assets.ts"',

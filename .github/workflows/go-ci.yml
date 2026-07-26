@@ -7,6 +7,7 @@ on:
     paths:
       - "go/**"
       - "bin/**"
+      - "src/update/job.ts"
       - "scripts/build-go-release.go"
       - "scripts/prepare-package.ts"
       - "scripts/prepare-release-assets.ts"
