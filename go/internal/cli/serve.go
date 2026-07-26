@@ -371,6 +371,9 @@ func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) serv
 			adapter := openaiadapter.NewChatAdapter(provider, secret, headers)
 			adapter.OpenRouterRouting = provider.OpenRouterRouting
 			adapter.ModelOpenRouterRouting = provider.ModelOpenRouterRouting
+			if model.Provider == "xai" {
+				return bindXAIRequestID(adapter, provider.Headers), nil
+			}
 			return adapter, nil
 		case "mimo-free":
 			adapter := openaiadapter.NewMimoAdapter()

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -354,6 +355,38 @@ func TestConfiguredLiveResolverUsesProviderPolicyWithoutLeakingSecrets(t *testin
 	target, err = resolver(context.Background(), nil)
 	if err != nil || !target.Keyed || target.Headers.Get("Authorization") != "Bearer keyed-secret" || target.Headers.Get("X-Static") != "yes" {
 		t.Fatalf("keyed live target = %#v err=%v", target, err)
+	}
+}
+
+func TestXAIAdapterFactoryAddsPerAttemptRequestID(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["xai"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://cli-chat-proxy.grok.test/v1", APIKey: "xai-key", AuthMode: "key", DefaultModel: "grok-test", Models: []string{"grok-test"}}
+	reg := configuredRegistry(cfg)
+	resolved, err := reg.ResolveModel("xai/grok-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := reg.ResolveTransport("xai", &types.AuthContext{Kind: "api-key", Provider: "xai", APIKey: "xai-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := adapterResolver(reg, cfg)(resolved, transport, &types.AuthContext{Kind: "api-key", Provider: "xai", APIKey: "xai-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &types.NormalizedRequest{ModelID: "grok-test", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}}}
+	first, err := adapter.BuildRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := adapter.BuildRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	firstID, secondID := first.Header.Get(providers.XAIRequestIDHeader), second.Header.Get(providers.XAIRequestIDHeader)
+	if !uuid.MatchString(firstID) || !uuid.MatchString(secondID) || firstID == secondID {
+		t.Fatalf("xAI request ids first=%q second=%q", firstID, secondID)
 	}
 }
 

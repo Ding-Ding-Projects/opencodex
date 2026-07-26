@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	"github.com/lidge-jun/opencodex-go/internal/vision"
 )
@@ -22,6 +23,26 @@ type visionBoundAdapter struct {
 	types.Adapter
 	preprocessor   *vision.VisionPreprocessor
 	supportsVision bool
+}
+
+type xaiRequestIDAdapter struct {
+	types.Adapter
+	configuredHeaders map[string]string
+}
+
+func bindXAIRequestID(adapter types.Adapter, configuredHeaders map[string]string) types.Adapter {
+	return &xaiRequestIDAdapter{Adapter: adapter, configuredHeaders: configuredHeaders}
+}
+
+func (a *xaiRequestIDAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	upstream, err := a.Adapter.BuildRequest(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := providers.EnsureXAIRequestID(upstream.Header, a.configuredHeaders); err != nil {
+		return nil, err
+	}
+	return upstream, nil
 }
 
 func bindAdapterVision(adapter types.Adapter, preprocessor *vision.VisionPreprocessor, supportsVision bool) types.Adapter {
@@ -82,6 +103,8 @@ func unwrapAdapter(adapter types.Adapter) types.Adapter {
 		case *fetchBoundAdapter:
 			adapter = bound.Adapter
 		case *visionBoundAdapter:
+			adapter = bound.Adapter
+		case *xaiRequestIDAdapter:
 			adapter = bound.Adapter
 		default:
 			return adapter
