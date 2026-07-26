@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -217,7 +218,7 @@ func TestTypeScriptAndGoInvalidRequestMatrix(t *testing.T) {
 		})
 	}
 	t.Run("oversized-header", func(t *testing.T) {
-		headers := http.Header{"X-Oversized-Parity": []string{strings.Repeat("h", 1100<<10)}}
+		headers := oversizedParityHeader()
 		body := []byte(`{"model":"differential/final","input":"x","stream":true}`)
 		goResult := captureRawRequest(goProxy.baseURL+"/v1/responses", body, headers)
 		tsResult := captureRawRequest(tsProxy.baseURL+"/v1/responses", body, headers)
@@ -228,6 +229,65 @@ func TestTypeScriptAndGoInvalidRequestMatrix(t *testing.T) {
 			t.Fatalf("Bun oversized-header contract changed: status=%d body=%q", tsResult.status, tsResult.body)
 		}
 	})
+}
+
+func TestBunOversizedHeaderCharacterization(t *testing.T) {
+	if os.Getenv("OCX_RUN_HEADER_STRESS") != "1" {
+		t.Skip("set OCX_RUN_HEADER_STRESS=1 for Bun oversized-header characterization")
+	}
+	upstream := newAdvancedDifferentialUpstream(t)
+	tsProxy := startTypeScriptProxy(t, advancedDifferentialConfig(upstream.server.URL))
+	body := []byte(`{"model":"differential/final","input":"x","stream":true}`)
+	for _, mode := range []struct {
+		name   string
+		client func() *http.Client
+	}{
+		{name: "fresh", client: func() *http.Client { return &http.Client{Transport: &http.Transport{DisableKeepAlives: true}} }},
+		{name: "pooled", client: func() *http.Client { return &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 2}} }},
+	} {
+		client := mode.client()
+		counts := map[string]int{}
+		for range 40 {
+			counts[classifyOversizedHeaderResult(captureRawRequestWithClient(client, tsProxy.baseURL+"/v1/responses", body, oversizedParityHeader()))]++
+		}
+		client.CloseIdleConnections()
+		if counts["other"] != 0 {
+			t.Fatalf("unexpected Bun oversized-header outcome in %s mode: %v", mode.name, counts)
+		}
+		t.Logf("HEADER_STRESS_RESULT mode=%s reset=%d empty_431=%d", mode.name, counts["reset"], counts["empty-431"])
+	}
+}
+
+func oversizedParityHeader() http.Header {
+	return http.Header{"X-Oversized-Parity": []string{strings.Repeat("h", 1100<<10)}}
+}
+
+func captureRawRequestWithClient(client *http.Client, url string, body []byte, headers http.Header) runtimeResponse {
+	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return runtimeResponse{err: err}
+	}
+	request.Header.Set("Content-Type", "application/json")
+	for key, values := range headers {
+		request.Header[key] = append([]string(nil), values...)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return runtimeResponse{err: err}
+	}
+	defer response.Body.Close()
+	payload, readErr := io.ReadAll(response.Body)
+	return runtimeResponse{status: response.StatusCode, header: response.Header.Clone(), body: payload, err: readErr}
+}
+
+func classifyOversizedHeaderResult(result runtimeResponse) string {
+	if result.err != nil {
+		return "reset"
+	}
+	if result.status == http.StatusRequestHeaderFieldsTooLarge && len(result.body) == 0 {
+		return "empty-431"
+	}
+	return "other"
 }
 
 func TestTypeScriptAndGoConcurrentStreamsAndKeepAlive(t *testing.T) {
@@ -349,21 +409,7 @@ func TestTypeScriptAndGoInvalidChunkEncoding(t *testing.T) {
 }
 
 func captureRawRequest(url string, body []byte, headers http.Header) runtimeResponse {
-	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return runtimeResponse{err: err}
-	}
-	request.Header.Set("Content-Type", "application/json")
-	for key, values := range headers {
-		request.Header[key] = append([]string(nil), values...)
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return runtimeResponse{err: err}
-	}
-	defer response.Body.Close()
-	payload, readErr := io.ReadAll(response.Body)
-	return runtimeResponse{status: response.StatusCode, header: response.Header.Clone(), body: payload, err: readErr}
+	return captureRawRequestWithClient(http.DefaultClient, url, body, headers)
 }
 
 func mustJSON(value any) []byte {

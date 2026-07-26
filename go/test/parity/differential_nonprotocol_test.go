@@ -101,9 +101,7 @@ func captureProcess(command *exec.Cmd) processCapture {
 }
 
 var knownArtifactDiffs = map[string]bool{
-	"cli/unknown-command-stdout": true,
-	"cli/unknown-command-stderr": true,
-	"shim/unix":                  true,
+	"shim/unix": true,
 }
 
 func compareArtifactBytes(t *testing.T, scenario string, goBytes, tsBytes []byte) {
