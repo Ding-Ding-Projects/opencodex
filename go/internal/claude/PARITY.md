@@ -51,6 +51,6 @@ Primary owner: `internal/bridge`. Producer-contract owner: `internal/adapter/ope
 
 ## Verdict
 
-The canonical Claude Messages translation layer is ported, production-reachable, and route-test locked for ingress, cache affinity, Desktop discrimination/health, buffered output, and streaming output. Package-wide parity remains **partial** only for independently unwired roots: model-info response shaping, gateway-cache lifecycle, context-window discovery composition, and the duplicate package-local Responses state store. Handler-owned native passthrough and orchestration divergences are tracked separately in `PRODUCTION_REACHABILITY.md`.
+The canonical Claude Messages translation layer is ported, production-reachable, and route-test locked for ingress, cache affinity, Desktop discrimination/health, buffered output, and streaming output. The duplicate package-local Responses state store has been removed; production `internal/server.ResponseStateStore` is canonical, matching TS `src/responses/state.ts`. Package-wide reachability remains **partial** only for three external callers: model-info response shaping, gateway-cache lifecycle, and context-window discovery composition. Handler-owned native passthrough and orchestration divergences are tracked separately in `PRODUCTION_REACHABILITY.md`.
 
 The production call graph, exact unused-symbol inventory, concrete divergence list, and canonical integration proposal are maintained in [`PRODUCTION_REACHABILITY.md`](PRODUCTION_REACHABILITY.md).

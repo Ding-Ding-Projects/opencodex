@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -16,36 +15,10 @@ func ParseResponsesRequest(raw []byte) (*types.NormalizedRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	previousID := request.PreviousResponseID
-	replayPrefix := 0
-	previousExpanded := false
-	if previousID != "" {
-		var body map[string]any
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, fmt.Errorf("responses parse error: %w", err)
-		}
-		expanded, prefix, expandedOK := defaultResponseState.ExpandWithMetadata(body)
-		replayPrefix, previousExpanded = prefix, expandedOK
-		if expandedOK {
-			raw, err = json.Marshal(expanded)
-			if err != nil {
-				return nil, fmt.Errorf("responses parse error: %w", err)
-			}
-			request, err = ValidateResponsesRequest(raw)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	parsed, err := parseValidatedRequest(request, raw, replayPrefix)
-	if err != nil {
-		return nil, err
-	}
-	parsed.PreviousExpanded = previousExpanded
-	if previousID != "" {
-		parsed.ProviderState = continuationState(defaultResponseState.ProviderState(previousID))
-	}
-	return parsed, nil
+	// Previous-response expansion is stateful Responses orchestration, not
+	// Claude wire parsing. Production expands through server.ResponseStateStore
+	// before calling this pure parser and then attaches replay/provider metadata.
+	return parseValidatedRequest(request, raw, 0)
 }
 
 type pendingReasoningPart struct {
@@ -360,6 +333,13 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 }
 
 func mustRaw(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+func cloneMap(value map[string]any) map[string]any {
+	result := make(map[string]any, len(value))
+	for key, item := range value {
+		result[key] = item
+	}
+	return result
+}
 func rawObjectArguments(value string) any {
 	raw := bytes.TrimSpace([]byte(value))
 	if len(raw) == 0 || raw[0] != '{' || !json.Valid(raw) {
@@ -611,21 +591,6 @@ func compactionText(encrypted string) string {
 		}
 	}
 	return opaqueCompactionNote
-}
-
-func continuationState(state ProviderState) types.ProviderContinuationState {
-	if len(state) == 0 {
-		return nil
-	}
-	raw, err := json.Marshal(state)
-	if err != nil {
-		return nil
-	}
-	var result types.ProviderContinuationState
-	if json.Unmarshal(raw, &result) != nil {
-		return nil
-	}
-	return result
 }
 
 func validResponsesEffort(value string) bool {

@@ -30,14 +30,14 @@ The table groups every exported API by implementation family. Types and constant
 | Messages inbound translation | `ParseAnthropicRequest`, `TranslateAnthropicRequest`, `PromptCacheSessionID`, `AnthropicToResponses`, `ResolveInboundModel`, `EffortForThinkingBudget`, `DetectInboundSurface`, `ExtractRouteDirective`; `InboundConfig`, `InboundTranslation`, `AnthropicRequestTranslation`, `InboundSurface*` | None in this family | **Live for `/v1/messages`.** The production handler uses Claude translation, model-map/blocked-skill config, cache-key provenance, resolved-model debug capture, and Desktop surface classification. |
 | Messages outbound translation | `ConvertEvents`, `StreamEvents`, `BufferedMessage`, `AnthropicUsage`, `AnthropicMessage` | `AnthropicErrorType`, `AnthropicErrorBody` as standalone helpers | **Live for buffered and streaming responses.** Route-level tests exercise both paths and rich event variants. HTTP-level native-passthrough tails still remain handler-owned. |
 | Debug capture | `DefaultDebugRingLimit`, `NewDebugRing`, `DebugRing`, `ClaudeInboundDebugEntry`; methods `Capture`, `Enabled`, `SetEnabled`, `Entries` | `DebugRing.Clear` | **Live except clear.** Server creates the ring; chat captures the translated resolved model; management reads/controls it. |
-| Claude Code context and agents | `ResolveAutoContext`, `EffectiveModelEnv`, `StripOneMillionMarker`, `WithOneMillionMarker`, `ShouldMarkOneMillion`, `HasOneMillionMarker`, `AutoContextOff`; `ClaudeCodeAlias`; `BuildClaudeAgentDefs`, `SyncClaudeAgentDefs`, `RenderClaudeAgentDef`; associated config/types | `BuildClaudeContextWindows`, `BoundedContextWindows` | **Partly live.** Environment and generated agent files are live, but their aliases and `ocx-route` directives are not decoded by the main Messages path. |
+| Claude Code context and agents | `ResolveAutoContext`, `EffectiveModelEnv`, `StripOneMillionMarker`, `WithOneMillionMarker`, `ShouldMarkOneMillion`, `HasOneMillionMarker`, `AutoContextOff`; `ClaudeCodeAlias`; `BuildClaudeAgentDefs`, `SyncClaudeAgentDefs`, `RenderClaudeAgentDef`; associated config/types | `BuildClaudeContextWindows`, `BoundedContextWindows` | **Partly live.** Environment and generated agent files are live and their aliases/directives are consumed by Messages. CLI and management still assemble partial context maps instead of calling the canonical discovery composition. |
 | Readable aliases | `ClaudeCodeAlias`, `AliasForRoute`, `AliasForNative`, `ClaudeCodeNativeAlias`, and `ResolveAlias`, including inbound consumption | None in the alias path | **Live.** Production translation decodes generated readable aliases before the generic registry. |
 | Desktop profile and apply | `ParseDesktop3pModeArgs`, `DesktopFamilyValues`, `DecodeDesktopProfile`, `ParseDesktopProfile`, `ReconcileDesktopProfile`, `MoveDesktopRoute`, `SetDesktopFamilyDefault`, `RenderDesktopProfile`, `DefaultDesktop3pLibraryPath`, `ApplyDesktop3pConfig`, `ReadDesktop3pStatus`, `ValidateDesktopProfileAvailability`; associated profile/apply/model types | Convenience/test APIs `PersistDesktop3pConfig`, `DecodeDesktop3pConfig`, `BuildDesktop3pRegistry`, `GenerateDesktop3pConfig`, `GenerateDesktop3pModels` | **Live management/configuration.** Atomic apply and profiles are used by CLI/management. The profile-aware `*WithProfile` helpers, fingerprinting, alias generation, and collision guards are live transitively from apply. |
 | Desktop alias consumption | `ResolveDesktop3pAlias`, `DetectInboundSurface`, and the Desktop branch in `ResolveInboundModel`; generated registry state is populated during config generation | `ActiveDesktop3pAlias` outside tests/model-info | **Live at request ingress.** A real-handler test proves the alias resolves to its routed model. |
 | Desktop health | `GetDesktopHealth`, `RecordDesktopRequest`, `RecordDesktopError`; `NewDesktopHealthTracker` and instance methods transitively | None in the global health path | **Live.** A real-handler test proves successful Desktop traffic increments request health; handler error paths call the error recorder. |
 | Desktop model information | None | `BuildModelInfos`, `BuildModelInfosWithStyle`, `BuildModelInfosWithAlias`; model-info types and `AnthropicID*` constants | **Dead.** Go serves the generic `/v1/models`; TypeScript calls `buildAnthropicModelInfos` from its server model route. |
-| Gateway model cache | None | `ClaudeConfigDir`, `WriteGatewayModelCache`, `ReadGatewayModelCache`, `GatewayModelCacheFresh`, `RefreshGatewayModelCache`; cache row/types | **Dead.** TypeScript refreshes this cache from CLI and system-environment setup; Go has tests only. |
-| Responses state compatibility | None | `NewResponseStateStore`, all `ResponseStateStore` methods, `ExpandPreviousResponseInput`, `PreviousResponseProviderState`, `RememberResponseState`, `FlushResponseState`, `ResponseStateMemoryMetrics`; state types | **Dead duplicate.** Production uses the separate `internal/server.ResponseStateStore`, not this package. |
+| Gateway model cache | None | `ClaudeConfigDir`, `WriteGatewayModelCache`, `ReadGatewayModelCache`, `GatewayModelCacheFresh`, `RefreshGatewayModelCache`, `RefreshGatewayModelCacheFromProxy`; cache row/types | **Port complete, production wiring pending.** The lifecycle wrapper now matches TS's unconditional loopback `?ids=cli` refresh with a 3-second default bound. CLI launch/system-env callers remain outside this package. |
+| Responses state compatibility | N/A | None | **Resolved by consolidation.** The duplicate Claude store and parser-global state were removed. `internal/server.ResponseStateStore` is canonical, matching TS `src/responses/state.ts`; production route tests cover replay, provider state, persistence, bounds, and memory metrics. |
 
 Exported helpers folded into those family rows are classified as follows:
 
@@ -52,9 +52,8 @@ The highest-impact unused roots are:
 
 1. `BuildModelInfos*` — Anthropic/Desktop model discovery response shaping.
 2. `RefreshGatewayModelCache` and its cache helpers — Claude gateway cache lifecycle.
-3. The entire package-local Responses state store — superseded by an independently implemented server store.
-4. `BuildClaudeContextWindows` / `BoundedContextWindows` — TS system-environment discovery composition remains unwired.
-5. Standalone `AnthropicErrorType` / `AnthropicErrorBody` helpers and `DebugRing.Clear` — convenience/management APIs without production callers.
+3. `BuildClaudeContextWindows` / `BoundedContextWindows` — TS system-environment discovery composition remains unwired.
+4. Standalone `AnthropicErrorType` / `AnthropicErrorBody` helpers and `DebugRing.Clear` — convenience/management APIs without production callers.
 
 ## Behavioral divergences and latent bugs
 
@@ -98,7 +97,15 @@ The adapter audit found three material wiring gaps outside this round's writable
 
 **The Anthropic Messages translation layer can now be declared ported, production-reachable, and route-test locked for ingress, prompt-cache affinity, Desktop discrimination/health, buffered output, streaming output, idle keepalive, and WebSearch argument safety. The entire `internal/claude` package cannot yet receive that declaration.**
 
-Remaining independent gaps are `BuildModelInfos*`, gateway model-cache lifecycle, `BuildClaudeContextWindows` composition, and the package-local Responses state duplicate. Native passthrough eligibility/image normalization, internal always-stream replay, Claude-specific sidecar/effort overlays, and error taxonomy are handler orchestration divergences rather than dead Claude converter roots. They remain listed above until their owning production paths converge.
+Round 6 closed the only in-package architectural defect: Responses state now has one canonical implementation in `internal/server`, exactly where TS keeps `src/responses/state.ts`. Gateway lifecycle also has a parity-complete, bounded loopback entry point.
+
+Package-wide production completion still requires three call-site changes outside the fixed write scope:
+
+1. `internal/server.handleModels` must detect Anthropic-flavor discovery and call `BuildModelInfosWithAlias` after assembling authoritative native/routed metadata.
+2. CLI Claude launch and system-env lifecycle must call `RefreshGatewayModelCacheFromProxy(ctx, client, port, timeout, configDir)` on their best-effort path.
+3. CLI runtime/system-env and management Claude settings must call `BoundedContextWindows` plus `BuildClaudeContextWindows` instead of manually constructing partial maps.
+
+Until those callers land, the honest verdict is: **the package implementation is complete and the Messages layer is production-complete, but `internal/claude` as a whole is not yet fully production-reachable.** Native passthrough eligibility/image normalization, internal always-stream replay, Claude-specific sidecar/effort overlays, and error taxonomy are handler orchestration divergences rather than dead Claude roots.
 
 ## Canonical integration direction
 
@@ -113,6 +120,6 @@ Recommended migration:
 3. Perform native-passthrough eligibility before routed translation, but use Claude-owned model-claim/alias policy. Keep HTTP credentials, image normalization, body bounds, and logging in the handler.
 4. Make the Claude outbound state machine the only adapter-event-to-Anthropic converter. The HTTP wrapper should set headers, flush frames, and own a timer-driven ping; enhance the machine first for any adapter event variants it still lacks.
 5. Delete the duplicate Messages conversion helpers from `internal/chat` only after route-level `/v1/messages` and count-tokens differential tests are green.
-6. Wire model-info and gateway-cache roots independently. Move or remove the package-local Responses state duplicate after proving the server store covers its snapshot/metrics contract.
+6. Wire model-info, gateway-cache, and context-composition roots independently. The package-local Responses state duplicate has been removed after production server tests proved replay, snapshot, bounds, and metrics coverage.
 
 Do not create an `internal/claude -> internal/chat` dependency. The current one-way `internal/chat -> internal/claude -> internal/types` shape is cycle-free and is the appropriate boundary.

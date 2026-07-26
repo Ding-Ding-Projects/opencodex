@@ -3,24 +3,11 @@ package claude
 import (
 	"encoding/base64"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-func TestResponsesParserRestoresReplayStateAndFlags(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("OPENCODEX_HOME", home)
-	defaultResponseState.ClearMemory()
-	t.Cleanup(func() { _ = defaultResponseState.Clear() })
-
-	RememberResponseState(
-		map[string]any{"input": []any{map[string]any{"type": "context_compaction"}, map[string]any{"role": "user", "content": "prior"}}, "store": true},
-		map[string]any{"id": "resp_prior", "status": "completed", "output": []any{map[string]any{"type": "message", "role": "assistant", "content": "done"}}},
-		ProviderState{"cursor": map[string]any{"conversationId": "conv-1"}}, false,
-	)
+func TestResponsesParserLeavesReplayOwnershipToServer(t *testing.T) {
 	body := map[string]any{
 		"model": "cursor/auto", "previous_response_id": "resp_prior", "stream": true,
 		"input":            []any{map[string]any{"role": "user", "content": "next"}},
@@ -35,11 +22,11 @@ func TestResponsesParserRestoresReplayStateAndFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseResponsesRequest: %v", err)
 	}
-	if !parsed.PreviousExpanded || parsed.ReplayPrefixLen != 3 {
+	if parsed.PreviousExpanded || parsed.ReplayPrefixLen != 0 {
 		t.Fatalf("replay metadata: expanded=%v prefix=%d", parsed.PreviousExpanded, parsed.ReplayPrefixLen)
 	}
-	if parsed.ProviderState["cursor"]["conversationId"] != "conv-1" {
-		t.Fatalf("provider state=%#v", parsed.ProviderState)
+	if parsed.ProviderState != nil {
+		t.Fatalf("pure parser attached provider state=%#v", parsed.ProviderState)
 	}
 	if parsed.CompactionBoundary {
 		t.Fatal("historical compaction marker incorrectly started a new boundary")
@@ -177,75 +164,5 @@ func TestResponsesParserUnknownMessageRoleDoesNotSplitReasoning(t *testing.T) {
 	}
 	if len(parsed.Context.Messages) != 1 || parsed.Context.Messages[0].Role != "assistant" || !strings.Contains(string(parsed.Context.Messages[0].Content), "kept") || strings.Contains(string(parsed.Context.Messages[0].Content), "ignored") {
 		t.Fatalf("messages=%#v", parsed.Context.Messages)
-	}
-}
-
-func TestResponseStateIncompleteSnapshotCapsAndMetrics(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "responses-state.json")
-	store := NewResponseStateStore()
-	store.snapshotPath = func() string { return path }
-	store.debounce = time.Hour
-	store.now = func() time.Time { return time.UnixMilli(1_000) }
-
-	store.Remember(map[string]any{"input": "start"}, map[string]any{
-		"id": "partial", "status": "incomplete", "incomplete_details": map[string]any{"reason": "max_output_tokens"},
-		"output": []any{map[string]any{"type": "message", "content": "partial"}},
-	}, nil, false)
-	store.Remember(map[string]any{"input": "unsafe"}, map[string]any{
-		"id": "filtered", "status": "incomplete", "incomplete_details": map[string]any{"reason": "content_filter"},
-		"output": []any{map[string]any{"type": "message", "content": "filtered"}},
-	}, nil, false)
-	if _, _, ok := store.ExpandWithMetadata(map[string]any{"previous_response_id": "partial", "input": "continue"}); !ok {
-		t.Fatal("max_output_tokens partial response was not retained")
-	}
-	if _, _, ok := store.ExpandWithMetadata(map[string]any{"previous_response_id": "filtered", "input": "continue"}); ok {
-		t.Fatal("content-filtered partial response was retained")
-	}
-	metrics := store.Metrics()
-	if metrics.Count != 1 || metrics.TotalBytes <= 0 || metrics.LargestBytes <= 0 {
-		t.Fatalf("metrics=%#v", metrics)
-	}
-	if err := store.Flush(); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("snapshot permissions: info=%v err=%v", info, err)
-	}
-
-	loaded := NewResponseStateStore()
-	loaded.now = func() time.Time { return time.UnixMilli(1_000) }
-	if err := loaded.Load(path); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if _, prefix, ok := loaded.ExpandWithMetadata(map[string]any{"previous_response_id": "partial"}); !ok || prefix != 2 {
-		t.Fatalf("loaded expansion ok=%v prefix=%d", ok, prefix)
-	}
-
-	loaded.SetByteCapForTests(1)
-	loaded.Remember(map[string]any{"input": "new"}, map[string]any{"id": "new", "status": "completed", "output": []any{}}, nil, false)
-	if loaded.Metrics().Count != 1 {
-		t.Fatalf("byte cap did not evict oldest entry: %#v", loaded.Metrics())
-	}
-}
-
-func TestResponseStateSnapshotSkipsOversizedEntry(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "responses-state.json")
-	store := NewResponseStateStore()
-	store.snapshotPath = func() string { return path }
-	store.debounce = time.Hour
-	store.Remember(map[string]any{"input": strings.Repeat("x", snapshotEntryMaxBytes+1024)}, map[string]any{"id": "huge", "status": "completed", "output": []any{}}, nil, false)
-	store.Remember(map[string]any{"input": "small"}, map[string]any{"id": "small", "status": "completed", "output": []any{}}, nil, false)
-	if err := store.Flush(); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-	loaded := NewResponseStateStore()
-	if err := loaded.Load(path); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if _, _, ok := loaded.ExpandWithMetadata(map[string]any{"previous_response_id": "huge"}); ok {
-		t.Fatal("oversized entry was persisted")
-	}
-	if _, _, ok := loaded.ExpandWithMetadata(map[string]any{"previous_response_id": "small"}); !ok {
-		t.Fatal("bounded entry was not persisted")
 	}
 }

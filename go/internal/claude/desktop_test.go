@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -169,6 +170,35 @@ func TestGatewayCacheTTLAndRefresh(t *testing.T) {
 	_, refreshed, err = RefreshGatewayModelCache(context.Background(), server.Client(), server.URL, time.Hour, dir, now.Add(2*time.Hour))
 	if err != nil || !refreshed || requests != 2 {
 		t.Fatalf("stale cache refreshed=%v requests=%d err=%v", refreshed, requests, err)
+	}
+}
+
+func TestGatewayCacheLifecycleRefreshesFromLoopbackProxy(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Query().Get("ids") != "cli" || r.Header.Get("anthropic-version") != "2023-06-01" {
+			t.Fatalf("gateway request = %s headers=%v", r.URL.String(), r.Header)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-ocx-p--m"}]}`))
+	}))
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	dir := t.TempDir()
+	for range 2 {
+		path, err := RefreshGatewayModelCacheFromProxy(context.Background(), server.Client(), port, time.Second, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cache, err := ReadGatewayModelCache(path); err != nil || cache.BaseURL != server.URL || len(cache.Models) != 1 {
+			t.Fatalf("cache=%#v err=%v", cache, err)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("lifecycle refresh requests=%d, want unconditional refresh", requests)
+	}
+	if _, err := RefreshGatewayModelCacheFromProxy(context.Background(), nil, 0, time.Second, dir); err == nil {
+		t.Fatal("invalid proxy port was accepted")
 	}
 }
 

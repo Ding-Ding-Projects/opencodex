@@ -5,9 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -319,38 +316,5 @@ func TestOutboundStreamPropagatesWritesAndFlushesFrames(t *testing.T) {
 	}
 	if writer.flushes == 0 || !strings.Contains(writer.String(), "event: message_stop") {
 		t.Fatalf("stream was not flushed: flushes=%d body=%s", writer.flushes, writer.String())
-	}
-}
-
-func TestContinuationExpansionProviderStateAndPersistence(t *testing.T) {
-	store := NewResponseStateStore()
-	request := map[string]any{"input": []any{map[string]any{"role": "user", "content": "q"}}, "store": false}
-	response := map[string]any{"id": "r1", "status": "completed", "output": []any{map[string]any{"type": "function_call", "call_id": "c"}}}
-	provider := ProviderState{"cursor": map[string]any{"conversationId": "conv"}}
-	store.Remember(request, response, provider, true)
-	expanded := store.Expand(map[string]any{"previous_response_id": "r1", "input": "next"})
-	if len(expanded["input"].([]any)) != 3 {
-		t.Fatalf("expanded = %#v", expanded)
-	}
-	cursor := store.ProviderState("r1")["cursor"].(map[string]any)
-	if cursor["checkpointUsable"] != false {
-		t.Fatalf("cursor = %#v", cursor)
-	}
-	path := filepath.Join(t.TempDir(), "state.json")
-	if err := store.Save(path); err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "windows" {
-		info, _ := os.Stat(path)
-		if info.Mode().Perm() != 0600 {
-			t.Fatalf("mode = %o", info.Mode().Perm())
-		}
-	}
-	loaded := NewResponseStateStore()
-	if err := loaded.Load(path); err != nil {
-		t.Fatal(err)
-	}
-	if loaded.ProviderState("r1")["cursor"] == nil {
-		t.Fatal("provider state not persisted")
 	}
 }

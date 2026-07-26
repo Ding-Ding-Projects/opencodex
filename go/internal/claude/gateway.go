@@ -131,3 +131,28 @@ func RefreshGatewayModelCache(ctx context.Context, client *http.Client, baseURL 
 	}
 	return path, true, nil
 }
+
+// RefreshGatewayModelCacheFromProxy performs the lifecycle refresh used before
+// launching Claude Code or injecting its system environment. It intentionally
+// bypasses the cache TTL: Claude Code cannot refresh this file itself when the
+// subscription-preserving launch supplies no proxy credential.
+func RefreshGatewayModelCacheFromProxy(ctx context.Context, client *http.Client, port int, timeout time.Duration, configDir string) (string, error) {
+	if port <= 0 || port > 65535 {
+		return "", fmt.Errorf("invalid gateway proxy port %d", port)
+	}
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	if configDir == "" {
+		var err error
+		configDir, err = ClaudeConfigDir()
+		if err != nil {
+			return "", err
+		}
+	}
+	bounded, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	path, _, err := RefreshGatewayModelCache(bounded, client, baseURL, 0, configDir, time.Now())
+	return path, err
+}
