@@ -1803,6 +1803,7 @@ describe("GitHub Actions hardening", () => {
       '"scripts/build-go-release.go"',
       '"scripts/prepare-package.ts"',
       '"scripts/prepare-release-assets.ts"',
+      '"scripts/reconcile-release-assets.ts"',
       '"scripts/ocx-native-launcher.test.mjs"',
       '"scripts/verify-native-install.mjs"',
       '"package.json"',
