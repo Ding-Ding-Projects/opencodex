@@ -28,6 +28,7 @@ const (
 
 type lifecycleObservation struct {
 	grokInjected  []byte
+	grokRecovered []byte
 	grokRestored  []byte
 	routeStatus   int
 	routeBody     []byte
@@ -59,12 +60,18 @@ func TestGrokAndClaudeDesktopCLILifecycleParity(t *testing.T) {
 	bun := requireBun(t, exec.LookPath)
 	upstream := newFakeUpstream(t)
 	port := reserveParityPort(t)
+	recoveryPort := reserveParityPort(t)
+	for recoveryPort == port {
+		recoveryPort = reserveParityPort(t)
+	}
 
-	goResult := observeCLILifecycle(t, lifecycleGo, "", port, upstream.server.URL)
+	goResult := observeCLILifecycle(t, lifecycleGo, "", port, recoveryPort, upstream.server.URL)
 	waitForPortRelease(t, port)
-	tsResult := observeCLILifecycle(t, lifecycleTS, bun, port, upstream.server.URL)
+	waitForPortRelease(t, recoveryPort)
+	tsResult := observeCLILifecycle(t, lifecycleTS, bun, port, recoveryPort, upstream.server.URL)
 
 	compareGrokLifecycleInjection(t, goResult.grokInjected, tsResult.grokInjected)
+	compareGrokLifecycleInjection(t, goResult.grokRecovered, tsResult.grokRecovered)
 	compareLifecycleBytes(t, "Grok restored config", goResult.grokRestored, tsResult.grokRestored)
 	compareRoutedLifecycleResponse(t, goResult.routeBody, tsResult.routeBody)
 	compareDesktopLifecycleConfig(t, goResult.desktopConfig, tsResult.desktopConfig)
@@ -77,7 +84,7 @@ func TestGrokAndClaudeDesktopCLILifecycleParity(t *testing.T) {
 	}
 }
 
-func observeCLILifecycle(t *testing.T, runtime lifecycleRuntime, bun string, port int, upstreamURL string) lifecycleObservation {
+func observeCLILifecycle(t *testing.T, runtime lifecycleRuntime, bun string, port, recoveryPort int, upstreamURL string) lifecycleObservation {
 	t.Helper()
 	home := t.TempDir()
 	grokHome := filepath.Join(home, ".grok")
@@ -111,6 +118,7 @@ func observeCLILifecycle(t *testing.T, runtime lifecycleRuntime, bun string, por
 
 	config := map[string]any{
 		"port": port, "hostname": "127.0.0.1", "defaultProvider": "parity",
+		"openaiProviderTierVersion": 2,
 		"providers": map[string]any{"parity": map[string]any{
 			"adapter": "openai-chat", "baseUrl": upstreamURL + "/v1", "allowPrivateNetwork": true,
 			"apiKey": "parity-api-key", "authMode": "key", "defaultModel": "success", "models": []string{"success"},
@@ -187,6 +195,31 @@ func observeCLILifecycle(t *testing.T, runtime lifecycleRuntime, bun string, por
 		t.Fatal(err)
 	}
 
+	killLifecycleCLI(t, process)
+	waitForPortRelease(t, port)
+	assertParityFileBytes(t, string(runtime)+" crash preserved Grok fence", grokPath, injected)
+	assertParityFileBytes(t, string(runtime)+" crash preserved Claude config", desktopConfigPath, desktopConfig)
+	assertParityFileBytes(t, string(runtime)+" crash preserved Claude metadata", desktopMetaPath, desktopMeta)
+	config["port"] = recoveryPort
+	configData, err = json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	process = startLifecycleCLI(t, runtime, bun, home, configPath, desktopHome, recoveryPort)
+	waitForFile(t, grokPath, func(data []byte) bool {
+		return bytes.Contains(data, []byte(fmt.Sprintf("base_url = \"http://127.0.0.1:%d/v1\"", recoveryPort)))
+	})
+	recovered := mustReadParityFile(t, grokPath)
+	assertParityFileBytes(t, string(runtime)+" restart preserved Claude config", desktopConfigPath, desktopConfig)
+	assertParityFileBytes(t, string(runtime)+" restart preserved Claude metadata", desktopMetaPath, desktopMeta)
+	recoveredStatus := doLifecycleRequest(t, http.MethodGet, process.baseURL+"/api/claude-desktop/status", nil)
+	if recoveredStatus.status != http.StatusOK || !bytes.Contains(recoveredStatus.body, []byte(`"stale":false`)) {
+		t.Fatalf("%s restart Claude Desktop status=%d body=%s", runtime, recoveredStatus.status, recoveredStatus.body)
+	}
+
 	stopLifecycleCLI(t, runtime, bun, process, home, configPath)
 	restored := mustReadParityFile(t, grokPath)
 	if !bytes.Equal(restored, originalGrok) {
@@ -194,7 +227,7 @@ func observeCLILifecycle(t *testing.T, runtime lifecycleRuntime, bun string, por
 	}
 	assertParityFileBytes(t, string(runtime)+" stop preserved Claude config", desktopConfigPath, desktopConfig)
 	assertParityFileBytes(t, string(runtime)+" stop preserved Claude metadata", desktopMetaPath, desktopMeta)
-	return lifecycleObservation{injected, restored, routeStatus, routeBody, desktopConfig, desktopMeta, status}
+	return lifecycleObservation{injected, recovered, restored, routeStatus, routeBody, desktopConfig, desktopMeta, status}
 }
 
 type lifecycleHTTPResult struct {
@@ -261,6 +294,18 @@ func stopLifecycleCLI(t *testing.T, runtime lifecycleRuntime, bun string, proces
 		}
 	case <-time.After(lifecyclePollTimeout):
 		t.Fatalf("%s serve did not exit after stop\nstdout=%s\nstderr=%s", runtime, process.stdout.String(), process.stderr.String())
+	}
+}
+
+func killLifecycleCLI(t *testing.T, process *cliLifecycleProcess) {
+	t.Helper()
+	if err := process.command.Process.Kill(); err != nil {
+		t.Fatalf("kill lifecycle CLI: %v", err)
+	}
+	select {
+	case <-process.exited:
+	case <-time.After(lifecyclePollTimeout):
+		t.Fatal("killed lifecycle CLI did not exit")
 	}
 }
 

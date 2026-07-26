@@ -1,5 +1,8 @@
 # 020 — Grok sync ownership and parity runtime boundary
 
+> Final Round 8 lifecycle, OAuth, coverage, and residual status is consolidated
+> in `090_parity_status.md`. This note remains the focused Grok/runtime record.
+
 ## Canonical Grok config lifecycle
 
 The command name `sync` is easy to misread as the Grok synchronization entry

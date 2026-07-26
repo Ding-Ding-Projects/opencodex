@@ -18,20 +18,25 @@ import (
 
 type tsProxyProcess struct {
 	baseURL string
+	home    string
 	command *exec.Cmd
 	done    chan error
 	stderr  *lockedBuffer
 }
 
 func startTypeScriptProxy(t *testing.T, config map[string]any, extraEnvironment ...string) *tsProxyProcess {
-	return startTypeScriptProxyWithEnvironmentLookup(t, config, exec.LookPath, extraEnvironment...)
+	return startTypeScriptProxyWithSetup(t, config, nil, extraEnvironment...)
 }
 
 func startTypeScriptProxyWithLookup(t *testing.T, config map[string]any, lookup func(string) (string, error)) *tsProxyProcess {
-	return startTypeScriptProxyWithEnvironmentLookup(t, config, lookup)
+	return startTypeScriptProxyWithEnvironmentLookup(t, config, lookup, nil)
 }
 
-func startTypeScriptProxyWithEnvironmentLookup(t *testing.T, config map[string]any, lookup func(string) (string, error), extraEnvironment ...string) *tsProxyProcess {
+func startTypeScriptProxyWithSetup(t *testing.T, config map[string]any, setup func(string), extraEnvironment ...string) *tsProxyProcess {
+	return startTypeScriptProxyWithEnvironmentLookup(t, config, exec.LookPath, setup, extraEnvironment...)
+}
+
+func startTypeScriptProxyWithEnvironmentLookup(t *testing.T, config map[string]any, lookup func(string) (string, error), setup func(string), extraEnvironment ...string) *tsProxyProcess {
 	t.Helper()
 	requireRuntimeParity(t)
 	bun := requireBun(t, lookup)
@@ -47,6 +52,9 @@ func startTypeScriptProxyWithEnvironmentLookup(t *testing.T, config map[string]a
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	home := t.TempDir()
+	if setup != nil {
+		setup(home)
+	}
 	if err := os.MkdirAll(filepath.Join(home, "codex"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +104,7 @@ await new Promise(() => {});
 			}
 		}
 	}()
-	process := &tsProxyProcess{baseURL: fmt.Sprintf("http://127.0.0.1:%d", port), command: command, done: done, stderr: stderr}
+	process := &tsProxyProcess{baseURL: fmt.Sprintf("http://127.0.0.1:%d", port), home: home, command: command, done: done, stderr: stderr}
 	select {
 	case <-ready:
 	case err := <-done:

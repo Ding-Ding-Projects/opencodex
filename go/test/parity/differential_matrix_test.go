@@ -107,7 +107,11 @@ type expectedRuntimeDiff struct {
 // knownRuntimeDiffs records runtime differences that are still expected between
 // the TypeScript and Go runtimes. An empty map means every covered scenario is
 // byte-identical; adding an entry is a deliberate, documented exception.
-var knownRuntimeDiffs = map[string]expectedRuntimeDiff{}
+var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
+	// origin/dev 923a0e54 adds account health fields. The Go port includes them,
+	// while this branch's TypeScript oracle still predates that upstream merge.
+	"oauth/account-health": {body: true},
+}
 
 var (
 	differentialIDPattern        = regexp.MustCompile(`\b(?:resp|msg|rs|fc|ws)_[0-9a-f]{32}\b`)

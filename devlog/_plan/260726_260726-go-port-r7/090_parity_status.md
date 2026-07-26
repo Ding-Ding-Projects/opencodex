@@ -1,5 +1,10 @@
 # 090 — Go runtime parity status
 
+> Superseded by the consolidated Round 8 status at
+> `../260726_260726-go-port-r8/090_parity_status.md`. This file remains the
+> Round 7 evidence snapshot and should not be used for current percentages or
+> residuals.
+
 Date: 2026-07-26  
 Branch: `dev2-go`  
 Primary harness: `go/test/parity/`
