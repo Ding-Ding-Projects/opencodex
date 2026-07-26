@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -155,10 +156,10 @@ func runClaudeDesktop(ctx context.Context, args []string, streams IO) error {
 }
 
 func loadClaudeDesktopState(ctx context.Context, cfg *config.Config, stored *claude.DesktopProfile) (desktopCLIState, error) {
-	models := configuredRegistry(*cfg).ListModels()
+	models := codex.FilterVisibleRuntimeModels(configuredRegistry(*cfg).ListModels(), *cfg)
 	if live := findLiveProxy(ctx, cfg); live != nil {
 		if fetched, err := fetchRuntimeModels(ctx, *cfg, live.Port); err == nil {
-			models = fetched
+			models = codex.FilterVisibleRuntimeModels(fetched, *cfg)
 		}
 	}
 	if stored == nil && cfg.ClaudeCode != nil && cfg.ClaudeCode.DesktopProfile != nil {

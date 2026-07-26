@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
-	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/grok"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -22,7 +22,7 @@ func applyGrokFence(ctx context.Context, cfg *config.Config, port int, hostname 
 			if err != nil {
 				return nil, err
 			}
-			return visibleGrokModels(models, cfg.DisabledModels), nil
+			return visibleGrokModels(codex.FilterVisibleRuntimeModels(models, *cfg)), nil
 		},
 	}
 	var result grok.Result
@@ -39,17 +39,10 @@ func applyGrokFence(ctx context.Context, cfg *config.Config, port int, hostname 
 	return nil
 }
 
-func visibleGrokModels(models []types.ModelEntry, disabledIDs []string) []grok.InjectModel {
-	disabled := make(map[string]struct{}, len(disabledIDs))
-	for _, id := range disabledIDs {
-		disabled[strings.TrimSpace(id)] = struct{}{}
-	}
+func visibleGrokModels(models []types.ModelEntry) []grok.InjectModel {
 	visible := make([]grok.InjectModel, 0, len(models))
 	for _, model := range models {
-		if _, hidden := disabled[model.ID]; hidden {
-			continue
-		}
-		visible = append(visible, grok.InjectModel{ID: model.ID, Name: model.DisplayName, ContextWindow: model.ContextWindow})
+		visible = append(visible, grok.InjectModel{ID: model.ID, ContextWindow: model.ContextWindow})
 	}
 	return visible
 }

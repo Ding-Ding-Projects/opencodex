@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -221,7 +222,7 @@ func (a *API) buildClaudeDesktopState(stored *claude.DesktopProfile) (claudeDesk
 	a.mu.RUnlock()
 	models := []types.ModelEntry{}
 	if a.registry != nil {
-		models = a.registry.ListModels()
+		models = codex.FilterVisibleRuntimeModels(a.registry.ListModels(), cfg)
 	}
 	disabled := make(map[string]bool, len(cfg.DisabledModels))
 	for _, id := range cfg.DisabledModels {

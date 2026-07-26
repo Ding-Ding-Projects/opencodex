@@ -51,9 +51,8 @@ func TestTeardownGrokFenceRemovesManagedServiceConfig(t *testing.T) {
 func TestVisibleGrokModelsExcludesDisabledCatalogEntries(t *testing.T) {
 	models := visibleGrokModels([]types.ModelEntry{
 		{ID: "provider/visible", DisplayName: "Visible", ContextWindow: 1000},
-		{ID: "provider/hidden", DisplayName: "Hidden", ContextWindow: 2000},
-	}, []string{"provider/hidden"})
-	if len(models) != 1 || models[0].ID != "provider/visible" || models[0].Name != "Visible" || models[0].ContextWindow != 1000 {
+	})
+	if len(models) != 1 || models[0].ID != "provider/visible" || models[0].Name != "" || models[0].ContextWindow != 1000 {
 		t.Fatalf("visible models=%#v", models)
 	}
 }

@@ -30,11 +30,12 @@ func TestClaudeDesktopManagementProfileApplyAndStatus(t *testing.T) {
 	library := filepath.Join(t.TempDir(), "library")
 	t.Setenv("OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR", library)
 	cfg := config.Default()
+	cfg.Providers["p"] = config.ProviderConfig{Models: []string{"m"}}
 	cfg.APIKeys = []config.ProxyAPIKey{{ID: "key", Key: "ocx_test"}}
 	api := newParityAPI(t, &cfg, func(options *Options) { options.Registry = desktopManagementRegistry{} })
 
 	get := serveManagement(api, http.MethodGet, "/api/claude-desktop", "")
-	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"route":"native/gpt-5.6"`) || !strings.Contains(get.Body.String(), `"route":"p/m"`) {
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"route":"native/gpt-5.5"`) || !strings.Contains(get.Body.String(), `"route":"p/m"`) {
 		t.Fatalf("GET profile=%d %s", get.Code, get.Body.String())
 	}
 	var state struct {

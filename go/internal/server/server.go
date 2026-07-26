@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	"github.com/lidge-jun/opencodex-go/internal/usage"
 )
@@ -66,6 +68,8 @@ type Config struct {
 	MemoryWatchdogCapacity int
 	MemorySample           func() MemorySample
 	ClaudeDebug            *claude.DebugRing
+	SearchLoop             *search.Loop
+	OnUsage                func(*types.Usage)
 	InjectionDebug         *ocxlib.DebugLogBuffer
 	ProviderQuotas         management.ProviderQuotaBackend
 	ClaudeRuntime          management.ClaudeCodeRuntime
@@ -101,7 +105,7 @@ func New(config Config) *Server {
 	if injectionDebug == nil {
 		injectionDebug = ocxlib.NewDebugLogBuffer()
 	}
-	handlerConfig := chat.HandlerConfig{Registry: config.Registry, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client, ClaudeDebug: claudeDebug}
+	handlerConfig := baseChatHandlerConfig(config, claudeDebug)
 	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
 		claudeConfig := config.ManagementConfig.ClaudeCode
 		handlerConfig.ClaudeEnabled = claudeConfig.Enabled
@@ -358,6 +362,18 @@ func New(config Config) *Server {
 	}
 	s.handler = oversizedHeaderMiddleware(Middleware(recoveryMiddleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), config.Logger), middlewareConfig))
 	return s
+}
+
+func baseChatHandlerConfig(config Config, debug *claude.DebugRing) chat.HandlerConfig {
+	result := chat.HandlerConfig{
+		Registry: config.Registry, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client,
+		ClaudeDebug: debug, SearchLoop: config.SearchLoop, OnUsage: config.OnUsage,
+	}
+	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
+		result.ClaudeModelMap = maps.Clone(config.ManagementConfig.ClaudeCode.ModelMap)
+		result.ClaudeBlockedSkills = append([]string(nil), config.ManagementConfig.ClaudeCode.BlockedSkills...)
+	}
+	return result
 }
 
 // EffectiveWireAdapter mirrors src/server/adapter-resolve.ts. Keeping this at
