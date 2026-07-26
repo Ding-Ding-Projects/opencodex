@@ -32,6 +32,8 @@ type HandlerConfig struct {
 	Compactor       types.CompactionHandler
 	NativeAnthropic func(*types.ResolvedModel) bool
 	NativeCompact   func(*types.ResolvedModel) bool
+	ConnectTimeout  time.Duration
+	BodyStall       time.Duration
 }
 
 type Handler struct{ config HandlerConfig }
@@ -170,6 +172,14 @@ func withHandlerDefaults(config HandlerConfig) HandlerConfig {
 	}
 	if config.ResponseLimit <= 0 {
 		config.ResponseLimit = defaultResponseLimit
+	}
+	if config.ConnectTimeout <= 0 {
+		config.ConnectTimeout = 200 * time.Second
+	}
+	if config.BodyStall < 0 {
+		config.BodyStall = 0
+	} else if config.BodyStall == 0 {
+		config.BodyStall = 90 * time.Second
 	}
 	return config
 }

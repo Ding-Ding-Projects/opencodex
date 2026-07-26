@@ -56,46 +56,48 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 			request.Header.Set("Authorization", "Bearer "+prepared.auth.AccessToken)
 		}
 	}
-	response, err := h.config.Client.Do(request)
-	if err != nil {
-		writeAnthropicError(w, 502, err.Error())
+	result := DoWithHeaderDeadline(r.Context(), h.config.Client, request, h.config.ConnectTimeout)
+	if result.TimedOut {
+		writeAnthropicError(w, http.StatusGatewayTimeout, "anthropic passthrough timed out waiting for response headers")
 		return
 	}
+	if result.Err != nil {
+		status := http.StatusBadGateway
+		if r.Context().Err() != nil {
+			status = 499
+		}
+		writeAnthropicError(w, status, result.Err.Error())
+		return
+	}
+	response := result.Response
 	defer response.Body.Close()
 	for _, name := range []string{"content-type", "request-id", "retry-after"} {
 		if value := response.Header.Get(name); value != "" {
 			w.Header().Set(name, value)
 		}
 	}
-	w.WriteHeader(response.StatusCode)
-	if prepared.normalized.Stream {
-		buffer := make([]byte, 32<<10)
-		flusher, _ := w.(http.Flusher)
-		var total int64
-		for {
-			n, readErr := response.Body.Read(buffer)
-			if n > 0 {
-				total += int64(n)
-				if total > h.config.ResponseLimit {
-					return
-				}
-				if _, err := w.Write(buffer[:n]); err != nil {
-					return
-				}
-				if flusher != nil {
-					flusher.Flush()
-				}
-			}
-			if readErr != nil {
-				return
-			}
-		}
-	}
-	data, err := readBounded(response.Body, h.config.ResponseLimit)
-	if err != nil {
+	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+	if prepared.normalized.Stream && strings.Contains(contentType, "text/event-stream") {
+		w.WriteHeader(response.StatusCode)
+		_ = WriteAnthropicPassthroughStream(r.Context(), w, response.Body, h.config.BodyStall, h.config.ResponseLimit, nil)
 		return
 	}
-	_, _ = w.Write(data)
+	bodyResult := ReadBoundedPassthroughBody(r.Context(), response.Body, h.config.BodyStall, h.config.ResponseLimit)
+	if bodyResult.Err != nil {
+		switch bodyResult.CloseReason {
+		case "client_cancel":
+			writeAnthropicError(w, 499, "client closed request during anthropic passthrough")
+		case "body_stall":
+			writeAnthropicError(w, http.StatusGatewayTimeout, bodyResult.Err.Error())
+		case "body_overflow":
+			writeAnthropicError(w, http.StatusBadGateway, bodyResult.Err.Error())
+		default:
+			writeAnthropicError(w, http.StatusBadGateway, bodyResult.Err.Error())
+		}
+		return
+	}
+	w.WriteHeader(response.StatusCode)
+	_, _ = w.Write(bodyResult.Data)
 }
 
 func nativeMessagesURL(base string) (string, error) {
