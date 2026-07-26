@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,7 +10,22 @@ import (
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
+
+type recordingRestartRunner struct {
+	commands []updatepkg.Command
+	failures int
+}
+
+func (r *recordingRestartRunner) Run(_ context.Context, command updatepkg.Command) ([]byte, error) {
+	r.commands = append(r.commands, command)
+	if r.failures > 0 {
+		r.failures--
+		return nil, errors.New("command failed")
+	}
+	return nil, nil
+}
 
 type packagedRuntimeFixture struct {
 	root       string
@@ -231,6 +247,47 @@ func TestDirectRuntimeCommandFlowsIntoServiceAndTray(t *testing.T) {
 	}
 	if tray.RestartCommand.Executable != direct.Executable || strings.Join(tray.RestartCommand.Arguments, " ") != "service restart" {
 		t.Fatalf("tray restart=%#v", tray.RestartCommand)
+	}
+}
+
+func TestExecuteUpdateRestartPlanUsesDurableCommandAndServiceFallback(t *testing.T) {
+	entry := runtimeCommand{Executable: "/stable/node", Launcher: "/pkg/bin/ocx.mjs"}
+	service := updatepkg.BuildRestartPlan(updatepkg.InstallerNPM, entry.Executable, entry.Launcher, true, 12000, []string{"service", "install", "--native"})
+	runner := &recordingRestartRunner{}
+	if err := executeUpdateRestartPlan(context.Background(), service, entry, 12000, runner); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 || runner.commands[0].String() != "/stable/node /pkg/bin/ocx.mjs service install --native" {
+		t.Fatalf("service commands = %#v", runner.commands)
+	}
+
+	runner = &recordingRestartRunner{failures: 1}
+	if err := executeUpdateRestartPlan(context.Background(), service, entry, 12000, runner); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 2 || runner.commands[1].String() != "/stable/node /pkg/bin/ocx.mjs start --port 12000" {
+		t.Fatalf("fallback commands = %#v", runner.commands)
+	}
+
+	runner = &recordingRestartRunner{failures: 2}
+	if err := executeUpdateRestartPlan(context.Background(), service, entry, 12000, runner); err == nil || !strings.Contains(err.Error(), "service reinstall failed") || !strings.Contains(err.Error(), "direct restart failed") {
+		t.Fatalf("double failure = %v", err)
+	}
+}
+
+func TestExternalGUIUpdateWorkerArgumentsUseExactLauncher(t *testing.T) {
+	entry := runtimeCommand{Executable: "/stable/node", Launcher: "/pkg/bin/ocx.mjs"}
+	job := updatepkg.Job{ID: "424242"}
+	args, err := externalGUIUpdateWorkerArguments(entry, job, "preview", true)
+	if err != nil || strings.Join(args, " ") != "/pkg/bin/ocx.mjs __gui-update-worker 424242 preview restart" {
+		t.Fatalf("args=%v err=%v", args, err)
+	}
+	args, err = externalGUIUpdateWorkerArguments(entry, job, "latest", false)
+	if err != nil || strings.Join(args, " ") != "/pkg/bin/ocx.mjs __gui-update-worker 424242 latest no-restart" {
+		t.Fatalf("args=%v err=%v", args, err)
+	}
+	if _, err := externalGUIUpdateWorkerArguments(runtimeCommand{}, job, "latest", true); err == nil {
+		t.Fatal("missing stable launcher was accepted")
 	}
 }
 

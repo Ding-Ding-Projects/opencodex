@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -444,8 +445,15 @@ func TestQuotaClaudeAndRuntimeBackendsMutateThroughManagementAPI(t *testing.T) {
 			Installer: updatepkg.InstallerNPM, UpdateAvailable: true, CanUpdate: true,
 		}, nil
 	}
-	runtimeControl.updateRunner = func(context.Context, string) error { close(updateStarted); return nil }
-	runtimeControl.restartRunner = func(context.Context) error { close(restartStarted); return nil }
+	runtimeControl.runtimeEntry = func() runtimeCommand { return runtimeCommand{Executable: "/stable/node", Launcher: "/pkg/bin/ocx.mjs"} }
+	runtimeControl.startWorker = func(_ runtimeCommand, job updatepkg.Job, _ string, restart bool) error {
+		close(updateStarted)
+		if restart {
+			close(restartStarted)
+		}
+		job.Status, job.Restarted = updatepkg.JobSucceeded, restart
+		return runtimeControl.updateManager.Store.Write(job)
+	}
 	api := newCLIManagementAPI(t, &cfg, path, nil, providerQuotas, claudeRuntime, runtimeControl)
 
 	response := callCLIManagement(t, api, http.MethodGet, "/api/provider-quotas", nil)
@@ -506,8 +514,13 @@ func TestRuntimeUpdateStatusSurvivesManagerRecreation(t *testing.T) {
 			Installer: updatepkg.InstallerNPM, UpdateAvailable: true, CanUpdate: true,
 		}, nil
 	}
+	control.runtimeEntry = func() runtimeCommand { return runtimeCommand{Executable: "/stable/node", Launcher: "/pkg/bin/ocx.mjs"} }
 	finished := make(chan struct{})
-	control.updateRunner = func(context.Context, string) error { close(finished); return nil }
+	control.startWorker = func(_ runtimeCommand, job updatepkg.Job, _ string, _ bool) error {
+		close(finished)
+		job.Status = updatepkg.JobSucceeded
+		return control.updateManager.Store.Write(job)
+	}
 
 	started, err := control.StartUpdate(context.Background(), "latest", false)
 	if err != nil {
@@ -534,6 +547,45 @@ func TestRuntimeUpdateStatusSurvivesManagerRecreation(t *testing.T) {
 	job, found, err := recreated.UpdateStatus(context.Background(), id)
 	if err != nil || !found || job["status"] != "succeeded" {
 		t.Fatalf("recreated status = found=%t job=%#v err=%v", found, job, err)
+	}
+}
+
+func TestRuntimeUpdateRequiresExactLauncherAndPersistsWorkerLaunchFailure(t *testing.T) {
+	t.Setenv("OPENCODEX_HOME", t.TempDir())
+	cfg := config.FreshInstall()
+	control := newRuntimeControl(&cfg)
+	control.updateCheck = func(context.Context, string) (updatepkg.CheckResult, error) {
+		return updatepkg.CheckResult{
+			CurrentVersion: "2.7.41", LatestVersion: "2.7.42", Channel: updatepkg.ChannelLatest,
+			Installer: updatepkg.InstallerNPM, UpdateAvailable: true, CanUpdate: true,
+		}, nil
+	}
+	control.runtimeEntry = func() runtimeCommand { return runtimeCommand{} }
+	if _, err := control.StartUpdate(context.Background(), "latest", true); err == nil || !strings.Contains(err.Error(), "stable Node launcher") {
+		t.Fatalf("unsupported runtime error = %v", err)
+	}
+
+	entry := runtimeCommand{Executable: "/stable/node", Launcher: "/pkg/bin/ocx.mjs"}
+	control.runtimeEntry = func() runtimeCommand { return entry }
+	var observed runtimeCommand
+	control.startWorker = func(command runtimeCommand, _ updatepkg.Job, channel string, restart bool) error {
+		observed = command
+		if channel != "latest" || !restart {
+			t.Fatalf("worker channel=%q restart=%t", channel, restart)
+		}
+		return errors.New("spawn denied")
+	}
+	result, err := control.StartUpdate(context.Background(), "latest", true)
+	if err != nil || result["status"] != string(updatepkg.JobFailed) || !strings.Contains(result["error"].(string), "spawn denied") {
+		t.Fatalf("launch failure result=%#v err=%v", result, err)
+	}
+	if observed != entry {
+		t.Fatalf("worker entry=%#v", observed)
+	}
+	id, _ := result["id"].(string)
+	persisted, found, statusErr := control.UpdateStatus(context.Background(), id)
+	if statusErr != nil || !found || persisted["status"] != string(updatepkg.JobFailed) {
+		t.Fatalf("persisted=%#v found=%t err=%v", persisted, found, statusErr)
 	}
 }
 
@@ -567,7 +619,7 @@ func TestProductionServeCompositionSuppliesUpdateLifecycleDependencies(t *testin
 	port := healthServer.Listener.Addr().(*net.TCPAddr).Port
 	control := newRuntimeControl(&cfg, runtimeTarget{Host: "0.0.0.0", Port: port})
 	lifecycle := control.updateManager.Lifecycle
-	if lifecycle == nil || lifecycle.CheckIntegrity == nil || lifecycle.PrepareTray == nil || lifecycle.RestoreTray == nil || lifecycle.RefreshTray == nil || lifecycle.ReclaimPort == nil || lifecycle.Restart == nil || lifecycle.Probe == nil {
+	if lifecycle == nil || lifecycle.CheckIntegrity == nil || lifecycle.PrepareTray == nil || lifecycle.RestoreTray == nil || lifecycle.RefreshTray == nil || lifecycle.ReclaimPort == nil || lifecycle.Restart == nil || lifecycle.Probe == nil || lifecycle.ProbeIdentity == nil {
 		t.Fatalf("production lifecycle dependencies are incomplete: %#v", lifecycle)
 	}
 	if lifecycle.RuntimeExecutable == "" || lifecycle.Launcher != "" || lifecycle.Host != "127.0.0.1" || lifecycle.Port != port {

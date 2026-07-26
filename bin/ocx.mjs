@@ -8,8 +8,8 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
@@ -19,6 +19,7 @@ const PKG = "@bitkyc08/opencodex";
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 const cliPath = join(here, "..", "src", "cli", "index.ts");
+const INTERNAL_GUI_UPDATE_MARKER = "OCX_INTERNAL_GUI_UPDATE_WORKER";
 
 function isNodeModulesInstall() {
   return here.split(/[\\/]/).includes("node_modules");
@@ -73,6 +74,98 @@ function expandUserPath(raw) {
 function configDir() {
   const raw = process.env.OPENCODEX_HOME?.trim();
   return resolve(raw ? expandUserPath(raw) : join(homedir(), ".opencodex"));
+}
+
+function terminalizeActiveGuiUpdateJob(jobId, message) {
+  const path = join(configDir(), "update-job.json");
+  try {
+    const job = JSON.parse(readFileSync(path, "utf8"));
+    if (job?.id !== jobId || (job.status !== "running" && job.status !== "restarting")) return false;
+    const detail = `GUI update worker failed: ${message}`;
+    const next = {
+      ...job,
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      restarted: false,
+      error: detail,
+      log: [...(Array.isArray(job.log) ? job.log : []), detail],
+    };
+    const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    renameSync(temporary, path);
+    return true;
+  } catch (error) {
+    console.error(`opencodex: could not terminalize GUI update job ${jobId}: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+function activeGuiUpdateJobExists(jobId) {
+  try {
+    const job = JSON.parse(readFileSync(join(configDir(), "update-job.json"), "utf8"));
+    return job?.id === jobId && (job.status === "running" || job.status === "restarting");
+  } catch {
+    return false;
+  }
+}
+
+async function runInternalGuiUpdateWorker() {
+  const jobId = process.argv[3] ?? "";
+  if (process.env[INTERNAL_GUI_UPDATE_MARKER] !== "1" || !/^\d+$/.test(jobId)) {
+    console.error("opencodex: unauthorized GUI update worker invocation");
+    process.exit(1);
+  }
+  delete process.env[INTERNAL_GUI_UPDATE_MARKER];
+  if (!activeGuiUpdateJobExists(jobId)) {
+    console.error(`opencodex: GUI update job is not active: ${jobId}`);
+    process.exit(1);
+  }
+  const bun = resolveBun(false);
+  if (!bun) {
+    terminalizeActiveGuiUpdateJob(jobId, "retained Bun runtime is unavailable");
+    process.exit(1);
+  }
+  let runtimeRoot;
+  let workerRuntime;
+  try {
+    const before = lstatSync(bun);
+    if (before.isSymbolicLink() || !before.isFile() || before.size < REAL_BUN_MIN_BYTES || before.size > 200_000_000) {
+      throw new Error("retained Bun runtime is not a bounded regular file");
+    }
+    runtimeRoot = mkdtempSync(join(tmpdir(), "ocx-gui-update-worker-"));
+    workerRuntime = join(runtimeRoot, process.platform === "win32" ? "bun.exe" : "bun");
+    copyFileSync(bun, workerRuntime);
+    chmodSync(workerRuntime, 0o700);
+    const after = lstatSync(bun);
+    const copied = lstatSync(workerRuntime);
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs
+      || !copied.isFile() || copied.isSymbolicLink() || copied.size !== before.size) {
+      throw new Error("retained Bun runtime changed during worker isolation");
+    }
+  } catch (error) {
+    if (runtimeRoot) rmSync(runtimeRoot, { recursive: true, force: true });
+    terminalizeActiveGuiUpdateJob(jobId, error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  const child = spawn(workerRuntime, [cliPath, ...process.argv.slice(2)], {
+    stdio: "ignore",
+    windowsHide: true,
+    env: process.env,
+  });
+  const outcome = await new Promise(resolve => {
+    child.once("error", error => resolve({ error }));
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+  rmSync(runtimeRoot, { recursive: true, force: true });
+  const detail = outcome.error
+    ? `could not launch retained worker: ${outcome.error.message}`
+    : outcome.signal
+      ? `retained worker exited on ${outcome.signal}`
+      : outcome.code === 0
+        ? "retained worker exited without a terminal job state"
+        : `retained worker exited ${outcome.code ?? "without status"}`;
+  const terminalized = terminalizeActiveGuiUpdateJob(jobId, detail);
+  process.exit(outcome.code === 0 && !terminalized ? 0 : 1);
 }
 
 function shouldRepairCodexShim() {
@@ -404,8 +497,24 @@ function resolveBun(required = true) {
   return bin;
 }
 
+const launcherCommand = process.argv[2];
+if (launcherCommand === "__gui-update-worker") await runInternalGuiUpdateWorker();
+
+// Help is side-effect free and must win before either package replacement or runtime
+// selection. npm package updates remain launcher-owned so Windows can replace the
+// package and every OS receives package-layout changes, not only a binary overwrite.
+const updateHelpRequested = launcherCommand === "update" &&
+  process.argv.slice(3).some(a => a === "--help" || a === "-h" || a === "help");
+if (updateHelpRequested) {
+  console.log("Usage: ocx update [--tag latest|preview]\n\nUpdate opencodex. Preview installs stay on the preview tag unless overridden.");
+  process.exit(0);
+}
+if (launcherCommand === "update" && isNodeModulesInstall() && !isBunGlobalInstall()) {
+  runNpmSelfUpdate();
+}
+
 // A supported npm installation is Go-first and fail-closed. Validate the exact
-// package-local artifact before any retained Bun or install.js path can run.
+// package-local artifact before any other retained Bun or install.js path can run.
 const strictPackaged = isNodeModulesInstall() && isSupportedNativeTarget();
 const goBinary = resolveGoBinary(strictPackaged);
 if (goBinary) {
@@ -416,19 +525,6 @@ if (goBinary) {
 } else {
   // Source checkouts and unsupported targets retain the bridge behavior.
   refreshLegacyCodexShimRuntime();
-  // `ocx update --help` prints usage and exits WITHOUT side effects. The legacy npm
-  // launcher intercepts update only on the TypeScript path; native Go handles its own update.
-  const updateHelpRequested = process.argv[2] === "update" &&
-    process.argv.slice(3).some(a => a === "--help" || a === "-h" || a === "help");
-  if (updateHelpRequested) {
-    console.log("Usage: ocx update [--tag latest|preview]\n\nUpdate opencodex. Preview installs stay on the preview tag unless overridden.");
-    process.exit(0);
-  }
-
-  if (process.argv[2] === "update" && isNodeModulesInstall() && !isBunGlobalInstall()) {
-    runNpmSelfUpdate();
-  }
-
   const bun = resolveBun();
   launchForwardingChild(bun, [cliPath, ...process.argv.slice(2)], "Bun runtime");
 }

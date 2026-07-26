@@ -253,6 +253,27 @@ func (m *JobManager) Start(ctx context.Context, check CheckResult, restart bool,
 	return job, nil
 }
 
+// StartExternal persists the running job before handing ownership to a detached
+// package worker. A synchronous launch failure is persisted as terminal state so it
+// cannot strand the single-job gate.
+func (m *JobManager) StartExternal(check CheckResult, restart bool, launch func(Job) error) (Job, error) {
+	job, err := m.begin(check, restart)
+	if err != nil {
+		return Job{}, err
+	}
+	if launch == nil {
+		job.Status, job.Error = JobFailed, "external update worker is required"
+		job.UpdatedAt = m.currentTime().UTC()
+		return job, m.Store.Write(job)
+	}
+	if err := launch(job); err != nil {
+		job.Status, job.Error = JobFailed, fmt.Sprintf("start external update worker: %v", err)
+		job.UpdatedAt = m.currentTime().UTC()
+		return job, m.Store.Write(job)
+	}
+	return job, nil
+}
+
 // Status returns the latest persisted job. A non-empty id must match the
 // persisted job, which preserves the TypeScript status endpoint contract.
 func (m *JobManager) Status(id string) (Job, bool, error) {
@@ -430,6 +451,16 @@ func (m *JobManager) restartWithLifecycle(ctx context.Context, job *Job, check C
 		job.Status, job.Error = JobFailed, err.Error()
 		m.restoreTrayAfterFailure(ctx, lifecycle, handoff, job)
 		return err
+	}
+	if check.Installer == InstallerNPM && lifecycle.ProbeIdentity != nil {
+		evidence := CorrelateRestartIdentity(lifecycle.OldPID, check.LatestVersion, lifecycle.ProbeIdentity(ctx))
+		if !evidence.OK {
+			err := fmt.Errorf("proxy restart did not show update-correlated identity: %s", evidence.Reason)
+			job.Status, job.Error = JobFailed, err.Error()
+			m.restoreTrayAfterFailure(ctx, lifecycle, handoff, job)
+			return err
+		}
+		job.Log = append(job.Log, "Proxy restart confirmed: "+evidence.Detail)
 	}
 	job.Status = JobSucceeded
 	job.Restarted = true

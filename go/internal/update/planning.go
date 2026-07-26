@@ -96,9 +96,50 @@ type LifecycleDependencies struct {
 	ReclaimPort       func(context.Context, string, int) bool
 	Restart           func(context.Context, RestartPlan) error
 	Probe             func(context.Context) bool
+	ProbeIdentity     func(context.Context) RestartIdentity
+	OldPID            int
 	StartupTimeout    time.Duration
 	StabilityWindow   time.Duration
 	ProbeInterval     time.Duration
+}
+
+type RestartIdentity struct {
+	PID     int
+	Version string
+}
+
+type RestartEvidence struct {
+	OK     bool
+	Detail string
+	Reason string
+}
+
+func CorrelateRestartIdentity(oldPID int, expectedVersion string, identity RestartIdentity) RestartEvidence {
+	expectedVersion = strings.TrimSpace(expectedVersion)
+	version := strings.TrimSpace(identity.Version)
+	versionMatches := expectedVersion != "" && version == expectedVersion
+	if oldPID > 0 {
+		if identity.PID == oldPID {
+			return RestartEvidence{Reason: "still the pre-update PID"}
+		}
+		if identity.PID > 0 {
+			if expectedVersion != "" && version != "" && !versionMatches {
+				return RestartEvidence{Reason: fmt.Sprintf("new PID but version %s does not match %s", version, expectedVersion)}
+			}
+			return RestartEvidence{OK: true, Detail: fmt.Sprintf("PID changed %d to %d", oldPID, identity.PID)}
+		}
+		if versionMatches {
+			return RestartEvidence{OK: true, Detail: "version " + version}
+		}
+		return RestartEvidence{Reason: "no PID and target version did not match"}
+	}
+	if versionMatches {
+		return RestartEvidence{OK: true, Detail: "version " + version}
+	}
+	if expectedVersion != "" && version != "" {
+		return RestartEvidence{Reason: fmt.Sprintf("version %s does not match %s", version, expectedVersion)}
+	}
+	return RestartEvidence{Reason: "no pre-update PID and no target-version match"}
 }
 
 // ParseIntegrityResult separates transient registry lookup failures from

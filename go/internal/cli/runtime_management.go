@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -407,6 +408,8 @@ type cliRuntimeControl struct {
 	healthCache   *platform.StartupHealthCache
 	healthProbe   platform.HealthProbe
 	now           func() time.Time
+	runtimeEntry  func() runtimeCommand
+	startWorker   func(runtimeCommand, updatepkg.Job, string, bool) error
 }
 
 type runtimeTarget struct {
@@ -418,7 +421,10 @@ var _ management.RuntimeControlBackend = (*cliRuntimeControl)(nil)
 
 func newRuntimeControl(cfg *config.Config, targets ...runtimeTarget) *cliRuntimeControl {
 	dir, _ := configDir()
-	control := &cliRuntimeControl{config: cfg, now: time.Now, healthCache: platform.NewStartupHealthCache(30 * time.Second)}
+	control := &cliRuntimeControl{
+		config: cfg, now: time.Now, healthCache: platform.NewStartupHealthCache(30 * time.Second),
+		runtimeEntry: processRuntimeCommand, startWorker: startExternalGUIUpdateWorker,
+	}
 	control.healthProbe = control.probeStartupHealth
 	control.updateCheck = control.resolveUpdateCheck
 	control.updateRunner = func(ctx context.Context, channel string) error {
@@ -443,8 +449,50 @@ func newRuntimeControl(cfg *config.Config, targets ...runtimeTarget) *cliRuntime
 	return control
 }
 
+const internalGUIUpdateWorkerMarker = "OCX_INTERNAL_GUI_UPDATE_WORKER"
+
+func startExternalGUIUpdateWorker(command runtimeCommand, job updatepkg.Job, channel string, restart bool) error {
+	arguments, err := externalGUIUpdateWorkerArguments(command, job, channel, restart)
+	if err != nil {
+		return err
+	}
+	child := exec.Command(command.Executable, arguments...)
+	child.Stdin, child.Stdout, child.Stderr = nil, nil, nil
+	configureUpdateWorkerProcess(child)
+	environment := make([]string, 0, len(os.Environ())+1)
+	prefix := internalGUIUpdateWorkerMarker + "="
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, prefix) {
+			environment = append(environment, item)
+		}
+	}
+	child.Env = append(environment, prefix+"1")
+	if err := child.Start(); err != nil {
+		return err
+	}
+	if err := child.Process.Release(); err != nil {
+		return fmt.Errorf("detach GUI update worker: %w", err)
+	}
+	return nil
+}
+
+func externalGUIUpdateWorkerArguments(command runtimeCommand, job updatepkg.Job, channel string, restart bool) ([]string, error) {
+	if strings.TrimSpace(command.Executable) == "" || strings.TrimSpace(command.Launcher) == "" {
+		return nil, errors.New("exact package Node launcher is unavailable")
+	}
+	mode := "no-restart"
+	if restart {
+		mode = "restart"
+	}
+	return []string{command.Launcher, "__gui-update-worker", job.ID, channel, mode}, nil
+}
+
 func productionUpdateLifecycle(cfg *config.Config, target runtimeTarget, control *cliRuntimeControl) *updatepkg.LifecycleDependencies {
-	runtimeCommand := processRuntimeCommand()
+	entryFn := control.runtimeEntry
+	if entryFn == nil {
+		entryFn = processRuntimeCommand
+	}
+	runtimeCommand := entryFn()
 	state := readServiceInstallState()
 	serviceInstalled := state != nil && serviceEnvironmentOwnedHere()
 	serviceArgs := []string(nil)
@@ -516,12 +564,58 @@ func productionUpdateLifecycle(cfg *config.Config, target runtimeTarget, control
 		ReclaimPort: func(ctx context.Context, host string, port int) bool {
 			return reclaimListenPort(ctx, host, port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second})
 		},
-		Restart: func(ctx context.Context, _ updatepkg.RestartPlan) error {
-			return control.restartRunner(ctx)
+		Restart: func(ctx context.Context, plan updatepkg.RestartPlan) error {
+			return executeUpdateRestartPlan(ctx, plan, runtimeCommand, target.Port, updatepkg.ExecRunner{})
 		},
 		Probe: func(ctx context.Context) bool {
 			return probeHealth(ctx, host, target.Port)
 		},
+		ProbeIdentity: func(ctx context.Context) updatepkg.RestartIdentity {
+			identity, ok := server.ProxyIdentityAt(ctx, nil, target.Port, host, 0, 750*time.Millisecond)
+			if !ok || identity == nil {
+				return updatepkg.RestartIdentity{}
+			}
+			result := updatepkg.RestartIdentity{}
+			if identity.PID != nil {
+				result.PID = *identity.PID
+			}
+			if identity.Version != nil {
+				result.Version = *identity.Version
+			}
+			return result
+		},
+		OldPID: os.Getpid(),
+	}
+}
+
+func executeUpdateRestartPlan(
+	ctx context.Context,
+	plan updatepkg.RestartPlan,
+	runtimeCommand runtimeCommand,
+	port int,
+	runner updatepkg.CommandRunner,
+) error {
+	if runner == nil {
+		runner = updatepkg.ExecRunner{}
+	}
+	if _, err := runner.Run(ctx, plan.Command); err == nil {
+		return nil
+	} else if plan.Mode != updatepkg.RestartService {
+		return fmt.Errorf("restart proxy with %s: %w", plan.Command.String(), err)
+	} else {
+		serviceErr := err
+		fallback := updatepkg.BuildRestartPlan(
+			updatepkg.InstallerNPM,
+			runtimeCommand.Executable,
+			runtimeCommand.Launcher,
+			false,
+			port,
+			nil,
+		)
+		if _, fallbackErr := runner.Run(ctx, fallback.Command); fallbackErr != nil {
+			return fmt.Errorf("service reinstall failed: %v; direct restart failed: %w", serviceErr, fallbackErr)
+		}
+		return nil
 	}
 }
 
@@ -628,6 +722,16 @@ func (r *cliRuntimeControl) resolveUpdateCheck(ctx context.Context, channel stri
 	if !available {
 		check.Reason = "already_latest"
 	}
+	entry := r.runtimeEntry
+	if entry == nil {
+		entry = processRuntimeCommand
+	}
+	command := entry()
+	if strings.TrimSpace(command.Executable) == "" || strings.TrimSpace(command.Launcher) == "" {
+		check.CanUpdate = false
+		check.Reason = "package_update_requires_node_launcher"
+		check.Command = fmt.Sprintf("npm install -g %s@%s", updatepkg.PackageName, channel)
+	}
 	return check, nil
 }
 
@@ -636,7 +740,24 @@ func (r *cliRuntimeControl) StartUpdate(ctx context.Context, channel string, res
 	if err != nil {
 		return nil, err
 	}
-	job, err := r.updateManager.Start(ctx, check, restart, r.restartRunner)
+	entryFn := r.runtimeEntry
+	if entryFn == nil {
+		entryFn = processRuntimeCommand
+	}
+	entry := entryFn()
+	if strings.TrimSpace(entry.Executable) == "" || strings.TrimSpace(entry.Launcher) == "" {
+		return nil, &updatepkg.JobError{
+			Message: "GUI update requires an exact npm package with a stable Node launcher; run the npm install command shown by update check",
+			Status:  http.StatusConflict, Code: "package_update_requires_node_launcher",
+		}
+	}
+	worker := r.startWorker
+	if worker == nil {
+		worker = startExternalGUIUpdateWorker
+	}
+	job, err := r.updateManager.StartExternal(check, restart, func(job updatepkg.Job) error {
+		return worker(entry, job, channel, restart)
+	})
 	if err != nil {
 		return nil, err
 	}

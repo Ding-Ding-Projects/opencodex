@@ -64,6 +64,33 @@ func TestRestartPlanningAndHealthConfirmation(t *testing.T) {
 	}
 }
 
+func TestCorrelateRestartIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		oldPID   int
+		expected string
+		identity RestartIdentity
+		ok       bool
+		reason   string
+	}{
+		{name: "changed pid exact version", oldPID: 11, expected: "2.7.42", identity: RestartIdentity{PID: 22, Version: "2.7.42"}, ok: true},
+		{name: "changed pid omitted version", oldPID: 11, expected: "2.7.42", identity: RestartIdentity{PID: 22}, ok: true},
+		{name: "stale pid", oldPID: 11, expected: "2.7.42", identity: RestartIdentity{PID: 11, Version: "2.7.42"}, reason: "pre-update PID"},
+		{name: "wrong new version", oldPID: 11, expected: "2.7.42", identity: RestartIdentity{PID: 22, Version: "2.7.41"}, reason: "does not match"},
+		{name: "version substitutes omitted pid", oldPID: 11, expected: "2.7.42", identity: RestartIdentity{Version: "2.7.42"}, ok: true},
+		{name: "no capture exact version", expected: "2.7.42", identity: RestartIdentity{PID: 22, Version: "2.7.42"}, ok: true},
+		{name: "no capture no version", expected: "2.7.42", identity: RestartIdentity{PID: 22}, reason: "no pre-update PID"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := CorrelateRestartIdentity(test.oldPID, test.expected, test.identity)
+			if result.OK != test.ok || (test.reason != "" && !strings.Contains(result.Reason, test.reason)) {
+				t.Fatalf("evidence = %#v", result)
+			}
+		})
+	}
+}
+
 func TestReadPackageVersionAndHistoryRestore(t *testing.T) {
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "package.json")

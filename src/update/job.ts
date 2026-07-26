@@ -165,6 +165,17 @@ function updateJob(job: UpdateJobState, patch: Partial<UpdateJobState>, logLine?
   return next;
 }
 
+/** Cross-runtime contract seam: exercises the real atomic TS job writer from Go tests. */
+export function transitionUpdateJobForTests(
+  jobId: string,
+  patch: Partial<UpdateJobState>,
+  logLine?: string,
+): UpdateJobState {
+  const job = readUpdateJob(jobId);
+  if (!job) throw new Error(`update job not found: ${jobId}`);
+  return updateJob(job, patch, logLine);
+}
+
 export function updateExecutionCommand(
   installer: Installer,
   channel: Channel,
