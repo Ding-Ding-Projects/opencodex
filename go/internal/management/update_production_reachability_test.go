@@ -128,13 +128,14 @@ func TestProductionManagementUpdateActivatesLifecyclePolicies(t *testing.T) {
 			return nil, nil
 		})
 		api := productionUpdateAPI(t, manager)
-		_ = startProductionUpdate(t, api, false)
+		id := startProductionUpdate(t, api, false)
 		<-started
 		conflict := serveManagement(api, http.MethodPost, "/api/update/run", `{"tag":"latest","restart":false}`)
 		close(release)
 		if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), "update_already_running") {
 			t.Fatalf("conflict = %d %s", conflict.Code, conflict.Body.String())
 		}
+		_ = awaitProductionUpdate(t, api, id)
 	})
 
 	t.Run("anomalous integrity", func(t *testing.T) {
