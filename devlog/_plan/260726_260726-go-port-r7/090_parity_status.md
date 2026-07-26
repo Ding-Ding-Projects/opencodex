@@ -9,7 +9,7 @@ Primary harness: `go/test/parity/`
 The Go runtime is byte-locked to the Bun TypeScript runtime across the core
 Responses, Chat Completions, and Messages scenarios covered below. This is a
 bounded claim, not whole-product byte parity. The Round 9 known-diff set reached
-zero. Rounds 10–12 deliberately expanded the oracle beyond those paths and
+zero. Rounds 10–13 deliberately expanded the oracle beyond those paths and
 found new validation, transport, config, logging, CLI, and native-shim
 differences. Those residuals are explicitly enumerated; none is hidden by
 normalization.
@@ -24,9 +24,12 @@ process and malformed-input boundary.
 |---|---|
 | `/v1/responses` SSE | complete, mid-stream error, cancellation, tool call, tool result and final answer, visible reasoning, malformed SSE, UTF-8 byte-split Korean/CJK/emoji, irregular jitter, 12 MiB output |
 | `/v1/messages` SSE | complete, mid-stream overloaded error, cancellation, event order, UUID shape |
+| `/v1/responses` WebSocket | six warmup turns on one connection and a generated eight-event terminal stream |
 | HTTP error matrix | Responses and Messages: 400, 401, 403, 404, 429, 500, 502, 503 |
 | Request transforms | multi-turn messages, image input, structured output, function-call output |
-| Management API | `/api/system`, `/api/system/runtime`, `/api/config`, `/api/providers` for the baseline config |
+| Management API | baseline reads; strict selected-model mutation, custom-model create/update/delete, and provider deletion |
+| Long sessions | eight-turn Claude Messages stream and four-turn native Codex shim path retain routing/config state |
+| Update planning | Bun/npm channel, immutable install command, proxy restart, and service restart plans |
 | Concurrency | 12 simultaneous uniquely tagged streams; no event or payload interleaving |
 | Connection reuse | sequential requests reuse idle upstream keep-alive connections |
 | Config loading | valid defaults and unknown top-level/provider fields |
@@ -62,8 +65,13 @@ Owner fixes promoted the unknown-command stdout/stderr contract and the
 `GET /health` 404 body to strict assertions. Socket-cut SSE status, headers,
 event order, and error bytes now match exactly. Invalid HTTP chunk encoding also
 matches in status, headers, and Bun-compatible parser error bytes. Both are
-strict assertions. Request-log response bytes now match as well. The known
-runtime set is therefore one response body: wrong-field config repair.
+strict assertions. Request-log response bytes now match as well. Round 13 first
+detected nine management mutation differences; owner fixes landed during the
+same round and all nine were promoted to strict. The two Responses WebSocket
+differences were also fixed and promoted to strict at the Round 14 boundary.
+The fixable known runtime set is now one: wrong-field config repair.
+Status and body dimensions are tracked independently, so a disappearing
+difference cannot silently pass as a changed known-diff shape.
 
 ### Intentional native-distribution difference
 
@@ -95,11 +103,11 @@ test; it is intentionally excluded from ordinary CI.
 There are two useful coverage numbers. They are scenario-family estimates, not
 Go statement coverage:
 
-- **Core HTTP data plane: about 85%.** The harness covers the high-frequency
+- **Core HTTP data plane: about 88%.** The harness covers the high-frequency
   Responses, Messages, and Chat request/stream/error families, including tools,
   reasoning, images, structured output, Unicode splits, cancellation,
   concurrency, failover, keep-alive, and large bodies.
-- **Whole user-facing product: about 45%.** This weighted inventory includes
+- **Whole user-facing product: about 53%.** This weighted inventory includes
   management, auth, lifecycle, platform, and sidecar features that have little
   or no differential coverage. It is the appropriate denominator for a claim
   that Go can replace the complete TypeScript application.
@@ -111,31 +119,33 @@ Go statement coverage:
 | Chat Completions | 8% | partial | production route and error paths; fewer advanced transform fixtures than Responses |
 | Routing, pools, combos, quota failover | 10% | partial | synthetic multi-account rotation/cooldown; no real provider rate-limit service |
 | Provider-native transports | 10% | partial | adapter selection and synthetic wire fixtures; no live auth/provider contract |
-| Management API | 10% | partial | auth boundary and four baseline GET shapes; most mutating routes are untested differentially |
+| Management API | 10% | substantial | provider/model/key mutation sequence, account-key switch, auth negative, persistence within one runtime session; OAuth/Codex account mutations remain |
 | Config and migrations | 7% | partial | defaults, unknown fields, wrong type; no cross-version/corrupt-disk migration matrix |
-| CLI and service lifecycle | 5% | partial | built binary, unknown command, startup; no installer/service-manager matrix |
-| Codex shim/inject integration | 5% | partial | proxy path and Unix shim bytes; no real Codex CLI/App session matrix |
+| CLI and service lifecycle | 5% | partial | built binary, unknown command, startup, and update/restart dry-run plans; no OS service-manager execution matrix |
+| Codex shim/inject integration | 5% | substantial | injected config plus four sequential shim-routed turns and backup restoration; no real Codex App session |
 | OAuth, Codex auth, account persistence | 7% | minimal | auth boundary only; login/device flow and persistence mutations are absent |
-| Live WebSocket/realtime | 5% | none | `/v1/live` and binary/reconnect behavior are not in the differential harness |
+| Live WebSocket/realtime | 5% | partial | Responses WS six-turn connection and generated stream; Go live sideband text/binary byte relay; reconnect/backpressure and TS live relay fixture remain |
 | Platform, tray, update, storage, search, vision | 8% | minimal | package tests may exist, but no TS-vs-Go production-path differential lock |
 
-The weighted 45% is deliberately conservative and approximate. It must not be
+The weighted 53% is deliberately conservative and approximate. It must not be
 reported as branch or line coverage.
 
 ### Explicitly unobserved boundaries
 
 - real Anthropic, Google, Kiro, Cursor, Mimo, and OpenAI services, credentials,
   device-login flows, and provider-specific retry headers;
-- live/realtime WebSocket frames, reconnects, binary payloads, and backpressure;
-- management mutations for OAuth/accounts, Codex auth, config, debug, update,
-  storage, startup actions, and log deletion;
+- live/realtime reconnect, backpressure, close-code, and long-duration behavior;
+  TS only accepts canonical OpenAI live providers, so a local frame-level
+  differential fixture cannot be created without external networking or a test seam;
+- management mutations for OAuth accounts, Codex auth accounts, config/debug,
+  update execution, storage, startup actions, and log deletion;
 - cross-version config/database migration, corrupt files, permissions, disk
   exhaustion, crash/restart recovery, and concurrent writers;
 - Windows/macOS/Linux installers, service managers, tray applications, and
   platform secret stores;
 - TLS/ALPN HTTP/2, HTTP/3, reverse proxies, compression, request smuggling, and
   protocol fuzzing;
-- real Codex CLI/App/SDK and Claude Code clients over multi-hour sessions;
+- real Codex App/SDK and Claude Code processes over multi-hour sessions;
 - external search/vision sidecars and real tool-service failures; and
 - non-Unix shim bytes, log rotation/sinks, and end-to-end redaction guarantees.
 
@@ -156,8 +166,13 @@ The main remaining flake risk is Bun's oversized-header transport choice; CI
 asserts only its stable rejection semantics and the opt-in characterization
 records the unstable distribution.
 
-On the current workstation the complete default parity package finished in
-about 9.5 seconds (excluding the opt-in workloads), comfortably inside the
+The concurrent-stream keep-alive check now establishes one known idle upstream
+connection per runtime before measuring reuse. This removes its former race with
+post-concurrency pool trimming; 20 consecutive focused runs passed without a
+retry or timing sleep.
+
+On the current workstation the Round 13 complete default parity package finishes
+in about 15–19 seconds (excluding the opt-in workloads), comfortably inside the
 repository's 300-second gate.
 
 ## Performance measurements

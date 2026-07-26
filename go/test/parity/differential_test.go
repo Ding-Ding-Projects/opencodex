@@ -23,11 +23,15 @@ type tsProxyProcess struct {
 	stderr  *lockedBuffer
 }
 
-func startTypeScriptProxy(t *testing.T, config map[string]any) *tsProxyProcess {
-	return startTypeScriptProxyWithLookup(t, config, exec.LookPath)
+func startTypeScriptProxy(t *testing.T, config map[string]any, extraEnvironment ...string) *tsProxyProcess {
+	return startTypeScriptProxyWithEnvironmentLookup(t, config, exec.LookPath, extraEnvironment...)
 }
 
 func startTypeScriptProxyWithLookup(t *testing.T, config map[string]any, lookup func(string) (string, error)) *tsProxyProcess {
+	return startTypeScriptProxyWithEnvironmentLookup(t, config, lookup)
+}
+
+func startTypeScriptProxyWithEnvironmentLookup(t *testing.T, config map[string]any, lookup func(string) (string, error), extraEnvironment ...string) *tsProxyProcess {
 	t.Helper()
 	bun, err := lookup("bun")
 	if err != nil {
@@ -72,6 +76,7 @@ await new Promise(() => {});
 	command.Env = append(filteredEnvironment(os.Environ(), "HOME", "OPENCODEX_HOME", "CODEX_HOME", "OPENCODEX_API_AUTH_TOKEN", "OCX_API_TOKEN_FILE", "PARITY_TS_PORT"),
 		"HOME="+home, "OPENCODEX_HOME="+home, "CODEX_HOME="+filepath.Join(home, "codex"),
 		fmt.Sprintf("PARITY_TS_PORT=%d", port), "CI=1")
+	command.Env = append(command.Env, extraEnvironment...)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

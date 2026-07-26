@@ -321,16 +321,21 @@ func TestTypeScriptAndGoConcurrentStreamsAndKeepAlive(t *testing.T) {
 			t.Fatalf("%s stream was interleaved with another request", captured.name)
 		}
 	}
-	connectionsBeforeReuse := upstream.connectionCount()
 	reuseBody := []byte(`{"model":"differential/final","input":"reuse","stream":true}`)
-	for range 2 {
-		if result := captureRawRequest(goProxy.baseURL+"/v1/responses", reuseBody, nil); result.err != nil || result.status != http.StatusOK {
-			t.Fatalf("Go keep-alive probe failed: %+v", result)
-		}
-		if result := captureRawRequest(tsProxy.baseURL+"/v1/responses", reuseBody, nil); result.err != nil || result.status != http.StatusOK {
-			t.Fatalf("TS keep-alive probe failed: %+v", result)
+	probe := func(runtime, baseURL string) {
+		t.Helper()
+		if result := captureRawRequest(baseURL+"/v1/responses", reuseBody, nil); result.err != nil || result.status != http.StatusOK {
+			t.Fatalf("%s keep-alive probe failed: %+v", runtime, result)
 		}
 	}
+	// Concurrent completion can leave each runtime with zero retained idle
+	// connections while its pool asynchronously trims excess sockets. Establish
+	// one known idle connection per runtime before measuring reuse.
+	probe("Go warmup", goProxy.baseURL)
+	probe("TS warmup", tsProxy.baseURL)
+	connectionsBeforeReuse := upstream.connectionCount()
+	probe("Go reuse", goProxy.baseURL)
+	probe("TS reuse", tsProxy.baseURL)
 	if count := upstream.connectionCount(); count != connectionsBeforeReuse {
 		t.Fatalf("sequential requests did not reuse idle upstream connections: before=%d after=%d", connectionsBeforeReuse, count)
 	}

@@ -1,0 +1,174 @@
+package parity_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+const managementParityToken = "synthetic-management-token"
+
+var managementAddedAtPattern = regexp.MustCompile(`"addedAt":\d+`)
+
+func TestTypeScriptAndGoManagementMutationSequence(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/models") {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"data":[{"id":"base-model"}]}`))
+			return
+		}
+		writeChatSuccess(writer, "base-model", "management parity")
+	}))
+	t.Cleanup(upstream.Close)
+	config := differentialConfig(upstream.URL, []string{"base-model"})
+	config["hostname"] = "0.0.0.0"
+	config["authToken"] = managementParityToken
+	config["apiKeys"] = []any{map[string]any{
+		"id": "parity-management", "name": "Parity management", "key": managementParityToken, "createdAt": "2026-07-26T00:00:00.000Z",
+	}}
+	authEnvironment := "OPENCODEX_API_AUTH_TOKEN=" + managementParityToken
+	tsProxy := startTypeScriptProxy(t, config, authEnvironment)
+	goProxy := startProxyWithConfig(t, config, authEnvironment)
+
+	providerBody := map[string]any{"name": "gui-extra", "provider": map[string]any{
+		"adapter": "openai-chat", "baseUrl": upstream.URL + "/v1", "allowPrivateNetwork": true,
+		"apiKey": "synthetic-provider-secret", "authMode": "key", "defaultModel": "base-model", "models": []string{"base-model"},
+	}}
+	compareRuntimeBytes(t, "management-mutation/unauthorized-provider-create",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodPost, "/api/providers", "", providerBody),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodPost, "/api/providers", "", providerBody), true)
+
+	compareRuntimeBytes(t, "management-mutation/provider-create",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodPost, "/api/providers", managementParityToken, providerBody),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodPost, "/api/providers", managementParityToken, providerBody), true)
+	compareRuntimeBytes(t, "management-mutation/provider-patch",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodPatch, "/api/providers?name=gui-extra", managementParityToken, map[string]any{"disabled": true}),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodPatch, "/api/providers?name=gui-extra", managementParityToken, map[string]any{"disabled": true}), true)
+
+	compareRuntimeBytes(t, "management-mutation/selected-models",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodPut, "/api/selected-models", managementParityToken, map[string]any{"provider": "differential", "models": []string{"base-model", "base-model"}}),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodPut, "/api/selected-models", managementParityToken, map[string]any{"provider": "differential", "models": []string{"base-model", "base-model"}}), true)
+	for _, enabled := range []bool{false, true} {
+		scenario := "management-mutation/model-visibility-disable"
+		if enabled {
+			scenario = "management-mutation/model-visibility-enable"
+		}
+		body := map[string]any{"scope": "models", "provider": "differential", "enabled": enabled, "targets": []any{map[string]any{"id": "base-model"}}}
+		compareRuntimeBytes(t, scenario,
+			captureManagementRequest(t, goProxy.baseURL, http.MethodPut, "/api/model-visibility", managementParityToken, body),
+			captureManagementRequest(t, tsProxy.baseURL, http.MethodPut, "/api/model-visibility", managementParityToken, body), true)
+	}
+
+	goCustom := captureManagementRequest(t, goProxy.baseURL, http.MethodPost, "/api/custom-models", managementParityToken,
+		map[string]any{"provider": "differential", "modelId": "gui-model", "displayName": "GUI Model", "contextWindow": 8192, "inputModalities": []string{"text", "image"}})
+	tsCustom := captureManagementRequest(t, tsProxy.baseURL, http.MethodPost, "/api/custom-models", managementParityToken,
+		map[string]any{"provider": "differential", "modelId": "gui-model", "displayName": "GUI Model", "contextWindow": 8192, "inputModalities": []string{"text", "image"}})
+	goCustomID, tsCustomID := responseStringField(t, goCustom, "id"), responseStringField(t, tsCustom, "id")
+	goAddedAt, tsAddedAt := responseStringField(t, goCustom, "addedAt"), responseStringField(t, tsCustom, "addedAt")
+	compareRuntimeWithExactIDs(t, "management-mutation/custom-model-create", goCustom, tsCustom, goCustomID+"\x00"+goAddedAt, tsCustomID+"\x00"+tsAddedAt)
+	compareRuntimeWithExactIDs(t, "management-mutation/custom-model-update",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodPut, "/api/custom-models/"+goCustomID, managementParityToken, map[string]any{"displayName": "GUI Model 2", "contextWindow": 16384}),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodPut, "/api/custom-models/"+tsCustomID, managementParityToken, map[string]any{"displayName": "GUI Model 2", "contextWindow": 16384}),
+		goCustomID+"\x00"+goAddedAt, tsCustomID+"\x00"+tsAddedAt)
+	compareRuntimeWithExactIDs(t, "management-mutation/custom-model-delete",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodDelete, "/api/custom-models/"+goCustomID, managementParityToken, nil),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodDelete, "/api/custom-models/"+tsCustomID, managementParityToken, nil),
+		goCustomID, tsCustomID)
+
+	goFirstKey := captureManagementRequest(t, goProxy.baseURL, http.MethodPost, "/api/providers/keys", managementParityToken, map[string]any{"name": "differential", "key": "synthetic-key-one", "label": "first"})
+	tsFirstKey := captureManagementRequest(t, tsProxy.baseURL, http.MethodPost, "/api/providers/keys", managementParityToken, map[string]any{"name": "differential", "key": "synthetic-key-one", "label": "first"})
+	assertSecretAbsent(t, goFirstKey, "synthetic-key-one")
+	assertSecretAbsent(t, tsFirstKey, "synthetic-key-one")
+	goFirstID, tsFirstID := responseStringField(t, goFirstKey, "id"), responseStringField(t, tsFirstKey, "id")
+	compareRuntimeWithExactIDs(t, "management-mutation/key-add-first", goFirstKey, tsFirstKey, goFirstID, tsFirstID)
+
+	goSecondKey := captureManagementRequest(t, goProxy.baseURL, http.MethodPost, "/api/providers/keys", managementParityToken, map[string]any{"name": "differential", "key": "synthetic-key-two", "label": "second"})
+	tsSecondKey := captureManagementRequest(t, tsProxy.baseURL, http.MethodPost, "/api/providers/keys", managementParityToken, map[string]any{"name": "differential", "key": "synthetic-key-two", "label": "second"})
+	assertSecretAbsent(t, goSecondKey, "synthetic-key-two")
+	assertSecretAbsent(t, tsSecondKey, "synthetic-key-two")
+	goSecondID, tsSecondID := responseStringField(t, goSecondKey, "id"), responseStringField(t, tsSecondKey, "id")
+	compareRuntimeWithExactIDs(t, "management-mutation/key-add-second", goSecondKey, tsSecondKey, goSecondID, tsSecondID)
+
+	compareRuntimeWithExactIDs(t, "management-mutation/key-switch-active",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodPut, "/api/providers/keys/active", managementParityToken, map[string]any{"name": "differential", "id": goFirstID}),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodPut, "/api/providers/keys/active", managementParityToken, map[string]any{"name": "differential", "id": tsFirstID}),
+		goFirstID, tsFirstID)
+	goKeyList := captureManagementRequest(t, goProxy.baseURL, http.MethodGet, "/api/providers/keys?name=differential", managementParityToken, nil)
+	tsKeyList := captureManagementRequest(t, tsProxy.baseURL, http.MethodGet, "/api/providers/keys?name=differential", managementParityToken, nil)
+	goKeyList.body = managementAddedAtPattern.ReplaceAll(goKeyList.body, []byte(`"addedAt":0`))
+	tsKeyList.body = managementAddedAtPattern.ReplaceAll(tsKeyList.body, []byte(`"addedAt":0`))
+	compareRuntimeWithExactIDs(t, "management-mutation/key-list", goKeyList, tsKeyList,
+		goFirstID+"\x00"+goSecondID, tsFirstID+"\x00"+tsSecondID)
+
+	compareRuntimeBytes(t, "management-mutation/provider-delete",
+		captureManagementRequest(t, goProxy.baseURL, http.MethodDelete, "/api/providers?name=gui-extra", managementParityToken, nil),
+		captureManagementRequest(t, tsProxy.baseURL, http.MethodDelete, "/api/providers?name=gui-extra", managementParityToken, nil), true)
+}
+
+func captureManagementRequest(t *testing.T, baseURL, method, path, token string, body any) runtimeResponse {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequest(method, baseURL+path, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return runtimeResponse{err: err}
+	}
+	defer response.Body.Close()
+	payload, readErr := io.ReadAll(response.Body)
+	return runtimeResponse{status: response.StatusCode, header: response.Header.Clone(), body: payload, err: readErr}
+}
+
+func responseStringField(t *testing.T, response runtimeResponse, field string) string {
+	t.Helper()
+	if response.err != nil {
+		t.Fatalf("management response failed before %s extraction: %v", field, response.err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(response.body, &value); err != nil {
+		t.Fatalf("decode management response for %s: status=%d", field, response.status)
+	}
+	text, _ := value[field].(string)
+	if text == "" {
+		t.Fatalf("management response omitted %s: status=%d", field, response.status)
+	}
+	return text
+}
+
+func compareRuntimeWithExactIDs(t *testing.T, scenario string, goResult, tsResult runtimeResponse, goIDs, tsIDs string) {
+	t.Helper()
+	for _, id := range strings.Split(goIDs, "\x00") {
+		goResult.body = bytes.ReplaceAll(goResult.body, []byte(id), []byte("dynamic_management_id"))
+	}
+	for _, id := range strings.Split(tsIDs, "\x00") {
+		tsResult.body = bytes.ReplaceAll(tsResult.body, []byte(id), []byte("dynamic_management_id"))
+	}
+	compareRuntimeBytes(t, scenario, goResult, tsResult, true)
+}
+
+func assertSecretAbsent(t *testing.T, response runtimeResponse, secret string) {
+	t.Helper()
+	if bytes.Contains(response.body, []byte(secret)) {
+		t.Fatal("management response exposed a submitted provider key")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -138,6 +139,9 @@ func startProxyWithSetup(t *testing.T, config map[string]any, setup func(string)
 	}()
 	select {
 	case address := <-listening:
+		if host, port, splitErr := net.SplitHostPort(address); splitErr == nil && (host == "0.0.0.0" || host == "::") {
+			address = net.JoinHostPort("127.0.0.1", port)
+		}
 		auth, _ := config["authToken"].(string)
 		process := &proxyProcess{baseURL: "http://" + address, home: home, command: command, done: done, stderr: stderr, auth: auth}
 		t.Cleanup(func() { process.stop(t) })
