@@ -249,8 +249,16 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 		keys := safeProxyAPIKeys(a.config.APIKeys)
 		endpoints := apiAccessEndpoints(a.config, request)
 		a.mu.RUnlock()
-		endpoints["keys"] = keys
-		writeJSON(w, http.StatusOK, endpoints)
+		writeJSON(w, http.StatusOK, orderedJSONObject{
+			{name: "keys", value: keys},
+			{name: "baseUrl", value: endpoints["baseUrl"]},
+			{name: "responsesEndpoint", value: endpoints["responsesEndpoint"]},
+			{name: "chatCompletionsEndpoint", value: endpoints["chatCompletionsEndpoint"]},
+			{name: "messagesEndpoint", value: endpoints["messagesEndpoint"]},
+			{name: "modelsEndpoint", value: endpoints["modelsEndpoint"]},
+			{name: "claudeCodeEnabled", value: endpoints["claudeCodeEnabled"]},
+			{name: "endpoint", value: endpoints["endpoint"]},
+		})
 	case http.MethodPost:
 		var body struct{ Name, Key string }
 		if !decodeJSON(w, request, &body) {
@@ -348,10 +356,20 @@ func safeProviderKeyInfos(infos []config.APIKeyInfo) []orderedJSONObject {
 	return result
 }
 
-func safeProxyAPIKeys(keys []config.ProxyAPIKey) []map[string]any {
-	result := make([]map[string]any, 0, len(keys))
+func safeProxyAPIKeys(keys []config.ProxyAPIKey) []orderedJSONObject {
+	result := make([]orderedJSONObject, 0, len(keys))
 	for _, key := range keys {
-		result = append(result, map[string]any{"id": key.ID, "name": key.Name, "createdAt": key.CreatedAt})
+		prefix := key.Key
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		prefix += "..."
+		result = append(result, orderedJSONObject{
+			{name: "id", value: key.ID},
+			{name: "name", value: key.Name},
+			{name: "prefix", value: prefix},
+			{name: "createdAt", value: key.CreatedAt},
+		})
 	}
 	return result
 }

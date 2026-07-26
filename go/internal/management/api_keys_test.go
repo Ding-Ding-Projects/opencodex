@@ -24,8 +24,11 @@ func TestProxyAPIKeysNeverReturnSecretsAndNotifyAdmission(t *testing.T) {
 		t.Fatalf("created=%d %s notified=%d", created.Code, created.Body.String(), len(notified))
 	}
 	listed := serveManagement(api, http.MethodGet, "/api/keys", "")
-	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secret) || strings.Contains(listed.Body.String(), `"key"`) {
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secret) || strings.Contains(listed.Body.String(), `"key"`) || !strings.Contains(listed.Body.String(), `"prefix":"ocx_clie..."`) {
 		t.Fatalf("listed=%d %s", listed.Code, listed.Body.String())
+	}
+	if !strings.HasPrefix(listed.Body.String(), `{"keys":[{"id":`) || !strings.Contains(listed.Body.String(), `"createdAt":"`) {
+		t.Fatalf("API key DTO field order differs from TypeScript: %s", listed.Body.String())
 	}
 	if refreshed.Load() != 1 {
 		t.Fatalf("catalog refresh calls=%d", refreshed.Load())
@@ -81,5 +84,20 @@ func TestKeyProviderCatalogAndAPIAccessContainNoCredentials(t *testing.T) {
 	api.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"baseUrl":"http://192.168.1.50:10100/v1"`) {
 		t.Fatalf("api access=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAPIAccessWildcardBindPrefersOriginOverHost(t *testing.T) {
+	cfg := config.Default()
+	cfg.Host = "0.0.0.0"
+	cfg.Port = 10100
+	api := newParityAPI(t, &cfg)
+	request := httptest.NewRequest(http.MethodGet, "http://fallback.example.test:8888/api/keys", nil)
+	request.Host = "fallback.example.test:8888"
+	request.Header.Set("Origin", "https://origin.example.test:8443")
+	response := httptest.NewRecorder()
+	api.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"baseUrl":"https://origin.example.test:8443/v1"`) || strings.Contains(response.Body.String(), "fallback.example.test") {
+		t.Fatalf("origin priority response=%d %s", response.Code, response.Body.String())
 	}
 }

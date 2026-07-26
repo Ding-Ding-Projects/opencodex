@@ -57,6 +57,8 @@ type ResponsesCoreConfig struct {
 	PrepareImageRetry func(*types.NormalizedRequest) error
 	RequestLogs       *RequestLogStore
 	StreamMode        string
+	ResponseState     *ResponseStateStore
+	SubagentFallback  *responseSubagentFallback
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -81,11 +83,16 @@ func NewResponsesCore(config ResponsesCoreConfig) *ResponsesCore {
 }
 
 type parsedResponsesRequest struct {
-	RequestedModel string
-	Normalized     *types.NormalizedRequest
+	RequestedModel      string
+	Normalized          *types.NormalizedRequest
+	UnreadableEncrypted bool
 }
 
 func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit int64) (*parsedResponsesRequest, error) {
+	return parseResponsesRequestWithState(w, request, limit, nil)
+}
+
+func parseResponsesRequestWithState(w http.ResponseWriter, request *http.Request, limit int64, state *ResponseStateStore) (*parsedResponsesRequest, error) {
 	if request.Body == nil {
 		return nil, fmt.Errorf("request body is required")
 	}
@@ -96,6 +103,13 @@ func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit i
 	var body map[string]any
 	if json.Unmarshal(raw, &body) != nil {
 		return nil, fmt.Errorf("Invalid JSON body")
+	}
+	replayPrefix := 0
+	var providerState types.ProviderContinuationState
+	previousExpanded := false
+	if state != nil {
+		body, replayPrefix, providerState, previousExpanded = state.Expand(body)
+		raw, _ = json.Marshal(body)
 	}
 	modelValue, exists := body["model"]
 	model, modelOK := modelValue.(string)
@@ -121,10 +135,9 @@ func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit i
 			return nil, zodTypeError("stream", "boolean", javascriptType(stream))
 		}
 	}
+	unreadableEncrypted := false
 	if input, ok := body["input"].([]any); ok {
-		if HasUnreadableEncryptedAgentTask(input) {
-			return nil, fmt.Errorf("encrypted agent task has no readable task text")
-		}
+		unreadableEncrypted = HasUnreadableEncryptedAgentTask(input)
 		SanitizeEncryptedContentSlice(&input)
 		body["input"] = input
 		raw, _ = json.Marshal(body)
@@ -134,7 +147,13 @@ func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit i
 		return nil, err
 	}
 	normalized.ClientThreadID = strings.TrimSpace(request.Header.Get("X-Codex-Parent-Thread-Id"))
-	return &parsedResponsesRequest{RequestedModel: model, Normalized: normalized}, nil
+	normalized.ReplayPrefixLen = replayPrefix
+	normalized.PreviousExpanded = previousExpanded
+	normalized.ProviderState = providerState
+	if cursor := providerState["cursor"]; cursor != nil {
+		normalized.CursorConversation, _ = cursor["conversationId"].(string)
+	}
+	return &parsedResponsesRequest{RequestedModel: model, Normalized: normalized, UnreadableEncrypted: unreadableEncrypted}, nil
 }
 
 func javascriptType(value any) string {
@@ -173,7 +192,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		writeJSONError(w, http.StatusServiceUnavailable, "server_not_configured", "routing integration is not configured")
 		return
 	}
-	parsed, err := parseResponsesRequest(w, request, core.config.BodyLimit)
+	parsed, err := parseResponsesRequestWithState(w, request, core.config.BodyLimit, core.config.ResponseState)
 	if err != nil {
 		status := http.StatusBadRequest
 		var tooLarge *http.MaxBytesError
@@ -184,6 +203,10 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		return
 	}
 	ApplyShadowCallIntercept(parsed.Normalized, core.config.ShadowCall)
+	threadSpawn := IsThreadSpawnRequest(request.Header)
+	if threadSpawn && core.config.SubagentFallback != nil {
+		core.config.SubagentFallback.Prime(request.Context())
+	}
 	router := ModelRouter{Registry: core.config.Registry, Combos: core.config.Combos}
 	resolved, pick, err := router.ResolveRequest(parsed.Normalized)
 	if err != nil {
@@ -193,6 +216,26 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		} else {
 			writeJSONError(w, http.StatusBadRequest, "model_not_found", err.Error())
 		}
+		return
+	}
+	var attempt *subagentFallbackAttempt
+	if threadSpawn && pick == nil && core.config.SubagentFallback != nil {
+		attempt = &subagentFallbackAttempt{model: parsed.Normalized.ModelID}
+		selection := core.config.SubagentFallback.Select(parsed.Normalized.ModelID, parsed.UnreadableEncrypted)
+		attempt.model = selection.Model
+		if selection.Rewritten {
+			parsed.RequestedModel = selection.Model
+			parsed.Normalized.ModelID = selection.Model
+			applyResolvedResponsesModel(parsed.Normalized, selection.Model)
+			resolved, err = router.Resolve(selection.Model)
+			if err != nil {
+				writeJSONError(w, http.StatusNotFound, "model_not_found", err.Error())
+				return
+			}
+		}
+	}
+	if parsed.UnreadableEncrypted && (core.config.SubagentFallback == nil || !core.config.SubagentFallback.canonical(resolved)) {
+		writeJSONError(w, http.StatusBadRequest, "unreadable_encrypted_agent_task", "Routed V2 worker task is encrypted for the native ChatGPT backend and cannot be read by the selected provider. Use plaintext V2 agent-message delivery or select a native ChatGPT model.")
 		return
 	}
 	applyResolvedResponsesModel(parsed.Normalized, resolved.Model)
@@ -209,7 +252,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	defer cancel(nil)
 	started := time.Now()
 	logSession := newResponsesLogSession(core.config.RequestLogs, started, parsed.RequestedModel, resolved, core.providerAdapter(resolved))
-	adapter, response, auth, resolved, pick, err := core.forward(ctx, request.Header, parsed.Normalized, resolved, pick, logSession)
+	adapter, response, auth, resolved, pick, err := core.forward(ctx, request.Header, parsed.Normalized, resolved, pick, logSession, attempt)
 	if err != nil {
 		status := http.StatusBadGateway
 		var failure *forwardError
@@ -228,10 +271,10 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		record.AccountID = auth.AccountID
 	}
 	if parsed.Normalized.Stream {
-		core.stream(ctx, cancel, w, request.Header, parsed.Normalized, resolved, pick, parsed.RequestedModel, adapter, response, auth, record, logSession)
+		core.stream(ctx, cancel, w, request.Header, parsed.Normalized, resolved, pick, parsed.RequestedModel, adapter, response, auth, record, logSession, attempt)
 		return
 	}
-	core.buffered(ctx, w, parsed.RequestedModel, adapter, response, auth, record, logSession)
+	core.buffered(ctx, w, parsed.Normalized, resolved, parsed.RequestedModel, adapter, response, auth, record, logSession, attempt)
 }
 
 func (core *ResponsesCore) providerAdapter(resolved *types.ResolvedModel) string {
@@ -302,7 +345,7 @@ type forwardError struct {
 
 func (e *forwardError) Error() string { return e.err.Error() }
 
-func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, logSession *responsesLogSession) (types.Adapter, *http.Response, *types.AuthContext, *types.ResolvedModel, *combos.Pick, error) {
+func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, logSession *responsesLogSession, attempt *subagentFallbackAttempt) (types.Adapter, *http.Response, *types.AuthContext, *types.ResolvedModel, *combos.Pick, error) {
 	var overrideKey string
 	imageRetryAttempted := false
 	for {
@@ -322,16 +365,22 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		if overrideKey != "" {
 			auth = authWithAPIKey(auth, overrideKey)
 		}
+		if auth != nil && auth.AccountID != "" && attempt != nil {
+			attempt.accountID = auth.AccountID
+		}
 		transport, err := core.config.Registry.ResolveTransport(resolved.Provider, auth)
 		if err != nil {
+			core.noteSubagentFailure(attempt, err.Error())
 			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "transport_error", err: err}
 		}
 		adapter, err := core.config.ResolveAdapter(resolved, transport, auth, incoming.Clone())
 		if err != nil {
+			core.noteSubagentFailure(attempt, err.Error())
 			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "adapter_error", err: err}
 		}
 		upstream, err := adapter.BuildRequest(ctx, normalized)
 		if err != nil {
+			core.noteSubagentFailure(attempt, err.Error())
 			status, kind := classifyAdapterBuildFailure(err)
 			return nil, nil, auth, resolved, pick, &forwardError{status: status, kind: kind, err: err}
 		}
@@ -342,6 +391,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		response, err := FetchWithHeaderTimeout(ctx, core.config.Client, upstream, 0, normalized.Stream)
 		if err != nil {
+			core.noteSubagentFailure(attempt, err.Error())
 			core.recordAuthOutcome(auth, types.OutcomeProviderError, 0, err.Error(), "")
 			if next, ok := core.nextCombo(normalized, pick, http.StatusBadGateway, "upstream_server_error", err.Error(), ""); ok {
 				pick, resolved = next, next.Resolved
@@ -375,6 +425,10 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			message = message[:500]
 		}
 		message = ocxlib.RedactSecretString(message)
+		failureMessage := message
+		if response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusPaymentRequired {
+			failureMessage = fmt.Sprintf("quota exhausted (%d): %s", response.StatusCode, message)
+		}
 		core.recordAuthOutcome(auth, outcomeForHTTP(response.StatusCode), response.StatusCode, message, response.Header.Get("Retry-After"))
 		if response.StatusCode == http.StatusTooManyRequests && core.config.RotateAPIKeyOn429 != nil {
 			attempted := ""
@@ -401,6 +455,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			pick, resolved = next, next.Resolved
 			continue
 		}
+		core.noteSubagentFailure(attempt, failureMessage)
 		if strings.TrimSpace(message) == "" {
 			message = http.StatusText(response.StatusCode)
 		}
@@ -457,14 +512,21 @@ func (core *ResponsesCore) nextCombo(request *types.NormalizedRequest, pick *com
 	return next, err == nil
 }
 
-func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession) {
+func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession, fallbackAttempt *subagentFallbackAttempt) {
 	defer response.Body.Close()
 	adapterName := core.providerAdapter(resolved)
 	if useEagerResponsesRelay(core.config.StreamMode, adapterName, response) {
+		rememberEager := func(response map[string]any) {
+			if core.responseStateEligible(normalized) {
+				core.config.ResponseState.RememberMap(normalized.RawBody, response, nil, true)
+			}
+		}
 		inspector := NewSSEInspector(SSEInspectorHandlers{
-			OnFirstOutput: logSession.firstOutput,
-			OnUsage:       logSession.usage,
-			OnTerminal:    logSession.rawTerminal,
+			OnFirstOutput:        logSession.firstOutput,
+			OnUsage:              logSession.usage,
+			OnTerminal:           logSession.rawTerminal,
+			OnCompletedResponse:  rememberEager,
+			OnIncompleteResponse: rememberEager,
 		})
 		body := io.Reader(response.Body)
 		if core.config.ItemIDRepair != nil {
@@ -502,21 +564,35 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		AdapterName: adapterName,
 		Continuation: func(continuationContext context.Context, continuation *types.NormalizedRequest) (<-chan types.AdapterEvent, error) {
 			logSession.noteRecovery("terminal-guard")
-			nextAdapter, nextResponse, _, nextResolved, _, err := core.forward(continuationContext, incoming, continuation, resolved, pick, logSession)
+			nextAdapter, nextResponse, _, nextResolved, _, err := core.forward(continuationContext, incoming, continuation, resolved, pick, logSession, fallbackAttempt)
 			if err != nil {
 				return nil, err
 			}
 			return core.eventsForResponse(continuationContext, nextAdapter, nextResponse, nextResolved.Provider, true), nil
 		},
 	})
-	events = core.observeEvents(ctx, events, auth, logSession)
+	events = core.observeEvents(ctx, events, auth, logSession, fallbackAttempt)
+	providerState := &streamProviderState{}
+	events = captureStreamProviderState(ctx, events, providerState)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	err := bridge.StreamWithOptions(ctx, w, requestedModel, events, bridge.StreamOptions{
+	writer := io.Writer(w)
+	var stateInspector *SSEInspector
+	if core.responseStateEligible(normalized) {
+		remember := func(response map[string]any) {
+			core.config.ResponseState.RememberMap(normalized.RawBody, response, providerState.get(), core.forceResponseState(resolved))
+		}
+		stateInspector = NewSSEInspector(SSEInspectorHandlers{OnCompletedResponse: remember, OnIncompleteResponse: remember})
+		writer = &sseInspectionWriter{writer: w, inspector: stateInspector}
+	}
+	err := bridge.StreamWithOptions(ctx, writer, requestedModel, events, bridge.StreamOptions{
 		StallTimeoutSec: core.config.StallTimeout,
 		OnCancel:        func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
 	})
+	if stateInspector != nil {
+		stateInspector.Finish()
+	}
 	if err != nil && !errors.Is(err, context.Canceled) && core.config.Logger != nil {
 		core.config.Logger.Error("responses_stream", "error", err)
 	}
@@ -587,7 +663,70 @@ func (core *ResponsesCore) eventsForResponse(ctx context.Context, adapter types.
 	return out
 }
 
-func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession) {
+func (core *ResponsesCore) responseStateEligible(request *types.NormalizedRequest) bool {
+	return core != nil && core.config.ResponseState != nil && request != nil && !request.CompactionRequest &&
+		(request.PreviousResponseID == "" || request.PreviousExpanded)
+}
+
+func (core *ResponsesCore) forceResponseState(resolved *types.ResolvedModel) bool {
+	if resolved == nil {
+		return false
+	}
+	if core.config.PassthroughRoute != nil && core.config.PassthroughRoute(resolved) {
+		return true
+	}
+	return strings.EqualFold(core.providerAdapter(resolved), "kiro")
+}
+
+type streamProviderState struct {
+	value atomic.Value
+}
+
+func (state *streamProviderState) set(value types.ProviderContinuationState) {
+	if cloned := cloneProviderState(value); len(cloned) > 0 {
+		state.value.Store(cloned)
+	}
+}
+
+func (state *streamProviderState) get() types.ProviderContinuationState {
+	if value := state.value.Load(); value != nil {
+		return cloneProviderState(value.(types.ProviderContinuationState))
+	}
+	return nil
+}
+
+func captureStreamProviderState(ctx context.Context, source <-chan types.AdapterEvent, state *streamProviderState) <-chan types.AdapterEvent {
+	out := make(chan types.AdapterEvent)
+	go func() {
+		defer close(out)
+		for event := range source {
+			if len(event.ProviderState) > 0 {
+				state.set(event.ProviderState)
+			}
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+
+type sseInspectionWriter struct {
+	writer    io.Writer
+	inspector *SSEInspector
+}
+
+func (writer *sseInspectionWriter) Write(payload []byte) (int, error) {
+	written, err := writer.writer.Write(payload)
+	if written > 0 {
+		writer.inspector.Consume(payload[:written])
+	}
+	return written, err
+}
+
+func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession, fallbackAttempt *subagentFallbackAttempt) {
 	defer response.Body.Close()
 	payload, err := readResponsesBody(ctx, response, defaultResponsesResponseLimit)
 	if err != nil {
@@ -597,12 +736,21 @@ func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, 
 	}
 	events, err := adapter.ParseUnary(ctx, payload)
 	if err != nil {
+		core.noteSubagentFailure(fallbackAttempt, err.Error())
 		logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, err.Error())
 		core.recordAuthOutcome(auth, types.OutcomeProviderError, http.StatusBadGateway, err.Error(), "")
 		writeJSONError(w, http.StatusBadGateway, "provider_parse_error", err.Error())
 		return
 	}
 	_, result := bridge.Convert(requestedModel, events)
+	for _, event := range events {
+		if event.Type == types.EventError {
+			core.noteSubagentFailure(fallbackAttempt, fallbackFailureMessage(event.StatusCode, event.Error))
+		}
+	}
+	if core.responseStateEligible(normalized) {
+		core.config.ResponseState.Remember(normalized.RawBody, result, providerStateFromEvents(events), core.forceResponseState(resolved))
+	}
 	logSession.observeSlice(events)
 	outcome := types.OutcomeProviderError
 	if result.Status == "completed" {
@@ -647,7 +795,7 @@ func readResponsesBody(ctx context.Context, response *http.Response, limit int64
 	return payload, nil
 }
 
-func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan types.AdapterEvent, auth *types.AuthContext, logSession *responsesLogSession) <-chan types.AdapterEvent {
+func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan types.AdapterEvent, auth *types.AuthContext, logSession *responsesLogSession, fallbackAttempt *subagentFallbackAttempt) <-chan types.AdapterEvent {
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
@@ -667,6 +815,7 @@ func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan type
 				core.recordAuthOutcome(auth, outcome, http.StatusOK, event.StopReason, "")
 			case types.EventError, types.EventIncomplete:
 				terminal = true
+				core.noteSubagentFailure(fallbackAttempt, fallbackFailureMessage(event.StatusCode, event.Error+" "+event.Message))
 				core.recordAuthOutcome(auth, types.OutcomeProviderError, event.StatusCode, event.Error, "")
 			}
 			select {
@@ -692,6 +841,20 @@ func (core *ResponsesCore) recordAuthOutcome(auth *types.AuthContext, outcome ty
 		meta.RetryAfter = delay
 	}
 	core.config.Auth.RecordOutcome(auth.AccountID, outcome, meta)
+}
+
+func (core *ResponsesCore) noteSubagentFailure(attempt *subagentFallbackAttempt, message string) {
+	if core == nil || core.config.SubagentFallback == nil || attempt == nil || strings.TrimSpace(attempt.model) == "" {
+		return
+	}
+	core.config.SubagentFallback.NoteFailure(attempt.model, message, attempt.accountID)
+}
+
+func fallbackFailureMessage(status int, message string) string {
+	if status == http.StatusTooManyRequests || status == http.StatusPaymentRequired {
+		return fmt.Sprintf("quota exhausted (%d): %s", status, message)
+	}
+	return message
 }
 
 func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {

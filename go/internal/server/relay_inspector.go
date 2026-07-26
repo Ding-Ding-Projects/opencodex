@@ -17,11 +17,12 @@ const (
 )
 
 type SSEInspectorHandlers struct {
-	OnPayload           func(string)
-	OnFirstOutput       func()
-	OnTerminal          func(ResponsesTerminalStatus, int)
-	OnCompletedResponse func(map[string]any)
-	OnUsage             func(*types.Usage)
+	OnPayload            func(string)
+	OnFirstOutput        func()
+	OnTerminal           func(ResponsesTerminalStatus, int)
+	OnCompletedResponse  func(map[string]any)
+	OnIncompleteResponse func(map[string]any)
+	OnUsage              func(*types.Usage)
 }
 
 // SSEInspector incrementally parses arbitrary transport chunks into complete
@@ -139,6 +140,9 @@ func (inspector *SSEInspector) inspectPayload(payload string) {
 		if inspector.handlers.OnCompletedResponse != nil {
 			inspector.handlers.OnCompletedResponse(cloneAnyMap(response))
 		}
+	}
+	if status == ResponsesIncomplete && response != nil && inspector.handlers.OnIncompleteResponse != nil {
+		inspector.handlers.OnIncompleteResponse(cloneAnyMap(response))
 	}
 	if inspector.handlers.OnTerminal != nil {
 		inspector.handlers.OnTerminal(status, inspector.terminalHTTP)

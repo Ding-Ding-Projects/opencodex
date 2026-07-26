@@ -104,10 +104,10 @@ type expectedRuntimeDiff struct {
 	body      bool
 }
 
-var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
-	"api-access/host-header":     {body: true},
-	"api-access/origin-priority": {body: true},
-}
+// knownRuntimeDiffs records runtime differences that are still expected between
+// the TypeScript and Go runtimes. An empty map means every covered scenario is
+// byte-identical; adding an entry is a deliberate, documented exception.
+var knownRuntimeDiffs = map[string]expectedRuntimeDiff{}
 
 var (
 	differentialIDPattern        = regexp.MustCompile(`\b(?:resp|msg|rs|fc|ws)_[0-9a-f]{32}\b`)

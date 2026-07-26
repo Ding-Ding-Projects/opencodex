@@ -347,7 +347,7 @@ func TestResponsesCoreRejectsUnreadableEncryptedAgentTask(t *testing.T) {
 	body := `{"model":"public","input":[{"type":"agent_message","content":[{"type":"encrypted_content","encrypted_content":"` + token + `"}]}]}`
 	response := httptest.NewRecorder()
 	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
-	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "no readable task text") {
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "encrypted for the native ChatGPT backend") {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }

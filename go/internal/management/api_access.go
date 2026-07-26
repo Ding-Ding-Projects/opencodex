@@ -17,6 +17,9 @@ func apiAccessEndpoints(cfg *config.Config, request *http.Request) map[string]an
 	}
 	host := strings.TrimSpace(cfg.Host)
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		if originBase := safeOriginBaseURL(request.Header.Get("Origin")); originBase != "" {
+			return apiAccessEndpointValues(originBase, cfg)
+		}
 		host = safeRequestHostname(request.Host)
 	}
 	if host == "" {
@@ -31,12 +34,28 @@ func apiAccessEndpoints(cfg *config.Config, request *http.Request) map[string]an
 		scheme = "https"
 	}
 	base := scheme + "://" + authority + "/v1"
+	return apiAccessEndpointValues(base, cfg)
+}
+
+func apiAccessEndpointValues(base string, cfg *config.Config) map[string]any {
 	claudeEnabled := cfg.ClaudeCode == nil || cfg.ClaudeCode.Enabled == nil || *cfg.ClaudeCode.Enabled
 	return map[string]any{
 		"baseUrl": base, "responsesEndpoint": base + "/responses", "chatCompletionsEndpoint": base + "/chat/completions",
 		"messagesEndpoint": base + "/messages", "modelsEndpoint": base + "/models", "claudeCodeEnabled": claudeEnabled,
 		"endpoint": base + "/responses",
 	}
+}
+
+func safeOriginBaseURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.User != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ""
+	}
+	host := parsed.Hostname()
+	if host == "0.0.0.0" || host == "::" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/v1"
 }
 
 func safeRequestHostname(authority string) string {

@@ -70,6 +70,9 @@ type Config struct {
 	ProviderQuotas         management.ProviderQuotaBackend
 	ClaudeRuntime          management.ClaudeCodeRuntime
 	RuntimeControl         management.RuntimeControlBackend
+	ResponseState          *ResponseStateStore
+	SubagentFallbackState  *codex.SubagentFallbackState
+	PrimeSubagentQuota     func(context.Context, string) error
 }
 
 type Server struct {
@@ -80,6 +83,7 @@ type Server struct {
 	quota               *codex.QuotaStore
 	advancedRequestLogs *RequestLogStore
 	watchdog            *MemoryWatchdog
+	responseState       *ResponseStateStore
 }
 
 func New(config Config) *Server {
@@ -162,7 +166,15 @@ func New(config Config) *Server {
 	}
 	advancedRequestLogs := NewRequestLogStore(MaxRequestLogEntries, nil)
 	watchdog := NewMemoryWatchdog(config.MemoryWatchdogInterval, config.MemoryWatchdogCapacity, config.MemorySample)
-	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota, advancedRequestLogs: advancedRequestLogs, watchdog: watchdog}
+	responseState := config.ResponseState
+	if responseState == nil {
+		statePath := ""
+		if strings.TrimSpace(config.ConfigPath) != "" {
+			statePath = filepath.Join(filepath.Dir(config.ConfigPath), "responses-state.json")
+		}
+		responseState = NewResponseStateStore(statePath)
+	}
+	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota, advancedRequestLogs: advancedRequestLogs, watchdog: watchdog, responseState: responseState}
 	keyFailover := providers.NewKeyFailover()
 	guidance := MultiAgentGuidanceOptions{}
 	if config.ManagementConfig != nil {
@@ -185,6 +197,18 @@ func New(config Config) *Server {
 	if s.config.SidecarResolver == nil && s.config.Registry != nil {
 		s.config.SidecarResolver = defaultSidecarResolver(s.config)
 	}
+	primeSubagentQuota := s.config.PrimeSubagentQuota
+	if primeSubagentQuota == nil && s.config.ProviderQuotas != nil {
+		primeSubagentQuota = func(ctx context.Context, _ string) error {
+			_, err := s.config.ProviderQuotas.ProviderQuotas(ctx, true)
+			return err
+		}
+	}
+	codexHome := strings.TrimSpace(s.config.StorageHome)
+	if codexHome == "" {
+		codexHome = codex.ResolveCodexHome(codex.HomeOptions{})
+	}
+	subagentFallback := newResponseSubagentFallback(s.config.ManagementConfig, s.config.Registry, quota, codexHome, s.config.SubagentFallbackState, primeSubagentQuota)
 	s.responses = NewResponsesCore(ResponsesCoreConfig{
 		Registry: s.config.Registry, Combos: s.config.Combos, Auth: s.config.Auth,
 		ResolveAdapter: s.config.ResolveAdapter, Client: s.config.Client, Recorder: recorder,
@@ -251,6 +275,8 @@ func New(config Config) *Server {
 			}
 			return ""
 		}(),
+		ResponseState:    responseState,
+		SubagentFallback: subagentFallback,
 	})
 	mux := http.NewServeMux()
 	websocketsEnabled := config.WebSockets
@@ -300,7 +326,7 @@ func New(config Config) *Server {
 	}
 	if managementRouter == nil {
 		usageLog, _ := config.UsageRecorder.(*usage.Log)
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {
@@ -364,6 +390,9 @@ func (s *Server) MemoryWatchdog() *MemoryWatchdog {
 func (s *Server) Close() {
 	if s != nil && s.watchdog != nil {
 		s.watchdog.Stop()
+	}
+	if s != nil && s.responseState != nil {
+		s.responseState.Flush()
 	}
 }
 
