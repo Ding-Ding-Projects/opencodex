@@ -333,6 +333,9 @@ func applyEOL(content, eol string) string {
 	return lf
 }
 
+// atomicWriteFile intentionally mirrors codex.atomicWriteFile. That helper and
+// its platform replace primitive are package-private, and the Grok package's
+// write-scope boundary forbids changing Codex merely to share them.
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

@@ -81,6 +81,22 @@ func TestArrayAndSubtableHeadersReserveTheUserNamespace(t *testing.T) {
 	}
 }
 
+func TestUnclosedHeaderInsideMultilineStringDoesNotHideRealAlias(t *testing.T) {
+	home := tempGrokHome(t)
+	path := filepath.Join(home, "config.toml")
+	mustWrite(t, path, "prompt = \"\"\"\n[model.a.b\n\"\"\"\n\n[model.ocx-mine]\nmodel = \"user/keeps-this\"\n")
+
+	result := InjectGrokConfig(10100, []InjectModel{{ID: "mine"}}, Options{GrokHome: home})
+	if !result.OK {
+		t.Fatal(result.Message)
+	}
+	content := mustRead(t, path)
+	managed := content[strings.Index(content, BeginMarker):]
+	if !strings.Contains(managed, "[model.ocx-mine-2]") {
+		t.Fatalf("real user alias was hidden by multiline content:\n%s", content)
+	}
+}
+
 func TestNonLoopbackRegistrationIsRefused(t *testing.T) {
 	for _, hostname := range []string{"0.0.0.0", "::", "[::]", "192.168.1.10", "proxy.lan"} {
 		t.Run(hostname, func(t *testing.T) {
@@ -177,6 +193,34 @@ func TestBackupIsExclusiveAndConfigUsesPrivatePermissions(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %v; want 0600", info.Mode().Perm())
+	}
+}
+
+func TestRepeatedCyclesAndUserTailDoNotDrift(t *testing.T) {
+	home := tempGrokHome(t)
+	path := filepath.Join(home, "config.toml")
+	original := "[a]\nx = 1\n\n[b]\ny = 2"
+	mustWrite(t, path, original)
+	for range 5 {
+		if result := InjectGrokConfig(10100, []InjectModel{{ID: "gpt-5.6-sol"}}, Options{GrokHome: home}); !result.OK {
+			t.Fatal(result.Message)
+		}
+		if result := StripGrokConfig(Options{GrokHome: home}); !result.OK {
+			t.Fatal(result.Message)
+		}
+		if got := mustRead(t, path); got != original {
+			t.Fatalf("config drifted to %q, want %q", got, original)
+		}
+	}
+
+	mustWrite(t, path, "theme = \"dark\"\n")
+	InjectGrokConfig(10100, []InjectModel{{ID: "gpt-5.6-sol"}}, Options{GrokHome: home})
+	mustWrite(t, path, mustRead(t, path)+"\n[mine]\nkeep = true\n")
+	if result := StripGrokConfig(Options{GrokHome: home}); !result.OK {
+		t.Fatal(result.Message)
+	}
+	if got, want := mustRead(t, path), "theme = \"dark\"\n\n[mine]\nkeep = true\n"; got != want {
+		t.Fatalf("user tail = %q, want %q", got, want)
 	}
 }
 
