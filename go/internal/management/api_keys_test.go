@@ -52,13 +52,16 @@ func TestProviderKeyPoolCRUDReturnsMetadataOnly(t *testing.T) {
 		t.Fatalf("provider key infos=%#v", infos)
 	}
 	listed := serveManagement(api, http.MethodGet, "/api/providers/keys?name=acme", "")
-	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secretOne) || strings.Contains(listed.Body.String(), secretTwo) || strings.Contains(listed.Body.String(), "masked") {
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secretOne) || strings.Contains(listed.Body.String(), secretTwo) || !strings.Contains(listed.Body.String(), `"masked":"prov****-two"`) {
 		t.Fatalf("listed=%d %s", listed.Code, listed.Body.String())
+	}
+	if !strings.HasPrefix(listed.Body.String(), `{"activeId":"`+infos[1].ID+`","keys":[{"id":"`+infos[0].ID+`","label":"primary","masked":`) {
+		t.Fatalf("provider key field order differs from TS: %s", listed.Body.String())
 	}
 	active := serveManagement(api, http.MethodPut, "/api/providers/keys/active", `{"name":"acme","id":"`+infos[0].ID+`"}`)
 	alias := serveManagement(api, http.MethodPut, "/api/providers/keys/alias", `{"name":"acme","id":"`+infos[0].ID+`","alias":"main"}`)
 	removed := serveManagement(api, http.MethodDelete, "/api/providers/keys?name=acme&id="+infos[1].ID, "")
-	if active.Code != http.StatusOK || alias.Code != http.StatusOK || removed.Code != http.StatusOK || cfg.Providers["acme"].APIKey != secretOne {
+	if active.Code != http.StatusOK || active.Body.String() != `{"ok":true,"name":"acme","activeId":"`+infos[0].ID+`"}` || alias.Code != http.StatusOK || removed.Code != http.StatusOK || cfg.Providers["acme"].APIKey != secretOne {
 		t.Fatalf("active=%d alias=%d removed=%d provider=%#v", active.Code, alias.Code, removed.Code, cfg.Providers["acme"])
 	}
 }

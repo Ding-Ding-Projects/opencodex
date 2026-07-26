@@ -76,6 +76,12 @@ func authMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
 			valid = HasValidResponsesAPIAuth(r, config)
 		}
 		if !valid {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"opencodex API key required"}`))
+				return
+			}
 			writeJSONError(w, http.StatusUnauthorized, "authentication_error", "opencodex API key required")
 			return
 		}

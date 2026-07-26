@@ -303,7 +303,13 @@ func (a *API) updateModelVisibility(w http.ResponseWriter, r *http.Request) bool
 		writeError(w, http.StatusInternalServerError, "save model visibility failed")
 		return true
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "scope": body.Scope, "provider": body.Provider, "enabled": *body.Enabled, "disabled": disabled})
+	writeJSON(w, http.StatusOK, orderedJSONObject{
+		{name: "ok", value: true},
+		{name: "scope", value: body.Scope},
+		{name: "provider", value: body.Provider},
+		{name: "enabled", value: *body.Enabled},
+		{name: "disabled", value: disabled},
+	})
 	return true
 }
 

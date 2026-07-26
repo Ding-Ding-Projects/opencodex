@@ -117,6 +117,19 @@ func TestConfigAndProviderResponsesUseTypeScriptShapeAndHeaders(t *testing.T) {
 	}
 }
 
+func TestProviderMutationResponsesMatchTypeScriptBytes(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+	created := serveManagement(api, http.MethodPost, "/api/providers", `{"name":"acme","provider":{"adapter":"openai-chat","baseUrl":"https://api.example.com/v1","authMode":"key","defaultModel":"m1","models":["m1"]}}`)
+	if created.Code != http.StatusOK || created.Body.String() != `{"success":true,"name":"acme"}` {
+		t.Fatalf("created=%d %s", created.Code, created.Body.String())
+	}
+	patched := serveManagement(api, http.MethodPatch, "/api/providers?name=acme", `{"disabled":true}`)
+	if patched.Code != http.StatusOK || patched.Body.String() != `{"success":true,"name":"acme","disabled":true,"hasApiKey":false}` {
+		t.Fatalf("patched=%d %s", patched.Code, patched.Body.String())
+	}
+}
+
 func TestModelSelectionAndVisibilityPersistInConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers["acme"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://api.example.com", DefaultModel: "m1"}
@@ -126,11 +139,11 @@ func TestModelSelectionAndVisibilityPersistInConfig(t *testing.T) {
 		t.Fatalf("selected=%d %s config=%#v", selected.Code, selected.Body.String(), cfg.Providers["acme"].SelectedModels)
 	}
 	disabled := serveManagement(api, http.MethodPut, "/api/model-visibility", `{"scope":"models","provider":"acme","enabled":false,"targets":[{"id":"m1"}]}`)
-	if disabled.Code != http.StatusOK || len(cfg.DisabledModels) != 1 || cfg.DisabledModels[0] != "acme/m1" {
+	if disabled.Code != http.StatusOK || disabled.Body.String() != `{"ok":true,"scope":"models","provider":"acme","enabled":false,"disabled":["acme/m1"]}` || len(cfg.DisabledModels) != 1 || cfg.DisabledModels[0] != "acme/m1" {
 		t.Fatalf("disabled=%d %s config=%#v", disabled.Code, disabled.Body.String(), cfg.DisabledModels)
 	}
 	enabled := serveManagement(api, http.MethodPut, "/api/model-visibility", `{"scope":"models","provider":"acme","enabled":true,"targets":[{"id":"m1"}]}`)
-	if enabled.Code != http.StatusOK || len(cfg.DisabledModels) != 0 {
+	if enabled.Code != http.StatusOK || enabled.Body.String() != `{"ok":true,"scope":"models","provider":"acme","enabled":true,"disabled":[]}` || len(cfg.DisabledModels) != 0 {
 		t.Fatalf("enabled=%d %s config=%#v", enabled.Code, enabled.Body.String(), cfg.DisabledModels)
 	}
 }

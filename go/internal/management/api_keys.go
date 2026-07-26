@@ -80,7 +80,10 @@ func (a *API) handleProviderKeys(w http.ResponseWriter, request *http.Request) {
 		activeID, infos := config.ListAPIKeys(a.config, name)
 		keys := safeProviderKeyInfos(infos)
 		a.mu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"activeId": activeID, "keys": keys})
+		writeJSON(w, http.StatusOK, orderedJSONObject{
+			{name: "activeId", value: nullable(activeID)},
+			{name: "keys", value: keys},
+		})
 	case http.MethodPost:
 		var body struct {
 			Name  string `json:"name"`
@@ -119,7 +122,10 @@ func (a *API) handleProviderKeys(w http.ResponseWriter, request *http.Request) {
 			writeError(w, http.StatusBadRequest, "provider key could not be saved")
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "id": id})
+		writeJSON(w, http.StatusCreated, orderedJSONObject{
+			{name: "ok", value: true},
+			{name: "id", value: id},
+		})
 	case http.MethodDelete:
 		name, nameErr := queryRequired(request.URL.Query(), "name")
 		id, idErr := queryRequired(request.URL.Query(), "id")
@@ -188,7 +194,11 @@ func (a *API) handleProviderKeyActive(w http.ResponseWriter, request *http.Reque
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "active provider key could not be saved")
 	} else {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": body.Name, "activeId": body.ID})
+		writeJSON(w, http.StatusOK, orderedJSONObject{
+			{name: "ok", value: true},
+			{name: "name", value: body.Name},
+			{name: "activeId", value: body.ID},
+		})
 	}
 }
 
@@ -319,10 +329,21 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func safeProviderKeyInfos(infos []config.APIKeyInfo) []map[string]any {
-	result := make([]map[string]any, 0, len(infos))
+func safeProviderKeyInfos(infos []config.APIKeyInfo) []orderedJSONObject {
+	result := make([]orderedJSONObject, 0, len(infos))
 	for _, info := range infos {
-		result = append(result, map[string]any{"id": info.ID, "label": info.Label, "active": info.Active, "addedAt": info.AddedAt})
+		entry := orderedJSONObject{{name: "id", value: info.ID}}
+		if info.Label != "" {
+			entry = append(entry, orderedJSONField{name: "label", value: info.Label})
+		}
+		entry = append(entry,
+			orderedJSONField{name: "masked", value: info.Masked},
+			orderedJSONField{name: "active", value: info.Active},
+		)
+		if info.AddedAt != 0 {
+			entry = append(entry, orderedJSONField{name: "addedAt", value: info.AddedAt})
+		}
+		result = append(result, entry)
 	}
 	return result
 }

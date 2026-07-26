@@ -23,7 +23,7 @@ func TestManagementProviderAndModelCRUDThroughServer(t *testing.T) {
 	}
 
 	created := managementRequest(t, proxy.Handler(), http.MethodPost, "/api/providers", `{"name":"extra","provider":{"adapter":"openai-chat","baseUrl":"https://extra.example","apiKey":"new-secret"}}`)
-	if created.Code != http.StatusCreated {
+	if created.Code != http.StatusOK || created.Body.String() != `{"success":true,"name":"extra"}` {
 		t.Fatalf("create provider = %d %s", created.Code, created.Body.String())
 	}
 	patched := managementRequest(t, proxy.Handler(), http.MethodPatch, "/api/providers?name=extra", `{"disabled":true}`)

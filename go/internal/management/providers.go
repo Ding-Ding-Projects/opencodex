@@ -71,7 +71,10 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusInternalServerError, "save provider failed")
 			return true
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"success": true, "name": body.Name})
+		writeJSON(w, http.StatusOK, orderedJSONObject{
+			{name: "success", value: true},
+			{name: "name", value: body.Name},
+		})
 	case http.MethodPatch:
 		name, err := queryRequired(r.URL.Query(), "name")
 		if err != nil {
@@ -113,7 +116,12 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "name": name, "disabled": provider.Disabled, "hasApiKey": provider.APIKey != ""})
+		writeJSON(w, http.StatusOK, orderedJSONObject{
+			{name: "success", value: true},
+			{name: "name", value: name},
+			{name: "disabled", value: provider.Disabled},
+			{name: "hasApiKey", value: provider.APIKey != ""},
+		})
 	case http.MethodDelete:
 		name, err := queryRequired(r.URL.Query(), "name")
 		if err != nil {

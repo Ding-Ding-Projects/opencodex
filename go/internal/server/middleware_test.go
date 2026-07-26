@@ -62,6 +62,18 @@ func TestMiddlewareCorrelatesAndLogsRejectedRequests(t *testing.T) {
 	}
 }
 
+func TestManagementAuthFailureUsesTypeScriptEnvelope(t *testing.T) {
+	h := Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("unauthorized management request reached handler")
+	}), MiddlewareConfig{Token: "secret"})
+	request := httptest.NewRequest(http.MethodPost, "/api/providers", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || response.Header().Get("Content-Type") != "application/json" || response.Body.String() != `{"error":"opencodex API key required"}` {
+		t.Fatalf("management auth response=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+}
+
 func TestCORSAllowlist(t *testing.T) {
 	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}), MiddlewareConfig{AllowedOrigins: []string{"https://app.example"}})
 	request := httptest.NewRequest(http.MethodOptions, "/v1/responses", nil)
