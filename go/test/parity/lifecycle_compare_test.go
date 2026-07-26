@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -21,6 +22,9 @@ func compareGrokLifecycleInjection(t *testing.T, goBytes, tsBytes []byte) {
 	t.Helper()
 	if !bytes.Equal(goBytes, tsBytes) {
 		t.Logf("DIFFERENTIAL GAP: Grok CLI catalog bytes differ: Go(len=%d sha=%s) TypeScript(len=%d sha=%s)", len(goBytes), payloadDigest(goBytes), len(tsBytes), payloadDigest(tsBytes))
+		if os.Getenv("OCX_REVEAL_KNOWN_DIFFS") == "1" {
+			t.Logf("GROK DIFFERENTIAL BYTES\nGo=%s\nTypeScript=%s", goBytes, tsBytes)
+		}
 	}
 	for runtime, config := range map[string][]byte{"Go": goBytes, "TypeScript": tsBytes} {
 		if !bytes.Contains(config, []byte(grok.BeginMarker)) || !bytes.Contains(config, []byte(grok.EndMarker)) || !bytes.Contains(config, []byte("base_url = \"http://127.0.0.1:")) {

@@ -307,8 +307,11 @@ func waitForHTTP(t *testing.T, process *cliLifecycleProcess) {
 	t.Helper()
 	deadline := time.Now().Add(lifecyclePollTimeout)
 	for time.Now().Before(deadline) {
-		request, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, process.baseURL+"/healthz", nil)
-		if response, err := http.DefaultClient.Do(request); err == nil {
+		requestContext, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		request, _ := http.NewRequestWithContext(requestContext, http.MethodGet, process.baseURL+"/healthz", nil)
+		response, err := http.DefaultClient.Do(request)
+		cancel()
+		if err == nil {
 			_ = response.Body.Close()
 			if response.StatusCode == http.StatusOK {
 				return

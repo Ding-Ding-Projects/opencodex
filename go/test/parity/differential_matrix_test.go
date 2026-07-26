@@ -107,17 +107,7 @@ type expectedRuntimeDiff struct {
 // knownRuntimeDiffs records runtime differences that are still expected between
 // the TypeScript and Go runtimes. An empty map means every covered scenario is
 // byte-identical; adding an entry is a deliberate, documented exception.
-var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
-	// Combo mutations are semantically equal, but Go map serialization orders
-	// success/id/combo differently from origin/dev b4485706.
-	"combos/create": {body: true},
-	"combos/rename": {body: true},
-	"combos/delete": {body: true},
-	// Combo GET also exposes Go-only maxHops:0. The focused lifecycle test keeps
-	// a strict semantic projection so this raw-body exception cannot hide drift.
-	"combos/created": {body: true},
-	"combos/renamed": {body: true},
-}
+var knownRuntimeDiffs = map[string]expectedRuntimeDiff{}
 
 var (
 	differentialIDPattern        = regexp.MustCompile(`\b(?:resp|msg|rs|fc|ws)_[0-9a-f]{32}\b`)

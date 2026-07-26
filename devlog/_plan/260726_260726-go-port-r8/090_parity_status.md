@@ -9,6 +9,8 @@ TypeScript oracle: isolated export of `origin/dev` at
 
 Primary harness: `go/test/parity/`
 
+Session-wide product and cutover verdict: `100_final_port_verdict.md`
+
 ## Verdict
 
 The differential suite now exercises the core data plane plus management,
@@ -18,9 +20,9 @@ the complete process matrix is an explicit CI-capable opt-in.
 
 Parity is not universal. Live provider login/device flows, real OS service
 managers, and several peripheral product surfaces remain outside the byte lock.
-The core runtime remains byte-locked. The known-difference map contains five
-new combo-management response-body differences found in Round 7; they are
-enumerated below and guarded by a separate strict semantic projection.
+The core runtime remains byte-locked and `knownRuntimeDiffs` is empty again.
+Round 8 promoted all five combo-management responses after the owner fix made
+their stale declarations fail as designed.
 
 This page supersedes the Round 7 `090_parity_status.md` percentages and
 synthesizes the focused Round 8 `020_grok_sync_and_parity_runtime.md` findings.
@@ -37,7 +39,8 @@ synthesizes the focused Round 8 `020_grok_sync_and_parity_runtime.md` findings.
 | Crash and restart | A hard proxy death preserves both user-owned configurations; restart on a new port deterministically refreshes the Grok fence without changing Desktop files, and canonical stop restores the original Grok file. |
 | Cross-feature isolation | Grok injection/removal and Desktop apply/status operate together without modifying each other's files. |
 | Agent controls | Effort-cap and shadow-call PUT/GET sequences run against both runtimes with strict response bytes. |
-| Combo management | Create, rename, read, delete, and empty-state restoration are semantically strict; five raw response differences are declared below. |
+| Combo management | Create, rename, read, delete, and empty-state restoration are byte strict. |
+| Storage | The real management route reaches the canonical scanner; dynamic home/time fields are narrowly normalized and report values are semantically strict. Bucket JSON key order is not yet byte-locked. |
 
 The Grok config tests additionally cover byte-exact restoration, all supported
 TOML key spellings and Unicode escapes, orphan/duplicate markers, malformed and
@@ -55,9 +58,8 @@ atomic replacement. They only use injected temporary homes.
 | Configuration and lifecycle | Legacy migration/backup/idempotence, Grok byte-safe sync/strip, Claude Desktop apply/status/reapply/rollback, crash/restart recovery, and cross-feature isolation |
 
 Strict means status, selected headers, and response bytes match after only the
-narrow dynamic ID/timestamp normalization documented by the harness. Combo
-management is the explicit exception: semantic state is strict, while five raw
-bodies remain declared differences.
+narrow dynamic ID/timestamp normalization documented by the harness. Storage
+is explicitly semantic-only and is not counted in the byte-locked claim.
 
 ## Latest-oracle audit
 
@@ -84,11 +86,16 @@ advertised-ladder differences. The management owner aligned the Go DTO during
 this round; both effort-cap and shadow-call PUT/GET are now byte-identical, and
 their stale known-diff entries were removed.
 
-Round 7 added combo management lifecycle coverage. Create, rename, and delete
-have equal JSON values but different key order. The two non-empty GET responses
-also expose `maxHops:0` only in Go. Empty initial/final responses are byte-equal.
-The five raw bodies remain in `knownRuntimeDiffs`; a recursive semantic guard
-removes only zero-valued `maxHops` and fails on every other value or shape drift.
+Round 7 added combo management lifecycle coverage and found five raw response
+differences. The owner aligned response order and removed the Go-only
+`maxHops:0`; Round 8 observed all five declarations become stale, removed them,
+and reran create/rename/read/delete/restore with strict bytes.
+
+Round 8 also added `/api/storage` through real Go and TypeScript management
+routes with identical isolated files and fixed mtimes. After replacing only
+the dynamic Codex home and `generatedAt`, all values match. Go's map-backed
+bucket marshaler orders JSON keys differently, so this new surface is tracked
+as semantic-only rather than weakening the strict known-difference map.
 
 ## Coverage
 
@@ -96,8 +103,8 @@ Two distinct metrics are reported and must not be interchanged.
 
 | Metric | Data plane | Whole product | Meaning |
 |---|---:|---:|---|
-| Differential scenario-family estimate | about 91% | about 68% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
-| Go statement coverage | 71.1% | 67.3% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
+| Differential scenario-family estimate | about 91% | about 69% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
+| Go statement coverage | 71.1% | 67.8% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
 
 The data-plane estimate rose modestly because multi-provider routing and
 concurrent isolation were added to an already mature HTTP/SSE/WebSocket matrix.
@@ -113,13 +120,13 @@ Statement coverage was measured with:
 cd go
 go test ./internal/adapter/... ./internal/bridge ./internal/chat ./internal/server \
   -coverpkg=./internal/adapter/...,./internal/bridge,./internal/chat,./internal/server \
-  -coverprofile=/tmp/opencodex-dataplane-r7.cover -count=1
-go tool cover -func=/tmp/opencodex-dataplane-r7.cover
+  -coverprofile=/tmp/opencodex-dataplane-r8.cover -count=1
+go tool cover -func=/tmp/opencodex-dataplane-r8.cover
 
 OCX_RUN_RUNTIME_PARITY=1 OCX_TS_ORACLE_ROOT=/path/to/current/dev \
   go test ./... -coverpkg=./... \
-  -coverprofile=/tmp/opencodex-product-r7.cover -count=1 -timeout 400s
-go tool cover -func=/tmp/opencodex-product-r7.cover
+  -coverprofile=/tmp/opencodex-product-r8.cover -count=1 -timeout 400s
+go tool cover -func=/tmp/opencodex-product-r8.cover
 ```
 
 ## Runtime and CI contract
@@ -132,11 +139,10 @@ go tool cover -func=/tmp/opencodex-product-r7.cover
 | `OCX_RUN_PERF=1` | Short local throughput/RSS measurement | Skipped |
 | `OCX_RUN_STREAM_PERF=1` | Long-lived SSE throughput/RSS plus 12,000-event adapter and Kiro resource-release soak | Skipped; default e2e runs the exact 512-event contract |
 
-The final current-oracle full runtime matrix completed in 30.297 seconds
-reported by `go test` (30.63 seconds wall time). Every TypeScript-dependent
-helper resolves Bun
-before starting and calls `t.Skip` when unavailable; the dedicated missing-Bun
-test forces that path with `exec.ErrNotFound`.
+The final current-oracle full runtime matrix completed in 30.766 seconds as
+reported by `go test`. Every TypeScript-dependent helper resolves Bun before
+starting and calls `t.Skip` when unavailable; the dedicated missing-Bun test
+forces that path with `exec.ErrNotFound`.
 
 Reproducible current-oracle setup and run from the repository root:
 
@@ -181,7 +187,7 @@ without changing the production queue policy or weakening the deep soak.
   and real Codex App or Claude Desktop processes are not end-to-end exercised.
 - Realtime reconnect/backpressure and long-duration external networking remain
   less complete than the HTTP/SSE data plane.
-- Combo management raw bytes differ in field order, and Go additionally emits
-  `maxHops:0` in non-empty GET responses; semantic lifecycle state is strict.
-- Grok catalog bytes still require their owning CLI/catalog slice before the
-  lifecycle observation can be promoted to strict bytes.
+- Storage bucket report values match, but map-backed Go key order prevents raw
+  byte promotion.
+- Grok catalog blocks contain the same models and fields, but Go emits the
+  static native order while TypeScript emits current-catalog order.
