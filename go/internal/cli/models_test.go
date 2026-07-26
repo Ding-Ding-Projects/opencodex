@@ -2,11 +2,49 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 )
+
+func TestCustomModelCRUDPersistsSeparatelyFromProviderModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", home)
+	cfg := config.Default()
+	cfg.DefaultProvider = "test"
+	cfg.Providers["test"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.test/v1", Models: []string{"built-in"}}
+	if err := config.Save(filepath.Join(home, "config.json"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	streams := IO{Out: &output, Err: &output}
+	if err := runModels([]string{"add", "test", "custom-v1", "--display-name", "Custom", "--context-window", "128000", "--modalities", "text,image,text"}, streams); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load(filepath.Join(home, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.CustomModels) != 1 || loaded.CustomModels[0].ModelID != "custom-v1" || strings.Join(loaded.CustomModels[0].InputModalities, ",") != "text,image" {
+		t.Fatalf("custom models = %#v", loaded.CustomModels)
+	}
+	if strings.Join(loaded.Providers["test"].Models, ",") != "built-in" {
+		t.Fatal("custom add changed provider.Models")
+	}
+	output.Reset()
+	if err := runModels([]string{"list-custom", "--json"}, streams); err != nil || !strings.Contains(output.String(), `"modelId": "custom-v1"`) {
+		t.Fatalf("list-custom output=%q err=%v", output.String(), err)
+	}
+	if err := runModels([]string{"remove", "test/custom-v1", "--yes"}, streams); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = config.Load(filepath.Join(home, "config.json"))
+	if err != nil || len(loaded.CustomModels) != 0 {
+		t.Fatalf("custom model not removed: %#v, %v", loaded.CustomModels, err)
+	}
+}
 
 func TestCollectConfiguredModelsIncludesEffortLadder(t *testing.T) {
 	cfg := config.Default()

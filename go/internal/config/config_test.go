@@ -1,12 +1,72 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
+	"time"
 )
+
+func TestLoadLegacyConfigWithoutNewCollections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	legacy := `{"port":10100,"hostname":"127.0.0.1","providers":{"test":{"adapter":"openai-chat","baseUrl":"https://example.test/v1","apiKey":"legacy-secret"}},"defaultProvider":"test"}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() legacy config error = %v", err)
+	}
+	if cfg.CustomModels != nil || cfg.Providers["test"].APIKeyPool != nil {
+		t.Fatalf("missing collection fields should remain optional: %#v", cfg)
+	}
+	if cfg.Providers["test"].APIKey != "legacy-secret" {
+		t.Fatal("legacy apiKey was not preserved")
+	}
+}
+
+func TestCustomModelsAndAPIKeyPoolRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.DefaultProvider = "test"
+	cfg.Providers["test"] = ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.test/v1", APIKey: "first-secret"}
+	model := CustomModel{ID: "model-id", Provider: "test", ModelID: "custom-v1", DisplayName: "Custom", ContextWindow: 128000, InputModalities: []string{"text", "image"}, AddedAt: "2026-07-26T00:00:00Z"}
+	if err := AddCustomModel(&cfg, model); err != nil {
+		t.Fatal(err)
+	}
+	firstID, err := AddAPIKey(&cfg, "test", "first-secret", "primary", time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID, err := AddAPIKey(&cfg, "test", "second-secret", "backup", time.Unix(2, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstID == secondID || !SetActiveAPIKey(&cfg, "test", firstID) {
+		t.Fatal("key pool ids or activation invalid")
+	}
+	if err := Save(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(*loaded, cfg) {
+		got, _ := json.Marshal(loaded)
+		want, _ := json.Marshal(cfg)
+		t.Fatalf("new schema round trip mismatch\n got: %s\nwant: %s", got, want)
+	}
+	if removed, ok := RemoveCustomModel(loaded, "test/custom-v1"); !ok || removed.ID != "model-id" {
+		t.Fatalf("RemoveCustomModel() = %#v, %v", removed, ok)
+	}
+	if !RemoveAPIKey(loaded, "test", firstID) || loaded.Providers["test"].APIKey != "second-secret" {
+		t.Fatal("removing active key did not promote remaining key")
+	}
+}
 
 func TestConfigLoadSaveRoundTripAndEnvironmentExpansion(t *testing.T) {
 	t.Setenv("OCX_TEST_KEY", `key-with-"quotes"`)

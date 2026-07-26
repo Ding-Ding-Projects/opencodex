@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
-	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
@@ -34,6 +37,8 @@ func runModels(args []string, streams IO) error {
 		return modelsList(args, streams)
 	case "efforts", "effort-ladder":
 		return modelsEfforts(args, streams)
+	case "list-custom":
+		return modelsListCustom(args, streams)
 	case "add", "remove":
 		return modelsMutate(command, args, streams)
 	default:
@@ -208,45 +213,150 @@ func modelEffortLadder() []effortLevel {
 }
 
 func modelsMutate(command string, args []string, streams IO) error {
-	if len(args) != 2 {
-		return fmt.Errorf("usage: ocx models %s <provider> <model>", command)
-	}
 	cfg, path, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	name, model := strings.TrimSpace(args[0]), strings.TrimSpace(args[1])
-	if model == "" || strings.Contains(model, "/") {
-		return fmt.Errorf("model must be a non-empty provider-local id without /")
-	}
-	provider, ok := cfg.Providers[name]
-	if !ok {
-		return fmt.Errorf("provider %q is not configured", name)
-	}
 	if command == "add" {
-		if !stringInSlice(provider.Models, model) {
-			provider.Models = append(provider.Models, model)
-			sort.Strings(provider.Models)
+		entry, parseErr := parseCustomModelAdd(args)
+		if parseErr != nil {
+			return parseErr
 		}
-	} else {
-		models := make([]string, 0, len(provider.Models))
-		for _, existing := range provider.Models {
-			if existing != model {
-				models = append(models, existing)
-			}
+		if _, ok := cfg.Providers[entry.Provider]; !ok {
+			return fmt.Errorf("provider %q is not configured", entry.Provider)
 		}
-		provider.Models = models
+		entry.ID, err = newUUID()
+		if err != nil {
+			return fmt.Errorf("generate custom model id: %w", err)
+		}
+		entry.AddedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		if err := config.AddCustomModel(cfg, entry); err != nil {
+			return err
+		}
+		if err := config.Save(path, cfg); err != nil {
+			return err
+		}
+		fmt.Fprintf(streams.Out, "Added custom model %s/%s (%s).\n", entry.Provider, entry.ModelID, entry.ID)
+		return nil
 	}
-	cfg.Providers[name] = provider
+	confirmed, rest := consumeBoolFlag(args, "--yes")
+	if len(rest) != 1 {
+		return fmt.Errorf("usage: ocx models remove <customId|provider/modelId> [--yes]")
+	}
+	if !confirmed {
+		return fmt.Errorf("remove requires --yes in non-interactive mode")
+	}
+	removed, ok := config.RemoveCustomModel(cfg, strings.TrimSpace(rest[0]))
+	if !ok {
+		return fmt.Errorf("custom model %q not found", rest[0])
+	}
 	if err := config.Save(path, cfg); err != nil {
 		return err
 	}
-	action := "Added"
-	if command == "remove" {
-		action = "Removed"
-	}
-	fmt.Fprintf(streams.Out, "%s model %s for provider %s.\n", action, model, name)
+	fmt.Fprintf(streams.Out, "Removed custom model %s/%s.\n", removed.Provider, removed.ModelID)
 	return nil
+}
+
+func parseCustomModelAdd(args []string) (config.CustomModel, error) {
+	if len(args) < 2 {
+		return config.CustomModel{}, fmt.Errorf("usage: ocx models add <provider> <modelId> [--display-name NAME] [--context-window TOKENS] [--modalities LIST]")
+	}
+	entry := config.CustomModel{Provider: strings.TrimSpace(args[0]), ModelID: strings.TrimSpace(args[1])}
+	rest := args[2:]
+	var err error
+	entry.DisplayName, rest, err = consumeValueFlag(rest, "--display-name")
+	if err != nil {
+		return entry, err
+	}
+	contextValue, rest, err := consumeValueFlag(rest, "--context-window")
+	if err != nil {
+		return entry, err
+	}
+	modalitiesValue, rest, err := consumeValueFlag(rest, "--modalities")
+	if err != nil || len(rest) != 0 {
+		return entry, fmt.Errorf("invalid models add arguments")
+	}
+	if entry.Provider == "" || !validProviderName.MatchString(entry.Provider) || entry.ModelID == "" || strings.Contains(entry.ModelID, "/") {
+		return entry, fmt.Errorf("provider must be valid and modelId must be nonblank without /")
+	}
+	entry.DisplayName = strings.TrimSpace(entry.DisplayName)
+	if strings.Contains(entry.DisplayName, "/") {
+		return entry, fmt.Errorf("displayName must not contain /")
+	}
+	if contextValue != "" {
+		entry.ContextWindow, err = strconv.Atoi(contextValue)
+		if err != nil || entry.ContextWindow <= 0 {
+			return entry, fmt.Errorf("context window must be a positive integer")
+		}
+	}
+	if modalitiesValue != "" {
+		seen := map[string]bool{}
+		for _, value := range strings.Split(modalitiesValue, ",") {
+			value = strings.TrimSpace(value)
+			if value != "text" && value != "image" && value != "audio" {
+				return entry, fmt.Errorf("modalities must be comma-separated values from text|image|audio")
+			}
+			if !seen[value] {
+				entry.InputModalities = append(entry.InputModalities, value)
+				seen[value] = true
+			}
+		}
+	}
+	return entry, nil
+}
+
+func modelsListCustom(args []string, streams IO) error {
+	jsonOutput, rest := consumeBoolFlag(args, "--json")
+	if len(rest) != 0 {
+		return fmt.Errorf("usage: ocx models list-custom [--json]")
+	}
+	cfg, _, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return writePrettyJSON(streams.Out, cfg.CustomModels)
+	}
+	if len(cfg.CustomModels) == 0 {
+		fmt.Fprintln(streams.Out, "No custom models registered.")
+		return nil
+	}
+	current := ""
+	for _, model := range cfg.CustomModels {
+		if model.Provider != current {
+			current = model.Provider
+			fmt.Fprintf(streams.Out, "%s:\n", current)
+		}
+		context := "-"
+		if model.ContextWindow > 0 {
+			context = fmt.Sprintf("%dk", model.ContextWindow/1000)
+		}
+		modalities := "-"
+		if len(model.InputModalities) > 0 {
+			modalities = strings.Join(model.InputModalities, ",")
+		}
+		display := model.DisplayName
+		if display == "" {
+			display = "-"
+		}
+		id := model.ID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		fmt.Fprintf(streams.Out, "  %-8s  %-24s  %-20s  %-8s  %s\n", id, model.ModelID, display, context, modalities)
+	}
+	return nil
+}
+
+func newUUID() (string, error) {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", err
+	}
+	bytes[6] = bytes[6]&0x0f | 0x40
+	bytes[8] = bytes[8]&0x3f | 0x80
+	hexValue := hex.EncodeToString(bytes[:])
+	return hexValue[:8] + "-" + hexValue[8:12] + "-" + hexValue[12:16] + "-" + hexValue[16:20] + "-" + hexValue[20:], nil
 }
 
 func consumeValueFlag(args []string, name string) (string, []string, error) {

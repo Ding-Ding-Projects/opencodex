@@ -43,9 +43,9 @@ func TestSanitizeCodexReasoningEfforts(t *testing.T) {
 
 func TestModelRecordValue(t *testing.T) {
 	record := map[string][]string{
-		"gpt-4o":       {"low", "high"},
-		"claude":       {"medium"},
-		"o3":           {"low", "medium", "high"},
+		"gpt-4o": {"low", "high"},
+		"claude": {"medium"},
+		"o3":     {"low", "medium", "high"},
 	}
 	if v, ok := ModelRecordValue(record, "gpt-4o"); !ok || len(v) != 2 {
 		t.Errorf("exact match failed: %v %v", v, ok)
@@ -79,9 +79,9 @@ func TestModelInList(t *testing.T) {
 
 func TestConfiguredReasoningEfforts(t *testing.T) {
 	provider := ProviderConfig{
-		Adapter:          "openai-chat",
-		BaseURL:          "https://example.com",
-		ReasoningEfforts: []string{"low", "medium", "high"},
+		Adapter:           "openai-chat",
+		BaseURL:           "https://example.com",
+		ReasoningEfforts:  []string{"low", "medium", "high"},
 		NoReasoningModels: []string{"gpt-3.5-turbo"},
 	}
 	got := ConfiguredReasoningEfforts(provider, "gpt-4o")

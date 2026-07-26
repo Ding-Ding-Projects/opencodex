@@ -48,6 +48,7 @@ type Config struct {
 	MultiAgentMode            string                    `json:"multiAgentMode,omitempty"`
 	MultiAgentGuidanceEnabled *bool                     `json:"multiAgentGuidanceEnabled,omitempty"`
 	DisabledModels            []string                  `json:"disabledModels,omitempty"`
+	CustomModels              []CustomModel             `json:"customModels,omitempty"`
 	ProviderContextCaps       map[string]int            `json:"providerContextCaps,omitempty"`
 	ContextCapValue           int                       `json:"contextCapValue,omitempty"`
 	Proxy                     string                    `json:"proxy,omitempty"`
@@ -101,6 +102,7 @@ type ProviderConfig struct {
 	AllowPrivateNetwork             bool                         `json:"allowPrivateNetwork,omitempty"`
 	Disabled                        bool                         `json:"disabled,omitempty"`
 	APIKey                          string                       `json:"apiKey,omitempty"`
+	APIKeyPool                      []APIKeyEntry                `json:"apiKeyPool,omitempty"`
 	DefaultModel                    string                       `json:"defaultModel,omitempty"`
 	Models                          []string                     `json:"models,omitempty"`
 	Headers                         map[string]string            `json:"headers,omitempty"`
@@ -142,6 +144,23 @@ type ProviderConfig struct {
 	Note                            string                       `json:"note,omitempty"`
 	UnsafeAllowNativeLocalExec      bool                         `json:"unsafeAllowNativeLocalExec,omitempty"`
 	NativeLocalExec                 string                       `json:"nativeLocalExec,omitempty"`
+}
+
+type CustomModel struct {
+	ID              string   `json:"id"`
+	Provider        string   `json:"provider"`
+	ModelID         string   `json:"modelId"`
+	DisplayName     string   `json:"displayName,omitempty"`
+	ContextWindow   int      `json:"contextWindow,omitempty"`
+	InputModalities []string `json:"inputModalities,omitempty"`
+	AddedAt         string   `json:"addedAt"`
+}
+
+type APIKeyEntry struct {
+	ID      string `json:"id"`
+	Key     string `json:"key"`
+	Label   string `json:"label,omitempty"`
+	AddedAt int64  `json:"addedAt,omitempty"`
 }
 
 type DebugConfig struct {
@@ -272,6 +291,40 @@ func (c Config) Validate() error {
 	if len(c.SubagentModels) > 5 {
 		return &ConfigError{Field: "subagentModels", Message: "must contain at most 5 models"}
 	}
+	seenCustomIDs := make(map[string]bool, len(c.CustomModels))
+	seenCustomSlugs := make(map[string]bool, len(c.CustomModels))
+	for index, model := range c.CustomModels {
+		field := fmt.Sprintf("customModels.%d", index)
+		if strings.TrimSpace(model.ID) == "" || seenCustomIDs[model.ID] {
+			return &ConfigError{Field: field + ".id", Message: "must be nonblank and unique"}
+		}
+		seenCustomIDs[model.ID] = true
+		if !providerNamePattern.MatchString(model.Provider) {
+			return &ConfigError{Field: field + ".provider", Message: "must be a valid provider name"}
+		}
+		if _, ok := c.Providers[model.Provider]; !ok {
+			return &ConfigError{Field: field + ".provider", Message: "must reference a configured provider"}
+		}
+		if strings.TrimSpace(model.ModelID) == "" || strings.Contains(model.ModelID, "/") {
+			return &ConfigError{Field: field + ".modelId", Message: "must be nonblank and must not contain /"}
+		}
+		slug := model.Provider + "/" + model.ModelID
+		if seenCustomSlugs[slug] {
+			return &ConfigError{Field: field + ".modelId", Message: "provider/modelId must be unique"}
+		}
+		seenCustomSlugs[slug] = true
+		if strings.Contains(model.DisplayName, "/") {
+			return &ConfigError{Field: field + ".displayName", Message: "must not contain /"}
+		}
+		if model.ContextWindow < 0 {
+			return &ConfigError{Field: field + ".contextWindow", Message: "must be a positive integer"}
+		}
+		for _, modality := range model.InputModalities {
+			if modality != "text" && modality != "image" && modality != "audio" {
+				return &ConfigError{Field: field + ".inputModalities", Message: "values must be text, image, or audio"}
+			}
+		}
+	}
 	for index, model := range c.SubagentModels {
 		if strings.TrimSpace(model) == "" {
 			return &ConfigError{Field: fmt.Sprintf("subagentModels.%d", index), Message: "must not be blank"}
@@ -355,6 +408,17 @@ func (c Config) Validate() error {
 		}
 		if provider.DefaultMaxOutputTokens < 0 {
 			return &ConfigError{Field: "providers." + name + ".defaultMaxOutputTokens", Message: "must be a positive integer"}
+		}
+		seenKeyIDs := make(map[string]bool, len(provider.APIKeyPool))
+		for index, entry := range provider.APIKeyPool {
+			field := fmt.Sprintf("providers.%s.apiKeyPool.%d", name, index)
+			if strings.TrimSpace(entry.ID) == "" || seenKeyIDs[entry.ID] {
+				return &ConfigError{Field: field + ".id", Message: "must be nonblank and unique"}
+			}
+			seenKeyIDs[entry.ID] = true
+			if strings.TrimSpace(entry.Key) == "" || strings.ContainsAny(entry.Key, "\r\n") {
+				return &ConfigError{Field: field + ".key", Message: "must be nonblank and contain no line breaks"}
+			}
 		}
 		for field, values := range map[string]map[string]int{
 			"modelContextWindows":  provider.ModelContextWindows,
