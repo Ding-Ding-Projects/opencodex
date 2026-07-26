@@ -15,6 +15,8 @@ func TestDesktop3pFingerprintStableAndApplyIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalConfig := mustReadFile(t, first.Path)
+	originalMetadata := mustReadFile(t, filepath.Join(dir, "_meta.json"))
 	second, err := ApplyDesktop3pConfig(dir, 10100, nil, routed, "ocx", Desktop3pStatic, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +27,8 @@ func TestDesktop3pFingerprintStableAndApplyIdempotent(t *testing.T) {
 	if !first.Written || second.Written {
 		t.Fatalf("idempotence flags = first:%v second:%v", first.Written, second.Written)
 	}
+	assertFileBytes(t, first.Path, originalConfig)
+	assertFileBytes(t, filepath.Join(dir, "_meta.json"), originalMetadata)
 	data, err := os.ReadFile(filepath.Join(dir, "_meta.json"))
 	if err != nil {
 		t.Fatal(err)

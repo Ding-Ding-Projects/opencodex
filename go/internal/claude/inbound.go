@@ -193,7 +193,13 @@ func AnthropicToResponses(raw any, cfg *InboundConfig) (InboundTranslation, erro
 	copyNumber(request, body, "temperature", "temperature")
 	copyNumber(request, body, "top_p", "top_p")
 	if stops, ok := request["stop_sequences"].([]any); ok && len(stops) > 0 {
-		body["stop"] = stops
+		filtered := make([]any, 0, len(stops))
+		for _, stop := range stops {
+			if _, ok := stop.(string); ok {
+				filtered = append(filtered, stop)
+			}
+		}
+		body["stop"] = filtered
 	}
 	source := ""
 	if metadata, ok := request["metadata"].(map[string]any); ok {
@@ -204,7 +210,11 @@ func AnthropicToResponses(raw any, cfg *InboundConfig) (InboundTranslation, erro
 		}
 	}
 	if source == "" && len(systems) > 0 {
-		body["prompt_cache_key"] = hash32(canonical(map[string]any{"version": 2, "model": body["model"], "system": systems, "tools": body["tools"]}))
+		tools, ok := body["tools"].([]any)
+		if !ok {
+			tools = []any{}
+		}
+		body["prompt_cache_key"] = hash32(canonical(map[string]any{"version": 2, "model": body["model"], "system": systems, "tools": tools}))
 		source = "system"
 	}
 	thinking, _ := request["thinking"].(map[string]any)
@@ -266,7 +276,11 @@ func anthropicUser(input []any, content any, blocked []string, calls map[string]
 				pending = append(pending, image)
 			}
 		case "document":
-			pending = append(pending, map[string]any{"type": "input_text", "text": "[document: " + stringField(m, "title") + "]"})
+			text := "[document]"
+			if title, ok := m["title"].(string); ok {
+				text = "[document: " + title + "]"
+			}
+			pending = append(pending, map[string]any{"type": "input_text", "text": text})
 		case "tool_result":
 			flush()
 			id := stringField(m, "tool_use_id")
@@ -312,7 +326,11 @@ func anthropicAssistant(input []any, content any) ([]any, error) {
 			if id == "" || name == "" {
 				return input, fmt.Errorf("tool_use requires id and name")
 			}
-			args, _ := json.Marshal(m["input"])
+			arguments := m["input"]
+			if arguments == nil {
+				arguments = map[string]any{}
+			}
+			args, _ := json.Marshal(arguments)
 			input = append(input, map[string]any{"type": "function_call", "call_id": id, "name": name, "arguments": string(args)})
 		}
 	}
@@ -336,14 +354,42 @@ func imageBlock(m map[string]any) map[string]any {
 	return nil
 }
 func toolResult(m map[string]any) any {
-	prefix := ""
-	if m["is_error"] == true {
-		prefix = "[tool error] "
-	}
+	isError := m["is_error"] == true
 	if s, ok := m["content"].(string); ok {
-		return prefix + s
+		if isError {
+			return "[tool error] " + s
+		}
+		return s
 	}
-	return prefix
+	if content, ok := m["content"].([]any); ok {
+		out := []any{}
+		for _, raw := range content {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch stringField(item, "type") {
+			case "text":
+				if text, ok := item["text"].(string); ok {
+					out = append(out, map[string]any{"type": "input_text", "text": text})
+				}
+			case "image":
+				if image := imageBlock(item); image != nil {
+					out = append(out, image)
+				}
+			}
+		}
+		if isError {
+			out = append([]any{map[string]any{"type": "input_text", "text": "[tool error]"}}, out...)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if isError {
+		return "[tool error]"
+	}
+	return ""
 }
 func effectiveBlockedSkills(cfg *InboundConfig) []string {
 	values := []string{"claude-api"}
