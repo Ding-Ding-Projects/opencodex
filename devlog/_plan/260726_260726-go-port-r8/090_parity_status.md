@@ -164,7 +164,7 @@ go tool cover -func=/tmp/opencodex-product-r8.cover
 | `OCX_RUN_PERF=1` | Short local throughput/RSS measurement | Skipped |
 | `OCX_RUN_STREAM_PERF=1` | Long-lived SSE throughput/RSS plus 12,000-event adapter and Kiro resource-release soak | Skipped; default e2e runs the exact 512-event contract |
 
-The final current-oracle full runtime matrix completed in 27.845 seconds as
+The final current-oracle full runtime matrix completed in 32.457 seconds as
 reported by `go test`. Every TypeScript-dependent helper resolves Bun before
 starting and calls `t.Skip` when unavailable; the dedicated missing-Bun test
 forces that path with `exec.ErrNotFound`.
