@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +48,8 @@ var desktop3pAliases = struct {
 	values  map[string]string
 	byRoute map[string]string
 }{values: map[string]string{}, byRoute: map[string]string{}}
+
+var desktop3pCapabilityMarkerPattern = regexp.MustCompile(`\[([^\]]+)\]`)
 
 func ParseDesktop3pModeArgs(flags []string) (Desktop3pConfigMode, error) {
 	known := map[string]Desktop3pConfigMode{"--static": Desktop3pStatic, "--hybrid": Desktop3pHybrid, "--discovery-only": Desktop3pDiscovery}
@@ -171,6 +174,9 @@ func GenerateDesktop3pConfigWithProfile(port int, nativeSlugs []string, routed [
 		if err != nil {
 			return Desktop3pConfig{}, err
 		}
+		if err := AssertDesktop3pModelsValid(models); err != nil {
+			return Desktop3pConfig{}, err
+		}
 		cfg.InferenceModels = models
 	}
 	return cfg, nil
@@ -270,10 +276,11 @@ func collectDesktop3pModels(nativeSlugs []string, routed []Desktop3pRoutedModel,
 }
 
 func displayDesktop3pModelID(id string) string {
+	id = desktop3pCapabilityMarkerPattern.ReplaceAllString(id, "-$1")
 	parts := strings.FieldsFunc(id, func(r rune) bool { return r == '-' || r == '_' })
 	for i, part := range parts {
 		lower := strings.ToLower(part)
-		if lower == "gpt" || lower == "glm" || lower == "ai" {
+		if lower == "gpt" || lower == "glm" || lower == "ai" || lower == "1m" {
 			parts[i] = strings.ToUpper(lower)
 		} else if part != "" {
 			parts[i] = strings.ToUpper(part[:1]) + part[1:]
