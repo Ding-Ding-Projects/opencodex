@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
-  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -13,11 +12,11 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { nativeArtifactNames, validateNativeDirectory } from "../scripts/prepare-package";
 
 const repo = join(import.meta.dir, "..");
@@ -66,12 +65,14 @@ function packFiles(nativeDir: string) {
 
 function refreshReport(fixture: Fixture): void {
   const bytes = readFileSync(fixture.archive);
+  const files = packFiles(fixture.nativeDir);
   writeFileSync(fixture.report, JSON.stringify([{
     filename: archiveName,
     size: bytes.byteLength,
+    unpackedSize: files.reduce((total, file) => total + file.size, 0),
     shasum: sha(bytes, "sha1", "hex"),
     integrity: `sha512-${sha(bytes, "sha512", "base64")}`,
-    files: packFiles(fixture.nativeDir),
+    files,
   }]));
 }
 
@@ -108,8 +109,16 @@ function fixture(): Fixture {
   return value;
 }
 
+function runWithEnv(args: string[], env?: NodeJS.ProcessEnv) {
+  return spawnSync(process.execPath, [helper, ...args], {
+    cwd: repo,
+    encoding: "utf8",
+    env: env ? { ...process.env, ...env } : process.env,
+  });
+}
+
 function run(...args: string[]) {
-  return spawnSync(process.execPath, [helper, ...args], { cwd: repo, encoding: "utf8" });
+  return runWithEnv(args);
 }
 
 function prepare(value: Fixture) {
@@ -129,6 +138,39 @@ function verify(identity: ReturnType<typeof receipt>) {
   return run("verify", "--archive", identity.archive, "--sha256", identity.sha256, "--native-dir", identity.nativeDir);
 }
 
+function rewriteArchiveMemberAsLink(value: Fixture, name: string, kind: "symlink" | "hardlink"): void {
+  const tar = Buffer.from(gunzipSync(readFileSync(value.archive)));
+  const wanted = `package/bin/native/${name}`;
+  let offset = 0;
+  let found = false;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const nul = (bytes: Uint8Array) => {
+      const end = bytes.indexOf(0);
+      return Buffer.from(bytes.subarray(0, end < 0 ? bytes.length : end)).toString();
+    };
+    const member = [nul(header.subarray(345, 500)), nul(header.subarray(0, 100))].filter(Boolean).join("/");
+    const size = Number.parseInt(nul(header.subarray(124, 136)).trim() || "0", 8);
+    if (member === wanted) {
+      header[156] = (kind === "symlink" ? "2" : "1").charCodeAt(0);
+      header.fill(0, 157, 257);
+      header.write(nativeArtifactNames(version)[1], 157, "utf8");
+      header.fill(0x20, 148, 156);
+      const checksum = [...header].reduce((total, byte) => total + byte, 0);
+      header.write(checksum.toString(8).padStart(6, "0"), 148, "ascii");
+      header[154] = 0;
+      header[155] = 0x20;
+      found = true;
+      break;
+    }
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  if (!found) throw new Error(`tar fixture member not found: ${wanted}`);
+  writeFileSync(value.archive, gzipSync(tar));
+  refreshReport(value);
+}
+
 afterEach(() => {
   while (temporaryRoots.length > 0) rmSync(temporaryRoots.pop()!, { recursive: true, force: true });
 });
@@ -142,7 +184,7 @@ describe("prepare-release-assets", () => {
     expect(readFileSync(value.receipt, "utf8").split("\n")).toHaveLength(4);
     expect(identity.archive).not.toBe(value.archive);
     expect(readFileSync(identity.archive)).toEqual(readFileSync(value.archive));
-    expect(lstatSync(identity.archive).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(lstatSync(identity.archive).mode & 0o777).toBe(0o600);
     validateNativeDirectory(identity.nativeDir, version);
     expect(verify(identity).status).toBe(0);
 
@@ -186,13 +228,15 @@ describe("prepare-release-assets", () => {
     expect(prepare(value).stderr).toContain("output already exists");
     expect(readFileSync(marker, "utf8")).toBe("keep");
 
-    rmSync(value.output, { recursive: true });
-    const target = join(value.root, "target");
-    mkdirSync(target);
-    writeFileSync(join(target, "marker"), "keep");
-    symlinkSync(target, value.output);
-    expect(prepare(value).stderr).toContain("output already exists");
-    expect(readFileSync(join(target, "marker"), "utf8")).toBe("keep");
+    if (process.platform !== "win32") {
+      rmSync(value.output, { recursive: true });
+      const target = join(value.root, "target");
+      mkdirSync(target);
+      writeFileSync(join(target, "marker"), "keep");
+      symlinkSync(target, value.output);
+      expect(prepare(value).stderr).toContain("output already exists");
+      expect(readFileSync(join(target, "marker"), "utf8")).toBe("keep");
+    }
   });
 
   test("rejects traversal, absolute, duplicate, and extra native members", () => {
@@ -226,13 +270,7 @@ describe("prepare-release-assets", () => {
   test("rejects symlink and hardlink native members before receipt", () => {
     for (const kind of ["symlink", "hardlink"] as const) {
       const value = fixture();
-      const names = nativeArtifactNames(version);
-      const victim = join(value.nativeDir, names[0]);
-      unlinkSync(victim);
-      if (kind === "symlink") symlinkSync(names[1], victim);
-      else linkSync(join(value.nativeDir, names[1]), victim);
-      writeManifest(value.nativeDir);
-      createArchive(value);
+      rewriteArchiveMemberAsLink(value, nativeArtifactNames(version)[0], kind);
       const result = prepare(value);
       expect(result.status).not.toBe(0);
       expect(existsSync(value.receipt)).toBe(false);
@@ -287,9 +325,85 @@ describe("prepare-release-assets", () => {
     expect(prepare(occupied).stderr).toContain("receipt already exists");
     expect(readFileSync(occupied.receipt, "utf8")).toBe("KEEP=1\nINJECTED=never\n");
 
-    const dangling = fixture();
-    symlinkSync(join(dangling.root, "missing"), dangling.receipt);
-    expect(prepare(dangling).stderr).toContain("receipt already exists");
-    expect(readlinkSync(dangling.receipt)).toBe(join(dangling.root, "missing"));
+    if (process.platform !== "win32") {
+      const dangling = fixture();
+      symlinkSync(join(dangling.root, "missing"), dangling.receipt);
+      expect(prepare(dangling).stderr).toContain("receipt already exists");
+      expect(readlinkSync(dangling.receipt)).toBe(join(dangling.root, "missing"));
+    }
+  });
+
+  test("rejects oversized report, archive, unpacked package, and unsafe file-size sums before reading archive bytes", () => {
+    const oversizedReport = fixture();
+    writeFileSync(oversizedReport.report, " ".repeat(8 * 1024 * 1024 + 1));
+    expect(prepare(oversizedReport).stderr).toContain("pack report exceeds 8388608 bytes");
+
+    const oversizedArchive = fixture();
+    const archiveReport = JSON.parse(readFileSync(oversizedArchive.report, "utf8"));
+    archiveReport[0].size = 192 * 1024 * 1024 + 1;
+    writeFileSync(oversizedArchive.report, JSON.stringify(archiveReport));
+    expect(prepare(oversizedArchive).stderr).toContain("source archive exceeds 201326592 bytes");
+
+    const oversizedUnpacked = fixture();
+    const unpackedReport = JSON.parse(readFileSync(oversizedUnpacked.report, "utf8"));
+    unpackedReport[0].unpackedSize = 256 * 1024 * 1024 + 1;
+    writeFileSync(oversizedUnpacked.report, JSON.stringify(unpackedReport));
+    expect(prepare(oversizedUnpacked).stderr).toContain("unpacked package exceeds 268435456 bytes");
+
+    const mismatchedSum = fixture();
+    const sumReport = JSON.parse(readFileSync(mismatchedSum.report, "utf8"));
+    sumReport[0].unpackedSize += 1;
+    writeFileSync(mismatchedSum.report, JSON.stringify(sumReport));
+    expect(prepare(mismatchedSum).stderr).toContain("file-size sum does not match unpackedSize");
+
+    const unsafeSum = fixture();
+    const unsafeReport = JSON.parse(readFileSync(unsafeSum.report, "utf8"));
+    unsafeReport[0].unpackedSize = 1;
+    unsafeReport[0].files = [
+      { path: "large-a", size: Number.MAX_SAFE_INTEGER, mode: 0o644 },
+      { path: "large-b", size: 1, mode: 0o644 },
+    ];
+    writeFileSync(unsafeSum.report, JSON.stringify(unsafeReport));
+    expect(prepare(unsafeSum).stderr).toContain("file-size sum exceeds safe integer range");
+  });
+
+  test("kills a stalled tar child at the configured test deadline", () => {
+    if (process.platform === "win32") return;
+    const value = fixture();
+    const fakeBin = join(value.root, "fake-bin");
+    mkdirSync(fakeBin);
+    const fakeTar = join(fakeBin, "tar");
+    writeFileSync(fakeTar, "#!/usr/bin/env bun\nawait new Promise(() => {});\n", { mode: 0o755 });
+    chmodSync(fakeTar, 0o755);
+    const started = Date.now();
+    const result = runWithEnv(
+      ["prepare", "--pack", value.report, "--output", value.output, "--receipt", value.receipt],
+      {
+        NODE_ENV: "test",
+        OPENCODEX_TEST_TAR_TIMEOUT_MS: "100",
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("exceeded 100 ms deadline");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(existsSync(value.receipt)).toBe(false);
+  });
+
+  test("kills a tar child whose metadata output exceeds the bound", () => {
+    if (process.platform === "win32") return;
+    const value = fixture();
+    const fakeBin = join(value.root, "fake-bin");
+    mkdirSync(fakeBin);
+    const fakeTar = join(fakeBin, "tar");
+    writeFileSync(fakeTar, "#!/usr/bin/env bun\nprocess.stdout.write(Buffer.alloc(9 * 1024 * 1024, 120));\nawait Bun.sleep(60_000);\n", { mode: 0o755 });
+    chmodSync(fakeTar, 0o755);
+    const result = runWithEnv(
+      ["prepare", "--pack", value.report, "--output", value.output, "--receipt", value.receipt],
+      { NODE_ENV: "test", PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("tar metadata stdout exceeded 8388608 bytes");
+    expect(existsSync(value.receipt)).toBe(false);
   });
 });
