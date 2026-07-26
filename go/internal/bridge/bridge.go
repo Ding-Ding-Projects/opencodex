@@ -47,6 +47,8 @@ type machine struct {
 	pendingSignature  string
 	pendingRedacted   []string
 	pendingWebSources []types.URLCitation
+	onUsage           func(*types.Usage)
+	usageReported     bool
 }
 
 type openItem struct {
@@ -67,11 +69,24 @@ type StreamOptions struct {
 	OnCancel        func()
 	Recorder        types.UsageRecorder
 	Record          *types.UsageRecord
+	// OnUsage receives raw adapter usage before strict-client wire normalization.
+	OnUsage func(*types.Usage)
+}
+
+// ConvertOptions supplies callbacks for buffered bridge conversion.
+type ConvertOptions struct {
+	// OnUsage receives raw adapter usage before strict-client wire normalization.
+	OnUsage func(*types.Usage)
 }
 
 // Convert consumes adapter events and returns ordered Responses events and the final response.
 func Convert(model string, events []types.AdapterEvent) ([]Event, Response) {
-	m := newMachine(model)
+	return ConvertWithOptions(model, events, ConvertOptions{})
+}
+
+// ConvertWithOptions consumes buffered adapter events and reports raw terminal usage.
+func ConvertWithOptions(model string, events []types.AdapterEvent, options ConvertOptions) ([]Event, Response) {
+	m := newMachineWithUsage(model, options.OnUsage)
 	out := []Event{m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})}
 	for _, event := range events {
 		out = append(out, m.accept(event)...)
@@ -90,7 +105,7 @@ func Stream(ctx context.Context, w io.Writer, model string, events <-chan types.
 // StreamWithOptions converts an adapter channel to SSE and records provider
 // usage after the protocol terminal has been emitted.
 func StreamWithOptions(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent, options StreamOptions) error {
-	m := newMachine(model)
+	m := newMachineWithUsage(model, options.OnUsage)
 	if err := writeSSE(w, m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})); err != nil {
 		return err
 	}
@@ -204,7 +219,14 @@ func Buffered(ctx context.Context, model string, events <-chan types.AdapterEven
 }
 
 func newMachine(model string) *machine {
-	return &machine{response: Response{ID: "resp_" + randomID(), Object: "response", CreatedAt: time.Now().Unix(), Status: "in_progress", Model: responseModelID(model), Output: []map[string]any{}, Usage: nil}}
+	return newMachineWithUsage(model, nil)
+}
+
+func newMachineWithUsage(model string, onUsage func(*types.Usage)) *machine {
+	return &machine{
+		response: Response{ID: "resp_" + randomID(), Object: "response", CreatedAt: time.Now().Unix(), Status: "in_progress", Model: responseModelID(model), Output: []map[string]any{}, Usage: nil},
+		onUsage:  onUsage,
+	}
 }
 
 func responseModelID(model string) string {
@@ -462,6 +484,7 @@ func (m *machine) finish(status, message string) []Event {
 	}
 	out := m.closeCurrent()
 	out = append(out, m.flushPendingReasoningEnvelope()...)
+	m.reportUsage()
 	m.terminal, m.response.Status = true, status
 	if (status == "failed" || status == "incomplete") && m.response.Error == nil && message != "" {
 		m.response.Error = map[string]any{"type": "server_error", "message": message}
@@ -469,6 +492,16 @@ func (m *machine) finish(status, message string) []Event {
 	eventType := "response." + status
 	out = append(out, m.emit(eventType, map[string]any{"response": m.snapshot(status)}))
 	return out
+}
+
+func (m *machine) reportUsage() {
+	if m.usageReported {
+		return
+	}
+	m.usageReported = true
+	if m.onUsage != nil {
+		m.onUsage(cloneUsage(m.usage))
+	}
 }
 
 func (m *machine) flushPendingReasoningEnvelope() []Event {

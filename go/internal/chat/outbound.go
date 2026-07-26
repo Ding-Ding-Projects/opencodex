@@ -264,24 +264,29 @@ func chatFinishReason(reason string, sawTool bool) string {
 
 func chatUsage(value *types.Usage) map[string]any {
 	if value == nil {
-		return map[string]any{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+		return map[string]any{
+			"prompt_tokens":             0,
+			"completion_tokens":         0,
+			"total_tokens":              0,
+			"prompt_tokens_details":     map[string]any{"cached_tokens": 0},
+			"completion_tokens_details": map[string]any{"reasoning_tokens": 0},
+		}
 	}
 	total := value.TotalTokens
 	if total == 0 {
 		total = value.InputTokens + value.OutputTokens
 	}
-	out := map[string]any{"prompt_tokens": value.InputTokens, "completion_tokens": value.OutputTokens, "total_tokens": total}
-	if value.CachedInputTokens > 0 || value.CacheReadInputTokens > 0 {
-		cached := value.CachedInputTokens
-		if cached == 0 {
-			cached = value.CacheReadInputTokens
-		}
-		out["prompt_tokens_details"] = map[string]any{"cached_tokens": cached}
+	cached := value.CachedInputTokens
+	if cached == 0 {
+		cached = value.CacheReadInputTokens
 	}
-	if value.ReasoningOutputTokens > 0 {
-		out["completion_tokens_details"] = map[string]any{"reasoning_tokens": value.ReasoningOutputTokens}
+	return map[string]any{
+		"prompt_tokens":             value.InputTokens,
+		"completion_tokens":         value.OutputTokens,
+		"total_tokens":              total,
+		"prompt_tokens_details":     map[string]any{"cached_tokens": cached},
+		"completion_tokens_details": map[string]any{"reasoning_tokens": value.ReasoningOutputTokens},
 	}
-	return out
 }
 
 func chatUsageStruct(value *types.Usage) *types.ChatUsage {
@@ -292,7 +297,15 @@ func chatUsageStruct(value *types.Usage) *types.ChatUsage {
 	if total == 0 {
 		total = value.InputTokens + value.OutputTokens
 	}
-	return &types.ChatUsage{PromptTokens: value.InputTokens, CompletionTokens: value.OutputTokens, TotalTokens: total}
+	cached := value.CachedInputTokens
+	if cached == 0 {
+		cached = value.CacheReadInputTokens
+	}
+	return &types.ChatUsage{
+		PromptTokens: value.InputTokens, CompletionTokens: value.OutputTokens, TotalTokens: total,
+		PromptTokensDetails:     types.PromptTokensDetails{CachedTokens: cached},
+		CompletionTokensDetails: types.CompletionTokensDetails{ReasoningTokens: value.ReasoningOutputTokens},
+	}
 }
 
 func chatChunk(id, model string, created int64, delta map[string]any, finish *string, usage *types.Usage) map[string]any {

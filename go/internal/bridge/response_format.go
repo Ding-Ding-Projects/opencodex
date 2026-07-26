@@ -200,6 +200,12 @@ func nestedKeyOrder(parent string, value reflect.Value) []string {
 	if parent == "usage" {
 		return []string{"input_tokens", "output_tokens", "total_tokens", "input_tokens_details", "output_tokens_details"}
 	}
+	if parent == "input_tokens_details" {
+		return []string{"cached_tokens", "cache_write_tokens"}
+	}
+	if parent == "output_tokens_details" {
+		return []string{"reasoning_tokens"}
+	}
 	if parent == "error" || parent == "last_error" {
 		return []string{"message", "type", "code"}
 	}
@@ -248,27 +254,34 @@ func jsonObjectType(value reflect.Value) string {
 
 func usage(value *types.Usage) map[string]any {
 	if value == nil {
-		return map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+		return map[string]any{
+			"input_tokens":          0,
+			"output_tokens":         0,
+			"total_tokens":          0,
+			"input_tokens_details":  map[string]any{"cached_tokens": 0},
+			"output_tokens_details": map[string]any{"reasoning_tokens": 0},
+		}
 	}
+	input := value.InputTokens
 	total := value.TotalTokens
-	if total == 0 {
-		total = value.InputTokens + value.OutputTokens
+	if value.ContextTotalTokens != 0 {
+		input = max(0, value.ContextTotalTokens-value.OutputTokens)
+		total = value.ContextTotalTokens
+	} else if base := input + value.OutputTokens; total < base {
+		total = base
 	}
-	result := map[string]any{"input_tokens": value.InputTokens, "output_tokens": value.OutputTokens, "total_tokens": total}
-	inputDetails := map[string]any{}
-	if value.CachedInputTokens != 0 {
-		inputDetails["cached_tokens"] = value.CachedInputTokens
-	}
+	cached := min(value.CachedInputTokens, input)
+	inputDetails := map[string]any{"cached_tokens": cached}
 	if value.CacheCreationInputTokens != 0 {
-		inputDetails["cache_write_tokens"] = value.CacheCreationInputTokens
+		inputDetails["cache_write_tokens"] = min(value.CacheCreationInputTokens, max(0, input-cached))
 	}
-	if len(inputDetails) > 0 {
-		result["input_tokens_details"] = inputDetails
+	return map[string]any{
+		"input_tokens":          input,
+		"output_tokens":         value.OutputTokens,
+		"total_tokens":          total,
+		"input_tokens_details":  inputDetails,
+		"output_tokens_details": map[string]any{"reasoning_tokens": value.ReasoningOutputTokens},
 	}
-	if value.ReasoningOutputTokens != 0 {
-		result["output_tokens_details"] = map[string]any{"reasoning_tokens": value.ReasoningOutputTokens}
-	}
-	return result
 }
 
 func cloneUsage(value *types.Usage) *types.Usage {

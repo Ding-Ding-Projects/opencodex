@@ -40,6 +40,51 @@ func TestBuildChatCompletionIncludesReasoningToolCallsAndUsage(t *testing.T) {
 	}
 }
 
+func TestChatUsageAlwaysEmitsDetailObjects(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *types.Usage
+		want  map[string]any
+	}{
+		{
+			name: "zero",
+			want: map[string]any{
+				"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+				"prompt_tokens_details":     map[string]any{"cached_tokens": 0},
+				"completion_tokens_details": map[string]any{"reasoning_tokens": 0},
+			},
+		},
+		{
+			name:  "partial",
+			usage: &types.Usage{InputTokens: 9, OutputTokens: 4},
+			want: map[string]any{
+				"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13,
+				"prompt_tokens_details":     map[string]any{"cached_tokens": 0},
+				"completion_tokens_details": map[string]any{"reasoning_tokens": 0},
+			},
+		},
+		{
+			name:  "full",
+			usage: &types.Usage{InputTokens: 20, OutputTokens: 10, CachedInputTokens: 5, ReasoningOutputTokens: 3},
+			want: map[string]any{
+				"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30,
+				"prompt_tokens_details":     map[string]any{"cached_tokens": 5},
+				"completion_tokens_details": map[string]any{"reasoning_tokens": 3},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := chatUsage(test.usage)
+			encodedGot, _ := json.Marshal(got)
+			encodedWant, _ := json.Marshal(test.want)
+			if string(encodedGot) != string(encodedWant) {
+				t.Fatalf("chat usage = %s, want %s", encodedGot, encodedWant)
+			}
+		})
+	}
+}
+
 func TestWriteChatStreamEmitsStableToolIndicesFinishUsageAndDone(t *testing.T) {
 	events := make(chan types.AdapterEvent, 4)
 	events <- types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call_1", Name: "lookup", Arguments: json.RawMessage(`{"q":"x"}`)}}

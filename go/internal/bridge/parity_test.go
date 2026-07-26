@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -78,6 +79,73 @@ func TestConvertFormatsUsageDetailsAndErrors(t *testing.T) {
 	outputDetails, ok := response.Usage["output_tokens_details"].(map[string]any)
 	if !ok || outputDetails["reasoning_tokens"] != 3 {
 		t.Fatalf("output details = %#v", response.Usage)
+	}
+}
+
+func TestResponsesUsageAlwaysEmitsOrderedDetailObjects(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *types.Usage
+		want  string
+	}{
+		{
+			name: "zero",
+			want: `{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`,
+		},
+		{
+			name:  "partial",
+			usage: &types.Usage{InputTokens: 10, OutputTokens: 5},
+			want:  `{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`,
+		},
+		{
+			name: "full",
+			usage: &types.Usage{
+				InputTokens: 20, OutputTokens: 10, TotalTokens: 29,
+				CachedInputTokens: 5, CacheCreationInputTokens: 20, ReasoningOutputTokens: 3,
+			},
+			want: `{"input_tokens":20,"output_tokens":10,"total_tokens":30,"input_tokens_details":{"cached_tokens":5,"cache_write_tokens":15},"output_tokens_details":{"reasoning_tokens":3}}`,
+		},
+		{
+			name: "absolute context",
+			usage: &types.Usage{
+				InputTokens: 2, OutputTokens: 4, ContextTotalTokens: 12,
+				CachedInputTokens: 10, CacheCreationInputTokens: 4,
+			},
+			want: `{"input_tokens":8,"output_tokens":4,"total_tokens":12,"input_tokens_details":{"cached_tokens":8,"cache_write_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := marshalOrderedJSON(usage(test.usage), nestedKeyOrder("usage", reflect.Value{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(encoded) != test.want {
+				t.Fatalf("usage bytes = %s, want %s", encoded, test.want)
+			}
+		})
+	}
+}
+
+func TestConvertWithOptionsReportsRawTerminalUsage(t *testing.T) {
+	raw := &types.Usage{InputTokens: 10, OutputTokens: 5}
+	var calls []*types.Usage
+	_, response := ConvertWithOptions("model", []types.AdapterEvent{{Type: types.EventDone, Usage: raw}}, ConvertOptions{
+		OnUsage: func(value *types.Usage) { calls = append(calls, cloneUsage(value)) },
+	})
+	if len(calls) != 1 || calls[0] == nil || calls[0].InputTokens != 10 || calls[0].TotalTokens != 0 {
+		t.Fatalf("raw usage callbacks = %#v", calls)
+	}
+	if response.Usage["input_tokens_details"] == nil {
+		t.Fatalf("wire usage was not normalized: %#v", response.Usage)
+	}
+
+	calls = nil
+	ConvertWithOptions("model", []types.AdapterEvent{{Type: types.EventTextDelta, Text: "partial"}}, ConvertOptions{
+		OnUsage: func(value *types.Usage) { calls = append(calls, cloneUsage(value)) },
+	})
+	if len(calls) != 1 || calls[0] != nil {
+		t.Fatalf("adapter EOF callbacks = %#v", calls)
 	}
 }
 
