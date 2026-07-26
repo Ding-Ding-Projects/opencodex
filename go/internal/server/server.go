@@ -77,6 +77,10 @@ type Config struct {
 	ResponseState          *ResponseStateStore
 	SubagentFallbackState  *codex.SubagentFallbackState
 	PrimeSubagentQuota     func(context.Context, string) error
+	ConfiguredPort         int
+	SelectedPort           int
+	PreferredPort          int
+	PersistSelectedPort    func(int) error
 }
 
 type Server struct {
@@ -92,6 +96,11 @@ type Server struct {
 
 func New(config Config) *Server {
 	backfillGoogleModes(config.ManagementConfig)
+	if config.PersistSelectedPort != nil && ShouldPersistSelectedPort(config.ConfiguredPort, config.SelectedPort, config.PreferredPort) {
+		if err := config.PersistSelectedPort(config.SelectedPort); err != nil {
+			panic(err)
+		}
+	}
 	if config.Client == nil {
 		config.Client = NewProviderClient(FetchTimeouts{Overall: 10 * time.Minute})
 	}
@@ -188,6 +197,13 @@ func New(config Config) *Server {
 	forwardAdmissionConfig := MiddlewareConfig{Token: config.Token, APIKeySource: admissionKeys.Get}
 	if config.ManagementConfig != nil && forwardAdmissionConfig.Token == "" {
 		forwardAdmissionConfig.Token = config.ManagementConfig.AuthToken
+	}
+	forwardAdmissionConfig.Hostname = config.Hostname
+	if forwardAdmissionConfig.Hostname == "" && config.ManagementConfig != nil {
+		forwardAdmissionConfig.Hostname = config.ManagementConfig.Host
+	}
+	if err := AssertServerAuthConfig(forwardAdmissionConfig); err != nil {
+		panic(err)
 	}
 	keyFailover := providers.NewKeyFailover()
 	guidance := MultiAgentGuidanceOptions{}

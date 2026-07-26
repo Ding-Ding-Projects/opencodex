@@ -392,7 +392,11 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			core.noteSubagentFailure(attempt, err.Error())
 			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "transport_error", err: err}
 		}
-		adapter, err := core.config.ResolveAdapter(resolved, transport, auth, incoming.Clone())
+		adapterHeaders := incoming.Clone()
+		if pick != nil {
+			adapterHeaders = BuildComboChildHeaders(adapterHeaders)
+		}
+		adapter, err := core.config.ResolveAdapter(resolved, transport, auth, adapterHeaders)
 		if err != nil {
 			core.noteSubagentFailure(attempt, err.Error())
 			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "adapter_error", err: err}
@@ -688,8 +692,8 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		writer = &sseInspectionWriter{writer: w, inspector: stateInspector}
 	}
 	err := bridge.StreamWithOptions(ctx, writer, requestedModel, events, bridge.StreamOptions{
-		StallTimeoutSec: core.config.StallTimeout,
-		OnCancel:        func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
+		StallTimeout: ResolveStallTimeout(core.config.StallTimeout),
+		OnCancel:     func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
 	})
 	if stateInspector != nil {
 		stateInspector.Finish()
