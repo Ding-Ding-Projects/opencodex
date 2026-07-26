@@ -470,16 +470,18 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 	}()
 	var open *struct {
 		id, name   string
-		chunks     []string
+		arguments  strings.Builder
 		completion bool
 	}
 	splitter := NewThinkingSplitter()
+	var assistantText strings.Builder
 	var authoritative *types.Usage
 	outputChars := 0
 	completionAnswer := ""
 	completionCalls := 0
 	sawRealTool := false
 	defer func() {
+		result.assistantText = assistantText.String()
 		if result.usage == nil {
 			if authoritative != nil {
 				copy := *authoritative
@@ -519,7 +521,7 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 				if strings.TrimSpace(item.Text) != "" {
 					result.sawText = true
 				}
-				result.assistantText += item.Text
+				assistantText.WriteString(item.Text)
 				phase := ""
 				if mode != CompletionDisabled {
 					phase = "commentary"
@@ -538,7 +540,7 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 		}
 		tool := open
 		open = nil
-		input := strings.Join(tool.chunks, "")
+		input := tool.arguments.String()
 		if !IsCompleteToolInput(input) {
 			fail(TruncationErrorMessage("incomplete tool input JSON"), tool.completion)
 			return false
@@ -660,7 +662,7 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 				}
 				open = &struct {
 					id, name   string
-					chunks     []string
+					arguments  strings.Builder
 					completion bool
 				}{id: event.ToolUseID, name: event.Name, completion: event.Name == CompletionToolName}
 				if open.completion && mode == CompletionDisabled {
@@ -672,7 +674,7 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 				return result
 			}
 			if event.Input != "" {
-				open.chunks = append(open.chunks, event.Input)
+				open.arguments.WriteString(event.Input)
 				outputChars += len(event.Input)
 			}
 			if event.Stop != nil && *event.Stop {
@@ -712,7 +714,7 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 		result.sawText = true
 	}
 	if mode == CompletionTextFallback && completionAnswer == "" && result.sawText && !sawRealTool {
-		repeated := normalizeAnswer(result.assistantText) == normalizeAnswer(previousText)
+		repeated := normalizeAnswer(assistantText.String()) == normalizeAnswer(previousText)
 		filtered := result.events[:0]
 		for _, event := range result.events {
 			if event.Type == types.EventTextDelta {
