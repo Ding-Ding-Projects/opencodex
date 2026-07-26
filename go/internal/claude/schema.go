@@ -74,9 +74,9 @@ func validateInputItem(item map[string]any) error {
 	}
 	switch t {
 	case "message":
-		if role != "user" && role != "developer" && role != "system" && role != "assistant" {
-			return fmt.Errorf("unsupported message role %q", role)
-		}
+		// TypeScript's inputItemSchema deliberately falls malformed message
+		// variants through its loose {type:string} branch. The parser ignores
+		// unknown roles, so accepting them here preserves that repair boundary.
 	case "function_call", "custom_tool_call":
 		if stringField(item, "call_id") == "" || stringField(item, "name") == "" {
 			return fmt.Errorf("%s requires call_id and name", t)

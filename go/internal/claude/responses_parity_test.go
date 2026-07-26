@@ -111,6 +111,75 @@ func TestResponsesParserToolLookupMatchesLatestAssistantFirstDuplicate(t *testin
 	}
 }
 
+func TestResponsesParserMergedReasoningUsesLatestMetadata(t *testing.T) {
+	body := map[string]any{"model": "m", "input": []any{
+		map[string]any{"type": "reasoning", "id": "reasoning-first", "summary": []any{map[string]any{"text": "first"}}},
+		map[string]any{"type": "reasoning", "id": "reasoning-latest", "summary": []any{map[string]any{"text": "latest"}}},
+		map[string]any{"type": "function_call", "call_id": "call-1", "name": "run", "arguments": "{}"},
+	}}
+	raw, _ := json.Marshal(body)
+	parsed, err := ParseResponsesRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(parsed.Context.Messages[0].Content, &parts); err != nil || len(parts) != 2 {
+		t.Fatalf("parts=%#v err=%v", parts, err)
+	}
+	if parts[0]["thinking"] != "first\nlatest" || parts[0]["itemId"] != "reasoning-latest" || !strings.Contains(stringField(parts[0], "signature"), "reasoning-latest") {
+		t.Fatalf("merged reasoning=%#v", parts[0])
+	}
+}
+
+func TestResponsesParserMalformedContentMatchesTypeScript(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     string
+		content  any
+		expected string
+	}{
+		{name: "missing user text", role: "user", content: []any{map[string]any{"type": "input_text"}}, expected: `[]`},
+		{name: "non-string user text", role: "user", content: []any{map[string]any{"type": "input_text", "text": map[string]any{"bad": true}}}, expected: `[]`},
+		{name: "null block", role: "user", content: []any{nil}, expected: `[]`},
+		{name: "non-array content", role: "user", content: map[string]any{"type": "input_text", "text": "x"}, expected: `[]`},
+		{name: "valid block survives malformed", role: "user", content: []any{map[string]any{"type": "input_text"}, map[string]any{"type": "input_text", "text": "real"}}, expected: `"real"`},
+		{name: "missing assistant output", role: "assistant", content: []any{map[string]any{"type": "output_text"}}, expected: `[]`},
+		{name: "non-string refusal", role: "assistant", content: []any{map[string]any{"type": "refusal", "refusal": map[string]any{"bad": true}}}, expected: `[]`},
+		{name: "image file reference fallback", role: "user", content: []any{map[string]any{"type": "input_image", "image_url": map[string]any{"bad": true}, "file_id": "file_1"}}, expected: `"[image: file_1]"`},
+		{name: "image omits absent detail", role: "user", content: []any{map[string]any{"type": "input_image", "image_url": "data:image/png;base64,aA=="}}, expected: `[{"imageUrl":"data:image/png;base64,aA==","type":"image"}]`},
+		{name: "file id wins", role: "user", content: []any{map[string]any{"type": "input_file", "file_id": "file_1", "filename": "report.pdf", "file_data": "ZmlsZQ=="}}, expected: `"[file: file_1]"`},
+		{name: "inline file uses filename", role: "user", content: []any{map[string]any{"type": "input_file", "filename": "report.pdf", "file_data": "ZmlsZQ=="}}, expected: `"[file: report.pdf]"`},
+		{name: "bare filename omitted", role: "user", content: []any{map[string]any{"type": "input_file", "filename": "report.pdf"}}, expected: `[]`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]any{"model": "m", "input": []any{map[string]any{"type": "message", "role": test.role, "content": test.content}}})
+			parsed, err := ParseResponsesRequest(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Context.Messages) != 1 || string(parsed.Context.Messages[0].Content) != test.expected {
+				t.Fatalf("content=%s want=%s", parsed.Context.Messages[0].Content, test.expected)
+			}
+		})
+	}
+}
+
+func TestResponsesParserUnknownMessageRoleDoesNotSplitReasoning(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{"model": "m", "input": []any{
+		map[string]any{"type": "reasoning", "id": "reasoning-1", "summary": []any{map[string]any{"text": "kept"}}},
+		map[string]any{"type": "message", "role": "unexpected", "content": "ignored"},
+		map[string]any{"type": "function_call", "call_id": "call-1", "name": "run", "arguments": "{}"},
+	}})
+	parsed, err := ParseResponsesRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Context.Messages) != 1 || parsed.Context.Messages[0].Role != "assistant" || !strings.Contains(string(parsed.Context.Messages[0].Content), "kept") || strings.Contains(string(parsed.Context.Messages[0].Content), "ignored") {
+		t.Fatalf("messages=%#v", parsed.Context.Messages)
+	}
+}
+
 func TestResponseStateIncompleteSnapshotCapsAndMetrics(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "responses-state.json")
 	store := NewResponseStateStore()

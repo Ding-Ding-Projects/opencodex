@@ -49,8 +49,16 @@ func ParseResponsesRequest(raw []byte) (*types.NormalizedRequest, error) {
 }
 
 type pendingReasoningPart struct {
-	Part   map[string]any
-	Signed bool
+	Part     map[string]any
+	Signed   bool
+	Thinking *strings.Builder
+}
+
+func (p *pendingReasoningPart) materialize() map[string]any {
+	if p.Thinking != nil {
+		p.Part["thinking"] = p.Thinking.String()
+	}
+	return p.Part
 }
 
 type indexedToolCall struct {
@@ -117,8 +125,8 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 	assistantWithReasoning := func() int {
 		messageIndex, parts := ensureAssistantParts()
 		context.Messages[messageIndex].Model = data.Model
-		for _, reasoning := range pending {
-			parts = append(parts, reasoning.Part)
+		for index := range pending {
+			parts = append(parts, pending[index].materialize())
 		}
 		assistantParts[messageIndex] = parts
 		pending = nil
@@ -150,20 +158,22 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 				}
 			case "message":
 				role := stringField(item, "role")
-				content := normalizeContent(item["content"], role == "assistant")
-				if role == "system" {
+				switch role {
+				case "system":
 					clearPending()
+					content := normalizeContent(item["content"], false)
 					if text := flattenText(content); text != "" {
 						context.SystemPrompt = append(context.SystemPrompt, text)
 					}
-				} else if role == "assistant" {
+				case "assistant":
+					content := normalizeContent(item["content"], true)
 					parts, _ := content.([]any)
 					if text, ok := content.(string); ok && text != "" {
 						parts = []any{map[string]any{"type": "text", "text": text}}
 					}
 					combined := make([]any, 0, len(pending)+len(parts))
-					for _, reasoning := range pending {
-						combined = append(combined, reasoning.Part)
+					for index := range pending {
+						combined = append(combined, pending[index].materialize())
 					}
 					combined = append(combined, parts...)
 					clearPending()
@@ -175,9 +185,9 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 					for _, part := range combined {
 						indexToolPart(messageIndex, part)
 					}
-				} else {
+				case "user", "developer":
 					clearPending()
-					appendMessage(role, content)
+					appendMessage(role, normalizeContent(item["content"], false))
 				}
 			case "reasoning":
 				text := reasoningText(item)
@@ -200,10 +210,18 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 					}
 					signed := envelope.Signature != ""
 					if len(pending) > 0 && !signed && !pending[len(pending)-1].Signed {
-						previous := pending[len(pending)-1].Part
-						previous["thinking"] = stringField(previous, "thinking") + "\n" + text
+						previous := &pending[len(pending)-1]
+						previous.Thinking.WriteByte('\n')
+						previous.Thinking.WriteString(text)
+						previous.Part = part
 					} else {
-						pending = append(pending, pendingReasoningPart{Part: part, Signed: signed})
+						entry := pendingReasoningPart{Part: part, Signed: signed}
+						if !signed {
+							entry.Thinking = &strings.Builder{}
+							entry.Thinking.Grow(len(text))
+							entry.Thinking.WriteString(text)
+						}
+						pending = append(pending, entry)
 					}
 				}
 			case "function_call", "custom_tool_call":
@@ -412,14 +430,34 @@ func normalizeContent(v any, assistant bool) any {
 		if !ok {
 			continue
 		}
-		switch stringField(m, "type") {
-		case "input_text", "output_text", "text":
-			out = append(out, map[string]any{"type": "text", "text": stringField(m, "text")})
-		case "refusal":
-			out = append(out, map[string]any{"type": "text", "text": "[refusal: " + stringField(m, "refusal") + "]"})
+		kind := stringField(m, "type")
+		if assistant {
+			switch kind {
+			case "output_text", "text":
+				if text, ok := m["text"].(string); ok {
+					out = append(out, map[string]any{"type": "text", "text": text})
+				}
+			case "refusal":
+				if refusal, ok := m["refusal"].(string); ok {
+					out = append(out, map[string]any{"type": "text", "text": "[refusal: " + refusal + "]"})
+				}
+			}
+			continue
+		}
+		switch kind {
+		case "input_text", "text":
+			if text, ok := m["text"].(string); ok {
+				out = append(out, map[string]any{"type": "text", "text": text})
+			}
 		case "input_image":
-			if u := stringField(m, "image_url"); u != "" {
-				out = append(out, map[string]any{"type": "image", "imageUrl": u, "detail": normalizeDetail(stringField(m, "detail"))})
+			if imageURL := stringField(m, "image_url"); imageURL != "" {
+				part := map[string]any{"type": "image", "imageUrl": imageURL}
+				if detail := stringField(m, "detail"); detail != "" {
+					part["detail"] = normalizeDetail(detail)
+				}
+				out = append(out, part)
+			} else if fileID := stringField(m, "file_id"); fileID != "" {
+				out = append(out, map[string]any{"type": "text", "text": "[image: " + fileID + "]"})
 			}
 		case "input_file":
 			if fileID := stringField(m, "file_id"); fileID != "" {

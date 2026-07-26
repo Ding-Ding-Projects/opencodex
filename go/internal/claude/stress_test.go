@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -96,6 +97,37 @@ func BenchmarkParseResponsesRequestToolChainScaling(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkParseResponsesRequestReasoningChain(b *testing.B) {
+	// Apple M5 Pro, 2,048 chunks: string-concatenation baseline 79,157,388
+	// B/op; strings.Builder median 4,727,284 B/op while preserving latest-item metadata.
+	previousStore := defaultResponseState
+	defaultResponseState = NewResponseStateStore()
+	b.Cleanup(func() { defaultResponseState = previousStore })
+	const chunks = 2_048
+	const text = "abcdefghijklmnopqrstuvwxyz012345"
+	input := make([]any, 0, chunks+1)
+	for range chunks {
+		input = append(input, map[string]any{"type": "reasoning", "summary": []any{map[string]any{"text": text}}})
+	}
+	input = append(input, map[string]any{"type": "function_call", "call_id": "call-final", "name": "shell", "arguments": "{}"})
+	raw, err := json.Marshal(map[string]any{"model": "claude-sonnet-5", "input": input})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(raw)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		parsed, err := ParseResponsesRequest(raw)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !bytes.Contains(parsed.Context.Messages[0].Content, []byte(text)) {
+			b.Fatal("reasoning content missing")
+		}
 	}
 }
 
