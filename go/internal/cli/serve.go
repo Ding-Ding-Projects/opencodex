@@ -129,7 +129,11 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	providerQuotas := &cliProviderQuotas{config: cfg, quota: sharedQuotaStore, codexAuth: codexAuthManagement, now: time.Now}
 	claudeRuntime := newClaudeRuntime(cfg, configHome)
 	runtimeControl := newRuntimeControl(cfg)
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
+	apiStop := func() {
+		teardownOwnedGrokFence(streams)
+		stop.Stop()
+	}
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop})
 	selectedPort := cfg.Port
 	if cfg.Port > 0 {
 		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, cfg.Port, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
@@ -149,7 +153,13 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	}
 	defer removeRuntimeFiles()
 	fmt.Fprintf(streams.Out, "OpenCodex proxy listening on %s\n", listener.Addr())
-	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel)
+	if os.Getenv("OCX_SERVICE") == "" {
+		defer teardownOwnedGrokFence(streams)
+	}
+	afterStart := func() {
+		go func() { _ = applyGrokFence(ctx, cfg, actualPort, cfg.Host, false, streams) }()
+	}
+	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart)
 }
 
 func configuredComboProviders(reg *registry.ProviderRegistry, cfg config.Config) map[string]combos.Provider {
@@ -179,9 +189,12 @@ func (s *stopRouter) Register(mux *http.ServeMux) {
 	})
 }
 
-func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listener net.Listener, stop <-chan struct{}) error {
+func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listener net.Listener, stop <-chan struct{}, afterStart func()) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
+	if afterStart != nil {
+		afterStart()
+	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(signals)

@@ -136,6 +136,7 @@ var routes = []string{
 	"GET /api/debug/logs", "GET /api/claude/inbound-debug", "GET /api/debug/injection-logs",
 	"GET /api/system/memory", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
 	"GET /api/subagent-model-fallback", "PUT /api/subagent-model-fallback", "GET /api/claude-code", "PUT /api/claude-code", "GET /api/shadow-call-settings", "PUT /api/shadow-call-settings", "GET /api/provider-quotas",
+	"GET /api/claude-desktop", "PUT /api/claude-desktop", "POST /api/claude-desktop/apply", "GET /api/claude-desktop/status",
 	"GET /api/startup-health", "POST /api/startup-action", "GET /api/windows-tray", "POST /api/windows-tray", "POST /api/sync", "GET /api/update/check", "POST /api/update/run", "GET /api/update/status",
 }
 
@@ -155,7 +156,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
-	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleRuntimeSettings, a.handleRuntimeControl, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
+	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleClaudeDesktop, a.handleRuntimeSettings, a.handleRuntimeControl, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
 		if handler(w, r) {
 			return
 		}
@@ -189,6 +190,9 @@ func (a *API) saveWithModelCacheLocked(provider string) error {
 	}
 	if a.modelCache != nil {
 		a.modelCache.Clear(provider)
+	}
+	if a.config.ClaudeCode != nil && a.config.ClaudeCode.DesktopProfile != nil {
+		go a.autoApplyClaudeDesktopBestEffort()
 	}
 	return nil
 }

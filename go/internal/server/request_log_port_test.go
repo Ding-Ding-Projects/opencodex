@@ -72,6 +72,17 @@ func TestRequestLogPublicDTOAddsDisplayMetricsAndHidesOrdinaryAttempt(t *testing
 	}
 }
 
+func TestRequestLogPublicDTOAllowsClaudeDesktopSurface(t *testing.T) {
+	entry := RequestLogEntry{RequestID: "desktop", Timestamp: 1, Model: "m", Provider: "p", Surface: "claude-desktop", Status: 200, UsageStatus: RequestUsageUnreported}
+	payload, err := json.Marshal(newRequestLogDTO(entry))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"surface":"claude-desktop"`) {
+		t.Fatalf("public DTO=%s", payload)
+	}
+}
+
 func TestFinalizedRequestUsageKeepsTotalOnlyInDTOField(t *testing.T) {
 	usageValue, status, total := finalizedRequestUsage("openai", &types.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}, nil)
 	if status != RequestUsageReported || total == nil || *total != 5 {

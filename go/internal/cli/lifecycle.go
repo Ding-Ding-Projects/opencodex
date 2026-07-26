@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/codex"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/server"
 )
@@ -31,6 +32,7 @@ func runStop(ctx context.Context, args []string, streams IO) error {
 	live := findLiveProxy(ctx, cfg)
 	if live == nil || live.PID <= 0 {
 		removeRuntimeFiles()
+		teardownOwnedGrokFence(streams)
 		fmt.Fprintln(streams.Out, "Proxy is not running.")
 		return nil
 	}
@@ -41,10 +43,11 @@ func runStop(ctx context.Context, args []string, streams IO) error {
 	}
 	stopCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	if err := platform.StopProcess(stopCtx, pid, baseURL, cfg.AuthToken); err != nil {
+	if err := ocxlib.StopProxy(stopCtx, pid, baseURL, cfg.AuthToken); err != nil {
 		return err
 	}
 	removeRuntimeFiles()
+	teardownOwnedGrokFence(streams)
 	fmt.Fprintln(streams.Out, "Proxy stopped.")
 	return nil
 }
@@ -67,7 +70,13 @@ func runRestart(ctx context.Context, args []string, streams IO) error {
 	if port > 0 && !reclaimListenPort(ctx, gracefulStopHost(cfg.Host), port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second}) {
 		return fmt.Errorf("listen port %d did not become available after stop", port)
 	}
-	return startDetachedAndWait(ctx, streams)
+	if err := startDetachedAndWait(ctx, streams); err != nil {
+		return err
+	}
+	if live := findLiveProxy(ctx, cfg); live != nil {
+		return applyGrokFence(ctx, cfg, live.Port, cfg.Host, true, streams)
+	}
+	return nil
 }
 
 func runHealth(ctx context.Context, args []string, streams IO) error {
@@ -117,6 +126,9 @@ func runGUI(ctx context.Context, args []string, streams IO) error {
 		}
 		if started := findLiveProxy(ctx, cfg); started != nil {
 			port = started.Port
+			if err := applyGrokFence(ctx, cfg, started.Port, cfg.Host, false, streams); err != nil {
+				return err
+			}
 		}
 	}
 	address := dashboardURL(cfg.Host, port)

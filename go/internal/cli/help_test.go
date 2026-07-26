@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 )
@@ -43,6 +44,26 @@ func TestHelpAndRegistrationCoverTypeScriptPublicCommands(t *testing.T) {
 		if _, registered := commandIndex[alias]; !registered {
 			t.Errorf("compatibility alias %q is not registered", alias)
 		}
+	}
+}
+
+func TestClaudeDesktopHasTopLevelAndNestedEntryPoints(t *testing.T) {
+	if _, ok := commandIndex["claude-desktop"]; !ok {
+		t.Fatal("top-level claude-desktop command is not registered")
+	}
+	var output bytes.Buffer
+	if err := runClaudeDesktop(context.Background(), []string{"help"}, IO{Out: &output, Err: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "ocx claude-desktop move") {
+		t.Fatalf("desktop help=%q", output.String())
+	}
+	output.Reset()
+	if err := PrintHelp(&output, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "ocx claude desktop move") || !strings.Contains(output.String(), "--discovery-only") {
+		t.Fatalf("claude help=%q", output.String())
 	}
 }
 

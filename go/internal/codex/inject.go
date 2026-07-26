@@ -47,7 +47,7 @@ func ShouldInjectAPIAuthHeader(hostname string) bool {
 		return false
 	}
 	ip := net.ParseIP(host)
-	return ip == nil || !ip.IsLoopback() && !ip.IsUnspecified()
+	return ip == nil || !ip.IsLoopback()
 }
 
 func ExternalCodexModelProvider(content string) string {

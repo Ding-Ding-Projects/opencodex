@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -633,6 +634,17 @@ func TestResponsesCorePreflightsBeforeCommittingSSEHeaders(t *testing.T) {
 func TestResponsesCoreNormalizesMidStreamDisconnectMessage(t *testing.T) {
 	if got := normalizeUpstreamDisconnectMessage("read upstream SSE stream: unexpected EOF"); got != bunSocketClosedMessage {
 		t.Fatalf("message=%q", got)
+	}
+}
+
+func TestClassifyUnstructuredStreamErrorPreservesMalformedSSEAsInvalidRequest(t *testing.T) {
+	malformed := classifyUnstructuredStreamError(types.AdapterEvent{Type: types.EventError, Error: "malformed upstream SSE data frame"})
+	if malformed.StatusCode != http.StatusBadRequest || malformed.ErrorType != "invalid_request_error" {
+		t.Fatalf("malformed=%#v", malformed)
+	}
+	middle := classifyUnstructuredStreamError(types.AdapterEvent{Type: types.EventError, Error: "synthetic mid-stream failure"})
+	if middle.StatusCode != http.StatusBadGateway || middle.ErrorType != ocxlib.UpstreamStreamErrorType {
+		t.Fatalf("middle=%#v", middle)
 	}
 }
 

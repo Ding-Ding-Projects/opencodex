@@ -1,5 +1,7 @@
 package config
 
+import "github.com/lidge-jun/opencodex-go/internal/claude"
+
 type ClaudeCodeConfig struct {
 	Enabled            *bool                  `json:"enabled,omitempty"`
 	NativePassthrough  *bool                  `json:"nativePassthrough,omitempty"`
@@ -20,6 +22,8 @@ type ClaudeCodeConfig struct {
 	InjectAgents       *bool                  `json:"injectAgents,omitempty"`
 	WebSearchSidecar   *ClaudeSidecarOverride `json:"webSearchSidecar,omitempty"`
 	VisionSidecar      *ClaudeSidecarOverride `json:"visionSidecar,omitempty"`
+	DesktopAutoApply   *bool                  `json:"desktopAutoApply,omitempty"`
+	DesktopProfile     *claude.DesktopProfile `json:"desktopProfile,omitempty"`
 }
 
 type ClaudeTierModels struct {

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -607,6 +608,11 @@ func (c Config) Validate() error {
 	}
 	if len(c.SubagentModels) > 5 {
 		return &ConfigError{Field: "subagentModels", Message: "must contain at most 5 models"}
+	}
+	if c.ClaudeCode != nil && c.ClaudeCode.DesktopProfile != nil {
+		if _, err := claude.ParseDesktopProfile(*c.ClaudeCode.DesktopProfile); err != nil {
+			return &ConfigError{Field: "claudeCode.desktopProfile", Message: err.Error()}
+		}
 	}
 	seenCustomIDs := make(map[string]bool, len(c.CustomModels))
 	seenCustomSlugs := make(map[string]bool, len(c.CustomModels))

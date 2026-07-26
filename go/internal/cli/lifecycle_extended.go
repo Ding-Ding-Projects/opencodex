@@ -28,10 +28,22 @@ func runEnsure(ctx context.Context, args []string, streams IO) error {
 	}
 	pid, port := readRuntime()
 	if pid > 0 && platform.ProcessAlive(pid) && probeHealth(ctx, cfg.Host, port) {
+		live := findLiveProxy(ctx, cfg)
+		if live != nil {
+			if err := applyGrokFence(ctx, cfg, live.Port, live.Hostname, false, streams); err != nil {
+				return err
+			}
+		}
 		fmt.Fprintf(streams.Out, "Proxy running on port %d.\n", port)
 		return nil
 	}
-	return startDetachedAndWait(ctx, streams)
+	if err := startDetachedAndWait(ctx, streams); err != nil {
+		return err
+	}
+	if live := findLiveProxy(ctx, cfg); live != nil {
+		return applyGrokFence(ctx, cfg, live.Port, cfg.Host, false, streams)
+	}
+	return nil
 }
 
 func runUninstall(ctx context.Context, args []string, streams IO) error {

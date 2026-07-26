@@ -224,7 +224,7 @@ type requestLogDTO struct {
 
 func newRequestLogDTO(entry RequestLogEntry) requestLogDTO {
 	surface := entry.Surface
-	if surface != "claude" {
+	if surface != "claude" && surface != "claude-desktop" {
 		surface = ""
 	}
 	var attempts []RequestAttemptLog

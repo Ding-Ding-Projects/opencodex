@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 )
 
 func TestLoadLegacyConfigWithoutNewCollections(t *testing.T) {
@@ -534,5 +536,13 @@ func TestValidateExtendedRuntimeSettings(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want ConfigError", err)
 			}
 		})
+	}
+}
+
+func TestValidateRejectsInvalidClaudeDesktopProfile(t *testing.T) {
+	cfg := Default()
+	cfg.ClaudeCode = &ClaudeCodeConfig{DesktopProfile: &claude.DesktopProfile{Version: 1}}
+	if err := cfg.Validate(); !IsConfigError(err) || !strings.Contains(err.Error(), "claudeCode.desktopProfile") {
+		t.Fatalf("Validate() error=%v", err)
 	}
 }

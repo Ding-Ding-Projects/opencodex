@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/grok"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/service"
@@ -41,33 +42,45 @@ func runService(args []string, streams IO) error {
 		if err := manager.Install(); err != nil {
 			return err
 		}
+		if err := writeServiceInstallState(); err != nil {
+			return fmt.Errorf("write service install state: %w", err)
+		}
 		fmt.Fprintf(streams.Out, "Service installed and started: %s\n", manager.ArtifactPath())
 	case "start":
 		return manager.Start()
 	case "restart":
+		if err := assertServiceEnvironmentOwnedHere(); err != nil {
+			return err
+		}
 		_, port := readRuntime()
 		if port <= 0 {
 			port = cfg.Port
 		}
-		if err := manager.Stop(); err != nil {
-			return err
-		}
-		if port > 0 && !reclaimListenPort(context.Background(), gracefulStopHost(cfg.Host), port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second}) {
-			return fmt.Errorf("listen port %d did not become available after service stop", port)
-		}
-		return manager.Start()
+		return restartManagedService(manager, gracefulStopHost(cfg.Host), port, streams)
 	case "stop":
+		if err := assertServiceEnvironmentOwnedHere(); err != nil {
+			return err
+		}
 		if err := manager.Stop(); err != nil {
 			return err
 		}
-		return stopTrackedProxy(*cfg)
+		if err := stopTrackedProxy(*cfg); err != nil {
+			return err
+		}
+		teardownOwnedGrokFence(streams)
+		return nil
 	case "uninstall", "remove":
+		if err := assertServiceEnvironmentOwnedHere(); err != nil {
+			return err
+		}
 		if err := manager.Uninstall(); err != nil {
 			return err
 		}
 		if err := stopTrackedProxy(*cfg); err != nil {
 			return err
 		}
+		teardownOwnedGrokFence(streams)
+		removeServiceInstallState()
 		dir, _ := configDir()
 		_ = os.Remove(filepath.Join(dir, "service-api-token"))
 		return nil
@@ -94,6 +107,31 @@ func runService(args []string, streams IO) error {
 		return fmt.Errorf("unknown service subcommand %q", command)
 	}
 	return nil
+}
+
+func restartManagedService(manager service.Manager, host string, port int, streams IO) error {
+	stopErr := manager.Stop()
+	if stopErr != nil {
+		fmt.Fprintln(streams.Err, "Service manager stop failed; continuing restart:", stopErr)
+	} else if port > 0 && !reclaimListenPort(context.Background(), host, port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second}) {
+		return fmt.Errorf("listen port %d did not become available after service stop", port)
+	}
+	if err := manager.Start(); err != nil {
+		if stopErr != nil {
+			return fmt.Errorf("service restart start failed after stop failure (%v): %w", stopErr, err)
+		}
+		return err
+	}
+	return nil
+}
+
+func teardownGrokFence(streams IO) {
+	result := (grok.Fence{}).Teardown()
+	if result.Changed {
+		fmt.Fprintln(streams.Out, result.Message)
+	} else if !result.OK {
+		fmt.Fprintln(streams.Err, "Grok config cleanup failed:", result.Message)
+	}
 }
 
 func stopTrackedProxy(cfg config.Config) error {

@@ -24,11 +24,18 @@ var commandHelp = map[string]string{
 	"diagnostics": "Usage: ocx diagnostics [--json]\n\nPrint a secret-free local diagnostic report.",
 	"completion":  "Usage: ocx completion <bash|zsh|fish|powershell>\n\nGenerate shell completion setup.",
 	"config":      "Usage: ocx config <path|show|get|set|unset|validate> [arguments]\n\nInspect and update validated configuration values.",
-	"claude":      "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.",
-	"debug":       "Usage: ocx debug <status|on|off|stack-on|stack-off>",
-	"service":     "Usage: ocx service [install|start|stop|status|uninstall]",
-	"tray":        "Usage: ocx tray [install|start|stop|restart|status|uninstall|run] [--json] [--no-start]\n\nManage the Windows system tray companion.",
-	"update":      "Usage: ocx update --tag latest|preview [--destination PATH] [--dry-run]\n       ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]\n\nResolve a platform-native GitHub release artifact, verify its SHA-256 manifest, and replace the current binary.",
+	"claude": "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.\n\n" +
+		"Claude Desktop profile:\n" +
+		"  ocx claude desktop [apply] [--static|--hybrid|--discovery-only]\n" +
+		"  ocx claude desktop show [--json]\n" +
+		"  ocx claude desktop move <route> <opus|fable|sonnet|haiku> [--default]\n" +
+		"  ocx claude desktop default <family> <route|none>\n" +
+		"  ocx claude desktop export <path|->\n" +
+		"  ocx claude desktop import <path> [--apply]",
+	"debug":   "Usage: ocx debug <status|on|off|stack-on|stack-off>",
+	"service": "Usage: ocx service [install|start|stop|status|uninstall]",
+	"tray":    "Usage: ocx tray [install|start|stop|restart|status|uninstall|run] [--json] [--no-start]\n\nManage the Windows system tray companion.",
+	"update":  "Usage: ocx update --tag latest|preview [--destination PATH] [--dry-run]\n       ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]\n\nResolve a platform-native GitHub release artifact, verify its SHA-256 manifest, and replace the current binary.",
 }
 
 func PrintHelp(writer io.Writer, command string) error {

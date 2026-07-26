@@ -80,7 +80,7 @@ func TestInjectBranchSelectionAndIdempotency(t *testing.T) {
 	if err != nil || kept != external || externalResult.PreservedExternalProvider != "custom" {
 		t.Fatalf("external branch = %q %+v %v", kept, externalResult, err)
 	}
-	if !ShouldInjectAPIAuthHeader("10.0.0.8") || ShouldInjectAPIAuthHeader("localhost") {
+	if !ShouldInjectAPIAuthHeader("10.0.0.8") || !ShouldInjectAPIAuthHeader("0.0.0.0") || !ShouldInjectAPIAuthHeader("::") || ShouldInjectAPIAuthHeader("localhost") {
 		t.Fatal("auth-header hostname gate mismatch")
 	}
 	if ClassifyCodexRouting(remoteOutput) != RoutingCustomRemote || ClassifyCodexRouting(external) != RoutingCustomRemote {

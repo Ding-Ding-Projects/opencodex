@@ -39,7 +39,7 @@ type scriptedRunner struct{ calls int }
 func (runner *scriptedRunner) Run(_ context.Context, _ *types.NormalizedRequest, _ types.Adapter) (TurnResult, error) {
 	runner.calls++
 	arguments, _ := json.Marshal(map[string]any{"query": "always search"})
-	return TurnResult{StatusCode: 200, Events: []types.AdapterEvent{{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call", Name: ToolName, Arguments: arguments}}, {Type: types.EventDone}}}, nil
+	return TurnResult{StatusCode: 200, Events: []types.AdapterEvent{{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call", Name: ToolName, Arguments: arguments}}, {Type: types.EventDone, Usage: &types.Usage{InputTokens: runner.calls, OutputTokens: 1}}}}, nil
 }
 
 type noOpAdapter struct{}
@@ -62,7 +62,8 @@ func (fixedExecutor) Search(context.Context, string, map[string]any) (Result, er
 
 func TestLoopIterationBoundForcesFinalPass(t *testing.T) {
 	runner := &scriptedRunner{}
-	loop := Loop{Runner: runner, Executor: fixedExecutor{}, MaxSearches: 2, MaxIterations: 4}
+	var rawUsage *types.Usage
+	loop := Loop{Runner: runner, Executor: fixedExecutor{}, MaxSearches: 2, MaxIterations: 4, OnUsage: func(usage *types.Usage) { rawUsage = usage }}
 	request := &types.NormalizedRequest{ModelID: "test", Context: types.RequestContext{Tools: []types.Tool{SyntheticTool()}}}
 	events, err := loop.Run(context.Background(), request, noOpAdapter{})
 	if err != nil {
@@ -73,6 +74,9 @@ func TestLoopIterationBoundForcesFinalPass(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Type != types.EventDone {
 		t.Fatalf("unexpected final events: %#v", events)
+	}
+	if rawUsage == nil || rawUsage.InputTokens != 3 || rawUsage.OutputTokens != 1 {
+		t.Fatalf("raw terminal usage=%#v", rawUsage)
 	}
 }
 

@@ -71,6 +71,7 @@ type Loop struct {
 	MaxRotations  int
 	Rotate429     RotateAdapter
 	Structured    bool
+	OnUsage       func(*types.Usage)
 }
 
 func (loop Loop) Run(ctx context.Context, request *types.NormalizedRequest, adapter types.Adapter) ([]types.AdapterEvent, error) {
@@ -112,6 +113,9 @@ func (loop Loop) Run(ctx context.Context, request *types.NormalizedRequest, adap
 			return nil, err
 		}
 		if forceAnswer || len(calls) == 0 || realTool {
+			if loop.OnUsage != nil && len(passthrough) > 0 {
+				loop.OnUsage(cloneUsage(passthrough[len(passthrough)-1].Usage))
+			}
 			return passthrough, nil
 		}
 
@@ -147,6 +151,14 @@ func (loop Loop) Run(ctx context.Context, request *types.NormalizedRequest, adap
 		}
 	}
 	return nil, fmt.Errorf("web-search loop exceeded %d iterations", maxIterations)
+}
+
+func cloneUsage(value *types.Usage) *types.Usage {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 func (loop Loop) runTurn(ctx context.Context, runner TurnRunner, request *types.NormalizedRequest, adapter types.Adapter) (TurnResult, types.Adapter, error) {

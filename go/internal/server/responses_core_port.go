@@ -857,10 +857,7 @@ func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan type
 		for event := range source {
 			if event.Type == types.EventError {
 				event.Error = normalizeUpstreamDisconnectMessage(event.Error)
-				if event.StatusCode == 0 && event.ErrorType == "" {
-					event.StatusCode = http.StatusBadGateway
-					event.ErrorType = ocxlib.UpstreamStreamErrorType
-				}
+				event = classifyUnstructuredStreamError(event)
 			}
 			logSession.observe(event)
 			switch event.Type {
@@ -888,6 +885,20 @@ func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan type
 		}
 	}()
 	return out
+}
+
+func classifyUnstructuredStreamError(event types.AdapterEvent) types.AdapterEvent {
+	if event.StatusCode != 0 || event.ErrorType != "" {
+		return event
+	}
+	if inferred := ocxlib.AdapterFailureFromMessage(event.Error); inferred.HTTPStatus == http.StatusBadRequest {
+		event.StatusCode = http.StatusBadRequest
+		event.ErrorType = "invalid_request_error"
+		return event
+	}
+	event.StatusCode = http.StatusBadGateway
+	event.ErrorType = ocxlib.UpstreamStreamErrorType
+	return event
 }
 
 func (core *ResponsesCore) recordAuthOutcome(auth *types.AuthContext, outcome types.OutcomeStatus, status int, message, retryAfter string) {

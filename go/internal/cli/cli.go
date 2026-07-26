@@ -70,6 +70,7 @@ func defaultCommandSpecs() []commandSpec {
 		{Name: "completion", Usage: "ocx completion <shell>", Summary: "Generate shell completions", Handler: noContext(runCompletion)},
 		{Name: "config", Usage: "ocx config <subcommand>", Summary: "Inspect or update configuration", Handler: noContext(runConfig)},
 		{Name: "claude", Usage: "ocx claude [args...]", Summary: "Launch Claude Code through the proxy", Handler: runClaude},
+		{Name: "claude-desktop", Usage: "ocx claude-desktop [subcommand]", Summary: "Manage Claude Desktop model families", Handler: runClaudeDesktop, Hidden: true},
 		{Name: "debug", Usage: "ocx debug <subcommand>", Summary: "Configure runtime diagnostics", Handler: noContext(runDebug)},
 		{Name: "service", Usage: "ocx service [subcommand]", Summary: "Manage the background service", Handler: noContext(runService)},
 		{Name: "tray", Usage: "ocx tray [subcommand]", Summary: "Manage the Windows tray companion", Handler: runTray},

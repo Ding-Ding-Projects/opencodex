@@ -13,6 +13,9 @@ import (
 )
 
 func runClaude(ctx context.Context, args []string, streams IO) error {
+	if len(args) > 0 && args[0] == "desktop" {
+		return runClaudeDesktop(ctx, args[1:], streams)
+	}
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return err
