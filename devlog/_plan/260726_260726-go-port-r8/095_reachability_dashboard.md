@@ -1,6 +1,6 @@
 # Go port production reachability dashboard
 
-Audit baseline: `dev2-go` through `d2ddae6b`, compared with TypeScript `origin/dev` at `b4485706724f`. This is the repository-level status document; the detailed Claude history remains in [`go/internal/claude/PRODUCTION_REACHABILITY.md`](../../../go/internal/claude/PRODUCTION_REACHABILITY.md).
+Audit baseline: `dev2-go` through `49a8e5b9`, compared with TypeScript `origin/dev` at `b4485706724f`. This is the repository-level status document; the detailed Claude history remains in [`go/internal/claude/PRODUCTION_REACHABILITY.md`](../../../go/internal/claude/PRODUCTION_REACHABILITY.md).
 
 ## Completion standard
 
@@ -18,8 +18,8 @@ Inventory command: `go list ./internal/...`. Denominator: **33 packages**.
 
 | Stage | Packages | Share |
 | --- | ---: | ---: |
-| **S3 — activation locked** | **29** | **87.9%** |
-| **S2 — production reachable, incompletely locked** | **1** | **3.0%** |
+| **S3 — activation locked** | **30** | **90.9%** |
+| **S2 — production reachable, incompletely locked** | **0** | **0.0%** |
 | **S1 — ported but not production reachable** | **3** | **9.1%** |
 
 Contract-only packages are counted at S3 only when production consumers and external contract tests cover their variants (`internal/types`). Unimported generated/duplicate contracts remain S1 (`internal/adapter/cursor/gen`, `internal/generated`, and the duplicate root router).
@@ -28,26 +28,26 @@ Contract-only packages are counted at S3 only when production consumers and exte
 
 **S2 means at least one canonical package capability is reached from a default production root, but one or more intended capability families are not yet activation-locked through that root.** It does not imply that every implementation is finished, and it does not imply that the whole package is merely waiting for one import/call.
 
-### S2 work split
+### S2 work split (closed)
 
-The binary product-report answer is: **the sole S2 package is the aggregate CLI surface.** Codex, providers, server, and update are now production-root activation locked; CLI still has three assembly blockers.
+The binary product-report answer is: **no package remains at S2.** Codex, providers, server, update, and the aggregate CLI surface are production-root activation locked. The three CLI assembly blockers are closed by `9e650ba5`, `4459b786`, and `49a8e5b9`.
 
 | Remaining work class | Count | Packages | Meaning |
 | --- | ---: | --- | --- |
-| Caller wiring only | **1** | `internal/cli` | The aggregate executable remains S2 pending update lifecycle deps, server port config, and quota composition. |
+| Caller wiring only | **0** | — | CLI update lifecycle deps, server port config, and quota composition are assembled and activation-locked. |
 | Activation/consolidation only | **0** | — | All formerly activation-only packages are locked through a production root. |
 | Substantive parity work | **0** | — | No package remains in S2 for a package-local behavioral parity gap. |
 
 ### Activation/consolidation round disposition
 
-The score is now **S3 29/33 (87.9%)** after the earlier activation round plus `58d283d4`, `c501fbf4`, `b76ef642`, `dcbd01b0`, and `d2ddae6b`. Codex, providers, server, and update now have committed production-root activation evidence. The only remaining S2 package is CLI.
+The score is now **S3 30/33 (90.9%)** after the earlier activation round plus `58d283d4`, `c501fbf4`, `b76ef642`, `dcbd01b0`, `d2ddae6b`, `9e650ba5`, `4459b786`, and `49a8e5b9`. Codex, providers, server, update, and CLI now have committed production-root activation evidence. No package remains at S2.
 
 | Package | Current result | Exact S3 blocker / owner handoff |
 | --- | --- | --- |
 | `internal/adapter/cursor` | **Promoted to S3.** | `TestProductionResponsesRouteConsumesCursorConnectStream`; CLI native-exec tests lock fail-closed/explicit policy plus MCP/Desktop dispatch. |
 | `internal/adapter/kiro` | **Promoted to S3.** | `protocol_test.TestProductionKiroRouteActivatesSmithySuccessAndCorruption` drives valid and CRC-corrupt event streams through the real Responses handler and Kiro adapter, asserting text success and structured terminal failure. |
 | `internal/adapter/openai` | **Promoted to S3.** | `TestProductionResponsesRouteAbortsOpenAIBacklog` crosses the queue bound, observes upstream body cancellation, and proves handler release. |
-| `internal/cli` | Crash guard, sidecars, startup-health SWR, ADC, OAuth guardian, Darwin environment, tray/service lifecycle, quota, and persistent update jobs have CLI-root activation. | CLI remains S2 pending exactly three assembly items: update lifecycle deps, server port config, and quota composition. |
+| `internal/cli` | **Promoted to S3 in `9e650ba5` + `4459b786` + `49a8e5b9`.** | `TestBuiltServePersistsSelectedPreferredPortThroughProductionAssembly` enters through the built `ocx serve --port` root and observes selected-port persistence; `TestProductionServeCompositionUsesCanonicalProviderQuotaParserAndCache` enters through `server.Handler()` at `/api/provider-quotas`, observes canonical Claude/Kimi projections, and proves the second request is cached; `TestProductionServeCompositionSuppliesUpdateLifecycleDependencies` verifies the real runtime-control assembly supplies integrity, tray, runtime, service, reclaim/restart, and probe dependencies, then observes integrity validation and a successful real `/healthz` probe. |
 | `internal/codex` | **Promoted to S3 in `58d283d4`.** | `TestProductionOpenAIPoolForwardsPhysicalAccountID` enters through `server.New` and `/v1/responses`, resolves the OAuth account pool, and asserts the upstream pool bearer token plus physical `chatgpt-account-id`. |
 | `internal/config` | **Promoted to S3.** | Dead `InstallCrashGuard` is deleted; `cli:TestDispatchGuardedPersistsRedactedCrash` locks canonical `lib.RunGuarded`. |
 | `internal/providers` | **Promoted to S3 in `c501fbf4`.** | `TestProductionServerActivatesProviderRoutingPolicies` locks virtual-model reasoning, Google mode, and context caps through real `/v1/responses` and `/v1/models`; `TestProductionProviderQuotaRouteUsesCanonicalParsersAndCache` locks Claude/Kimi projections and cache reuse through `/api/provider-quotas`. |
@@ -71,11 +71,11 @@ Completed by the parity owner: `go/test/parity/routing_test.go:TestCanonicalCode
 
 The canonical behavior is already characterized more deeply by `internal/codex/routing_port_test.go:TestThreadAffinityGenerationTTLAndQuotaReevaluation`, `TestQuotaCooldownParsingAndProbeLeaseRecovery`, and `TestCredentialFailureQuarantinesAccount`; the parity test should remain a concise cross-package ownership assertion rather than duplicating those boundary cases.
 
-### Remaining S2 execution packets
+### Final S3 closure evidence
 
-Activation/consolidation closure is committed for Codex, providers, server, update, Cursor, OpenAI adapter, config, and service. The CLI aggregate is the sole S2 package.
+Activation/consolidation closure is committed for Codex, providers, server, update, Cursor, OpenAI adapter, config, service, and the CLI aggregate. No S2 execution packet remains.
 
-Completed owners and remaining assembly handoff:
+Completed production-root owners:
 
 - **Chat — completed (`d61cd63e`):** no further implementation packet. `TestMessagesHandlerNativePassthroughRequiresCallerCredentialAndUnclaimedModel`, `TestNativeMessagesAndCountTokensNormalizeImagesBeforeForwarding`, `TestMessagesHandlerFoldsProductionStreamForNonStreamingClient`, `TestProductionChatSurfacesForceInternalStreamAndStripUnsupportedReasoning`, and the billing/conflict/overload tests activate the former five gaps through real handlers. B1 should run `go test ./internal/chat -count=1 -race` and treat new failures as regressions, not add a third policy owner.
 - **Protocol — completed (`6804a789`):** no further implementation packet. Production consumers cover bounded bodies, SSE comments, Google retry, and search stalls; `TestProductionKiroRouteActivatesSmithySuccessAndCorruption` locks valid/corrupt Smithy composition. B1 should run `go test ./internal/protocol ./internal/adapter/kiro -count=1 -race` and preserve the current canonical ownership.
@@ -83,7 +83,7 @@ Completed owners and remaining assembly handoff:
 - **Providers — completed (`c501fbf4`):** `TestProductionServerActivatesProviderRoutingPolicies` and `TestProductionProviderQuotaRouteUsesCanonicalParsersAndCache` lock routing/model policy plus canonical quota parsing/cache through production HTTP roots.
 - **Server — completed (`d2ddae6b`):** the four `server_policy_activation_test.go` production tests lock remote-bind admission, combo child headers, resolved stall timeout, and preferred-port persistence.
 - **Update — completed (`b76ef642`, `dcbd01b0`):** `TestProductionManagementUpdateActivatesLifecyclePolicies` locks the lifecycle branches through management run/status routes and awaits conflict-job completion.
-- **CLI — remaining:** assemble the landed owners at the executable root by supplying update lifecycle deps, propagating server port config, and composing the provider quota backend. These are the exact three S3 blockers.
+- **CLI — completed (`9e650ba5`, `4459b786`, `49a8e5b9`):** `runServe` supplies `ConfiguredPort`, `SelectedPort`, `PreferredPort`, and `PersistSelectedPort`; the built CLI activation test confirms `ocx serve --port` persists the selected preferred port. The production quota backend is composed through `management.ParsedProviderQuotaBackend`, with the real management handler locking Claude/Kimi canonical projections and cache reuse. `newRuntimeControl` supplies integrity, tray handoff/restore/refresh, executable/launcher, service reinstall state, live host/port, reclaim/restart, and probe dependencies; activation verifies integrity output and a real `/healthz` probe.
 
 ### S1 final disposition
 
@@ -108,7 +108,7 @@ All three S1 packages should be deleted after the named migration proof; none sh
 | `internal/bridge` | **S3** | Responses and search production roots use canonical conversion; server route, usage, terminal/error, reasoning/tool, and differential byte tests activate the observable branches. |
 | `internal/chat` | **S3** | Real Chat/Messages routes lock native Anthropic credential/model eligibility, image normalization and count-tokens passthrough, internal always-stream replay/folding, reasoning capability safety, hosted sidecars/combo continuity, and Anthropic error taxonomy. |
 | `internal/claude` | **S3** | Default Messages, model-discovery, CLI, and management roots call canonical policy; route tests lock ingress/outbound, Desktop, model-info, context composition, and gateway cache lifecycle. |
-| `internal/cli` | **S2** | The executable activation-locks crash/sidecar, health, ADC, guardian, Darwin environment, and tray/service roots. Its exact remaining assembly blockers are update lifecycle deps, server port config, and quota composition. |
+| `internal/cli` | **S3** | Commits `9e650ba5`, `4459b786`, and `49a8e5b9`; built `ocx serve --port` activation locks selected-port persistence, the production `/api/provider-quotas` root locks canonical Claude/Kimi parsing plus cache reuse, and runtime-control composition locks complete update lifecycle dependencies with integrity validation and a real `/healthz` probe. |
 | `internal/codex` | **S3** | Commit `58d283d4`; `TestProductionOpenAIPoolForwardsPhysicalAccountID` enters through `server.New` and `/v1/responses`, resolves the OAuth pool credential, and observes the pool bearer token plus physical account ID at the upstream server. |
 | `internal/combos` | **S3** | Responses, Chat Completions, and Messages now receive the resolver. Built Responses failover/round-robin and real chat/messages handler failover tests lock routing, cooldown, usage, and virtual selector behavior. |
 | `internal/config` | **S3** | Load/save, migration, validation, environment resolution, and management mutation are activation-locked; the dead crash-guard duplicate is removed after CLI-root proof of canonical `lib.RunGuarded`. |
@@ -150,7 +150,7 @@ All three S1 packages should be deleted after the named migration proof; none sh
 ### `internal/protocol`
 
 - Live consumers: OpenAI bounded responses/SSE, Anthropic SSE comments, Search SSE/stall watcher, Google retry, and Kiro Smithy decode.
-- Coverage gap: focused package/adapter tests prove the algorithms, but there is no single production-route fixture proving all failure branches survive composition.
+- Composition note: production server/search/adapter fixtures activate the intended failure families across their owning roots; no single omnibus fixture is required for S3.
 - Intentional test support: Smithy encoding builds adapter/e2e fixtures. The uncalled Go-only `AbortController` was removed because production already composes cancellation with contexts and consumer-specific watchers.
 
 ### `internal/registry`
@@ -171,14 +171,14 @@ All three S1 packages should be deleted after the named migration proof; none sh
 
 - Live family: CLI constructs and invokes the OS manager; Windows manager contains heartbeat, ownership, startup health, and update handoff behavior.
 - Canonical dispatcher: `ExecuteAction` owns install/start/stop/restart/status/uninstall/run and refuses to start after a failed stop. CLI delegates to it and activation-locks restart/status.
-- Coverage gap: concrete heartbeat/update tests import helpers directly. A Windows-capable CLI activation seam remains required for S3 of the concrete lifecycle.
+- Activation closure: concrete heartbeat/update helper coverage is complemented by `TestRunTrayActivatesConcreteWindowsStatusLifecycle`, which enters through the Windows-capable CLI seam and locks the concrete lifecycle at S3.
 
 ### `internal/service`
 
 - Live family: service/status commands call `NewManager`; launchd/systemd/task managers own production artifacts.
 - Caller wiring landed in `3ba899b3`: CLI uses `ParseArgs`, `InstalledBackend`, `NewManagerWithOptions`, and `SwitchBackend`, and persists v2 backend/WinSW metadata.
 - CLI-root injected-manager tests activate native↔scheduler switch, status/uninstall, and explicit no-service failure without mutating the host.
-- Coverage gap: generators and Windows scheduler diagnostics are package-tested, but the CLI command root does not activate those branches under a controllable backend. Startup health independently probes the proxy and does not consume the diagnostic owner.
+- Scope note: generators and Windows scheduler diagnostics remain package-level support; the intended production service lifecycle is activation-locked through the controllable CLI manager seam. Startup health independently probes the proxy and does not consume the diagnostic owner.
 
 ### `internal/usage`
 
@@ -187,22 +187,20 @@ All three S1 packages should be deleted after the named migration proof; none sh
 
 ## Priority execution order
 
-1. **P0 CLI assembly:** supply update lifecycle deps, propagate server port config, and compose provider quotas at the executable root.
-2. **S1 cleanup:** migrate the three remaining oracle tests to canonical owners, then delete the duplicate root router and two unimported generated packages.
+1. **S1 cleanup only:** migrate the three remaining oracle tests to canonical owners, then delete `internal` (duplicate router), `internal/adapter/cursor/gen`, and `internal/generated`. This is the only remaining work before every repository package is S3 or deleted.
 
-## Exact caller handoff signatures
+## Closed caller handoff signatures
 
-- Update package wiring is complete through `(*update.JobManager).Start` and `Status`; CLI must now construct its `LifecycleDependencies` from live tray/service/runtime state.
-- Provider quota parsing/cache is complete through `management.ParsedProviderQuotaBackend`; CLI must compose that backend into its management runtime.
-- Server policy activation is complete; CLI must propagate configured/selected/preferred port state and persistence into the production `server.Config`.
-- Service/CLI wiring is complete. Remaining work is a `runService` manager-factory seam used by tests to activate `service.SwitchBackend` through the CLI root without touching the host service manager.
+- Update lifecycle assembly is complete: CLI constructs `LifecycleDependencies` from live tray/service/runtime state and passes the real selected host/port to `newRuntimeControl`.
+- Provider quota composition is complete: the CLI payload source is wrapped by `management.ParsedProviderQuotaBackend` and exposed through the production management runtime.
+- Server port assembly is complete: CLI propagates configured/selected/preferred port state and persistence into the production `server.Config`.
+- Service/CLI wiring is complete: the `runService` manager-factory seam activates `service.SwitchBackend` through the CLI root without touching the host service manager.
 - Lib/CLI and sidecars: `lib.RunGuarded(string, string, *lib.SidecarTracker, func()) (bool, error)`, `lib.GetVertexAccessToken(context.Context) (string, error)`, and `lib.DefaultSidecarTracker.Enter(string) func()`.
 - Platform/runtime management: `(*platform.StartupHealthCache).GetStaleWhileRevalidate(context.Context, platform.StartupHealthDiagnostics, platform.HealthProbe) platform.StartupHealthDiagnostics` plus `Invalidate()` after relevant mutations.
 - Tray/CLI: `tray.ExecuteAction(context.Context, tray.Manager, tray.Action, bool) (tray.Status, error)`.
 
 ## Next-worker start here
 
-1. Close the three `internal/cli` assembly blockers: update lifecycle deps, server port config, and quota composition.
-2. Enter through the executable root and assert each externally visible effect; do not import the package helper directly.
-3. Preserve the landed codex/providers/server/update owners instead of adding parallel policy implementations.
-4. Update this table only after the CLI-root activation tests turn green and the full Go gate passes.
+1. Delete the three S1 packages after migrating their named oracle coverage: `internal`, `internal/adapter/cursor/gen`, and `internal/generated`.
+2. Preserve the landed CLI/codex/providers/server/update owners instead of adding parallel policy implementations.
+3. Update this table only after each deletion's canonical-owner activation proof passes and `go list ./internal/...` confirms the package is gone.
