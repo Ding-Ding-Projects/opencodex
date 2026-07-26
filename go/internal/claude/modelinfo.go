@@ -23,16 +23,31 @@ type ThinkingCapability struct {
 	Supported bool          `json:"supported"`
 	Types     ThinkingTypes `json:"types"`
 }
-type ModelCapabilities struct {
-	Batch             CapabilitySupport  `json:"batch"`
-	Citations         CapabilitySupport  `json:"citations"`
-	CodeExecution     CapabilitySupport  `json:"code_execution"`
-	Effort            EffortCapability   `json:"effort"`
-	ImageInput        CapabilitySupport  `json:"image_input"`
-	PDFInput          CapabilitySupport  `json:"pdf_input"`
-	StructuredOutputs CapabilitySupport  `json:"structured_outputs"`
-	Thinking          ThinkingCapability `json:"thinking"`
+type ContextManagementCapability struct {
+	Supported     bool `json:"supported"`
+	ClearThinking any  `json:"clear_thinking_20251015"`
+	ClearToolUses any  `json:"clear_tool_uses_20250919"`
+	Compact       any  `json:"compact_20260112"`
 }
+type ModelCapabilities struct {
+	Batch             CapabilitySupport           `json:"batch"`
+	Citations         CapabilitySupport           `json:"citations"`
+	CodeExecution     CapabilitySupport           `json:"code_execution"`
+	ContextManagement ContextManagementCapability `json:"context_management"`
+	Effort            EffortCapability            `json:"effort"`
+	ImageInput        CapabilitySupport           `json:"image_input"`
+	PDFInput          CapabilitySupport           `json:"pdf_input"`
+	StructuredOutputs CapabilitySupport           `json:"structured_outputs"`
+	Thinking          ThinkingCapability          `json:"thinking"`
+}
+
+type AnthropicIDStyle string
+
+const (
+	AnthropicIDDesktop3P AnthropicIDStyle = "desktop3p"
+	AnthropicIDReadable  AnthropicIDStyle = "readable"
+)
+
 type ModelInfo struct {
 	ID             string            `json:"id"`
 	DisplayName    string            `json:"display_name"`
@@ -51,6 +66,10 @@ type DiscoveryModel struct {
 }
 
 func BuildModelInfos(native []DiscoveryModel, routed []DiscoveryModel, auto AutoContextMode) []ModelInfo {
+	return BuildModelInfosWithStyle(native, routed, auto, AnthropicIDReadable)
+}
+
+func BuildModelInfosWithStyle(native []DiscoveryModel, routed []DiscoveryModel, auto AutoContextMode, style AnthropicIDStyle) []ModelInfo {
 	out := []ModelInfo{}
 	seen := map[string]bool{}
 	push := func(info ModelInfo, window int, allowAuto bool) {
@@ -79,10 +98,16 @@ func BuildModelInfos(native []DiscoveryModel, routed []DiscoveryModel, auto Auto
 	}
 	for _, m := range native {
 		id := ClaudeCodeNativeAlias(m.ID)
+		if style == AnthropicIDDesktop3P {
+			id = Desktop3pAlias("native", m.ID)
+		}
 		push(newModelInfo(id, m.ID+" (native)", m), m.ContextWindow, true)
 	}
 	for _, m := range routed {
 		id := ClaudeCodeAlias(m.Provider, m.ID)
+		if style == AnthropicIDDesktop3P {
+			id = Desktop3pAlias(m.Provider, m.ID)
+		}
 		push(newModelInfo(id, m.ID+" ("+m.Provider+")", m), m.ContextWindow, m.Provider != "anthropic")
 	}
 	return out
@@ -102,7 +127,7 @@ func newModelInfo(id, display string, m DiscoveryModel) ModelInfo {
 		xh = &v
 	}
 	capFalse := CapabilitySupport{}
-	caps := ModelCapabilities{Batch: capFalse, Citations: capFalse, CodeExecution: capFalse, ImageInput: CapabilitySupport{m.ImageInput}, PDFInput: capFalse, StructuredOutputs: capFalse,
+	caps := ModelCapabilities{Batch: capFalse, Citations: capFalse, CodeExecution: capFalse, ContextManagement: ContextManagementCapability{}, ImageInput: CapabilitySupport{m.ImageInput}, PDFInput: capFalse, StructuredOutputs: capFalse,
 		Effort: EffortCapability{supported, CapabilitySupport{rungs["low"]}, CapabilitySupport{rungs["medium"]}, CapabilitySupport{rungs["high"]}, CapabilitySupport{rungs["max"]}, xh}, Thinking: ThinkingCapability{supported, ThinkingTypes{CapabilitySupport{supported}, CapabilitySupport{supported}}}}
 	var window *int
 	if m.ContextWindow > 0 {

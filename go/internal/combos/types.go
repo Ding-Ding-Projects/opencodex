@@ -145,18 +145,11 @@ func validateAll(definitions map[string]Combo, providers map[string]Provider) er
 		if alias != "" {
 			aliases[alias] = id
 		}
-		usable := 0
 		for _, target := range combo.Targets {
-			provider, ok := providers[strings.TrimSpace(target.Provider)]
+			_, ok := providers[strings.TrimSpace(target.Provider)]
 			if !ok {
 				return fmt.Errorf("combo %q: target provider %q is not configured", id, target.Provider)
 			}
-			if !provider.Disabled {
-				usable++
-			}
-		}
-		if usable == 0 {
-			return fmt.Errorf("combo %q: targets must include at least one enabled provider", id)
 		}
 	}
 	return nil

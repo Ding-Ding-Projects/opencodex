@@ -2,6 +2,7 @@ package combos
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -175,5 +176,17 @@ func TestConcurrentResolutionSafety(t *testing.T) {
 	}
 	if total := counts["a"] + counts["b"]; total != workers*each {
 		t.Fatal(fmt.Sprintf("resolved %d requests, want %d", total, workers*each))
+	}
+}
+
+func TestAllDisabledComboLoadsAndFailsAtRequestTime(t *testing.T) {
+	resolver, err := New(map[string]Combo{"offline": {Targets: []Target{{Provider: "a", Model: "m"}}}}, map[string]Provider{"a": {Disabled: true}})
+	if err != nil {
+		t.Fatalf("New rejected persisted all-disabled combo: %v", err)
+	}
+	_, err = resolver.PickTarget("combo/offline")
+	var unavailable *NoAvailableTargetsError
+	if !errors.As(err, &unavailable) || unavailable.Code() != "combo_unavailable" {
+		t.Fatalf("PickTarget error=%T %v", err, err)
 	}
 }

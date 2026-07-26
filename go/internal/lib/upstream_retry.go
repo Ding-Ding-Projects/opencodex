@@ -25,6 +25,9 @@ type RetryOptions struct {
 	SlowAttempt time.Duration
 	Now         func() time.Time
 	Sleep       func(context.Context, time.Duration) error
+	// ResetOnly retries connection-reset-shaped transport failures but returns
+	// completed HTTP responses unchanged.
+	ResetOnly bool
 }
 
 type ReplayableRequest func(context.Context, bool) (*http.Response, error)
@@ -98,7 +101,7 @@ func DoWithUpstreamRetry(ctx context.Context, send ReplayableRequest, options Re
 		if err == nil && response == nil {
 			return nil, errors.New("upstream retry returned nil response without error")
 		}
-		if err == nil && (!IsTransientUpstreamStatus(response.StatusCode) || elapsed > slowAttempt || attempt == attempts-1) {
+		if err == nil && (options.ResetOnly || !IsTransientUpstreamStatus(response.StatusCode) || elapsed > slowAttempt || attempt == attempts-1) {
 			return response, nil
 		}
 		if err != nil && (!IsConnectionResetError(err) || attempt == attempts-1) {

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -43,7 +44,28 @@ type Bucket struct {
 	Newest    *int64         `json:"newest,omitempty"`
 	Largest   []LargestEntry `json:"largest,omitempty"`
 	Rows      *int64         `json:"rows,omitempty"`
+	rowsKnown bool
 }
+
+func (bucket Bucket) MarshalJSON() ([]byte, error) {
+	result := map[string]any{
+		"key": bucket.Key, "label": bucket.Label, "bytes": bucket.Bytes, "fileCount": bucket.FileCount,
+	}
+	if bucket.Oldest != nil {
+		result["oldest"] = *bucket.Oldest
+	}
+	if bucket.Newest != nil {
+		result["newest"] = *bucket.Newest
+	}
+	if len(bucket.Largest) > 0 {
+		result["largest"] = bucket.Largest
+	}
+	if bucket.rowsKnown {
+		result["rows"] = bucket.Rows
+	}
+	return json.Marshal(result)
+}
+
 type Total struct {
 	Bytes     int64 `json:"bytes"`
 	FileCount int   `json:"fileCount"`
@@ -156,6 +178,9 @@ func finishReport(report Report, files map[BucketKey][]fileEntry, rows map[Bucke
 		}
 		if rows != nil {
 			bucket.Rows = rows[key]
+		}
+		if (key == BucketStateDB || key == BucketLogsDB) && bucket.FileCount > 0 {
+			bucket.rowsKnown = true
 		}
 		report.Buckets = append(report.Buckets, bucket)
 		report.Total.Bytes += bucket.Bytes

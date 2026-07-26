@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 )
 
 type AnthropicExecutor struct {
@@ -29,7 +31,7 @@ func (e *AnthropicExecutor) Search(ctx context.Context, query string, _ map[stri
 	}
 	model := e.Model
 	if model == "" {
-		model = "claude-sonnet-4-5"
+		model = DefaultAnthropicSidecarModel
 	}
 	instruction := baseInstruction
 	if e.DescribeImages {
@@ -47,29 +49,31 @@ func (e *AnthropicExecutor) Search(ctx context.Context, query string, _ map[stri
 	}
 	timeout := e.Timeout
 	if timeout <= 0 {
-		timeout = 200 * time.Second
+		timeout = time.Duration(DefaultSidecarTimeoutMS) * time.Millisecond
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return Result{}, err
-	}
-	copyHeaders(request.Header, e.Headers)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("anthropic-version", "2023-06-01")
-	if e.AccessToken != "" {
-		request.Header.Set("Authorization", "Bearer "+e.AccessToken)
-	}
-	if e.APIKey != "" {
-		request.Header.Set("x-api-key", e.APIKey)
-	}
 	client := e.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
-	response, err := client.Do(request)
+	response, err := lib.DoWithUpstreamRetry(requestCtx, func(attemptCtx context.Context, _ bool) (*http.Response, error) {
+		request, buildErr := http.NewRequestWithContext(attemptCtx, http.MethodPost, endpoint, bytes.NewReader(payload))
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		copyHeaders(request.Header, e.Headers)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "text/event-stream")
+		request.Header.Set("anthropic-version", "2023-06-01")
+		if e.AccessToken != "" {
+			request.Header.Set("Authorization", "Bearer "+e.AccessToken)
+		}
+		if e.APIKey != "" {
+			request.Header.Set("x-api-key", e.APIKey)
+		}
+		return client.Do(request)
+	}, lib.RetryOptions{Attempts: 3, ResetOnly: true})
 	if err != nil {
 		return Result{}, err
 	}

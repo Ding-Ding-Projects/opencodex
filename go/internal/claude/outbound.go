@@ -56,14 +56,26 @@ func AnthropicErrorBody(status int, message string) map[string]any {
 	return map[string]any{"type": "error", "error": map[string]any{"type": AnthropicErrorType(status), "message": message}}
 }
 func AnthropicUsage(u *types.Usage) map[string]any {
+	return anthropicUsageWithSearch(u, 0)
+}
+
+func anthropicUsageWithSearch(u *types.Usage, webSearchRequests int) map[string]any {
 	if u == nil {
 		u = &types.Usage{}
 	}
-	input := u.InputTokens - u.CacheReadInputTokens - u.CacheCreationInputTokens
+	cacheRead := u.CacheReadInputTokens
+	if cacheRead == 0 {
+		cacheRead = u.CachedInputTokens
+	}
+	input := u.InputTokens - cacheRead - u.CacheCreationInputTokens
 	if input < 0 {
 		input = 0
 	}
-	return map[string]any{"input_tokens": input, "output_tokens": u.OutputTokens, "cache_read_input_tokens": u.CacheReadInputTokens, "cache_creation_input_tokens": u.CacheCreationInputTokens}
+	result := map[string]any{"input_tokens": input, "output_tokens": u.OutputTokens, "cache_read_input_tokens": cacheRead, "cache_creation_input_tokens": u.CacheCreationInputTokens}
+	if webSearchRequests > 0 {
+		result["server_tool_use"] = map[string]any{"web_search_requests": webSearchRequests}
+	}
+	return result
 }
 
 func ConvertEvents(model string, events []types.AdapterEvent) ([]byte, AnthropicMessage) {
@@ -126,11 +138,14 @@ type anthropicMachine struct {
 	openToolID, openToolName   string
 	toolJSON                   strings.Builder
 	usage                      *types.Usage
+	webSearchRequests          int
+	webSearchQueries           map[string][]string
+	thinkingSignature          string
 	writeErr                   error
 }
 
 func newAnthropicMachine(model string, emit func(string, map[string]any)) *anthropicMachine {
-	return &anthropicMachine{model: model, emit: emit, message: AnthropicMessage{ID: "msg_" + randomHex(), Type: "message", Role: "assistant", Content: []map[string]any{}, Model: model, Usage: AnthropicUsage(nil)}}
+	return &anthropicMachine{model: model, emit: emit, webSearchQueries: map[string][]string{}, message: AnthropicMessage{ID: "msg_" + randomHex(), Type: "message", Role: "assistant", Content: []map[string]any{}, Model: model, Usage: AnthropicUsage(nil)}}
 }
 func (m *anthropicMachine) start() {
 	if m.started {
@@ -156,7 +171,12 @@ func (m *anthropicMachine) closeBlock() {
 		return
 	}
 	if m.open == "thinking" {
-		m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "signature_delta", "signature": "ocx" + fmt.Sprint(time.Now().UnixMilli())}})
+		signature := m.thinkingSignature
+		if signature == "" {
+			signature = "ocx" + fmt.Sprint(time.Now().UnixMilli())
+		}
+		m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "signature_delta", "signature": signature}})
+		m.thinkingSignature = ""
 	}
 	m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": m.openIndex})
 	if m.open == "tool_use" {
@@ -174,6 +194,9 @@ func (m *anthropicMachine) accept(e types.AdapterEvent) {
 		return
 	}
 	switch e.Type {
+	case types.EventHeartbeat:
+		m.start()
+		m.emit("ping", map[string]any{"type": "ping"})
 	case types.EventTextDelta:
 		if e.Text == "" {
 			return
@@ -181,7 +204,7 @@ func (m *anthropicMachine) accept(e types.AdapterEvent) {
 		m.openBlock("text", map[string]any{"type": "text", "text": ""})
 		m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "text_delta", "text": e.Text}})
 		m.appendText("text", e.Text)
-	case types.EventReasoning:
+	case types.EventReasoning, types.EventThinkingDelta, types.EventReasoningRawDelta:
 		text := firstNonEmpty(e.Reasoning, e.Text)
 		if text == "" {
 			return
@@ -189,6 +212,21 @@ func (m *anthropicMachine) accept(e types.AdapterEvent) {
 		m.openBlock("thinking", map[string]any{"type": "thinking", "thinking": "", "signature": ""})
 		m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "thinking_delta", "thinking": text}})
 		m.appendText("thinking", text)
+	case types.EventThinkingSignature:
+		m.thinkingSignature = firstNonEmpty(e.Signature, e.Data)
+	case types.EventRedactedThinking:
+		data := firstNonEmpty(e.Data, e.Text)
+		if data == "" {
+			return
+		}
+		m.closeBlock()
+		m.start()
+		index := m.index
+		m.index++
+		block := map[string]any{"type": "redacted_thinking", "data": data}
+		m.emit("content_block_start", map[string]any{"type": "content_block_start", "index": index, "content_block": block})
+		m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
+		m.message.Content = append(m.message.Content, block)
 	case types.EventToolCall:
 		if e.ToolCall == nil {
 			return
@@ -214,6 +252,14 @@ func (m *anthropicMachine) accept(e types.AdapterEvent) {
 		}
 	case types.EventUsage:
 		m.usage = e.Usage
+	case types.EventWebSearchCallBegin:
+		id := e.ID
+		if id == "" {
+			id = "srvtoolu_" + randomHex()
+		}
+		m.webSearchQueries[id] = append([]string(nil), e.Queries...)
+	case types.EventWebSearchCallEnd:
+		m.emitWebSearch(e)
 	case types.EventError:
 		m.fail(statusOr(e.StatusCode, 500), firstNonEmpty(e.Error, "provider error"))
 	case types.EventDone:
@@ -228,6 +274,19 @@ func (m *anthropicMachine) accept(e types.AdapterEvent) {
 			reason = "max_tokens"
 		}
 		m.finish(reason)
+	case types.EventIncomplete:
+		if e.Usage != nil {
+			m.usage = e.Usage
+		}
+		switch e.Reason {
+		case "max_output_tokens":
+			m.finish("max_tokens")
+		case "content_filter":
+			m.finish("refusal")
+		default:
+			message := firstNonEmpty(e.Message, e.Error, "upstream response was incomplete")
+			m.fail(529, message)
+		}
 	}
 }
 func (m *anthropicMachine) appendText(kind, text string) {
@@ -253,9 +312,56 @@ func (m *anthropicMachine) finish(reason string) {
 	m.start()
 	m.closeBlock()
 	m.message.StopReason = reason
-	m.message.Usage = AnthropicUsage(m.usage)
+	m.message.Usage = anthropicUsageWithSearch(m.usage, m.webSearchRequests)
 	m.emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": reason, "stop_sequence": nil}, "usage": m.message.Usage})
 	m.emit("message_stop", map[string]any{"type": "message_stop"})
+}
+
+func (m *anthropicMachine) emitWebSearch(event types.AdapterEvent) {
+	m.closeBlock()
+	m.start()
+	id := event.ID
+	if id == "" {
+		id = "srvtoolu_" + randomHex()
+	}
+	queries := event.Queries
+	if len(queries) == 0 {
+		queries = m.webSearchQueries[id]
+	}
+	input := map[string]any{}
+	if len(queries) > 1 {
+		input["queries"] = queries
+	} else if len(queries) == 1 {
+		input["query"] = queries[0]
+	}
+	toolIndex := m.index
+	m.index++
+	m.emit("content_block_start", map[string]any{"type": "content_block_start", "index": toolIndex, "content_block": map[string]any{"type": "server_tool_use", "id": id, "name": "web_search"}})
+	encoded, _ := json.Marshal(input)
+	m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": toolIndex, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(encoded)}})
+	m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": toolIndex})
+
+	result := any(map[string]any{"type": "web_search_tool_result_error", "error_code": "unavailable"})
+	successful := event.WebSearchStatus != "failed" && event.Error == ""
+	if successful {
+		hits := make([]map[string]any, 0, len(event.Sources))
+		for _, source := range event.Sources {
+			if source.URL != "" {
+				hits = append(hits, map[string]any{"type": "web_search_result", "title": source.Title, "url": source.URL})
+			}
+		}
+		result = hits
+		m.webSearchRequests++
+	}
+	resultIndex := m.index
+	m.index++
+	m.emit("content_block_start", map[string]any{"type": "content_block_start", "index": resultIndex, "content_block": map[string]any{"type": "web_search_tool_result", "tool_use_id": id, "content": result}})
+	m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": resultIndex})
+	m.message.Content = append(m.message.Content,
+		map[string]any{"type": "server_tool_use", "id": id, "name": "web_search", "input": input},
+		map[string]any{"type": "web_search_tool_result", "tool_use_id": id, "content": result},
+	)
+	delete(m.webSearchQueries, id)
 }
 func (m *anthropicMachine) fail(status int, message string) {
 	if m.terminal {

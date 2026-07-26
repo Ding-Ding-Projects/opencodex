@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/lib"
 )
 
 const baseInstruction = "You are a web-search assistant. Use the web_search tool to find current information for the user's query, then reply with a concise, factual answer. End with a Sources section containing one title and URL per line."
@@ -35,7 +37,7 @@ func (e *OpenAIExecutor) Search(ctx context.Context, query string, hostedTool ma
 	}
 	model := e.Model
 	if model == "" {
-		model = "gpt-5-mini"
+		model = DefaultOpenAISidecarModel
 	}
 	reasoning := e.Reasoning
 	if reasoning == "" {
@@ -62,23 +64,26 @@ func (e *OpenAIExecutor) execute(ctx context.Context, endpoint string, body any)
 	if err != nil {
 		return Result{}, err
 	}
-	if e.Timeout <= 0 {
-		e.Timeout = 200 * time.Second
+	timeout := e.Timeout
+	if timeout <= 0 {
+		timeout = time.Duration(DefaultSidecarTimeoutMS) * time.Millisecond
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, e.Timeout)
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return Result{}, err
-	}
-	copyHeaders(request.Header, e.Headers)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "text/event-stream")
 	client := e.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
-	response, err := client.Do(request)
+	response, err := lib.DoWithUpstreamRetry(requestCtx, func(attemptCtx context.Context, _ bool) (*http.Response, error) {
+		request, buildErr := http.NewRequestWithContext(attemptCtx, http.MethodPost, endpoint, bytes.NewReader(payload))
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		copyHeaders(request.Header, e.Headers)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "text/event-stream")
+		return client.Do(request)
+	}, lib.RetryOptions{Attempts: 3, ResetOnly: true})
 	if err != nil {
 		return Result{}, err
 	}
@@ -116,8 +121,12 @@ func copyHeaders(target, source http.Header) {
 }
 
 func responseError(response *http.Response) error {
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	return &HTTPError{StatusCode: response.StatusCode, RetryAfter: response.Header.Get("Retry-After")}
+	payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	message := strings.TrimSpace(lib.RedactSecretString(string(payload)))
+	if len(message) > 200 {
+		message = message[:200]
+	}
+	return &HTTPError{StatusCode: response.StatusCode, RetryAfter: response.Header.Get("Retry-After"), Message: message}
 }
 
 type HTTPError struct {

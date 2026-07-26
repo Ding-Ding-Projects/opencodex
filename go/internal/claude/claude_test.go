@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -47,6 +48,26 @@ func TestContextWindowsAndOneMillionVariants(t *testing.T) {
 	}
 }
 
+func TestContextWindowsDesktopAliasesModelEnvAndBoundedAcquisition(t *testing.T) {
+	windows := BuildClaudeContextWindows(map[string]int{"gpt-native": 1_000_000}, []ContextModel{{Provider: "cursor", ID: "auto", ContextWindow: 400_000}})
+	if windows[Desktop3pAlias("native", "gpt-native")] != 1_000_000 || windows[Desktop3pAlias("cursor", "auto")] != 400_000 {
+		t.Fatalf("desktop aliases missing: %#v", windows)
+	}
+	env := EffectiveModelEnv(&ModelEnvConfig{
+		ContextConfig: ContextConfig{}, Model: "cursor/auto", SmallFastModel: "gpt-native",
+		TierModels: ClaudeTierModels{Opus: "gpt-native", Sonnet: "cursor/auto", Fable: "cursor/auto"},
+	}, windows, nil)
+	if env["ANTHROPIC_MODEL"] != "cursor/auto[1m]" || env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "gpt-native[1m]" || env["ANTHROPIC_SMALL_FAST_MODEL"] != "gpt-native[1m]" {
+		t.Fatalf("effective model env=%#v", env)
+	}
+	if _, ok := BoundedContextWindows(context.Background(), time.Millisecond, func(ctx context.Context) (map[string]int, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}); ok {
+		t.Fatal("timed out acquisition reported success")
+	}
+}
+
 func TestModelInfoAdvertisesOnlyDeclaredCapabilities(t *testing.T) {
 	infos := BuildModelInfos(nil, []DiscoveryModel{{Provider: "p", ID: "vision", ReasoningEfforts: []string{"low", "ultra"}, ContextWindow: 372_000, ImageInput: true}}, AutoContextMode{Enabled: true, CompactWindow: 350_000})
 	if len(infos) != 2 || infos[0].Capabilities.Effort.High.Supported || !infos[0].Capabilities.Effort.Low.Supported {
@@ -54,6 +75,14 @@ func TestModelInfoAdvertisesOnlyDeclaredCapabilities(t *testing.T) {
 	}
 	if !strings.Contains(infos[1].DisplayName, "372k") || infos[1].MaxInputTokens == nil || *infos[1].MaxInputTokens != 372_000 {
 		t.Fatalf("variant = %#v", infos[1])
+	}
+	desktop := BuildModelInfosWithStyle(nil, []DiscoveryModel{{Provider: "p", ID: "vision"}}, AutoContextOff, AnthropicIDDesktop3P)
+	if len(desktop) != 1 || desktop[0].ID != Desktop3pAlias("p", "vision") {
+		t.Fatalf("desktop IDs=%#v", desktop)
+	}
+	payload, _ := json.Marshal(desktop[0].Capabilities)
+	if !strings.Contains(string(payload), `"context_management":{"supported":false,"clear_thinking_20251015":null`) {
+		t.Fatalf("capabilities=%s", payload)
 	}
 }
 
@@ -137,6 +166,28 @@ func TestOutboundLifecycleThinkingToolChunksAndUsage(t *testing.T) {
 	}
 	if input := message.Content[2]["input"].(map[string]any); input["x"] != float64(1) {
 		t.Fatalf("tool input = %#v", input)
+	}
+}
+
+func TestOutboundWebSearchIncompleteAndThinkingSignature(t *testing.T) {
+	stream, message := ConvertEvents("m", []types.AdapterEvent{
+		{Type: types.EventThinkingDelta, Reasoning: "private"},
+		{Type: types.EventThinkingSignature, Signature: "real-signature"},
+		{Type: types.EventWebSearchCallBegin, ID: "search-1", Queries: []string{"current version"}},
+		{Type: types.EventWebSearchCallEnd, ID: "search-1", WebSearchStatus: "completed", Sources: []types.URLCitation{{URL: "https://example.com", Title: "Example"}}},
+		{Type: types.EventDone, Usage: &types.Usage{InputTokens: 10, OutputTokens: 2}},
+	})
+	text := string(stream)
+	if !strings.Contains(text, `"signature":"real-signature"`) || !strings.Contains(text, `"type":"server_tool_use"`) || !strings.Contains(text, `"web_search_requests":1`) {
+		t.Fatalf("stream=%s", text)
+	}
+	if message.StopReason != "end_turn" || len(message.Content) != 3 {
+		t.Fatalf("message=%#v", message)
+	}
+
+	_, incomplete := ConvertEvents("m", []types.AdapterEvent{{Type: types.EventIncomplete, Reason: "content_filter"}})
+	if incomplete.StopReason != "refusal" {
+		t.Fatalf("incomplete stop reason=%q", incomplete.StopReason)
 	}
 }
 

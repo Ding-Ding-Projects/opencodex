@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,4 +57,33 @@ func TestReadonlySQLiteURLNormalizesWindowsSeparators(t *testing.T) {
 	if strings.Contains(got, "%5C") || !strings.HasPrefix(got, "file:///C:/Users/runner/state.sqlite?") {
 		t.Fatalf("readonly SQLite URL = %q", got)
 	}
+}
+
+func TestScanEmitsNullRowsForSQLiteSidecarWithoutMainDatabase(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "logs_9.sqlite-wal"), []byte("wal"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Scan(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if json.Unmarshal(payload, &decoded) != nil {
+		t.Fatal("decode report")
+	}
+	for _, raw := range decoded["buckets"].([]any) {
+		bucket := raw.(map[string]any)
+		if bucket["key"] == string(BucketLogsDB) {
+			if _, present := bucket["rows"]; !present || bucket["rows"] != nil {
+				t.Fatalf("logs bucket rows=%#v payload=%s", bucket["rows"], payload)
+			}
+			return
+		}
+	}
+	t.Fatal("logs bucket missing")
 }

@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -14,43 +15,95 @@ func ParseResponsesRequest(raw []byte) (*types.NormalizedRequest, error) {
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, fmt.Errorf("responses parse error: %w", err)
 	}
-	expanded := ExpandPreviousResponseInput(body)
+	previousID := stringField(body, "previous_response_id")
+	expanded, replayPrefix, previousExpanded := defaultResponseState.ExpandWithMetadata(body)
 	raw, _ = json.Marshal(expanded)
 	request, err := ValidateResponsesRequest(raw)
 	if err != nil {
 		return nil, err
 	}
-	return parseValidatedRequest(request, raw)
+	parsed, err := parseValidatedRequest(request, raw, replayPrefix)
+	if err != nil {
+		return nil, err
+	}
+	parsed.PreviousExpanded = previousExpanded
+	if previousID != "" {
+		parsed.ProviderState = continuationState(defaultResponseState.ProviderState(previousID))
+	}
+	return parsed, nil
 }
 
-func parseValidatedRequest(data ResponsesRequest, raw []byte) (*types.NormalizedRequest, error) {
+type pendingReasoningPart struct {
+	Part   map[string]any
+	Signed bool
+}
+
+func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) (*types.NormalizedRequest, error) {
 	now := time.Now().UnixMilli()
 	context := types.RequestContext{}
+	var rawBody map[string]any
+	_ = json.Unmarshal(raw, &rawBody)
 	if data.Instructions != nil && *data.Instructions != "" {
 		context.SystemPrompt = append(context.SystemPrompt, *data.Instructions)
 	}
 	appendMessage := func(role string, content any) {
 		context.Messages = append(context.Messages, types.Message{Role: role, Content: mustRaw(content), Timestamp: now})
 	}
+	pending := []pendingReasoningPart{}
+	loadedToolSpecs := []any{}
+	compactionRequest := false
+	compactionBoundary := false
+	assistantWithReasoning := func() *types.Message {
+		message := ensureAssistant(&context, now)
+		message.Model = data.Model
+		for _, reasoning := range pending {
+			message.Content = appendContent(message.Content, reasoning.Part)
+		}
+		pending = nil
+		return message
+	}
+	clearPending := func() { pending = nil }
+
 	switch input := data.Input.(type) {
 	case string:
 		appendMessage("user", input)
 	case []any:
-		for _, value := range input {
+		for inputIndex, value := range input {
 			item := value.(map[string]any)
 			kind := stringField(item, "type")
 			if kind == "" && stringField(item, "role") != "" {
 				kind = "message"
 			}
 			switch kind {
+			case "compaction_trigger":
+				compactionRequest = true
+			case "additional_tools":
+				if tools, ok := item["tools"].([]any); ok {
+					loadedToolSpecs = append(loadedToolSpecs, tools...)
+				}
 			case "message":
 				role := stringField(item, "role")
 				content := normalizeContent(item["content"], role == "assistant")
 				if role == "system" {
+					clearPending()
 					if text := flattenText(content); text != "" {
 						context.SystemPrompt = append(context.SystemPrompt, text)
 					}
+				} else if role == "assistant" {
+					parts, _ := content.([]any)
+					if text, ok := content.(string); ok && text != "" {
+						parts = []any{map[string]any{"type": "text", "text": text}}
+					}
+					combined := make([]any, 0, len(pending)+len(parts))
+					for _, reasoning := range pending {
+						combined = append(combined, reasoning.Part)
+					}
+					combined = append(combined, parts...)
+					clearPending()
+					message := types.Message{Role: role, Content: mustRaw(combined), Timestamp: now, Model: data.Model, Phase: stringField(item, "phase")}
+					context.Messages = append(context.Messages, message)
 				} else {
+					clearPending()
 					appendMessage(role, content)
 				}
 			case "reasoning":
@@ -60,45 +113,124 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte) (*types.Normalized
 					text = envelope.Text
 				}
 				if text != "" {
-					ensureAssistant(&context, now).Content = appendContent(ensureAssistant(&context, now).Content, map[string]any{"type": "thinking", "thinking": text, "signature": firstNonEmpty(envelope.Signature, stringField(item, "encrypted_content")), "redacted": envelope.Redacted})
+					signature := envelope.Signature
+					if signature == "" {
+						encoded, _ := json.Marshal(item)
+						signature = string(encoded)
+					}
+					part := map[string]any{"type": "thinking", "thinking": text, "signature": signature}
+					if len(envelope.Redacted) > 0 {
+						part["redacted"] = envelope.Redacted
+					}
+					if id := stringField(item, "id"); id != "" {
+						part["itemId"] = id
+					}
+					signed := envelope.Signature != ""
+					if len(pending) > 0 && !signed && !pending[len(pending)-1].Signed {
+						previous := pending[len(pending)-1].Part
+						previous["thinking"] = stringField(previous, "thinking") + "\n" + text
+					} else {
+						pending = append(pending, pendingReasoningPart{Part: part, Signed: signed})
+					}
 				}
-			case "function_call", "custom_tool_call", "local_shell_call", "tool_search_call":
+			case "function_call", "custom_tool_call":
 				callID := firstNonEmpty(stringField(item, "call_id"), stringField(item, "id"))
 				name := stringField(item, "name")
 				args := map[string]any{}
-				if kind == "tool_search_call" {
-					name = "tool_search"
-				}
-				if kind == "local_shell_call" {
-					name = "local_shell"
-				}
 				if kind == "custom_tool_call" {
 					args["input"], _ = item["input"].(string)
 				} else if s, _ := item["arguments"].(string); s != "" {
 					_ = json.Unmarshal([]byte(s), &args)
 				}
-				m := ensureAssistant(&context, now)
-				m.Content = appendContent(m.Content, map[string]any{"type": "toolCall", "id": callID, "name": name, "arguments": args})
-			case "function_call_output", "custom_tool_call_output", "tool_search_output":
+				part := map[string]any{"type": "toolCall", "id": callID, "name": name, "arguments": args}
+				if namespace := stringField(item, "namespace"); namespace != "" {
+					part["namespace"] = namespace
+				}
+				if kind == "custom_tool_call" {
+					part["customWireName"] = name
+				}
+				message := assistantWithReasoning()
+				message.Content = appendContent(message.Content, part)
+			case "local_shell_call":
+				callID := firstNonEmpty(stringField(item, "call_id"), stringField(item, "id"))
+				if callID == "" {
+					continue
+				}
+				args := map[string]any{}
+				if action, ok := item["action"].(map[string]any); ok {
+					if command, ok := action["command"].([]any); ok && len(command) > 0 {
+						args["command"] = command
+					}
+				}
+				message := assistantWithReasoning()
+				message.Content = appendContent(message.Content, map[string]any{"type": "toolCall", "id": callID, "name": "shell", "arguments": args})
+			case "tool_search_call":
+				callID := firstNonEmpty(stringField(item, "call_id"), stringField(item, "id"))
+				args, _ := item["arguments"].(map[string]any)
+				if args == nil {
+					args = map[string]any{}
+				}
+				message := assistantWithReasoning()
+				message.Content = appendContent(message.Content, map[string]any{"type": "toolCall", "id": callID, "name": "tool_search", "arguments": args})
+			case "tool_search_output":
+				clearPending()
+				tools, _ := item["tools"].([]any)
+				loadedToolSpecs = append(loadedToolSpecs, tools...)
+				names := toolSpecWireNames(tools)
+				status := stringField(item, "status")
+				failed := status != "" && status != "completed" && status != "success"
+				content := "Tool search returned no tools."
+				if failed && len(names) == 0 {
+					content = "Tool search failed (status: " + status + ")."
+				} else if len(names) > 0 {
+					content = "Tool search loaded these tools — they are now in your available tools. Call one by its EXACT name: " + strings.Join(names, ", ") + "."
+				}
+				context.Messages = append(context.Messages, types.Message{Role: "toolResult", ToolCallID: stringField(item, "call_id"), ToolName: "tool_search", Content: mustRaw(content), IsError: failed && len(names) == 0, Timestamp: now})
+			case "function_call_output", "custom_tool_call_output":
+				clearPending()
 				callID := stringField(item, "call_id")
 				tool := findToolCall(context.Messages, callID)
-				content, isError := normalizeToolOutput(item["output"])
-				context.Messages = append(context.Messages, types.Message{Role: "toolResult", ToolCallID: callID, ToolName: tool.Name, Content: mustRaw(content), IsError: isError, Timestamp: now})
+				content, encrypted := normalizeToolOutput(item["output"])
+				context.Messages = append(context.Messages, types.Message{Role: "toolResult", ToolCallID: callID, ToolName: tool.Name, ToolNamespace: tool.Namespace, Content: mustRaw(content), ContainsEncryptedContent: encrypted, Timestamp: now})
 			case "agent_message":
-				appendMessage("user", normalizeContent(item["content"], false))
+				clearPending()
+				content := normalizeContent(item["content"], false)
+				if flat := strings.TrimSpace(flattenText(content)); flat == "" {
+					content = "(sub-agent message received)"
+				}
+				appendMessage("user", content)
 			case "compaction", "compaction_summary", "context_compaction":
-				if encrypted := stringField(item, "encrypted_content"); encrypted != "" {
-					appendMessage("user", "[compacted context: "+encrypted+"]")
+				if inputIndex >= replayPrefix {
+					compactionBoundary = true
 				}
-			case "additional_tools":
-				if tools, ok := item["tools"].([]any); ok {
-					context.Tools = append(context.Tools, parseTools(tools)...)
+				clearPending()
+				encrypted := stringField(item, "encrypted_content")
+				if kind == "context_compaction" && encrypted == "" {
+					continue
 				}
+				appendMessage("user", compactionText(encrypted))
+			case "web_search_call":
+				clearPending()
 			}
 		}
 	}
-	context.Tools = append(context.Tools, parseToolMaps(data.Tools)...)
-	opts := types.RequestOptions{MaxOutputTokens: valueOrZero(data.MaxOutputTokens), Temperature: data.Temperature, TopP: data.TopP, ParallelToolCalls: data.ParallelToolCalls, ServiceTier: data.ServiceTier}
+	declared := parseToolMaps(data.Tools)
+	loaded := parseTools(loadedToolSpecs)
+	loadedNames := map[string]bool{}
+	for _, tool := range loaded {
+		loadedNames[toolWireName(tool.Namespace, tool.Name)] = true
+	}
+	seenTools := map[string]bool{}
+	for _, tool := range append(declared, loaded...) {
+		key := toolWireName(tool.Namespace, tool.Name)
+		if seenTools[key] {
+			continue
+		}
+		seenTools[key] = true
+		tool.LoadedFromToolSearch = loadedNames[key]
+		context.Tools = append(context.Tools, tool)
+	}
+	opts := types.RequestOptions{MaxOutputTokens: valueOrZero(data.MaxOutputTokens), Temperature: data.Temperature, TopP: data.TopP, ParallelToolCalls: data.ParallelToolCalls, ServiceTier: data.ServiceTier, PromptCacheKey: data.PromptCacheKey, PresencePenalty: data.PresencePenalty, FrequencyPenalty: data.FrequencyPenalty}
 	if data.Stop != nil {
 		switch stop := data.Stop.(type) {
 		case string:
@@ -112,15 +244,25 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte) (*types.Normalized
 		}
 	}
 	if data.ToolChoice != nil {
-		opts.ToolChoice = mustRaw(data.ToolChoice)
+		opts.ToolChoice = normalizedToolChoice(data.ToolChoice)
 	}
 	if effort, _ := data.Reasoning["effort"].(string); effort != "" {
 		if effort == "ultra" {
 			effort = "max"
 		}
-		opts.Reasoning = effort
+		if validResponsesEffort(effort) {
+			opts.Reasoning = effort
+		}
 	}
-	return &types.NormalizedRequest{ModelID: data.Model, PreviousResponseID: data.PreviousResponseID, Context: context, Stream: data.Stream, Options: opts, RawBody: append(json.RawMessage(nil), raw...)}, nil
+	summary, _ := data.Reasoning["summary"].(string)
+	opts.HideThinkingSummary = summary == "" || summary == "none"
+	return &types.NormalizedRequest{
+		ModelID: data.Model, PreviousResponseID: data.PreviousResponseID, Context: context,
+		Stream: data.Stream, Options: opts, RawBody: append(json.RawMessage(nil), raw...),
+		ReplayPrefixLen: replayPrefix, StructuredOutput: structuredOutput(data.Text),
+		CompactionRequest: compactionRequest, CompactionBoundary: compactionBoundary,
+		WebSearch: hostedWebSearch(data.Tools),
+	}, nil
 }
 
 func ensureAssistant(context *types.RequestContext, now int64) *types.Message {
@@ -209,7 +351,15 @@ func normalizeContent(v any, assistant bool) any {
 				out = append(out, map[string]any{"type": "image", "imageUrl": u, "detail": normalizeDetail(stringField(m, "detail"))})
 			}
 		case "input_file":
-			out = append(out, map[string]any{"type": "text", "text": "[file: " + firstNonEmpty(stringField(m, "file_id"), stringField(m, "filename"), "?") + "]"})
+			if fileID := stringField(m, "file_id"); fileID != "" {
+				out = append(out, map[string]any{"type": "text", "text": "[file: " + fileID + "]"})
+			} else if stringField(m, "file_data") != "" {
+				label := stringField(m, "filename")
+				if label == "" {
+					label = "inline data"
+				}
+				out = append(out, map[string]any{"type": "text", "text": "[file: " + label + "]"})
+			}
 		}
 	}
 	if len(out) == 1 && !assistant {
@@ -234,6 +384,8 @@ func normalizeToolOutput(v any) (any, bool) {
 		return "", false
 	}
 	out := []any{}
+	hasImage := false
+	hasEncrypted := false
 	for _, x := range a {
 		m, ok := x.(map[string]any)
 		if !ok {
@@ -241,16 +393,33 @@ func normalizeToolOutput(v any) (any, bool) {
 		}
 		switch stringField(m, "type") {
 		case "input_image":
-			out = append(out, map[string]any{"type": "image", "imageUrl": stringField(m, "image_url"), "detail": normalizeDetail(stringField(m, "detail"))})
+			if imageURL := stringField(m, "image_url"); imageURL != "" {
+				out = append(out, map[string]any{"type": "image", "imageUrl": imageURL, "detail": normalizeDetail(stringField(m, "detail"))})
+				hasImage = true
+			}
 		case "encrypted_content":
 			out = append(out, map[string]any{"type": "text", "text": "[encrypted content omitted]"})
+			hasEncrypted = true
+		case "refusal":
+			if refusal := stringField(m, "refusal"); refusal != "" {
+				out = append(out, map[string]any{"type": "text", "text": "[refusal: " + refusal + "]"})
+			}
 		default:
-			if t := firstNonEmpty(stringField(m, "text"), stringField(m, "refusal")); t != "" {
+			if t := stringField(m, "text"); t != "" {
 				out = append(out, map[string]any{"type": "text", "text": t})
 			}
 		}
 	}
-	return out, false
+	if !hasImage {
+		var text strings.Builder
+		for _, part := range out {
+			if item, ok := part.(map[string]any); ok {
+				text.WriteString(stringField(item, "text"))
+			}
+		}
+		return text.String(), hasEncrypted
+	}
+	return out, hasEncrypted
 }
 func parseTools(values []any) []types.Tool {
 	maps := []map[string]any{}
@@ -286,7 +455,32 @@ func parseToolMaps(values []map[string]any) []types.Tool {
 		}
 		seen[ns+"/"+name] = true
 		p, _ := m["parameters"].(map[string]any)
-		out = append(out, types.Tool{Name: name, Description: stringField(m, "description"), Parameters: p, Strict: m["strict"] == true, Namespace: ns})
+		tool := types.Tool{Name: name, Description: stringField(m, "description"), Parameters: p, Strict: m["strict"] == true, Namespace: ns}
+		if t == "custom" {
+			tool.Freeform = true
+			tool.Parameters = map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"input": map[string]any{"type": "string", "description": "Raw tool input."}},
+				"required":   []any{"input"},
+			}
+		}
+		if t == "tool_search" {
+			tool.ToolSearch = true
+			if tool.Description == "" {
+				tool.Description = "Search for additional tools to load for the next turn."
+			}
+			if tool.Parameters == nil {
+				tool.Parameters = map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query": map[string]any{"type": "string", "description": "Search query for tools to load."},
+						"limit": map[string]any{"type": "number", "description": "Maximum number of tools to return."},
+					},
+					"required": []any{"query"},
+				}
+			}
+		}
+		out = append(out, tool)
 	}
 	for _, m := range values {
 		add(m, "")
@@ -302,9 +496,142 @@ func findToolCall(messages []types.Message, callID string) types.Tool {
 		}
 		for _, part := range parts {
 			if stringField(part, "type") == "toolCall" && stringField(part, "id") == callID {
-				return types.Tool{Name: stringField(part, "name")}
+				return types.Tool{Name: stringField(part, "name"), Namespace: stringField(part, "namespace")}
 			}
 		}
 	}
 	return types.Tool{}
+}
+
+const (
+	compactionPrefix        = "ocx1:"
+	compactionSummaryPrefix = "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:"
+	opaqueCompactionNote    = "[earlier conversation was compacted; the summary is stored in a format this model cannot read]"
+)
+
+func compactionText(encrypted string) string {
+	if strings.HasPrefix(encrypted, compactionPrefix) {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(encrypted, compactionPrefix))
+		if err == nil && len(decoded) > 0 {
+			return compactionSummaryPrefix + "\n\n" + string(decoded)
+		}
+	}
+	return opaqueCompactionNote
+}
+
+func continuationState(state ProviderState) types.ProviderContinuationState {
+	if len(state) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return nil
+	}
+	var result types.ProviderContinuationState
+	if json.Unmarshal(raw, &result) != nil {
+		return nil
+	}
+	return result
+}
+
+func validResponsesEffort(value string) bool {
+	switch value {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedToolChoice(value any) json.RawMessage {
+	if choice, ok := value.(string); ok {
+		return mustRaw(choice)
+	}
+	choice, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	kind := stringField(choice, "type")
+	if (kind == "function" || kind == "custom") && stringField(choice, "name") != "" {
+		return mustRaw(map[string]any{"name": stringField(choice, "name")})
+	}
+	if kind != "allowed_tools" {
+		return mustRaw("auto")
+	}
+	rawTools, _ := choice["tools"].([]any)
+	names := []string{}
+	seen := map[string]bool{}
+	for _, raw := range rawTools {
+		tool, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := stringField(tool, "name")
+		switch stringField(tool, "type") {
+		case "web_search", "web_search_preview":
+			name = "web_search"
+		case "tool_search":
+			name = "tool_search"
+		}
+		if name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return mustRaw("none")
+	}
+	mode := "auto"
+	if stringField(choice, "mode") == "required" {
+		mode = "required"
+	}
+	return mustRaw(map[string]any{"allowedTools": names, "mode": mode})
+}
+
+func structuredOutput(text map[string]any) bool {
+	format, ok := text["format"].(map[string]any)
+	if !ok {
+		return false
+	}
+	kind := stringField(format, "type")
+	return kind == "json_schema" || kind == "json_object"
+}
+
+func hostedWebSearch(tools []map[string]any) map[string]any {
+	for _, tool := range tools {
+		if stringField(tool, "type") == "web_search" {
+			return cloneMap(tool)
+		}
+	}
+	return nil
+}
+
+func toolWireName(namespace, name string) string {
+	if namespace != "" {
+		return namespace + "__" + name
+	}
+	return name
+}
+
+func toolSpecWireNames(values []any) []string {
+	result := []string{}
+	for _, value := range values {
+		tool, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if stringField(tool, "type") == "namespace" {
+			namespace := stringField(tool, "name")
+			if nested, ok := tool["tools"].([]any); ok {
+				for _, raw := range nested {
+					if item, ok := raw.(map[string]any); ok && stringField(item, "name") != "" {
+						result = append(result, toolWireName(namespace, stringField(item, "name")))
+					}
+				}
+			}
+		} else if name := stringField(tool, "name"); name != "" {
+			result = append(result, name)
+		}
+	}
+	return result
 }

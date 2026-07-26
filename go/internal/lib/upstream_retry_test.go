@@ -30,6 +30,17 @@ func TestDoWithUpstreamRetryRecoversResetAndTransient(t *testing.T) {
 	}
 }
 
+func TestDoWithUpstreamRetryResetOnlyReturnsCompletedHTTPFailure(t *testing.T) {
+	attempts := 0
+	response, err := DoWithUpstreamRetry(context.Background(), func(context.Context, bool) (*http.Response, error) {
+		attempts++
+		return &http.Response{StatusCode: 503, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("failure"))}, nil
+	}, RetryOptions{Attempts: 3, ResetOnly: true, Sleep: func(context.Context, time.Duration) error { return nil }})
+	if err != nil || response.StatusCode != 503 || attempts != 1 {
+		t.Fatalf("response=%#v err=%v attempts=%d", response, err, attempts)
+	}
+}
+
 func TestDoWithUpstreamRetryDoesNotRetryCancellation(t *testing.T) {
 	attempts := 0
 	_, err := DoWithUpstreamRetry(context.Background(), func(context.Context, bool) (*http.Response, error) { attempts++; return nil, context.Canceled }, RetryOptions{Attempts: 3})

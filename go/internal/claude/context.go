@@ -1,8 +1,10 @@
 package claude
 
 import (
+	"context"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -30,6 +32,20 @@ type ContextModel struct {
 	Provider      string
 	ID            string
 	ContextWindow int
+}
+
+type ClaudeTierModels struct {
+	Opus   string
+	Sonnet string
+	Haiku  string
+	Fable  string
+}
+
+type ModelEnvConfig struct {
+	ContextConfig
+	Model          string
+	SmallFastModel string
+	TierModels     ClaudeTierModels
 }
 
 func HasOneMillionMarker(s string) bool { return strings.HasSuffix(strings.ToLower(s), "[1m]") }
@@ -91,6 +107,7 @@ func BuildClaudeContextWindows(native map[string]int, routed []ContextModel) map
 	}
 	for slug, window := range native {
 		put(slug, window)
+		put(Desktop3pAlias("native", slug), window)
 		if a, ok := AliasForNative(slug); ok {
 			put(a, window)
 		}
@@ -104,6 +121,7 @@ func BuildClaudeContextWindows(native map[string]int, routed []ContextModel) map
 			continue
 		}
 		put(m.Provider+"/"+m.ID, m.ContextWindow)
+		put(Desktop3pAlias(m.Provider, m.ID), m.ContextWindow)
 		if a, ok := AliasForRoute(m.Provider, m.ID); ok {
 			put(a, m.ContextWindow)
 		}
@@ -112,4 +130,57 @@ func BuildClaudeContextWindows(native map[string]int, routed []ContextModel) map
 		}
 	}
 	return out
+}
+
+func EffectiveModelEnv(cfg *ModelEnvConfig, windows map[string]int, auto *AutoContextMode) map[string]string {
+	result := map[string]string{}
+	mode := ResolveAutoContext(nil, "")
+	if cfg != nil {
+		mode = ResolveAutoContext(&cfg.ContextConfig, "")
+	}
+	if auto != nil {
+		mode = *auto
+	}
+	set := func(name, value string) {
+		if marked := WithOneMillionMarker(value, windows, mode); marked != "" {
+			result[name] = marked
+		}
+	}
+	if cfg == nil {
+		return result
+	}
+	set("ANTHROPIC_MODEL", cfg.Model)
+	set("ANTHROPIC_DEFAULT_OPUS_MODEL", cfg.TierModels.Opus)
+	set("ANTHROPIC_DEFAULT_SONNET_MODEL", cfg.TierModels.Sonnet)
+	set("ANTHROPIC_DEFAULT_FABLE_MODEL", cfg.TierModels.Fable)
+	haiku := cfg.TierModels.Haiku
+	if haiku == "" {
+		haiku = cfg.SmallFastModel
+	}
+	set("ANTHROPIC_DEFAULT_HAIKU_MODEL", haiku)
+	set("ANTHROPIC_SMALL_FAST_MODEL", haiku)
+	return result
+}
+
+func BoundedContextWindows(ctx context.Context, timeout time.Duration, acquire func(context.Context) (map[string]int, error)) (map[string]int, bool) {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	bounded, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type result struct {
+		windows map[string]int
+		err     error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		windows, err := acquire(bounded)
+		completed <- result{windows, err}
+	}()
+	select {
+	case <-bounded.Done():
+		return nil, false
+	case value := <-completed:
+		return value.windows, value.err == nil
+	}
 }

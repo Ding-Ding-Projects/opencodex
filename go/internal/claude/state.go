@@ -2,75 +2,120 @@ package claude
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
 
 const (
-	maxStoredResponses     = 1000
-	responseTTL            = time.Hour
-	maxStoredResponseBytes = 64 << 20
+	maxStoredResponses       = 1000
+	responseTTL              = time.Hour
+	maxStoredResponseBytes   = 64 << 20
+	snapshotEntryMaxBytes    = 2 << 20
+	snapshotTotalMaxBytes    = 24 << 20
+	responseSnapshotDebounce = 2 * time.Second
 )
 
 type ProviderState map[string]any
+
 type storedResponse struct {
 	CreatedAt time.Time
 	Items     []any
 	Providers ProviderState
 	Size      int
 }
+
+type ResponseStateMetrics struct {
+	Count        int   `json:"count"`
+	TotalBytes   int   `json:"totalBytes"`
+	LargestBytes int   `json:"largestBytes"`
+	OldestAgeMS  int64 `json:"oldestAgeMs"`
+}
+
 type ResponseStateStore struct {
-	mu      sync.Mutex
-	states  map[string]storedResponse
-	bytes   int
-	now     func() time.Time
-	byteCap int
+	mu           sync.Mutex
+	states       map[string]storedResponse
+	bytes        int
+	now          func() time.Time
+	byteCap      int
+	snapshotPath func() string
+	debounce     time.Duration
+	loaded       bool
+	persistTimer *time.Timer
+	pendingPath  string
 }
 
 func NewResponseStateStore() *ResponseStateStore {
-	return &ResponseStateStore{states: map[string]storedResponse{}, now: time.Now, byteCap: maxStoredResponseBytes}
+	return &ResponseStateStore{
+		states:   map[string]storedResponse{},
+		now:      time.Now,
+		byteCap:  maxStoredResponseBytes,
+		debounce: responseSnapshotDebounce,
+	}
 }
 
-var defaultResponseState = NewResponseStateStore()
+func newDefaultResponseStateStore() *ResponseStateStore {
+	store := NewResponseStateStore()
+	store.snapshotPath = responseStateSnapshotPath
+	return store
+}
+
+var defaultResponseState = newDefaultResponseStateStore()
 
 func ExpandPreviousResponseInput(body map[string]any) map[string]any {
-	return defaultResponseState.Expand(body)
+	expanded, _, _ := defaultResponseState.ExpandWithMetadata(body)
+	return expanded
 }
+
 func PreviousResponseProviderState(id string) ProviderState {
 	return defaultResponseState.ProviderState(id)
 }
+
 func RememberResponseState(request map[string]any, response map[string]any, provider ProviderState, force bool) {
 	defaultResponseState.Remember(request, response, provider, force)
 }
 
+func FlushResponseState() error { return defaultResponseState.Flush() }
+
+func ResponseStateMemoryMetrics() ResponseStateMetrics { return defaultResponseState.Metrics() }
+
 func (s *ResponseStateStore) Expand(body map[string]any) map[string]any {
+	expanded, _, _ := s.ExpandWithMetadata(body)
+	return expanded
+}
+
+// ExpandWithMetadata returns the replay prefix length and whether expansion
+// succeeded without adding proxy-private fields to the forwarded request body.
+func (s *ResponseStateStore) ExpandWithMetadata(body map[string]any) (map[string]any, int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.prune()
+	s.ensureLoadedLocked()
+	s.pruneLocked()
 	id := stringField(body, "previous_response_id")
 	previous, ok := s.states[id]
 	if !ok {
-		return body
+		return body, 0, false
 	}
 	out := cloneMap(body)
 	out["input"] = append(append([]any{}, previous.Items...), inputItems(body["input"])...)
-	return out
+	return out, len(previous.Items), true
 }
+
 func (s *ResponseStateStore) ProviderState(id string) ProviderState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.prune()
+	s.ensureLoadedLocked()
+	s.pruneLocked()
 	state, ok := s.states[id]
 	if !ok {
 		return nil
 	}
 	return cloneProvider(state.Providers)
 }
+
 func (s *ResponseStateStore) Remember(request, response map[string]any, providers ProviderState, force bool) {
-	if request["store"] == false && !force {
+	if request == nil || response == nil || (request["store"] == false && !force) {
 		return
 	}
 	id := stringField(response, "id")
@@ -78,138 +123,285 @@ func (s *ResponseStateStore) Remember(request, response map[string]any, provider
 	if id == "" || !ok {
 		return
 	}
-	if status := stringField(response, "status"); status != "" && status != "completed" {
+	status := stringField(response, "status")
+	if status == "incomplete" {
+		details, ok := response["incomplete_details"].(map[string]any)
+		if !ok || stringField(details, "reason") != "max_output_tokens" {
+			return
+		}
+	} else if status != "" && status != "completed" {
 		return
 	}
-	items := append(inputItems(request["input"]), output...)
-	raw, _ := json.Marshal(items)
-	state := storedResponse{CreatedAt: s.now(), Items: items, Providers: cloneProvider(providers), Size: len(raw)}
-	if cursor, ok := state.Providers["cursor"].(map[string]any); ok && stringField(cursor, "conversationId") != "" {
+
+	providers = cloneProvider(providers)
+	if providers == nil {
+		providers = ProviderState{}
+	}
+	if cursor, ok := providers["cursor"].(map[string]any); ok && stringField(cursor, "conversationId") != "" {
 		usable := true
 		for _, item := range output {
-			if m, ok := item.(map[string]any); ok && stringField(m, "type") == "function_call" {
+			if value, ok := item.(map[string]any); ok && stringField(value, "type") == "function_call" {
 				usable = false
+				break
 			}
 		}
 		cursor["checkpointUsable"] = usable
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if old, ok := s.states[id]; ok {
-		s.bytes -= old.Size
+	s.ensureLoadedLocked()
+	s.setEntryLocked(id, storedResponse{
+		CreatedAt: s.now(),
+		Items:     append(inputItems(request["input"]), output...),
+		Providers: providers,
+	})
+	s.pruneLocked()
+	s.schedulePersistLocked()
+}
+
+func (s *ResponseStateStore) Metrics() ResponseStateMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	metrics := ResponseStateMetrics{Count: len(s.states), TotalBytes: s.bytes}
+	now := s.now()
+	var oldest time.Time
+	for _, state := range s.states {
+		if state.Size > metrics.LargestBytes {
+			metrics.LargestBytes = state.Size
+		}
+		if oldest.IsZero() || state.CreatedAt.Before(oldest) {
+			oldest = state.CreatedAt
+		}
 	}
-	s.states[id] = state
-	s.bytes += state.Size
-	s.prune()
+	if !oldest.IsZero() {
+		metrics.OldestAgeMS = max(0, now.Sub(oldest).Milliseconds())
+	}
+	return metrics
+}
+
+func (s *ResponseStateStore) SetByteCapForTests(bytes int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if bytes <= 0 {
+		s.byteCap = maxStoredResponseBytes
+	} else {
+		s.byteCap = bytes
+	}
+	s.pruneLocked()
 }
 
 func (s *ResponseStateStore) Save(path string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.prune()
-	type diskState struct {
-		CreatedAt time.Time     `json:"createdAt"`
-		Items     []any         `json:"items"`
-		Providers ProviderState `json:"providers,omitempty"`
-	}
-	entries := map[string]diskState{}
-	for id, state := range s.states {
-		entries[id] = diskState{state.CreatedAt, state.Items, state.Providers}
-	}
-	b, err := json.Marshal(map[string]any{"version": 2, "states": entries})
+	s.ensureLoadedLocked()
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err = os.WriteFile(tmp, b, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeResponseSnapshot(path, data)
 }
 
 func (s *ResponseStateStore) Load(path string) error {
-	b, err := os.ReadFile(path)
+	data, err := readResponseSnapshot(path)
 	if err != nil {
 		return err
 	}
-	var snapshot struct {
-		Version int `json:"version"`
-		States  map[string]struct {
-			CreatedAt time.Time     `json:"createdAt"`
-			Items     []any         `json:"items"`
-			Providers ProviderState `json:"providers"`
-		} `json:"states"`
-	}
-	if err = json.Unmarshal(b, &snapshot); err != nil {
-		return err
-	}
-	if snapshot.Version != 2 {
-		return fmt.Errorf("unsupported response state version %d", snapshot.Version)
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.states = map[string]storedResponse{}
-	s.bytes = 0
-	for id, v := range snapshot.States {
-		raw, _ := json.Marshal(v.Items)
-		s.states[id] = storedResponse{v.CreatedAt, v.Items, v.Providers, len(raw)}
-		s.bytes += len(raw)
+	if err := s.loadSnapshotLocked(data); err != nil {
+		return err
 	}
-	s.prune()
+	s.loaded = true
+	s.pruneLocked()
 	return nil
 }
-func (s *ResponseStateStore) prune() {
+
+func (s *ResponseStateStore) Flush() error {
+	s.mu.Lock()
+	if s.persistTimer == nil || s.pendingPath == "" {
+		s.mu.Unlock()
+		return nil
+	}
+	s.persistTimer.Stop()
+	s.persistTimer = nil
+	path := s.pendingPath
+	s.pendingPath = ""
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return writeResponseSnapshot(path, data)
+}
+
+func (s *ResponseStateStore) ClearMemory() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.persistTimer != nil {
+		s.persistTimer.Stop()
+	}
+	s.persistTimer = nil
+	s.pendingPath = ""
+	s.states = map[string]storedResponse{}
+	s.bytes = 0
+	s.loaded = false
+}
+
+func (s *ResponseStateStore) Clear() error {
+	s.ClearMemory()
+	if s.snapshotPath == nil {
+		return nil
+	}
+	path := s.snapshotPath()
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (s *ResponseStateStore) ensureLoadedLocked() {
+	if s.loaded {
+		return
+	}
+	s.loaded = true
+	if s.snapshotPath == nil {
+		return
+	}
+	path := s.snapshotPath()
+	if path == "" {
+		return
+	}
+	data, err := readResponseSnapshot(path)
+	if err != nil || s.loadSnapshotLocked(data) != nil {
+		return
+	}
+	s.pruneLocked()
+}
+
+func (s *ResponseStateStore) setEntryLocked(id string, state storedResponse) {
+	s.deleteEntryLocked(id)
+	raw, err := json.Marshal(state.Items)
+	if err == nil {
+		state.Size = len(raw)
+	}
+	s.states[id] = state
+	s.bytes += state.Size
+}
+
+func (s *ResponseStateStore) deleteEntryLocked(id string) {
+	state, ok := s.states[id]
+	if !ok {
+		return
+	}
+	delete(s.states, id)
+	s.bytes -= state.Size
+	if s.bytes < 0 {
+		s.bytes = 0
+	}
+}
+
+func (s *ResponseStateStore) pruneLocked() {
 	now := s.now()
 	for id, state := range s.states {
 		if now.Sub(state.CreatedAt) > responseTTL {
-			delete(s.states, id)
-			s.bytes -= state.Size
+			s.deleteEntryLocked(id)
 		}
 	}
-	for len(s.states) > maxStoredResponses || s.bytes > s.byteCap {
-		var oldestID string
-		var oldest time.Time
-		for id, state := range s.states {
-			if oldestID == "" || state.CreatedAt.Before(oldest) {
-				oldestID = id
-				oldest = state.CreatedAt
-			}
-		}
-		if oldestID == "" || len(s.states) <= 1 {
+	for len(s.states) > maxStoredResponses {
+		if id := s.oldestIDLocked(); id != "" {
+			s.deleteEntryLocked(id)
+		} else {
 			break
 		}
-		s.bytes -= s.states[oldestID].Size
-		delete(s.states, oldestID)
+	}
+	for s.bytes > s.byteCap && len(s.states) > 1 {
+		if id := s.oldestIDLocked(); id != "" {
+			s.deleteEntryLocked(id)
+		} else {
+			break
+		}
 	}
 }
-func inputItems(v any) []any {
-	switch x := v.(type) {
+
+func (s *ResponseStateStore) oldestIDLocked() string {
+	var id string
+	var created time.Time
+	for candidate, state := range s.states {
+		if id == "" || state.CreatedAt.Before(created) || (state.CreatedAt.Equal(created) && candidate < id) {
+			id, created = candidate, state.CreatedAt
+		}
+	}
+	return id
+}
+
+func (s *ResponseStateStore) schedulePersistLocked() {
+	if s.snapshotPath == nil || s.persistTimer != nil {
+		return
+	}
+	path := s.snapshotPath()
+	if path == "" {
+		return
+	}
+	s.pendingPath = path
+	delay := s.debounce
+	if delay <= 0 {
+		delay = responseSnapshotDebounce
+	}
+	s.persistTimer = time.AfterFunc(delay, func() { _ = s.persistScheduled(path) })
+}
+
+func (s *ResponseStateStore) persistScheduled(path string) error {
+	s.mu.Lock()
+	if s.pendingPath != path {
+		s.mu.Unlock()
+		return nil
+	}
+	s.persistTimer = nil
+	s.pendingPath = ""
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return writeResponseSnapshot(path, data)
+}
+
+func inputItems(value any) []any {
+	switch input := value.(type) {
 	case nil:
 		return nil
 	case []any:
-		return append([]any{}, x...)
+		return append([]any{}, input...)
 	case string:
-		return []any{map[string]any{"role": "user", "content": x}}
+		return []any{map[string]any{"role": "user", "content": input}}
 	default:
-		return []any{x}
+		return []any{input}
 	}
 }
-func cloneMap(v map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, x := range v {
-		out[k] = x
+
+func cloneMap(value map[string]any) map[string]any {
+	result := make(map[string]any, len(value))
+	for key, item := range value {
+		result[key] = item
 	}
-	return out
+	return result
 }
-func cloneProvider(v ProviderState) ProviderState {
-	if v == nil {
+
+func cloneProvider(value ProviderState) ProviderState {
+	if value == nil {
 		return nil
 	}
-	raw, _ := json.Marshal(v)
-	var out ProviderState
-	_ = json.Unmarshal(raw, &out)
-	return out
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var result ProviderState
+	if json.Unmarshal(raw, &result) != nil {
+		return nil
+	}
+	return result
 }
