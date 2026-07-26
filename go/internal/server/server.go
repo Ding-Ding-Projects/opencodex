@@ -23,49 +23,54 @@ import (
 type AdapterResolver func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error)
 
 type Config struct {
-	Registry           types.Registry
-	Combos             *combos.Resolver
-	Auth               types.AuthProvider
-	ResolveAdapter     AdapterResolver
-	Client             *http.Client
-	Token              string
-	AllowedOrigins     []string
-	Logger             *slog.Logger
-	Lifecycle          *Lifecycle
-	Management         types.ManagementRouter
-	ChatHandler        types.RouteHandler
-	MessagesHandler    types.RouteHandler
-	CountTokensHandler types.RouteHandler
-	CompactHandler     types.RouteHandler
-	UsageRecorder      types.UsageRecorder
-	RequestLogs        *management.RequestLog
-	ManagementConfig   *appconfig.Config
-	ConfigPath         string
-	DebugLog           *usage.DebugLog
-	OAuthManagement    management.OAuthBackend
-	StorageHome        string
-	Stop               func()
-	Version            string
-	EffortCap          string
-	SubagentEffortCap  string
-	StallTimeoutSec    *float64
-	Hostname           string
-	SidecarResolver    SidecarResolver
-	ShadowCall         *ShadowCallIntercept
-	LiveResolver       LiveRelayResolver
-	ReadinessChecks    map[string]func(context.Context) error
-	WebSockets         bool
-	RefreshCatalog     func() error
-	CodexQuota         *codex.QuotaStore
-	ModelCache         management.ModelCacheInvalidator
+	Registry               types.Registry
+	Combos                 *combos.Resolver
+	Auth                   types.AuthProvider
+	ResolveAdapter         AdapterResolver
+	Client                 *http.Client
+	Token                  string
+	AllowedOrigins         []string
+	Logger                 *slog.Logger
+	Lifecycle              *Lifecycle
+	Management             types.ManagementRouter
+	ChatHandler            types.RouteHandler
+	MessagesHandler        types.RouteHandler
+	CountTokensHandler     types.RouteHandler
+	CompactHandler         types.RouteHandler
+	UsageRecorder          types.UsageRecorder
+	RequestLogs            *management.RequestLog
+	ManagementConfig       *appconfig.Config
+	ConfigPath             string
+	DebugLog               *usage.DebugLog
+	OAuthManagement        management.OAuthBackend
+	StorageHome            string
+	Stop                   func()
+	Version                string
+	EffortCap              string
+	SubagentEffortCap      string
+	StallTimeoutSec        *float64
+	Hostname               string
+	SidecarResolver        SidecarResolver
+	ShadowCall             *ShadowCallIntercept
+	LiveResolver           LiveRelayResolver
+	ReadinessChecks        map[string]func(context.Context) error
+	WebSockets             bool
+	RefreshCatalog         func() error
+	CodexQuota             *codex.QuotaStore
+	ModelCache             management.ModelCacheInvalidator
+	MemoryWatchdogInterval time.Duration
+	MemoryWatchdogCapacity int
+	MemorySample           func() MemorySample
 }
 
 type Server struct {
-	config    Config
-	lifecycle *Lifecycle
-	handler   http.Handler
-	responses *ResponsesCore
-	quota     *codex.QuotaStore
+	config              Config
+	lifecycle           *Lifecycle
+	handler             http.Handler
+	responses           *ResponsesCore
+	quota               *codex.QuotaStore
+	advancedRequestLogs *RequestLogStore
+	watchdog            *MemoryWatchdog
 }
 
 func New(config Config) *Server {
@@ -125,7 +130,9 @@ func New(config Config) *Server {
 	if quota == nil {
 		quota = codex.NewQuotaStore()
 	}
-	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota}
+	advancedRequestLogs := NewRequestLogStore(MaxRequestLogEntries, nil)
+	watchdog := NewMemoryWatchdog(config.MemoryWatchdogInterval, config.MemoryWatchdogCapacity, config.MemorySample)
+	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota, advancedRequestLogs: advancedRequestLogs, watchdog: watchdog}
 	keyFailover := providers.NewKeyFailover()
 	guidance := MultiAgentGuidanceOptions{}
 	if config.ManagementConfig != nil {
@@ -194,6 +201,13 @@ func New(config Config) *Server {
 			return rotated.APIKey, true
 		},
 		PrepareImageRetry: ApplyAnthropicImageTierRetry,
+		RequestLogs:       advancedRequestLogs,
+		StreamMode: func() string {
+			if s.config.ManagementConfig != nil {
+				return s.config.ManagementConfig.StreamMode
+			}
+			return ""
+		}(),
 	})
 	mux := http.NewServeMux()
 	websocketsEnabled := config.WebSockets
@@ -243,7 +257,7 @@ func New(config Config) *Server {
 	}
 	if managementRouter == nil {
 		usageLog, _ := config.UsageRecorder.(*usage.Log)
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, OAuth: config.OAuthManagement, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, OAuth: config.OAuthManagement, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {
@@ -279,6 +293,19 @@ func (s *Server) QuotaStore() *codex.QuotaStore {
 		return nil
 	}
 	return s.quota
+}
+
+func (s *Server) MemoryWatchdog() *MemoryWatchdog {
+	if s == nil {
+		return nil
+	}
+	return s.watchdog
+}
+
+func (s *Server) Close() {
+	if s != nil && s.watchdog != nil {
+		s.watchdog.Stop()
+	}
 }
 
 func (s *Server) handleCodexQuota(w http.ResponseWriter, _ *http.Request) {
@@ -335,7 +362,9 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) Lifecycle() *Lifecycle { return s.lifecycle }
 
 func (s *Server) HTTPServer(address string) *http.Server {
-	return &http.Server{Addr: address, Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
+	server := &http.Server{Addr: address, Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
+	server.RegisterOnShutdown(s.Close)
+	return server
 }
 
 func (s *Server) responsesEndpoint(websocketsEnabled bool) http.Handler {

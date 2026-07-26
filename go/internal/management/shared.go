@@ -43,10 +43,14 @@ type AgentSettings struct {
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	payload, err := json.Marshal(value)
+	if err != nil {
+		status = http.StatusInternalServerError
+		payload = []byte(`{"error":"JSON serialization failed"}`)
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	_, _ = w.Write(payload)
 }
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"error": message})
@@ -72,7 +76,15 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 }
 
 func publicProvider(name string, provider config.ProviderConfig) map[string]any {
-	return map[string]any{"name": name, "adapter": provider.Adapter, "baseUrl": publicProviderBaseURL(provider.BaseURL), "defaultModel": provider.DefaultModel, "hasApiKey": provider.APIKey != "", "allowPrivateNetwork": provider.AllowPrivateNetwork, "liveModels": provider.LiveModels == nil || *provider.LiveModels, "models": provider.Models, "authMode": provider.AuthMode, "disabled": provider.Disabled}
+	models := append([]string(nil), provider.Models...)
+	if models == nil {
+		models = []string{}
+	}
+	row := map[string]any{"name": name, "adapter": provider.Adapter, "baseUrl": publicProviderBaseURL(provider.BaseURL), "defaultModel": provider.DefaultModel, "hasApiKey": provider.APIKey != "", "allowPrivateNetwork": provider.AllowPrivateNetwork, "liveModels": provider.LiveModels == nil || *provider.LiveModels, "models": models, "authMode": provider.AuthMode, "disabled": provider.Disabled}
+	if provider.CodexAccountMode != "" {
+		row["codexAccountMode"] = provider.CodexAccountMode
+	}
+	return row
 }
 
 func publicProviderBaseURL(raw string) string {
@@ -92,11 +104,48 @@ func publicProviderBaseURL(raw string) string {
 }
 
 func safeConfig(value *config.Config) map[string]any {
-	providers := make([]map[string]any, 0, len(value.Providers))
+	providers := make(map[string]map[string]any, len(value.Providers))
 	for name, provider := range value.Providers {
-		providers = append(providers, publicProvider(name, provider))
+		dto := map[string]any{
+			"adapter": provider.Adapter, "baseUrl": publicProviderBaseURL(provider.BaseURL),
+			"hasApiKey": provider.APIKey != "", "hasHeaders": len(provider.Headers) > 0,
+		}
+		copyString := func(key, current string) {
+			if current != "" {
+				dto[key] = current
+			}
+		}
+		copyString("defaultModel", provider.DefaultModel)
+		copyString("authMode", provider.AuthMode)
+		copyString("codexAccountMode", provider.CodexAccountMode)
+		if provider.Disabled {
+			dto["disabled"] = true
+		}
+		if provider.AllowPrivateNetwork {
+			dto["allowPrivateNetwork"] = true
+		}
+		if provider.KeyOptional != nil {
+			dto["keyOptional"] = *provider.KeyOptional
+		}
+		if provider.LiveModels != nil {
+			dto["liveModels"] = *provider.LiveModels
+		}
+		if provider.Models != nil {
+			dto["models"] = append([]string(nil), provider.Models...)
+		}
+		if provider.ContextWindow != 0 {
+			dto["contextWindow"] = provider.ContextWindow
+		}
+		if provider.DefaultMaxOutputTokens != 0 {
+			dto["defaultMaxOutputTokens"] = provider.DefaultMaxOutputTokens
+		}
+		providers[name] = dto
 	}
-	return map[string]any{"port": value.Port, "hostname": value.Host, "defaultProvider": value.DefaultProvider, "streamMode": value.StreamMode, "debug": value.Debug, "log": value.Log, "providers": providers}
+	result := map[string]any{"port": value.Port, "hostname": value.Host, "defaultProvider": value.DefaultProvider, "codexAutoStart": codexAutoStart(value.CodexAutoStart), "providers": providers}
+	if value.WebSockets {
+		result["websockets"] = true
+	}
+	return result
 }
 
 func validateIdentifier(value, field string) error {

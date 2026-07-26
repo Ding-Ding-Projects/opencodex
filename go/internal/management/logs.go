@@ -174,6 +174,10 @@ func (l *RequestLog) Hydrate(entries []usage.Entry) {
 func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 	switch r.Method + " " + r.URL.Path {
 	case "GET /api/logs":
+		if a.advancedRequestLogs != nil {
+			writeJSON(w, http.StatusOK, a.advancedRequestLogs.QueryRequestLogs(r.URL.Query()))
+			return true
+		}
 		tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 		entries := a.requestLogs.Entries(strings.TrimSpace(r.URL.Query().Get("provider")), strings.TrimSpace(r.URL.Query().Get("status")), min(max(tail, 0), 200))
 		rows := make([]map[string]any, 0, len(entries))
@@ -183,6 +187,9 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, rows)
 		return true
 	case "DELETE /api/logs":
+		if a.advancedRequestLogs != nil {
+			a.advancedRequestLogs.ClearRequestLogs()
+		}
 		a.requestLogs.Clear()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return true

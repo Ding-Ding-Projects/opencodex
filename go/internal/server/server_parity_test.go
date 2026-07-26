@@ -61,6 +61,34 @@ func TestResponsesSamePathDispatchesHTTPAndWebSocket(t *testing.T) {
 	}
 }
 
+func TestServerStartsMemoryWatchdogAndStopsItWithHTTPServer(t *testing.T) {
+	var samples atomic.Int32
+	proxy := New(Config{MemoryWatchdogInterval: time.Millisecond, MemoryWatchdogCapacity: 4, MemorySample: func() MemorySample {
+		n := samples.Add(1)
+		return MemorySample{At: time.Now(), RSS: uint64(n)}
+	}})
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for samples.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := proxy.MemoryWatchdog().Snapshot(); samples.Load() < 2 || len(got) < 2 {
+		t.Fatalf("watchdog did not start at server construction: samples=%d snapshot=%v", samples.Load(), got)
+	}
+	memory := serveRequest(proxy.Handler(), http.MethodGet, "/api/system/memory", "", nil)
+	if memory.Code != http.StatusOK || !strings.Contains(memory.Body.String(), `"watchdog":{"samples":[`) {
+		t.Fatalf("management memory route did not expose active watchdog: %d %s", memory.Code, memory.Body.String())
+	}
+	httpServer := proxy.HTTPServer("127.0.0.1:0")
+	if err := httpServer.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stoppedAt := samples.Load()
+	time.Sleep(5 * time.Millisecond)
+	if samples.Load() != stoppedAt {
+		t.Fatalf("watchdog continued after HTTP shutdown: before=%d after=%d", stoppedAt, samples.Load())
+	}
+}
+
 func TestResponsesWebSocketDisabledAndPanicBoundary(t *testing.T) {
 	proxy := New(Config{})
 	disabled := serveRequest(proxy.Handler(), http.MethodGet, "/v1/responses", "", http.Header{"Connection": {"keep-alive, Upgrade"}, "Upgrade": {"websocket"}})
@@ -99,7 +127,7 @@ func TestServerDynamicallyAppliesManagedAPIKeysAndClaudeToggle(t *testing.T) {
 	if create.Code != http.StatusCreated || strings.Contains(create.Body.String(), newSecret) {
 		t.Fatalf("create=%d %s", create.Code, create.Body.String())
 	}
-	authorized := serveRequest(proxy.Handler(), http.MethodGet, "/api/system", "", http.Header{"Authorization": {"Bearer " + newSecret}})
+	authorized := serveRequest(proxy.Handler(), http.MethodGet, "/api/config", "", http.Header{"Authorization": {"Bearer " + newSecret}})
 	if authorized.Code != http.StatusOK {
 		t.Fatalf("new key was not activated without restart: %d %s", authorized.Code, authorized.Body.String())
 	}
@@ -163,7 +191,7 @@ func TestResponsesPreservesUpstreamErrorStatus(t *testing.T) {
 	}})
 
 	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire"}`, nil)
-	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "7" || !strings.Contains(response.Body.String(), "cool down") {
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "" || !strings.Contains(response.Body.String(), `Provider error 429:`) || !strings.Contains(response.Body.String(), "cool down") {
 		t.Fatalf("provider error = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
 }
@@ -253,6 +281,13 @@ func TestServerRotatesConfiguredAPIKeyPoolOnResponses429(t *testing.T) {
 	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire","stream":false}`, nil)
 	if response.Code != http.StatusOK || attempts.Load() != 2 {
 		t.Fatalf("status=%d attempts=%d body=%s", response.Code, attempts.Load(), response.Body.String())
+	}
+	logs := serveRequest(proxy.Handler(), http.MethodGet, "/api/logs", "", nil)
+	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), `"terminalStatus":"completed"`) || !strings.Contains(logs.Body.String(), `"sendCount":2`) || !strings.Contains(logs.Body.String(), `"recoveryKinds":["key-429"]`) {
+		t.Fatalf("advanced production log = %d %s", logs.Code, logs.Body.String())
+	}
+	if strings.Contains(logs.Body.String(), "key-one") || strings.Contains(logs.Body.String(), "key-two") {
+		t.Fatalf("request log leaked key material: %s", logs.Body.String())
 	}
 }
 

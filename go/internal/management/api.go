@@ -2,6 +2,7 @@ package management
 
 import (
 	"net/http"
+	"net/url"
 	"runtime"
 	"sync"
 
@@ -11,48 +12,57 @@ import (
 )
 
 type Options struct {
-	Config           *config.Config
-	ConfigPath       string
-	Registry         types.Registry
-	UsageLog         *usage.Log
-	DebugLog         *usage.DebugLog
-	RequestLogs      *RequestLog
-	OAuth            OAuthBackend
-	FetchModels      ModelFetcher
-	StorageHome      string
-	Version          string
-	Stop             func()
-	RefreshCatalog   func() error
-	OnAPIKeysChanged func([]config.ProxyAPIKey)
-	ModelCache       ModelCacheInvalidator
+	Config              *config.Config
+	ConfigPath          string
+	Registry            types.Registry
+	UsageLog            *usage.Log
+	DebugLog            *usage.DebugLog
+	RequestLogs         *RequestLog
+	OAuth               OAuthBackend
+	FetchModels         ModelFetcher
+	StorageHome         string
+	Version             string
+	Stop                func()
+	RefreshCatalog      func() error
+	OnAPIKeysChanged    func([]config.ProxyAPIKey)
+	ModelCache          ModelCacheInvalidator
+	AdvancedRequestLogs AdvancedRequestLogSource
+	MemoryWatchdog      func() any
 	// Authorize is an optional defense-in-depth admission hook for callers that
 	// register the management router without the server's global middleware.
 	Authorize func(*http.Request) bool
 }
 
+type AdvancedRequestLogSource interface {
+	QueryRequestLogs(url.Values) any
+	ClearRequestLogs()
+}
+
 type API struct {
-	mu               sync.RWMutex
-	config           *config.Config
-	configPath       string
-	registry         types.Registry
-	usageLog         *usage.Log
-	debugLog         *usage.DebugLog
-	requestLogs      *RequestLog
-	oauth            OAuthBackend
-	fetchModels      ModelFetcher
-	storageHome      string
-	version          string
-	stop             func()
-	refreshCatalog   func() error
-	onAPIKeysChanged func([]config.ProxyAPIKey)
-	modelCache       ModelCacheInvalidator
-	authorize        func(*http.Request) bool
-	customModels     map[string]CustomModel
-	aliases          map[string]string
-	contextCaps      map[string]int
-	combos           map[string]Combo
-	agents           AgentSettings
-	debugEnabled     bool
+	mu                  sync.RWMutex
+	config              *config.Config
+	configPath          string
+	registry            types.Registry
+	usageLog            *usage.Log
+	debugLog            *usage.DebugLog
+	requestLogs         *RequestLog
+	advancedRequestLogs AdvancedRequestLogSource
+	memoryWatchdog      func() any
+	oauth               OAuthBackend
+	fetchModels         ModelFetcher
+	storageHome         string
+	version             string
+	stop                func()
+	refreshCatalog      func() error
+	onAPIKeysChanged    func([]config.ProxyAPIKey)
+	modelCache          ModelCacheInvalidator
+	authorize           func(*http.Request) bool
+	customModels        map[string]CustomModel
+	aliases             map[string]string
+	contextCaps         map[string]int
+	combos              map[string]Combo
+	agents              AgentSettings
+	debugEnabled        bool
 }
 
 func New(options Options) (*API, error) {
@@ -81,7 +91,7 @@ func New(options Options) (*API, error) {
 	for _, model := range cfg.CustomModels {
 		customModels[model.ID] = model
 	}
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
+	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving
@@ -96,7 +106,7 @@ var routes = []string{
 	"GET /api/key-providers", "GET /api/providers/keys", "POST /api/providers/keys", "DELETE /api/providers/keys", "PUT /api/providers/keys/active", "PUT /api/providers/keys/alias", "GET /api/keys", "POST /api/keys", "DELETE /api/keys",
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
 	"GET /api/logs", "DELETE /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "DELETE /api/debug/usage-logs", "GET /api/usage", "DELETE /api/usage", "GET /api/storage",
-	"GET /api/system", "GET /api/system/memory", "GET /api/system/runtime", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
+	"GET /api/system/memory", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
 }
 
 func RegisteredRoutes() []string { return append([]string(nil), routes...) }

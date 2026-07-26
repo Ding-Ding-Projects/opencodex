@@ -24,7 +24,7 @@ func TestManagementRouteRegistration(t *testing.T) {
 		{http.MethodGet, "/api/config", http.StatusOK},
 		{http.MethodPut, "/api/config", http.StatusMethodNotAllowed},
 		{http.MethodGet, "/api/providers", http.StatusOK},
-		{http.MethodGet, "/api/system/runtime", http.StatusOK},
+		{http.MethodGet, "/api/system/runtime", http.StatusNotFound},
 	} {
 		request := httptest.NewRequest(test.method, test.path, nil)
 		response := httptest.NewRecorder()

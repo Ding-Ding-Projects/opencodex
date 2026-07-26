@@ -14,28 +14,17 @@ func (a *API) handleSystem(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case "/api/system":
-		result := a.runtimeInfo()
-		result["pid"] = os.Getpid()
-		result["uptimeSeconds"] = time.Since(processStarted).Seconds()
-		writeJSON(w, http.StatusOK, result)
-		return true
-	case "/api/system/runtime":
-		result := a.runtimeInfo()
-		result["pid"] = os.Getpid()
-		result["uptimeSeconds"] = time.Since(processStarted).Seconds()
-		a.mu.RLock()
-		result["streamMode"] = a.config.StreamMode
-		a.mu.RUnlock()
-		writeJSON(w, http.StatusOK, result)
-		return true
 	case "/api/system/memory":
 		var stats runtime.MemStats
 		runtime.ReadMemStats(&stats)
 		a.mu.RLock()
 		mode := a.config.StreamMode
 		a.mu.RUnlock()
-		writeJSON(w, http.StatusOK, map[string]any{"pid": os.Getpid(), "goVersion": runtime.Version(), "platform": runtime.GOOS, "uptimeSeconds": time.Since(processStarted).Seconds(), "rss": stats.Sys, "heapUsed": stats.HeapAlloc, "heapTotal": stats.HeapSys, "goroutines": runtime.NumGoroutine(), "streamMode": mode})
+		var watchdog any
+		if a.memoryWatchdog != nil {
+			watchdog = map[string]any{"samples": a.memoryWatchdog()}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"pid": os.Getpid(), "goVersion": runtime.Version(), "platform": runtime.GOOS, "uptimeSeconds": time.Since(processStarted).Seconds(), "rss": stats.Sys, "heapUsed": stats.HeapAlloc, "heapTotal": stats.HeapSys, "goroutines": runtime.NumGoroutine(), "streamMode": mode, "watchdog": watchdog})
 		return true
 	}
 	return false

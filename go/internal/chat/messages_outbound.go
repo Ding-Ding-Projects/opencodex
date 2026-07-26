@@ -120,7 +120,7 @@ func writeAnthropicStream(ctx context.Context, w http.ResponseWriter, model stri
 			return nil
 		}
 		started = true
-		if err := emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_" + randomHex(12), "type": "message", "role": "assistant", "content": []any{}, "model": model, "stop_reason": nil, "stop_sequence": nil, "usage": anthropicUsage(nil)}}); err != nil {
+		if err := emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_" + randomHex(12), "type": "message", "role": "assistant", "content": []any{}, "model": model, "stop_reason": nil, "stop_sequence": nil, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0}}}); err != nil {
 			return err
 		}
 		return emit("ping", map[string]any{"type": "ping"})
@@ -210,7 +210,11 @@ func writeAnthropicStream(ctx context.Context, w http.ResponseWriter, model stri
 				if status == 0 {
 					status = http.StatusBadGateway
 				}
-				return emit("error", anthropicErrorBody(status, firstNonEmpty(event.Error, "upstream request failed"), ""))
+				override := ""
+				if status == 500 || status == 502 || status == 503 || status == 504 {
+					override = "overloaded_error"
+				}
+				return emit("error", anthropicErrorBody(status, firstNonEmpty(event.Error, "upstream request failed"), override))
 			case types.EventDone:
 				terminal = true
 				if event.Usage != nil {

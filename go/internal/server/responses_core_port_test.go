@@ -95,6 +95,16 @@ type inspectingStreamAdapter struct {
 	seen chan string
 }
 
+type eagerRelayAdapter struct {
+	coreAdapter
+	parsed *bool
+}
+
+func (a eagerRelayAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
+	*a.parsed = true
+	panic("eager relay must bypass adapter parsing")
+}
+
 type guardActivationAdapter struct {
 	endpoint string
 	builds   *int
@@ -291,6 +301,29 @@ func TestResponsesCoreTerminalGuardActuallyContinuesAnthropicStream(t *testing.T
 	}
 }
 
+func TestResponsesCoreUsesProductionEagerRelayForNativeResponsesSSE(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+	parsed := false
+	logs := NewRequestLogStore(10, nil)
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL}, StreamMode: "eager-relay", RequestLogs: logs,
+		ProviderAdapter: func(string) string { return "openai-responses" },
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return eagerRelayAdapter{coreAdapter: coreAdapter{endpoint: transport.BaseURL}, parsed: &parsed}, nil
+		},
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
+	entries := logs.Entries()
+	if response.Code != http.StatusOK || parsed || !strings.Contains(response.Body.String(), `"type":"response.completed"`) || len(entries) != 1 || entries[0].TerminalStatus != ResponsesCompleted {
+		t.Fatalf("status=%d parsed=%v logs=%#v body=%s", response.Code, parsed, entries, response.Body.String())
+	}
+}
+
 func TestResponsesCoreRejectsUnreadableEncryptedAgentTask(t *testing.T) {
 	core, _, _, upstream := newCoreHarness(t)
 	defer upstream.Close()
@@ -320,7 +353,7 @@ func TestResponsesCoreExtractsQuotaHeadersBehindCallback(t *testing.T) {
 	}
 }
 
-func TestResponsesCoreClassifiesUpstreamErrorAndPreservesRetryAfter(t *testing.T) {
+func TestResponsesCoreClassifiesUpstreamErrorWithoutRelayingRetryAfter(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "7")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -336,7 +369,7 @@ func TestResponsesCoreClassifiesUpstreamErrorAndPreservesRetryAfter(t *testing.T
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
 	response := httptest.NewRecorder()
 	core.ServeHTTP(response, request)
-	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "7" {
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "" || !strings.Contains(response.Body.String(), `Provider error 429:`) {
 		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
 	var body struct {

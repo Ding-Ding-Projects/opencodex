@@ -48,6 +48,8 @@ type ResponsesCoreConfig struct {
 	ItemIDRepair        func(string) *ResponsesItemIDRepairConfig
 	RotateAPIKeyOn429   func(string, string, string) (string, bool)
 	PrepareImageRetry   func(*types.NormalizedRequest) error
+	RequestLogs         *RequestLogStore
+	StreamMode          string
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -152,8 +154,15 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	ctx, cancel := context.WithCancelCause(tracked)
 	defer cancel(nil)
 	started := time.Now()
-	adapter, response, auth, resolved, pick, err := core.forward(ctx, request.Header, parsed.Normalized, resolved, pick)
+	logSession := newResponsesLogSession(core.config.RequestLogs, started, parsed.RequestedModel, resolved, core.providerAdapter(resolved.Provider))
+	adapter, response, auth, resolved, pick, err := core.forward(ctx, request.Header, parsed.Normalized, resolved, pick, logSession)
 	if err != nil {
+		status := http.StatusBadGateway
+		var failure *forwardError
+		if errors.As(err, &failure) {
+			status = failure.status
+		}
+		logSession.finish(status, ResponsesFailed, RequestLogTerminal, err.Error())
 		core.writeForwardError(w, err)
 		return
 	}
@@ -165,10 +174,17 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		record.AccountID = auth.AccountID
 	}
 	if parsed.Normalized.Stream {
-		core.stream(ctx, cancel, w, request.Header, parsed.Normalized, resolved, pick, parsed.RequestedModel, adapter, response, auth, record)
+		core.stream(ctx, cancel, w, request.Header, parsed.Normalized, resolved, pick, parsed.RequestedModel, adapter, response, auth, record, logSession)
 		return
 	}
-	core.buffered(ctx, w, parsed.RequestedModel, adapter, response, auth, record)
+	core.buffered(ctx, w, parsed.RequestedModel, adapter, response, auth, record, logSession)
+}
+
+func (core *ResponsesCore) providerAdapter(provider string) string {
+	if core.config.ProviderAdapter == nil {
+		return ""
+	}
+	return core.config.ProviderAdapter(provider)
 }
 
 // applyResolvedResponsesModel keeps the normalized request and native
@@ -223,10 +239,11 @@ type forwardError struct {
 
 func (e *forwardError) Error() string { return e.err.Error() }
 
-func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick) (types.Adapter, *http.Response, *types.AuthContext, *types.ResolvedModel, *combos.Pick, error) {
+func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, logSession *responsesLogSession) (types.Adapter, *http.Response, *types.AuthContext, *types.ResolvedModel, *combos.Pick, error) {
 	var overrideKey string
 	imageRetryAttempted := false
 	for {
+		logSession.ensureAttempt(resolved.Provider, resolved.Model, core.providerAdapter(resolved.Provider))
 		var auth *types.AuthContext
 		var err error
 		if core.config.Auth != nil {
@@ -294,6 +311,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			}
 			if nextKey, ok := core.config.RotateAPIKeyOn429(resolved.Provider, attempted, response.Header.Get("Retry-After")); ok && strings.TrimSpace(nextKey) != "" && nextKey != attempted {
 				overrideKey = nextKey
+				logSession.noteRecovery("key-429")
 				continue
 			}
 		}
@@ -303,12 +321,14 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		if ShouldAttemptImageTierRetry(response.StatusCode, adapterName, normalized, imageRetryAttempted) && core.config.PrepareImageRetry != nil {
 			imageRetryAttempted = true
+			logSession.noteRecovery("image-413")
 			if err := core.config.PrepareImageRetry(normalized); err != nil {
 				return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadRequest, kind: "request_build_error", err: fmt.Errorf("prepare image retry: %w", err)}
 			}
 			continue
 		}
 		if next, ok := core.nextCombo(normalized, pick, response.StatusCode, "upstream_error", message, response.Header.Get("Retry-After")); ok {
+			logSession.finishAttempt(response.StatusCode)
 			pick, resolved = next, next.Resolved
 			continue
 		}
@@ -364,33 +384,69 @@ func (core *ResponsesCore) nextCombo(request *types.NormalizedRequest, pick *com
 	return next, err == nil
 }
 
-func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord) {
+func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession) {
 	defer response.Body.Close()
+	adapterName := core.providerAdapter(record.Provider)
+	if useEagerResponsesRelay(core.config.StreamMode, adapterName, response) {
+		inspector := NewSSEInspector(SSEInspectorHandlers{
+			OnFirstOutput: logSession.firstOutput,
+			OnUsage:       logSession.usage,
+			OnTerminal:    logSession.rawTerminal,
+		})
+		body := io.Reader(response.Body)
+		if core.config.ItemIDRepair != nil {
+			if repair := core.config.ItemIDRepair(record.Provider); HasResponsesItemIDRepair(repair) {
+				body = RepairResponsesItemIDsWithConfig(body, *repair)
+			}
+		}
+		err := RelaySSE(ctx, w, io.NopCloser(body), RelayOptions{Inspector: inspector})
+		if usage := inspector.Usage(); usage != nil && core.config.Recorder != nil {
+			copy := *record
+			copy.Usage, copy.Duration = *usage, time.Since(record.StartedAt)
+			copy.Status = types.OutcomeSuccess
+			if inspector.TerminalStatus() != ResponsesCompleted {
+				copy.Status = types.OutcomeProviderError
+			}
+			_ = core.config.Recorder.Record(context.WithoutCancel(ctx), &copy)
+		}
+		logSession.finishStream(ctx, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	events := core.eventsForResponse(ctx, adapter, response, record.Provider, false)
-	adapterName := ""
-	if core.config.ProviderAdapter != nil {
-		adapterName = core.config.ProviderAdapter(record.Provider)
-	}
 	events = GuardTerminalEventStream(ctx, normalized, events, GuardOptions{
 		AdapterName: adapterName,
 		Continuation: func(continuationContext context.Context, continuation *types.NormalizedRequest) (<-chan types.AdapterEvent, error) {
-			nextAdapter, nextResponse, _, nextResolved, _, err := core.forward(continuationContext, incoming, continuation, resolved, pick)
+			logSession.noteRecovery("terminal-guard")
+			nextAdapter, nextResponse, _, nextResolved, _, err := core.forward(continuationContext, incoming, continuation, resolved, pick, logSession)
 			if err != nil {
 				return nil, err
 			}
 			return core.eventsForResponse(continuationContext, nextAdapter, nextResponse, nextResolved.Provider, true), nil
 		},
 	})
-	events = core.observeEvents(ctx, events, auth)
+	events = core.observeEvents(ctx, events, auth, logSession)
 	err := bridge.StreamWithOptions(ctx, w, requestedModel, events, bridge.StreamOptions{
 		StallTimeoutSec: core.config.StallTimeout,
 		OnCancel:        func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
 	})
 	if err != nil && !errors.Is(err, context.Canceled) && core.config.Logger != nil {
 		core.config.Logger.Error("responses_stream", "error", err)
+	}
+	logSession.finishStream(ctx, err)
+}
+
+func useEagerResponsesRelay(streamMode, adapterName string, response *http.Response) bool {
+	if streamMode != "eager-relay" || response == nil || response.Body == nil || !strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(adapterName)) {
+	case "openai", "openai-responses", "responses":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -420,20 +476,23 @@ func (core *ResponsesCore) eventsForResponse(ctx context.Context, adapter types.
 	return out
 }
 
-func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord) {
+func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession) {
 	defer response.Body.Close()
 	payload, err := readResponsesBody(ctx, response, defaultResponsesResponseLimit)
 	if err != nil {
+		logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, err.Error())
 		writeJSONError(w, http.StatusBadGateway, "provider_response_error", err.Error())
 		return
 	}
 	events, err := adapter.ParseUnary(ctx, payload)
 	if err != nil {
+		logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, err.Error())
 		core.recordAuthOutcome(auth, types.OutcomeProviderError, http.StatusBadGateway, err.Error(), "")
 		writeJSONError(w, http.StatusBadGateway, "provider_parse_error", err.Error())
 		return
 	}
 	_, result := bridge.Convert(requestedModel, events)
+	logSession.observeSlice(events)
 	outcome := types.OutcomeProviderError
 	if result.Status == "completed" {
 		outcome = types.OutcomeSuccess
@@ -447,6 +506,11 @@ func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+	if result.Status == "completed" {
+		logSession.finish(http.StatusOK, ResponsesCompleted, RequestLogNonStream, "")
+	} else {
+		logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, "")
+	}
 }
 
 func readResponsesBody(ctx context.Context, response *http.Response, limit int64) ([]byte, error) {
@@ -472,12 +536,13 @@ func readResponsesBody(ctx context.Context, response *http.Response, limit int64
 	return payload, nil
 }
 
-func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan types.AdapterEvent, auth *types.AuthContext) <-chan types.AdapterEvent {
+func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan types.AdapterEvent, auth *types.AuthContext, logSession *responsesLogSession) <-chan types.AdapterEvent {
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
 		terminal := false
 		for event := range source {
+			logSession.observe(event)
 			switch event.Type {
 			case types.EventDone:
 				terminal = true
@@ -518,10 +583,11 @@ func (core *ResponsesCore) recordAuthOutcome(auth *types.AuthContext, outcome ty
 func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {
 	var failure *forwardError
 	if errors.As(err, &failure) {
-		if failure.retryAfter != "" {
-			w.Header().Set("Retry-After", failure.retryAfter)
+		message := failure.err.Error()
+		if failure.kind == "upstream_error" {
+			message = fmt.Sprintf("Provider error %d: %s", failure.status, message)
 		}
-		writeClassifiedJSONError(w, failure.status, failure.kind, failure.err.Error())
+		writeClassifiedJSONError(w, failure.status, failure.kind, message)
 		return
 	}
 	writeJSONError(w, http.StatusBadGateway, "server_error", err.Error())

@@ -156,6 +156,12 @@ func (store *RequestLogStore) Clear() {
 	store.mu.Unlock()
 }
 
+func (store *RequestLogStore) QueryRequestLogs(query url.Values) any {
+	return FilterRequestLogs(store.Entries(), query)
+}
+
+func (store *RequestLogStore) ClearRequestLogs() { store.Clear() }
+
 type requestIDContextKey struct{}
 
 // RequestIDFromContext returns the ingress correlation ID for logs and

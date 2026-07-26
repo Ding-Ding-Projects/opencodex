@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -134,6 +135,24 @@ func TestWriteAnthropicStreamFailsClosedOnTruncation(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `event: error`) || !strings.Contains(w.Body.String(), `overloaded_error`) || strings.Contains(w.Body.String(), `message_stop`) {
 		t.Fatalf("stream = %s", w.Body.String())
+	}
+}
+
+func TestWriteAnthropicStreamMatchesTypeScriptInitialUsageAndTransientError(t *testing.T) {
+	events := make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{Type: types.EventError, StatusCode: http.StatusInternalServerError, Error: "temporary upstream failure"}
+	close(events)
+	w := httptest.NewRecorder()
+	if err := writeAnthropicStream(context.Background(), w, "m", events); err != nil {
+		t.Fatal(err)
+	}
+	body := w.Body.String()
+	start := strings.SplitN(body, "\n\n", 2)[0]
+	if strings.Contains(start, "cache_read_input_tokens") || strings.Contains(start, "cache_creation_input_tokens") || !strings.Contains(start, `"usage":{"input_tokens":0,"output_tokens":0}`) {
+		t.Fatalf("message_start usage differs from TS: %s", start)
+	}
+	if !strings.Contains(body, `"type":"overloaded_error"`) || strings.Contains(body, `"type":"api_error"`) {
+		t.Fatalf("transient stream error differs from TS: %s", body)
 	}
 }
 

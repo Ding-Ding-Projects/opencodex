@@ -71,7 +71,7 @@ func TestOAuthRoutesMatchPublicManagementContract(t *testing.T) {
 	}
 
 	providers := serveManagement(api, http.MethodGet, "/api/oauth/providers", "")
-	if providers.Code != http.StatusOK || providers.Body.String() != "{\"providers\":[\"xai\",\"anthropic\"]}\n" {
+	if providers.Code != http.StatusOK || providers.Body.String() != "{\"providers\":[\"xai\",\"anthropic\"]}" {
 		t.Fatalf("providers = %d %s", providers.Code, providers.Body.String())
 	}
 	login := serveManagement(api, http.MethodPost, "/api/oauth/login", `{"provider":"XAI","addAccount":true,"accountId":"acct-1"}`)

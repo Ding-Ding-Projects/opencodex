@@ -48,8 +48,8 @@ func TestManagementAuthorizationRunsBeforeRouteAndBodyParsing(t *testing.T) {
 	if response.Code != http.StatusUnauthorized || called != 1 || !strings.Contains(response.Body.String(), "opencodex API key required") {
 		t.Fatalf("response=%d %s called=%d", response.Code, response.Body.String(), called)
 	}
-	if response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("cache policy=%q", response.Header().Get("Cache-Control"))
+	if response.Header().Get("Cache-Control") != "" || response.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("TS management headers=%v", response.Header())
 	}
 }
 
@@ -68,6 +68,30 @@ func TestProviderDTOContainsNoCredentialMaterial(t *testing.T) {
 	}
 	if dto["baseUrl"] != "https://example.com/v1" || dto["hasApiKey"] != true {
 		t.Fatalf("dto=%#v", dto)
+	}
+}
+
+func TestConfigAndProviderResponsesUseTypeScriptShapeAndHeaders(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = map[string]config.ProviderConfig{"acme": {Adapter: "openai", BaseURL: "https://example.com/v1", APIKey: "secret", Headers: map[string]string{"X-Secret": "hidden"}}}
+	api := newParityAPI(t, &cfg)
+	configResponse := serveManagement(api, http.MethodGet, "/api/config", "")
+	providersResponse := serveManagement(api, http.MethodGet, "/api/providers", "")
+	for _, response := range []*httptest.ResponseRecorder{configResponse, providersResponse} {
+		if response.Header().Get("Content-Type") != "application/json" || response.Header().Get("Cache-Control") != "" || strings.HasSuffix(response.Body.String(), "\n") {
+			t.Fatalf("management wire response headers=%v body=%q", response.Header(), response.Body.String())
+		}
+	}
+	var configBody map[string]any
+	if err := json.Unmarshal(configResponse.Body.Bytes(), &configBody); err != nil {
+		t.Fatal(err)
+	}
+	providers, ok := configBody["providers"].(map[string]any)
+	if !ok || providers["acme"] == nil || configBody["codexAutoStart"] != true || configBody["streamMode"] != nil {
+		t.Fatalf("safe config DTO = %#v", configBody)
+	}
+	if strings.Contains(configResponse.Body.String(), "secret") || strings.Contains(providersResponse.Body.String(), "secret") {
+		t.Fatalf("management DTO leaked credential material: config=%s providers=%s", configResponse.Body.String(), providersResponse.Body.String())
 	}
 }
 

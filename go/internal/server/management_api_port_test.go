@@ -18,7 +18,7 @@ func TestManagementAPIComposition(t *testing.T) {
 	api.Register(mux)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/system/runtime", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "9.9.9") {
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "404 page not found") {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 	found := false
