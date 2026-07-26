@@ -139,6 +139,37 @@ func TestParseResponsesItemsAndReasoningEnvelope(t *testing.T) {
 	}
 }
 
+func TestParseResponsesFunctionArgumentsRemainObjectOnly(t *testing.T) {
+	for _, test := range []struct {
+		name, arguments string
+		wantX           float64
+		wantEmpty       bool
+	}{
+		{name: "object", arguments: `{"x":1}`, wantX: 1},
+		{name: "array", arguments: `[]`, wantEmpty: true},
+		{name: "malformed", arguments: `{broken`, wantEmpty: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]any{"model": "m", "input": []any{map[string]any{"type": "function_call", "call_id": "c1", "name": "run", "arguments": test.arguments}}})
+			parsed, err := ParseResponsesRequest(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parts []map[string]any
+			if err := json.Unmarshal(parsed.Context.Messages[0].Content, &parts); err != nil || len(parts) != 1 {
+				t.Fatalf("parts=%#v err=%v", parts, err)
+			}
+			arguments, _ := parts[0]["arguments"].(map[string]any)
+			if test.wantEmpty && len(arguments) != 0 {
+				t.Fatalf("arguments=%#v", arguments)
+			}
+			if !test.wantEmpty && arguments["x"] != test.wantX {
+				t.Fatalf("arguments=%#v", arguments)
+			}
+		})
+	}
+}
+
 func TestResponsesValidationRejectsMalformedBoundaries(t *testing.T) {
 	cases := [][]byte{[]byte(`{}`), []byte(`{"model":"m","input":{}}`), []byte(`{"model":"m","input":[{"type":"function_call","name":"x"}]}`), []byte(`{"model":"m","tool_choice":"sometimes"}`)}
 	for _, raw := range cases {

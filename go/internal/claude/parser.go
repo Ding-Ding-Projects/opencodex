@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,16 +12,30 @@ import (
 )
 
 func ParseResponsesRequest(raw []byte) (*types.NormalizedRequest, error) {
-	var body map[string]any
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, fmt.Errorf("responses parse error: %w", err)
-	}
-	previousID := stringField(body, "previous_response_id")
-	expanded, replayPrefix, previousExpanded := defaultResponseState.ExpandWithMetadata(body)
-	raw, _ = json.Marshal(expanded)
 	request, err := ValidateResponsesRequest(raw)
 	if err != nil {
 		return nil, err
+	}
+	previousID := request.PreviousResponseID
+	replayPrefix := 0
+	previousExpanded := false
+	if previousID != "" {
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, fmt.Errorf("responses parse error: %w", err)
+		}
+		expanded, prefix, expandedOK := defaultResponseState.ExpandWithMetadata(body)
+		replayPrefix, previousExpanded = prefix, expandedOK
+		if expandedOK {
+			raw, err = json.Marshal(expanded)
+			if err != nil {
+				return nil, fmt.Errorf("responses parse error: %w", err)
+			}
+			request, err = ValidateResponsesRequest(raw)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	parsed, err := parseValidatedRequest(request, raw, replayPrefix)
 	if err != nil {
@@ -38,11 +53,19 @@ type pendingReasoningPart struct {
 	Signed bool
 }
 
+type indexedToolCall struct {
+	MessageIndex int
+	Name         string
+	Namespace    string
+}
+
 func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) (*types.NormalizedRequest, error) {
 	now := time.Now().UnixMilli()
-	context := types.RequestContext{}
-	var rawBody map[string]any
-	_ = json.Unmarshal(raw, &rawBody)
+	messageCapacity := 1
+	if input, ok := data.Input.([]any); ok && len(input) > messageCapacity {
+		messageCapacity = len(input)
+	}
+	context := types.RequestContext{Messages: make([]types.Message, 0, messageCapacity)}
 	if data.Instructions != nil && *data.Instructions != "" {
 		context.SystemPrompt = append(context.SystemPrompt, *data.Instructions)
 	}
@@ -50,17 +73,61 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 		context.Messages = append(context.Messages, types.Message{Role: role, Content: mustRaw(content), Timestamp: now})
 	}
 	pending := []pendingReasoningPart{}
+	assistantParts := make([][]any, messageCapacity)
+	bufferedAssistants := make([]bool, messageCapacity)
+	toolCalls := make(map[string]indexedToolCall, messageCapacity/2)
+	indexToolPart := func(messageIndex int, rawPart any) {
+		part, ok := rawPart.(map[string]any)
+		if !ok || stringField(part, "type") != "toolCall" {
+			return
+		}
+		callID := stringField(part, "id")
+		if callID == "" {
+			return
+		}
+		current, exists := toolCalls[callID]
+		if exists && current.MessageIndex >= messageIndex {
+			return
+		}
+		toolCalls[callID] = indexedToolCall{MessageIndex: messageIndex, Name: stringField(part, "name"), Namespace: stringField(part, "namespace")}
+	}
+	ensureAssistantParts := func() (int, []any) {
+		messageIndex := len(context.Messages) - 1
+		if messageIndex < 0 || context.Messages[messageIndex].Role != "assistant" {
+			context.Messages = append(context.Messages, types.Message{Role: "assistant", Timestamp: now})
+			messageIndex = len(context.Messages) - 1
+		}
+		if bufferedAssistants[messageIndex] {
+			return messageIndex, assistantParts[messageIndex]
+		}
+		var parts []any
+		if len(context.Messages[messageIndex].Content) > 0 {
+			_ = json.Unmarshal(context.Messages[messageIndex].Content, &parts)
+		}
+		assistantParts[messageIndex] = parts
+		bufferedAssistants[messageIndex] = true
+		for _, part := range parts {
+			indexToolPart(messageIndex, part)
+		}
+		return messageIndex, parts
+	}
 	loadedToolSpecs := []any{}
 	compactionRequest := false
 	compactionBoundary := false
-	assistantWithReasoning := func() *types.Message {
-		message := ensureAssistant(&context, now)
-		message.Model = data.Model
+	assistantWithReasoning := func() int {
+		messageIndex, parts := ensureAssistantParts()
+		context.Messages[messageIndex].Model = data.Model
 		for _, reasoning := range pending {
-			message.Content = appendContent(message.Content, reasoning.Part)
+			parts = append(parts, reasoning.Part)
 		}
+		assistantParts[messageIndex] = parts
 		pending = nil
-		return message
+		return messageIndex
+	}
+	appendAssistantPart := func(part any) {
+		messageIndex := assistantWithReasoning()
+		assistantParts[messageIndex] = append(assistantParts[messageIndex], part)
+		indexToolPart(messageIndex, part)
 	}
 	clearPending := func() { pending = nil }
 
@@ -100,8 +167,14 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 					}
 					combined = append(combined, parts...)
 					clearPending()
-					message := types.Message{Role: role, Content: mustRaw(combined), Timestamp: now, Model: data.Model, Phase: stringField(item, "phase")}
+					message := types.Message{Role: role, Timestamp: now, Model: data.Model, Phase: stringField(item, "phase")}
 					context.Messages = append(context.Messages, message)
+					messageIndex := len(context.Messages) - 1
+					assistantParts[messageIndex] = combined
+					bufferedAssistants[messageIndex] = true
+					for _, part := range combined {
+						indexToolPart(messageIndex, part)
+					}
 				} else {
 					clearPending()
 					appendMessage(role, content)
@@ -136,11 +209,12 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 			case "function_call", "custom_tool_call":
 				callID := firstNonEmpty(stringField(item, "call_id"), stringField(item, "id"))
 				name := stringField(item, "name")
-				args := map[string]any{}
+				var args any = map[string]any{}
 				if kind == "custom_tool_call" {
-					args["input"], _ = item["input"].(string)
+					input, _ := item["input"].(string)
+					args = map[string]any{"input": input}
 				} else if s, _ := item["arguments"].(string); s != "" {
-					_ = json.Unmarshal([]byte(s), &args)
+					args = rawObjectArguments(s)
 				}
 				part := map[string]any{"type": "toolCall", "id": callID, "name": name, "arguments": args}
 				if namespace := stringField(item, "namespace"); namespace != "" {
@@ -149,8 +223,7 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 				if kind == "custom_tool_call" {
 					part["customWireName"] = name
 				}
-				message := assistantWithReasoning()
-				message.Content = appendContent(message.Content, part)
+				appendAssistantPart(part)
 			case "local_shell_call":
 				callID := firstNonEmpty(stringField(item, "call_id"), stringField(item, "id"))
 				if callID == "" {
@@ -162,16 +235,14 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 						args["command"] = command
 					}
 				}
-				message := assistantWithReasoning()
-				message.Content = appendContent(message.Content, map[string]any{"type": "toolCall", "id": callID, "name": "shell", "arguments": args})
+				appendAssistantPart(map[string]any{"type": "toolCall", "id": callID, "name": "shell", "arguments": args})
 			case "tool_search_call":
 				callID := firstNonEmpty(stringField(item, "call_id"), stringField(item, "id"))
 				args, _ := item["arguments"].(map[string]any)
 				if args == nil {
 					args = map[string]any{}
 				}
-				message := assistantWithReasoning()
-				message.Content = appendContent(message.Content, map[string]any{"type": "toolCall", "id": callID, "name": "tool_search", "arguments": args})
+				appendAssistantPart(map[string]any{"type": "toolCall", "id": callID, "name": "tool_search", "arguments": args})
 			case "tool_search_output":
 				clearPending()
 				tools, _ := item["tools"].([]any)
@@ -189,7 +260,7 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 			case "function_call_output", "custom_tool_call_output":
 				clearPending()
 				callID := stringField(item, "call_id")
-				tool := findToolCall(context.Messages, callID)
+				tool := toolCalls[callID]
 				content, encrypted := normalizeToolOutput(item["output"])
 				context.Messages = append(context.Messages, types.Message{Role: "toolResult", ToolCallID: callID, ToolName: tool.Name, ToolNamespace: tool.Namespace, Content: mustRaw(content), ContainsEncryptedContent: encrypted, Timestamp: now})
 			case "agent_message":
@@ -212,6 +283,11 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 			case "web_search_call":
 				clearPending()
 			}
+		}
+	}
+	for messageIndex, buffered := range bufferedAssistants {
+		if buffered {
+			context.Messages[messageIndex].Content = mustRaw(assistantParts[messageIndex])
 		}
 	}
 	declared := parseToolMaps(data.Tools)
@@ -265,19 +341,14 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 	}, nil
 }
 
-func ensureAssistant(context *types.RequestContext, now int64) *types.Message {
-	if n := len(context.Messages); n > 0 && context.Messages[n-1].Role == "assistant" {
-		return &context.Messages[n-1]
-	}
-	context.Messages = append(context.Messages, types.Message{Role: "assistant", Content: json.RawMessage(`[]`), Timestamp: now})
-	return &context.Messages[len(context.Messages)-1]
-}
-func appendContent(raw json.RawMessage, part any) json.RawMessage {
-	var parts []any
-	_ = json.Unmarshal(raw, &parts)
-	return mustRaw(append(parts, part))
-}
 func mustRaw(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+func rawObjectArguments(value string) any {
+	raw := bytes.TrimSpace([]byte(value))
+	if len(raw) == 0 || raw[0] != '{' || !json.Valid(raw) {
+		return map[string]any{}
+	}
+	return json.RawMessage(raw)
+}
 func valueOrZero(v *int) int {
 	if v == nil {
 		return 0
@@ -486,21 +557,6 @@ func parseToolMaps(values []map[string]any) []types.Tool {
 		add(m, "")
 	}
 	return out
-}
-
-func findToolCall(messages []types.Message, callID string) types.Tool {
-	for i := len(messages) - 1; i >= 0; i-- {
-		var parts []map[string]any
-		if json.Unmarshal(messages[i].Content, &parts) != nil {
-			continue
-		}
-		for _, part := range parts {
-			if stringField(part, "type") == "toolCall" && stringField(part, "id") == callID {
-				return types.Tool{Name: stringField(part, "name"), Namespace: stringField(part, "namespace")}
-			}
-		}
-	}
-	return types.Tool{}
 }
 
 const (

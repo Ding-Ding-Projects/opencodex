@@ -65,10 +65,42 @@ func TestResponseStateStoreRemainsBoundedAcrossLongSession(t *testing.T) {
 }
 
 func BenchmarkParseResponsesRequestToolChain(b *testing.B) {
+	// Apple M5 Pro, 100 calls: repeated materialization baseline 776,449 B/op
+	// and 15,988 allocs/op; buffered parser 259,469 B/op and 4,826 allocs/op.
 	previousStore := defaultResponseState
 	defaultResponseState = NewResponseStateStore()
 	b.Cleanup(func() { defaultResponseState = previousStore })
-	const calls = 100
+	raw := benchmarkResponsesToolChain(b, 100)
+	b.SetBytes(int64(len(raw)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if _, err := ParseResponsesRequest(raw); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkParseResponsesRequestToolChainScaling(b *testing.B) {
+	previousStore := defaultResponseState
+	defaultResponseState = NewResponseStateStore()
+	b.Cleanup(func() { defaultResponseState = previousStore })
+	for _, calls := range []int{10, 100, 1_000} {
+		raw := benchmarkResponsesToolChain(b, calls)
+		b.Run(fmt.Sprintf("calls-%d", calls), func(b *testing.B) {
+			b.SetBytes(int64(len(raw)))
+			b.ReportAllocs()
+			for index := 0; index < b.N; index++ {
+				if _, err := ParseResponsesRequest(raw); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func benchmarkResponsesToolChain(tb testing.TB, calls int) []byte {
+	tb.Helper()
 	input := make([]any, 0, calls*2)
 	for index := 0; index < calls; index++ {
 		id := fmt.Sprintf("call_%d", index)
@@ -79,14 +111,7 @@ func BenchmarkParseResponsesRequestToolChain(b *testing.B) {
 	}
 	raw, err := json.Marshal(map[string]any{"model": "claude-sonnet-5", "input": input})
 	if err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
-	b.SetBytes(int64(len(raw)))
-	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
-		if _, err := ParseResponsesRequest(raw); err != nil {
-			b.Fatal(err)
-		}
-	}
+	return raw
 }

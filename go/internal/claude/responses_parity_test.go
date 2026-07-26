@@ -93,6 +93,24 @@ func TestResponsesParserCompactionAndReasoningBoundaries(t *testing.T) {
 	}
 }
 
+func TestResponsesParserToolLookupMatchesLatestAssistantFirstDuplicate(t *testing.T) {
+	body := map[string]any{"model": "m", "input": []any{
+		map[string]any{"type": "function_call", "call_id": "duplicate", "name": "first", "arguments": "{}"},
+		map[string]any{"type": "function_call", "call_id": "duplicate", "name": "same-turn-later", "arguments": "{}"},
+		map[string]any{"type": "function_call_output", "call_id": "duplicate", "output": "one"},
+		map[string]any{"type": "function_call", "call_id": "duplicate", "name": "new-turn", "arguments": "{}"},
+		map[string]any{"type": "function_call_output", "call_id": "duplicate", "output": "two"},
+	}}
+	raw, _ := json.Marshal(body)
+	parsed, err := ParseResponsesRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Context.Messages) != 4 || parsed.Context.Messages[1].ToolName != "first" || parsed.Context.Messages[3].ToolName != "new-turn" {
+		t.Fatalf("messages=%#v", parsed.Context.Messages)
+	}
+}
+
 func TestResponseStateIncompleteSnapshotCapsAndMetrics(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "responses-state.json")
 	store := NewResponseStateStore()
