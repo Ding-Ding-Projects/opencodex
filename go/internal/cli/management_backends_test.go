@@ -19,6 +19,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
+	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
 
 func TestCodexAuthManagementAPIChangesPersistentPoolStateWithoutLeakingTokens(t *testing.T) {
@@ -337,6 +338,12 @@ func TestQuotaClaudeAndRuntimeBackendsMutateThroughManagementAPI(t *testing.T) {
 	runtimeControl := newRuntimeControl(&cfg)
 	updateStarted := make(chan struct{})
 	restartStarted := make(chan struct{})
+	runtimeControl.updateCheck = func(context.Context, string) (updatepkg.CheckResult, error) {
+		return updatepkg.CheckResult{
+			CurrentVersion: "1.0.0", LatestVersion: "1.1.0", Channel: updatepkg.ChannelPreview,
+			Installer: updatepkg.InstallerNPM, UpdateAvailable: true, CanUpdate: true,
+		}, nil
+	}
 	runtimeControl.updateRunner = func(context.Context, string) error { close(updateStarted); return nil }
 	runtimeControl.restartRunner = func(context.Context) error { close(restartStarted); return nil }
 	api := newCLIManagementAPI(t, &cfg, path, nil, providerQuotas, claudeRuntime, runtimeControl)
@@ -383,6 +390,47 @@ func TestQuotaClaudeAndRuntimeBackendsMutateThroughManagementAPI(t *testing.T) {
 			t.Fatalf("update status=%d %s", status.Code, status.Body.String())
 		}
 		runtime.Gosched()
+	}
+}
+
+func TestRuntimeUpdateStatusSurvivesManagerRecreation(t *testing.T) {
+	t.Setenv("OPENCODEX_HOME", t.TempDir())
+	cfg := config.FreshInstall()
+	control := newRuntimeControl(&cfg)
+	control.updateCheck = func(context.Context, string) (updatepkg.CheckResult, error) {
+		return updatepkg.CheckResult{
+			CurrentVersion: "1.0.0", LatestVersion: "1.1.0", Channel: updatepkg.ChannelLatest,
+			Installer: updatepkg.InstallerNPM, UpdateAvailable: true, CanUpdate: true,
+		}, nil
+	}
+	finished := make(chan struct{})
+	control.updateRunner = func(context.Context, string) error { close(finished); return nil }
+
+	started, err := control.StartUpdate(context.Background(), "latest", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-finished
+	id, _ := started["id"].(string)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		job, found, statusErr := control.UpdateStatus(context.Background(), id)
+		if statusErr != nil {
+			t.Fatal(statusErr)
+		}
+		if found && job["status"] == "succeeded" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("persisted update never completed: found=%t job=%#v", found, job)
+		}
+		runtime.Gosched()
+	}
+
+	recreated := newRuntimeControl(&cfg)
+	job, found, err := recreated.UpdateStatus(context.Background(), id)
+	if err != nil || !found || job["status"] != "succeeded" {
+		t.Fatalf("recreated status = found=%t job=%#v err=%v", found, job, err)
 	}
 }
 

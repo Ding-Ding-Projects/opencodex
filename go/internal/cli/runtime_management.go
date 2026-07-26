@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
@@ -216,34 +215,33 @@ func (r *cliClaudeRuntime) SyncClaudeAgentDefinitions(_ context.Context) error {
 	return err
 }
 
-type runtimeUpdateJob struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	Channel   string `json:"channel"`
-	Restart   bool   `json:"restart"`
-	StartedAt int64  `json:"startedAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-	Error     string `json:"error,omitempty"`
-}
-
 type cliRuntimeControl struct {
 	config        *config.Config
+	updateManager *updatepkg.JobManager
+	updateCheck   func(context.Context, string) (updatepkg.CheckResult, error)
 	updateRunner  func(context.Context, string) error
 	restartRunner func(context.Context) error
 	now           func() time.Time
-	mu            sync.Mutex
-	jobs          map[string]runtimeUpdateJob
 }
 
 var _ management.RuntimeControlBackend = (*cliRuntimeControl)(nil)
 
 func newRuntimeControl(cfg *config.Config) *cliRuntimeControl {
-	control := &cliRuntimeControl{config: cfg, now: time.Now, jobs: make(map[string]runtimeUpdateJob)}
+	dir, _ := configDir()
+	control := &cliRuntimeControl{config: cfg, now: time.Now}
+	control.updateCheck = control.resolveUpdateCheck
 	control.updateRunner = func(ctx context.Context, channel string) error {
 		return runUpdate(ctx, []string{"--tag", channel}, IO{Out: ioDiscard{}, Err: ioDiscard{}})
 	}
 	control.restartRunner = func(context.Context) error {
 		return runService([]string{"restart"}, IO{Out: ioDiscard{}, Err: ioDiscard{}})
+	}
+	control.updateManager = &updatepkg.JobManager{
+		Store: &updatepkg.JobStore{Path: filepath.Join(dir, "update-job.json")},
+		Now:   func() time.Time { return control.now() },
+		Execute: func(ctx context.Context, check updatepkg.CheckResult) ([]byte, error) {
+			return nil, control.updateRunner(ctx, string(check.Channel))
+		},
 	}
 	return control
 }
@@ -297,61 +295,77 @@ func (r *cliRuntimeControl) SyncModels(ctx context.Context) (map[string]any, err
 }
 
 func (r *cliRuntimeControl) CheckUpdate(ctx context.Context, channel string) (map[string]any, error) {
-	resolver := updatepkg.NewGitHubReleaseResolver()
-	artifact, err := resolver.Resolve(ctx, updatepkg.Channel(channel))
+	check, err := r.updateCheck(ctx, channel)
 	if err != nil {
 		return nil, err
 	}
+	return updateCheckMap(check), nil
+}
+
+func (r *cliRuntimeControl) resolveUpdateCheck(ctx context.Context, channel string) (updatepkg.CheckResult, error) {
+	resolver := updatepkg.NewGitHubReleaseResolver()
+	artifact, err := resolver.Resolve(ctx, updatepkg.Channel(channel))
+	if err != nil {
+		return updatepkg.CheckResult{}, err
+	}
 	available := artifact.Version != strings.TrimPrefix(Version, "v")
-	return map[string]any{
-		"currentVersion": Version, "latestVersion": artifact.Version, "channel": channel,
-		"updateAvailable": available, "canUpdate": available, "artifact": artifact.Name,
-		"releaseNotesUrl": updatepkg.ReleaseNotesURL,
-	}, nil
+	check := updatepkg.CheckResult{
+		CurrentVersion: strings.TrimPrefix(Version, "v"), LatestVersion: artifact.Version,
+		Channel: updatepkg.Channel(channel), Installer: updatepkg.InstallerNPM,
+		UpdateAvailable: available, CanUpdate: available, ReleaseNotesURL: updatepkg.ReleaseNotesURL,
+	}
+	if !available {
+		check.Reason = "already_latest"
+	}
+	return check, nil
 }
 
 func (r *cliRuntimeControl) StartUpdate(ctx context.Context, channel string, restart bool) (map[string]any, error) {
-	now := r.now().UTC()
-	job := runtimeUpdateJob{ID: newFlowID("update"), Status: "running", Channel: channel, Restart: restart, StartedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}
-	r.mu.Lock()
-	r.jobs[job.ID] = job
-	r.mu.Unlock()
-	go func() {
-		err := r.updateRunner(context.Background(), channel)
-		if err == nil && restart && r.restartRunner != nil {
-			err = r.restartRunner(context.Background())
-		}
-		r.mu.Lock()
-		current := r.jobs[job.ID]
-		current.Status, current.UpdatedAt = "succeeded", r.now().UTC().UnixMilli()
-		if err != nil {
-			current.Status, current.Error = "failed", err.Error()
-		}
-		r.jobs[job.ID] = current
-		r.mu.Unlock()
-	}()
+	check, err := r.updateCheck(ctx, channel)
+	if err != nil {
+		return nil, err
+	}
+	job, err := r.updateManager.Start(ctx, check, restart, r.restartRunner)
+	if err != nil {
+		return nil, err
+	}
 	return runtimeJobMap(job), nil
 }
 
 func (r *cliRuntimeControl) UpdateStatus(_ context.Context, id string) (map[string]any, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if id == "" && len(r.jobs) > 0 {
-		ids := make([]string, 0, len(r.jobs))
-		for candidate := range r.jobs {
-			ids = append(ids, candidate)
-		}
-		sort.Strings(ids)
-		id = ids[len(ids)-1]
-	}
-	job, found := r.jobs[id]
-	return runtimeJobMap(job), found, nil
+	job, found, err := r.updateManager.Status(id)
+	return runtimeJobMap(job), found, err
 }
 
-func runtimeJobMap(job runtimeUpdateJob) map[string]any {
-	result := map[string]any{"id": job.ID, "status": job.Status, "channel": job.Channel, "restart": job.Restart, "startedAt": job.StartedAt, "updatedAt": job.UpdatedAt}
+func updateCheckMap(check updatepkg.CheckResult) map[string]any {
+	result := map[string]any{
+		"currentVersion": check.CurrentVersion, "latestVersion": check.LatestVersion,
+		"channel": string(check.Channel), "installer": string(check.Installer),
+		"updateAvailable": check.UpdateAvailable, "canUpdate": check.CanUpdate,
+		"command": check.Command, "releaseNotesUrl": check.ReleaseNotesURL,
+	}
+	if check.Reason != "" {
+		result["reason"] = check.Reason
+	}
+	return result
+}
+
+func runtimeJobMap(job updatepkg.Job) map[string]any {
+	result := map[string]any{
+		"id": job.ID, "status": string(job.Status), "channel": string(job.Channel),
+		"installer": string(job.Installer), "restart": job.Restart,
+		"startedAt": job.StartedAt.UnixMilli(), "updatedAt": job.UpdatedAt.UnixMilli(),
+		"currentVersion": job.CurrentVersion, "latestVersion": job.LatestVersion,
+		"command": job.Command, "log": append([]string(nil), job.Log...),
+	}
 	if job.Error != "" {
 		result["error"] = job.Error
+	}
+	if job.ExitCode != nil {
+		result["exitCode"] = *job.ExitCode
+	}
+	if job.Restarted {
+		result["restarted"] = true
 	}
 	return result
 }
