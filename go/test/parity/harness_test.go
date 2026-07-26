@@ -55,6 +55,7 @@ type proxyProcess struct {
 	command *exec.Cmd
 	done    chan error
 	stderr  *lockedBuffer
+	auth    string
 }
 
 type lockedBuffer struct {
@@ -76,16 +77,29 @@ func (buffer *lockedBuffer) String() string {
 
 func startProxy(t *testing.T, upstreamURL string) *proxyProcess {
 	t.Helper()
-	home := t.TempDir()
-	configPath := filepath.Join(home, "config.json")
 	config := map[string]any{
 		"port": 0, "hostname": "127.0.0.1", "defaultProvider": "parity",
 		"providers": map[string]any{"parity": map[string]any{
 			"adapter": "openai-chat", "baseUrl": upstreamURL + "/v1", "allowPrivateNetwork": true,
 			"apiKey": "parity-api-key", "authMode": "key", "defaultModel": "success",
-			"models": []string{"success", "error", "cancel"}, "headers": map[string]string{"X-Parity-Static": "configured"},
+			"models":  []string{"success", "split", "truncated", "error", "error-401", "error-429", "error-500", "cancel"},
+			"headers": map[string]string{"X-Parity-Static": "configured"},
 		}},
 	}
+	return startProxyWithConfig(t, config)
+}
+
+func startProxyWithConfig(t *testing.T, config map[string]any, extraEnvironment ...string) *proxyProcess {
+	return startProxyWithSetup(t, config, nil, extraEnvironment...)
+}
+
+func startProxyWithSetup(t *testing.T, config map[string]any, setup func(string), extraEnvironment ...string) *proxyProcess {
+	t.Helper()
+	home := t.TempDir()
+	if setup != nil {
+		setup(home)
+	}
+	configPath := filepath.Join(home, "config.json")
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
@@ -94,8 +108,9 @@ func startProxy(t *testing.T, upstreamURL string) *proxyProcess {
 		t.Fatal(err)
 	}
 	command := exec.Command(parityBinary, "serve", "--config", configPath, "--port", "0")
-	command.Env = append(filteredEnvironment(os.Environ(), "OPENCODEX_HOME", "CODEX_HOME", "OPENCODEX_API_AUTH_TOKEN", "OCX_API_TOKEN_FILE"),
-		"OPENCODEX_HOME="+home, "CODEX_HOME="+filepath.Join(home, "codex"))
+	command.Env = append(filteredEnvironment(os.Environ(), "HOME", "OPENCODEX_HOME", "CODEX_HOME", "OPENCODEX_API_AUTH_TOKEN", "OCX_API_TOKEN_FILE"),
+		"HOME="+home, "OPENCODEX_HOME="+home, "CODEX_HOME="+filepath.Join(home, "codex"))
+	command.Env = append(command.Env, extraEnvironment...)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +134,8 @@ func startProxy(t *testing.T, upstreamURL string) *proxyProcess {
 	}()
 	select {
 	case address := <-listening:
-		process := &proxyProcess{baseURL: "http://" + address, command: command, done: done, stderr: stderr}
+		auth, _ := config["authToken"].(string)
+		process := &proxyProcess{baseURL: "http://" + address, command: command, done: done, stderr: stderr, auth: auth}
 		t.Cleanup(func() { process.stop(t) })
 		return process
 	case err := <-done:
@@ -135,6 +151,9 @@ func (process *proxyProcess) stop(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, process.baseURL+"/api/stop", nil)
+	if process.auth != "" {
+		request.Header.Set("Authorization", "Bearer "+process.auth)
+	}
 	if response, err := http.DefaultClient.Do(request); err == nil {
 		_ = response.Body.Close()
 	}
