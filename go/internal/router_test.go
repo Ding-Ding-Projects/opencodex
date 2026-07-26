@@ -2,6 +2,8 @@ package internal
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/combos"
@@ -10,6 +12,50 @@ import (
 
 func provider(adapter, base string) config.ProviderConfig {
 	return config.ProviderConfig{Adapter: adapter, BaseURL: base}
+}
+
+func TestRouteModelWarnsOnceWhenPinnedProviderDiscardsBaseURL(t *testing.T) {
+	var warnings []string
+	original := routeWarningf
+	routeWarningf = func(format string, values ...any) { warnings = append(warnings, fmt.Sprintf(format, values...)) }
+	t.Cleanup(func() { routeWarningf = original })
+	cfg := config.Default()
+	cfg.Providers["anthropic"] = config.ProviderConfig{Adapter: "anthropic", BaseURL: "https://user:hunter2@router-warning.example.test/v1/opaque-account-token?api_key=secret"}
+
+	for range 3 {
+		got, err := RouteModel(cfg, "anthropic/claude-sonnet-5")
+		if err != nil || got.Provider.BaseURL != "https://api.anthropic.com" {
+			t.Fatalf("route=%#v err=%v", got, err)
+		}
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings=%#v", warnings)
+	}
+	warning := warnings[0]
+	for _, secret := range []string{"hunter2", "opaque-account-token", "api_key", "secret", "/v1"} {
+		if strings.Contains(warning, secret) {
+			t.Fatalf("warning leaked %q: %s", secret, warning)
+		}
+	}
+	if !strings.Contains(warning, "https://router-warning.example.test/…") || !strings.Contains(warning, "https://api.anthropic.com") {
+		t.Fatalf("warning lacks safe endpoints: %s", warning)
+	}
+}
+
+func TestRouteModelDoesNotWarnWhenPinnedBaseURLMatches(t *testing.T) {
+	var warnings []string
+	original := routeWarningf
+	routeWarningf = func(format string, values ...any) { warnings = append(warnings, fmt.Sprintf(format, values...)) }
+	t.Cleanup(func() { routeWarningf = original })
+	cfg := config.Default()
+	cfg.Providers["anthropic"] = config.ProviderConfig{Adapter: "anthropic", BaseURL: " https://api.anthropic.com/// "}
+
+	if _, err := RouteModel(cfg, "anthropic/claude-sonnet-5"); err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings=%#v", warnings)
+	}
 }
 
 func TestRouteModelOpenAIAndExplicitSlash(t *testing.T) {

@@ -2,9 +2,12 @@ package internal
 
 import (
 	"fmt"
+	"log"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	"github.com/lidge-jun/opencodex-go/internal/config"
@@ -18,6 +21,12 @@ const (
 )
 
 var bareOpenAIFamily = regexp.MustCompile(`^(?:gpt-|o1-|o3-|o4-)`)
+
+var (
+	discardedBaseURLWarningsMu sync.Mutex
+	discardedBaseURLWarnings   = map[string]struct{}{}
+	routeWarningf              = log.Printf
+)
 
 type RouteResult struct {
 	ProviderName     string
@@ -207,6 +216,9 @@ func routedProviderConfig(name string, user config.ProviderConfig) (config.Provi
 	} else {
 		out.BaseURL = entry.BaseURL
 	}
+	if resolvedURL {
+		warnIfBaseURLDiscarded(name, userURL, out.BaseURL)
+	}
 	if err := destinationError(out.BaseURL, user.AllowPrivateNetwork, entry.AllowPrivateNetworkByDefault); err != nil {
 		return config.ProviderConfig{}, err
 	}
@@ -267,6 +279,39 @@ func routedProviderConfig(name string, user config.ProviderConfig) (config.Provi
 	out.ReasoningEffortMap = mergeStrings(entry.ReasoningEffortMap, user.ReasoningEffortMap)
 	out.ModelReasoningEffortMap = mergeNested(entry.ModelReasoningEffortMap, user.ModelReasoningEffortMap)
 	return out, nil
+}
+
+func sameEndpoint(a, b string) bool {
+	return strings.TrimRight(strings.TrimSpace(a), "/") == strings.TrimRight(strings.TrimSpace(b), "/")
+}
+
+func configuredOriginForLog(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "(unparseable URL)"
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	if parsed.Path != "" && parsed.Path != "/" {
+		return origin + "/…"
+	}
+	return origin
+}
+
+func warnIfBaseURLDiscarded(providerName, userBaseURL, effectiveBaseURL string) {
+	if sameEndpoint(userBaseURL, effectiveBaseURL) {
+		return
+	}
+	discarded := configuredOriginForLog(userBaseURL)
+	effective := lib.RedactSecretString(lib.RedactURLForLog(effectiveBaseURL))
+	key := providerName + " | " + discarded + " | " + effective
+	discardedBaseURLWarningsMu.Lock()
+	if _, warned := discardedBaseURLWarnings[key]; warned {
+		discardedBaseURLWarningsMu.Unlock()
+		return
+	}
+	discardedBaseURLWarnings[key] = struct{}{}
+	discardedBaseURLWarningsMu.Unlock()
+	routeWarningf("⚠️  config.json provider %q: configured baseUrl %s is ignored because this provider's endpoint is fixed at %s. A URL saved for a different account or region is a common cause of 401s here — drop it, or use the provider whose endpoint matches.", providerName, discarded, effective)
 }
 
 func destinationError(baseURL string, allow, registryAllow bool) error {
