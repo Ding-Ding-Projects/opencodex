@@ -185,6 +185,75 @@ func TestTypeScriptAndGoAgentControlSettings(t *testing.T) {
 	}
 }
 
+func TestTypeScriptAndGoComboManagementLifecycle(t *testing.T) {
+	config := differentialConfig("https://combos.invalid", []string{"probe"})
+	tsProxy := startTypeScriptProxy(t, config)
+	goProxy := startProxyWithConfig(t, config)
+	combo := func(alias string) map[string]any {
+		return map[string]any{
+			"alias": alias, "strategy": "round-robin", "stickyLimit": 2, "defaultEffort": "high",
+			"targets": []any{map[string]any{"provider": "differential", "model": "probe", "weight": 3}},
+		}
+	}
+	scenarios := []struct {
+		id     string
+		method string
+		path   string
+		body   any
+	}{
+		{id: "combos/empty", method: http.MethodGet, path: "/api/combos"},
+		{id: "combos/create", method: http.MethodPut, path: "/api/combos", body: map[string]any{"id": "fast", "combo": combo("route/fast")}},
+		{id: "combos/created", method: http.MethodGet, path: "/api/combos"},
+		{id: "combos/rename", method: http.MethodPut, path: "/api/combos", body: map[string]any{"id": "durable", "renameFrom": "fast", "combo": combo("route/durable")}},
+		{id: "combos/renamed", method: http.MethodGet, path: "/api/combos"},
+		{id: "combos/delete", method: http.MethodDelete, path: "/api/combos?id=durable"},
+		{id: "combos/restored-empty", method: http.MethodGet, path: "/api/combos"},
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.id, func(t *testing.T) {
+			goResult := captureManagementRequest(t, goProxy.baseURL, scenario.method, scenario.path, "", scenario.body)
+			tsResult := captureManagementRequest(t, tsProxy.baseURL, scenario.method, scenario.path, "", scenario.body)
+			assertComboSemanticParity(t, goResult, tsResult)
+			compareRuntimeBytes(t, scenario.id, goResult, tsResult, true)
+		})
+	}
+}
+
+func assertComboSemanticParity(t *testing.T, goResult, tsResult runtimeResponse) {
+	t.Helper()
+	if goResult.err != nil || tsResult.err != nil || goResult.status != tsResult.status {
+		return
+	}
+	var goValue, tsValue any
+	if err := json.Unmarshal(goResult.body, &goValue); err != nil {
+		t.Fatalf("decode Go combo response: %v", err)
+	}
+	if err := json.Unmarshal(tsResult.body, &tsValue); err != nil {
+		t.Fatalf("decode TypeScript combo response: %v", err)
+	}
+	stripZeroComboMaxHops(goValue)
+	stripZeroComboMaxHops(tsValue)
+	if !reflect.DeepEqual(goValue, tsValue) {
+		t.Fatalf("combo semantic response differs: Go=%#v TypeScript=%#v", goValue, tsValue)
+	}
+}
+
+func stripZeroComboMaxHops(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		if typed["maxHops"] == float64(0) {
+			delete(typed, "maxHops")
+		}
+		for _, child := range typed {
+			stripZeroComboMaxHops(child)
+		}
+	case []any:
+		for _, child := range typed {
+			stripZeroComboMaxHops(child)
+		}
+	}
+}
+
 func TestTypeScriptAndGoOpenAITierConfigMigration(t *testing.T) {
 	bun := requireBun(t, exec.LookPath)
 	repositoryRoot := typeScriptOracleRoot()
