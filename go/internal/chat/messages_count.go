@@ -23,7 +23,7 @@ func NewCountTokensHandler(config HandlerConfig) *CountTokensHandler {
 
 func (h *CountTokensHandler) Handle(w http.ResponseWriter, request *http.Request) {
 	if h.config.ClaudeEnabled != nil && !*h.config.ClaudeEnabled {
-		writeJSON(w, http.StatusForbidden, anthropicErrorBody(http.StatusForbidden, "Claude inbound is disabled", "permission_error"))
+		writeAnthropicJSON(w, http.StatusForbidden, anthropicErrorBody(http.StatusForbidden, "Claude inbound is disabled", "permission_error"))
 		return
 	}
 	raw, err := readRequestBody(w, request, h.config.BodyLimit)

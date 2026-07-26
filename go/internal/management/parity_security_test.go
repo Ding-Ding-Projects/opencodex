@@ -73,7 +73,8 @@ func TestProviderDTOContainsNoCredentialMaterial(t *testing.T) {
 
 func TestConfigAndProviderResponsesUseTypeScriptShapeAndHeaders(t *testing.T) {
 	cfg := config.Default()
-	cfg.Providers = map[string]config.ProviderConfig{"acme": {Adapter: "openai", BaseURL: "https://example.com/v1", APIKey: "secret", Headers: map[string]string{"X-Secret": "hidden"}}}
+	cfg.Port, cfg.Host, cfg.DefaultProvider = 10100, "127.0.0.1", "acme"
+	cfg.Providers = map[string]config.ProviderConfig{"acme": {Adapter: "openai", BaseURL: "https://example.com/v1", APIKey: "secret", Headers: map[string]string{"X-Secret": "hidden"}, DefaultModel: "wire", AllowPrivateNetwork: true, AuthMode: "key", Models: []string{"wire"}}}
 	api := newParityAPI(t, &cfg)
 	configResponse := serveManagement(api, http.MethodGet, "/api/config", "")
 	providersResponse := serveManagement(api, http.MethodGet, "/api/providers", "")
@@ -92,6 +93,11 @@ func TestConfigAndProviderResponsesUseTypeScriptShapeAndHeaders(t *testing.T) {
 	}
 	if strings.Contains(configResponse.Body.String(), "secret") || strings.Contains(providersResponse.Body.String(), "secret") {
 		t.Fatalf("management DTO leaked credential material: config=%s providers=%s", configResponse.Body.String(), providersResponse.Body.String())
+	}
+	wantConfig := `{"port":10100,"hostname":"127.0.0.1","defaultProvider":"acme","codexAutoStart":true,"providers":{"acme":{"adapter":"openai","baseUrl":"https://example.com/v1","hasApiKey":true,"hasHeaders":true,"defaultModel":"wire","allowPrivateNetwork":true,"authMode":"key","models":["wire"]}}}`
+	wantProviders := `[{"name":"acme","adapter":"openai","baseUrl":"https://example.com/v1","defaultModel":"wire","hasApiKey":true,"allowPrivateNetwork":true,"liveModels":true,"models":["wire"],"authMode":"key","disabled":false}]`
+	if configResponse.Body.String() != wantConfig || providersResponse.Body.String() != wantProviders {
+		t.Fatalf("management bytes differ from TS:\nconfig=%s\nproviders=%s", configResponse.Body.String(), providersResponse.Body.String())
 	}
 }
 

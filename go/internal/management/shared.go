@@ -1,12 +1,14 @@
 package management
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
@@ -40,6 +42,42 @@ type AgentSettings struct {
 	MultiAgentMode    string   `json:"multiAgentMode"`
 	InjectionPrompt   string   `json:"injectionPrompt,omitempty"`
 	GuidanceEnabled   *bool    `json:"multiAgentGuidanceEnabled,omitempty"`
+}
+
+type orderedJSONField struct {
+	name  string
+	value any
+}
+type orderedJSONObject []orderedJSONField
+
+func (object orderedJSONObject) MarshalJSON() ([]byte, error) {
+	var output bytes.Buffer
+	output.WriteByte('{')
+	for index, field := range object {
+		if index > 0 {
+			output.WriteByte(',')
+		}
+		name, _ := json.Marshal(field.name)
+		value, err := json.Marshal(field.value)
+		if err != nil {
+			return nil, err
+		}
+		output.Write(name)
+		output.WriteByte(':')
+		output.Write(value)
+	}
+	output.WriteByte('}')
+	return output.Bytes(), nil
+}
+
+func orderedFromMap(source map[string]any, order []string) orderedJSONObject {
+	result := make(orderedJSONObject, 0, len(source))
+	for _, key := range order {
+		if value, ok := source[key]; ok {
+			result = append(result, orderedJSONField{name: key, value: value})
+		}
+	}
+	return result
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -103,9 +141,15 @@ func publicProviderBaseURL(raw string) string {
 	return value
 }
 
-func safeConfig(value *config.Config) map[string]any {
-	providers := make(map[string]map[string]any, len(value.Providers))
-	for name, provider := range value.Providers {
+func safeConfig(value *config.Config) any {
+	names := make([]string, 0, len(value.Providers))
+	for name := range value.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	providers := make(orderedJSONObject, 0, len(names))
+	for _, name := range names {
+		provider := value.Providers[name]
 		dto := map[string]any{
 			"adapter": provider.Adapter, "baseUrl": publicProviderBaseURL(provider.BaseURL),
 			"hasApiKey": provider.APIKey != "", "hasHeaders": len(provider.Headers) > 0,
@@ -139,13 +183,18 @@ func safeConfig(value *config.Config) map[string]any {
 		if provider.DefaultMaxOutputTokens != 0 {
 			dto["defaultMaxOutputTokens"] = provider.DefaultMaxOutputTokens
 		}
-		providers[name] = dto
+		providers = append(providers, orderedJSONField{name: name, value: orderedFromMap(dto, []string{
+			"adapter", "baseUrl", "hasApiKey", "hasHeaders", "defaultModel", "disabled", "allowPrivateNetwork", "authMode", "keyOptional", "freeTier", "liveModels", "models", "contextWindow", "modelContextWindows", "defaultMaxOutputTokens", "modelMaxOutputTokens", "openRouterRouting", "modelOpenRouterRouting", "reasoningEfforts", "modelReasoningEfforts", "noVisionModels", "noReasoningModels", "noTemperatureModels", "noTopPModels", "noPenaltyModels", "autoToolChoiceOnlyModels", "preserveReasoningContentModels", "escapeBuiltinToolNames", "note", "codexAccountMode",
+		})})
 	}
-	result := map[string]any{"port": value.Port, "hostname": value.Host, "defaultProvider": value.DefaultProvider, "codexAutoStart": codexAutoStart(value.CodexAutoStart), "providers": providers}
+	result := orderedJSONObject{
+		{name: "port", value: value.Port}, {name: "hostname", value: value.Host},
+		{name: "defaultProvider", value: value.DefaultProvider}, {name: "codexAutoStart", value: codexAutoStart(value.CodexAutoStart)},
+	}
 	if value.WebSockets {
-		result["websockets"] = true
+		result = append(result, orderedJSONField{name: "websockets", value: true})
 	}
-	return result
+	return append(result, orderedJSONField{name: "providers", value: providers})
 }
 
 func validateIdentifier(value, field string) error {

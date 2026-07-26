@@ -93,11 +93,12 @@ func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
 		return handlerAdapter{endpoint: upstream.URL}, nil
 	}}
 	tests := []struct {
-		name string
-		body string
-		run  func(http.ResponseWriter, *http.Request)
+		name      string
+		body      string
+		wantRetry string
+		run       func(http.ResponseWriter, *http.Request)
 	}{
-		{name: "chat completions", body: `{"model":"acme/wire","messages":[{"role":"user","content":"hi"}]}`, run: NewHandler(config).Handle},
+		{name: "chat completions", body: `{"model":"acme/wire","messages":[{"role":"user","content":"hi"}]}`, wantRetry: "17", run: NewHandler(config).Handle},
 		{name: "Claude messages", body: `{"model":"acme/wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`, run: NewMessagesHandler(config).Handle},
 	}
 	for _, test := range tests {
@@ -105,7 +106,7 @@ func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
 			response := httptest.NewRecorder()
 			test.run(response, request)
-			if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "17" {
+			if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != test.wantRetry {
 				t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 			}
 			if !strings.Contains(response.Body.String(), `"type":"rate_limit_error"`) || !strings.Contains(response.Body.String(), "quota exhausted") {
@@ -115,6 +116,11 @@ func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
 				want := `{"error":{"message":"quota exhausted","type":"rate_limit_error","param":null,"code":null}}`
 				if response.Body.String() != want {
 					t.Fatalf("chat upstream envelope = %q, want %q", response.Body.String(), want)
+				}
+			} else {
+				want := `{"type":"error","error":{"type":"rate_limit_error","message":"Provider error 429: {\"error\":{\"message\":\"quota exhausted\"}}"}}`
+				if response.Body.String() != want || response.Header().Get("Retry-After") != "" {
+					t.Fatalf("Messages 429 bytes=%q headers=%v, want %q", response.Body.String(), response.Header(), want)
 				}
 			}
 		})
@@ -129,7 +135,7 @@ func TestMessagesHandlerReclassifiesTransientUpstreamAsOverloaded(t *testing.T) 
 		wantRetry  string
 	}{
 		{name: "default retry", status: http.StatusInternalServerError, wantRetry: "2"},
-		{name: "preserve upstream retry", status: http.StatusBadGateway, retryAfter: "9", wantRetry: "9"},
+		{name: "replace hidden upstream retry", status: http.StatusBadGateway, retryAfter: "9", wantRetry: "2"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

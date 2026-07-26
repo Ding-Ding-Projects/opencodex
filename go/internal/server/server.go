@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/bridge"
 	"github.com/lidge-jun/opencodex-go/internal/chat"
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
@@ -432,8 +433,15 @@ func terminalUsage(events []types.AdapterEvent) *types.Usage {
 	return found
 }
 
-func managementStub(w http.ResponseWriter, _ *http.Request) {
-	writeJSONError(w, http.StatusNotFound, "not_found", "management endpoint not found")
+func managementStub(w http.ResponseWriter, request *http.Request) {
+	payload, err := bridge.FormatErrorResponse(http.StatusNotFound, "not_found", "Unknown endpoint: "+request.Method+" "+request.URL.Path)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "not_found", "Unknown endpoint")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(payload)
 }
 func writeJSONError(w http.ResponseWriter, status int, kind, message string) {
 	w.Header().Set("Content-Type", "application/json")

@@ -77,7 +77,7 @@ func buildAnthropicMessage(events []types.AdapterEvent, model string) (map[strin
 	if !done {
 		return nil, statusError{status: http.StatusBadGateway, message: "adapter stream ended without a terminal event"}
 	}
-	return map[string]any{"id": "msg_" + randomHex(12), "type": "message", "role": "assistant", "content": content, "model": model, "stop_reason": stop, "stop_sequence": nil, "usage": anthropicUsage(usage)}, nil
+	return map[string]any{"id": "msg_" + randomHex(16), "type": "message", "role": "assistant", "content": content, "model": model, "stop_reason": stop, "stop_sequence": nil, "usage": anthropicUsage(usage)}, nil
 }
 
 func appendTextBlock(content []any, kind, field, text string) []any {
@@ -103,7 +103,7 @@ func writeAnthropicStream(ctx context.Context, w http.ResponseWriter, model stri
 	open := ""
 	var usage *types.Usage
 	emit := func(name string, data any) error {
-		encoded, err := json.Marshal(data)
+		encoded, err := marshalAnthropicJSON(data)
 		if err != nil {
 			return err
 		}
@@ -120,7 +120,7 @@ func writeAnthropicStream(ctx context.Context, w http.ResponseWriter, model stri
 			return nil
 		}
 		started = true
-		if err := emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_" + randomHex(12), "type": "message", "role": "assistant", "content": []any{}, "model": model, "stop_reason": nil, "stop_sequence": nil, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0}}}); err != nil {
+		if err := emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_" + randomHex(16), "type": "message", "role": "assistant", "content": []any{}, "model": model, "stop_reason": nil, "stop_sequence": nil, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0}}}); err != nil {
 			return err
 		}
 		return emit("ping", map[string]any{"type": "ping"})
@@ -315,12 +315,23 @@ func anthropicErrorBody(status int, message, override string) map[string]any {
 	return map[string]any{"type": "error", "error": map[string]any{"type": kind, "message": message}}
 }
 func writeAnthropicError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, anthropicErrorBody(status, message, ""))
+	writeAnthropicJSON(w, status, anthropicErrorBody(status, message, ""))
+}
+
+func writeAnthropicJSON(w http.ResponseWriter, status int, body any) {
+	payload, err := marshalAnthropicJSON(body)
+	if err != nil {
+		payload = []byte(`{"type":"error","error":{"type":"api_error","message":"JSON serialization failed"}}`)
+		status = http.StatusInternalServerError
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(payload)
 }
 func writeAnthropicErrorFor(w http.ResponseWriter, err error) {
 	var incomplete incompleteError
 	if errors.As(err, &incomplete) {
-		writeJSON(w, incomplete.status, anthropicErrorBody(incomplete.status, incomplete.message, "overloaded_error"))
+		writeAnthropicJSON(w, incomplete.status, anthropicErrorBody(incomplete.status, incomplete.message, "overloaded_error"))
 		return
 	}
 	var typed statusError

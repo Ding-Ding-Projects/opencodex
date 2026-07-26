@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -153,6 +154,21 @@ func TestWriteAnthropicStreamMatchesTypeScriptInitialUsageAndTransientError(t *t
 	}
 	if !strings.Contains(body, `"type":"overloaded_error"`) || strings.Contains(body, `"type":"api_error"`) {
 		t.Fatalf("transient stream error differs from TS: %s", body)
+	}
+}
+
+func TestWriteAnthropicStreamMessageStartIsByteOrderedWithUUIDLength(t *testing.T) {
+	events := make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{Type: types.EventDone}
+	close(events)
+	w := httptest.NewRecorder()
+	if err := writeAnthropicStream(context.Background(), w, "claude-wire", events); err != nil {
+		t.Fatal(err)
+	}
+	first := strings.SplitN(w.Body.String(), "\n\n", 2)[0]
+	pattern := regexp.MustCompile(`^event: message_start\ndata: \{"type":"message_start","message":\{"id":"msg_[0-9a-f]{32}","type":"message","role":"assistant","content":\[\],"model":"claude-wire","stop_reason":null,"stop_sequence":null,"usage":\{"input_tokens":0,"output_tokens":0\}\}\}$`)
+	if !pattern.MatchString(first) {
+		t.Fatalf("message_start bytes differ from TypeScript: %s", first)
 	}
 }
 

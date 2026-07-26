@@ -298,7 +298,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		_ = response.Body.Close()
-		message := strings.TrimSpace(string(payload))
+		message := string(payload)
 		if len(message) > 500 {
 			message = message[:500]
 		}
@@ -332,7 +332,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			pick, resolved = next, next.Resolved
 			continue
 		}
-		if message == "" {
+		if strings.TrimSpace(message) == "" {
 			message = http.StatusText(response.StatusCode)
 		}
 		return nil, nil, auth, resolved, pick, &forwardError{status: response.StatusCode, kind: "upstream_error", retryAfter: response.Header.Get("Retry-After"), err: fmt.Errorf("%s", message)}
@@ -594,14 +594,14 @@ func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {
 }
 
 func writeClassifiedJSONError(w http.ResponseWriter, status int, kind, message string) {
-	errorType, code := classifyResponsesError(status, kind, message)
+	payload, err := bridge.FormatErrorResponse(status, kind, message)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "server_error", "JSON serialization failed")
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
-		"message": message,
-		"type":    errorType,
-		"code":    code,
-	}})
+	_, _ = w.Write(payload)
 }
 
 // classifyResponsesError mirrors the public Responses error taxonomy used by

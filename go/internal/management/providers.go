@@ -30,9 +30,10 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		rows := make([]map[string]any, 0, len(names))
+		rows := make([]any, 0, len(names))
 		for _, name := range names {
-			rows = append(rows, publicProvider(name, a.config.Providers[name]))
+			row := publicProvider(name, a.config.Providers[name])
+			rows = append(rows, orderedFromMap(row, []string{"name", "adapter", "baseUrl", "defaultModel", "hasApiKey", "allowPrivateNetwork", "liveModels", "models", "authMode", "disabled", "codexAccountMode", "discovery"}))
 		}
 		a.mu.RUnlock()
 		writeJSON(w, http.StatusOK, rows)

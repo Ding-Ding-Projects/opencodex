@@ -110,6 +110,18 @@ func TestResponsesWebSocketDisabledAndPanicBoundary(t *testing.T) {
 	}
 }
 
+func TestUnknownManagementRoutesUseTypeScriptErrorBytes(t *testing.T) {
+	proxy := New(Config{})
+	defer proxy.Close()
+	for _, path := range []string{"/api/system", "/api/system/runtime"} {
+		response := serveRequest(proxy.Handler(), http.MethodGet, path, "", nil)
+		want := `{"error":{"message":"Unknown endpoint: GET ` + path + `","type":"not_found","code":"not_found"}}`
+		if response.Code != http.StatusNotFound || response.Body.String() != want {
+			t.Fatalf("%s = %d %q, want %q", path, response.Code, response.Body.String(), want)
+		}
+	}
+}
+
 func TestServerDynamicallyAppliesManagedAPIKeysAndClaudeToggle(t *testing.T) {
 	oldSecret := "ocx_existing_admission_secret_12345"
 	newSecret := "ocx_new_admission_secret_678901234"

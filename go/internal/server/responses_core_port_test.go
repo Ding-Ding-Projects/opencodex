@@ -372,6 +372,10 @@ func TestResponsesCoreClassifiesUpstreamErrorWithoutRelayingRetryAfter(t *testin
 	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "" || !strings.Contains(response.Body.String(), `Provider error 429:`) {
 		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
+	want := `{"error":{"message":"Provider error 429: {\"error\":{\"message\":\"quota exhausted\"}}","type":"insufficient_quota","code":"insufficient_quota"}}`
+	if response.Body.String() != want {
+		t.Fatalf("Responses error bytes = %q, want %q", response.Body.String(), want)
+	}
 	var body struct {
 		Error struct {
 			Type string `json:"type"`

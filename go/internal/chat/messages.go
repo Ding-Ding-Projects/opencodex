@@ -20,7 +20,7 @@ func NewMessagesHandler(config HandlerConfig) *MessagesHandler {
 
 func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if h.config.ClaudeEnabled != nil && !*h.config.ClaudeEnabled {
-		writeJSON(w, http.StatusForbidden, anthropicErrorBody(http.StatusForbidden, "Claude inbound is disabled", "permission_error"))
+		writeAnthropicJSON(w, http.StatusForbidden, anthropicErrorBody(http.StatusForbidden, "Claude inbound is disabled", "permission_error"))
 		return
 	}
 	raw, err := readRequestBody(w, r, h.config.BodyLimit)
@@ -49,17 +49,15 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
-		message := readProviderError(response.Body, h.config.ResponseLimit)
-		if message == "" {
-			message = fmt.Sprintf("upstream error (%d)", response.StatusCode)
+		payload, _ := readBounded(response.Body, min64(h.config.ResponseLimit, 1<<20))
+		message := fmt.Sprintf("Provider error %d: %s", response.StatusCode, ocxlib.RedactSecretString(string(payload)))
+		if len(message) > len(fmt.Sprintf("Provider error %d: ", response.StatusCode))+500 {
+			message = message[:len(fmt.Sprintf("Provider error %d: ", response.StatusCode))+500]
 		}
 		status := response.StatusCode
-		copyRetryAfter(w.Header(), response.Header)
 		if ocxlib.IsTransientUpstreamStatus(status) {
 			status = 529
-			if w.Header().Get("Retry-After") == "" {
-				w.Header().Set("Retry-After", "2")
-			}
+			w.Header().Set("Retry-After", "2")
 		}
 		writeAnthropicError(w, status, message)
 		return
