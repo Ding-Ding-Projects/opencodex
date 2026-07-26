@@ -114,6 +114,7 @@ type ReclaimListenPortOptions struct {
 	KillHolders                     bool
 	OnlyKillPIDs                    []int
 	DropTCPRows                     bool
+	DisableTCPDrop                  bool
 	Scan                            func(context.Context, int) ListenPIDScan
 	IsAlive                         func(int) bool
 	VerifyOpenCodex                 func(int) bool
@@ -148,6 +149,12 @@ func ReclaimListenPort(ctx context.Context, host string, port int, options Recla
 	if options.IsAvailable == nil {
 		options.IsAvailable = IsPortAvailable
 	}
+	if options.DropTCP == nil && runtime.GOOS == "windows" {
+		options.DropTCP = func(port int) error {
+			_, err := DropWindowsTCPRowsForLocalPort(port)
+			return err
+		}
+	}
 	if options.Sleep == nil {
 		options.Sleep = func(ctx context.Context, delay time.Duration) error {
 			timer := time.NewTimer(delay)
@@ -167,6 +174,7 @@ func ReclaimListenPort(ctx context.Context, host string, port int, options Recla
 		}
 	}
 	mayKill := options.KillHolders && len(allowed) > 0 && options.VerifyOpenCodex != nil
+	dropTCPRows := options.DropTCPRows || (runtime.GOOS == "windows" && !options.DisableTCPDrop)
 	deadline := time.Now().Add(options.Timeout)
 	lastScan := time.Time{}
 	killed := make(map[int]struct{})
@@ -211,7 +219,7 @@ func ReclaimListenPort(ctx context.Context, host string, port int, options Recla
 					foreignOrProtected = true
 				}
 			}
-			if !foreignOrProtected && options.DropTCPRows && options.DropTCP != nil {
+			if !foreignOrProtected && dropTCPRows && options.DropTCP != nil {
 				_ = options.DropTCP(port)
 			}
 		}
