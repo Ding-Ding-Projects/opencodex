@@ -6,6 +6,16 @@ on:
     branches: [dev2-go]
     paths:
       - "go/**"
+      - "bin/**"
+      - "scripts/build-go-release.go"
+      - "scripts/prepare-package.ts"
+      - "scripts/prepare-release-assets.ts"
+      - "scripts/ocx-native-launcher.test.mjs"
+      - "scripts/verify-native-install.mjs"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
       - ".github/workflows/go-ci.yml"
 
 permissions:
@@ -75,6 +85,17 @@ jobs:
 
       - name: linux/arm64
         run: GOOS=linux GOARCH=arm64 go build ./...
+
+      - name: Verify six native release names without publishing
+        run: |
+          set -euo pipefail
+          version="0.0.0-preview.0"
+          output="$(go run ../scripts/build-go-release.go --version "$version" --dry-run)"
+          printf '%s\n' "$output"
+          test "$(printf '%s\n' "$output" | grep -c -- ' -> ')" -eq 6
+          for suffix in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64 windows_amd64.exe windows_arm64.exe; do
+            printf '%s\n' "$output" | grep -Fq -- "/ocx_${version}_${suffix}"
+          done
 
   e2e:
     name: E2E Integration
