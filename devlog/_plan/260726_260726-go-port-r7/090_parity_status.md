@@ -59,10 +59,10 @@ Dynamic request-log fields are normalized separately and narrowly:
 ## Current residual differences
 
 The live finalization audit reduced the fixable known set from eight to two.
-`65687f45` fixed `config/wrong-field-type`; the server owner then removed all
-three Go-only deletion routes. Each stale declaration failed as designed before
-promotion to strict. The server owner also aligned the usage summary DTO. Only
-the two API-access differences remain, both owned by server/management.
+`65687f45` fixed `config/wrong-field-type`; `d208c607` then removed all three
+Go-only deletion routes and aligned the usage summary DTO. Each stale
+declaration failed as designed before promotion to strict. Only the two
+API-access differences remain, both owned by server/management.
 
 | Scenario ID | Request | Current Go behavior | Bun TypeScript behavior | Owner evidence |
 |---|---|---|---|---|
@@ -260,27 +260,36 @@ exact roster, clone boundary, and seed-first union order.
 
 ## Round 17 next-boundary assessment
 
-Quota-aware subagent fallback is suitable for the production differential
-harness. Two sequential `x-openai-subagent: collab_spawn` requests can use a
-local primary that returns 429 and a healthy local fallback. The first response
-must feed model health; the second must be rewritten to the fallback before
-route-dependent normalization. TS wires this at
-`src/server/responses/core.ts:880-934` and records failure feedback through
-`recordSubagentQuotaFailureForThreadSpawn`. Go has selection and feedback logic
-in `go/internal/codex/subagent_model_fallback.go`, but the production Responses
-core currently wires only guidance (`go/internal/server/responses_core_port.go`
-and `go/internal/server/server.go:173`). A hermetic two-turn differential test
-can therefore verify the missing integration without real provider accounts.
+Quota-aware subagent fallback remains an unimplemented production seam and is
+suitable for the differential harness. Two sequential
+`x-openai-subagent: collab_spawn` requests can use a local primary that returns
+429 and a healthy local fallback. The first response must feed model health;
+the second must be rewritten to the fallback before route-dependent
+normalization. TS primes quota and selects/re-routes at
+`src/server/responses/core.ts:880-934`, then records terminal quota feedback at
+`:1258-1274`. Go implements `SubagentFallbackState.Select`, `NoteFailure`, and
+`PrimeQuota` at `go/internal/codex/subagent_model_fallback.go:226-291`, but no
+production caller invokes any of them. The server wires only the human-readable
+guidance string at `go/internal/server/server.go:166-174`; neither
+`go/internal/server/responses_core_port.go` nor its callers feed selection or
+failure state. A hermetic two-turn differential test can therefore verify the
+missing integration without real provider accounts.
 
-Continuation state is also differentially testable, but `/api/system/memory`
-needs semantic rather than whole-body byte comparison because PID, runtime
-version, uptime, and heap counters intentionally differ. The production test
-should perform one stored response, a second request with
-`previous_response_id`, compare the expanded upstream input, then compare only
-`responseState.{count,totalBytes,largestBytes,oldestAgeMs}`. Go already has the
-store and metrics in `go/internal/claude/state.go:29-81`, but no production call
-sites and no `responseState` field in `go/internal/management/system.go:17-28`.
-Focused store unit tests are useful but cannot replace that end-to-end seam.
+Responses continuation state is the second unimplemented production seam. It
+is differentially testable, but `/api/system/memory` needs semantic rather than
+whole-body byte comparison because PID, runtime version, uptime, and heap
+counters intentionally differ. The production test should perform one stored
+response, a second request with `previous_response_id`, compare the expanded
+upstream input, then compare only
+`responseState.{count,totalBytes,largestBytes,oldestAgeMs}`. TS expands and
+records continuation state from `src/server/responses/core.ts` and exposes the
+metric at `src/server/management/system-routes.ts:53-64`. Go already has
+`ExpandPreviousResponseInput`, `RememberResponseState`, and metrics in
+`go/internal/claude/state.go:64-81`, but the Responses production path has no
+call sites, so `previous_response_id` replay is not implemented. The Go memory
+response also omits `responseState` at
+`go/internal/management/system.go:17-28`. Focused store unit tests are useful
+but cannot replace that end-to-end seam.
 
 ## Performance measurements
 
@@ -326,10 +335,12 @@ pre-run goroutine count within the two-second collection budget.
    implement allowed-Origin precedence for wildcard binds. Keep auth and CORS
    rejection tests green; never expose full keys.
 
-4. The next two highest-value uncovered production seams are quota-aware
-   subagent fallback feedback/rerouting and Responses continuation state. Use
-   the hermetic approaches in "Round 17 next-boundary assessment"; do not rely
-   on store unit tests alone for production wiring claims.
+4. Implement the two explicitly unfinished production seams: invoke
+   `PrimeQuota`/`Select` before Responses route-dependent normalization and
+   `NoteFailure` on quota terminals; then wire `previous_response_id` replay,
+   response recording, and `/api/system/memory.responseState`. Use the hermetic
+   approaches in "Round 17 next-boundary assessment"; do not treat the existing
+   codex/claude store unit tests as production-wiring proof.
 
 5. Run the complete gate before every commit:
 
