@@ -123,26 +123,26 @@ func InjectGrokConfig(port int, models []InjectModel, opts Options) Result {
 	if err != nil {
 		return errorResult("inject", err)
 	}
-	eol := dominantEOL(string(raw))
-	content := applyEOL(string(raw), "\n")
+	content := string(raw)
+	eol := dominantEOL(content)
 	region := findManagedRegion(content)
 	if region != nil && region.orphaned {
 		return orphanedMarkerResult("injection")
 	}
 
-	block := BuildGrokManagedBlock(port, models, opts.Hostname, userModelAliases(content, region))
+	block := applyEOL(BuildGrokManagedBlock(port, models, opts.Hostname, userModelAliases(content, region)), eol)
 	var next string
 	switch {
 	case region != nil:
 		next = content[:region.start] + block + content[region.end:]
 	case content == "":
-		next = block + "\n"
+		next = block + eol
 	default:
 		// Exactly one separator newline makes the transform injective for originals
 		// with and without their own trailing newline, so stripping can restore bytes.
-		next = content + "\n" + block + "\n"
+		next = content + eol + block + eol
 	}
-	output := []byte(applyEOL(next, eol))
+	output := []byte(next)
 	if string(output) == string(raw) {
 		return Result{OK: true, Message: "Grok config already contains the current opencodex managed block."}
 	}
@@ -175,8 +175,7 @@ func StripGrokConfig(opts Options) Result {
 	if !existed {
 		return Result{OK: true, Message: "Grok config not found; no managed block to remove."}
 	}
-	eol := dominantEOL(string(raw))
-	content := applyEOL(string(raw), "\n")
+	content := string(raw)
 	region := findManagedRegion(content)
 	if region == nil {
 		return Result{OK: true, Message: "No opencodex managed block found in Grok config."}
@@ -185,18 +184,16 @@ func StripGrokConfig(opts Options) Result {
 		return orphanedMarkerResult("cleanup")
 	}
 
-	removalEnd := region.end
-	if strings.HasPrefix(content[removalEnd:], "\n") {
-		removalEnd++
-	}
+	eol := managedRegionEOL(content, region)
+	removalEnd := consumeLineEnding(content, region.end)
 	prefix := content[:region.start]
 	rest := content[removalEnd:]
-	if strings.HasSuffix(prefix, "\n\n") {
-		prefix = prefix[:len(prefix)-1]
-	} else if rest == "" && strings.HasSuffix(prefix, "\n") {
-		prefix = prefix[:len(prefix)-1]
+	if strings.HasSuffix(prefix, eol+eol) {
+		prefix = prefix[:len(prefix)-len(eol)]
+	} else if rest == "" && strings.HasSuffix(prefix, eol) {
+		prefix = prefix[:len(prefix)-len(eol)]
 	}
-	if err := atomicWriteFile(configPath, []byte(applyEOL(prefix+rest, eol)), 0o600); err != nil {
+	if err := atomicWriteFile(configPath, []byte(prefix+rest), 0o600); err != nil {
 		return errorResult("strip", err)
 	}
 	return Result{OK: true, Changed: true, Message: "Removed the opencodex managed block from Grok config."}
@@ -250,20 +247,48 @@ func providerBaseHost(hostname string) string {
 
 func findManagedRegion(content string) *managedRegion {
 	start := strings.Index(content, BeginMarker)
-	if start < 0 {
+	endStart := strings.Index(content, EndMarker)
+	beginCount := strings.Count(content, BeginMarker)
+	endCount := strings.Count(content, EndMarker)
+	if beginCount == 0 && endCount == 0 {
 		return nil
 	}
-	endStart := strings.Index(content[start+len(BeginMarker):], EndMarker)
-	if endStart < 0 {
-		return &managedRegion{start: start, end: len(content), orphaned: true}
+	if beginCount != 1 || endCount != 1 || start < 0 || endStart < start+len(BeginMarker) ||
+		!markerOccupiesLine(content, start, BeginMarker) || !markerOccupiesLine(content, endStart, EndMarker) {
+		return &managedRegion{start: max(start, 0), end: len(content), orphaned: true}
 	}
-	end := start + len(BeginMarker) + endStart + len(EndMarker)
+	end := endStart + len(EndMarker)
 	return &managedRegion{start: start, end: end}
+}
+
+func markerOccupiesLine(content string, offset int, marker string) bool {
+	lineStart := offset == 0 || content[offset-1] == '\n'
+	after := offset + len(marker)
+	lineEnd := after == len(content) || strings.HasPrefix(content[after:], "\n") || strings.HasPrefix(content[after:], "\r\n")
+	return lineStart && lineEnd
+}
+
+func managedRegionEOL(content string, region *managedRegion) string {
+	lineEnd := region.start + len(BeginMarker)
+	if strings.HasPrefix(content[lineEnd:], "\r\n") {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+func consumeLineEnding(content string, offset int) int {
+	if strings.HasPrefix(content[offset:], "\r\n") {
+		return offset + 2
+	}
+	if strings.HasPrefix(content[offset:], "\n") {
+		return offset + 1
+	}
+	return offset
 }
 
 func orphanedMarkerResult(action string) Result {
 	return Result{
-		Message:       fmt.Sprintf("Grok config %s refused: found the opencodex begin marker without its end marker. The managed region boundary is ambiguous, so nothing was modified. Repair ~/.grok/config.toml manually (see config.toml.bak-opencodex) and re-run.", action),
+		Message:       fmt.Sprintf("Grok config %s refused: the opencodex markers are missing, duplicated, or out of order. The managed region boundary is ambiguous, so nothing was modified. Repair ~/.grok/config.toml manually (see config.toml.bak-opencodex) and re-run.", action),
 		SkippedReason: SkipOrphanedMarker,
 	}
 }

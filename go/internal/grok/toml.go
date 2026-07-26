@@ -10,7 +10,7 @@ import (
 const keySegmentPattern = `(?:[A-Za-z0-9_-]+|"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*')`
 
 var (
-	modelTableHeader = regexp.MustCompile(`(?m)^[ \t]*\[\[?[ \t]*(` + keySegmentPattern + `)[ \t]*\.[ \t]*(` + keySegmentPattern + `)[ \t]*(?:\.[^\]\r\n]*)?\]\]?[ \t]*(?:#[^\r\n]*)?$`)
+	modelTableHeader = regexp.MustCompile(`(?m)^[ \t]*\[\[?[ \t]*(` + keySegmentPattern + `)[ \t]*\.[ \t]*(` + keySegmentPattern + `)[ \t]*(?:\.[^\]\r\n]*)?\]\]?[ \t]*(?:#[^\r\n]*)?\r?$`)
 	invalidAliasByte = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 )
 
