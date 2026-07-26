@@ -39,8 +39,8 @@ bun run build
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | `pull_request`, `push` to `main`/`dev`/`preview`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs source typecheck/tests, privacy scan, release-helper syntax check, and GUI lint/build; `npm-global-smoke` (Node only, **no setup-bun**) installs the exact packed archive and runs `ocx help` through its package-local Go artifact. |
-| `.github/workflows/go-ci.yml` | Pushes to `dev2-go` touching `go/**` or the workflow, or manual dispatch | Quality gate for the temporary Go rewrite track: build, vet, test, race detection where supported, six-target cross-compilation (darwin/linux/windows × amd64/arm64), and the Go E2E suite. Superseded runs on the same ref are cancelled. |
+| `.github/workflows/ci.yml` | `pull_request`, `push` to `main`/`dev`/`preview`/`dev2-go`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs source typecheck/tests, privacy scan, release-helper syntax check, and GUI lint/build; `npm-global-smoke` (Node only, **no setup-bun**) installs the exact packed archive and runs `ocx help` through its package-local Go artifact. |
+| `.github/workflows/go-ci.yml` | Pushes to `dev2-go` touching Go, native packaging, package metadata, or governing workflow paths, or manual dispatch | Quality gate for the temporary Go rewrite track: build, vet, test, race detection where supported, six-target cross-compilation (darwin/linux/windows × amd64/arm64), a six-name dry-run inventory, and the Go E2E suite. Superseded runs on the same ref are cancelled. |
 | `.github/workflows/release.yml` | Manual dispatch only | npm publish/dry-run workflow. It requires the exact `GITHUB_SHA` to have a successful Cross-platform CI run before publish or dry-run. |
 | `.github/workflows/deploy-docs.yml` | `push` to `main` touching `docs-site/**` or the workflow, or manual dispatch | Build and publish the Astro/Starlight docs site to GitHub Pages. |
 | `.github/workflows/service-lifecycle.yml` | `push` touching `src/service.ts`, `src/cli/index.ts`, or the workflow, or manual dispatch | Linux systemd smoke test: install, verify, `ocx stop` stops the service, uninstall. |
@@ -109,8 +109,16 @@ Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`;
 `prepublishOnly` rejects direct source publishing so only the release workflow may publish.
 `scripts/release.ts` runs local typecheck, the test suite, and `bun run privacy:scan`
 before the version bump, commit/push, Cross-platform CI wait, and GitHub Release workflow
-dispatch. The workflow builds the GUI, packs once, verifies that exact archive, runs the
-isolated poison-install receipt, and only then publishes it. Docs publishing is separate.
+dispatch. Every dispatch must name the exact expected commit SHA and fails closed when it is
+empty or differs from `GITHUB_SHA`. The workflow builds the GUI, packs once, verifies that exact
+archive, runs the isolated poison-install receipt, and copies the validated bytes into a
+runner-private retained archive identified by an absolute path and SHA-256. It materializes and
+validates exactly six native binaries plus their checksum manifest from that retained archive
+before publish. A dry-run performs all archive and asset preparation but cannot run npm, Git tag,
+Git push, or GitHub Release mutations. A real run publishes the private retained archive and uses
+freshly materialized, immediately revalidated bytes as the seven GitHub Release assets. It then
+downloads the remote assets, normalizes local modes, and verifies their inventory and bytes against
+the retained archive. Docs publishing is separate.
 
 ## Release metadata invariants
 
@@ -119,17 +127,26 @@ Every npm release version must map cleanly across four surfaces:
 | Surface | Required state |
 | --- | --- |
 | `package.json` | `version` equals the release workflow `version` input. |
-| npm registry | `@bitkyc08/opencodex@<version>` does not exist before publish, then exists after publish with the requested dist-tag. |
-| Git tag | `v<version>` does not exist before publish, then points at the exact release commit. |
-| GitHub Release | `v<version>` does not exist before publish, then is created from the exact release commit. |
+| npm registry | `@bitkyc08/opencodex@<version>` is absent, or its integrity exactly matches the retained archive and the requested dist-tag already maps to it. |
+| Git tag | `v<version>` is absent, or it already resolves to the exact release commit. |
+| GitHub Release | `v<version>` is absent, or its tag, title, prerelease flag, notes, and existing asset names are compatible with exact recovery. Its final inventory is the seven archive-bound native assets. |
 
-The release must fail before `npm publish` if npm, the Git tag, or the GitHub Release already has the
-requested version. This prevents partial releases where npm is published but GitHub Release creation
-fails afterward.
+The workflow classifies public state only after it has retained the candidate archive. npm identity
+is exact only when registry integrity and dist-tag both match. A same-SHA tag is reusable. GitHub
+Release presence is only a candidate until generated title, prerelease flag, and notes are available;
+the final exact classification happens immediately before create or repair. Any identity mismatch or
+unexpected asset name fails before mutation.
 
-Do not force-move public version tags by default. If release metadata is already inconsistent, treat
-the version as consumed and publish the next unused patch version instead. Only rewrite a public tag
-after an explicit human decision that the public history rewrite is acceptable.
+Exact-integrity reruns recover from interruptions after npm publish, tag push, release creation, or a
+partial asset upload. Already exact mutations are skipped. Missing or mismatched expected assets are
+reconciled with `gh release upload --clobber`, after which all seven remote assets are downloaded and
+byte-verified against the retained archive. This recovery path is deliberately narrow: it never moves
+a conflicting tag, republishes different npm bytes, accepts changed release metadata, or removes an
+unexpected remote asset.
+
+Do not force-move public version tags. If release metadata is inconsistent with the retained archive,
+exact commit, requested channel, generated notes, or seven-asset inventory, treat the version as
+consumed and publish the next unused patch version instead.
 
 Manual preflight checks when debugging a release:
 
@@ -139,9 +156,9 @@ git ls-remote origin refs/tags/v<version>
 gh release view v<version>
 ```
 
-If any of these commands reports an existing artifact for the requested version, stop before
-publishing. For a non-destructive recovery, choose the next unused patch version and release that
-version through `scripts/release.ts`.
+An existing artifact is recoverable only when the workflow's exact-integrity classifier accepts every
+identity above. Otherwise stop before publishing and choose the next unused patch version through
+`scripts/release.ts`.
 
 ## Cross-platform CI
 
