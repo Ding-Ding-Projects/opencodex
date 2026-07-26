@@ -110,6 +110,38 @@ func TestTypeScriptAndGoManagementMutationSequence(t *testing.T) {
 		captureManagementRequest(t, tsProxy.baseURL, http.MethodDelete, "/api/providers?name=gui-extra", managementParityToken, nil), true)
 }
 
+func TestTypeScriptAndGoManagementControlMutations(t *testing.T) {
+	upstream := newDifferentialUpstream(t)
+	config := differentialConfig(upstream.server.URL, []string{"success"})
+	config["hostname"] = "0.0.0.0"
+	config["authToken"] = managementParityToken
+	config["apiKeys"] = []any{map[string]any{
+		"id": "parity-management", "name": "Parity management", "key": managementParityToken, "createdAt": "2026-07-26T00:00:00.000Z",
+	}}
+	authEnvironment := "OPENCODEX_API_AUTH_TOKEN=" + managementParityToken
+	tsProxy := startTypeScriptProxy(t, config, authEnvironment)
+	goProxy := startProxyWithConfig(t, config, authEnvironment)
+	compare := func(scenario, method, path string, body any) {
+		t.Helper()
+		compareRuntimeBytes(t, "management-controls/"+scenario,
+			captureManagementRequest(t, goProxy.baseURL, method, path, managementParityToken, body),
+			captureManagementRequest(t, tsProxy.baseURL, method, path, managementParityToken, body), true)
+	}
+
+	sidecars := map[string]any{
+		"webSearch": map[string]any{"model": "search-model", "backend": "anthropic", "reasoning": "high"},
+		"vision":    map[string]any{"model": "vision-model", "backend": "openai", "maxDescriptionsPerTurn": 3},
+	}
+	compare("sidecar-put", http.MethodPut, "/api/sidecar-settings", sidecars)
+	compare("sidecar-get", http.MethodGet, "/api/sidecar-settings", nil)
+	compare("debug-enable", http.MethodPut, "/api/debug", map[string]any{"debug": true, "usage": true, "injection": true})
+	compare("debug-reset", http.MethodPut, "/api/debug", map[string]any{"reset": true})
+	compare("auto-switch", http.MethodPut, "/api/codex-auth/auto-switch", map[string]any{"threshold": 77})
+	compare("failover", http.MethodPut, "/api/codex-auth/failover", map[string]any{"threshold": 4})
+	compare("active-get", http.MethodGet, "/api/codex-auth/active", nil)
+	compare("auto-switch-invalid", http.MethodPut, "/api/codex-auth/auto-switch", map[string]any{"threshold": 101})
+}
+
 func captureManagementRequest(t *testing.T, baseURL, method, path, token string, body any) runtimeResponse {
 	t.Helper()
 	var reader io.Reader

@@ -104,7 +104,9 @@ type expectedRuntimeDiff struct {
 }
 
 var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
-	"config/wrong-field-type": {body: true},
+	"config/wrong-field-type":         {body: true},
+	"management-controls/sidecar-put": {body: true},
+	"management-controls/sidecar-get": {body: true},
 }
 
 var (
