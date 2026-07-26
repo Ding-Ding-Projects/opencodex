@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +23,9 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/server"
+	"github.com/lidge-jun/opencodex-go/internal/service"
+	"github.com/lidge-jun/opencodex-go/internal/tray"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
@@ -358,9 +363,14 @@ type cliRuntimeControl struct {
 	now           func() time.Time
 }
 
+type runtimeTarget struct {
+	Host string
+	Port int
+}
+
 var _ management.RuntimeControlBackend = (*cliRuntimeControl)(nil)
 
-func newRuntimeControl(cfg *config.Config) *cliRuntimeControl {
+func newRuntimeControl(cfg *config.Config, targets ...runtimeTarget) *cliRuntimeControl {
 	dir, _ := configDir()
 	control := &cliRuntimeControl{config: cfg, now: time.Now, healthCache: platform.NewStartupHealthCache(30 * time.Second)}
 	control.healthProbe = control.probeStartupHealth
@@ -368,17 +378,108 @@ func newRuntimeControl(cfg *config.Config) *cliRuntimeControl {
 	control.updateRunner = func(ctx context.Context, channel string) error {
 		return runUpdate(ctx, []string{"--tag", channel}, IO{Out: ioDiscard{}, Err: ioDiscard{}})
 	}
-	control.restartRunner = func(context.Context) error {
-		return runService([]string{"restart"}, IO{Out: ioDiscard{}, Err: ioDiscard{}})
+	control.restartRunner = func(ctx context.Context) error {
+		return runRestart(ctx, nil, IO{Out: ioDiscard{}, Err: ioDiscard{}})
 	}
+	target := runtimeTarget{Host: cfg.Host, Port: cfg.Port}
+	if len(targets) > 0 {
+		target = targets[0]
+	}
+	lifecycle := productionUpdateLifecycle(cfg, target, control)
 	control.updateManager = &updatepkg.JobManager{
-		Store: &updatepkg.JobStore{Path: filepath.Join(dir, "update-job.json")},
-		Now:   func() time.Time { return control.now() },
+		Store:     &updatepkg.JobStore{Path: filepath.Join(dir, "update-job.json")},
+		Lifecycle: lifecycle,
+		Now:       func() time.Time { return control.now() },
 		Execute: func(ctx context.Context, check updatepkg.CheckResult) ([]byte, error) {
 			return nil, control.updateRunner(ctx, string(check.Channel))
 		},
 	}
 	return control
+}
+
+func productionUpdateLifecycle(cfg *config.Config, target runtimeTarget, control *cliRuntimeControl) *updatepkg.LifecycleDependencies {
+	executable, err := os.Executable()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	state := readServiceInstallState()
+	serviceInstalled := state != nil && serviceEnvironmentOwnedHere()
+	serviceArgs := []string(nil)
+	if serviceInstalled {
+		serviceArgs = service.ServiceReinstallArgs(*state)
+		control.restartRunner = func(context.Context) error {
+			return runService([]string{"restart"}, IO{Out: ioDiscard{}, Err: ioDiscard{}})
+		}
+	}
+	var trayManager tray.Manager
+	var trayInitErr error
+	if manager, err := tray.New(trayConfig(*cfg)); err == nil {
+		trayManager = manager
+	} else if !errors.Is(err, tray.ErrNotSupported) {
+		trayInitErr = err
+	}
+	var trayMu sync.Mutex
+	var trayHandoff tray.Handoff
+	completeTray := func(ctx context.Context) error {
+		if trayManager == nil {
+			return nil
+		}
+		trayMu.Lock()
+		handoff := trayHandoff
+		trayMu.Unlock()
+		_, err := trayManager.CompleteUpdate(ctx, handoff)
+		return err
+	}
+	host := gracefulStopHost(target.Host)
+	return &updatepkg.LifecycleDependencies{
+		CheckIntegrity: func(ctx context.Context, check updatepkg.CheckResult) updatepkg.IntegrityResult {
+			if strings.TrimSpace(check.LatestVersion) == "" {
+				return updatepkg.ParseIntegrityResult("", "", nil)
+			}
+			integrityCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			defer cancel()
+			npm := "npm"
+			if runtime.GOOS == "windows" {
+				npm = "npm.cmd"
+			}
+			output, err := (updatepkg.ExecRunner{}).Run(integrityCtx, updatepkg.Command{Bin: npm, Args: []string{"view", updatepkg.PackageName + "@" + check.LatestVersion, "dist.integrity"}})
+			return updatepkg.ParseIntegrityResult(check.LatestVersion, string(output), err)
+		},
+		PrepareTray: func(ctx context.Context) (updatepkg.TrayHandoff, error) {
+			if trayInitErr != nil {
+				return updatepkg.TrayHandoff{}, trayInitErr
+			}
+			if trayManager == nil {
+				return updatepkg.TrayHandoff{}, nil
+			}
+			handoff, err := trayManager.PrepareUpdate(ctx)
+			if err != nil {
+				return updatepkg.TrayHandoff{}, err
+			}
+			trayMu.Lock()
+			trayHandoff = handoff
+			trayMu.Unlock()
+			return updatepkg.TrayHandoff{RestoreOnFailure: handoff.Running, RefreshAfterReplacement: handoff.Installed}, nil
+		},
+		RestoreTray: completeTray,
+		RefreshTray: completeTray,
+
+		RuntimeExecutable: executable,
+		Launcher:          executable,
+		ServiceInstalled:  serviceInstalled,
+		ServiceArgs:       serviceArgs,
+		Host:              host,
+		Port:              target.Port,
+		ReclaimPort: func(ctx context.Context, host string, port int) bool {
+			return reclaimListenPort(ctx, host, port, server.ReclaimListenPortOptions{Timeout: 30 * time.Second})
+		},
+		Restart: func(ctx context.Context, _ updatepkg.RestartPlan) error {
+			return control.restartRunner(ctx)
+		},
+		Probe: func(ctx context.Context) bool {
+			return probeHealth(ctx, host, target.Port)
+		},
+	}
 }
 
 type ioDiscard struct{}

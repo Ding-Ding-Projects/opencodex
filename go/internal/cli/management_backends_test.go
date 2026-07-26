@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/server"
+	"github.com/lidge-jun/opencodex-go/internal/service"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
@@ -429,6 +431,11 @@ func TestQuotaClaudeAndRuntimeBackendsMutateThroughManagementAPI(t *testing.T) {
 	providerQuotas := &cliProviderQuotas{config: &cfg, quota: quota, now: time.Now}
 	claudeRuntime := newClaudeRuntime(&cfg, home, nil, nil)
 	runtimeControl := newRuntimeControl(&cfg)
+	runtimeControl.updateManager.Lifecycle.CheckIntegrity = func(context.Context, updatepkg.CheckResult) updatepkg.IntegrityResult {
+		return updatepkg.IntegrityResult{Status: updatepkg.IntegrityVerified}
+	}
+	runtimeControl.updateManager.Lifecycle.ReclaimPort = func(context.Context, string, int) bool { return true }
+	runtimeControl.updateManager.Lifecycle.Probe = func(context.Context) bool { return true }
 	updateStarted := make(chan struct{})
 	restartStarted := make(chan struct{})
 	runtimeControl.updateCheck = func(context.Context, string) (updatepkg.CheckResult, error) {
@@ -490,6 +497,9 @@ func TestRuntimeUpdateStatusSurvivesManagerRecreation(t *testing.T) {
 	t.Setenv("OPENCODEX_HOME", t.TempDir())
 	cfg := config.FreshInstall()
 	control := newRuntimeControl(&cfg)
+	control.updateManager.Lifecycle.CheckIntegrity = func(context.Context, updatepkg.CheckResult) updatepkg.IntegrityResult {
+		return updatepkg.IntegrityResult{Status: updatepkg.IntegrityVerified}
+	}
 	control.updateCheck = func(context.Context, string) (updatepkg.CheckResult, error) {
 		return updatepkg.CheckResult{
 			CurrentVersion: "1.0.0", LatestVersion: "1.1.0", Channel: updatepkg.ChannelLatest,
@@ -524,6 +534,54 @@ func TestRuntimeUpdateStatusSurvivesManagerRecreation(t *testing.T) {
 	job, found, err := recreated.UpdateStatus(context.Background(), id)
 	if err != nil || !found || job["status"] != "succeeded" {
 		t.Fatalf("recreated status = found=%t job=%#v err=%v", found, job, err)
+	}
+}
+
+func TestProductionServeCompositionSuppliesUpdateLifecycleDependencies(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", filepath.Join(home, "ocx"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	if err := writeServiceInstallState(service.BackendScheduler); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	npmName := "npm"
+	npmBody := "#!/bin/sh\nprintf '%s\\n' 'sha512-YWJjZA=='\n"
+	if runtime.GOOS == "windows" {
+		npmName = "npm.cmd"
+		npmBody = "@echo sha512-YWJjZA==\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, npmName), []byte(npmBody), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := config.FreshInstall()
+	proxy := server.New(server.Config{Version: "test", Hostname: cfg.Host})
+	healthServer := httptest.NewServer(proxy.Handler())
+	defer healthServer.Close()
+	port := healthServer.Listener.Addr().(*net.TCPAddr).Port
+	control := newRuntimeControl(&cfg, runtimeTarget{Host: "0.0.0.0", Port: port})
+	lifecycle := control.updateManager.Lifecycle
+	if lifecycle == nil || lifecycle.CheckIntegrity == nil || lifecycle.PrepareTray == nil || lifecycle.RestoreTray == nil || lifecycle.RefreshTray == nil || lifecycle.ReclaimPort == nil || lifecycle.Restart == nil || lifecycle.Probe == nil {
+		t.Fatalf("production lifecycle dependencies are incomplete: %#v", lifecycle)
+	}
+	if lifecycle.RuntimeExecutable == "" || lifecycle.Launcher == "" || lifecycle.Host != "127.0.0.1" || lifecycle.Port != port {
+		t.Fatalf("runtime target = executable=%q launcher=%q host=%q port=%d", lifecycle.RuntimeExecutable, lifecycle.Launcher, lifecycle.Host, lifecycle.Port)
+	}
+	if !lifecycle.ServiceInstalled || strings.Join(lifecycle.ServiceArgs, " ") != "service install" {
+		t.Fatalf("service state = installed=%t args=%v", lifecycle.ServiceInstalled, lifecycle.ServiceArgs)
+	}
+	integrity := lifecycle.CheckIntegrity(context.Background(), updatepkg.CheckResult{LatestVersion: "9.9.9"})
+	if integrity.Status != updatepkg.IntegrityVerified || integrity.Integrity != "sha512-YWJjZA==" {
+		t.Fatalf("integrity result = %#v", integrity)
+	}
+	if !lifecycle.Probe(context.Background()) {
+		t.Fatal("captured production host/port did not reach the real liveness route")
 	}
 }
 

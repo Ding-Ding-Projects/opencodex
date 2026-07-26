@@ -146,7 +146,12 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 			return err
 		}
 	}
-	runtimeControl := newRuntimeControl(cfg)
+	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
+	if err != nil {
+		return err
+	}
+	selectedPort = listener.Addr().(*net.TCPAddr).Port
+	runtimeControl := newRuntimeControl(cfg, runtimeTarget{Host: cfg.Host, Port: selectedPort})
 	apiStop := func() {
 		teardownOwnedGrokFence(streams)
 		stop.Stop()
@@ -159,11 +164,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		return nil
 	}})
 	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
-	listener, listenErr := net.Listen("tcp", httpServer.Addr)
-	if listenErr != nil {
-		return listenErr
-	}
-	actualPort := listener.Addr().(*net.TCPAddr).Port
+	actualPort := selectedPort
 	if err := writeRuntimeFiles(actualPort); err != nil {
 		_ = listener.Close()
 		return err
