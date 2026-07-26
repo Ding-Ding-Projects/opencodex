@@ -20,12 +20,14 @@ import {
 } from "node:fs";
 import { getConfigDir } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
+import { preferredDurableRuntime } from "../lib/runtime-entry";
 import { isProcessAlive } from "../lib/process-control";
 import { serviceApiTokenFilePath } from "../lib/service-secrets";
 import { windowsEnvIndirectBatchValue } from "../lib/win-paths";
 import { isWslRuntime, wslAutomountRoot } from "./home";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
+const SHIM_RUNTIME_MARKER = "opencodex shim runtime convergence v1";
 const CODEX_SHIM_PROBE_BYTES = 16 * 1024;
 export const CODEX_SHIM_REPLACEMENT_STABLE_MS = 100;
 export const CODEX_SHIM_STATE_MAX_BYTES = 1024 * 1024;
@@ -112,16 +114,26 @@ interface InstallCodexShimInternalOptions {
   beforeGuardedRefresh?: (wrapperPath: string, index: number) => void;
 }
 
+export interface RefreshCodexShimRuntimeOptions {
+  platform?: NodeJS.Platform;
+  runtime?: { bun: string; cli: string };
+  /** Deterministic fault/race seam; production callers never set this. */
+  beforeWrite?: (wrapperPath: string, index: number) => void;
+}
+
+export type RefreshCodexShimRuntimeResult =
+  | { refreshed: true; count: number; message: string }
+  | { refreshed: false; count: 0; message: string };
+
 export type CodexShimAutoRestoreResult =
   | { status: "not-installed" | "healthy" | "disabled" }
   | { status: "ineligible" | "deferred"; message?: string }
   | { status: "restored"; message: string };
 
 function cliEntry(): { bun: string; cli: string } {
-  // Bundled Bun path (survives `ocx update`); all three shim builders
-  // (Unix / Windows cmd / Windows PowerShell) receive it via this entry.
-  // This module lives in src/codex/, the CLI entry in src/cli/index.ts.
-  return { bun: durableBunPath(), cli: join(import.meta.dir, "..", "cli", "index.ts") };
+  const fallback = { runtime: durableBunPath(), cli: join(import.meta.dir, "..", "cli", "index.ts") };
+  const entry = preferredDurableRuntime(join(import.meta.dir, "..", ".."), fallback);
+  return { bun: entry.runtime, cli: entry.cli };
 }
 
 function commandNames(name: string): string[] {
@@ -364,6 +376,7 @@ export function buildUnixCodexShim(realCodexPath: string, bunPath: string, cliPa
   const valueOptions = CODEX_GLOBAL_OPTIONS_WITH_VALUE.join("|");
   return `#!/usr/bin/env sh
 # ${SHIM_MARKER}
+# ${SHIM_RUNTIME_MARKER}
 if [ -z "$OPENCODEX_API_AUTH_TOKEN" ] && [ -f ${shQuote(tokenFile)} ]; then
   OPENCODEX_API_AUTH_TOKEN="$(cat ${shQuote(tokenFile)})"
   export OPENCODEX_API_AUTH_TOKEN
@@ -429,6 +442,7 @@ export function buildWindowsCodexShim(realCodexPath: string, bunPath: string, cl
   const valueOptionChecks = CODEX_GLOBAL_OPTIONS_WITH_VALUE.map(option => `if /I "%~1"=="${option}" goto skip_option_value`).join("\r\n");
   return `@echo off\r
 rem ${SHIM_MARKER}\r
+rem ${SHIM_RUNTIME_MARKER}\r
 ${windowsBatchSet("OCX_REAL_CODEX", realCodexPath)}\r
 ${windowsBatchSet("OCX_BUN", bunPath)}\r
 ${windowsBatchSet("OCX_CLI", cliPath)}\r
@@ -471,6 +485,7 @@ export function buildWindowsPowerShellCodexShim(realCodexPath: string, bunPath: 
   const tokenFile = serviceApiTokenFilePath();
   return `#!/usr/bin/env pwsh
 # ${SHIM_MARKER}
+# ${SHIM_RUNTIME_MARKER}
 if (-not $env:OPENCODEX_API_AUTH_TOKEN -and (Test-Path -LiteralPath ${psString(tokenFile)})) {
   $env:OPENCODEX_API_AUTH_TOKEN = (Get-Content -Raw -LiteralPath ${psString(tokenFile)}).Trim()
 }
@@ -591,28 +606,37 @@ function gitBashPath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
-function writeShim(wrapperPath: string, realCodexPath: string): void {
-  const { bun, cli } = cliEntry();
-  if (process.platform === "win32") {
+function shimBytes(
+  wrapperPath: string,
+  realCodexPath: string,
+  platform: NodeJS.Platform,
+  runtime: { bun: string; cli: string },
+): string {
+  const { bun, cli } = runtime;
+  if (platform === "win32") {
     const lower = wrapperPath.toLowerCase();
     if (lower.endsWith(".ps1")) {
       // UTF-8 BOM: Windows PowerShell 5.1 decodes BOM-less .ps1 files in the ANSI
       // codepage, which mangles non-ASCII paths embedded in the shim.
-      writeFileSync(wrapperPath, `\uFEFF${buildWindowsPowerShellCodexShim(realCodexPath, bun, cli)}`, "utf8");
+      return `\uFEFF${buildWindowsPowerShellCodexShim(realCodexPath, bun, cli)}`;
     } else if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-      writeFileSync(wrapperPath, buildWindowsCodexShim(realCodexPath, bun, cli), "utf8");
+      return buildWindowsCodexShim(realCodexPath, bun, cli);
     } else {
       // Extensionless Git-Bash sh launcher: sh shim with forward-slash paths.
-      writeFileSync(
-        wrapperPath,
-        buildUnixCodexShim(gitBashPath(realCodexPath), gitBashPath(bun), gitBashPath(cli), gitBashPath(serviceApiTokenFilePath())),
-        "utf8",
+      return buildUnixCodexShim(
+        gitBashPath(realCodexPath),
+        gitBashPath(bun),
+        gitBashPath(cli),
+        gitBashPath(serviceApiTokenFilePath()),
       );
     }
-  } else {
-    writeFileSync(wrapperPath, buildUnixCodexShim(realCodexPath, bun, cli), "utf8");
-    chmodSync(wrapperPath, 0o755);
   }
+  return buildUnixCodexShim(realCodexPath, bun, cli);
+}
+
+function writeShim(wrapperPath: string, realCodexPath: string): void {
+  writeFileSync(wrapperPath, shimBytes(wrapperPath, realCodexPath, process.platform, cliEntry()), "utf8");
+  if (process.platform !== "win32") chmodSync(wrapperPath, 0o755);
 }
 
 function stateFiles(state: ShimState): ShimFileState[] {
@@ -1038,6 +1062,147 @@ function installCodexShimInternal(options: InstallCodexShimInternalOptions): { i
 
 export function installCodexShim(): { installed: boolean; message: string } {
   return installCodexShimInternal({ allowFreshInstall: true });
+}
+
+/**
+ * Rebind installed OpenCodex-owned wrappers to this package's stable launcher,
+ * retaining Bun/TS only as the fail-safe. This never discovers Codex on PATH or mutates
+ * the state file or original-launcher backups.
+ */
+export function refreshCodexShimRuntime(
+  options: RefreshCodexShimRuntimeOptions = {},
+): RefreshCodexShimRuntimeResult {
+  const platform = options.platform ?? process.platform;
+  const stateFile = statePath();
+  const stateProbe = stableShimPathProbe(stateFile);
+  if (!stateProbe || stateProbe.fingerprint.kind !== "file") {
+    return { refreshed: false, count: 0, message: "Codex shim runtime refresh requires a regular non-symlink state file." };
+  }
+  const stateRead = readStateResult();
+  const state = stateRead.state;
+  if (!state || state.platform !== platform) {
+    return { refreshed: false, count: 0, message: "Codex shim runtime refresh requires valid state for the current platform." };
+  }
+
+  const files = stateFiles(state);
+  const wrapperPaths = new Set<string>();
+  const backupPaths = new Set<string>();
+  const snapshots: Array<{
+    file: ShimFileState;
+    probe: StableShimPathProbe;
+    bytes: Buffer;
+    mode: number;
+  }> = [];
+  const backupProbes = new Map<string, StableShimPathProbe>();
+  for (const file of files) {
+    if (!file.wrapperPath || !file.originalPath || !file.backupPath
+      || wrapperPaths.has(file.wrapperPath) || backupPaths.has(file.backupPath)
+      || wrapperPaths.has(file.backupPath) || backupPaths.has(file.wrapperPath)) {
+      return { refreshed: false, count: 0, message: "Codex shim runtime refresh rejected duplicate or empty tracked paths." };
+    }
+    wrapperPaths.add(file.wrapperPath);
+    backupPaths.add(file.backupPath);
+    if (file.backupPath !== backupPathFor(file.originalPath)) {
+      return { refreshed: false, count: 0, message: "Codex shim runtime refresh rejected an unexpected backup relationship." };
+    }
+    const backupProbe = stableShimPathProbe(file.backupPath);
+    if (!backupProbe || backupProbe.fingerprint.kind !== "file") {
+      return { refreshed: false, count: 0, message: "Codex shim runtime refresh requires regular non-symlink backups." };
+    }
+    backupProbes.set(file.backupPath, backupProbe);
+    if (file.realPath) {
+      const realProbe = stableShimPathProbe(file.realPath);
+      if (!realProbe || realProbe.fingerprint.kind !== "file") {
+        return { refreshed: false, count: 0, message: "Codex shim runtime refresh requires regular non-symlink backing launchers." };
+      }
+    }
+    if (file.preserveOnly) {
+      if (existsSync(file.originalPath)) {
+        return { refreshed: false, count: 0, message: "Codex shim runtime refresh rejected an active preserve-only launcher." };
+      }
+      continue;
+    }
+    if (file.originalPath !== file.wrapperPath) {
+      return { refreshed: false, count: 0, message: "Codex shim runtime refresh rejected a non-canonical wrapper relationship." };
+    }
+    const wrapperProbe = stableShimPathProbe(file.wrapperPath);
+    if (!wrapperProbe || wrapperProbe.fingerprint.kind !== "file" || !isHealthyShimProbe(wrapperProbe, platform)) {
+      return { refreshed: false, count: 0, message: "Codex shim runtime refresh requires regular OpenCodex-owned wrappers." };
+    }
+    snapshots.push({
+      file,
+      probe: wrapperProbe,
+      bytes: readFileSync(file.wrapperPath),
+      mode: wrapperProbe.fingerprint.mode & 0o777,
+    });
+  }
+
+  const runtime = options.runtime ?? cliEntry();
+  const changed: typeof snapshots = [];
+  try {
+    for (const [index, snapshot] of snapshots.entries()) {
+      options.beforeWrite?.(snapshot.file.wrapperPath, index);
+      const current = stableShimPathProbe(snapshot.file.wrapperPath);
+      if (!current || current.fingerprint.kind !== "file" || !sameStableShimPathProbe(current, snapshot.probe)) {
+        throw new Error(`tracked wrapper changed before refresh: ${snapshot.file.wrapperPath}`);
+      }
+      changed.push(snapshot);
+      const nextBytes = shimBytes(
+        snapshot.file.wrapperPath,
+        snapshot.file.realPath ?? snapshot.file.backupPath,
+        platform,
+        runtime,
+      );
+      writeFileSync(
+        snapshot.file.wrapperPath,
+        nextBytes,
+        "utf8",
+      );
+      chmodSync(snapshot.file.wrapperPath, snapshot.mode);
+      const written = stableShimPathProbe(snapshot.file.wrapperPath);
+      if (!written || written.fingerprint.kind !== "file"
+        || written.fingerprint.size !== Buffer.byteLength(nextBytes)
+        || written.prefix !== nextBytes) {
+        throw new Error(`tracked wrapper changed while being refreshed: ${snapshot.file.wrapperPath}`);
+      }
+    }
+    const finalState = stableShimPathProbe(stateFile);
+    if (!finalState || !sameStableShimPathProbe(finalState, stateProbe)) {
+      throw new Error("Codex shim state changed during runtime refresh");
+    }
+    for (const [path, before] of backupProbes) {
+      const after = stableShimPathProbe(path);
+      if (!after || !sameStableShimPathProbe(after, before)) {
+        throw new Error(`Codex shim backup changed during runtime refresh: ${path}`);
+      }
+    }
+  } catch (error) {
+    const rollbackErrors: Error[] = [];
+    for (const snapshot of [...changed].reverse()) {
+      try {
+        const current = statFingerprint(snapshot.file.wrapperPath, false);
+        if (!current || current.kind !== "file") throw new Error(`wrapper is no longer a regular file: ${snapshot.file.wrapperPath}`);
+        writeFileSync(snapshot.file.wrapperPath, snapshot.bytes);
+        chmodSync(snapshot.file.wrapperPath, snapshot.mode);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError)));
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError([error, ...rollbackErrors], "Codex shim runtime refresh and rollback failed");
+    }
+    return {
+      refreshed: false,
+      count: 0,
+      message: `Codex shim runtime refresh rolled back: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  return {
+    refreshed: true,
+    count: snapshots.length,
+    message: `Refreshed ${snapshots.length} Codex shim runtime wrapper(s).`,
+  };
 }
 
 export function autoRestoreCodexShim(options: {

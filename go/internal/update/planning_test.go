@@ -24,13 +24,23 @@ func TestDetectInstaller(t *testing.T) {
 }
 
 func TestRestartPlanningAndHealthConfirmation(t *testing.T) {
-	proxy := BuildRestartPlan(InstallerBun, "/runtime/ocx", "/pkg/cli", false, 12000, nil)
-	if proxy.Mode != RestartProxy || proxy.Command.Bin != "/runtime/ocx" || strings.Join(proxy.Command.Args, " ") != "/pkg/cli start --port 12000" {
+	proxy := BuildRestartPlan(InstallerBun, "/runtime/ocx", "", false, 12000, nil)
+	if proxy.Mode != RestartProxy || proxy.Command.Bin != "/runtime/ocx" || strings.Join(proxy.Command.Args, " ") != "start --port 12000" {
 		t.Fatalf("proxy plan = %#v", proxy)
 	}
-	service := BuildRestartPlan(InstallerNPM, "/ignored", "/pkg/cli", true, 12000, []string{"service", "install", "--native"})
-	if service.Mode != RestartService || !strings.HasSuffix(service.Command.Bin, "node") || strings.Join(service.Command.Args, " ") != "/pkg/cli service install --native" {
+	service := BuildRestartPlan(InstallerNPM, "/runtime/node", "/pkg/bin/ocx.mjs", true, 12000, []string{"service", "install", "--native"})
+	if service.Mode != RestartService || service.Command.Bin != "/runtime/node" || strings.Join(service.Command.Args, " ") != "/pkg/bin/ocx.mjs service install --native" {
 		t.Fatalf("service plan = %#v", service)
+	}
+	for _, installer := range []Installer{InstallerSource, InstallerNPM, InstallerBun} {
+		plan := BuildRestartPlan(installer, "/runtime/node", "/pkg/bin/ocx.mjs", false, 12000, nil)
+		if plan.Command.Bin != "/runtime/node" || strings.Join(plan.Command.Args, " ") != "/pkg/bin/ocx.mjs start --port 12000" {
+			t.Fatalf("%s plan = %#v", installer, plan)
+		}
+		direct := BuildRestartPlan(installer, "/runtime/ocx", "", false, 12000, nil)
+		if direct.Command.Bin != "/runtime/ocx" || strings.Join(direct.Command.Args, " ") != "start --port 12000" {
+			t.Fatalf("%s direct plan = %#v", installer, direct)
+		}
 	}
 	if !IsSourceBuildVersion(" 0.0.0 ") || IsSourceBuildVersion("2.8.0") {
 		t.Fatal("source build detection mismatch")

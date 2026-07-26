@@ -8,7 +8,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +77,53 @@ function configDir() {
 
 function shouldRepairCodexShim() {
   return existsSync(join(configDir(), "codex-shim.json"));
+}
+
+const SHIM_RUNTIME_MARKER = "opencodex shim runtime convergence v1";
+const SHIM_REFRESH_GUARD = "OCX_SHIM_RUNTIME_REFRESH_GUARD";
+
+function hasLegacyTsCodexShim() {
+  if (process.env[SHIM_REFRESH_GUARD] === "1") return false;
+  const statePath = join(configDir(), "codex-shim.json");
+  try {
+    const stateStat = lstatSync(statePath);
+    if (!stateStat.isFile() || stateStat.isSymbolicLink() || stateStat.size > 1024 * 1024) return false;
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    if (state.platform !== process.platform) return false;
+    const wrappers = Array.isArray(state.wrappers) ? state.wrappers : [state];
+    return wrappers.some(file => {
+      if (!file || file.preserveOnly || typeof file.wrapperPath !== "string") return false;
+      const wrapperStat = lstatSync(file.wrapperPath);
+      if (!wrapperStat.isFile() || wrapperStat.isSymbolicLink() || wrapperStat.size > 64 * 1024) return false;
+      const content = readFileSync(file.wrapperPath, "utf8");
+      return /src[\\/]cli[\\/]index\.ts/.test(content) && !content.includes(SHIM_RUNTIME_MARKER);
+    });
+  } catch {
+    return false;
+  }
+}
+
+function refreshLegacyCodexShimRuntime() {
+  if (!hasLegacyTsCodexShim()) return;
+  const bun = resolveBun(false);
+  if (!bun) {
+    console.warn(
+      "opencodex: legacy Codex shim runtime refresh skipped because the retained Bun runtime is unavailable; " +
+      "continuing with the packaged Go runtime. Retry after reinstalling with: ocx codex-shim refresh-runtime",
+    );
+    return;
+  }
+  const result = spawnSync(bun, [cliPath, "codex-shim", "refresh-runtime"], {
+    stdio: "inherit",
+    windowsHide: true,
+    env: { ...process.env, [SHIM_REFRESH_GUARD]: "1" },
+  });
+  if (result.status !== 0) {
+    console.warn(
+      `opencodex: legacy Codex shim runtime refresh failed (${result.status ?? "spawn error"}); ` +
+      "continuing with the packaged Go runtime. Retry with: ocx codex-shim refresh-runtime",
+    );
+  }
 }
 
 function historyRestoreIncomplete() {
@@ -329,11 +376,14 @@ function fail(msg) {
   process.exit(1);
 }
 
-function resolveBun() {
+function resolveBun(required = true) {
+  const override = process.env.OPENCODEX_BUN_PATH?.trim();
+  if (override && findBunBinary(dirname(dirname(override))) === override) return override;
   let bunDir;
   try {
     bunDir = bunBinDir();
   } catch {
+    if (!required) return null;
     fail("the `bun` dependency is not installed.");
   }
 
@@ -347,10 +397,14 @@ function resolveBun() {
     const r = spawnSync(process.execPath, [installJs], { stdio: "inherit" });
     if (r.status === 0) bin = findBunBinary(bunDir);
   }
-  if (!bin) fail("Bun binary missing after install attempt.");
+  if (!bin) {
+    if (!required) return null;
+    fail("Bun binary missing after install attempt.");
+  }
   return bin;
 }
 
+refreshLegacyCodexShimRuntime();
 const goBinary = resolveGoBinary();
 if (goBinary) {
   launchForwardingChild(goBinary, process.argv.slice(2), "Go runtime");

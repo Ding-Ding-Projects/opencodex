@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { atomicWriteFile, getConfigDir, loadConfig, readPid, readRuntimePort } from "../config";
 import { isProcessAlive, killProxy } from "../lib/process-control";
+import { preferredDurableRuntime, type DurableRuntimeEntry } from "../lib/runtime-entry";
 import { reclaimListenPort } from "../server/port-reclaim";
 import { isOpencodexHealthz, probeHostname, proxyIdentityAt, type HealthzIdentity } from "../server/proxy-liveness";
 import { isServiceInstalled } from "../service";
@@ -107,6 +108,14 @@ function packageLauncherPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "bin", "ocx.mjs");
 }
 
+function postInstallRuntimeEntry(): DurableRuntimeEntry {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  return preferredDurableRuntime(root, {
+    runtime: process.execPath,
+    cli: packageLauncherPath(),
+  });
+}
+
 function formatCommand(bin: string, args: string[]): string {
   return `${bin} ${args.join(" ")}`;
 }
@@ -182,6 +191,7 @@ export function restartCommand(
   launcher = packageLauncherPath(),
   port?: number,
   serviceArgs?: string[],
+  runtimeOverride?: string,
 ): { mode: "service" | "proxy"; bin: string; args: string[]; display: string } {
   const mode = serviceInstalled ? "service" : "proxy";
   const pinPort = !serviceInstalled && typeof port === "number" && Number.isFinite(port) && port > 0;
@@ -189,8 +199,8 @@ export function restartCommand(
     ? [launcher, "start", "--port", String(Math.trunc(port))]
     : [launcher, "start"];
   const svcArgs = serviceInstalled ? [launcher, ...(serviceArgs ?? ["service", "install"])] : startArgs;
-  if (installer === "npm") {
-    const bin = nodeBin();
+  if (runtimeOverride || installer === "npm") {
+    const bin = runtimeOverride ?? nodeBin();
     const args = svcArgs;
     return { mode, bin, args, display: formatCommand(bin, args) };
   }
@@ -368,7 +378,8 @@ function runLoggedCommand(job: UpdateJobState, bin: string, args: string[], time
 }
 
 function spawnDetachedStart(job: UpdateJobState, installer: Installer, port?: number): void {
-  const cmd = restartCommand(false, installer, packageLauncherPath(), port);
+  const entry = postInstallRuntimeEntry();
+  const cmd = restartCommand(false, installer, entry.cli, port, undefined, entry.runtime);
   const env = { ...process.env };
   delete env.OCX_SERVICE;
   updateJob(job, {}, `$ ${cmd.display}`);
@@ -433,7 +444,8 @@ async function restartAfterUpdate(
       svcArgs = serviceReinstallArgs();
     } catch { /* fallback to default service install */ }
   }
-  const cmd = restartCommand(serviceInstalled, job.installer, packageLauncherPath(), port, svcArgs);
+  const entry = postInstallRuntimeEntry();
+  const cmd = restartCommand(serviceInstalled, job.installer, entry.cli, port, svcArgs, entry.runtime);
   const waitFn = io.waitForPort ?? reclaimListenPort;
   const reclaimOpts = {
     timeoutMs: RESTART_PORT_RECLAIM_MS,
@@ -874,11 +886,12 @@ export async function runGuiUpdateWorker(jobId: string, channel: Channel, restar
     }
 
     if (trayWasInstalled) {
-      const trayArgs = [process.argv[1], ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
-      const tray = runLoggedCommand(job, process.execPath, trayArgs, 20_000);
+      const entry = postInstallRuntimeEntry();
+      const trayArgs = [entry.cli, ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
+      const tray = runLoggedCommand(job, entry.runtime, trayArgs, 20_000);
       if (tray.status !== 0) {
         updateJob(job, {}, "Windows tray refresh failed; run 'ocx tray install'.");
-        if (trayWasRunning) runLoggedCommand(job, process.execPath, [process.argv[1], "tray", "start"], 15_000);
+        if (trayWasRunning) runLoggedCommand(job, entry.runtime, [entry.cli, "tray", "start"], 15_000);
       }
     }
 

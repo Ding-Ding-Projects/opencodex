@@ -139,8 +139,12 @@ type RestartPlan struct {
 // proxy restart. The captured port is authoritative after update teardown has
 // removed runtime state.
 func BuildRestartPlan(installer Installer, runtimeExecutable, launcher string, serviceInstalled bool, port int, serviceArgs []string) RestartPlan {
+	_ = installer
 	mode := RestartProxy
-	args := []string{launcher, "start"}
+	args := []string{"start"}
+	if launcher != "" {
+		args = append([]string{launcher}, args...)
+	}
 	if port > 0 {
 		args = append(args, "--port", fmt.Sprint(port))
 	}
@@ -149,13 +153,12 @@ func BuildRestartPlan(installer Installer, runtimeExecutable, launcher string, s
 		if len(serviceArgs) == 0 {
 			serviceArgs = []string{"service", "install"}
 		}
-		args = append([]string{launcher}, serviceArgs...)
+		args = append([]string(nil), serviceArgs...)
+		if launcher != "" {
+			args = append([]string{launcher}, args...)
+		}
 	}
-	bin := runtimeExecutable
-	if installer == InstallerNPM {
-		bin = executableName("node")
-	}
-	return RestartPlan{Mode: mode, Command: Command{Bin: bin, Args: args}}
+	return RestartPlan{Mode: mode, Command: Command{Bin: runtimeExecutable, Args: args}}
 }
 
 // ConfirmRestartedProxy requires the proxy to become healthy and remain so for

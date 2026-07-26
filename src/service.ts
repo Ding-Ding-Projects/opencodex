@@ -15,6 +15,7 @@ import { restoreNativeCodex } from "./codex/inject";
 import { stripGrokConfig } from "./grok/inject";
 import { isWslRuntime } from "./codex/home";
 import { durableBunPath, durableBunRuntime } from "./lib/bun-runtime";
+import { preferredDurableRuntime } from "./lib/runtime-entry";
 import { isProcessAlive, stopProxy } from "./lib/process-control";
 import { serviceApiTokenFilePath } from "./lib/service-secrets";
 import { randomUUID } from "node:crypto";
@@ -43,8 +44,15 @@ export type ServiceBackend = "scheduler" | "native";
 function cliEntry(): { bun: string; cli: string } {
   // Bake the bundled Bun (npm global prefix, survives `ocx update`) rather than
   // a transient system Bun, so launchd/systemd/schtasks keep resolving even if a
-  // standalone Bun is later removed. The CLI entry lives at src/cli/index.ts.
-  return { bun: durableBunPath(), cli: join(import.meta.dir, "cli", "index.ts") };
+  // standalone Bun is later removed. Prefer the stable package launcher when
+  // an exact native artifact and a usable absolute Node runtime are present.
+  return serviceRuntimeEntry();
+}
+
+export function serviceRuntimeEntry(packageRoot = join(import.meta.dir, "..")): { bun: string; cli: string } {
+  const fallback = { runtime: durableBunPath(), cli: join(import.meta.dir, "cli", "index.ts") };
+  const entry = preferredDurableRuntime(packageRoot, fallback);
+  return { bun: entry.runtime, cli: entry.cli };
 }
 
 function plistPath(): string {

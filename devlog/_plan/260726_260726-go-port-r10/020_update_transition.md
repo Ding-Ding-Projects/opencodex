@@ -1,164 +1,108 @@
-# 020 — WP2: legacy preview transition and durable runtime rebake
+# 020 — WP2: existing preview transition and durable runtime rebake
 
-Literal implementation hunks: `021_wp2_literal_patch.md`.
+Literal candidate contract: `021_wp2_literal_patch.md`.
 
 ## Outcome
 
-Prove an updater already running under the old npm/Bun package can replace package
-files, enter the new Go executable, and rewrite every durable service/tray/shim path
-before any later major cutover removes the dormant package-local Bun dependency.
+An updater already running from the old Bun preview may replace the package and
+finish safely. Every fresh service, tray, shim, and restart owner then persists a
+stable absolute Node + `bin/ocx.mjs` command which forwards to the exact packaged
+Go binary. The bridge package retains Bun only as a fail-safe when package or Node
+identity cannot be proved.
 
-## NEW `src/lib/runtime-entry.ts` — complete content contract
+Rebased base: `9bf232d4b` (contains `origin/dev` at
+`58f0fab3109383b398328c98dcea63089773c693`).
 
-```ts
-import { execFileSync } from "node:child_process";
-import { lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+## Audit history
 
-export interface DurableRuntimeEntry { runtime: string; cli: string }
+The first literal plan was rejected by gpt-5.6-sol medium/priority:
 
-function nodeExecutable(): string {
-  return execFileSync(process.platform === "win32" ? "where.exe" : "which", ["node"], {
-    encoding: "utf8", windowsHide: true,
-  }).split(/\r?\n/, 1)[0]!.trim();
-}
+- Go restart planning could produce `node <versioned-Go-binary>`.
+- Go services and tray persisted a versioned binary removed by the next update.
+- the proposed Go shim refresh supported one wrapper and lacked TS Windows parity;
+- its pre-bridge fixture imported live-checkout owners and never executed Go;
+- package launcher/Node/symlink/race validation and executable matrices were weak.
 
-export function packagedNativeBinary(root: string, platform = process.platform, arch = process.arch): string | null {
-  const os = { darwin: "darwin", linux: "linux", win32: "windows" }[platform];
-  const goarch = { x64: "amd64", arm64: "arm64" }[arch];
-  if (!os || !goarch) return null;
-  const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: string };
-  if (!version) return null;
-  const path = join(root, "bin", "native", `ocx_${version}_${os}_${goarch}${os === "windows" ? ".exe" : ""}`);
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    if (platform !== "win32" && (stat.mode & 0o111) === 0) return null;
-    return path;
-  } catch { return null; }
-}
+That candidate was discarded. No Go shim refresh is introduced.
 
-export function preferredDurableRuntime(
-  root: string,
-  fallback: DurableRuntimeEntry,
-): DurableRuntimeEntry {
-  return packagedNativeBinary(root)
-    ? { runtime: nodeExecutable(), cli: join(root, "bin", "ocx.mjs") }
-    : fallback;
-}
-```
+The first corrected-candidate audit then rejected two remaining TS trust gaps:
+package assets were not rechecked after Node discovery, and Node lookup executed the
+PATH-selected `which`/`where.exe`. The final candidate walks absolute PATH
+directories directly without executing a helper and rechecks manifest, launcher,
+native, and Node identities including executable mode after lookup.
 
-This helper does not execute the Go binary; it only chooses the durable Node launcher
-when the exact packaged target is present. `tests/bun-runtime.test.ts` imports it
-and covers supported/missing/stale/symlink/non-executable and Node lookup failure.
+## Corrected design
 
-## MODIFY `src/service.ts`, `src/tray/windows.ts`, `src/codex/shim.ts`
+### Stable runtime identity
 
-Each existing `cliEntry/currentEntry` keeps its Bun fallback but wraps it with the
-new helper. Exact shape:
+TypeScript and Go each validate the same boundary:
 
-```diff
--return { bun: durableBunPath(), cli: join(import.meta.dir, "...", "cli", "index.ts") };
-+const fallback = { runtime: durableBunPath(), cli: join(import.meta.dir, "...", "cli", "index.ts") };
-+const entry = preferredDurableRuntime(packageRoot, fallback);
-+return { bun: entry.runtime, cli: entry.cli };
-```
+- exact package version and host target artifact;
+- package manifest, launcher, native executable, and Node are regular trusted files;
+- symlinks, wrong names, malformed versions, empty/relative Node results, and
+  replacement races fail closed;
+- a valid package persists canonical absolute Node + stable `bin/ocx.mjs`;
+- a source checkout remains direct Go; a bridge package that cannot prove Node keeps
+  the retained Bun/source entry.
 
-The existing builders continue using their `bun` field name for serialization
-compatibility, but persisted value is absolute Node and `cli` is `bin/ocx.mjs`.
-Thus an old updater's dynamically loaded lifecycle owner writes Node launcher → Go.
+Go service and tray owners prepend the launcher to their existing arguments. Go
+update planning carries runtime and launcher as distinct values, so it can represent
+both direct Go and Node-launcher commands without ever constructing
+`node <Go-binary>`.
 
-The shim owner is the exception: a pre-bridge CLI may have cached it before package
-replacement. Dormant Bun remains installed, so that cached shim stays valid. The
-fresh launcher path below refreshes it on the first post-update `ocx` invocation.
+### Immutable old updater
 
-## MODIFY `src/update/job.ts` — bridge behavior
+The old process may keep its already-loaded stop/update code. After replacement, all
+post-install service/tray/restart commands execute the freshly installed runtime
+entry. A fixture copies the replacement package tree, launches its owners from an
+immutable old-process driver, and then executes Node → `bin/ocx.mjs` → packaged
+runtime; live-checkout imports are forbidden.
 
-- Change Bun/source restart and tray-refresh commands from `process.execPath +
-  process.argv[1]` to Node + the freshly installed package launcher:
+### Shim convergence
 
-```diff
--const bin = process.execPath;
--const args = svcArgs;
-+const bin = nodeBin();
-+const args = svcArgs;
-...
--runLoggedCommand(job, process.execPath, trayArgs, 20_000)
-+runLoggedCommand(job, nodeBin(), [packageLauncherPath(), ...installArgs], 20_000)
-```
+The retained Bun executes the fresh TypeScript `codex-shim refresh-runtime`
+command before Go forwarding when a legacy wrapper still names
+`src/cli/index.ts`. The TS owner already has complete Unix and Windows command
+semantics.
 
-- `restartCommand` continues to use the installed launcher for npm and now does the
-  same for Bun. The launcher chooses packaged Go. Source checkouts keep the existing
-  source command and are not sent through package-native logic.
+Refresh accepts legacy single and Windows multi-wrapper state, validates platform,
+unique/expected wrapper-backup relationships, regular non-symlink ownership and
+stable fingerprints, rewrites all non-preserve wrappers to the current stable
+runtime, and leaves state and backup bytes unchanged. Any race or write failure rolls
+back every modified wrapper. Failure emits an exact recovery command and Go launch
+continues through the retained bridge.
 
-## MODIFY `src/update/index.ts` — direct CLI bridge behavior
+## Candidate and evidence
 
-- Add local `nodeBin()` and `packageLauncherPath()` owners matching
-  `src/update/job.ts`.
-- After successful npm/Bun package replacement, invoke shim, tray, service reinstall,
-  direct fallback start, and tray restoration via
-  `node <new-package>/bin/ocx.mjs ...`, never `process.execPath src/cli/index.ts`.
-- Keep the allowlisted `npm install -g` and `bun add -g` replacement commands.
-- The first bridge package keeps its Bun dependency so immutable old code can finish
-  spawning. Its newly loaded service/tray/shim owners nevertheless persist Node
-  launcher → Go where the owner is newly loaded; cached shim converges on first fresh
-  launcher invocation.
+The final candidate is the implementation-only diff from `9bf232d4b` to the WP2
+commit. The latest dev delta touched only `tests/ci-workflows.test.ts`, outside this
+candidate, and rebase reproduced the pre-rebase implementation patch byte-for-byte.
 
-## MODIFY `bin/ocx.mjs` and Go shim owner
+- 23 files, `+1391/-79`;
+- canonical diff SHA-256:
+  `825372b0f546c6c8169a48bbae80f9d7c620edba12979fddff339d50f5731830`;
+- `src/cli/index.ts` retains its pre-existing executable mode (`100755`);
+- post-rebase gpt-5.6-sol medium/priority re-audit: `PASS`, no blockers;
+- the re-audit reproduced the exact digest/counts, confirmed byte-identical
+  pre/post-rebase patches and no latest-dev semantic overlap, then passed focused
+  Bun/Node/Go/parity/race/typecheck/privacy checks;
+- final focused Bun: 147 pass, 0 fail, 647 assertions;
+- final gpt-5.6-sol medium/priority targeted re-audit: `PASS`, no blockers;
+- first full Go parity gate exposed and corrected one stale fixture value:
+  npm's explicit runtime is `node`, not the retired sentinel `ignored`.
+- the auditor rechecked that sole `+1/-1` fixture expansion against the prior
+  22-file PASS ledger, reproduced the 23-file digest, and reran
+  `TestTypeScriptAndGoUpdateDryRunPlanning`: `PASS`;
+- native launcher Node tests: 5 pass, 0 fail;
+- full Go `test ./...`, `test -race ./...`, and `vet ./...`: pass;
+- Windows amd64 cli/update test binaries cross-compile as PE32+ executables;
+- full Bun: 4850 pass, 0 fail, 23815 assertions across 376 files;
+- typecheck, GUI lint, privacy scan, and diff check: pass.
 
-- Before forwarding a fresh supported-target command, inspect
-  `$OPENCODEX_HOME/codex-shim.json`. If the owned wrapper still references the
-  legacy Bun/TS entry, synchronously invoke the packaged Go child with
-  `codex-shim refresh`, guarded by `OCX_NATIVE_SHIM_REFRESH=1`.
-- Add `codex.RefreshCodexShimRuntime` in `go/internal/codex/shim.go`. It reads the
-  existing owned state, requires wrapper marker + backup regular file, and atomically
-  rewrites only the wrapper so it invokes the current Go executable. It never renames
-  the backup or discovers Codex on PATH.
-- Add `refresh` to `go/internal/cli/lifecycle_extended.go:runCodexShim`.
-- If refresh fails, warn and continue through dormant Bun safety; do not corrupt the
-  existing shim. A successful refresh makes subsequent launches zero-work.
+## Required gates
 
-## MODIFY exact tests
-
-- `tests/update-job.test.ts`: update Bun restart expectations to Node + launcher;
-  add npm/Bun × service present/absent and tray running/idle/absent matrix, asserting
-  launcher invocation and failure restoration.
-- `tests/update-tray-handoff.test.ts`: add post-replacement launcher invocation and
-  tray restore failure.
-- `tests/update-job.test.ts`: extend its existing service-reinstall
-  success/failure and pinned-port assertions.
-- `tests/update-stop-first.test.ts`: assert stop, installer, and post-replacement
-  service repair use the intended launcher/runtime.
-- `tests/winsw.test.ts`: preserve backend-specific service reinstall args.
-- `tests/codex-shim.test.ts`: assert post-update shim repair command reaches launcher.
-- `go/internal/cli/service_grok_test.go:TestRunServiceActivatesBackendSwitchStatusAndUninstall`,
-  `tray_test.go:TestRunTrayManagerRestartAndStatusOutput`, and
-  `lifecycle_extended_test.go:TestCodexShimStatusUsesScopedStatePath`: preserve
-  real Dispatch and package-local executable evidence.
-- Add immutable pre-bridge updater fixtures: copy current updater source/command
-  behavior before replacement, replace only package files, then assert dynamically
-  loaded lifecycle owners persist Node launcher → Go for service/tray/shim.
-
-## Activation matrix
-
-| Trigger | Observable |
-| --- | --- |
-| npm or Bun replacement succeeds, no durable state | no repair command |
-| service present | old process loads new service owner; persisted command is Node launcher → Go |
-| tray installed/running | new tray owner persists Node launcher → Go, then resumes |
-| shim cached from pre-bridge | update remains safe on dormant Bun; first fresh launcher calls Go refresh and wrapper then points at Go |
-| any repair fails | primary update result retained; old running state restored when promised |
-
-## Package boundary
-
-This phase stages binaries and makes Go the default. It does not remove `bun` from
-`package.json`; that dormant bridge dependency is retained until an adoption/major
-cutover receipt exists.
-
-## Check
-
-```bash
-bun test --isolate tests/update-job.test.ts tests/update-stop-first.test.ts tests/update-tray-handoff.test.ts tests/winsw.test.ts tests/codex-shim.test.ts
-cd go
-go test ./internal/cli ./internal/service ./internal/tray ./internal/update -count=1
-```
+1. gpt-5.6-sol medium/priority audit of this exact 23-file candidate.
+2. Apply only after P → A → B.
+3. Focused executable transition/shim/runtime matrices.
+4. Full Go test/race/vet/cross-build and full Bun/typecheck/privacy gates.
+5. Commit and push exact remote parity before D.

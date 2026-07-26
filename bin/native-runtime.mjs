@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,8 +21,8 @@ function expandUserPath(raw) {
 
 function isExecutableFile(path, platform) {
   try {
-    const stat = statSync(path);
-    return stat.isFile() && (platform === "win32" || (stat.mode & 0o111) !== 0);
+    const stat = lstatSync(path);
+    return !stat.isSymbolicLink() && stat.isFile() && (platform === "win32" || (stat.mode & 0o111) !== 0);
   } catch {
     return false;
   }

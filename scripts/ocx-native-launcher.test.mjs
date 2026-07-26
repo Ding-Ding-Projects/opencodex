@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -62,6 +62,23 @@ test("auto mode selects the exact package-local platform artifact", () => {
     chmodSync(binary, 0o755);
     assert.equal(resolveNativeGoBinary({ here: dir, version: "2.9.0", env: {}, platform: "linux", architecture: "arm64" }), binary);
     assert.equal(resolveNativeGoBinary({ here: dir, version: "2.9.0", env: { OPENCODEX_RUNTIME: "ts", OPENCODEX_GO_BINARY: binary }, platform: "linux", architecture: "arm64" }), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("native resolver rejects a symlinked packaged artifact", { skip: process.platform === "win32" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ocx-native-symlink-"));
+  try {
+    const nativeDir = join(dir, "native");
+    mkdirSync(nativeDir);
+    const target = { os: "linux", arch: "arm64" };
+    const real = join(dir, "real");
+    const linked = join(nativeDir, nativeArtifactName("2.9.0", target));
+    writeFileSync(real, "native", { mode: 0o755 });
+    chmodSync(real, 0o755);
+    symlinkSync(real, linked);
+    assert.equal(resolveNativeGoBinary({ here: dir, version: "2.9.0", env: {}, platform: "linux", architecture: "arm64" }), null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -444,10 +444,7 @@ func newRuntimeControl(cfg *config.Config, targets ...runtimeTarget) *cliRuntime
 }
 
 func productionUpdateLifecycle(cfg *config.Config, target runtimeTarget, control *cliRuntimeControl) *updatepkg.LifecycleDependencies {
-	executable, err := os.Executable()
-	if err != nil {
-		executable = os.Args[0]
-	}
+	runtimeCommand := processRuntimeCommand()
 	state := readServiceInstallState()
 	serviceInstalled := state != nil && serviceEnvironmentOwnedHere()
 	serviceArgs := []string(nil)
@@ -510,8 +507,8 @@ func productionUpdateLifecycle(cfg *config.Config, target runtimeTarget, control
 		RestoreTray: completeTray,
 		RefreshTray: completeTray,
 
-		RuntimeExecutable: executable,
-		Launcher:          executable,
+		RuntimeExecutable: runtimeCommand.Executable,
+		Launcher:          runtimeCommand.Launcher,
 		ServiceInstalled:  serviceInstalled,
 		ServiceArgs:       serviceArgs,
 		Host:              host,

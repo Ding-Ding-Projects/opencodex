@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -71,7 +70,7 @@ func runTrayManager(ctx context.Context, manager tray.Manager, command string, s
 }
 
 func trayConfig(cfg config.Config) tray.Config {
-	executable, _ := os.Executable()
+	runtimeCommand := processRuntimeCommand()
 	dir, _ := configDir()
 	port := cfg.Port
 	if port <= 0 {
@@ -82,5 +81,11 @@ func trayConfig(cfg config.Config) tray.Config {
 		host = "127.0.0.1"
 	}
 	baseURL := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
-	return tray.Config{StateDir: filepath.Join(dir, "tray"), Executable: executable, RunArguments: []string{"tray", "run"}, DashboardURL: baseURL, HealthURL: baseURL + "/healthz", StartupHealthURL: baseURL + "/health/startup", RestartCommand: tray.Command{Executable: executable, Arguments: []string{"service", "restart"}}}
+	runArguments := []string{"tray", "run"}
+	restartArguments := []string{"service", "restart"}
+	if runtimeCommand.Launcher != "" {
+		runArguments = append([]string{runtimeCommand.Launcher}, runArguments...)
+		restartArguments = append([]string{runtimeCommand.Launcher}, restartArguments...)
+	}
+	return tray.Config{StateDir: filepath.Join(dir, "tray"), Executable: runtimeCommand.Executable, RunArguments: runArguments, DashboardURL: baseURL, HealthURL: baseURL + "/healthz", StartupHealthURL: baseURL + "/health/startup", RestartCommand: tray.Command{Executable: runtimeCommand.Executable, Arguments: restartArguments}}
 }

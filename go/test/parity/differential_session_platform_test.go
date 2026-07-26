@@ -60,7 +60,7 @@ console.log(JSON.stringify({
 	bunInstall := updatepkg.InstallCommand(updatepkg.InstallerBun, updatepkg.ChannelPreview, "2.1.0-preview.2")
 	npmInstall := updatepkg.InstallCommand(updatepkg.InstallerNPM, updatepkg.ChannelLatest, "2.1.0")
 	bunRestart := updatepkg.BuildRestartPlan(updatepkg.InstallerBun, bun, "/pkg/bin/ocx.mjs", false, 12000, nil)
-	npmRestart := updatepkg.BuildRestartPlan(updatepkg.InstallerNPM, "ignored", "/pkg/bin/ocx.mjs", true, 12000, []string{"service", "install", "--native"})
+	npmRestart := updatepkg.BuildRestartPlan(updatepkg.InstallerNPM, "node", "/pkg/bin/ocx.mjs", true, 12000, []string{"service", "install", "--native"})
 	goPlan := map[string]any{
 		"channels": []any{string(updatepkg.DefaultChannel("2.0.0-preview.3")), string(updatepkg.DefaultChannel("2.0.0"))},
 		"install": []any{

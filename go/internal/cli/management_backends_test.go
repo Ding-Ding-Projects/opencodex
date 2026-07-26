@@ -570,7 +570,7 @@ func TestProductionServeCompositionSuppliesUpdateLifecycleDependencies(t *testin
 	if lifecycle == nil || lifecycle.CheckIntegrity == nil || lifecycle.PrepareTray == nil || lifecycle.RestoreTray == nil || lifecycle.RefreshTray == nil || lifecycle.ReclaimPort == nil || lifecycle.Restart == nil || lifecycle.Probe == nil {
 		t.Fatalf("production lifecycle dependencies are incomplete: %#v", lifecycle)
 	}
-	if lifecycle.RuntimeExecutable == "" || lifecycle.Launcher == "" || lifecycle.Host != "127.0.0.1" || lifecycle.Port != port {
+	if lifecycle.RuntimeExecutable == "" || lifecycle.Launcher != "" || lifecycle.Host != "127.0.0.1" || lifecycle.Port != port {
 		t.Fatalf("runtime target = executable=%q launcher=%q host=%q port=%d", lifecycle.RuntimeExecutable, lifecycle.Launcher, lifecycle.Host, lifecycle.Port)
 	}
 	if !lifecycle.ServiceInstalled || strings.Join(lifecycle.ServiceArgs, " ") != "service install" {

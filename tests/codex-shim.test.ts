@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, uninstallCodexShim } from "../src/codex/shim";
+import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, refreshCodexShimRuntime, uninstallCodexShim } from "../src/codex/shim";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
 const skipStabilityWait = () => {};
@@ -123,7 +123,8 @@ describe("Codex autostart shim", () => {
 
     expect(source).toContain('const gitBashLauncher = join(dir, "codex");');
     expect(source).toContain("for (const path of [cmd, ps1, gitBashLauncher])");
-    expect(source).toContain("buildUnixCodexShim(gitBashPath(realCodexPath), gitBashPath(bun), gitBashPath(cli), gitBashPath(serviceApiTokenFilePath()))");
+    expect(source).toContain("gitBashPath(realCodexPath)");
+    expect(source).toContain("gitBashPath(serviceApiTokenFilePath())");
   });
 
   test("Unix shim accepts an injected token-file path (Git-Bash shims need forward slashes everywhere)", () => {
@@ -747,5 +748,241 @@ describe("WSL PATH interop guard", () => {
       ...fakeFs([`${dir}/codex`]),
     });
     expect(found).toBe(`${dir}/codex`);
+  });
+});
+
+describe("Codex shim runtime convergence", () => {
+  function legacy(content: string): string {
+    return content.replace(/^.*opencodex shim runtime convergence v1.*\r?\n/m, "");
+  }
+
+  function writeRuntimeState(
+    home: string,
+    platform: NodeJS.Platform,
+    files: Array<{ wrapperPath: string; backupPath: string; preserveOnly?: boolean }>,
+  ): string {
+    const statePath = join(home, "codex-shim.json");
+    const wrappers = files.map(file => ({
+      wrapperPath: file.wrapperPath,
+      originalPath: file.wrapperPath,
+      backupPath: file.backupPath,
+      ...(file.preserveOnly ? { preserveOnly: true } : {}),
+    }));
+    writeFileSync(statePath, `${JSON.stringify({ platform, ...wrappers[0], wrappers }, null, 2)}\n`, "utf8");
+    return statePath;
+  }
+
+  test("refreshes a Unix legacy wrapper without PATH discovery or state/backup mutation", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-shim-runtime-unix-"));
+    const oldHome = process.env.OPENCODEX_HOME;
+    const oldPath = process.env.PATH;
+    try {
+      process.env.OPENCODEX_HOME = home;
+      process.env.PATH = "";
+      const wrapper = join(home, "codex");
+      const backup = join(home, "codex.opencodex-real");
+      writeFileSync(backup, "#!/bin/sh\necho codex\n", { mode: 0o755 });
+      writeFileSync(wrapper, legacy(buildUnixCodexShim(backup, "/old/bun", "/old/src/cli/index.ts")), { mode: 0o751 });
+      const statePath = writeRuntimeState(home, "linux", [{ wrapperPath: wrapper, backupPath: backup }]);
+      const stateBytes = readFileSync(statePath);
+      const backupBytes = readFileSync(backup);
+
+      const result = refreshCodexShimRuntime({
+        platform: "linux",
+        runtime: { bun: "/current/bun", cli: "/current/src/cli/index.ts" },
+      });
+
+      expect(result).toMatchObject({ refreshed: true, count: 1 });
+      expect(readFileSync(wrapper, "utf8")).toContain("/current/bun");
+      expect(readFileSync(wrapper, "utf8")).toContain("/current/src/cli/index.ts");
+      expect(statSync(wrapper).mode & 0o777).toBe(0o751);
+      expect(readFileSync(statePath)).toEqual(stateBytes);
+      expect(readFileSync(backup)).toEqual(backupBytes);
+    } finally {
+      if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = oldHome;
+      if (oldPath === undefined) delete process.env.PATH;
+      else process.env.PATH = oldPath;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("refreshes every Windows cmd, PowerShell, and bare wrapper while preserving preserveOnly", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-shim-runtime-win-"));
+    const oldHome = process.env.OPENCODEX_HOME;
+    try {
+      process.env.OPENCODEX_HOME = home;
+      const names = ["codex.cmd", "codex.ps1", "codex"];
+      const files = names.map(name => {
+        const wrapperPath = join(home, name);
+        const backupPath = name.includes(".")
+          ? join(home, name.replace(".", ".opencodex-real."))
+          : `${wrapperPath}.opencodex-real`;
+        writeFileSync(backupPath, `original ${name}\n`, "utf8");
+        const content = name.endsWith(".cmd")
+          ? buildWindowsCodexShim(backupPath, "C:\\old\\bun.exe", "C:\\old\\src\\cli\\index.ts")
+          : name.endsWith(".ps1")
+            ? `\uFEFF${buildWindowsPowerShellCodexShim(backupPath, "C:\\old\\bun.exe", "C:\\old\\src\\cli\\index.ts")}`
+            : buildUnixCodexShim(backupPath, "C:/old/bun.exe", "C:/old/src/cli/index.ts");
+        writeFileSync(wrapperPath, legacy(content), "utf8");
+        return { wrapperPath, backupPath };
+      });
+      const preservedOriginal = join(home, "codex.exe");
+      const preservedBackup = join(home, "codex.opencodex-real.exe");
+      writeFileSync(preservedBackup, "real exe bytes", "utf8");
+      const statePath = writeRuntimeState(home, "win32", [
+        ...files,
+        { wrapperPath: preservedOriginal, backupPath: preservedBackup, preserveOnly: true },
+      ]);
+      const immutable = [statePath, ...files.map(file => file.backupPath), preservedBackup]
+        .map(path => [path, readFileSync(path)] as const);
+
+      const result = refreshCodexShimRuntime({
+        platform: "win32",
+        runtime: { bun: "C:\\current\\bun.exe", cli: "C:\\current\\src\\cli\\index.ts" },
+      });
+
+      expect(result).toMatchObject({ refreshed: true, count: 3 });
+      for (const file of files) {
+        expect(readFileSync(file.wrapperPath, "utf8")).toContain("current");
+        expect(readFileSync(file.wrapperPath, "utf8")).toContain("opencodex shim runtime convergence v1");
+      }
+      expect(existsSync(preservedOriginal)).toBe(false);
+      for (const [path, bytes] of immutable) expect(readFileSync(path)).toEqual(bytes);
+    } finally {
+      if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = oldHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects foreign, symlinked, duplicate, and platform-mismatched state without mutation", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-shim-runtime-invalid-"));
+    const oldHome = process.env.OPENCODEX_HOME;
+    try {
+      process.env.OPENCODEX_HOME = home;
+      const wrapper = join(home, "codex");
+      const backup = join(home, "codex.opencodex-real");
+      writeFileSync(backup, "backup", "utf8");
+      writeFileSync(wrapper, "foreign wrapper", "utf8");
+      const statePath = writeRuntimeState(home, "linux", [{ wrapperPath: wrapper, backupPath: backup }]);
+      const original = readFileSync(wrapper);
+      expect(refreshCodexShimRuntime({ platform: "linux" }).refreshed).toBe(false);
+      expect(readFileSync(wrapper)).toEqual(original);
+
+      writeFileSync(wrapper, legacy(buildUnixCodexShim(backup, "/old/bun", "/old/src/cli/index.ts")), { mode: 0o755 });
+      expect(refreshCodexShimRuntime({ platform: "win32" }).refreshed).toBe(false);
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      state.wrappers.push({ ...state.wrappers[0] });
+      writeFileSync(statePath, `${JSON.stringify(state)}\n`, "utf8");
+      expect(refreshCodexShimRuntime({ platform: "linux" }).refreshed).toBe(false);
+
+      writeRuntimeState(home, "linux", [{ wrapperPath: wrapper, backupPath: backup }]);
+      const target = join(home, "state-target.json");
+      renameSync(statePath, target);
+      symlinkSync(target, statePath);
+      expect(refreshCodexShimRuntime({ platform: "linux" }).refreshed).toBe(false);
+    } finally {
+      if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = oldHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a later-wrapper race rolls back all earlier wrapper bytes and modes", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-shim-runtime-race-"));
+    const oldHome = process.env.OPENCODEX_HOME;
+    try {
+      process.env.OPENCODEX_HOME = home;
+      const files = ["codex.cmd", "codex.ps1"].map(name => {
+        const wrapperPath = join(home, name);
+        const backupPath = join(home, name.replace(".", ".opencodex-real."));
+        writeFileSync(backupPath, `backup ${name}`, "utf8");
+        writeFileSync(wrapperPath, legacy(buildWindowsCodexShim(backupPath, "old", "old/src/cli/index.ts")), { mode: 0o640 });
+        return { wrapperPath, backupPath };
+      });
+      const statePath = writeRuntimeState(home, "win32", files);
+      const before = files.map(file => ({ bytes: readFileSync(file.wrapperPath), mode: statSync(file.wrapperPath).mode & 0o777 }));
+      const stateBytes = readFileSync(statePath);
+      const backupBytes = files.map(file => readFileSync(file.backupPath));
+
+      const result = refreshCodexShimRuntime({
+        platform: "win32",
+        runtime: { bun: "new", cli: "new/src/cli/index.ts" },
+        beforeWrite: (path, index) => {
+          if (index === 1) writeFileSync(path, "concurrent replacement", "utf8");
+        },
+      });
+
+      expect(result.refreshed).toBe(false);
+      expect(readFileSync(files[0].wrapperPath)).toEqual(before[0].bytes);
+      expect(statSync(files[0].wrapperPath).mode & 0o777).toBe(before[0].mode);
+      expect(readFileSync(files[1].wrapperPath, "utf8")).toBe("concurrent replacement");
+      expect(readFileSync(statePath)).toEqual(stateBytes);
+      files.forEach((file, index) => expect(readFileSync(file.backupPath)).toEqual(backupBytes[index]));
+    } finally {
+      if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = oldHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("an injected later write failure rolls back every changed wrapper", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-shim-runtime-failure-"));
+    const oldHome = process.env.OPENCODEX_HOME;
+    try {
+      process.env.OPENCODEX_HOME = home;
+      const files = ["codex.cmd", "codex.ps1"].map(name => {
+        const wrapperPath = join(home, name);
+        const backupPath = join(home, name.replace(".", ".opencodex-real."));
+        writeFileSync(backupPath, `backup ${name}`, "utf8");
+        writeFileSync(wrapperPath, legacy(buildWindowsCodexShim(backupPath, "old", "old/src/cli/index.ts")), { mode: 0o644 });
+        return { wrapperPath, backupPath };
+      });
+      writeRuntimeState(home, "win32", files);
+      const before = files.map(file => readFileSync(file.wrapperPath));
+
+      const result = refreshCodexShimRuntime({
+        platform: "win32",
+        runtime: { bun: "new", cli: "new/src/cli/index.ts" },
+        beforeWrite: (_path, index) => {
+          if (index === 1) throw new Error("injected write failure");
+        },
+      });
+
+      expect(result.refreshed).toBe(false);
+      expect(result.message).toContain("injected write failure");
+      files.forEach((file, index) => expect(readFileSync(file.wrapperPath)).toEqual(before[index]));
+    } finally {
+      if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = oldHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("symlinked wrappers and backups are rejected", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-shim-runtime-symlink-"));
+    const oldHome = process.env.OPENCODEX_HOME;
+    try {
+      process.env.OPENCODEX_HOME = home;
+      const wrapper = join(home, "codex");
+      const backup = join(home, "codex.opencodex-real");
+      const wrapperTarget = join(home, "wrapper-target");
+      writeFileSync(wrapperTarget, legacy(buildUnixCodexShim(backup, "old", "old/src/cli/index.ts")), { mode: 0o755 });
+      writeFileSync(backup, "backup", "utf8");
+      symlinkSync(wrapperTarget, wrapper);
+      writeRuntimeState(home, "linux", [{ wrapperPath: wrapper, backupPath: backup }]);
+      expect(refreshCodexShimRuntime({ platform: "linux" }).refreshed).toBe(false);
+      rmSync(wrapper);
+      renameSync(wrapperTarget, wrapper);
+      const backupTarget = join(home, "backup-target");
+      renameSync(backup, backupTarget);
+      symlinkSync(backupTarget, backup);
+      expect(refreshCodexShimRuntime({ platform: "linux" }).refreshed).toBe(false);
+    } finally {
+      if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = oldHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

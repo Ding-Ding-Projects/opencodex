@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getConfigDir, loadConfig, readPid, readRuntimePort } from "../config";
+import { preferredDurableRuntime } from "../lib/runtime-entry";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "./tray-update-plan.mjs";
 
 /**
@@ -21,6 +22,14 @@ export function historyRestoreIncomplete(configDir = getConfigDir()): boolean {
 
 export const PKG = "@bitkyc08/opencodex";
 const HERE = dirname(fileURLToPath(import.meta.url)); // .../opencodex/src/update
+const PACKAGE_ROOT = join(HERE, "..", "..");
+
+function postInstallRuntimeEntry(): { runtime: string; cli: string } {
+  return preferredDurableRuntime(PACKAGE_ROOT, {
+    runtime: process.execPath,
+    cli: process.argv[1],
+  });
+}
 
 export type Installer = "bun" | "npm" | "source";
 export type Channel = "latest" | "preview";
@@ -255,25 +264,22 @@ export async function runUpdate(): Promise<void> {
   if (installStdio === "pipe") logSpawnOutput("", r);
   if (r.status === 0) {
     console.log(`\n✅ Updated${latest ? ` to v${latest}` : ""}.`);
-    // Re-bake the bundled Bun path into the Codex autostart shim on every
-    // platform when one is installed (refresh-only; never installs fresh).
-    try {
-      const { isCodexShimInstalled, installCodexShim } = await import("../codex/shim");
-      if (isCodexShimInstalled()) {
-        const result = installCodexShim();
-        if (result.installed) console.log(`🔧 ${result.message}`);
-      }
-    } catch (e) {
-      console.warn(`⚠️  Shim repair skipped: ${e instanceof Error ? e.message : e}`);
+    const postInstall = postInstallRuntimeEntry();
+    const shim = spawnSync(postInstall.runtime, [postInstall.cli, "codex-shim", "refresh-runtime"], {
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    if (shim.status !== 0) {
+      console.warn("⚠️  Shim runtime refresh failed; retained Bun remains valid. Run 'ocx codex-shim refresh-runtime'.");
     }
     if (trayWasInstalled) {
-      const trayArgs = [process.argv[1], ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
-      const tray = spawnSync(process.execPath, trayArgs, { stdio: "inherit", windowsHide: true });
+      const trayArgs = [postInstall.cli, ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
+      const tray = spawnSync(postInstall.runtime, trayArgs, { stdio: "inherit", windowsHide: true });
       if (tray.status === 0) {
         console.log("🔧 Refreshed Windows tray startup paths.");
       } else {
         console.warn("⚠️  Windows tray refresh failed. Run 'ocx tray install'.");
-        if (trayWasRunning) spawnSync(process.execPath, [process.argv[1], "tray", "start"], { stdio: "ignore", windowsHide: true });
+        if (trayWasRunning) spawnSync(postInstall.runtime, [postInstall.cli, "tray", "start"], { stdio: "ignore", windowsHide: true });
       }
     }
     // The stop above unloaded any managed service; reinstall it with the NEW files
@@ -297,7 +303,7 @@ export async function runUpdate(): Promise<void> {
       process.env.OCX_BAKE_PORT = String(capturedListen.port);
       try {
         const svcStdio = updateChildStdio();
-        const svc = spawnSync(process.execPath, [process.argv[1], ...serviceReinstallArgs()], {
+        const svc = spawnSync(postInstall.runtime, [postInstall.cli, ...serviceReinstallArgs()], {
           stdio: svcStdio,
           encoding: svcStdio === "pipe" ? "utf8" : undefined,
           windowsHide: true,
@@ -316,7 +322,7 @@ export async function runUpdate(): Promise<void> {
             console.warn("   Run 'ocx service install' as administrator to refresh the background service.");
             const env = { ...process.env };
             delete env.OCX_SERVICE;
-            const child = spawn(process.execPath, [process.argv[1], "start", "--port", String(capturedListen.port)], {
+            const child = spawn(postInstall.runtime, [postInstall.cli, "start", "--port", String(capturedListen.port)], {
               detached: true,
               stdio: "ignore",
               windowsHide: true,

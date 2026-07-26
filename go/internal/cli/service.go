@@ -211,7 +211,7 @@ func serviceBaseURLAt(cfg config.Config, port int) string {
 }
 
 func serviceConfig(cfg config.Config) service.Config {
-	executable, _ := os.Executable()
+	runtimeCommand := processRuntimeCommand()
 	dir, _ := configDir()
 	path, _ := configPath()
 	port := cfg.Port
@@ -229,8 +229,11 @@ func serviceConfig(cfg config.Config) service.Config {
 	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
 		arguments = append(arguments, "--codex-home", codexHome)
 	}
+	if runtimeCommand.Launcher != "" {
+		arguments = append([]string{runtimeCommand.Launcher}, arguments...)
+	}
 	return service.Config{
-		Executable:  executable,
+		Executable:  runtimeCommand.Executable,
 		Arguments:   arguments,
 		Environment: environment,
 		LogPath:     filepath.Join(dir, "service.log"),

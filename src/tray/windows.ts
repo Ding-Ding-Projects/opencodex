@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandUserPath, getConfigDir } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
+import { preferredDurableRuntime } from "../lib/runtime-entry";
 import { hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
 
 const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -80,9 +81,15 @@ function currentCodexHome(): string {
 }
 
 function currentEntry(): WindowsTrayEntry {
+  return windowsTrayRuntimeEntry();
+}
+
+export function windowsTrayRuntimeEntry(packageRoot = join(import.meta.dir, "..", "..")): WindowsTrayEntry {
+  const fallback = { runtime: durableBunPath(), cli: join(import.meta.dir, "..", "cli", "index.ts") };
+  const entry = preferredDurableRuntime(packageRoot, fallback);
   return {
-    bun: durableBunPath(),
-    cli: join(import.meta.dir, "..", "cli", "index.ts"),
+    bun: entry.runtime,
+    cli: entry.cli,
     script: installedTrayScriptPath(),
     codexHome: currentCodexHome(),
     opencodexHome: getConfigDir(),
