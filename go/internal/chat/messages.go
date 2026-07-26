@@ -18,6 +18,10 @@ func NewMessagesHandler(config HandlerConfig) *MessagesHandler {
 }
 
 func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	if h.config.ClaudeEnabled != nil && !*h.config.ClaudeEnabled {
+		writeJSON(w, http.StatusForbidden, anthropicErrorBody(http.StatusForbidden, "Claude inbound is disabled", "permission_error"))
+		return
+	}
 	raw, err := readRequestBody(w, r, h.config.BodyLimit)
 	if err != nil {
 		writeAnthropicError(w, 400, err.Error())
@@ -48,6 +52,7 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		if message == "" {
 			message = fmt.Sprintf("upstream error (%d)", response.StatusCode)
 		}
+		copyRetryAfter(w.Header(), response.Header)
 		writeAnthropicError(w, response.StatusCode, message)
 		return
 	}

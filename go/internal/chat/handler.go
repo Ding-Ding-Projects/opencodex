@@ -34,6 +34,7 @@ type HandlerConfig struct {
 	NativeCompact   func(*types.ResolvedModel) bool
 	ConnectTimeout  time.Duration
 	BodyStall       time.Duration
+	ClaudeEnabled   *bool
 }
 
 type Handler struct{ config HandlerConfig }
@@ -70,6 +71,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		if message == "" {
 			message = fmt.Sprintf("upstream error (%d)", response.StatusCode)
 		}
+		copyRetryAfter(w.Header(), response.Header)
 		writeChatError(w, response.StatusCode, message)
 		return
 	}
@@ -96,6 +98,12 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, completion)
+}
+
+func copyRetryAfter(destination, source http.Header) {
+	if value := strings.TrimSpace(source.Get("Retry-After")); value != "" {
+		destination.Set("Retry-After", value)
+	}
 }
 
 type preparedRequest struct {

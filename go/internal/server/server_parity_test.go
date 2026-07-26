@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -77,6 +79,36 @@ func TestResponsesWebSocketDisabledAndPanicBoundary(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "secret-bearing") || strings.Contains(logs.String(), "secret-bearing") {
 		t.Fatalf("panic value leaked: response=%s logs=%s", response.Body.String(), logs.String())
+	}
+}
+
+func TestServerDynamicallyAppliesManagedAPIKeysAndClaudeToggle(t *testing.T) {
+	oldSecret := "ocx_existing_admission_secret_12345"
+	newSecret := "ocx_new_admission_secret_678901234"
+	disabled := false
+	cfg := appconfig.Default()
+	cfg.Host = "0.0.0.0"
+	cfg.APIKeys = []appconfig.ProxyAPIKey{{ID: "existing", Name: "existing", Key: oldSecret, CreatedAt: "2026-01-01T00:00:00Z"}}
+	cfg.ClaudeCode = &appconfig.ClaudeCodeConfig{Enabled: &disabled}
+	var logs bytes.Buffer
+	var refreshes atomic.Int32
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	proxy := New(Config{ManagementConfig: &cfg, Logger: logger, RefreshCatalog: func() error { refreshes.Add(1); return nil }})
+
+	create := serveRequest(proxy.Handler(), http.MethodPost, "/api/keys", `{"name":"new","key":"`+newSecret+`"}`, http.Header{"Authorization": {"Bearer " + oldSecret}})
+	if create.Code != http.StatusCreated || strings.Contains(create.Body.String(), newSecret) {
+		t.Fatalf("create=%d %s", create.Code, create.Body.String())
+	}
+	authorized := serveRequest(proxy.Handler(), http.MethodGet, "/api/system", "", http.Header{"Authorization": {"Bearer " + newSecret}})
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("new key was not activated without restart: %d %s", authorized.Code, authorized.Body.String())
+	}
+	claude := serveRequest(proxy.Handler(), http.MethodPost, "/v1/messages/count_tokens", `{"model":"m","messages":[]}`, http.Header{"X-Api-Key": {newSecret}})
+	if claude.Code != http.StatusForbidden || !strings.Contains(claude.Body.String(), `"type":"permission_error"`) {
+		t.Fatalf("Claude disabled response=%d %s", claude.Code, claude.Body.String())
+	}
+	if refreshes.Load() != 1 || strings.Contains(logs.String(), oldSecret) || strings.Contains(logs.String(), newSecret) {
+		t.Fatalf("refreshes=%d logs=%s", refreshes.Load(), logs.String())
 	}
 }
 

@@ -411,10 +411,107 @@ func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {
 		if failure.retryAfter != "" {
 			w.Header().Set("Retry-After", failure.retryAfter)
 		}
-		writeJSONError(w, failure.status, failure.kind, failure.err.Error())
+		writeClassifiedJSONError(w, failure.status, failure.kind, failure.err.Error())
 		return
 	}
 	writeJSONError(w, http.StatusBadGateway, "server_error", err.Error())
+}
+
+func writeClassifiedJSONError(w http.ResponseWriter, status int, kind, message string) {
+	errorType, code := classifyResponsesError(status, kind, message)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+		"message": message,
+		"type":    errorType,
+		"code":    code,
+	}})
+}
+
+// classifyResponsesError mirrors the public Responses error taxonomy used by
+// the TypeScript bridge. Status wins for protocol-significant cases while
+// provider text refines quota, permission, and request-size failures.
+func classifyResponsesError(status int, kind, message string) (string, any) {
+	text := strings.ToLower(message)
+	containsAny := func(values ...string) bool {
+		for _, value := range values {
+			if strings.Contains(text, value) {
+				return true
+			}
+		}
+		return false
+	}
+	if kind == "client_cancelled" {
+		return "client_cancelled", "client_cancelled"
+	}
+	if status == 499 || kind == "client_closed_request" || containsAny("client closed request", "client cancelled request", "client canceled request", "request canceled by client", "request cancelled by client") {
+		return "invalid_request_error", "client_closed_request"
+	}
+	if containsAny("context_length_exceeded", "context window", "context length", "maximum context", "too many tokens") {
+		return "invalid_request_error", "context_length_exceeded"
+	}
+	if strings.Contains(text, "cursor resource limit exceeded") {
+		return "invalid_request_error", "tool_catalog_too_large"
+	}
+	if strings.Contains(text, "cursor rate limit exceeded") {
+		return "rate_limit_error", "rate_limit_exceeded"
+	}
+	if containsAny("insufficient_quota", "exceeded your current quota", "quota exhausted", "account quota exceeded", "monthly quota exceeded", "daily quota exceeded") {
+		return "insufficient_quota", "insufficient_quota"
+	}
+	if status == http.StatusTooManyRequests || containsAny("rate limit", "rate limited", "too many requests", "resource_exhausted", "resource exhausted", "throttlingexception", "throttling") {
+		return "rate_limit_error", "rate_limit_exceeded"
+	}
+	if kind == "origin_rejected" {
+		return "invalid_request_error", "origin_rejected"
+	}
+	if status == http.StatusUnauthorized || kind == "authentication_error" || authenticationFailureText(text) {
+		return "authentication_error", "invalid_api_key"
+	}
+	if (status == http.StatusForbidden || kind == "permission_error") && subscriptionFailureText(text) {
+		return "permission_error", "subscription_required"
+	}
+	if status == http.StatusForbidden || kind == "permission_error" || permissionFailureText(text) {
+		return "permission_error", "permission_denied"
+	}
+	if status == http.StatusServiceUnavailable || containsAny("overloaded", "server is busy", "temporarily unavailable") {
+		return "server_error", "server_is_overloaded"
+	}
+	if containsAny("validationexception", "invalid request", "model unavailable", "model not found", "unsupported model", "profile arn", "wrong region", "invalid region") {
+		return "invalid_request_error", "invalid_request_error"
+	}
+	if status >= 500 {
+		return "server_error", "upstream_server_error"
+	}
+	if status == http.StatusBadRequest || kind == "invalid_request_error" {
+		return "invalid_request_error", "invalid_request_error"
+	}
+	if kind == "" {
+		return kind, nil
+	}
+	return kind, kind
+}
+
+func authenticationFailureText(text string) bool {
+	credentialCue := strings.Contains(text, "authentication") || strings.Contains(text, "credential") || strings.Contains(text, "api key") || strings.Contains(text, "token") || strings.Contains(text, "signature")
+	return strings.Contains(text, "authentication failed") || strings.Contains(text, "authentication") || strings.Contains(text, "invalid_api_key") || strings.Contains(text, "invalid api key") || strings.Contains(text, "invalid token") || strings.Contains(text, "unauthorizedexception") || strings.Contains(text, "unrecognizedclientexception") || strings.Contains(text, "unrecognizedclient") || strings.Contains(text, "expired token") || strings.Contains(text, "expiredtoken") || strings.Contains(text, "unauthenticated") || strings.Contains(text, "unauthorized") || (containsText(text, "access denied", "accessdeniedexception") && credentialCue)
+}
+
+func subscriptionFailureText(text string) bool {
+	return containsText(text, "requires a subscription", "requires subscription", "subscription required", "upgrade for access", "upgrade to pro", "pro subscription", "ollama.com/upgrade") || (strings.Contains(text, "upgrade") && strings.Contains(text, "subscription"))
+}
+
+func permissionFailureText(text string) bool {
+	return containsText(text, "permission_denied", "permission denied", "forbidden", "access denied", "accessdeniedexception", "not allowed to use", "model access")
+}
+
+func containsText(text string, values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(text, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func (core *ResponsesCore) nextRequestID() string {

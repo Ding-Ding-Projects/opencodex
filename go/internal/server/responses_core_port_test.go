@@ -197,3 +197,57 @@ func TestResponsesCoreExtractsQuotaHeadersBehindCallback(t *testing.T) {
 		t.Fatal("quota callback mutated the upstream response headers")
 	}
 }
+
+func TestResponsesCoreClassifiesUpstreamErrorAndPreservesRetryAfter(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"quota exhausted"}}`)
+	}))
+	defer upstream.Close()
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL},
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return coreAdapter{endpoint: transport.BaseURL}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "7" {
+		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Type string `json:"type"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Type != "insufficient_quota" || body.Error.Code != "insufficient_quota" {
+		t.Fatalf("classified error = %#v, body=%s", body.Error, response.Body.String())
+	}
+}
+
+func TestClassifyResponsesErrorStatusAndMessagePrecedence(t *testing.T) {
+	tests := []struct {
+		status     int
+		kind, text string
+		wantType   string
+		wantCode   any
+	}{
+		{429, "upstream_error", "rate limited", "rate_limit_error", "rate_limit_exceeded"},
+		{401, "upstream_error", "upgrade required", "authentication_error", "invalid_api_key"},
+		{403, "upstream_error", "subscription required", "permission_error", "subscription_required"},
+		{503, "upstream_error", "temporarily unavailable", "server_error", "server_is_overloaded"},
+		{502, "upstream_error", "provider failed", "server_error", "upstream_server_error"},
+	}
+	for _, test := range tests {
+		gotType, gotCode := classifyResponsesError(test.status, test.kind, test.text)
+		if gotType != test.wantType || gotCode != test.wantCode {
+			t.Errorf("classify(%d, %q, %q) = (%q, %v), want (%q, %v)", test.status, test.kind, test.text, gotType, gotCode, test.wantType, test.wantCode)
+		}
+	}
+}

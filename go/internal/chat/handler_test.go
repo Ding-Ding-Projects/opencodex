@@ -81,6 +81,40 @@ func TestHandlerRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestChatHandlersPreserveUpstreamRetryAfter(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "17")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"quota exhausted"}}`)
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	config := HandlerConfig{Registry: reg, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+		return handlerAdapter{endpoint: upstream.URL}, nil
+	}}
+	tests := []struct {
+		name string
+		body string
+		run  func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "chat completions", body: `{"model":"acme/wire","messages":[{"role":"user","content":"hi"}]}`, run: NewHandler(config).Handle},
+		{name: "Claude messages", body: `{"model":"acme/wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`, run: NewMessagesHandler(config).Handle},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			test.run(response, request)
+			if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "17" {
+				t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), `"type":"rate_limit_error"`) || !strings.Contains(response.Body.String(), "quota exhausted") {
+				t.Fatalf("error body = %s", response.Body.String())
+			}
+		})
+	}
+}
+
 func TestMessagesHandlerNativeAnthropicPassthrough(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != "native-key" {

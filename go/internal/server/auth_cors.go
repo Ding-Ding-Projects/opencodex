@@ -76,11 +76,20 @@ func AssertServerAuthConfig(config MiddlewareConfig) error {
 }
 
 func proxyAdmissionSecrets(config MiddlewareConfig) []string {
-	secrets := make([]string, 0, len(config.APIKeys)+1)
+	dynamic := []string(nil)
+	if config.APIKeySource != nil {
+		dynamic = config.APIKeySource()
+	}
+	secrets := make([]string, 0, len(config.APIKeys)+len(dynamic)+1)
 	if token := strings.TrimSpace(config.Token); token != "" {
 		secrets = append(secrets, token)
 	}
 	for _, key := range config.APIKeys {
+		if key = strings.TrimSpace(key); key != "" {
+			secrets = append(secrets, key)
+		}
+	}
+	for _, key := range dynamic {
 		if key = strings.TrimSpace(key); key != "" {
 			secrets = append(secrets, key)
 		}

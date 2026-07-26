@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 func TestCountTokensHandlerMatchesAnthropicContract(t *testing.T) {
-	handler := NewCountTokensHandler(0)
+	handler := NewCountTokensHandler(HandlerConfig{})
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(`{"model":"claude-sonnet[1M]","system":"system","messages":[{"role":"user","content":"한국어 메시지입니다"}],"tools":[{"name":"run"}]}`))
 	handler.Handle(response, request)
@@ -25,7 +27,7 @@ func TestCountTokensHandlerMatchesAnthropicContract(t *testing.T) {
 }
 
 func TestCountTokensHandlerHonorsRouteDirective(t *testing.T) {
-	handler := NewCountTokensHandler(0)
+	handler := NewCountTokensHandler(HandlerConfig{})
 	count := func(system string) int {
 		response := httptest.NewRecorder()
 		body := `{"model":"fallback","system":` + system + `,"messages":[{"role":"user","content":"12345678"}]}`
@@ -40,5 +42,17 @@ func TestCountTokensHandlerHonorsRouteDirective(t *testing.T) {
 	routed := count(`"<!-- ocx-route: claude-opus -->"`)
 	if routed <= plain {
 		t.Fatalf("route directive did not select the Claude estimator: plain=%d routed=%d", plain, routed)
+	}
+}
+
+func TestClaudeDisabledRejectsMessagesAndCountTokens(t *testing.T) {
+	disabled := false
+	config := HandlerConfig{ClaudeEnabled: &disabled}
+	for _, handler := range []types.RouteHandler{NewMessagesHandler(config), NewCountTokensHandler(config)} {
+		response := httptest.NewRecorder()
+		handler.Handle(response, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"x"}]}`)))
+		if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"type":"permission_error"`) {
+			t.Fatalf("disabled response=%d %s", response.Code, response.Body.String())
+		}
 	}
 }

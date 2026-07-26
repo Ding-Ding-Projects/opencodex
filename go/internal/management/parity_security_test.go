@@ -131,7 +131,7 @@ func TestProviderContextCapsSupportGlobalSetAllAndPersistence(t *testing.T) {
 		t.Fatalf("all=%d %s config=%#v", all.Code, all.Body.String(), cfg.ProviderContextCaps)
 	}
 	unknown := serveManagement(api, http.MethodPut, "/api/provider-context-caps", `{"provider":"missing","enabled":true}`)
-	if unknown.Code != http.StatusNotFound || len(cfg.ProviderContextCaps) != 2 {
+	if _, added := cfg.ProviderContextCaps["missing"]; unknown.Code != http.StatusNotFound || added || cfg.ProviderContextCaps["a"] != 500000 || cfg.ProviderContextCaps["b"] != 500000 {
 		t.Fatalf("unknown=%d %s config=%#v", unknown.Code, unknown.Body.String(), cfg.ProviderContextCaps)
 	}
 }

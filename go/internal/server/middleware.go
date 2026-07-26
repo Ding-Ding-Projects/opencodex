@@ -34,6 +34,7 @@ func recoveryMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 type MiddlewareConfig struct {
 	Token          string
 	APIKeys        []string
+	APIKeySource   func() []string
 	Hostname       string
 	Port           int
 	AllowedOrigins []string

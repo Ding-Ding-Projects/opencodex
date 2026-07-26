@@ -13,19 +13,20 @@ import (
 // CountTokensHandler implements Anthropic's count_tokens compatibility route.
 // Routed providers use the same deterministic approximation as the TypeScript
 // server; native passthrough remains an adapter-level concern.
-type CountTokensHandler struct{ bodyLimit int64 }
+type CountTokensHandler struct{ config HandlerConfig }
 
 var _ types.RouteHandler = (*CountTokensHandler)(nil)
 
-func NewCountTokensHandler(bodyLimit int64) *CountTokensHandler {
-	if bodyLimit <= 0 {
-		bodyLimit = defaultRequestBodyLimit
-	}
-	return &CountTokensHandler{bodyLimit: bodyLimit}
+func NewCountTokensHandler(config HandlerConfig) *CountTokensHandler {
+	return &CountTokensHandler{config: withHandlerDefaults(config)}
 }
 
 func (h *CountTokensHandler) Handle(w http.ResponseWriter, request *http.Request) {
-	raw, err := readRequestBody(w, request, h.bodyLimit)
+	if h.config.ClaudeEnabled != nil && !*h.config.ClaudeEnabled {
+		writeJSON(w, http.StatusForbidden, anthropicErrorBody(http.StatusForbidden, "Claude inbound is disabled", "permission_error"))
+		return
+	}
+	raw, err := readRequestBody(w, request, h.config.BodyLimit)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, err.Error())
 		return

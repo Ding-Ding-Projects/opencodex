@@ -11,42 +11,46 @@ import (
 )
 
 type Options struct {
-	Config      *config.Config
-	ConfigPath  string
-	Registry    types.Registry
-	UsageLog    *usage.Log
-	DebugLog    *usage.DebugLog
-	RequestLogs *RequestLog
-	OAuth       OAuthBackend
-	FetchModels ModelFetcher
-	StorageHome string
-	Version     string
-	Stop        func()
+	Config           *config.Config
+	ConfigPath       string
+	Registry         types.Registry
+	UsageLog         *usage.Log
+	DebugLog         *usage.DebugLog
+	RequestLogs      *RequestLog
+	OAuth            OAuthBackend
+	FetchModels      ModelFetcher
+	StorageHome      string
+	Version          string
+	Stop             func()
+	RefreshCatalog   func() error
+	OnAPIKeysChanged func([]config.ProxyAPIKey)
 	// Authorize is an optional defense-in-depth admission hook for callers that
 	// register the management router without the server's global middleware.
 	Authorize func(*http.Request) bool
 }
 
 type API struct {
-	mu           sync.RWMutex
-	config       *config.Config
-	configPath   string
-	registry     types.Registry
-	usageLog     *usage.Log
-	debugLog     *usage.DebugLog
-	requestLogs  *RequestLog
-	oauth        OAuthBackend
-	fetchModels  ModelFetcher
-	storageHome  string
-	version      string
-	stop         func()
-	authorize    func(*http.Request) bool
-	customModels map[string]CustomModel
-	aliases      map[string]string
-	contextCaps  map[string]int
-	combos       map[string]Combo
-	agents       AgentSettings
-	debugEnabled bool
+	mu               sync.RWMutex
+	config           *config.Config
+	configPath       string
+	registry         types.Registry
+	usageLog         *usage.Log
+	debugLog         *usage.DebugLog
+	requestLogs      *RequestLog
+	oauth            OAuthBackend
+	fetchModels      ModelFetcher
+	storageHome      string
+	version          string
+	stop             func()
+	refreshCatalog   func() error
+	onAPIKeysChanged func([]config.ProxyAPIKey)
+	authorize        func(*http.Request) bool
+	customModels     map[string]CustomModel
+	aliases          map[string]string
+	contextCaps      map[string]int
+	combos           map[string]Combo
+	agents           AgentSettings
+	debugEnabled     bool
 }
 
 func New(options Options) (*API, error) {
@@ -75,7 +79,7 @@ func New(options Options) (*API, error) {
 	for _, model := range cfg.CustomModels {
 		customModels[model.ID] = model
 	}
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
+	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, oauth: options.OAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving
@@ -87,6 +91,7 @@ var routes = []string{
 	"GET /api/providers", "POST /api/providers", "PATCH /api/providers", "DELETE /api/providers", "POST /api/providers/test", "GET /api/provider-presets",
 	"GET /api/models", "PUT /api/disabled-models", "PUT /api/model-visibility", "GET /api/selected-models", "PUT /api/selected-models", "GET /api/custom-models", "POST /api/custom-models", "PUT /api/custom-models/{id}", "DELETE /api/custom-models/{id}", "GET /api/model-aliases", "PUT /api/model-aliases", "GET /api/provider-context-caps", "PUT /api/provider-context-caps",
 	"GET /api/oauth/providers", "POST /api/oauth/login", "POST /api/oauth/login/cancel", "POST /api/oauth/login/code", "GET /api/oauth/status", "POST /api/oauth/logout", "GET /api/oauth/accounts", "PUT /api/oauth/accounts/active", "PUT /api/oauth/accounts/alias", "DELETE /api/oauth/accounts",
+	"GET /api/key-providers", "GET /api/providers/keys", "POST /api/providers/keys", "DELETE /api/providers/keys", "PUT /api/providers/keys/active", "PUT /api/providers/keys/alias", "GET /api/keys", "POST /api/keys", "DELETE /api/keys",
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
 	"GET /api/logs", "DELETE /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "DELETE /api/debug/usage-logs", "GET /api/usage", "DELETE /api/usage", "GET /api/storage",
 	"GET /api/system", "GET /api/system/memory", "GET /api/system/runtime", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
@@ -108,7 +113,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
-	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleOAuth, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
+	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
 		if handler(w, r) {
 			return
 		}
@@ -124,10 +129,15 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) saveLocked() error {
-	if a.configPath == "" {
-		return nil
+	if a.configPath != "" {
+		if err := config.Save(a.configPath, a.config); err != nil {
+			return err
+		}
 	}
-	return config.Save(a.configPath, a.config)
+	if a.refreshCatalog != nil {
+		_ = a.refreshCatalog()
+	}
+	return nil
 }
 func (a *API) runtimeInfo() map[string]any {
 	return map[string]any{"version": a.version, "goVersion": runtime.Version(), "platform": runtime.GOOS, "architecture": runtime.GOARCH}

@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/chat"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
@@ -50,6 +53,7 @@ type Config struct {
 	LiveResolver       LiveRelayResolver
 	ReadinessChecks    map[string]func(context.Context) error
 	WebSockets         bool
+	RefreshCatalog     func() error
 }
 
 type Server struct {
@@ -67,6 +71,26 @@ func New(config Config) *Server {
 		config.Lifecycle = NewLifecycle()
 	}
 	handlerConfig := chat.HandlerConfig{Registry: config.Registry, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client}
+	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
+		claudeConfig := config.ManagementConfig.ClaudeCode
+		handlerConfig.ClaudeEnabled = claudeConfig.Enabled
+		if claudeConfig.BodyStallSec > 0 {
+			handlerConfig.BodyStall = time.Duration(claudeConfig.BodyStallSec) * time.Second
+		}
+		if claudeConfig.BodyMaxBytes > 0 {
+			handlerConfig.ResponseLimit = claudeConfig.BodyMaxBytes
+		}
+		if claudeConfig.NativePassthrough != nil {
+			enabled := *claudeConfig.NativePassthrough
+			handlerConfig.NativeAnthropic = func(model *types.ResolvedModel) bool {
+				if !enabled || model == nil {
+					return false
+				}
+				provider := strings.ToLower(model.Provider)
+				return provider == "anthropic" || provider == "claude"
+			}
+		}
+	}
 	if config.ChatHandler == nil {
 		config.ChatHandler = chat.NewHandler(handlerConfig)
 	}
@@ -74,7 +98,7 @@ func New(config Config) *Server {
 		config.MessagesHandler = chat.NewMessagesHandler(handlerConfig)
 	}
 	if config.CountTokensHandler == nil {
-		config.CountTokensHandler = chat.NewCountTokensHandler(handlerConfig.BodyLimit)
+		config.CountTokensHandler = chat.NewCountTokensHandler(handlerConfig)
 	}
 	if config.CompactHandler == nil {
 		config.CompactHandler = chat.NewCompactHandler(handlerConfig)
@@ -143,9 +167,23 @@ func New(config Config) *Server {
 	mux.HandleFunc("GET /health/startup", health.Startup)
 	mux.Handle("GET /v1/responses/ws", WebSocketBridge(s.responses))
 	managementRouter := config.Management
+	admissionKeys := newAdmissionKeySnapshot(nil)
+	if config.ManagementConfig != nil {
+		admissionKeys.Set(config.ManagementConfig.APIKeys)
+	}
+	refreshCatalog := config.RefreshCatalog
+	if refreshCatalog == nil {
+		home := strings.TrimSpace(config.StorageHome)
+		if home == "" {
+			home = codex.ResolveCodexHome(codex.HomeOptions{})
+		}
+		refreshCatalog = func() error {
+			return codex.InvalidateCodexModelsCache(filepath.Join(home, "opencodex-catalog.json"), filepath.Join(home, "models_cache.json"))
+		}
+	}
 	if managementRouter == nil {
 		usageLog, _ := config.UsageRecorder.(*usage.Log)
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, OAuth: config.OAuthManagement, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, OAuth: config.OAuthManagement, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {
@@ -159,6 +197,7 @@ func New(config Config) *Server {
 	mux.HandleFunc("/v1/", unknownV1)
 	mux.Handle("/", StaticHandler())
 	middlewareConfig := MiddlewareConfig{Token: config.Token, Hostname: s.config.Hostname, AllowedOrigins: config.AllowedOrigins, Logger: config.Logger}
+	middlewareConfig.APIKeySource = admissionKeys.Get
 	if config.ManagementConfig != nil {
 		middlewareConfig.Port = config.ManagementConfig.Port
 		if middlewareConfig.Token == "" {
@@ -170,6 +209,35 @@ func New(config Config) *Server {
 	}
 	s.handler = Middleware(recoveryMiddleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), config.Logger), middlewareConfig)
 	return s
+}
+
+type admissionKeySnapshot struct {
+	mu   sync.RWMutex
+	keys []string
+}
+
+func newAdmissionKeySnapshot(keys []appconfig.ProxyAPIKey) *admissionKeySnapshot {
+	snapshot := &admissionKeySnapshot{}
+	snapshot.Set(keys)
+	return snapshot
+}
+
+func (snapshot *admissionKeySnapshot) Set(keys []appconfig.ProxyAPIKey) {
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value := strings.TrimSpace(key.Key); value != "" {
+			values = append(values, value)
+		}
+	}
+	snapshot.mu.Lock()
+	snapshot.keys = values
+	snapshot.mu.Unlock()
+}
+
+func (snapshot *admissionKeySnapshot) Get() []string {
+	snapshot.mu.RLock()
+	defer snapshot.mu.RUnlock()
+	return append([]string(nil), snapshot.keys...)
 }
 
 type fanoutRecorder struct {
