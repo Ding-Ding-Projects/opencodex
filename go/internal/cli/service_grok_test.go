@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,36 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/service"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
+
+type serviceActivationManager struct {
+	name       string
+	installed  bool
+	installErr error
+	calls      *[]string
+}
+
+func (m *serviceActivationManager) record(action string) {
+	*m.calls = append(*m.calls, m.name+":"+action)
+}
+func (m *serviceActivationManager) Install() error {
+	m.record("install")
+	if m.installErr == nil {
+		m.installed = true
+	}
+	return m.installErr
+}
+func (m *serviceActivationManager) Start() error { m.record("start"); return nil }
+func (m *serviceActivationManager) Stop() error  { m.record("stop"); return nil }
+func (m *serviceActivationManager) Uninstall() error {
+	m.record("uninstall")
+	m.installed = false
+	return nil
+}
+func (m *serviceActivationManager) Status() (service.Status, error) {
+	m.record("status")
+	return service.Status{Installed: m.installed, Running: m.installed}, nil
+}
+func (m *serviceActivationManager) ArtifactPath() string { return m.name }
 
 type restartTestManager struct {
 	stopErr error
@@ -103,6 +134,89 @@ func TestServiceNativeBackendBuildsWinSWOptionsAndPersistsChoice(t *testing.T) {
 	state := readServiceInstallState()
 	if state == nil || state.Backend != service.BackendNative || state.WinSWVersion != service.WinSWVersion || state.WinSWSHA256 != service.WinSWSHA256 {
 		t.Fatalf("native install state=%#v", state)
+	}
+}
+
+func TestRunServiceActivatesBackendSwitchStatusAndUninstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODEX_HOME", filepath.Join(home, "ocx"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	cfg := config.FreshInstall()
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeServiceInstallState(service.BackendScheduler); err != nil {
+		t.Fatal(err)
+	}
+	originalGOOS, originalFactory := serviceRuntimeGOOS, newServiceManagerWithOptions
+	t.Cleanup(func() { serviceRuntimeGOOS, newServiceManagerWithOptions = originalGOOS, originalFactory })
+	serviceRuntimeGOOS = "windows"
+	var calls []string
+	scheduler := &serviceActivationManager{name: "scheduler", installed: true, calls: &calls}
+	native := &serviceActivationManager{name: "native", calls: &calls}
+	newServiceManagerWithOptions = func(_ service.Config, options service.ManagerOptions) (service.Manager, error) {
+		if options.Backend == service.BackendNative {
+			return native, nil
+		}
+		return scheduler, nil
+	}
+
+	var output bytes.Buffer
+	if err := runService([]string{"install", "--native"}, IO{Out: &output}); err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := []string{"scheduler:status", "scheduler:uninstall", "scheduler:status", "native:install"}
+	if len(calls) < len(wantPrefix) || strings.Join(calls[:len(wantPrefix)], ",") != strings.Join(wantPrefix, ",") {
+		t.Fatalf("switch calls=%v", calls)
+	}
+	if state := readServiceInstallState(); state == nil || state.Backend != service.BackendNative {
+		t.Fatalf("installed state=%#v", state)
+	}
+	calls = nil
+	if err := runService([]string{"status"}, IO{Out: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runService([]string{"uninstall"}, IO{Out: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(calls, ","), "native:status") || !strings.Contains(strings.Join(calls, ","), "native:uninstall") {
+		t.Fatalf("status/uninstall calls=%v", calls)
+	}
+}
+
+func TestRunServiceBackendSwitchReportsNoServiceAfterTargetFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODEX_HOME", filepath.Join(home, "ocx"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	cfg := config.FreshInstall()
+	path, _ := configPath()
+	if err := config.Save(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeServiceInstallState(service.BackendScheduler); err != nil {
+		t.Fatal(err)
+	}
+	originalGOOS, originalFactory := serviceRuntimeGOOS, newServiceManagerWithOptions
+	t.Cleanup(func() { serviceRuntimeGOOS, newServiceManagerWithOptions = originalGOOS, originalFactory })
+	serviceRuntimeGOOS = "windows"
+	var calls []string
+	scheduler := &serviceActivationManager{name: "scheduler", installed: true, calls: &calls}
+	native := &serviceActivationManager{name: "native", installErr: errors.New("synthetic WinSW failure"), calls: &calls}
+	newServiceManagerWithOptions = func(_ service.Config, options service.ManagerOptions) (service.Manager, error) {
+		if options.Backend == service.BackendNative {
+			return native, nil
+		}
+		return scheduler, nil
+	}
+	err := runService([]string{"install", "--native"}, IO{Out: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "no service is installed") || scheduler.installed || native.installed {
+		t.Fatalf("switch failure err=%v scheduler=%t native=%t calls=%v", err, scheduler.installed, native.installed, calls)
 	}
 }
 

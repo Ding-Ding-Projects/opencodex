@@ -19,8 +19,13 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/service"
 )
 
+var (
+	serviceRuntimeGOOS           = runtime.GOOS
+	newServiceManagerWithOptions = service.NewManagerWithOptions
+)
+
 func runService(args []string, streams IO) error {
-	parsed, err := service.ParseArgs(args, runtime.GOOS)
+	parsed, err := service.ParseArgs(args, serviceRuntimeGOOS)
 	if err != nil {
 		return err
 	}
@@ -45,7 +50,7 @@ func runService(args []string, streams IO) error {
 		if err := prepareServiceToken(*cfg); err != nil {
 			return err
 		}
-		if runtime.GOOS == "windows" && readServiceInstallState() != nil && installedBackend != backend {
+		if serviceRuntimeGOOS == "windows" && readServiceInstallState() != nil && installedBackend != backend {
 			current, managerErr := serviceManagerForBackend(*cfg, installedBackend)
 			if managerErr != nil {
 				return managerErr
@@ -124,7 +129,7 @@ func runService(args []string, streams IO) error {
 }
 
 func serviceManagerForBackend(cfg config.Config, backend service.Backend) (service.Manager, error) {
-	return service.NewManagerWithOptions(serviceConfig(cfg), serviceManagerOptions(backend))
+	return newServiceManagerWithOptions(serviceConfig(cfg), serviceManagerOptions(backend))
 }
 
 func serviceManagerOptions(backend service.Backend) service.ManagerOptions {
