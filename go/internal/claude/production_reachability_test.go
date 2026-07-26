@@ -120,6 +120,32 @@ func TestProductionMessagesActivatesClaudeInboundPolicies(t *testing.T) {
 	}
 }
 
+func TestProductionBufferedMessagesUsesClaudeOutboundStateMachine(t *testing.T) {
+	events := []types.AdapterEvent{
+		{Type: types.EventReasoningRawDelta, Text: "private thought"},
+		{Type: types.EventThinkingSignature, Signature: "signed-thinking"},
+		{Type: types.EventRedactedThinking, Data: "redacted-payload"},
+		{Type: types.EventWebSearchCallBegin, ID: "search-1", Queries: []string{"query"}},
+		{Type: types.EventWebSearchCallEnd, ID: "search-1", Sources: []types.URLCitation{{URL: "https://example.com", Title: "Example"}}},
+		{Type: types.EventDone, Usage: &types.Usage{InputTokens: 10, OutputTokens: 2}},
+	}
+	handler, upstream := productionMessagesHandler(t, nil, events)
+	defer upstream.Close()
+	response := invokeMessages(t, handler, map[string]any{
+		"model": "acme/wire", "max_tokens": 32,
+		"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	wire := response.Body.String()
+	for _, want := range []string{"private thought", "signed-thinking", "redacted-payload", "server_tool_use", "web_search_result", "https://example.com", "web_search_requests"} {
+		if !strings.Contains(wire, want) {
+			t.Fatalf("production buffered Anthropic message missing %q: %s", want, wire)
+		}
+	}
+}
+
 func TestProductionDesktopAliasRecordsHealthAndRoutes(t *testing.T) {
 	models := []claude.Desktop3pRoutedModel{{Provider: "acme", ID: "wire"}}
 	claude.BuildDesktop3pRegistry(nil, models)

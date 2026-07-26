@@ -228,6 +228,9 @@ func TestOutboundWebSearchIncompleteAndThinkingSignature(t *testing.T) {
 	if message.StopReason != "end_turn" || len(message.Content) != 3 {
 		t.Fatalf("message=%#v", message)
 	}
+	if signature := message.Content[0]["signature"]; signature != "real-signature" {
+		t.Fatalf("buffered thinking signature=%#v", signature)
+	}
 
 	_, incomplete := ConvertEvents("m", []types.AdapterEvent{{Type: types.EventIncomplete, Reason: "content_filter"}})
 	if incomplete.StopReason != "refusal" {

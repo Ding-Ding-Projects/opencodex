@@ -180,6 +180,9 @@ func (m *anthropicMachine) closeBlock() {
 			signature = "ocx" + fmt.Sprint(time.Now().UnixMilli())
 		}
 		m.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": m.openIndex, "delta": map[string]any{"type": "signature_delta", "signature": signature}})
+		if count := len(m.message.Content); count > 0 && m.message.Content[count-1]["type"] == "thinking" {
+			m.message.Content[count-1]["signature"] = signature
+		}
 		m.thinkingSignature = ""
 	}
 	m.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": m.openIndex})
