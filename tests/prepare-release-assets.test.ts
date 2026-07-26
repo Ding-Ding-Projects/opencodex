@@ -406,4 +406,10 @@ describe("prepare-release-assets", () => {
     expect(result.stderr).toContain("tar metadata stdout exceeded 8388608 bytes");
     expect(existsSync(value.receipt)).toBe(false);
   });
+
+  test("test timeout overrides can only shorten production deadlines", () => {
+    const source = readFileSync(helper, "utf8");
+    expect(source).toContain("Math.min(value, fallback)");
+    expect(source).not.toContain("? value : fallback");
+  });
 });

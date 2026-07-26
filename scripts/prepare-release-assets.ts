@@ -11,6 +11,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -39,7 +40,7 @@ const HELPER_TIMEOUT_MS = 120_000;
 function timeoutForTest(name: string, fallback: number): number {
   if (process.env.NODE_ENV !== "test") return fallback;
   const value = Number(process.env[name]);
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+  return Number.isSafeInteger(value) && value > 0 ? Math.min(value, fallback) : fallback;
 }
 
 type PackFile = { path: string; size: number; mode: number };
@@ -103,6 +104,36 @@ function assertFresh(path: string, label: string): void {
   assertSafeParent(path, label);
 }
 
+function readRegularBounded(path: string, cap: number, label: string): Buffer {
+  const pathStat = statRegular(path, label, cap);
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  let descriptor: number;
+  try { descriptor = openSync(path, constants.O_RDONLY | noFollow); } catch (error) {
+    return fail(`${label} could not be opened safely: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.size > cap || !sameIdentity(pathStat, opened)) {
+      return fail(`${label} changed before it was opened`);
+    }
+    const bytes = Buffer.alloc(opened.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (count === 0) fail(`${label} ended before its reported size`);
+      offset += count;
+    }
+    const afterOpened = fstatSync(descriptor);
+    const afterPath = statRegular(path, label, cap);
+    if (!sameIdentity(opened, afterOpened) || !sameIdentity(opened, afterPath)) {
+      return fail(`${label} changed while it was being read`);
+    }
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 async function streamFile(path: string, cap: number, label: string, destination?: string): Promise<FileDigests> {
   const pathStat = statRegular(path, label, cap);
   const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
@@ -154,8 +185,7 @@ async function streamFile(path: string, cap: number, label: string, destination?
 
 function parsePackReport(packPath: string, version: string): { report: PackResult; archive: string; entries: NativeEntry[] } {
   const absolutePack = resolve(packPath);
-  statRegular(absolutePack, "pack report", MAX_REPORT_SIZE);
-  const parsed: unknown = JSON.parse(readFileSync(absolutePack, "utf8"));
+  const parsed: unknown = JSON.parse(readRegularBounded(absolutePack, MAX_REPORT_SIZE, "pack report").toString("utf8"));
   if (!Array.isArray(parsed) || parsed.length !== 1) fail("npm pack report must contain exactly one package result");
   const candidate = parsed[0] as Partial<PackResult>;
   if (
