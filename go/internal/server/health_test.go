@@ -23,10 +23,25 @@ func TestReadinessReportsDependencyFailureWithoutDetails(t *testing.T) {
 
 func TestServerHealthSurfacesBypassAdmissionAuth(t *testing.T) {
 	proxy := New(Config{Token: "secret", ReadinessChecks: map[string]func(context.Context) error{"runtime": func(context.Context) error { return nil }}})
-	for _, path := range []string{"/ready", "/health/startup"} {
-		response := serveRequest(proxy.Handler(), http.MethodGet, path, "", nil)
-		if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
-			t.Fatalf("%s = %d headers=%v body=%s", path, response.Code, response.Header(), response.Body.String())
-		}
+	response := serveRequest(proxy.Handler(), http.MethodGet, "/health/startup", "", nil)
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("startup = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+func TestGoOnlyRoutePolicy(t *testing.T) {
+	proxy := New(Config{})
+	defer proxy.Close()
+	ready := serveRequest(proxy.Handler(), http.MethodGet, "/ready", "", nil)
+	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), "proxy dashboard") || strings.Contains(ready.Body.String(), `"status":"ready"`) {
+		t.Fatalf("retired readiness alias=%d %s", ready.Code, ready.Body.String())
+	}
+	websocketAlias := serveRequest(proxy.Handler(), http.MethodGet, "/v1/responses/ws", "", nil)
+	if websocketAlias.Code != http.StatusNotFound {
+		t.Fatalf("retired websocket alias=%d %s", websocketAlias.Code, websocketAlias.Body.String())
+	}
+	startup := serveRequest(proxy.Handler(), http.MethodGet, "/health/startup", "", nil)
+	if startup.Code != http.StatusOK || !strings.Contains(startup.Body.String(), `"status":"started"`) {
+		t.Fatalf("native startup extension=%d %s", startup.Code, startup.Body.String())
 	}
 }

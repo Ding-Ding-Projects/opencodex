@@ -22,7 +22,7 @@ func TestDrainAdmissionMiddlewareRejectsNewWorkButKeepsHealthAndStop(t *testing.
 		{path: "/v1/chat/completions", want: http.StatusServiceUnavailable},
 		{path: "/api/providers", want: http.StatusServiceUnavailable},
 		{path: "/healthz", want: http.StatusNoContent},
-		{path: "/ready", want: http.StatusNoContent},
+		{path: "/health/startup", want: http.StatusNoContent},
 		{path: "/api/stop", want: http.StatusNoContent},
 	} {
 		response := httptest.NewRecorder()

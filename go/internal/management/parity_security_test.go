@@ -213,6 +213,19 @@ func TestSidecarSettingsStrictValidationAndAtomicUpdate(t *testing.T) {
 	}
 }
 
+func TestSidecarSettingsPersistReasoningWithoutExposingItInDTO(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+	updated := serveManagement(api, http.MethodPut, "/api/sidecar-settings", `{"webSearch":{"model":"search","backend":"openai","reasoning":"high"}}`)
+	if updated.Code != http.StatusOK || strings.Contains(updated.Body.String(), "reasoning") || cfg.WebSearchSidecar == nil || cfg.WebSearchSidecar.Reasoning != "high" {
+		t.Fatalf("updated=%d %s config=%#v", updated.Code, updated.Body.String(), cfg.WebSearchSidecar)
+	}
+	loaded := serveManagement(api, http.MethodGet, "/api/sidecar-settings", "")
+	if loaded.Code != http.StatusOK || strings.Contains(loaded.Body.String(), "reasoning") {
+		t.Fatalf("loaded=%d %s", loaded.Code, loaded.Body.String())
+	}
+}
+
 func TestAgentSettingsPersistAndReloadWithoutSecretFields(t *testing.T) {
 	cfg := config.Default()
 	api := newParityAPI(t, &cfg)

@@ -198,7 +198,7 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 func requiresDedicatedAdmission(path string) bool {
 	switch path {
-	case "/v1/responses", "/v1/responses/compact", "/v1/responses/ws", "/v1/chat/completions":
+	case "/v1/responses", "/v1/responses/compact", "/v1/chat/completions":
 		return true
 	default:
 		return false

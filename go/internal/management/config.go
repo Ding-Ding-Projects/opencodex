@@ -84,12 +84,12 @@ func defaultStreamMode(value string) string {
 }
 
 func sidecarSettingsDTO(config *appconfig.Config) map[string]any {
-	webModel, webBackend, webReasoning := "gpt-5.6-luna", "", ""
+	webModel, webBackend := "gpt-5.6-luna", ""
 	if config.WebSearchSidecar != nil {
 		if config.WebSearchSidecar.Model != "" {
 			webModel = config.WebSearchSidecar.Model
 		}
-		webBackend, webReasoning = config.WebSearchSidecar.Backend, config.WebSearchSidecar.Reasoning
+		webBackend = config.WebSearchSidecar.Backend
 	}
 	visionModel, visionBackend, maxDescriptions := "gpt-5.6-luna", "", 0
 	if config.VisionSidecar != nil {
@@ -99,7 +99,7 @@ func sidecarSettingsDTO(config *appconfig.Config) map[string]any {
 		visionBackend, maxDescriptions = config.VisionSidecar.Backend, config.VisionSidecar.MaxDescriptionsPerTurn
 	}
 	return map[string]any{
-		"webSearch": map[string]any{"model": webModel, "backend": nullable(webBackend), "reasoning": nullable(webReasoning)},
+		"webSearch": map[string]any{"model": webModel, "backend": nullable(webBackend)},
 		"vision":    map[string]any{"model": visionModel, "backend": nullable(visionBackend), "maxDescriptionsPerTurn": maxDescriptions},
 	}
 }

@@ -256,9 +256,7 @@ func New(config Config) *Server {
 	// bundled dashboard does not accidentally turn this unknown endpoint into 200.
 	mux.HandleFunc("GET /health", unknownV1)
 	mux.Handle("GET /healthz", liveness)
-	mux.HandleFunc("GET /ready", health.Ready)
 	mux.HandleFunc("GET /health/startup", health.Startup)
-	mux.Handle("GET /v1/responses/ws", WebSocketBridge(s.responses))
 	managementRouter := config.Management
 	admissionKeys := newAdmissionKeySnapshot(nil)
 	if config.ManagementConfig != nil {
