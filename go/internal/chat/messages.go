@@ -46,6 +46,7 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalized, requestedModel := translation.Request, translation.RequestedModel
+	clientStream := normalized.Stream
 	desktop := translation.Surface == claude.InboundSurfaceClaudeDesktop
 	if desktop {
 		claude.RecordDesktopRequest()
@@ -71,13 +72,16 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	internal := *normalized
+	internal.Stream = true
+	prepared.normalized = &internal
 	if events, handled, err := h.config.runSearch(r.Context(), prepared); handled {
 		if err != nil {
 			recordDesktopError()
 			writeAnthropicError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		if normalized.Stream {
+		if clientStream {
 			if err := writeAnthropicStream(r.Context(), w, requestedModel, adapterEventChannel(events)); err != nil {
 				recordDesktopError()
 			}
@@ -95,10 +99,9 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	var response *http.Response
 	var streamEvents <-chan types.AdapterEvent
 	var unaryEvents []types.AdapterEvent
-	if normalized.Stream {
-		response, streamEvents, err = h.config.doStream(r.Context(), prepared)
-	} else {
-		response, unaryEvents, err = h.config.doUnary(r.Context(), prepared)
+	response, streamEvents, err = h.config.doStream(r.Context(), prepared)
+	if err == nil && !clientStream && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		unaryEvents, err = collectAdapterEvents(r.Context(), streamEvents)
 	}
 	if err != nil {
 		recordDesktopError()
@@ -121,7 +124,7 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, status, message)
 		return
 	}
-	if normalized.Stream {
+	if clientStream {
 		if err := writeAnthropicStream(r.Context(), w, requestedModel, streamEvents); err != nil {
 			recordDesktopError()
 		}

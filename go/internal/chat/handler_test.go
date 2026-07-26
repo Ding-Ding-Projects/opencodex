@@ -127,7 +127,7 @@ func (a incompleteHandlerAdapter) ParseUnary(context.Context, []byte) ([]types.A
 	return a.events, nil
 }
 
-func TestHandlerRoutesUnaryChatCompletion(t *testing.T) {
+func TestHandlerFoldsProductionStreamForNonStreamingChatCompletion(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
 	defer upstream.Close()
 	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
@@ -135,13 +135,36 @@ func TestHandlerRoutesUnaryChatCompletion(t *testing.T) {
 		if model.Model != "wire" || transport.BaseURL != upstream.URL {
 			t.Fatalf("route = %+v %+v", model, transport)
 		}
-		return handlerAdapter{endpoint: upstream.URL}, nil
+		return handlerAdapter{endpoint: upstream.URL, onBuild: func(request *types.NormalizedRequest) {
+			if !request.Stream {
+				t.Fatal("routed Chat Completions request did not force the internal stream")
+			}
+		}}, nil
 	}})
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"acme/wire","messages":[{"role":"user","content":"hi"}]}`))
 	response := httptest.NewRecorder()
 	handler.Handle(response, request)
-	if response.Code != 200 || !strings.Contains(response.Body.String(), `"content":"unary"`) || !strings.Contains(response.Body.String(), `"total_tokens":3`) {
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"content":"streamed"`) || !strings.Contains(response.Body.String(), `"total_tokens":2`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMessagesHandlerFoldsProductionStreamForNonStreamingClient(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	handler := NewMessagesHandler(HandlerConfig{Registry: reg, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+		return handlerAdapter{endpoint: upstream.URL, onBuild: func(request *types.NormalizedRequest) {
+			if !request.Stream {
+				t.Fatal("routed Messages request did not force the internal stream")
+			}
+		}}, nil
+	}})
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"acme/wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+	response := httptest.NewRecorder()
+	handler.Handle(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"text":"streamed"`) {
+		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -389,6 +412,34 @@ func TestMessagesHandlerReclassifiesTransientUpstreamAsOverloaded(t *testing.T) 
 			handler.Handle(response, request)
 			if response.Code != 529 || response.Header().Get("Retry-After") != test.wantRetry || !strings.Contains(response.Body.String(), `"type":"overloaded_error"`) {
 				t.Fatalf("response=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMessagesHandlerPreservesAnthropicBillingAndConflictTaxonomy(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		kind   string
+	}{
+		{status: http.StatusPaymentRequired, kind: "billing_error"},
+		{status: http.StatusConflict, kind: "conflict_error"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+				_, _ = io.WriteString(w, `{"error":{"message":"classified"}}`)
+			}))
+			defer upstream.Close()
+			reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+			handler := NewMessagesHandler(HandlerConfig{Registry: reg, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+				return handlerAdapter{endpoint: upstream.URL}, nil
+			}})
+			request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"acme/wire","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+			response := httptest.NewRecorder()
+			handler.Handle(response, request)
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"type":"`+test.kind+`"`) {
+				t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
 			}
 		})
 	}

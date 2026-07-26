@@ -738,7 +738,7 @@ func (core *ResponsesCore) eventsForResponse(ctx context.Context, adapter types.
 			body = RepairResponsesItemIDsWithConfig(body, *repair)
 		}
 	}
-	parsed := adapter.ParseStream(ctx, io.NopCloser(body))
+	parsed := adapter.ParseStream(ctx, readerWithCloser{Reader: body, Closer: response.Body})
 	if !closeBody {
 		return parsed
 	}
@@ -755,6 +755,11 @@ func (core *ResponsesCore) eventsForResponse(ctx context.Context, adapter types.
 		}
 	}()
 	return out
+}
+
+type readerWithCloser struct {
+	io.Reader
+	io.Closer
 }
 
 func (core *ResponsesCore) responseStateEligible(request *types.NormalizedRequest) bool {

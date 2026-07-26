@@ -162,7 +162,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestedModel := normalized.ModelID
-	prepared, err := h.config.prepare(r.Context(), r.Header, normalized)
+	clientStream := normalized.Stream
+	internal := *normalized
+	internal.Stream = true
+	prepared, err := h.config.prepare(r.Context(), r.Header, &internal)
 	if err != nil {
 		writeChatErrorFor(w, err)
 		return
@@ -172,7 +175,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			writeChatError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		if normalized.Stream {
+		if clientStream {
 			if err := WriteChatStream(r.Context(), w, requestedModel, adapterEventChannel(events)); err != nil && !errors.Is(err, context.Canceled) {
 				return
 			}
@@ -189,10 +192,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	var response *http.Response
 	var streamEvents <-chan types.AdapterEvent
 	var unaryEvents []types.AdapterEvent
-	if normalized.Stream {
-		response, streamEvents, err = h.config.doStream(r.Context(), prepared)
-	} else {
-		response, unaryEvents, err = h.config.doUnary(r.Context(), prepared)
+	response, streamEvents, err = h.config.doStream(r.Context(), prepared)
+	if err == nil && !clientStream && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		unaryEvents, err = collectAdapterEvents(r.Context(), streamEvents)
 	}
 	if err != nil {
 		writeChatErrorFor(w, err)
@@ -205,7 +207,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamChatErrorDetails(w, response.StatusCode, details)
 		return
 	}
-	if normalized.Stream {
+	if clientStream {
 		if err := WriteChatStream(r.Context(), w, requestedModel, streamEvents); err != nil && !errors.Is(err, context.Canceled) {
 			return
 		}
@@ -226,6 +228,21 @@ func adapterEventChannel(events []types.AdapterEvent) <-chan types.AdapterEvent 
 	}
 	close(stream)
 	return stream
+}
+
+func collectAdapterEvents(ctx context.Context, stream <-chan types.AdapterEvent) ([]types.AdapterEvent, error) {
+	events := make([]types.AdapterEvent, 0, 16)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case event, ok := <-stream:
+			if !ok {
+				return events, nil
+			}
+			events = append(events, event)
+		}
+	}
 }
 
 func copyRetryAfter(destination, source http.Header) {
@@ -384,51 +401,6 @@ func (c HandlerConfig) doStream(ctx context.Context, prepared *preparedRequest) 
 		}
 		return response, preflight.Stream, nil
 	}
-}
-
-func (c HandlerConfig) doUnary(ctx context.Context, prepared *preparedRequest) (*http.Response, []types.AdapterEvent, error) {
-	continuityRetried := false
-	for {
-		response, err := c.do(ctx, prepared)
-		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-			return response, nil, err
-		}
-		payload, readErr := readBounded(response.Body, c.ResponseLimit)
-		_ = response.Body.Close()
-		if readErr != nil {
-			return response, nil, statusError{status: http.StatusBadGateway, message: readErr.Error()}
-		}
-		events, parseErr := prepared.adapter.ParseUnary(ctx, payload)
-		if !continuityRetried && cursoradapter.IsContinuityRetry(parseErr) {
-			continuityRetried = true
-			continue
-		}
-		if parseErr != nil {
-			return response, nil, statusError{status: http.StatusBadGateway, message: parseErr.Error()}
-		}
-		if failure := firstAdapterError(events); failure != nil {
-			status := failure.StatusCode
-			if status == 0 {
-				status = http.StatusBadGateway
-			}
-			if c.advanceCombo(ctx, prepared, status, failure.Code, failure.Error, "") {
-				continue
-			}
-		} else {
-			c.noteComboSuccess(prepared)
-		}
-		return response, events, nil
-	}
-}
-
-func firstAdapterError(events []types.AdapterEvent) *types.AdapterEvent {
-	for index := range events {
-		event := &events[index]
-		if event.Type == types.EventError {
-			return event
-		}
-	}
-	return nil
 }
 
 func (c HandlerConfig) noteComboSuccess(prepared *preparedRequest) {
