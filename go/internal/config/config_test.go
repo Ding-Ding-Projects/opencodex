@@ -284,6 +284,30 @@ func TestConfigPreservesExtendedRuntimeSettings(t *testing.T) {
 	}
 }
 
+func TestConfigPreservesCursorExecutionSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.DefaultProvider = "cursor"
+	cfg.Providers["cursor"] = ProviderConfig{
+		Adapter: "cursor", BaseURL: "https://api2.cursor.sh", AuthMode: "oauth", NativeLocalExec: "off",
+		MCPServers: map[string]CursorMCPServerConfig{
+			"stdio":  {Command: "mcp-server", Args: []string{"--stdio"}, Env: map[string]string{"MODE": "test"}},
+			"remote": {URL: "https://mcp.example.test/rpc", Headers: map[string]string{"X-Test": "value"}},
+		},
+		DesktopExecutor: &CursorDesktopExecutorConfig{ComputerUseCommand: "desktop-tool", WorkingDirectory: "/tmp", TimeoutMS: 5000},
+	}
+	if err := Save(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(*loaded, cfg) {
+		t.Fatalf("Cursor execution settings did not round trip\n got: %#v\nwant: %#v", *loaded, cfg)
+	}
+}
+
 func TestValidateExtendedRuntimeSettings(t *testing.T) {
 	tests := []struct {
 		name   string

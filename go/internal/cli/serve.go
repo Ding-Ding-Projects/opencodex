@@ -31,7 +31,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/usage"
 )
 
-func runServe(_ context.Context, args []string, streams IO) error {
+func runServe(ctx context.Context, args []string, streams IO) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(streams.Err)
 	hostOverride := flags.String("host", "", "listen host")
@@ -87,16 +87,20 @@ func runServe(_ context.Context, args []string, streams IO) error {
 	if token == "" {
 		token = cfg.AuthToken
 	}
-	reg := configuredRegistry(*cfg)
-	comboResolver, err := combos.New(cfg.Combos, configuredComboProviders(reg, *cfg))
-	if err != nil {
-		return err
-	}
 	configHome, err := configDir()
 	if err != nil {
 		return err
 	}
 	credentialStore := oauth.NewCredentialStore(filepath.Join(configHome, "auth.json"))
+	cursorModels, discoveryErr := discoverConfiguredCursorModels(ctx, *cfg, credentialStore, nil)
+	if discoveryErr != nil && streams.Err != nil {
+		fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; using configured catalog: %v\n", discoveryErr)
+	}
+	reg := configuredRegistryWithCursorModels(*cfg, cursorModels)
+	comboResolver, err := combos.New(cfg.Combos, configuredComboProviders(reg, *cfg))
+	if err != nil {
+		return err
+	}
 	auth, err := configuredAuthWithStore(*cfg, credentialStore)
 	if err != nil {
 		return err
@@ -105,7 +109,8 @@ func runServe(_ context.Context, args []string, streams IO) error {
 	debugLog := usage.NewDebugLog(filepath.Join(configHome, "usage-debug.jsonl"))
 	requestLogs := management.NewRequestLog(200)
 	stop := &stopRouter{channel: make(chan struct{})}
-	proxy := server.New(server.Config{Registry: reg, Combos: comboResolver, Auth: auth, ResolveAdapter: adapterResolver(reg, *cfg), Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
+	providerClient := newAdapterAwareClient(server.NewProviderClient(server.FetchTimeouts{Overall: 10 * time.Minute}))
+	proxy := server.New(server.Config{Registry: reg, Combos: comboResolver, Auth: auth, ResolveAdapter: adapterResolver(reg, *cfg), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
 	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	listener, listenErr := net.Listen("tcp", httpServer.Addr)
 	if listenErr != nil {
@@ -182,7 +187,10 @@ func configuredRegistry(cfg config.Config) *registry.ProviderRegistry {
 		}
 		if position, ok := index[name]; ok {
 			preset := base[position]
-			preset.Adapter, preset.BaseURL, preset.DefaultModel = entry.Adapter, entry.BaseURL, entry.DefaultModel
+			preset.Adapter, preset.BaseURL = entry.Adapter, entry.BaseURL
+			if entry.DefaultModel != "" {
+				preset.DefaultModel = entry.DefaultModel
+			}
 			if len(entry.Models) > 0 {
 				preset.Models = entry.Models
 			}
@@ -223,6 +231,14 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*
 }
 
 func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.AdapterResolver {
+	cursorExecutors := make(map[string]*cursoradapter.NativeExecutor)
+	cursorExecutorErrors := make(map[string]error)
+	for name, provider := range cfg.Providers {
+		if provider.Adapter != "cursor" {
+			continue
+		}
+		cursorExecutors[name], cursorExecutorErrors[name] = newCursorNativeExecutor(provider)
+	}
 	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
 		entry, ok := reg.Lookup(model.Provider)
 		if !ok {
@@ -238,30 +254,53 @@ func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.A
 			}
 		}
 		headers := transport.Headers
+		provider.BaseURL = transport.BaseURL
 		switch entry.Adapter {
-		case "openai-chat", "mimo-free":
-			return &openaiadapter.ChatAdapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers}, nil
+		case "openai-chat":
+			return openaiadapter.NewChatAdapter(provider, secret, headers), nil
+		case "mimo-free":
+			adapter := openaiadapter.NewMimoAdapter()
+			adapter.Chat = *openaiadapter.NewChatAdapter(provider, secret, headers)
+			return bindAdapterFetch(adapter, adapter.Do), nil
 		case "cursor":
+			executor := cursorExecutors[model.Provider]
+			if err := cursorExecutorErrors[model.Provider]; err != nil {
+				return nil, fmt.Errorf("configure Cursor native executor: %w", err)
+			}
+			if executor == nil {
+				executor, _ = newCursorNativeExecutor(provider)
+			}
 			return cursoradapter.NewAdapter(cursoradapter.AdapterConfig{
-				BaseURL: transport.BaseURL,
-				Token:   secret,
-				Headers: headers,
+				BaseURL:        transport.BaseURL,
+				Token:          secret,
+				Headers:        headers,
+				NativeExecutor: executor,
 			})
 		case "openai-responses":
-			return &openaiadapter.ResponsesAdapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers, IncomingHeaders: incoming, ForwardAuth: entry.AuthKind == registry.AuthForward}, nil
+			if entry.AuthKind == registry.AuthForward {
+				provider.AuthMode = "forward"
+			}
+			adapter := openaiadapter.NewResponsesAdapter(provider, secret, headers)
+			adapter.IncomingHeaders = incoming
+			return adapter, nil
 		case "anthropic":
 			return &anthropic.Adapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers}, nil
 		case "azure-openai":
 			return &openaiadapter.AzureAdapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers}, nil
 		case "google":
 			mode := google.ModeAIStudio
-			if model.Provider == "google-vertex" {
+			if model.Provider == "google-vertex" || provider.GoogleMode == string(google.ModeVertex) {
 				mode = google.ModeVertex
 			}
-			if model.Provider == "google-antigravity" {
+			if model.Provider == "google-antigravity" || provider.GoogleMode == string(google.ModeCloudCodeAssist) {
 				mode = google.ModeCloudCodeAssist
 			}
-			return google.NewAdapter(mode, transport, auth), nil
+			adapter := google.NewAdapter(mode, transport, auth)
+			adapter.Project = provider.Project
+			adapter.Location = provider.Location
+			return bindAdapterFetch(adapter, func(ctx context.Context, request *http.Request) (*http.Response, error) {
+				return adapter.Do(ctx, request, google.RetryOptions{})
+			}), nil
 		case "kiro":
 			return kiro.NewAdapter(transport.BaseURL, secret), nil
 		default:

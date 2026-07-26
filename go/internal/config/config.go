@@ -95,55 +95,76 @@ type WebSearchSidecarConfig struct {
 }
 
 type ProviderConfig struct {
-	Adapter                         string                       `json:"adapter"`
-	BaseURL                         string                       `json:"baseUrl"`
-	ModelAdapters                   map[string]string            `json:"modelAdapters,omitempty"`
-	ResponsesPath                   string                       `json:"responsesPath,omitempty"`
-	AllowPrivateNetwork             bool                         `json:"allowPrivateNetwork,omitempty"`
-	Disabled                        bool                         `json:"disabled,omitempty"`
-	APIKey                          string                       `json:"apiKey,omitempty"`
-	APIKeyPool                      []APIKeyEntry                `json:"apiKeyPool,omitempty"`
-	DefaultModel                    string                       `json:"defaultModel,omitempty"`
-	Models                          []string                     `json:"models,omitempty"`
-	Headers                         map[string]string            `json:"headers,omitempty"`
-	AuthMode                        string                       `json:"authMode,omitempty"`
-	CodexAccountMode                string                       `json:"codexAccountMode,omitempty"`
-	GoogleMode                      string                       `json:"googleMode,omitempty"`
-	Project                         string                       `json:"project,omitempty"`
-	Location                        string                       `json:"location,omitempty"`
-	ContextWindow                   int                          `json:"contextWindow,omitempty"`
-	DefaultMaxOutputTokens          int                          `json:"defaultMaxOutputTokens,omitempty"`
-	ParallelToolCalls               *bool                        `json:"parallelToolCalls,omitempty"`
-	EscapeBuiltinToolNames          *bool                        `json:"escapeBuiltinToolNames,omitempty"`
-	KeyOptional                     *bool                        `json:"keyOptional,omitempty"`
-	ModelSuffixBracketStrip         *bool                        `json:"modelSuffixBracketStrip,omitempty"`
-	ReasoningEfforts                []string                     `json:"reasoningEfforts,omitempty"`
-	ModelReasoningEfforts           map[string][]string          `json:"modelReasoningEfforts,omitempty"`
-	ModelDefaultReasoningEfforts    map[string]string            `json:"modelDefaultReasoningEfforts,omitempty"`
-	ReasoningEffortMap              map[string]string            `json:"reasoningEffortMap,omitempty"`
-	ModelReasoningEffortMap         map[string]map[string]string `json:"modelReasoningEffortMap,omitempty"`
-	ModelContextWindows             map[string]int               `json:"modelContextWindows,omitempty"`
-	ModelInputModalities            map[string][]string          `json:"modelInputModalities,omitempty"`
-	ModelMaxInputTokens             map[string]int               `json:"modelMaxInputTokens,omitempty"`
-	ModelMaxOutputTokens            map[string]int               `json:"modelMaxOutputTokens,omitempty"`
-	NoVisionModels                  []string                     `json:"noVisionModels,omitempty"`
-	NoReasoningModels               []string                     `json:"noReasoningModels,omitempty"`
-	NoTemperatureModels             []string                     `json:"noTemperatureModels,omitempty"`
-	NoTopPModels                    []string                     `json:"noTopPModels,omitempty"`
-	NoPenaltyModels                 []string                     `json:"noPenaltyModels,omitempty"`
-	AutoToolChoiceOnlyModels        []string                     `json:"autoToolChoiceOnlyModels,omitempty"`
-	PreserveReasoningContentModels  []string                     `json:"preserveReasoningContentModels,omitempty"`
-	ThinkingToggleModels            []string                     `json:"thinkingToggleModels,omitempty"`
-	ThinkingBudgetModels            []string                     `json:"thinkingBudgetModels,omitempty"`
-	SelectedModels                  []string                     `json:"selectedModels,omitempty"`
-	LiveModels                      *bool                        `json:"liveModels,omitempty"`
-	ModelSupportsReasoningSummaries map[string]bool              `json:"modelSupportsReasoningSummaries,omitempty"`
-	PromptCacheKey                  bool                         `json:"promptCacheKey,omitempty"`
-	RefreshPolicy                   string                       `json:"refreshPolicy,omitempty"`
-	FreeTier                        bool                         `json:"freeTier,omitempty"`
-	Note                            string                       `json:"note,omitempty"`
-	UnsafeAllowNativeLocalExec      bool                         `json:"unsafeAllowNativeLocalExec,omitempty"`
-	NativeLocalExec                 string                       `json:"nativeLocalExec,omitempty"`
+	Adapter                         string                           `json:"adapter"`
+	BaseURL                         string                           `json:"baseUrl"`
+	ModelAdapters                   map[string]string                `json:"modelAdapters,omitempty"`
+	ResponsesPath                   string                           `json:"responsesPath,omitempty"`
+	AllowPrivateNetwork             bool                             `json:"allowPrivateNetwork,omitempty"`
+	Disabled                        bool                             `json:"disabled,omitempty"`
+	APIKey                          string                           `json:"apiKey,omitempty"`
+	APIKeyPool                      []APIKeyEntry                    `json:"apiKeyPool,omitempty"`
+	DefaultModel                    string                           `json:"defaultModel,omitempty"`
+	Models                          []string                         `json:"models,omitempty"`
+	Headers                         map[string]string                `json:"headers,omitempty"`
+	AuthMode                        string                           `json:"authMode,omitempty"`
+	CodexAccountMode                string                           `json:"codexAccountMode,omitempty"`
+	GoogleMode                      string                           `json:"googleMode,omitempty"`
+	Project                         string                           `json:"project,omitempty"`
+	Location                        string                           `json:"location,omitempty"`
+	ContextWindow                   int                              `json:"contextWindow,omitempty"`
+	DefaultMaxOutputTokens          int                              `json:"defaultMaxOutputTokens,omitempty"`
+	ParallelToolCalls               *bool                            `json:"parallelToolCalls,omitempty"`
+	EscapeBuiltinToolNames          *bool                            `json:"escapeBuiltinToolNames,omitempty"`
+	KeyOptional                     *bool                            `json:"keyOptional,omitempty"`
+	ModelSuffixBracketStrip         *bool                            `json:"modelSuffixBracketStrip,omitempty"`
+	ReasoningEfforts                []string                         `json:"reasoningEfforts,omitempty"`
+	ModelReasoningEfforts           map[string][]string              `json:"modelReasoningEfforts,omitempty"`
+	ModelDefaultReasoningEfforts    map[string]string                `json:"modelDefaultReasoningEfforts,omitempty"`
+	ReasoningEffortMap              map[string]string                `json:"reasoningEffortMap,omitempty"`
+	ModelReasoningEffortMap         map[string]map[string]string     `json:"modelReasoningEffortMap,omitempty"`
+	ModelContextWindows             map[string]int                   `json:"modelContextWindows,omitempty"`
+	ModelInputModalities            map[string][]string              `json:"modelInputModalities,omitempty"`
+	ModelMaxInputTokens             map[string]int                   `json:"modelMaxInputTokens,omitempty"`
+	ModelMaxOutputTokens            map[string]int                   `json:"modelMaxOutputTokens,omitempty"`
+	NoVisionModels                  []string                         `json:"noVisionModels,omitempty"`
+	NoReasoningModels               []string                         `json:"noReasoningModels,omitempty"`
+	NoTemperatureModels             []string                         `json:"noTemperatureModels,omitempty"`
+	NoTopPModels                    []string                         `json:"noTopPModels,omitempty"`
+	NoPenaltyModels                 []string                         `json:"noPenaltyModels,omitempty"`
+	AutoToolChoiceOnlyModels        []string                         `json:"autoToolChoiceOnlyModels,omitempty"`
+	PreserveReasoningContentModels  []string                         `json:"preserveReasoningContentModels,omitempty"`
+	ThinkingToggleModels            []string                         `json:"thinkingToggleModels,omitempty"`
+	ThinkingBudgetModels            []string                         `json:"thinkingBudgetModels,omitempty"`
+	SelectedModels                  []string                         `json:"selectedModels,omitempty"`
+	LiveModels                      *bool                            `json:"liveModels,omitempty"`
+	ModelSupportsReasoningSummaries map[string]bool                  `json:"modelSupportsReasoningSummaries,omitempty"`
+	PromptCacheKey                  bool                             `json:"promptCacheKey,omitempty"`
+	RefreshPolicy                   string                           `json:"refreshPolicy,omitempty"`
+	FreeTier                        bool                             `json:"freeTier,omitempty"`
+	Note                            string                           `json:"note,omitempty"`
+	UnsafeAllowNativeLocalExec      bool                             `json:"unsafeAllowNativeLocalExec,omitempty"`
+	NativeLocalExec                 string                           `json:"nativeLocalExec,omitempty"`
+	MCPServers                      map[string]CursorMCPServerConfig `json:"mcpServers,omitempty"`
+	DesktopExecutor                 *CursorDesktopExecutorConfig     `json:"desktopExecutor,omitempty"`
+}
+
+type CursorMCPServerConfig struct {
+	Command          string            `json:"command,omitempty"`
+	Args             []string          `json:"args,omitempty"`
+	Env              map[string]string `json:"env,omitempty"`
+	WorkingDirectory string            `json:"cwd,omitempty"`
+	URL              string            `json:"url,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	Enabled          *bool             `json:"enabled,omitempty"`
+	ToolPrefix       string            `json:"toolPrefix,omitempty"`
+}
+
+type CursorDesktopExecutorConfig struct {
+	ComputerUseCommand  string            `json:"computerUseCommand,omitempty"`
+	RecordScreenCommand string            `json:"recordScreenCommand,omitempty"`
+	WorkingDirectory    string            `json:"cwd,omitempty"`
+	Env                 map[string]string `json:"env,omitempty"`
+	TimeoutMS           int               `json:"timeoutMs,omitempty"`
 }
 
 type CustomModel struct {
@@ -446,6 +467,39 @@ func (c Config) Validate() error {
 		case "", "off", "codex-sandbox", "on":
 		default:
 			return &ConfigError{Field: "providers." + name + ".nativeLocalExec", Message: "must be off, codex-sandbox, or on"}
+		}
+		for serverName, mcp := range provider.MCPServers {
+			field := "providers." + name + ".mcpServers." + serverName
+			if strings.TrimSpace(serverName) == "" {
+				return &ConfigError{Field: "providers." + name + ".mcpServers", Message: "server names must not be blank"}
+			}
+			if mcp.Enabled != nil && !*mcp.Enabled {
+				continue
+			}
+			if (strings.TrimSpace(mcp.Command) == "") == (strings.TrimSpace(mcp.URL) == "") {
+				return &ConfigError{Field: field, Message: "must configure exactly one of command or url"}
+			}
+			if mcp.URL != "" {
+				parsed, err := url.ParseRequestURI(mcp.URL)
+				if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+					return &ConfigError{Field: field + ".url", Message: "must be an http(s) URL"}
+				}
+			}
+			for key, value := range mcp.Env {
+				if strings.TrimSpace(key) == "" || strings.ContainsAny(key+value, "\x00\r\n") {
+					return &ConfigError{Field: field + ".env", Message: "must not contain blank names, NUL, or line breaks"}
+				}
+			}
+		}
+		if provider.DesktopExecutor != nil && provider.DesktopExecutor.TimeoutMS < 0 {
+			return &ConfigError{Field: "providers." + name + ".desktopExecutor.timeoutMs", Message: "must not be negative"}
+		}
+		if desktop := provider.DesktopExecutor; desktop != nil {
+			for key, value := range desktop.Env {
+				if strings.TrimSpace(key) == "" || strings.ContainsAny(key+value, "\x00\r\n") {
+					return &ConfigError{Field: "providers." + name + ".desktopExecutor.env", Message: "must not contain blank names, NUL, or line breaks"}
+				}
+			}
 		}
 		if err := ValidateModelAdapters(name, provider); err != nil {
 			return err

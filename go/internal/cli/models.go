@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -61,11 +62,22 @@ func modelsList(args []string, streams IO) error {
 			return fmt.Errorf("provider %q is not configured", providerFilter)
 		}
 	}
+	if providerFilter == "" || providerFilter == "cursor" {
+		if store, storeErr := accountStore(); storeErr == nil {
+			if discovered, discoveryErr := discoverConfiguredCursorModels(context.Background(), *cfg, store, nil); discoveryErr == nil {
+				provider := cfg.Providers["cursor"]
+				provider.Models = append(provider.Models, discovered...)
+				cfg.Providers["cursor"] = provider
+			} else if streams.Err != nil {
+				fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; showing configured models: %v\n", discoveryErr)
+			}
+		}
+	}
 	rows := collectConfiguredModels(*cfg, providerFilter)
 	if jsonOutput {
 		return writePrettyJSON(streams.Out, map[string]any{
 			"models": rows,
-			"note":   "Static config models only. Providers with liveModels may expose more models at runtime.",
+			"note":   "Configured models plus live Cursor discovery when credentials are available. Other liveModels providers may expose more models at runtime.",
 		})
 	}
 	if len(rows) == 0 {
