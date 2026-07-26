@@ -87,6 +87,26 @@ func TestServerWiresSubagentFallbackGuidanceIntoResponsesCore(t *testing.T) {
 	}
 }
 
+func TestServerWiresForwardAdmissionCredentialValidation(t *testing.T) {
+	cfg := appconfig.Default()
+	cfg.AuthToken = "management-admission-secret"
+	cfg.APIKeys = []appconfig.ProxyAPIKey{{ID: "key-1", Key: "dynamic-admission-secret"}}
+	proxy := New(Config{ManagementConfig: &cfg})
+	validate := proxy.responses.config.ValidateForwardAdmission
+	if validate == nil {
+		t.Fatal("forward admission validator was not wired")
+	}
+	for _, secret := range []string{"management-admission-secret", "dynamic-admission-secret"} {
+		headers := http.Header{"Authorization": []string{"Bearer " + secret}}
+		if err := validate(headers); err == nil {
+			t.Fatalf("admission secret %q was accepted for forwarding", secret)
+		}
+	}
+	if err := validate(http.Header{"Authorization": []string{"Bearer provider-secret"}}); err != nil {
+		t.Fatalf("provider credential was rejected: %v", err)
+	}
+}
+
 type parityRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn parityRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

@@ -51,15 +51,18 @@ type ResponsesCoreConfig struct {
 	RouteAdapter func(string, string) string
 	// PassthroughRoute identifies adapters whose non-2xx bytes are part of the
 	// public Responses contract and must be relayed without normalization.
-	PassthroughRoute  func(*types.ResolvedModel) bool
-	ForwardRoute      func(*types.ResolvedModel) bool
-	ItemIDRepair      func(string) *ResponsesItemIDRepairConfig
-	RotateAPIKeyOn429 func(string, string, string) (string, bool)
-	PrepareImageRetry func(*types.NormalizedRequest) error
-	RequestLogs       *RequestLogStore
-	StreamMode        string
-	ResponseState     *ResponseStateStore
-	SubagentFallback  *responseSubagentFallback
+	PassthroughRoute func(*types.ResolvedModel) bool
+	ForwardRoute     func(*types.ResolvedModel) bool
+	// ValidateForwardAdmission rejects proxy admission credentials before a
+	// forward route can copy incoming authorization headers to an upstream.
+	ValidateForwardAdmission func(http.Header) error
+	ItemIDRepair             func(string) *ResponsesItemIDRepairConfig
+	RotateAPIKeyOn429        func(string, string, string) (string, bool)
+	PrepareImageRetry        func(*types.NormalizedRequest) error
+	RequestLogs              *RequestLogStore
+	StreamMode               string
+	ResponseState            *ResponseStateStore
+	SubagentFallback         *responseSubagentFallback
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -352,6 +355,12 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 	imageRetryAttempted := false
 	for {
 		logSession.ensureAttempt(resolved.Provider, resolved.Model, core.providerAdapter(resolved))
+		forwardRoute := core.config.ForwardRoute != nil && core.config.ForwardRoute(resolved)
+		if forwardRoute && core.config.ValidateForwardAdmission != nil {
+			if err := core.config.ValidateForwardAdmission(incoming); err != nil {
+				return nil, nil, nil, resolved, pick, &forwardError{status: http.StatusUnauthorized, kind: "authentication_error", err: err}
+			}
+		}
 		var auth *types.AuthContext
 		var err error
 		if core.config.Auth != nil {
@@ -381,7 +390,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "adapter_error", err: err}
 		}
 		adapterRequest := normalized
-		if core.config.ForwardRoute != nil && core.config.ForwardRoute(resolved) {
+		if forwardRoute {
 			adapterRequest = requestWithoutUnsupportedForwardParams(normalized)
 		}
 		upstream, err := adapter.BuildRequest(ctx, adapterRequest)

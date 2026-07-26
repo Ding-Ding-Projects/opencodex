@@ -85,6 +85,51 @@ func TestResponsesCoreStripsUnsupportedForwardParamsOnlyForAdapterCopy(t *testin
 	}
 }
 
+func TestResponsesCoreRejectsProxyAdmissionCredentialBeforeForwardDispatch(t *testing.T) {
+	builds := 0
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry:     coreRegistry{endpoint: "http://unused.invalid"},
+		ForwardRoute: func(*types.ResolvedModel) bool { return true },
+		ValidateForwardAdmission: func(headers http.Header) error {
+			return ValidateForwardAdmissionCredential(headers, MiddlewareConfig{Token: "ocx-admission-secret"})
+		},
+		ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			builds++
+			return coreAdapter{}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`))
+	request.Header.Set("Authorization", "Bearer ocx-admission-secret")
+	response := httptest.NewRecorder()
+
+	core.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized || builds != 0 {
+		t.Fatalf("status=%d adapterBuilds=%d body=%s", response.Code, builds, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"type":"authentication_error"`) || !strings.Contains(response.Body.String(), "cannot be forwarded upstream") {
+		t.Fatalf("unexpected rejection body: %s", response.Body.String())
+	}
+}
+
+func TestResponsesCoreAllowsIndependentProviderCredentialOnForwardRoute(t *testing.T) {
+	core, _, _, upstream := newCoreHarness(t)
+	defer upstream.Close()
+	core.config.ForwardRoute = func(*types.ResolvedModel) bool { return true }
+	core.config.ValidateForwardAdmission = func(headers http.Header) error {
+		return ValidateForwardAdmissionCredential(headers, MiddlewareConfig{Token: "ocx-admission-secret"})
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`))
+	request.Header.Set("Authorization", "Bearer provider-secret")
+	response := httptest.NewRecorder()
+
+	core.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestParseResponsesRequestRejectsMalformedInputBeforeDispatch(t *testing.T) {
 	body := `{"model":"public","input":[{"type":"function_call","name":"missing-call-id"}]}`
 	_, err := parseResponsesRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)), 1<<20)

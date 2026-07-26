@@ -179,6 +179,14 @@ func New(config Config) *Server {
 		responseState = NewResponseStateStore(statePath)
 	}
 	s := &Server{config: config, lifecycle: config.Lifecycle, quota: quota, advancedRequestLogs: advancedRequestLogs, watchdog: watchdog, responseState: responseState}
+	admissionKeys := newAdmissionKeySnapshot(nil)
+	if config.ManagementConfig != nil {
+		admissionKeys.Set(config.ManagementConfig.APIKeys)
+	}
+	forwardAdmissionConfig := MiddlewareConfig{Token: config.Token, APIKeySource: admissionKeys.Get}
+	if config.ManagementConfig != nil && forwardAdmissionConfig.Token == "" {
+		forwardAdmissionConfig.Token = config.ManagementConfig.AuthToken
+	}
 	keyFailover := providers.NewKeyFailover()
 	guidance := MultiAgentGuidanceOptions{}
 	if config.ManagementConfig != nil {
@@ -247,6 +255,9 @@ func New(config Config) *Server {
 				return false
 			}
 			return s.config.ManagementConfig.Providers[resolved.Provider].AuthMode == "forward"
+		},
+		ValidateForwardAdmission: func(headers http.Header) error {
+			return ValidateForwardAdmissionCredential(headers, forwardAdmissionConfig)
 		},
 		ItemIDRepair: func(provider string) *ResponsesItemIDRepairConfig {
 			if s.config.ManagementConfig == nil {
@@ -320,10 +331,6 @@ func New(config Config) *Server {
 	mux.Handle("GET /healthz", liveness)
 	mux.HandleFunc("GET /health/startup", health.Startup)
 	managementRouter := config.Management
-	admissionKeys := newAdmissionKeySnapshot(nil)
-	if config.ManagementConfig != nil {
-		admissionKeys.Set(config.ManagementConfig.APIKeys)
-	}
 	refreshCatalog := config.RefreshCatalog
 	if refreshCatalog == nil {
 		home := strings.TrimSpace(config.StorageHome)
