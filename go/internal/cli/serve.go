@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/adapter/google"
 	"github.com/lidge-jun/opencodex-go/internal/adapter/kiro"
 	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
@@ -29,6 +31,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	"github.com/lidge-jun/opencodex-go/internal/usage"
+	"github.com/lidge-jun/opencodex-go/internal/vision"
 )
 
 func runServe(ctx context.Context, args []string, streams IO) error {
@@ -98,11 +101,15 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	}
 	credentialStore := oauth.NewCredentialStore(filepath.Join(configHome, "auth.json"))
 	oauthManagement := newOAuthManagement(credentialStore)
+	providerClient := newAdapterAwareClient(server.NewProviderClient(providerFetchTimeouts(runtimeCfg)))
+	sharedModelCache := codex.NewModelCache()
+	runtimeCfg = discoverConfiguredProviderModels(ctx, runtimeCfg, credentialStore, sharedModelCache, providerClient)
 	cursorModels, discoveryErr := discoverConfiguredCursorModels(ctx, runtimeCfg, credentialStore, nil)
 	if discoveryErr != nil && streams.Err != nil {
 		fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; using configured catalog: %v\n", discoveryErr)
 	}
 	reg := configuredRegistryWithCursorModels(runtimeCfg, cursorModels)
+	liveRegistry := &configBackedRegistry{config: cfg, cursorModels: cursorModels}
 	comboResolver, err := combos.New(runtimeCfg.Combos, configuredComboProviders(reg, runtimeCfg))
 	if err != nil {
 		return err
@@ -115,9 +122,15 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	debugLog := usage.NewDebugLog(filepath.Join(configHome, "usage-debug.jsonl"))
 	requestLogs := management.NewRequestLog(200)
 	stop := &stopRouter{channel: make(chan struct{})}
-	providerClient := newAdapterAwareClient(server.NewProviderClient(providerFetchTimeouts(runtimeCfg)))
-	proxy := server.New(server.Config{Registry: reg, Combos: comboResolver, Auth: auth, ResolveAdapter: adapterResolver(reg, runtimeCfg), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
-	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: auth, ResolveAdapter: configBackedAdapterResolver(cfg, cursorModels, providerClient), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, OAuthManagement: oauthManagement, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore), StallTimeoutSec: configuredStallTimeout(runtimeCfg), StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
+	selectedPort := cfg.Port
+	if cfg.Port > 0 {
+		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, cfg.Port, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
+		if err != nil {
+			return err
+		}
+	}
+	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
 	listener, listenErr := net.Listen("tcp", httpServer.Addr)
 	if listenErr != nil {
 		return listenErr
@@ -221,6 +234,7 @@ func configuredAuth(cfg config.Config) (*oauth.AuthResolver, error) {
 func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*oauth.AuthResolver, error) {
 	configs := map[string]oauth.ProviderAuthConfig{"openai": {Mode: oauth.AuthModeForward}}
 	reg := registry.New()
+	useOpenAIPool := false
 	for name, provider := range cfg.Providers {
 		mode := oauth.AuthModeOAuth
 		keyOptional := provider.KeyOptional != nil && *provider.KeyOptional
@@ -238,9 +252,21 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*
 				mode = oauth.AuthModeAPIKey
 			}
 		}
-		configs[name] = oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey, KeyOptional: keyOptional}
+		usePool := false
+		if name == "openai" && provider.CodexAccountMode != "direct" {
+			if set, found, err := store.GetAccountSet("openai"); err != nil {
+				return nil, err
+			} else if found && len(set.Accounts) > 0 {
+				mode, usePool, useOpenAIPool = oauth.AuthModeOAuth, true, true
+			}
+		}
+		configs[name] = oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey, KeyOptional: keyOptional, UsePool: usePool}
 	}
-	return oauth.NewAuthResolver(store, configs, nil), nil
+	resolver := oauth.NewAuthResolver(store, configs, nil)
+	if useOpenAIPool {
+		resolver.Pool = oauth.NewAccountPool(store, "openai")
+	}
+	return resolver, nil
 }
 
 func providerFetchTimeouts(cfg config.Config) server.FetchTimeouts {
@@ -252,7 +278,70 @@ func providerFetchTimeouts(cfg config.Config) server.FetchTimeouts {
 	return timeouts
 }
 
+func configuredStallTimeout(cfg config.Config) *float64 {
+	if cfg.StallTimeoutSec <= 0 {
+		return nil
+	}
+	seconds := float64(cfg.StallTimeoutSec)
+	return &seconds
+}
+
 func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.AdapterResolver {
+	return adapterResolverWithVisionClient(reg, cfg, http.DefaultClient)
+}
+
+func adapterResolverWithVisionClient(reg *registry.ProviderRegistry, cfg config.Config, client *http.Client) server.AdapterResolver {
+	base := baseAdapterResolver(reg, cfg)
+	preprocessor := configuredVisionPreprocessor(cfg, client)
+	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
+		adapter, err := base(model, transport, auth, incoming)
+		if err != nil || preprocessor == nil {
+			return adapter, err
+		}
+		provider := cfg.Providers[model.Provider]
+		return bindAdapterVision(adapter, preprocessor, !modelInList(provider.NoVisionModels, model.Model)), nil
+	}
+}
+
+func configuredVisionPreprocessor(cfg config.Config, client *http.Client) *vision.VisionPreprocessor {
+	sidecar := cfg.VisionSidecar
+	if sidecar == nil || (sidecar.Enabled != nil && !*sidecar.Enabled) {
+		return nil
+	}
+	preprocessor := vision.PreprocessorConfig{
+		Backend:                   vision.Backend(sidecar.Backend),
+		MaxDescriptionsPerTurn:    sidecar.MaxDescriptionsPerTurn,
+		MaxDescriptionsPerTurnSet: sidecar.MaxDescriptionsPerTurnSet || sidecar.MaxDescriptionsPerTurn != 0,
+	}
+	timeout := time.Duration(sidecar.TimeoutMS) * time.Millisecond
+	for _, provider := range cfg.Providers {
+		if provider.Disabled {
+			continue
+		}
+		switch provider.Adapter {
+		case "anthropic":
+			if preprocessor.Anthropic == nil {
+				preprocessor.Anthropic = &vision.AnthropicConfig{BaseURL: provider.BaseURL, Model: sidecar.Model, AccessToken: provider.APIKey, Headers: provider.Headers, Client: client, Timeout: timeout}
+			}
+		case "openai-responses":
+			if preprocessor.OpenAI == nil {
+				preprocessor.OpenAI = &vision.OpenAIConfig{BaseURL: provider.BaseURL, Model: sidecar.Model, AccessToken: provider.APIKey, Headers: provider.Headers, Client: client, Timeout: timeout}
+			}
+		}
+	}
+	return vision.NewVisionPreprocessor(preprocessor)
+}
+
+func modelInList(models []string, model string) bool {
+	for _, candidate := range models {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(model)) {
+			return true
+		}
+	}
+	return false
+}
+
+func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.AdapterResolver {
 	cursorExecutors := make(map[string]*cursoradapter.NativeExecutor)
 	cursorExecutorErrors := make(map[string]error)
 	for name, provider := range cfg.Providers {

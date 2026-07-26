@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/platform"
+	"github.com/lidge-jun/opencodex-go/internal/tray"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
 
@@ -41,7 +43,18 @@ func runUpdate(ctx context.Context, args []string, streams IO) error {
 			fmt.Fprintln(streams.Out, command.String())
 			return nil
 		}
-		output, err := (updatepkg.ExecRunner{}).Run(ctx, command)
+		var trayManager tray.Manager
+		if runtime.GOOS == "windows" {
+			cfg, _, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			trayManager, err = tray.New(trayConfig(*cfg))
+			if err != nil {
+				return fmt.Errorf("prepare Windows tray update: %w", err)
+			}
+		}
+		output, err := executePackageUpdate(ctx, updatepkg.ExecRunner{}, command, trayManager)
 		if len(output) > 0 {
 			fmt.Fprint(streams.Out, string(output))
 		}
@@ -62,4 +75,25 @@ func runUpdate(ctx context.Context, args []string, streams IO) error {
 	}
 	fmt.Fprintf(streams.Out, "Updated %s.\n", *destination)
 	return nil
+}
+
+func executePackageUpdate(ctx context.Context, runner updatepkg.CommandRunner, command updatepkg.Command, trayManager tray.Manager) ([]byte, error) {
+	var handoff tray.Handoff
+	var err error
+	if trayManager != nil {
+		handoff, err = trayManager.PrepareUpdate(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("stop Windows tray before update: %w", err)
+		}
+	}
+	output, runErr := runner.Run(ctx, command)
+	if trayManager != nil {
+		if _, completeErr := trayManager.CompleteUpdate(ctx, handoff); completeErr != nil {
+			if runErr != nil {
+				return output, fmt.Errorf("%v; restore Windows tray after failed update: %w", runErr, completeErr)
+			}
+			return output, fmt.Errorf("refresh Windows tray after update: %w", completeErr)
+		}
+	}
+	return output, runErr
 }

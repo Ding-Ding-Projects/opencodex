@@ -24,16 +24,17 @@ func runStop(ctx context.Context, args []string, streams IO) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: ocx stop")
 	}
-	pid, port := readRuntime()
-	if pid <= 0 || !platform.ProcessAlive(pid) {
-		removeRuntimeFiles()
-		fmt.Fprintln(streams.Out, "Proxy is not running.")
-		return nil
-	}
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return err
 	}
+	live := findLiveProxy(ctx, cfg)
+	if live == nil || live.PID <= 0 {
+		removeRuntimeFiles()
+		fmt.Fprintln(streams.Out, "Proxy is not running.")
+		return nil
+	}
+	pid, port := live.PID, live.Port
 	baseURL := ""
 	if port > 0 {
 		baseURL = "http://" + net.JoinHostPort(gracefulStopHost(cfg.Host), strconv.Itoa(port))
@@ -81,7 +82,11 @@ func runHealth(ctx context.Context, args []string, streams IO) error {
 		return err
 	}
 	pid, port := readRuntime()
-	healthy := pid > 0 && platform.ProcessAlive(pid) && probeHealth(ctx, cfg.Host, port)
+	live := findLiveProxy(ctx, cfg)
+	healthy := live != nil
+	if live != nil {
+		pid, port = live.PID, live.Port
+	}
 	if jsonOutput {
 		return json.NewEncoder(streams.Out).Encode(map[string]any{"ok": healthy, "pid": nullablePositive(pid), "port": nullablePositive(port)})
 	}
@@ -100,13 +105,19 @@ func runGUI(ctx context.Context, args []string, streams IO) error {
 	if err != nil {
 		return err
 	}
-	_, port := readRuntime()
-	if !probeHealth(ctx, cfg.Host, port) {
+	live := findLiveProxy(ctx, cfg)
+	port := 0
+	if live != nil {
+		port = live.Port
+	}
+	if live == nil {
 		fmt.Fprintln(streams.Out, "Proxy not running. Starting...")
 		if err := startDetachedAndWait(ctx, streams); err != nil {
 			return err
 		}
-		_, port = readRuntime()
+		if started := findLiveProxy(ctx, cfg); started != nil {
+			port = started.Port
+		}
 	}
 	address := dashboardURL(cfg.Host, port)
 	fmt.Fprintf(streams.Out, "Opening %s\n", address)
@@ -143,9 +154,8 @@ func startDetachedAndWait(ctx context.Context, streams IO) error {
 		case <-deadline.C:
 			return errors.New("proxy did not become healthy after starting")
 		case <-ticker.C:
-			pid, port := readRuntime()
-			if pid > 0 && platform.ProcessAlive(pid) && probeHealth(ctx, cfg.Host, port) {
-				fmt.Fprintf(streams.Out, "Proxy started (PID %d, port %d).\n", pid, port)
+			if live := findLiveProxy(ctx, cfg); live != nil {
+				fmt.Fprintf(streams.Out, "Proxy started (PID %d, port %d).\n", live.PID, live.Port)
 				return nil
 			}
 		}

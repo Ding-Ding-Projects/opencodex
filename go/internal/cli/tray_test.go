@@ -28,9 +28,11 @@ func (f *fakeTrayManager) Stop(context.Context) (tray.Status, error)   { return 
 func (f *fakeTrayManager) Status(context.Context) (tray.Status, error) { return f.record("status") }
 func (f *fakeTrayManager) Run(context.Context) error                   { f.calls = append(f.calls, "run"); return nil }
 func (f *fakeTrayManager) PrepareUpdate(context.Context) (tray.Handoff, error) {
+	f.calls = append(f.calls, "prepare-update")
 	return tray.Handoff{}, nil
 }
 func (f *fakeTrayManager) CompleteUpdate(context.Context, tray.Handoff) (tray.Status, error) {
+	f.calls = append(f.calls, "complete-update")
 	return f.status, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
+	"github.com/lidge-jun/opencodex-go/internal/vision"
 )
 
 type adapterFetchFunc func(context.Context, *http.Request) (*http.Response, error)
@@ -15,6 +16,26 @@ type adapterFetchContextKey struct{}
 type fetchBoundAdapter struct {
 	types.Adapter
 	fetch adapterFetchFunc
+}
+
+type visionBoundAdapter struct {
+	types.Adapter
+	preprocessor   *vision.VisionPreprocessor
+	supportsVision bool
+}
+
+func bindAdapterVision(adapter types.Adapter, preprocessor *vision.VisionPreprocessor, supportsVision bool) types.Adapter {
+	if preprocessor == nil {
+		return adapter
+	}
+	return &visionBoundAdapter{Adapter: adapter, preprocessor: preprocessor, supportsVision: supportsVision}
+}
+
+func (a *visionBoundAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	if err := a.preprocessor.PreprocessForModel(ctx, request, a.supportsVision); err != nil {
+		return nil, err
+	}
+	return a.Adapter.BuildRequest(ctx, request)
 }
 
 func bindAdapterFetch(adapter types.Adapter, fetch adapterFetchFunc) types.Adapter {
@@ -56,8 +77,14 @@ func newAdapterAwareClient(base *http.Client) *http.Client {
 }
 
 func unwrapAdapter(adapter types.Adapter) types.Adapter {
-	if bound, ok := adapter.(*fetchBoundAdapter); ok {
-		return bound.Adapter
+	for {
+		switch bound := adapter.(type) {
+		case *fetchBoundAdapter:
+			adapter = bound.Adapter
+		case *visionBoundAdapter:
+			adapter = bound.Adapter
+		default:
+			return adapter
+		}
 	}
-	return adapter
 }

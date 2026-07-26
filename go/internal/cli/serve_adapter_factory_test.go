@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -312,6 +313,50 @@ func TestConfiguredAuthAllowsKeyOptionalMimoWithoutCredential(t *testing.T) {
 	}
 }
 
+func TestConfiguredAuthActivatesOpenAIAccountPool(t *testing.T) {
+	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	for index, access := range []string{"pool-access-one", "pool-access-two"} {
+		credential := oauth.OAuthCredentials{Access: access, Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: fmt.Sprintf("account-%d", index)}
+		if err := store.SaveCredential(context.Background(), "openai", credential); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.FreshInstall()
+	resolver, err := configuredAuthWithStore(cfg, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := resolver.ResolveAuth(context.Background(), "openai", "thread-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := resolver.ResolveAuth(context.Background(), "openai", "thread-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolver.Pool == nil || first.AccountID == "" || second.AccountID == "" || first.AccountID == second.AccountID {
+		t.Fatalf("pool=%v first=%#v second=%#v", resolver.Pool != nil, first, second)
+	}
+}
+
+func TestConfiguredLiveResolverUsesProviderPolicyWithoutLeakingSecrets(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["openai-apikey"] = config.ProviderConfig{Adapter: "openai-responses", BaseURL: "https://api.openai.test/v1", APIKey: "keyed-secret", Headers: map[string]string{"X-Static": "yes"}}
+	resolver := configuredLiveResolver(&cfg, oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json")))
+	target, err := resolver(context.Background(), http.Header{"Authorization": {"Bearer incoming-token"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ProviderBaseURL != cfg.Providers["openai"].BaseURL || !target.UsesBackendShape || target.Headers.Get("Authorization") != "Bearer incoming-token" {
+		t.Fatalf("forward live target = %#v", target)
+	}
+	delete(cfg.Providers, "openai")
+	target, err = resolver(context.Background(), nil)
+	if err != nil || !target.Keyed || target.Headers.Get("Authorization") != "Bearer keyed-secret" || target.Headers.Get("X-Static") != "yes" {
+		t.Fatalf("keyed live target = %#v err=%v", target, err)
+	}
+}
+
 func TestProviderFetchTimeoutsUseConfiguredConnectBudget(t *testing.T) {
 	cfg := config.FreshInstall()
 	cfg.ConnectTimeoutMS = 1234
@@ -319,5 +364,34 @@ func TestProviderFetchTimeoutsUseConfiguredConnectBudget(t *testing.T) {
 	want := 1234 * time.Millisecond
 	if timeouts.Connect != want || timeouts.TLSHandshake != want || timeouts.ResponseHeader != want || timeouts.Overall != 10*time.Minute {
 		t.Fatalf("timeouts=%#v", timeouts)
+	}
+}
+
+func TestConfiguredStallTimeoutIsPassedAsSeconds(t *testing.T) {
+	if configuredStallTimeout(config.Config{}) != nil {
+		t.Fatal("omitted stall timeout must preserve the server default")
+	}
+	value := configuredStallTimeout(config.Config{StallTimeoutSec: 1})
+	if value == nil || *value != 1 {
+		t.Fatalf("configured stall timeout = %v", value)
+	}
+}
+
+func TestVisionFactoryPreservesExplicitZeroDescriptionLimit(t *testing.T) {
+	cfg := config.Default()
+	cfg.VisionSidecar = &config.VisionSidecarConfig{
+		Backend: "openai", MaxDescriptionsPerTurn: 0, MaxDescriptionsPerTurnSet: true,
+	}
+	preprocessor := configuredVisionPreprocessor(cfg, http.DefaultClient)
+	if preprocessor == nil {
+		t.Fatal("configuredVisionPreprocessor returned nil")
+	}
+	content := json.RawMessage(`[{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}]`)
+	request := &types.NormalizedRequest{Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: content}}}}
+	if err := preprocessor.PreprocessForModel(context.Background(), request, false); err != nil {
+		t.Fatalf("PreprocessForModel: %v", err)
+	}
+	if strings.Contains(string(request.Context.Messages[0].Content), "input_image") {
+		t.Fatalf("explicit zero must strip rather than describe images: %s", request.Context.Messages[0].Content)
 	}
 }

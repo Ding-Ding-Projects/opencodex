@@ -85,11 +85,53 @@ type SidecarTimeoutConfig struct {
 }
 
 type VisionSidecarConfig struct {
-	Enabled                *bool  `json:"enabled,omitempty"`
-	Backend                string `json:"backend,omitempty"`
-	Model                  string `json:"model,omitempty"`
-	MaxDescriptionsPerTurn int    `json:"maxDescriptionsPerTurn,omitempty"`
-	TimeoutMS              int    `json:"timeoutMs,omitempty"`
+	Enabled                   *bool  `json:"enabled,omitempty"`
+	Backend                   string `json:"backend,omitempty"`
+	Model                     string `json:"model,omitempty"`
+	MaxDescriptionsPerTurn    int    `json:"-"`
+	MaxDescriptionsPerTurnSet bool   `json:"-"`
+	TimeoutMS                 int    `json:"timeoutMs,omitempty"`
+}
+
+func (c *VisionSidecarConfig) UnmarshalJSON(data []byte) error {
+	type wireConfig struct {
+		Enabled                *bool  `json:"enabled,omitempty"`
+		Backend                string `json:"backend,omitempty"`
+		Model                  string `json:"model,omitempty"`
+		MaxDescriptionsPerTurn *int   `json:"maxDescriptionsPerTurn"`
+		TimeoutMS              int    `json:"timeoutMs,omitempty"`
+	}
+	var wire wireConfig
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	c.Enabled, c.Backend, c.Model, c.TimeoutMS = wire.Enabled, wire.Backend, wire.Model, wire.TimeoutMS
+	c.MaxDescriptionsPerTurnSet = wire.MaxDescriptionsPerTurn != nil
+	if wire.MaxDescriptionsPerTurn != nil {
+		c.MaxDescriptionsPerTurn = *wire.MaxDescriptionsPerTurn
+	} else {
+		c.MaxDescriptionsPerTurn = 0
+	}
+	return nil
+}
+
+func (c VisionSidecarConfig) MarshalJSON() ([]byte, error) {
+	type wireConfig struct {
+		Enabled                *bool  `json:"enabled,omitempty"`
+		Backend                string `json:"backend,omitempty"`
+		Model                  string `json:"model,omitempty"`
+		MaxDescriptionsPerTurn *int   `json:"maxDescriptionsPerTurn,omitempty"`
+		TimeoutMS              int    `json:"timeoutMs,omitempty"`
+	}
+	var maxDescriptions *int
+	if c.MaxDescriptionsPerTurnSet || c.MaxDescriptionsPerTurn != 0 {
+		value := c.MaxDescriptionsPerTurn
+		maxDescriptions = &value
+	}
+	return json.Marshal(wireConfig{
+		Enabled: c.Enabled, Backend: c.Backend, Model: c.Model,
+		MaxDescriptionsPerTurn: maxDescriptions, TimeoutMS: c.TimeoutMS,
+	})
 }
 
 type WebSearchSidecarConfig struct {

@@ -282,7 +282,7 @@ func TestConfigPreservesExtendedRuntimeSettings(t *testing.T) {
 	cfg.ShutdownTimeoutMS = 5_000
 	cfg.CacheRetention = "long"
 	cfg.WebSearchSidecar = &WebSearchSidecarConfig{Backend: "anthropic", Model: "claude-sonnet-4", MaxSearchesPerTurn: 3, TimeoutMS: 20_000}
-	cfg.VisionSidecar = &VisionSidecarConfig{Backend: "openai", Model: "gpt-5.4-mini", MaxDescriptionsPerTurn: 2}
+	cfg.VisionSidecar = &VisionSidecarConfig{Backend: "openai", Model: "gpt-5.4-mini", MaxDescriptionsPerTurn: 2, MaxDescriptionsPerTurnSet: true}
 	cfg.CORSAllowOrigins = []string{"https://example.com"}
 	if err := Save(path, &cfg); err != nil {
 		t.Fatal(err)
@@ -293,6 +293,37 @@ func TestConfigPreservesExtendedRuntimeSettings(t *testing.T) {
 	}
 	if !reflect.DeepEqual(*loaded, cfg) {
 		t.Fatalf("extended settings did not round trip\n got: %#v\nwant: %#v", *loaded, cfg)
+	}
+}
+
+func TestVisionDescriptionLimitDistinguishesOmittedFromExplicitZero(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		set  bool
+	}{
+		{name: "omitted", body: `{"visionSidecar":{}}`},
+		{name: "explicit zero", body: `{"visionSidecar":{"maxDescriptionsPerTurn":0}}`, set: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var partial struct {
+				Vision *VisionSidecarConfig `json:"visionSidecar"`
+			}
+			if err := json.Unmarshal([]byte(test.body), &partial); err != nil {
+				t.Fatal(err)
+			}
+			if partial.Vision == nil || partial.Vision.MaxDescriptionsPerTurnSet != test.set {
+				t.Fatalf("vision = %#v, set want %v", partial.Vision, test.set)
+			}
+			encoded, err := json.Marshal(partial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasField := strings.Contains(string(encoded), `"maxDescriptionsPerTurn"`)
+			if hasField != test.set {
+				t.Fatalf("encoded = %s, field presence want %v", encoded, test.set)
+			}
+		})
 	}
 }
 
