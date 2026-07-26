@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	adapterbase "github.com/lidge-jun/opencodex-go/internal/adapter"
@@ -34,6 +35,14 @@ func NewTurnQueue(capacity int) *TurnQueue {
 }
 
 func NewAdapterEventQueue() *TurnQueue { return NewTurnQueue(16) }
+
+func newStreamEventQueue(body io.Closer) *TurnQueue {
+	queue := NewAdapterEventQueue()
+	if body != nil {
+		queue.OnBacklogExceeded = func() { _ = body.Close() }
+	}
+	return queue
+}
 
 // Push queues an event in call order. It returns false after Close.
 func (q *TurnQueue) Push(event types.AdapterEvent) bool {

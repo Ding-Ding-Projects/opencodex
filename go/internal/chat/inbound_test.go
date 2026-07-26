@@ -88,6 +88,26 @@ func TestParseInboundRecoversToolNameFromEarlierCallID(t *testing.T) {
 	}
 }
 
+func TestParseInboundPreservesPromptCacheAndHostedWebSearch(t *testing.T) {
+	req, err := ParseInbound([]byte(`{
+		"model":"m","prompt_cache_key":"cache-session",
+		"messages":[{"role":"user","content":"search"}],
+		"tools":[{"type":"web_search_preview"}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Options.PromptCacheKey != "cache-session" {
+		t.Fatalf("prompt cache key = %q", req.Options.PromptCacheKey)
+	}
+	if req.WebSearch == nil || req.WebSearch["type"] != "web_search" {
+		t.Fatalf("web search = %#v", req.WebSearch)
+	}
+	if len(req.Context.Tools) != 0 {
+		t.Fatalf("hosted search leaked into function tools: %#v", req.Context.Tools)
+	}
+}
+
 func TestParseAnthropicInboundTranslatesToolAndThinking(t *testing.T) {
 	req, model, err := parseAnthropicInbound([]byte(`{
 		"model":"claude-x","max_tokens":100,"thinking":{"type":"enabled","budget_tokens":8000},

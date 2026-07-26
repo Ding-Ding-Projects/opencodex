@@ -201,6 +201,65 @@ func TestAdapterIgnoresUnknownServerEventAndStillTerminates(t *testing.T) {
 	}
 }
 
+func TestAdapterPersistsSuccessfulThreadContinuity(t *testing.T) {
+	ClearCursorThreadContinuity()
+	t.Cleanup(ClearCursorThreadContinuity)
+	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := cursorNormalizedRequest("hello")
+	normalized.Metadata = map[string]string{CursorClientThreadIDMetadata: "thread-success", CursorIdentityScopeMetadata: "account-a"}
+	request, err := adapter.BuildRequest(context.Background(), normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Body.Close()
+	want := adapter.currentTurn().run.ConversationID
+	terminal := appendMessage(nil, 1, appendMessage(nil, 14, nil))
+	body := connectFrames(t, ConnectFrame{Payload: terminal}, ConnectFrame{Flags: ConnectFlagEndStream, Payload: []byte(`{}`)})
+	events := collectCursorAdapterEvents(adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(body))))
+	if len(events) != 1 || events[0].Type != types.EventDone {
+		t.Fatalf("events = %#v", events)
+	}
+	if got, ok := LookupCursorThreadConversation("thread-success", "account-a"); !ok || got != want {
+		t.Fatalf("remembered conversation = %q, %v; want %q", got, ok, want)
+	}
+}
+
+func TestAdapterInvalidArgumentPreparesFreshContinuityForNextTurn(t *testing.T) {
+	ClearCursorThreadContinuity()
+	t.Cleanup(ClearCursorThreadContinuity)
+	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := cursorNormalizedRequest("hello")
+	normalized.Metadata = map[string]string{CursorClientThreadIDMetadata: "thread-recovery", CursorIdentityScopeMetadata: "account-a"}
+	request, err := adapter.BuildRequest(context.Background(), normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := adapter.currentTurn().run.ConversationID
+	defer request.Body.Close()
+	body := connectFrames(t, ConnectFrame{Flags: ConnectFlagEndStream, Payload: []byte(`{"error":{"code":"invalid_argument","message":"stale conversation"}}`)})
+	events := collectCursorAdapterEvents(adapter.ParseStream(context.Background(), io.NopCloser(bytes.NewReader(body))))
+	if len(events) != 1 || events[0].Type != types.EventError {
+		t.Fatalf("events = %#v", events)
+	}
+	recovered, ok := LookupCursorThreadConversation("thread-recovery", "account-a")
+	if !ok || recovered == "" || recovered == failed {
+		t.Fatalf("recovered conversation = %q, %v; failed = %q", recovered, ok, failed)
+	}
+	next, err := BuildAgentRunRequest(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Run.ConversationID != recovered {
+		t.Fatalf("next conversation = %q, want %q", next.Run.ConversationID, recovered)
+	}
+}
+
 func TestAdapterBridgesResponsesClientToolAndFinalizesAfterGrace(t *testing.T) {
 	adapter, err := NewAdapter(AdapterConfig{BaseURL: "https://cursor.example", Token: "token", HeartbeatInterval: time.Hour})
 	if err != nil {

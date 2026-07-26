@@ -255,6 +255,32 @@ func TestMessagesHandlerConnectsSearchLoopUsageCallback(t *testing.T) {
 	}
 }
 
+func TestChatHandlerConnectsHostedSearchLoopUsageCallback(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	rawUsage := &types.Usage{InputTokens: 9, OutputTokens: 2, CachedInputTokens: 1}
+	var recorded *types.Usage
+	loop := &search.Loop{Runner: chatSearchRunner{usage: rawUsage}}
+	handler := NewHandler(HandlerConfig{
+		Registry: reg, SearchLoop: loop, OnUsage: func(value *types.Usage) { recorded = value },
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return handlerAdapter{endpoint: upstream.URL}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"model":"acme/wire","messages":[{"role":"user","content":"search"}],
+		"tools":[{"type":"web_search_preview"}]
+	}`))
+	response := httptest.NewRecorder()
+	handler.Handle(response, request)
+	if response.Code != http.StatusOK || recorded == nil || recorded.InputTokens != 9 || !strings.Contains(response.Body.String(), "searched") {
+		t.Fatalf("response=%d body=%s usage=%#v", response.Code, response.Body.String(), recorded)
+	}
+}
+
 func TestMessagesHandlerWiresMetadataPromptCacheSessionHeaderOnly(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{}`)

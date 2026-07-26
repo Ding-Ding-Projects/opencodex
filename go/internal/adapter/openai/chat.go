@@ -235,11 +235,12 @@ type pendingChatCall struct {
 }
 
 func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan types.AdapterEvent {
-	out := make(chan types.AdapterEvent)
+	queue := newStreamEventQueue(body)
+	out := queue.Stream()
 	go func() {
-		defer close(out)
+		defer queue.Close()
 		if body == nil {
-			sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "No response body"})
+			queue.Send(ctx, types.AdapterEvent{Type: types.EventError, Error: "No response body"})
 			return
 		}
 		streamCtx, cancel := context.WithCancel(ctx)
@@ -248,32 +249,33 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 		order := make([]string, 0)
 		var usage *types.Usage
 		finishReason := ""
-		flush := func() bool { return flushChatCalls(ctx, out, calls, order) }
+		emit := func(event types.AdapterEvent) bool { return queue.Send(ctx, event) }
+		flush := func() bool { return flushChatCalls(emit, calls, order) }
 		for decoded := range decodeSSE(streamCtx, body) {
 			if decoded.Err != nil {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
+				emit(types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
 				return
 			}
 			frame := decoded.Event
 			if frame.Comment != nil {
-				if !sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventHeartbeat}) {
+				if !emit(types.AdapterEvent{Type: types.EventHeartbeat}) {
 					return
 				}
 				continue
 			}
 			if frame.Data == "[DONE]" {
 				flush()
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})
+				emit(types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})
 				return
 			}
 			var chunk map[string]any
 			if json.Unmarshal([]byte(frame.Data), &chunk) != nil {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "malformed upstream SSE data frame"})
+				emit(types.AdapterEvent{Type: types.EventError, Error: "malformed upstream SSE data frame"})
 				return
 			}
 			if chunk["error"] != nil {
 				flush()
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: responsesErrorMessage(chunk)})
+				emit(types.AdapterEvent{Type: types.EventError, Error: responsesErrorMessage(chunk)})
 				return
 			}
 			if chunk["usage"] != nil {
@@ -289,10 +291,10 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 			}
 			delta, _ := choice["delta"].(map[string]any)
 			if reasoning := stringValue(delta["reasoning_content"]); reasoning != "" {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventReasoningRawDelta, Text: reasoning})
+				emit(types.AdapterEvent{Type: types.EventReasoningRawDelta, Text: reasoning})
 			}
 			if text := stringValue(delta["content"]); text != "" {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
+				emit(types.AdapterEvent{Type: types.EventTextDelta, Text: text})
 			}
 			accumulateChatCalls(delta["tool_calls"], calls, &order)
 			if stringValue(choice["finish_reason"]) != "" {
@@ -304,10 +306,10 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 		}
 		flush()
 		if finishReason == "" && usage == nil {
-			sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "upstream stream ended without a terminal signal ([DONE] or finish_reason) — possible truncation"})
+			emit(types.AdapterEvent{Type: types.EventError, Error: "upstream stream ended without a terminal signal ([DONE] or finish_reason) — possible truncation"})
 			return
 		}
-		sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})
+		emit(types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})
 	}()
 	return out
 }
@@ -357,7 +359,7 @@ func accumulateChatCalls(value any, calls map[string]*pendingChatCall, order *[]
 	}
 }
 
-func flushChatCalls(ctx context.Context, out chan<- types.AdapterEvent, calls map[string]*pendingChatCall, order []string) bool {
+func flushChatCalls(emit func(types.AdapterEvent) bool, calls map[string]*pendingChatCall, order []string) bool {
 	for sequence, key := range order {
 		call := calls[key]
 		if call == nil {
@@ -370,7 +372,7 @@ func flushChatCalls(ctx context.Context, out chan<- types.AdapterEvent, calls ma
 		if !json.Valid(arguments) {
 			arguments = []byte("{}")
 		}
-		if !sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: call.id, Name: call.name, Arguments: arguments}}) {
+		if !emit(types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: call.id, Name: call.name, Arguments: arguments}}) {
 			return false
 		}
 		delete(calls, key)

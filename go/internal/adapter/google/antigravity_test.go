@@ -7,6 +7,17 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
+func TestAntigravityRequestUserAgentMatchesCanonicalFingerprint(t *testing.T) {
+	t.Setenv("GOOGLE_ANTIGRAVITY_USER_AGENT", "")
+	if got := AntigravityRequestUserAgent(); got != "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)" {
+		t.Fatalf("default user agent = %q", got)
+	}
+	t.Setenv("GOOGLE_ANTIGRAVITY_USER_AGENT", "custom-antigravity")
+	if got := AntigravityRequestUserAgent(); got != "custom-antigravity" {
+		t.Fatalf("overridden user agent = %q", got)
+	}
+}
+
 func TestAntigravitySessionAndSignatureValidation(t *testing.T) {
 	req := &types.NormalizedRequest{Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: rawJSON("same")}}}}
 	if first, second := AntigravitySessionID(req), AntigravitySessionID(req); first != second || first[0] != '-' {

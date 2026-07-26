@@ -30,6 +30,7 @@ type chatRequest struct {
 	ReasoningEffort     string            `json:"reasoning_effort"`
 	Reasoning           map[string]any    `json:"reasoning"`
 	ServiceTier         string            `json:"service_tier"`
+	PromptCacheKey      string            `json:"prompt_cache_key"`
 	Metadata            map[string]any    `json:"metadata"`
 }
 
@@ -71,11 +72,14 @@ func ParseInbound(raw []byte) (*types.NormalizedRequest, error) {
 		return nil, &RequestError{Message: "messages must include at least one user/assistant/tool turn"}
 	}
 
-	tools, err := parseChatTools(body.Tools)
+	tools, hostedWebSearch, err := parseChatTools(body.Tools)
 	if err != nil {
 		return nil, err
 	}
 	req.Context.Tools = tools
+	if hostedWebSearch {
+		req.WebSearch = map[string]any{"type": "web_search"}
+	}
 	req.Options = chatOptions(body)
 	req.Metadata = stringMetadata(body.Metadata)
 	return req, nil
@@ -213,11 +217,16 @@ func chatToolCallPart(raw json.RawMessage, knownToolNames map[string]string) (ma
 	return map[string]any{"type": "toolCall", "id": id, "name": name, "arguments": arguments}, nil
 }
 
-func parseChatTools(rawTools []json.RawMessage) ([]types.Tool, error) {
+func parseChatTools(rawTools []json.RawMessage) ([]types.Tool, bool, error) {
 	out := make([]types.Tool, 0, len(rawTools))
+	hostedWebSearch := false
 	for _, raw := range rawTools {
 		var entry map[string]any
 		if json.Unmarshal(raw, &entry) != nil {
+			continue
+		}
+		if entry["type"] == "web_search" || entry["type"] == "web_search_preview" {
+			hostedWebSearch = true
 			continue
 		}
 		fn := entry
@@ -233,11 +242,11 @@ func parseChatTools(rawTools []json.RawMessage) ([]types.Tool, error) {
 		strict, _ := fn["strict"].(bool)
 		out = append(out, types.Tool{Name: name, Description: description, Parameters: parameters, Strict: strict})
 	}
-	return out, nil
+	return out, hostedWebSearch, nil
 }
 
 func chatOptions(body chatRequest) types.RequestOptions {
-	options := types.RequestOptions{Temperature: body.Temperature, TopP: body.TopP, ParallelToolCalls: body.ParallelToolCalls, ServiceTier: body.ServiceTier}
+	options := types.RequestOptions{Temperature: body.Temperature, TopP: body.TopP, ParallelToolCalls: body.ParallelToolCalls, ServiceTier: body.ServiceTier, PromptCacheKey: body.PromptCacheKey}
 	if body.MaxCompletionTokens != nil {
 		options.MaxOutputTokens = *body.MaxCompletionTokens
 	} else if body.MaxTokens != nil {

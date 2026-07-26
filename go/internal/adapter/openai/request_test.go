@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -266,6 +267,24 @@ func TestResponsesParseStreamIncomplete(t *testing.T) {
 	}
 	if events[0].Usage == nil || events[0].Usage.TotalTokens != 0 || events[0].Usage.OutputTokens != 3 {
 		t.Fatalf("unexpected usage: %#v", events[0].Usage)
+	}
+}
+
+func TestResponsesParseStreamAbortsWhenConsumerBacklogExceedsPolicy(t *testing.T) {
+	var stream strings.Builder
+	for range 1100 {
+		stream.WriteString("data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n")
+	}
+	events := (&ResponsesAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream.String())))
+	// Give the parser time to fill the production queue while this consumer is stalled.
+	time.Sleep(25 * time.Millisecond)
+	collected := collectEvents(events)
+	if len(collected) == 0 {
+		t.Fatal("backlogged stream emitted no terminal event")
+	}
+	last := collected[len(collected)-1]
+	if last.Type != types.EventError || last.Error != "consumer backlog exceeded — turn aborted" {
+		t.Fatalf("terminal event = %#v", last)
 	}
 }
 

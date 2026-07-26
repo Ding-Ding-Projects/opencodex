@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	DefaultAntigravityUserAgent = "antigravity/cli/1.0.0 (aidev_client; os_type=darwin; arch=arm64)"
+	DefaultAntigravityUserAgent = "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)"
 	replayTTL                   = time.Hour
 	replayMaxEntries            = 10_240
 	replayEvictBatch            = 128

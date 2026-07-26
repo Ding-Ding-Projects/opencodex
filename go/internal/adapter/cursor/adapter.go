@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -50,6 +51,14 @@ type adapterTurn struct {
 	once            sync.Once
 	finalizeMu      sync.Mutex
 	pendingFinalize *time.Timer
+
+	clientThreadID string
+	identityScope  string
+	isolate        bool
+	externalModel  bool
+	lastWasTool    bool
+	emittedOutput  atomic.Bool
+	replayUnsafe   atomic.Bool
 }
 
 var _ types.Adapter = (*Adapter)(nil)
@@ -102,8 +111,14 @@ func (a *Adapter) BuildRequest(ctx context.Context, request *types.NormalizedReq
 	}
 	turn := &adapterTurn{
 		ctx: turnCtx, cancel: cancel, writer: writer, run: built.Run,
-		parser: NewEventParser(parserOptions),
+		parser:         NewEventParser(parserOptions),
+		clientThreadID: strings.TrimSpace(request.Metadata[CursorClientThreadIDMetadata]),
+		identityScope:  request.Metadata[CursorIdentityScopeMetadata],
+		isolate:        request.Metadata[CursorIsolateConversationMetadata] == "true",
+		externalModel:  IsCursorExternalWireModel(built.Run.Model.ID),
 	}
+	lastRole, _ := lastAction(request.Context.Messages)
+	turn.lastWasTool = lastRole == "tool"
 
 	a.mu.Lock()
 	if a.active != nil {
@@ -171,12 +186,14 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			}
 		}()
 		err := a.consumeFrames(ctx, body, turn, func(event types.AdapterEvent) error {
+			a.observeTurnEvent(turn, event)
 			if !sendCursorAdapterEvent(ctx, out, event) {
 				return ctx.Err()
 			}
 			return nil
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
+			a.prepareContinuityRecovery(turn, err)
 			sendCursorAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: err.Error(), StatusCode: http.StatusBadGateway})
 		}
 	}()
@@ -191,10 +208,46 @@ func (a *Adapter) ParseUnary(ctx context.Context, body []byte) ([]types.AdapterE
 	defer a.releaseTurn(turn)
 	var events []types.AdapterEvent
 	err := a.consumeFrames(ctx, bytes.NewReader(body), turn, func(event types.AdapterEvent) error {
+		a.observeTurnEvent(turn, event)
 		events = append(events, event)
 		return nil
 	})
+	if err != nil {
+		a.prepareContinuityRecovery(turn, err)
+	}
 	return events, err
+}
+
+func (a *Adapter) observeTurnEvent(turn *adapterTurn, event types.AdapterEvent) {
+	if event.Type != types.EventHeartbeat {
+		turn.emittedOutput.Store(true)
+	}
+	if event.Type == types.EventDone && turn.clientThreadID != "" && !turn.isolate {
+		RememberCursorThreadConversation(turn.clientThreadID, turn.run.ConversationID, turn.identityScope)
+	}
+}
+
+func (a *Adapter) prepareContinuityRecovery(turn *adapterTurn, err error) {
+	if turn == nil || turn.clientThreadID == "" || turn.isolate || !turn.externalModel || turn.lastWasTool ||
+		turn.emittedOutput.Load() || turn.replayUnsafe.Load() || !isCursorInvalidArgumentError(err) {
+		return
+	}
+	recovered := generatedCursorConversationID()
+	RememberCursorThreadConversation(turn.clientThreadID, recovered, turn.identityScope)
+	if a.usage != nil {
+		a.usage.Rekey(turn.run.ConversationID, recovered)
+	}
+}
+
+func isCursorInvalidArgumentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var trailer *ConnectEndStreamError
+	if errors.As(err, &trailer) && strings.EqualFold(trailer.Code, "invalid_argument") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "invalid_argument")
 }
 
 func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *adapterTurn, emit func(types.AdapterEvent) error) error {
@@ -296,6 +349,7 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 			if a.config.NativeExecutor == nil {
 				continue
 			}
+			turn.replayUnsafe.Store(true)
 			for _, execResponse := range a.config.NativeExecutor.Execute(ctx, execRequest) {
 				reply, marshalErr := MarshalExecClientMessage(execResponse)
 				if marshalErr != nil {

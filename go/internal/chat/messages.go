@@ -78,12 +78,7 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if normalized.Stream {
-			stream := make(chan types.AdapterEvent, len(events))
-			for _, event := range events {
-				stream <- event
-			}
-			close(stream)
-			if err := writeAnthropicStream(r.Context(), w, requestedModel, stream); err != nil {
+			if err := writeAnthropicStream(r.Context(), w, requestedModel, adapterEventChannel(events)); err != nil {
 				recordDesktopError()
 			}
 			return

@@ -87,6 +87,25 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeChatErrorFor(w, err)
 		return
 	}
+	if events, handled, err := h.config.runSearch(r.Context(), prepared); handled {
+		if err != nil {
+			writeChatError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		if normalized.Stream {
+			if err := WriteChatStream(r.Context(), w, requestedModel, adapterEventChannel(events)); err != nil && !errors.Is(err, context.Canceled) {
+				return
+			}
+			return
+		}
+		completion, err := BuildChatCompletion(events, requestedModel)
+		if err != nil {
+			writeChatError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, completion)
+		return
+	}
 	response, err := h.config.do(r.Context(), prepared)
 	if err != nil {
 		writeChatErrorFor(w, err)
@@ -122,6 +141,15 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, completion)
+}
+
+func adapterEventChannel(events []types.AdapterEvent) <-chan types.AdapterEvent {
+	stream := make(chan types.AdapterEvent, len(events))
+	for _, event := range events {
+		stream <- event
+	}
+	close(stream)
+	return stream
 }
 
 func copyRetryAfter(destination, source http.Header) {

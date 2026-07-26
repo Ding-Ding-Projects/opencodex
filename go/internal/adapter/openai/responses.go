@@ -518,46 +518,48 @@ func responsesTools(tools []types.Tool) []map[string]any {
 }
 
 func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan types.AdapterEvent {
-	out := make(chan types.AdapterEvent)
+	queue := newStreamEventQueue(body)
+	out := queue.Stream()
 	go func() {
-		defer close(out)
+		defer queue.Close()
 		if body == nil {
-			sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "passthrough adapter received no response body"})
+			queue.Send(ctx, types.AdapterEvent{Type: types.EventError, Error: "passthrough adapter received no response body"})
 			return
 		}
+		emit := func(event types.AdapterEvent) bool { return queue.Send(ctx, event) }
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		calls := make(map[string]*types.ToolCall)
 		for decoded := range decodeSSE(streamCtx, body) {
 			if decoded.Err != nil {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
+				emit(types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
 				return
 			}
 			frame := decoded.Event
 			if frame.Comment != nil {
-				if !sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventHeartbeat}) {
+				if !emit(types.AdapterEvent{Type: types.EventHeartbeat}) {
 					return
 				}
 				continue
 			}
 			if frame.Data == "[DONE]" {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone})
+				emit(types.AdapterEvent{Type: types.EventDone})
 				return
 			}
 			var event map[string]any
 			if err := json.Unmarshal([]byte(frame.Data), &event); err != nil {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "malformed upstream SSE data frame"})
+				emit(types.AdapterEvent{Type: types.EventError, Error: "malformed upstream SSE data frame"})
 				return
 			}
 			terminal := parseResponsesStreamEvent(event, calls, func(adapterEvent types.AdapterEvent) bool {
-				return sendAdapterEvent(ctx, out, adapterEvent)
+				return emit(adapterEvent)
 			})
 			if terminal {
 				return
 			}
 		}
 		if ctx.Err() == nil {
-			sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "upstream stream ended without a terminal signal"})
+			emit(types.AdapterEvent{Type: types.EventError, Error: "upstream stream ended without a terminal signal"})
 		}
 	}()
 	return out
