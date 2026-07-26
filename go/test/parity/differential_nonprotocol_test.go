@@ -100,20 +100,23 @@ func captureProcess(command *exec.Cmd) processCapture {
 	return processCapture{exitCode: exitCode, stdout: stdout.Bytes(), stderr: stderr.Bytes()}
 }
 
-var knownArtifactDiffs = map[string]bool{
+// intentionalArtifactDiffs records native-distribution contracts that must stay
+// different from Bun. The Go shim directly executes native `ocx ensure`; matching
+// the TypeScript bytes would reintroduce a Bun + TS CLI runtime dependency.
+var intentionalArtifactDiffs = map[string]bool{
 	"shim/unix": true,
 }
 
 func compareArtifactBytes(t *testing.T, scenario string, goBytes, tsBytes []byte) {
 	t.Helper()
 	different := !bytes.Equal(goBytes, tsBytes)
-	if different == knownArtifactDiffs[scenario] {
+	if different == intentionalArtifactDiffs[scenario] {
 		if different {
-			t.Logf("KNOWN ARTIFACT DIFFERENTIAL [%s]: Go(len=%d sha=%s) TS(len=%d sha=%s)", scenario, len(goBytes), payloadDigest(goBytes), len(tsBytes), payloadDigest(tsBytes))
+			t.Logf("INTENTIONAL ARTIFACT DIFFERENTIAL [%s]: Go(len=%d sha=%s) TS(len=%d sha=%s)", scenario, len(goBytes), payloadDigest(goBytes), len(tsBytes), payloadDigest(tsBytes))
 		}
 		return
 	}
-	t.Fatalf("artifact differential changed [%s]: expectedDifferent=%t Go=%q TS=%q", scenario, knownArtifactDiffs[scenario], goBytes, tsBytes)
+	t.Fatalf("artifact differential changed [%s]: intentionallyDifferent=%t Go=%q TS=%q", scenario, intentionalArtifactDiffs[scenario], goBytes, tsBytes)
 }
 
 var (

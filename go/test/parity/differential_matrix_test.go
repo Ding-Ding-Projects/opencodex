@@ -104,10 +104,7 @@ type expectedRuntimeDiff struct {
 }
 
 var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
-	"config/wrong-field-type":            {body: true},
-	"logs/request-shape":                 {body: true},
-	"advanced/network-disconnect":        {status: true, headers: []string{"Content-Type", "Cache-Control"}, body: true},
-	"nonstandard/invalid-chunk-encoding": {body: true},
+	"config/wrong-field-type": {body: true},
 }
 
 var (

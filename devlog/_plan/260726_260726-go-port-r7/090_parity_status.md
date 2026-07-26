@@ -56,22 +56,24 @@ Dynamic request-log fields are normalized separately and narrowly:
 | Owner | Scenario | Current Go behavior | Bun TypeScript behavior |
 |---|---|---|---|
 | Bun HTTP server | 1.1 MiB request header | empty 431 | connection reset or empty 431; semantic lock because Bun alternates between both outcomes |
-| server/adapter | socket cut before the first SSE event | rejects before stream with 502 JSON | starts 200 SSE, then emits `response.failed`; message bytes now agree |
-| adapter/transport | invalid HTTP chunk encoding | rejects before stream with 502 JSON carrying Go's chunk-parser message | rejects before stream with 502 JSON carrying Bun's `InvalidHTTPResponse` message |
 | config | wrong known-field type | Go fallback config representation | TS repaired/default config representation |
-| request logs | `/api/logs?tail=1` | includes `surface` and per-attempt details | includes `displayMetrics` |
-| codex shim | Unix shim bytes | invokes the native `ocx` binary directly | invokes Bun plus the TS CLI module |
 
 Owner fixes promoted the unknown-command stdout/stderr contract and the
-`GET /health` 404 body to strict assertions. Invalid chunk encoding now locks
-status and headers, leaving only the runtime-specific parser message. The
-socket-cut error text also agrees; its pre-stream JSON versus post-start SSE
-shape remains a known differential. The strict/known set is therefore five
-scenarios: four runtime-response bodies/shapes plus the native shim artifact.
+`GET /health` 404 body to strict assertions. Socket-cut SSE status, headers,
+event order, and error bytes now match exactly. Invalid HTTP chunk encoding also
+matches in status, headers, and Bun-compatible parser error bytes. Both are
+strict assertions. Request-log response bytes now match as well. The known
+runtime set is therefore one response body: wrong-field config repair.
 
-The shim difference reflects the native Go distribution architecture, but it
-remains a byte difference and must not be described as strict parity without an
-explicit product decision.
+### Intentional native-distribution difference
+
+The Unix shim is intentionally not a known defect. Go directly executes native
+`ocx ensure`; the TypeScript shim executes Bun plus the TS CLI module. Matching
+the TypeScript bytes would restore a Bun runtime dependency and violate the
+native independent-distribution goal. The harness keeps this in a separate
+`intentionalArtifactDiffs` policy map and fails if the difference disappears or
+changes unexpectedly. It is excluded from the fixable known-diff count while
+remaining explicitly observable.
 
 ### Oversized-header characterization
 
