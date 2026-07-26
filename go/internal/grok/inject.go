@@ -33,6 +33,8 @@ type InjectModel struct {
 type Options struct {
 	GrokHome string
 	Hostname string
+	// Excluded allocates aliases for these model IDs without emitting their tables.
+	Excluded map[string]struct{}
 }
 
 type Result struct {
@@ -50,7 +52,7 @@ type managedRegion struct {
 var replaceFile = atomicReplace
 
 // BuildGrokManagedBlock returns the LF-normalized OpenCodex-owned TOML fence.
-func BuildGrokManagedBlock(port int, models []InjectModel, hostname string, reservedAliases map[string]struct{}) string {
+func BuildGrokManagedBlock(port int, models []InjectModel, hostname string, reservedAliases, excluded map[string]struct{}) string {
 	host := providerBaseHost(hostname)
 	baseURL := fmt.Sprintf("http://%s:%d/v1", host, port)
 	lines := []string{BeginMarker}
@@ -73,6 +75,11 @@ func BuildGrokManagedBlock(port int, models []InjectModel, hostname string, rese
 		}
 		aliasCounts[baseAlias] = count
 		taken[alias] = struct{}{}
+		// Consume the alias slot before filtering so selection changes cannot rename
+		// another model whose sanitized ID collides with this one.
+		if _, isExcluded := excluded[model.ID]; isExcluded {
+			continue
+		}
 		if len(lines) > 1 {
 			lines = append(lines, "")
 		}
@@ -131,7 +138,7 @@ func InjectGrokConfig(port int, models []InjectModel, opts Options) Result {
 		return orphanedMarkerResult("injection")
 	}
 
-	block := applyEOL(BuildGrokManagedBlock(port, models, opts.Hostname, userModelAliases(content, region)), eol)
+	block := applyEOL(BuildGrokManagedBlock(port, models, opts.Hostname, userModelAliases(content, region), opts.Excluded), eol)
 	var next string
 	switch {
 	case region != nil:

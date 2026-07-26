@@ -48,3 +48,26 @@ func TestFenceEnsureAndRestartAreDeterministicAndHeartbeatSafe(t *testing.T) {
 		t.Fatalf("Teardown() = %#v", result)
 	}
 }
+
+func TestSyncThreadsAliasStableModelExclusion(t *testing.T) {
+	home := tempGrokHome(t)
+	models := []InjectModel{{ID: "same/model"}, {ID: "same.model"}, {ID: "same-model"}}
+	result := SyncGrokConfig(context.Background(), 10100, Options{
+		GrokHome: home,
+		Excluded: map[string]struct{}{"same.model": {}},
+	}, SyncDeps{
+		FetchModels: func(context.Context) ([]InjectModel, error) {
+			return append([]InjectModel(nil), models...), nil
+		},
+	})
+	if !result.OK || !result.Changed {
+		t.Fatalf("SyncGrokConfig() = %#v", result)
+	}
+	content := mustRead(t, filepath.Join(home, "config.toml"))
+	if strings.Contains(content, `model = "same.model"`) {
+		t.Fatalf("excluded model was synced:\n%s", content)
+	}
+	if !strings.Contains(content, "[model.ocx-same-model-3]\nmodel = \"same-model\"") {
+		t.Fatalf("sync renumbered model after exclusion:\n%s", content)
+	}
+}

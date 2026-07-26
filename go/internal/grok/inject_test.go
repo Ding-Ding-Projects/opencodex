@@ -155,7 +155,7 @@ func TestOrphanedBeginMarkerRefusesMutation(t *testing.T) {
 }
 
 func TestManagedBlockUsesDirectChatCompletionsFields(t *testing.T) {
-	block := BuildGrokManagedBlock(10190, []InjectModel{{ID: "cursor/grok-4.5", ContextWindow: 500000}}, "::1", nil)
+	block := BuildGrokManagedBlock(10190, []InjectModel{{ID: "cursor/grok-4.5", ContextWindow: 500000}}, "::1", nil, nil)
 	for _, expected := range []string{
 		`[model.ocx-cursor-grok-4-5]`,
 		`base_url = "http://[::1]:10190/v1"`,
@@ -175,6 +175,37 @@ func TestManagedBlockUsesDirectChatCompletionsFields(t *testing.T) {
 		"context_window = 500000"
 	if !strings.Contains(block, wantOrder) {
 		t.Fatalf("managed block attribution header ordering differs:\n%s", block)
+	}
+}
+
+func TestManagedBlockExclusionKeepsCollidingAliasesStable(t *testing.T) {
+	models := []InjectModel{
+		{ID: "vendor/model"},
+		{ID: "vendor.model"},
+		{ID: "vendor-model"},
+	}
+	full := BuildGrokManagedBlock(10100, models, "", nil, nil)
+	excluded := BuildGrokManagedBlock(10100, models, "", nil, map[string]struct{}{"vendor.model": {}})
+
+	for _, alias := range []string{"ocx-vendor-model", "ocx-vendor-model-2", "ocx-vendor-model-3"} {
+		if !strings.Contains(full, "[model."+alias+"]") {
+			t.Fatalf("full block missing alias %q:\n%s", alias, full)
+		}
+	}
+	if strings.Contains(excluded, `model = "vendor.model"`) || strings.Contains(excluded, "[model.ocx-vendor-model-2]") {
+		t.Fatalf("excluded model was emitted:\n%s", excluded)
+	}
+	if !strings.Contains(excluded, "[model.ocx-vendor-model-3]\nmodel = \"vendor-model\"") {
+		t.Fatalf("model after exclusion changed alias:\n%s", excluded)
+	}
+}
+
+func TestEmptyExclusionProducesIdenticalManagedBlock(t *testing.T) {
+	models := []InjectModel{{ID: "first"}, {ID: "second", ContextWindow: 200000}}
+	absent := BuildGrokManagedBlock(10100, models, "localhost", nil, nil)
+	empty := BuildGrokManagedBlock(10100, models, "localhost", nil, map[string]struct{}{})
+	if empty != absent {
+		t.Fatalf("empty exclusion changed managed bytes:\nabsent=%q\nempty=%q", absent, empty)
 	}
 }
 
