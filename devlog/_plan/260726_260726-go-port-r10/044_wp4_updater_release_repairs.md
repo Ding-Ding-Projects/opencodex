@@ -9,10 +9,51 @@ retryability fixes plus the freeform issue-quality template gate), so the candid
 rebased onto `703c6191`. The rebased tree is `08015fd1`; this plan document itself is
 `6d5a67af`, which is the anchor the implementation and the next audit must use.
 
-A second audit round on the first draft of this document returned two more FAIL
-verdicts. Their findings are folded in below rather than appended: the dry-run repair
-was scoped too narrowly, the worker claim was not cross-process atomic, and the GUI
-embed guard did not actually guard anything in CI.
+Two further audit rounds on this document returned FAIL. Round 2 showed the dry-run
+repair was scoped too narrowly, the worker claim was not cross-process atomic, and the
+GUI embed guard did not guard anything in CI. Round 3 showed something more important:
+every remaining blocker was a restatement of one structural fact, so patching them
+individually could not converge.
+
+### The structural finding, and the design change it forces
+
+`update-job.json` currently has three independent writers: Go
+(`go/internal/update/job.go`), the Node launcher (`bin/ocx.mjs:79`), and the Bun worker
+(`src/update/job.ts:125`). Each performs its own unlocked read-modify-write. Round 3
+established that no amount of nonce, generation counter, or lease discipline fixes this,
+because Node and Bun cannot take the Go file lock: neither runtime exposes `flock`
+without a new native dependency, and `package.json` has none. A generation check that is
+not serialized by the same lock is not a compare-and-swap. Both auditors reached this
+independently, and both then derived the same downstream blockers: the claim tracks the
+Node supervisor rather than the Bun process that actually mutates the package, a live
+worker with an expired lease becomes permanently unrecoverable, and re-validating the
+launcher path before `exec` still leaves a window before the OS opens the file.
+
+Rather than add a fourth mechanism to a three-writer design, this revision removes the
+writers. The packaged Go binary already owns every capability the Bun worker was
+retained for:
+
+- integrity pre-flight, tray handoff, tray refresh, and tray restore-on-failure
+  (`go/internal/update/job.go:330-372`, `LifecycleDependencies` at
+  `go/internal/update/planning.go:84`)
+- service reinstall arguments and direct-start fallback
+  (`go/internal/cli/runtime_management.go:786`, `service.ServiceReinstallArgs`)
+- port reclaim before restart (`go/internal/update/job.go:388`)
+- old-PID and target-version restart correlation
+  (`CorrelateRestartIdentity`, `go/internal/update/planning.go:117`)
+- detached process creation on both families
+  (`update_worker_process_unix.go:11` uses `Setsid`;
+  `update_worker_process_windows.go:15` uses `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`)
+
+So the packaged update worker becomes a second, detached invocation of the **same Go
+binary**, copied out of the package first so the original can be replaced underneath it.
+`bin/ocx.mjs` keeps exactly one update responsibility — the npm-layout package
+replacement it must own because Windows cannot replace a running package from inside it —
+and stops writing job state entirely. `src/update/job.ts` keeps its worker only for the
+non-packaged Bun topologies, which never share a job file with a packaged Go binary.
+
+That collapses the writer set to one process at a time in the packaged product, which is
+what makes the remaining repairs implementable instead of merely stated.
 
 This amendment stays inside the single WP4 release-readiness work unit. It repairs the
 packaged update path, the release dispatch ordering, and one embedded-asset staleness
@@ -96,96 +137,97 @@ Repair:
   `workflow run release.yml`. A shim that omits `go-ci.yml` must make the test fail
   loudly, which is what proves the wait is real.
 
-## Finding 3 (release-blocking) — the update job has no cross-process claim
+## Finding 3 (release-blocking) — collapse the update worker to a single Go owner
 
 `bin/ocx.mjs:112` authorizes the hidden worker on a static environment marker plus a
-numeric job id that is currently `running`/`restarting`. Nothing binds the invocation to
-the persisted job's intent, and nothing claims the job exclusively.
+numeric job id. Nothing binds the invocation to the persisted job's intent and nothing
+claims it exclusively. Round 2 proposed a nonce; round 3 showed a nonce cannot help while
+three runtimes write the file. The repair is to remove the multi-runtime handoff.
 
-The first draft proposed a random nonce carried in the child environment. That alone is
-not a fix, for two independent reasons the audits both identified:
+- Add a hidden Go subcommand `__update-worker` in `go/internal/cli`. It performs exactly
+  what `JobManager` already implements for the in-process path: integrity pre-flight,
+  tray handoff, package replacement through `InstallCommand`, tray refresh or restore,
+  port reclaim, service reinstall with direct-start fallback, and restart correlation.
+  No new lifecycle logic is written; the subcommand reuses `productionUpdateLifecycle`.
+- `StartExternal` copies the running Go executable into the private worker directory
+  (below), verifies the copy's SHA-256 against the source it just read, and launches the
+  **copy** with `__update-worker`. Copying is what allows npm to replace the package
+  underneath, which was the sole reason a separate runtime was ever involved. The
+  existing detached-process attributes (`update_worker_process_unix.go:11`,
+  `update_worker_process_windows.go:15`) are reused unchanged.
+- Because the launched artifact is a verified copy at a path the parent created, there
+  is no launcher TOCTOU to close: the file that is validated is the file that is
+  executed. This retires round 3's blocker about re-resolving Node and `ocx.mjs`
+  immediately before `exec`.
+- Authorization becomes structural rather than secret-based. The worker is the only
+  process that can hold the exclusive claim, and it takes that claim through the Go file
+  lock before doing anything. Delete `OCX_INTERNAL_GUI_UPDATE_WORKER`, the nonce idea,
+  and `runInternalGuiUpdateWorker()` from `bin/ocx.mjs` together with
+  `terminalizeActiveGuiUpdateJob()` and `activeGuiUpdateJobExists()`. The launcher no
+  longer reads or writes `update-job.json` at all.
+- `src/update/job.ts` keeps `transitionUpdateJobForTests` and its worker for Bun-global
+  and source topologies, which never coexist with a packaged Go binary over the same job
+  file. Its `updateJob()` stale-state fallback at `src/update/job.ts:141` is still
+  removed: on an id mismatch it must throw rather than rewrite from a stale copy.
+- Exclusion uses the lock this repository already ships. Lift the `flock`/`LockFileEx`
+  primitive out of `go/internal/oauth/filelock.go` into a shared internal package (it
+  already pairs the OS lock with an in-process token because macOS `flock` is
+  process-scoped) and take `<config-dir>/update-job.lock` across read, verify, and write
+  for every transition. Add `Generation uint64` to `Job`, incremented per write and
+  verified under the lock, so a stale writer fails loudly instead of clobbering.
+- Canonicalize the lock-map key by absolute resolved path, so two spellings of the same
+  config directory do not produce two in-process tokens.
+- Tests: two real concurrent Go processes claiming one job, exactly one winning; a
+  worker copy whose source binary is modified mid-copy failing verification; and the
+  launcher proven to make no writes to `update-job.json` in any update path.
 
-- A nonce stored in cleartext in `update-job.json` grants exactly the capability it is
-  meant to withhold. Any actor who can read that file (the same actor the threat model
-  assumes) can replay it.
-- `JobManager.begin` at `go/internal/update/job.go:296` holds only a process-local
-  mutex, and `JobStore` read/write lock separately at `go/internal/update/job.go:174`.
-  Atomic rename makes each write indivisible but does not make read-verify-write a
-  compare-and-swap. Two `ocx` processes — the CLI and the service are routinely both
-  present — can each see no active job and both create one.
+## Finding 4 (release-blocking) — stranded jobs and unsafe reclaim
 
-Repair, built on the cross-process lock this repository already ships:
+A killed worker leaves the job `running` forever, and the single-job gate then refuses
+every later update with `update_already_running`
+(`go/internal/update/job.go:305`). The naive reclaim ("PID dead or lease expired") is
+itself unsafe: the job is persisted before the worker records its PID
+(`go/internal/update/job.go:259`) and `platform.ProcessAlive(0)` is false
+(`go/internal/platform/process.go:17`), so an immediate status poll would kill a healthy
+job; and terminalizing a merely stalled worker admits a second package mutator, which is
+worse than a stuck job.
 
-- Reuse the `flock`/`LockFileEx` primitive in `go/internal/oauth/filelock.go` (it
-  already pairs an OS file lock with an in-process token, precisely because macOS
-  `flock` is process-scoped). Lift it into a shared internal package so `update` can
-  take `<config-dir>/update-job.lock` without duplicating the implementation.
-- Every transition that reads then writes the job — `reclaim`, `begin`, claim, lease
-  renewal, terminalization — runs inside that lock and re-reads state after acquiring
-  it. Add a `Generation uint64` to `Job`; each write increments it and every writer
-  refuses to write when the generation it read no longer matches (CAS), so even a
-  writer that bypasses the lock cannot silently clobber a newer job.
-- Persist only `sha256(nonce)` in `Worker.NonceHash`. The plaintext nonce exists solely
-  in the spawned child's environment. The first successful claim atomically clears
-  `NonceHash` under the lock, so it is single-use: a replay finds nothing to match.
-- `Worker` also carries `Args` (the exact channel and restart mode the launcher must
-  receive), `Claimed` (bool), `PID`, `StartTicks` (process start identity), and
-  `LeaseExpiresAt`.
-- `startExternalGUIUpdateWorker` strips every inherited `OCX_INTERNAL_GUI_UPDATE_*`
-  variable before appending exactly one marker and one nonce, so a caller cannot smuggle
-  a duplicate. `bin/ocx.mjs` deletes both from `process.env` before spawning Bun, so the
-  grandchild never sees the capability.
-- `bin/ocx.mjs` requires: marker present, nonce hash match, argv channel/restart-mode
-  exactly equal to `job.worker.args`, and `Claimed === false`. It then claims under the
-  same file lock, writing its own PID and start identity. Any mismatch exits 1 without
-  mutating the job.
-- Test: two concurrent claimants (real separate processes, not goroutines) against one
-  job; exactly one succeeds, and a replay of the same nonce after the claim fails.
+With a single Go worker the state machine is small enough to specify exactly:
 
-## Finding 4 (release-blocking) — stranded jobs, unsafe reclaim, leaked Bun copies
-
-A killed worker (`SIGKILL`, reboot, forced logout) leaves the job `running` forever, the
-single-job gate refuses every later update with `update_already_running`, and the
-`ocx-gui-update-worker-*` temp directory holding a ~60MB Bun copy is never removed.
-
-The naive reclaim ("PID dead or lease expired") is itself unsafe, in three ways the
-audits demonstrated:
-
-- The job is persisted before the worker records its PID
-  (`go/internal/update/job.go:259`), and `platform.ProcessAlive(0)` is false
-  (`go/internal/platform/process.go:17`). An immediate status poll would kill a
-  perfectly healthy job that has not claimed yet.
-- Terminalizing a merely stalled worker admits a second one, and then two processes run
-  `npm install -g` against the same global prefix (`src/update/job.ts:818`,
-  `bin/ocx.mjs:376`). That is worse than a stuck job.
-- PID identity alone is not identity: PID reuse on long-lived systems misattributes an
-  unrelated process, and `bin/ocx.mjs:135` creates temp directories in shared,
-  world-writable temp space with no owner marker, so a prefix sweep cannot prove
-  ownership and is a symlink/clobber hazard.
-
-Repair:
-
-- Model three worker states explicitly: `unclaimed` (job persisted, worker not yet
-  claimed, protected by a short bounded startup grace), `claimed` (PID plus start
-  identity plus renewed lease), and terminal.
-- Reclaim only terminalizes when: `unclaimed` and past the startup grace; or `claimed`
-  and the recorded PID **and start identity** no longer match a live process; or
-  `claimed` and the lease expired **and** the PID is not alive. A live PID with an
-  expired lease is reported as stalled and is not terminalized, because admitting a
-  second package mutator is the worse failure.
-- All reclaim and renewal transitions run under the `update-job.lock` CAS described in
-  Finding 3, so Go, Node, and Bun writers cannot lose updates. Remove the stale-local-
-  state fallback in `updateJob()` at `src/update/job.ts:141`, which currently rewrites
-  from a stale in-memory copy when the id no longer matches; it must fail instead.
-- Create the worker runtime directory under a per-user `0700` base inside the config
-  directory rather than shared temp, name it with the unguessable worker id, and persist
-  that exact canonical path in the job. Cleanup removes only that recorded path, after
-  `lstat` confirms a non-symlink directory owned by the current uid. No prefix sweep of
-  shared temp.
-- Go tests, one case each: unclaimed-within-grace (not reclaimed), unclaimed-past-grace
-  (reclaimed), live claimed worker (not reclaimed), dead PID (reclaimed), expired lease
-  with live PID (stalled, not reclaimed), PID reuse with mismatched start identity
-  (reclaimed), lease renewal, and a concurrent status poll during claim.
+- Three worker states: `unclaimed` (persisted, worker not yet claimed, protected by a
+  bounded startup grace), `claimed` (identity plus renewed lease), and terminal.
+- Reclaim terminalizes only when: `unclaimed` past the startup grace; or `claimed` and
+  the recorded identity no longer matches a live process. A live process with an expired
+  lease is reported as `stalled` and is never silently terminalized.
+- Worker identity is PID plus process creation time, not PID alone, so PID reuse cannot
+  misattribute. Implement it as build-tagged helpers in `go/internal/platform`:
+  `/proc/<pid>/stat` field 22 on Linux, `unix.SysctlKinfoProc` on macOS, and
+  `GetProcessTimes` via `OpenProcess` on Windows. `golang.org/x/sys` is already a
+  dependency (`go/go.mod`), so this needs no cgo — but it is real work and is budgeted
+  here rather than assumed.
+- `stalled` is recoverable, not terminal. Add `ocx update recover`, documented in help
+  output: it verifies the recorded identity, terminates the worker's process group
+  (POSIX) or process (Windows), waits until the identity is provably gone, and only then
+  terminalizes the job under the lock. If termination cannot be proven it refuses and
+  prints the PID and the manual command, because force-clearing while a package mutator
+  is live is the failure this whole section exists to prevent.
+- The worker runtime directory is created under a per-user `0700` base in the config
+  directory, named with an unguessable id, and its exact canonical path is persisted in
+  the job. Cleanup removes only that recorded path after `lstat` proves a non-symlink
+  directory. No prefix sweep of shared temp.
+- `OPENCODEX_HOME` is caller-controlled (`bin/ocx.mjs:74`, `go/internal/cli/provider.go:33`),
+  so it can point inside the package tree and reintroduce the Windows locking problem the
+  copy exists to avoid. `StartExternal` therefore refuses to place the worker directory
+  anywhere inside the resolved package root, falling back to the OS per-user application
+  data directory with the same `0700` semantics. On Windows, harden with the existing DACL
+  path used for secrets (`src/config.ts` `hardenSecretPath` has the Go counterpart in
+  `internal/platform`) and reject reparse points instead of relying on a Unix uid check.
+- Go tests, one case each: unclaimed within grace (kept), unclaimed past grace
+  (reclaimed), live claimed worker (kept), dead identity (reclaimed), same PID with a
+  different creation time (reclaimed), expired lease with a live process (reported
+  `stalled`, job untouched), `update recover` on a stalled job, `update recover`
+  refusing when the process survives termination, and a worker root resolving inside the
+  package tree being rejected.
 
 ## Finding 5 (medium) — GitHub resolution runs before the deterministic refusal
 
@@ -202,15 +244,14 @@ keeps its current ordering, because a check is legitimately a network operation;
 the mutating start path is reordered. Add a Go test with an `updateCheck` stub that
 fails the test if it is called when the runtime entry is empty.
 
-Hoisting alone widens a TOCTOU window: `resolveRuntimeCommand`
-(`go/internal/cli/runtime_command.go:63`) validates its file snapshots during
-resolution and then discards them, so package files could change between the early
-refusal check and the spawn. Therefore the early check is an availability gate only;
-immediately before `child.Start()` in `startExternalGUIUpdateWorker`, re-resolve the
-exact package-local Node and launcher pair and require it to be identical to the early
-result, refusing otherwise. Keep the existing regression coverage for the Windows
-native-update refusal (`go/internal/cli/update.go:61`) and the exact-launcher rejection
-(`go/internal/cli/runtime_command_test.go:278`) green and unweakened.
+Under Finding 3 the worker is a verified copy of the Go binary, so the launcher
+resolution that created the TOCTOU window is gone from the spawn path. What remains of
+this finding is the ordering itself, plus one narrowed requirement: the packaged-runtime
+snapshot taken before copying must still be `unchanged()` after the copy completes, so a
+package swapped mid-copy is rejected. Keep the existing regression coverage for the
+Windows native-update refusal (`go/internal/cli/update.go:61`) and the exact-launcher
+rejection (`go/internal/cli/runtime_command_test.go:278`) green and unweakened; the
+launcher pair is still what `CheckUpdate` reports to the GUI as the npm-update command.
 
 ## Finding 6 (gate) — the embedded Go GUI bundle is stale against `gui/src`
 
@@ -242,16 +283,23 @@ embedded assets. The guard has to build.
   SHA-256 digests. A `--check` mode builds into a temporary directory and diffs against
   the committed tree without writing, exiting nonzero on any difference.
 - Regenerate the embedded tree with that script and commit the result.
-- Add a Go CI step that runs `bun install --frozen-lockfile` and
-  `bun scripts/embed-gui.ts --check` on the Linux matrix leg, so a GUI change landing
-  without an embed refresh fails CI. Add `gui/**` to the `go-ci.yml` path triggers so
-  the run actually happens; this does not disturb the release-bump trigger, since
-  `package.json` is already listed.
+- Add a Go CI step on the Linux matrix leg that runs `bun install --frozen-lockfile` and
+  `bun scripts/embed-gui.ts --check`, before the Go build and test steps. The job sets
+  `defaults.run.working-directory: go` (`.github/workflows/go-ci.yml:38`), so this step
+  must override `working-directory: .` or it will not find the script.
+- Add both `gui/**` and `scripts/embed-gui.ts` to the `go-ci.yml` path triggers, so a
+  GUI change or a change to the guard itself cannot skip the run. This does not disturb
+  the release-bump trigger, since `package.json` is already listed.
 - Prove equality locally with `diff -ru --no-dereference gui/dist
   go/internal/server/static` producing no output, plus a green
   `go test ./internal/server -run TestEmbeddedGUIBundle`.
-- Use the same script for the release archive verification so regeneration and
-  verification cannot drift apart.
+- Release verification must check the artifact that actually ships. `release.yml:216`
+  runs `build:publish` and then `npm pack`, while `build:gui` writes `gui/dist`
+  independently (`package.json:44`), so a `--check` that rebuilds into a temp directory
+  does not prove the packed bytes. Add `--verify-dist`, which compares the existing
+  `gui/dist` against the committed embedded tree without rebuilding, and run it in
+  `release.yml` immediately before `npm pack`. That exact comparison goes into the
+  archive receipt.
 
 ## Verification plan
 
