@@ -17,6 +17,8 @@ Base: `45744655f69f0e43f0357075db4c9e827f256bd6`
 - `tests/cli-help.test.ts`
 - `tests/install-scripts.test.ts`
 - `tests/prebridge-runtime-rebake.test.ts` is a regression gate, not an edit target
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
 
 ### Go durable runtime and updater
 
@@ -70,6 +72,8 @@ must recheck that identity after download and immediately before rename.
 10. The tarball is packed once, verified as that same archive, installed with scripts
    disabled, poisoned for every Bun execution path, and invoked through its real bin.
 11. WP3 retains `bun` in dependencies, `src/**` in files, and the explicit Bun export.
+12. CI and release run package verification before poison-install verification, both
+    against the same one-time pack report/archive, before any publish step.
 
 ## Required executable matrices
 
@@ -118,11 +122,15 @@ go vet ./internal/cli ./internal/update
 Package receipt is a separate exact-archive transaction:
 
 ```bash
+bun run build:gui
 bun run prepack
 npm pack --ignore-scripts --json > pack.json
 bun run verify:native-package
-bun run verify:native-install -- pack.json
+bun run verify:native-install
 ```
 
 The implementation candidate returns to P for any scope, count, mode, or digest
 change after audit.
+
+Final implementation lock: 31 files, `+1007/-552`, SHA-256
+`d2600017fcbe145685690ce237571155643c5cf0ab3a2a5aba88a082233f17c2`.

@@ -85,14 +85,17 @@ the base above.
 
 ### Exact tarball receipt
 
-- Build native artifacts, run `npm pack` exactly once, verify that same report/archive,
-  then install that exact `.tgz` into an isolated global prefix with lifecycle scripts
-  disabled.
+- Build the GUI first, build native artifacts, run `npm pack` exactly once, verify
+  that same report/archive, then install that exact `.tgz` into an isolated global
+  prefix with lifecycle scripts disabled.
 - Resolve the installed package's Bun dependency, replace both its binary and
   `install.js` with poison sentinels, set an isolated `OPENCODEX_HOME`, and execute the
   installed `ocx help` through its real npm bin entry.
 - Acceptance requires Go help output, zero poison sentinel, exact archive identity,
   and no source-checkout imports.
+- Cross-platform CI and the release publish job invoke `verify:native-install`
+  immediately after `verify:native-package`, consuming the same `pack.json` and
+  archive. Publish cannot bypass the poison-install proof.
 - Launcher fixtures separately prove the sole Bun exception: exact packaged Go is
   validated first, then legacy shim refresh runs Bun exactly once before Go; a
   missing/invalid Go artifact runs neither Bun nor `install.js`; refresh failure
@@ -106,12 +109,30 @@ the base above.
 - The six targets are listed consistently, including Windows arm64.
 - Bun dependency removal is explicitly deferred to the convergence gate; WP3 does not
   claim that npm dependency or `src/**` has disappeared.
+- The release SOT describes the actual direct-publish rejection and the exact
+  GUI-build → pack → package verify → poison-install verify → publish sequence.
 
 ## Required gates
 
 1. Audit this corrected plan with gpt-5.6-sol medium/priority.
 2. Compose implementation in a clean candidate; audit its exact diff before apply.
 3. Focused launcher, shim, self-update, signal, docs, and runtime-command tests.
-4. Pack once; verify and execute that exact isolated install with poison Bun.
+4. Build GUI, pack once, then verify and execute that exact isolated install with
+   poison Bun.
 5. Full Go test/race/vet/cross-build and full Bun/typecheck/lint/privacy gates.
 6. Push exact remote parity before D.
+
+## Final audited candidate
+
+- clean integration base: `c3168bed3ad4818484cf7f335bc7103eae3b602c`;
+- 31 files, `+1007/-552`;
+- canonical binary diff SHA-256:
+  `d2600017fcbe145685690ce237571155643c5cf0ab3a2a5aba88a082233f17c2`;
+- updater/TOCTOU/workflow security audit: gpt-5.6-sol medium/priority `PASS`;
+- launcher/package/release audit: gpt-5.6-sol medium/priority `PASS`;
+- focused Node/Bun: 76 pass, 0 fail; native launcher: 5 pass, 0 fail;
+- full Go test/race/vet and Windows amd64 cli/update/platform cross-build: pass;
+- fresh receipt worktree completed GUI build, six-target native build, one pack,
+  exact package verification, and isolated poison-install execution;
+- accepted tarball: 54,244,362 bytes, 374 files, SHA-256
+  `3913f00981c5b06713ce19b7ca6345668b7a4bd427208ef2597c32b0ef54ae67`.
