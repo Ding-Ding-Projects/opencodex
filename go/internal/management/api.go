@@ -130,7 +130,7 @@ var routes = []string{
 	"GET /api/codex-auth/accounts", "POST /api/codex-auth/accounts", "DELETE /api/codex-auth/accounts", "PUT /api/codex-auth/accounts/alias", "GET /api/codex-auth/active", "PUT /api/codex-auth/active", "PUT /api/codex-auth/auto-switch", "PUT /api/codex-auth/failover", "GET /api/codex-auth/reset-credits", "POST /api/codex-auth/reset-credits/consume", "POST /api/codex-auth/login", "POST /api/codex-auth/login/code", "POST /api/codex-auth/login/cancel", "GET /api/codex-auth/login-status",
 	"GET /api/key-providers", "GET /api/providers/keys", "POST /api/providers/keys", "DELETE /api/providers/keys", "PUT /api/providers/keys/active", "PUT /api/providers/keys/alias", "GET /api/keys", "POST /api/keys", "DELETE /api/keys",
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
-	"GET /api/logs", "DELETE /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "DELETE /api/debug/usage-logs", "GET /api/usage", "DELETE /api/usage", "GET /api/storage",
+	"GET /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "GET /api/usage", "GET /api/storage",
 	"GET /api/debug/logs", "GET /api/claude/inbound-debug", "GET /api/debug/injection-logs",
 	"GET /api/system/memory", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
 	"GET /api/subagent-model-fallback", "PUT /api/subagent-model-fallback", "GET /api/claude-code", "PUT /api/claude-code", "GET /api/shadow-call-settings", "PUT /api/shadow-call-settings", "GET /api/provider-quotas",

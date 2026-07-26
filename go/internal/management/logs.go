@@ -107,7 +107,12 @@ func (l *RequestLog) Record(ctx context.Context, record *types.UsageRecord) erro
 	persist := l.usage
 	l.mu.RUnlock()
 	if persist != nil {
-		return persist.Record(ctx, record)
+		return persist.Append(usage.Entry{
+			RequestID: record.RequestID, Timestamp: record.StartedAt.UnixMilli(), ThreadID: record.ThreadID,
+			Provider: record.Provider, Model: record.Model, ResolvedModel: record.Model,
+			Status: outcomeStatus(record.Status), DurationMS: record.Duration.Milliseconds(),
+			UsageStatus: status, Usage: &value, TotalTokens: &total,
+		})
 	}
 	return nil
 }
@@ -186,13 +191,6 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 			rows = append(rows, metricDTO(entry))
 		}
 		writeJSON(w, http.StatusOK, rows)
-		return true
-	case "DELETE /api/logs":
-		if a.advancedRequestLogs != nil {
-			a.advancedRequestLogs.ClearRequestLogs()
-		}
-		a.requestLogs.Clear()
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return true
 	case "GET /api/debug":
 		writeJSON(w, http.StatusOK, debugSettingsDTO(ocxlib.GetDebugSettings()))
@@ -291,15 +289,6 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 		}
 		writeJSON(w, http.StatusOK, entries)
 		return true
-	case "DELETE /api/debug/usage-logs":
-		if a.debugLog != nil {
-			if err := a.debugLog.Clear(); err != nil {
-				writeError(w, http.StatusInternalServerError, "usage diagnostics could not be cleared")
-				return true
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return true
 	case "GET /api/usage":
 		window := usage.ParseRange(r.URL.Query().Get("range"))
 		surface := usage.ParseSurface(r.URL.Query().Get("surface"))
@@ -312,16 +301,7 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusInternalServerError, "usage log could not be read")
 			return true
 		}
-		writeJSON(w, http.StatusOK, usage.Summarize(entries, window, time.Now(), surface))
-		return true
-	case "DELETE /api/usage":
-		if a.usageLog != nil {
-			if err := a.usageLog.Clear(); err != nil {
-				writeError(w, http.StatusInternalServerError, "usage log could not be cleared")
-				return true
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, usageSummaryResponse(usage.Summarize(entries, window, time.Now(), surface), entries))
 		return true
 	case "GET /api/storage":
 		home := a.storageHome
@@ -338,6 +318,56 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+type usageModelResponse struct {
+	Provider          string  `json:"provider"`
+	Model             string  `json:"model"`
+	ResolvedModel     string  `json:"resolvedModel,omitempty"`
+	Requests          int     `json:"requests"`
+	AttemptCount      int     `json:"attemptCount"`
+	MeasuredRequests  int     `json:"measuredRequests"`
+	ReportedRequests  int     `json:"reportedRequests"`
+	EstimatedRequests int     `json:"estimatedRequests"`
+	TotalTokens       int     `json:"totalTokens"`
+	InputTokens       int     `json:"inputTokens"`
+	OutputTokens      int     `json:"outputTokens"`
+	ShareRatio        float64 `json:"shareRatio"`
+	EstimatedCostUSD  float64 `json:"estimatedCostUsd,omitempty"`
+}
+
+type usageSummaryResponseDTO struct {
+	Range       usage.Range             `json:"range"`
+	Surface     string                  `json:"surface"`
+	Since       *int64                  `json:"since"`
+	GeneratedAt int64                   `json:"generatedAt"`
+	Summary     usage.SummaryTotals     `json:"summary"`
+	Days        []usage.Day             `json:"days"`
+	Models      []usageModelResponse    `json:"models"`
+	Providers   []usage.ProviderSummary `json:"providers"`
+}
+
+func usageSummaryResponse(summary usage.Summary, entries []usage.Entry) usageSummaryResponseDTO {
+	resolved := make(map[string]string)
+	for _, entry := range entries {
+		if entry.ResolvedModel != "" {
+			resolved[entry.Provider+"\x00"+entry.Model] = entry.ResolvedModel
+		}
+	}
+	models := make([]usageModelResponse, len(summary.Models))
+	for index, model := range summary.Models {
+		models[index] = usageModelResponse{
+			Provider: model.Provider, Model: model.Model, ResolvedModel: resolved[model.Provider+"\x00"+model.Model],
+			Requests: model.Requests, AttemptCount: model.AttemptCount, MeasuredRequests: model.MeasuredRequests,
+			ReportedRequests: model.ReportedRequests, EstimatedRequests: model.EstimatedRequests,
+			InputTokens: model.InputTokens, OutputTokens: model.OutputTokens, TotalTokens: model.TotalTokens,
+			ShareRatio: model.ShareRatio, EstimatedCostUSD: model.EstimatedCostUSD,
+		}
+	}
+	return usageSummaryResponseDTO{
+		Range: summary.Range, Surface: summary.Surface, Since: summary.Since, GeneratedAt: summary.GeneratedAt,
+		Summary: summary.Summary, Days: summary.Days, Models: models, Providers: summary.Providers,
+	}
 }
 
 func debugLogQuery(r *http.Request) (int, int) {
