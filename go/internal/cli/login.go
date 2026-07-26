@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
@@ -30,6 +31,26 @@ type refreshableLoginFlow interface {
 type browserLoginFlow struct {
 	flow   oauth.BrowserFlow
 	manual oauth.ManualCodeFunc
+}
+
+type anthropicLoginFlow struct {
+	browser browserLoginFlow
+}
+
+func (f anthropicLoginFlow) Login(ctx context.Context, onAuth func(oauth.Authorization)) (oauth.OAuthCredentials, error) {
+	if local, ok := oauth.DetectClaudeCodeToken(""); ok {
+		if onAuth != nil {
+			onAuth(oauth.Authorization{Instructions: "Found Claude Code credentials; importing automatically."})
+		}
+		if local.Expires >= time.Now().Add(time.Minute).UnixMilli() {
+			return local, nil
+		}
+		if refreshed, err := f.browser.Refresh(ctx, local.Refresh); err == nil {
+			refreshed.Source = oauth.SourceLocalCLI
+			return refreshed, nil
+		}
+	}
+	return f.browser.Login(ctx, onAuth)
 }
 
 func (f browserLoginFlow) Login(ctx context.Context, onAuth func(oauth.Authorization)) (oauth.OAuthCredentials, error) {
@@ -64,7 +85,7 @@ func newLoginFlow(provider string, client oauth.HTTPDoer, kiroPath string) (logi
 	case "chatgpt":
 		return browserLoginFlow{flow: oauth.NewChatGPTFlow(client)}, nil
 	case "anthropic":
-		return browserLoginFlow{flow: oauth.NewAnthropicFlow(client)}, nil
+		return anthropicLoginFlow{browser: browserLoginFlow{flow: oauth.NewAnthropicFlow(client)}}, nil
 	case "xai":
 		return browserLoginFlow{flow: oauth.NewXAIFlow(client)}, nil
 	case "google-antigravity":
@@ -102,6 +123,9 @@ func runLogin(ctx context.Context, args []string, streams IO) error {
 	if browser, ok := flow.(browserLoginFlow); ok {
 		browser.manual = manualCodeInput(streams)
 		flow = browser
+	} else if anthropic, ok := flow.(anthropicLoginFlow); ok {
+		anthropic.browser.manual = manualCodeInput(streams)
+		flow = anthropic
 	}
 	onAuth := func(auth oauth.Authorization) {
 		fmt.Fprintf(streams.Out, "\nAuthentication for %s\n", storeName)

@@ -68,7 +68,7 @@ func collectDiagnostics() diagnosticsReport {
 		}
 	}
 	if cfg == nil {
-		defaults := config.Default()
+		defaults := config.FreshInstall()
 		cfg = &defaults
 	}
 	if manager, err := service.NewManager(serviceConfig(*cfg)); err == nil {

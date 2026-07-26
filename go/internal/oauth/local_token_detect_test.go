@@ -24,3 +24,26 @@ func TestDetectGrokCLITokenAndGenerationRules(t *testing.T) {
 		t.Fatal("newer live generation was not adopted")
 	}
 }
+
+func TestDetectClaudeCodeTokenFromExplicitProfile(t *testing.T) {
+	dir := t.TempDir()
+	data := `{"claudeAiOauth":{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":4102444800000}}`
+	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credential, ok := DetectClaudeCodeToken(dir)
+	if !ok || credential.Access != "access-secret" || credential.Refresh != "refresh-secret" || credential.Expires != 4102444800000 || credential.Source != SourceLocalCLI {
+		t.Fatalf("Claude credential metadata mismatch: found=%t source=%q expires=%d", ok, credential.Source, credential.Expires)
+	}
+}
+
+func TestParseClaudeOAuthPayloadRejectsIncompleteAndOversizedData(t *testing.T) {
+	for _, data := range [][]byte{
+		[]byte(`{"claudeAiOauth":{"accessToken":"access-only"}}`),
+		make([]byte, maxLocalTokenFileBytes+1),
+	} {
+		if _, ok := ParseClaudeOAuthPayload(data); ok {
+			t.Fatal("invalid Claude credential was accepted")
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -45,7 +46,7 @@ func TestLoadPreservesOrphanedCustomModelForProviderRemovalCompatibility(t *test
 
 func TestCustomModelsAndAPIKeyPoolRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	cfg := Default()
+	cfg := FreshInstall()
 	cfg.DefaultProvider = "test"
 	cfg.Providers["test"] = ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.test/v1", APIKey: "first-secret"}
 	model := CustomModel{ID: "model-id", Provider: "test", ModelID: "custom-v1", DisplayName: "Custom", ContextWindow: 128000, InputModalities: []string{"text", "image"}, AddedAt: "2026-07-26T00:00:00Z"}
@@ -83,11 +84,11 @@ func TestCustomModelsAndAPIKeyPoolRoundTrip(t *testing.T) {
 	}
 }
 
-func TestConfigLoadSaveRoundTripAndEnvironmentExpansion(t *testing.T) {
+func TestConfigLoadPreservesEnvironmentReferencesAndResolvesRuntimeCopy(t *testing.T) {
 	t.Setenv("OCX_TEST_KEY", `key-with-"quotes"`)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
-	cfg := Default()
+	cfg := FreshInstall()
 	cfg.AuthToken = "${OCX_TEST_KEY}"
 	cfg.Providers["test"] = ProviderConfig{
 		Adapter: "openai-chat",
@@ -113,18 +114,29 @@ func TestConfigLoadSaveRoundTripAndEnvironmentExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	wantSecret := `key-with-"quotes"`
-	if loaded.AuthToken != wantSecret || loaded.Providers["test"].APIKey != wantSecret {
-		t.Fatalf("environment expansion failed: %#v", loaded)
+	if loaded.AuthToken != "${OCX_TEST_KEY}" || loaded.Providers["test"].APIKey != "$OCX_TEST_KEY" {
+		t.Fatalf("Load() expanded persistent references: %#v", loaded)
 	}
-
-	expected := cfg
-	expected.AuthToken = wantSecret
-	provider := expected.Providers["test"]
-	provider.APIKey = wantSecret
-	expected.Providers["test"] = provider
-	if !reflect.DeepEqual(*loaded, expected) {
-		t.Fatalf("round trip mismatch\n got: %#v\nwant: %#v", *loaded, expected)
+	resolved, err := ResolveEnvironment(*loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSecret := `key-with-"quotes"`
+	if resolved.AuthToken != wantSecret || resolved.Providers["test"].APIKey != wantSecret {
+		t.Fatalf("runtime environment expansion failed: %#v", resolved)
+	}
+	if err := Save(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), wantSecret) {
+		t.Fatal("resolved secret was persisted")
+	}
+	if !reflect.DeepEqual(*loaded, cfg) {
+		t.Fatalf("round trip mismatch\n got: %#v\nwant: %#v", *loaded, cfg)
 	}
 }
 
@@ -261,7 +273,7 @@ func TestValidateCanonicalCodexAccountMode(t *testing.T) {
 
 func TestConfigPreservesExtendedRuntimeSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	cfg := Default()
+	cfg := FreshInstall()
 	cfg.OpenAIProviderTierVersion = 2
 	cfg.SubagentModels = []string{"openai/gpt-5.6-sol"}
 	cfg.MultiAgentMode = "v2"
@@ -286,7 +298,7 @@ func TestConfigPreservesExtendedRuntimeSettings(t *testing.T) {
 
 func TestConfigPreservesCursorExecutionSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	cfg := Default()
+	cfg := FreshInstall()
 	cfg.DefaultProvider = "cursor"
 	cfg.Providers["cursor"] = ProviderConfig{
 		Adapter: "cursor", BaseURL: "https://api2.cursor.sh", AuthMode: "oauth", NativeLocalExec: "off",

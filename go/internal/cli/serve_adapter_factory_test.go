@@ -10,9 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	anthropicadapter "github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
 	googleadapter "github.com/lidge-jun/opencodex-go/internal/adapter/google"
 	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -31,6 +34,47 @@ func resolveTestAdapter(t *testing.T, provider string, cfg config.ProviderConfig
 		t.Fatal(err)
 	}
 	return adapter
+}
+
+func TestAdapterResolverUsesProviderAwareAnthropicConstructor(t *testing.T) {
+	cfg := config.Default()
+	cfg.CacheRetention = "long"
+	cfg.Providers["anthropic"] = config.ProviderConfig{Adapter: "anthropic", BaseURL: "https://api.anthropic.com", AuthMode: "oauth", DefaultModel: "claude-opus-4-7"}
+	reg := configuredRegistry(cfg)
+	resolved, err := adapterResolver(reg, cfg)(
+		&types.ResolvedModel{Provider: "anthropic", Model: "claude-opus-4-7"},
+		&types.Transport{BaseURL: "https://api.anthropic.com"},
+		&types.AuthContext{AccessToken: "oauth-token"}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, ok := unwrapAdapter(resolved).(*anthropicadapter.Adapter)
+	if !ok {
+		t.Fatalf("Anthropic factory returned %T", resolved)
+	}
+	request, err := adapter.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: "claude-opus-4-7",
+		Context: types.RequestContext{
+			Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}},
+			Tools:    []types.Tool{{Name: "lookup", Description: "Lookup", Parameters: map[string]any{"type": "object"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	tools, _ := body["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("Anthropic tools = %#v", body["tools"])
+	}
+	tool, _ := tools[0].(map[string]any)
+	if adapter.CacheRetention != "long" || request.Header.Get("Authorization") != "Bearer oauth-token" || tool["name"] != "custom_lookup" || body["cache_control"] == nil {
+		t.Fatalf("Anthropic factory policy missing: retention=%q headers=%#v body=%#v", adapter.CacheRetention, request.Header, body)
+	}
 }
 
 func TestAdapterResolverUsesProviderAwareOpenAIConstructors(t *testing.T) {
@@ -76,6 +120,71 @@ func TestAdapterResolverUsesProviderAwareOpenAIConstructors(t *testing.T) {
 	}
 	if responsesRequest.URL.String() != "https://responses.example/custom/responses" {
 		t.Fatalf("responses path policy = %s", responsesRequest.URL)
+	}
+}
+
+func TestAdapterResolverAppliesOpenRouterRoutingPolicy(t *testing.T) {
+	allowFallbacks := false
+	cfg := config.ProviderConfig{
+		Adapter: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", DefaultModel: "vendor/model",
+		OpenRouterRouting: &providers.OpenRouterProviderRouting{Order: []string{"anthropic"}},
+		ModelOpenRouterRouting: map[string]providers.OpenRouterProviderRouting{
+			"vendor/model": {Only: []string{"google"}, AllowFallbacks: &allowFallbacks},
+		},
+	}
+	adapter, ok := unwrapAdapter(resolveTestAdapter(t, "openrouter", cfg)).(*openaiadapter.ChatAdapter)
+	if !ok {
+		t.Fatalf("OpenRouter factory returned %T", adapter)
+	}
+	request, err := adapter.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: "vendor/model", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	routing, _ := body["provider"].(map[string]any)
+	only, _ := routing["only"].([]any)
+	if len(only) != 1 || only[0] != "google" || routing["allow_fallbacks"] != false {
+		t.Fatalf("OpenRouter routing policy = %#v", routing)
+	}
+}
+
+func TestConfiguredRegistryAppliesStaticHeadersAndDefaultProvider(t *testing.T) {
+	cfg := config.Default()
+	cfg.DefaultProvider = "custom"
+	cfg.Providers["custom"] = config.ProviderConfig{
+		Adapter: "openai-chat", BaseURL: "https://custom.example/v1", DefaultModel: "custom-default",
+		Headers: map[string]string{"X-Provider-Policy": "enabled"},
+	}
+	reg := configuredRegistry(cfg)
+	resolved, err := reg.ResolveModel("unqualified-model")
+	if err != nil || resolved.Provider != "custom" {
+		t.Fatalf("configured default provider was not applied: resolved=%#v err=%v", resolved, err)
+	}
+	entry, ok := reg.Lookup("custom")
+	if !ok {
+		t.Fatal("custom provider missing")
+	}
+	transport, err := registry.ResolveProviderTransport(entry, &types.AuthContext{APIKey: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := adapterResolver(reg, cfg)(resolved, transport, &types.AuthContext{APIKey: "secret"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := adapter.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: resolved.Model, Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Header.Get("X-Provider-Policy") != "enabled" {
+		t.Fatalf("static provider headers were not applied: %#v", request.Header)
 	}
 }
 

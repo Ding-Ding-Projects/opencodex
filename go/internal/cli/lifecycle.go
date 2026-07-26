@@ -139,8 +139,15 @@ func startDetachedAndWait(ctx context.Context, streams IO) error {
 }
 
 func runRestore(args []string, streams IO) error {
+	if len(args) == 1 && args[0] == "back" {
+		if err := runSync(context.Background(), nil, streams); err != nil {
+			return err
+		}
+		fmt.Fprintln(streams.Out, "Plain `codex` now routes through opencodex again (undo with: ocx restore).")
+		return nil
+	}
 	if len(args) != 0 {
-		return fmt.Errorf("usage: ocx restore")
+		return fmt.Errorf("usage: ocx restore [back]")
 	}
 	home, _ := os.UserHomeDir()
 	codexHome := codex.ResolveCodexHome(codex.HomeOptions{HomeDir: home})

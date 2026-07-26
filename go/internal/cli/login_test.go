@@ -15,7 +15,7 @@ import (
 func TestNewLoginFlowCoversPublicOAuthProviders(t *testing.T) {
 	tests := map[string]string{
 		"xai":                "cli.browserLoginFlow",
-		"anthropic":          "cli.browserLoginFlow",
+		"anthropic":          "cli.anthropicLoginFlow",
 		"google-antigravity": "cli.browserLoginFlow",
 		"cursor":             "*oauth.CursorFlow",
 		"kimi":               "*oauth.KimiFlow",

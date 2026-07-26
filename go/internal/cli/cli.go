@@ -45,7 +45,7 @@ func defaultCommandSpecs() []commandSpec {
 	return []commandSpec{
 		{Name: "help", Usage: "ocx help [command]", Summary: "Show help", Handler: commandHelpHandler},
 		{Name: "version", Aliases: []string{"-v", "--version"}, Usage: "ocx --version", Summary: "Print version", Handler: commandVersionHandler},
-		{Name: "serve", Aliases: []string{"start"}, Usage: "ocx serve [--host HOST] [--port PORT]", Summary: "Start the proxy server", Handler: runServe},
+		{Name: "start", Aliases: []string{"serve"}, Usage: "ocx start [--host HOST] [--port PORT]", Summary: "Start the proxy server", Handler: runServe},
 		{Name: "stop", Usage: "ocx stop", Summary: "Gracefully stop the proxy", Handler: runStop},
 		{Name: "restart", Usage: "ocx restart", Summary: "Restart the proxy in background", Handler: runRestart},
 		{Name: "ensure", Usage: "ocx ensure", Summary: "Ensure the proxy is running", Handler: runEnsure},
@@ -55,6 +55,7 @@ func defaultCommandSpecs() []commandSpec {
 		{Name: "uninstall", Aliases: []string{"remove"}, Usage: "ocx uninstall", Summary: "Remove proxy service integration", Handler: runUninstall},
 		{Name: "codex-shim", Usage: "ocx codex-shim <install|status|uninstall>", Summary: "Manage Codex autostart shim", Handler: noContext(runCodexShim)},
 		{Name: "sync-cache", Usage: "ocx sync-cache", Summary: "Invalidate the Codex model cache", Handler: noContext(runSyncCache)},
+		{Name: "sync", Usage: "ocx sync", Summary: "Fetch models and inject them into Codex", Handler: runSync},
 		{Name: "recover-history", Usage: "ocx recover-history --legacy-openai", Summary: "Recover legacy Codex history routing", Handler: noContext(runRecoverHistory)},
 		{Name: "v2", Usage: "ocx v2 <status|on|off|mode|threads>", Summary: "Manage Codex multi-agent v2", Handler: noContext(runV2)},
 		{Name: "login", Usage: "ocx login <provider>", Summary: "Authenticate an OAuth provider", Handler: runLogin},
@@ -123,13 +124,13 @@ func Run(ctx context.Context, args []string, streams IO) int {
 	command, err := Parse(args)
 	if err != nil {
 		fmt.Fprintln(streams.Err, "Error:", err)
-		return 2
+		return 1
 	}
 	position, ok := commandIndex[command.Name]
 	if !ok {
 		fmt.Fprintf(streams.Err, "Unknown command: %s\n", command.Name)
 		_ = PrintHelp(streams.Err, "")
-		return 2
+		return 1
 	}
 	spec := commandSpecs[position]
 	if runErr := spec.Handler(ctx, command.Args, streams); runErr != nil {

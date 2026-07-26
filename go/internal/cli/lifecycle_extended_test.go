@@ -21,6 +21,13 @@ func TestEnsureHonorsDisabledAutostart(t *testing.T) {
 	if err := config.Save(filepath.Join(home, "config.json"), &cfg); err != nil {
 		t.Fatal(err)
 	}
+	loaded, err := config.Load(filepath.Join(home, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CodexAutoStart == nil || *loaded.CodexAutoStart {
+		t.Fatalf("codexAutoStart did not round trip: %#v", loaded.CodexAutoStart)
+	}
 	var output bytes.Buffer
 	if err := runEnsure(context.Background(), nil, IO{Out: &output}); err != nil {
 		t.Fatal(err)

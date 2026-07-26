@@ -30,46 +30,54 @@ var sensitiveProviderHeaders = map[string]bool{
 }
 
 type Config struct {
-	Port                      int                       `json:"port"`
-	Host                      string                    `json:"hostname,omitempty"`
-	AuthToken                 string                    `json:"authToken,omitempty"`
-	Providers                 map[string]ProviderConfig `json:"providers"`
-	Combos                    map[string]combos.Combo   `json:"combos,omitempty"`
-	DefaultProvider           string                    `json:"defaultProvider"`
-	OpenAIProviderTierVersion int                       `json:"openaiProviderTierVersion,omitempty"`
-	SubagentModels            []string                  `json:"subagentModels,omitempty"`
-	InjectionModel            string                    `json:"injectionModel,omitempty"`
-	InjectionEffort           string                    `json:"injectionEffort,omitempty"`
-	InjectionPrompt           string                    `json:"injectionPrompt,omitempty"`
-	FastMode                  *bool                     `json:"fastMode,omitempty"`
-	StreamMode                string                    `json:"streamMode,omitempty"`
-	EffortCap                 string                    `json:"effortCap,omitempty"`
-	SubagentEffortCap         string                    `json:"subagentEffortCap,omitempty"`
-	MultiAgentMode            string                    `json:"multiAgentMode,omitempty"`
-	MultiAgentGuidanceEnabled *bool                     `json:"multiAgentGuidanceEnabled,omitempty"`
-	DisabledModels            []string                  `json:"disabledModels,omitempty"`
-	CustomModels              []CustomModel             `json:"customModels,omitempty"`
-	ProviderContextCaps       map[string]int            `json:"providerContextCaps,omitempty"`
-	ContextCapValue           int                       `json:"contextCapValue,omitempty"`
-	Proxy                     string                    `json:"proxy,omitempty"`
-	StallTimeoutSec           int                       `json:"stallTimeoutSec,omitempty"`
-	ConnectTimeoutMS          int                       `json:"connectTimeoutMs,omitempty"`
-	ShutdownTimeoutMS         int                       `json:"shutdownTimeoutMs,omitempty"`
-	WebSockets                bool                      `json:"websockets,omitempty"`
-	CodexAutoStart            *bool                     `json:"codexAutoStart,omitempty"`
-	CodexShimAutoRestore      *bool                     `json:"codexShimAutoRestore,omitempty"`
-	SyncResumeHistory         *bool                     `json:"syncResumeHistory,omitempty"`
-	ModelCacheTTLMS           int                       `json:"modelCacheTtlMs,omitempty"`
-	CacheRetention            string                    `json:"cacheRetention,omitempty"`
-	WebSearchSidecar          *WebSearchSidecarConfig   `json:"webSearchSidecar,omitempty"`
-	VisionSidecar             *VisionSidecarConfig      `json:"visionSidecar,omitempty"`
-	Images                    *SidecarTimeoutConfig     `json:"images,omitempty"`
-	Search                    *SidecarTimeoutConfig     `json:"search,omitempty"`
-	AutoSwitchThreshold       int                       `json:"autoSwitchThreshold,omitempty"`
-	UpstreamFailoverThreshold int                       `json:"upstreamFailoverThreshold,omitempty"`
-	CORSAllowOrigins          []string                  `json:"corsAllowOrigins,omitempty"`
-	Debug                     DebugConfig               `json:"debug,omitempty"`
-	Log                       LogConfig                 `json:"log,omitempty"`
+	Port                        int                        `json:"port"`
+	Host                        string                     `json:"hostname,omitempty"`
+	AuthToken                   string                     `json:"authToken,omitempty"`
+	Providers                   map[string]ProviderConfig  `json:"providers"`
+	Combos                      map[string]combos.Combo    `json:"combos,omitempty"`
+	DefaultProvider             string                     `json:"defaultProvider"`
+	OpenAIProviderTierVersion   int                        `json:"openaiProviderTierVersion,omitempty"`
+	ClaudeCode                  *ClaudeCodeConfig          `json:"claudeCode,omitempty"`
+	SubagentModels              []string                   `json:"subagentModels,omitempty"`
+	SubagentModelFallback       []string                   `json:"subagentModelFallback,omitempty"`
+	SubagentModelFallbackPollMS int                        `json:"subagentModelFallbackPollMs,omitempty"`
+	InjectionModel              string                     `json:"injectionModel,omitempty"`
+	InjectionEffort             string                     `json:"injectionEffort,omitempty"`
+	InjectionPrompt             string                     `json:"injectionPrompt,omitempty"`
+	FastMode                    *bool                      `json:"fastMode,omitempty"`
+	StreamMode                  string                     `json:"streamMode,omitempty"`
+	EffortCap                   string                     `json:"effortCap,omitempty"`
+	SubagentEffortCap           string                     `json:"subagentEffortCap,omitempty"`
+	MultiAgentMode              string                     `json:"multiAgentMode,omitempty"`
+	MultiAgentGuidanceEnabled   *bool                      `json:"multiAgentGuidanceEnabled,omitempty"`
+	DisabledModels              []string                   `json:"disabledModels,omitempty"`
+	CustomModels                []CustomModel              `json:"customModels,omitempty"`
+	ShadowCallIntercept         *ShadowCallInterceptConfig `json:"shadowCallIntercept,omitempty"`
+	ProviderContextCaps         map[string]int             `json:"providerContextCaps,omitempty"`
+	ContextCapValue             int                        `json:"contextCapValue,omitempty"`
+	Proxy                       string                     `json:"proxy,omitempty"`
+	StallTimeoutSec             int                        `json:"stallTimeoutSec,omitempty"`
+	ConnectTimeoutMS            int                        `json:"connectTimeoutMs,omitempty"`
+	ShutdownTimeoutMS           int                        `json:"shutdownTimeoutMs,omitempty"`
+	WebSockets                  bool                       `json:"websockets,omitempty"`
+	APIKeys                     []ProxyAPIKey              `json:"apiKeys,omitempty"`
+	CodexAutoStart              *bool                      `json:"codexAutoStart,omitempty"`
+	CodexShimAutoRestore        *bool                      `json:"codexShimAutoRestore,omitempty"`
+	SyncResumeHistory           *bool                      `json:"syncResumeHistory,omitempty"`
+	ModelCacheTTLMS             int                        `json:"modelCacheTtlMs,omitempty"`
+	CacheRetention              string                     `json:"cacheRetention,omitempty"`
+	WebSearchSidecar            *WebSearchSidecarConfig    `json:"webSearchSidecar,omitempty"`
+	VisionSidecar               *VisionSidecarConfig       `json:"visionSidecar,omitempty"`
+	Images                      *SidecarTimeoutConfig      `json:"images,omitempty"`
+	Search                      *SidecarTimeoutConfig      `json:"search,omitempty"`
+	AutoSwitchThreshold         int                        `json:"autoSwitchThreshold,omitempty"`
+	UpstreamFailoverThreshold   int                        `json:"upstreamFailoverThreshold,omitempty"`
+	CodexAccounts               []CodexAccount             `json:"codexAccounts,omitempty"`
+	ActiveCodexAccountID        string                     `json:"activeCodexAccountId,omitempty"`
+	TokenGuardian               *TokenGuardianConfig       `json:"tokenGuardian,omitempty"`
+	CORSAllowOrigins            []string                   `json:"corsAllowOrigins,omitempty"`
+	Debug                       DebugConfig                `json:"debug,omitempty"`
+	Log                         LogConfig                  `json:"log,omitempty"`
 }
 
 type SidecarTimeoutConfig struct {
@@ -95,57 +103,60 @@ type WebSearchSidecarConfig struct {
 }
 
 type ProviderConfig struct {
-	Adapter                         string                           `json:"adapter"`
-	BaseURL                         string                           `json:"baseUrl"`
-	ModelAdapters                   map[string]string                `json:"modelAdapters,omitempty"`
-	ResponsesPath                   string                           `json:"responsesPath,omitempty"`
-	AllowPrivateNetwork             bool                             `json:"allowPrivateNetwork,omitempty"`
-	Disabled                        bool                             `json:"disabled,omitempty"`
-	APIKey                          string                           `json:"apiKey,omitempty"`
-	APIKeyPool                      []APIKeyEntry                    `json:"apiKeyPool,omitempty"`
-	DefaultModel                    string                           `json:"defaultModel,omitempty"`
-	Models                          []string                         `json:"models,omitempty"`
-	Headers                         map[string]string                `json:"headers,omitempty"`
-	AuthMode                        string                           `json:"authMode,omitempty"`
-	CodexAccountMode                string                           `json:"codexAccountMode,omitempty"`
-	GoogleMode                      string                           `json:"googleMode,omitempty"`
-	Project                         string                           `json:"project,omitempty"`
-	Location                        string                           `json:"location,omitempty"`
-	ContextWindow                   int                              `json:"contextWindow,omitempty"`
-	DefaultMaxOutputTokens          int                              `json:"defaultMaxOutputTokens,omitempty"`
-	ParallelToolCalls               *bool                            `json:"parallelToolCalls,omitempty"`
-	EscapeBuiltinToolNames          *bool                            `json:"escapeBuiltinToolNames,omitempty"`
-	KeyOptional                     *bool                            `json:"keyOptional,omitempty"`
-	ModelSuffixBracketStrip         *bool                            `json:"modelSuffixBracketStrip,omitempty"`
-	ReasoningEfforts                []string                         `json:"reasoningEfforts,omitempty"`
-	ModelReasoningEfforts           map[string][]string              `json:"modelReasoningEfforts,omitempty"`
-	ModelDefaultReasoningEfforts    map[string]string                `json:"modelDefaultReasoningEfforts,omitempty"`
-	ReasoningEffortMap              map[string]string                `json:"reasoningEffortMap,omitempty"`
-	ModelReasoningEffortMap         map[string]map[string]string     `json:"modelReasoningEffortMap,omitempty"`
-	ModelContextWindows             map[string]int                   `json:"modelContextWindows,omitempty"`
-	ModelInputModalities            map[string][]string              `json:"modelInputModalities,omitempty"`
-	ModelMaxInputTokens             map[string]int                   `json:"modelMaxInputTokens,omitempty"`
-	ModelMaxOutputTokens            map[string]int                   `json:"modelMaxOutputTokens,omitempty"`
-	NoVisionModels                  []string                         `json:"noVisionModels,omitempty"`
-	NoReasoningModels               []string                         `json:"noReasoningModels,omitempty"`
-	NoTemperatureModels             []string                         `json:"noTemperatureModels,omitempty"`
-	NoTopPModels                    []string                         `json:"noTopPModels,omitempty"`
-	NoPenaltyModels                 []string                         `json:"noPenaltyModels,omitempty"`
-	AutoToolChoiceOnlyModels        []string                         `json:"autoToolChoiceOnlyModels,omitempty"`
-	PreserveReasoningContentModels  []string                         `json:"preserveReasoningContentModels,omitempty"`
-	ThinkingToggleModels            []string                         `json:"thinkingToggleModels,omitempty"`
-	ThinkingBudgetModels            []string                         `json:"thinkingBudgetModels,omitempty"`
-	SelectedModels                  []string                         `json:"selectedModels,omitempty"`
-	LiveModels                      *bool                            `json:"liveModels,omitempty"`
-	ModelSupportsReasoningSummaries map[string]bool                  `json:"modelSupportsReasoningSummaries,omitempty"`
-	PromptCacheKey                  bool                             `json:"promptCacheKey,omitempty"`
-	RefreshPolicy                   string                           `json:"refreshPolicy,omitempty"`
-	FreeTier                        bool                             `json:"freeTier,omitempty"`
-	Note                            string                           `json:"note,omitempty"`
-	UnsafeAllowNativeLocalExec      bool                             `json:"unsafeAllowNativeLocalExec,omitempty"`
-	NativeLocalExec                 string                           `json:"nativeLocalExec,omitempty"`
-	MCPServers                      map[string]CursorMCPServerConfig `json:"mcpServers,omitempty"`
-	DesktopExecutor                 *CursorDesktopExecutorConfig     `json:"desktopExecutor,omitempty"`
+	Adapter                         string                                         `json:"adapter"`
+	BaseURL                         string                                         `json:"baseUrl"`
+	ModelAdapters                   map[string]string                              `json:"modelAdapters,omitempty"`
+	ResponsesPath                   string                                         `json:"responsesPath,omitempty"`
+	AllowPrivateNetwork             bool                                           `json:"allowPrivateNetwork,omitempty"`
+	Disabled                        bool                                           `json:"disabled,omitempty"`
+	APIKey                          string                                         `json:"apiKey,omitempty"`
+	APIKeyPool                      []APIKeyEntry                                  `json:"apiKeyPool,omitempty"`
+	DefaultModel                    string                                         `json:"defaultModel,omitempty"`
+	Models                          []string                                       `json:"models,omitempty"`
+	Headers                         map[string]string                              `json:"headers,omitempty"`
+	AuthMode                        string                                         `json:"authMode,omitempty"`
+	CodexAccountMode                string                                         `json:"codexAccountMode,omitempty"`
+	GoogleMode                      string                                         `json:"googleMode,omitempty"`
+	Project                         string                                         `json:"project,omitempty"`
+	Location                        string                                         `json:"location,omitempty"`
+	ContextWindow                   int                                            `json:"contextWindow,omitempty"`
+	DefaultMaxOutputTokens          int                                            `json:"defaultMaxOutputTokens,omitempty"`
+	ParallelToolCalls               *bool                                          `json:"parallelToolCalls,omitempty"`
+	EscapeBuiltinToolNames          *bool                                          `json:"escapeBuiltinToolNames,omitempty"`
+	KeyOptional                     *bool                                          `json:"keyOptional,omitempty"`
+	ModelSuffixBracketStrip         *bool                                          `json:"modelSuffixBracketStrip,omitempty"`
+	ReasoningEfforts                []string                                       `json:"reasoningEfforts,omitempty"`
+	ModelReasoningEfforts           map[string][]string                            `json:"modelReasoningEfforts,omitempty"`
+	ModelDefaultReasoningEfforts    map[string]string                              `json:"modelDefaultReasoningEfforts,omitempty"`
+	ReasoningEffortMap              map[string]string                              `json:"reasoningEffortMap,omitempty"`
+	ModelReasoningEffortMap         map[string]map[string]string                   `json:"modelReasoningEffortMap,omitempty"`
+	ModelContextWindows             map[string]int                                 `json:"modelContextWindows,omitempty"`
+	ModelInputModalities            map[string][]string                            `json:"modelInputModalities,omitempty"`
+	ModelMaxInputTokens             map[string]int                                 `json:"modelMaxInputTokens,omitempty"`
+	ModelMaxOutputTokens            map[string]int                                 `json:"modelMaxOutputTokens,omitempty"`
+	NoVisionModels                  []string                                       `json:"noVisionModels,omitempty"`
+	NoReasoningModels               []string                                       `json:"noReasoningModels,omitempty"`
+	NoTemperatureModels             []string                                       `json:"noTemperatureModels,omitempty"`
+	NoTopPModels                    []string                                       `json:"noTopPModels,omitempty"`
+	NoPenaltyModels                 []string                                       `json:"noPenaltyModels,omitempty"`
+	AutoToolChoiceOnlyModels        []string                                       `json:"autoToolChoiceOnlyModels,omitempty"`
+	PreserveReasoningContentModels  []string                                       `json:"preserveReasoningContentModels,omitempty"`
+	ThinkingToggleModels            []string                                       `json:"thinkingToggleModels,omitempty"`
+	ThinkingBudgetModels            []string                                       `json:"thinkingBudgetModels,omitempty"`
+	SelectedModels                  []string                                       `json:"selectedModels,omitempty"`
+	LiveModels                      *bool                                          `json:"liveModels,omitempty"`
+	ModelSupportsReasoningSummaries map[string]bool                                `json:"modelSupportsReasoningSummaries,omitempty"`
+	PromptCacheKey                  bool                                           `json:"promptCacheKey,omitempty"`
+	ResponsesItemIDRepair           *ResponsesItemIDRepairConfig                   `json:"responsesItemIdRepair,omitempty"`
+	OpenRouterRouting               *providers.OpenRouterProviderRouting           `json:"openRouterRouting,omitempty"`
+	ModelOpenRouterRouting          map[string]providers.OpenRouterProviderRouting `json:"modelOpenRouterRouting,omitempty"`
+	RefreshPolicy                   string                                         `json:"refreshPolicy,omitempty"`
+	FreeTier                        bool                                           `json:"freeTier,omitempty"`
+	Note                            string                                         `json:"note,omitempty"`
+	UnsafeAllowNativeLocalExec      bool                                           `json:"unsafeAllowNativeLocalExec,omitempty"`
+	NativeLocalExec                 string                                         `json:"nativeLocalExec,omitempty"`
+	MCPServers                      map[string]CursorMCPServerConfig               `json:"mcpServers,omitempty"`
+	DesktopExecutor                 *CursorDesktopExecutorConfig                   `json:"desktopExecutor,omitempty"`
 }
 
 type CursorMCPServerConfig struct {
@@ -198,17 +209,40 @@ type LogConfig struct {
 
 func Default() Config {
 	return Config{
-		Port:            DefaultPort,
-		Host:            DefaultHost,
-		Providers:       make(map[string]ProviderConfig),
-		Combos:          make(map[string]combos.Combo),
-		DefaultProvider: "openai",
-		StreamMode:      "auto",
+		Port: DefaultPort, Host: DefaultHost,
+		Providers: make(map[string]ProviderConfig), Combos: make(map[string]combos.Combo),
+		DefaultProvider: "openai", StreamMode: "auto",
 	}
 }
 
-// Load reads one complete file image, expands environment references in string
-// values, applies defaults, and validates the resulting configuration.
+// FreshInstall is the user-visible TypeScript-compatible configuration written
+// for a new installation. Default remains the minimal construction baseline
+// used by internal callers that assemble providers explicitly.
+func FreshInstall() Config {
+	multiAgentGuidanceEnabled := true
+	codexAutoStart := true
+	codexShimAutoRestore := true
+	return Config{
+		Port: DefaultPort, Host: DefaultHost, OpenAIProviderTierVersion: providers.OpenAIProviderTierVersion,
+		Providers: map[string]ProviderConfig{"openai": {Adapter: "openai-responses", BaseURL: "https://chatgpt.com/backend-api/codex", AuthMode: "forward", CodexAccountMode: "pool"}},
+		Combos:    make(map[string]combos.Combo), DefaultProvider: "openai",
+		SubagentModels:            []string{"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini"},
+		MultiAgentGuidanceEnabled: &multiAgentGuidanceEnabled,
+		CodexAutoStart:            &codexAutoStart,
+		CodexShimAutoRestore:      &codexShimAutoRestore,
+	}
+}
+
+func loadBaseline() Config {
+	return Config{
+		Port: DefaultPort, Host: DefaultHost,
+		Providers: make(map[string]ProviderConfig), Combos: make(map[string]combos.Combo),
+		DefaultProvider: "openai",
+	}
+}
+
+// Load reads one complete file image, applies compatible defaults, and validates
+// it. Environment references stay intact so a later Save never persists secrets.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -219,14 +253,15 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	expanded, err := json.Marshal(expandValue(raw))
-	if err != nil {
-		return nil, fmt.Errorf("expand config: %w", err)
-	}
 
-	cfg := Default()
-	if err := json.Unmarshal(expanded, &cfg); err != nil {
+	cfg := loadBaseline()
+	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	if object, ok := raw.(map[string]any); ok {
+		if _, present := object["openaiProviderTierVersion"]; !present {
+			cfg.OpenAIProviderTierVersion = 0
+		}
 	}
 	if cfg.Providers == nil {
 		cfg.Providers = make(map[string]ProviderConfig)
@@ -234,8 +269,40 @@ func Load(path string) (*Config, error) {
 	if cfg.Combos == nil {
 		cfg.Combos = make(map[string]combos.Combo)
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+	if cfg.StreamMode != "" && cfg.StreamMode != "auto" && cfg.StreamMode != "legacy-tee" && cfg.StreamMode != "eager-relay" {
+		cfg.StreamMode = ""
+	}
+	validationErr := cfg.Validate()
+	if validationErr == nil {
+		validationErr = validateDefaultProvider(cfg)
+	}
+	if validationErr != nil {
+		repaired := FreshInstall()
+		if decodeErr := json.Unmarshal(data, &repaired); decodeErr != nil {
+			return nil, fmt.Errorf("decode repaired config: %w", decodeErr)
+		}
+		if repaired.Providers == nil {
+			repaired.Providers = make(map[string]ProviderConfig)
+		}
+		if repaired.Combos == nil {
+			repaired.Combos = make(map[string]combos.Combo)
+		}
+		if repaired.StreamMode != "" && repaired.StreamMode != "auto" && repaired.StreamMode != "legacy-tee" && repaired.StreamMode != "eager-relay" {
+			repaired.StreamMode = ""
+		}
+		if object, ok := raw.(map[string]any); ok {
+			if _, present := object["openaiProviderTierVersion"]; !present {
+				repaired.OpenAIProviderTierVersion = 0
+			}
+		}
+		repairErr := repaired.Validate()
+		if repairErr == nil {
+			repairErr = validateDefaultProvider(repaired)
+		}
+		if repairErr != nil {
+			return nil, validationErr
+		}
+		cfg = repaired
 	}
 	return &cfg, nil
 }
@@ -348,6 +415,14 @@ func (c Config) Validate() error {
 			return &ConfigError{Field: fmt.Sprintf("subagentModels.%d", index), Message: "must not be blank"}
 		}
 	}
+	for index, model := range c.SubagentModelFallback {
+		if strings.TrimSpace(model) == "" {
+			return &ConfigError{Field: fmt.Sprintf("subagentModelFallback.%d", index), Message: "must not be blank"}
+		}
+	}
+	if c.SubagentModelFallbackPollMS < 0 {
+		return &ConfigError{Field: "subagentModelFallbackPollMs", Message: "must not be negative"}
+	}
 	for field, effort := range map[string]string{"effortCap": c.EffortCap, "subagentEffortCap": c.SubagentEffortCap, "injectionEffort": c.InjectionEffort} {
 		if effort != "" && !IsCodexReasoningEffort(effort) {
 			return &ConfigError{Field: field, Message: "must be a supported Codex reasoning effort"}
@@ -384,6 +459,9 @@ func (c Config) Validate() error {
 		return &ConfigError{Field: "cacheRetention", Message: "must be none, short, or long"}
 	}
 	if err := validateSidecars(c); err != nil {
+		return err
+	}
+	if err := validateExtendedConfig(c); err != nil {
 		return err
 	}
 	for name, provider := range c.Providers {
@@ -426,6 +504,26 @@ func (c Config) Validate() error {
 		}
 		if provider.DefaultMaxOutputTokens < 0 {
 			return &ConfigError{Field: "providers." + name + ".defaultMaxOutputTokens", Message: "must be a positive integer"}
+		}
+		for model := range provider.ModelSupportsReasoningSummaries {
+			if strings.TrimSpace(model) == "" {
+				return &ConfigError{Field: "providers." + name + ".modelSupportsReasoningSummaries", Message: "keys must be nonblank model ids"}
+			}
+		}
+		if repair := provider.ResponsesItemIDRepair; repair != nil {
+			for field, values := range map[string][]string{"message": repair.Message, "reasoning": repair.Reasoning} {
+				for _, value := range values {
+					if strings.TrimSpace(value) == "" {
+						return &ConfigError{Field: "providers." + name + ".responsesItemIdRepair." + field, Message: "values must not be blank"}
+					}
+				}
+			}
+		}
+		if err := providers.OpenRouterRoutingConfigError(providers.ProviderConfig{
+			Adapter: provider.Adapter, BaseURL: provider.BaseURL,
+			OpenRouterRouting: provider.OpenRouterRouting, ModelOpenRouterRouting: provider.ModelOpenRouterRouting,
+		}); err != nil {
+			return &ConfigError{Field: "providers." + name + ".openRouterRouting", Message: err.Error()}
 		}
 		seenKeyIDs := make(map[string]bool, len(provider.APIKeyPool))
 		for index, entry := range provider.APIKeyPool {
@@ -508,6 +606,63 @@ func (c Config) Validate() error {
 	for id, combo := range c.Combos {
 		if err := combos.ValidateBasic(id, combo); err != nil {
 			return &ConfigError{Field: "combos." + id, Message: err.Error()}
+		}
+	}
+	return nil
+}
+
+func validateDefaultProvider(c Config) error {
+	if _, exists := c.Providers[c.DefaultProvider]; !exists {
+		return &ConfigError{Field: "defaultProvider", Message: "must name a configured provider"}
+	}
+	return nil
+}
+
+func validateExtendedConfig(c Config) error {
+	seenAPIKeys := make(map[string]bool, len(c.APIKeys))
+	for index, key := range c.APIKeys {
+		field := fmt.Sprintf("apiKeys.%d", index)
+		if strings.TrimSpace(key.ID) == "" || seenAPIKeys[key.ID] {
+			return &ConfigError{Field: field + ".id", Message: "must be nonblank and unique"}
+		}
+		seenAPIKeys[key.ID] = true
+		if strings.TrimSpace(key.Name) == "" {
+			return &ConfigError{Field: field + ".name", Message: "must not be blank"}
+		}
+		if strings.TrimSpace(key.Key) == "" || strings.ContainsAny(key.Key, "\r\n") {
+			return &ConfigError{Field: field + ".key", Message: "must be nonblank and contain no line breaks"}
+		}
+	}
+	seenAccounts := make(map[string]bool, len(c.CodexAccounts))
+	for index, account := range c.CodexAccounts {
+		field := fmt.Sprintf("codexAccounts.%d", index)
+		if strings.TrimSpace(account.ID) == "" || seenAccounts[account.ID] {
+			return &ConfigError{Field: field + ".id", Message: "must be nonblank and unique"}
+		}
+		seenAccounts[account.ID] = true
+		if strings.TrimSpace(account.Email) == "" {
+			return &ConfigError{Field: field + ".email", Message: "must not be blank"}
+		}
+	}
+	if c.ActiveCodexAccountID != "" && !seenAccounts[c.ActiveCodexAccountID] {
+		return &ConfigError{Field: "activeCodexAccountId", Message: "must name a configured Codex account"}
+	}
+	if guardian := c.TokenGuardian; guardian != nil {
+		if guardian.TickSeconds != 0 && guardian.TickSeconds < 60 {
+			return &ConfigError{Field: "tokenGuardian.tickSeconds", Message: "must be at least 60"}
+		}
+		for field, value := range map[string]int{
+			"jitterSeconds": guardian.JitterSeconds, "leadSeconds": guardian.LeadSeconds,
+			"failureBackoffBaseSeconds": guardian.FailureBackoffBaseSeconds,
+			"failureBackoffMaxSeconds":  guardian.FailureBackoffMaxSeconds,
+			"codexWarmupMaxAgeSeconds":  guardian.CodexWarmupMaxAgeSeconds,
+		} {
+			if value < 0 {
+				return &ConfigError{Field: "tokenGuardian." + field, Message: "must not be negative"}
+			}
+		}
+		if guardian.Concurrency < 0 {
+			return &ConfigError{Field: "tokenGuardian.concurrency", Message: "must be positive"}
 		}
 	}
 	return nil

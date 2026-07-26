@@ -58,9 +58,9 @@ func loadConfig() (*config.Config, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadMigrated(path)
 	if os.IsNotExist(err) || err != nil && strings.Contains(strings.ToLower(err.Error()), "no such file") {
-		defaults := config.Default()
+		defaults := config.FreshInstall()
 		return &defaults, path, nil
 	}
 	return cfg, path, err

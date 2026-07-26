@@ -6,12 +6,13 @@ import (
 )
 
 var commandHelp = map[string]string{
-	"serve":       "Usage: ocx serve [--host HOST] [--port PORT]\n\nStart the proxy in the foreground.",
+	"start":       "Usage: ocx start [--host HOST] [--port PORT]\n\nStart the proxy in the foreground.",
 	"stop":        "Usage: ocx stop\n\nGracefully stop the running proxy.",
 	"restart":     "Usage: ocx restart\n\nRestart the proxy as a detached process.",
 	"health":      "Usage: ocx health [--json]\n\nCheck whether the proxy is healthy.",
 	"gui":         "Usage: ocx gui\n\nStart the proxy if needed and open its dashboard.",
-	"restore":     "Usage: ocx restore\n\nRemove OpenCodex-owned entries from Codex config.",
+	"restore":     "Usage: ocx restore [back]\n\nRemove OpenCodex-owned entries from Codex config, or re-inject while the proxy is running.",
+	"sync":        "Usage: ocx sync\n\nFetch models from the running proxy and inject the catalog into Codex.",
 	"login":       "Usage: ocx login <provider>\n\nAuthenticate xAI, Anthropic, Kimi, Kiro, Google Antigravity, Cursor, or GitHub Copilot.",
 	"logout":      "Usage: ocx logout <provider>\n\nRemove saved OAuth accounts for a provider.",
 	"account":     accountUsage,

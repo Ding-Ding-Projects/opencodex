@@ -30,7 +30,7 @@ func TestCompletionScriptsContainCommands(t *testing.T) {
 func TestConfigSetGetAndRedactedShow(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("OPENCODEX_HOME", home)
-	cfg := config.Default()
+	cfg := config.FreshInstall()
 	cfg.AuthToken = "secret-token"
 	cfg.Providers["custom"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.test/v1", APIKey: "secret-key"}
 	if err := config.Save(filepath.Join(home, "config.json"), &cfg); err != nil {

@@ -120,7 +120,7 @@ func collectDoctorReport(ctx context.Context, input doctorDeps) (doctorReport, e
 
 	cfg, configErr := config.Load(configFile)
 	if os.IsNotExist(configErr) {
-		defaults := config.Default()
+		defaults := config.FreshInstall()
 		cfg = &defaults
 		report.add(doctorCheck{Name: "configuration", Status: doctorWarn, Detail: "config.json does not exist; defaults will be used", Hint: "Run 'ocx init' to create a provider configuration."})
 	} else if configErr != nil {

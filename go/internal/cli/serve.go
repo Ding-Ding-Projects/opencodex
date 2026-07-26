@@ -59,7 +59,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	var loadedConfigPath string
 	var err error
 	if *configFile != "" {
-		cfg, err = config.Load(*configFile)
+		cfg, err = config.LoadMigrated(*configFile)
 		loadedConfigPath, _ = filepath.Abs(*configFile)
 	} else {
 		cfg, loadedConfigPath, err = loadConfig()
@@ -76,6 +76,11 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	config.ApplyProxyEnv(*cfg)
+	runtimeCfg, err := config.ResolveEnvironment(*cfg)
+	if err != nil {
+		return fmt.Errorf("resolve configuration environment: %w", err)
+	}
 	serviceTokenFile := *tokenFile
 	if serviceTokenFile == "" {
 		serviceTokenFile = os.Getenv("OCX_API_TOKEN_FILE")
@@ -85,23 +90,23 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		return err
 	}
 	if token == "" {
-		token = cfg.AuthToken
+		token = runtimeCfg.AuthToken
 	}
 	configHome, err := configDir()
 	if err != nil {
 		return err
 	}
 	credentialStore := oauth.NewCredentialStore(filepath.Join(configHome, "auth.json"))
-	cursorModels, discoveryErr := discoverConfiguredCursorModels(ctx, *cfg, credentialStore, nil)
+	cursorModels, discoveryErr := discoverConfiguredCursorModels(ctx, runtimeCfg, credentialStore, nil)
 	if discoveryErr != nil && streams.Err != nil {
 		fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; using configured catalog: %v\n", discoveryErr)
 	}
-	reg := configuredRegistryWithCursorModels(*cfg, cursorModels)
-	comboResolver, err := combos.New(cfg.Combos, configuredComboProviders(reg, *cfg))
+	reg := configuredRegistryWithCursorModels(runtimeCfg, cursorModels)
+	comboResolver, err := combos.New(runtimeCfg.Combos, configuredComboProviders(reg, runtimeCfg))
 	if err != nil {
 		return err
 	}
-	auth, err := configuredAuthWithStore(*cfg, credentialStore)
+	auth, err := configuredAuthWithStore(runtimeCfg, credentialStore)
 	if err != nil {
 		return err
 	}
@@ -110,7 +115,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	requestLogs := management.NewRequestLog(200)
 	stop := &stopRouter{channel: make(chan struct{})}
 	providerClient := newAdapterAwareClient(server.NewProviderClient(server.FetchTimeouts{Overall: 10 * time.Minute}))
-	proxy := server.New(server.Config{Registry: reg, Combos: comboResolver, Auth: auth, ResolveAdapter: adapterResolver(reg, *cfg), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
+	proxy := server.New(server.Config{Registry: reg, Combos: comboResolver, Auth: auth, ResolveAdapter: adapterResolver(reg, runtimeCfg), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, DebugLog: debugLog, StorageHome: os.Getenv("CODEX_HOME"), Stop: stop.Stop})
 	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	listener, listenErr := net.Listen("tcp", httpServer.Addr)
 	if listenErr != nil {
@@ -181,13 +186,13 @@ func configuredRegistry(cfg config.Config) *registry.ProviderRegistry {
 		index[entry.ID] = position
 	}
 	for name, provider := range cfg.Providers {
-		entry := registry.Provider{ID: name, Label: name, Adapter: provider.Adapter, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel}
+		entry := registry.Provider{ID: name, Label: name, Adapter: provider.Adapter, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel, StaticHeaders: provider.Headers}
 		for _, model := range provider.Models {
 			entry.Models = append(entry.Models, registry.ModelDefinition{ID: model})
 		}
 		if position, ok := index[name]; ok {
 			preset := base[position]
-			preset.Adapter, preset.BaseURL = entry.Adapter, entry.BaseURL
+			preset.Adapter, preset.BaseURL, preset.StaticHeaders = entry.Adapter, entry.BaseURL, entry.StaticHeaders
 			if entry.DefaultModel != "" {
 				preset.DefaultModel = entry.DefaultModel
 			}
@@ -199,7 +204,9 @@ func configuredRegistry(cfg config.Config) *registry.ProviderRegistry {
 			base = append(base, entry)
 		}
 	}
-	return registry.New(base...)
+	configured := registry.New(base...)
+	_ = configured.SetDefaultProvider(cfg.DefaultProvider)
+	return configured
 }
 
 func configuredAuth(cfg config.Config) (*oauth.AuthResolver, error) {
@@ -257,7 +264,10 @@ func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.A
 		provider.BaseURL = transport.BaseURL
 		switch entry.Adapter {
 		case "openai-chat":
-			return openaiadapter.NewChatAdapter(provider, secret, headers), nil
+			adapter := openaiadapter.NewChatAdapter(provider, secret, headers)
+			adapter.OpenRouterRouting = provider.OpenRouterRouting
+			adapter.ModelOpenRouterRouting = provider.ModelOpenRouterRouting
+			return adapter, nil
 		case "mimo-free":
 			adapter := openaiadapter.NewMimoAdapter()
 			adapter.Chat = *openaiadapter.NewChatAdapter(provider, secret, headers)
@@ -284,7 +294,7 @@ func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.A
 			adapter.IncomingHeaders = incoming
 			return adapter, nil
 		case "anthropic":
-			return &anthropic.Adapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers}, nil
+			return anthropic.NewAdapter(provider, secret, headers, cfg.CacheRetention), nil
 		case "azure-openai":
 			return &openaiadapter.AzureAdapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers}, nil
 		case "google":

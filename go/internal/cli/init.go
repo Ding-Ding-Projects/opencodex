@@ -42,7 +42,7 @@ func runInit(args []string, streams IO) error {
 		}
 	}
 
-	cfg := config.Default()
+	cfg := config.FreshInstall()
 	cfg.Port = port
 	cfg.Providers[name] = provider
 	cfg.DefaultProvider = name
@@ -163,7 +163,7 @@ func readCustomProvider(reader *bufio.Reader, writer io.Writer) (string, config.
 		return "", config.ProviderConfig{}, err
 	}
 	provider := config.ProviderConfig{Adapter: adapter, BaseURL: baseURL, APIKey: key, DefaultModel: model, AuthMode: "key"}
-	probe := config.Default()
+	probe := config.FreshInstall()
 	probe.DefaultProvider = name
 	probe.Providers[name] = provider
 	if err := probe.Validate(); err != nil {

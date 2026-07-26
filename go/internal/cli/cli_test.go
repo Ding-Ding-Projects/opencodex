@@ -38,7 +38,7 @@ func TestRunVersionAndUnknownCommand(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := Run(context.Background(), []string{"unknown"}, streams); code != 2 {
+	if code := Run(context.Background(), []string{"unknown"}, streams); code != 1 {
 		t.Fatalf("unknown exit=%d", code)
 	}
 	if !strings.Contains(errOut.String(), "Unknown command") {
