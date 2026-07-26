@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,42 @@ func TestDetectCollaborationSurface(t *testing.T) {
 	}
 	if _, ok := DetectCollaborationSurface(append(v1, types.Tool{Name: "send_message"})); ok {
 		t.Fatal("contradictory surface should be rejected")
+	}
+}
+
+func TestDetectCollaborationSurfaceRequiresSpawnTool(t *testing.T) {
+	if surface, ok := DetectCollaborationSurface([]types.Tool{{Name: "send_input"}}); ok || surface != "" {
+		t.Fatalf("companion-only surface=%q ok=%v", surface, ok)
+	}
+}
+
+func TestMultiAgentGuidanceTextSurfaceRulesAndBudget(t *testing.T) {
+	v1 := &types.NormalizedRequest{Options: types.RequestOptions{Reasoning: "max"}}
+	v1.Context.Tools = []types.Tool{{Namespace: "collab", Name: "spawn_agent"}}
+	if text := MultiAgentGuidanceText(v1, MultiAgentGuidanceOptions{}, nil); !strings.Contains(text, ProactiveMultiAgentModeText) {
+		t.Fatalf("v1 guidance=%q", text)
+	}
+	v1.Options.Reasoning = "high"
+	if text := MultiAgentGuidanceText(v1, MultiAgentGuidanceOptions{}, nil); text != "" {
+		t.Fatalf("non-top v1 guidance=%q", text)
+	}
+
+	v2 := &types.NormalizedRequest{}
+	v2.Context.Tools = []types.Tool{{Name: "spawn_agent"}, {Name: "send_message"}}
+	text := MultiAgentGuidanceText(v2, MultiAgentGuidanceOptions{
+		InjectionModel: "gpt-sol", InjectionEffort: "high", SubagentModels: []string{"gpt-sol"},
+	}, func([]string, CollaborationSurface) EffectiveSubagentRoster {
+		return EffectiveSubagentRoster{Advertised: []SubagentModel{{Model: "gpt-sol", Efforts: []string{"low", "high"}}}, Candidates: []SubagentModel{{Model: "gpt-sol"}}}
+	})
+	if !strings.Contains(text, `model "gpt-sol"`) || strings.Contains(text, ProactiveMultiAgentModeText) || len(strings.TrimSuffix(strings.TrimPrefix(text, "<multi_agent_mode>"), "</multi_agent_mode>")) > V2GuidanceCharacterBudget {
+		t.Fatalf("v2 guidance=%q", text)
+	}
+}
+
+func TestApplyInjectionPlaceholdersIncludesFallback(t *testing.T) {
+	got := ApplyInjectionPlaceholders("{{model}}/{{effort}}{{roster}}{{fallback}}", "m", "e", " r", " f")
+	if got != "m/e r f" {
+		t.Fatalf("placeholders=%q", got)
 	}
 }
 

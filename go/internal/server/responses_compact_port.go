@@ -63,13 +63,25 @@ func BufferCompactResponse(ctx context.Context, response *http.Response, limit i
 }
 
 func (c CompactCoordinator) ServeHTTP(w http.ResponseWriter, request *http.Request) {
+	var rawBody map[string]any
+	decoder := json.NewDecoder(http.MaxBytesReader(w, request.Body, 64<<20))
+	decoder.UseNumber()
+	if decoder.Decode(&rawBody) != nil || rawBody == nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request_error", "Invalid compaction request body")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request_error", "compaction request must contain exactly one JSON object")
+		return
+	}
+	canonical, _ := json.Marshal(rawBody)
 	var body struct {
 		Model    string            `json:"model"`
 		Input    []json.RawMessage `json:"input"`
 		ThreadID string            `json:"thread_id"`
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, request.Body, 64<<20))
-	if decoder.Decode(&body) != nil || strings.TrimSpace(body.Model) == "" {
+	if json.Unmarshal(canonical, &body) != nil || strings.TrimSpace(body.Model) == "" {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request_error", "compaction request requires a valid model")
 		return
 	}
@@ -86,7 +98,7 @@ func (c CompactCoordinator) ServeHTTP(w http.ResponseWriter, request *http.Reque
 		route.Model = body.Model
 	}
 	if route.Native {
-		c.forwardNative(w, request, route, body.Input, body.ThreadID)
+		c.forwardNative(w, request, route, rawBody)
 		return
 	}
 	if c.Summarize == nil {
@@ -113,8 +125,15 @@ func (c CompactCoordinator) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string]any{"output": output})
 }
 
-func (c CompactCoordinator) forwardNative(w http.ResponseWriter, incoming *http.Request, route CompactRoute, input []json.RawMessage, threadID string) {
-	payload, _ := json.Marshal(map[string]any{"model": route.Model, "input": input})
+func (c CompactCoordinator) forwardNative(w http.ResponseWriter, incoming *http.Request, route CompactRoute, rawBody map[string]any) {
+	payloadBody := make(map[string]any, len(rawBody))
+	for key, value := range rawBody {
+		if key != "reasoning" {
+			payloadBody[key] = value
+		}
+	}
+	payloadBody["model"] = route.Model
+	payload, _ := json.Marshal(payloadBody)
 	upstream, err := http.NewRequestWithContext(incoming.Context(), http.MethodPost, route.Endpoint, bytes.NewReader(payload))
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())

@@ -58,7 +58,7 @@ func DetectCollaborationSurface(tools []types.Tool) (CollaborationSurface, bool)
 			v2Only = true
 		}
 	}
-	if namespacedSpawn == flatSpawn || v1Only && v2Only {
+	if !namespacedSpawn && !flatSpawn || namespacedSpawn && flatSpawn || v1Only && v2Only {
 		return "", false
 	}
 	if v1Only || namespacedSpawn && !v2Only {
@@ -67,9 +67,94 @@ func DetectCollaborationSurface(tools []types.Tool) (CollaborationSurface, bool)
 	return CollaborationV2, true
 }
 
-func ApplyInjectionPlaceholders(prompt, model, effort, roster string) string {
-	replacer := strings.NewReplacer("{{model}}", model, "{{effort}}", effort, "{{roster}}", roster)
+func ApplyInjectionPlaceholders(prompt, model, effort, roster string, fallback ...string) string {
+	fallbackText := ""
+	if len(fallback) > 0 {
+		fallbackText = fallback[0]
+	}
+	replacer := strings.NewReplacer("{{model}}", model, "{{effort}}", effort, "{{roster}}", roster, "{{fallback}}", fallbackText)
 	return replacer.Replace(prompt)
+}
+
+type EffectiveSubagentRoster struct {
+	Advertised []SubagentModel
+	Candidates []SubagentModel
+}
+
+type MultiAgentGuidanceOptions struct {
+	Enabled          *bool
+	InjectionModel   string
+	InjectionEffort  string
+	SubagentModels   []string
+	InjectionPrompt  string
+	FallbackGuidance string
+}
+
+type SubagentRosterResolver func(configured []string, surface CollaborationSurface) EffectiveSubagentRoster
+
+// MultiAgentGuidanceText mirrors the collaboration-surface split: v1 receives
+// proactive guidance only at the top reasoning tier, while v2 receives bounded
+// model designation guidance and never duplicates codex-rs' proactive text.
+func MultiAgentGuidanceText(request *types.NormalizedRequest, options MultiAgentGuidanceOptions, resolve SubagentRosterResolver) string {
+	if options.Enabled != nil && !*options.Enabled || request == nil {
+		return ""
+	}
+	surface, ok := DetectCollaborationSurface(request.Context.Tools)
+	if !ok {
+		return ""
+	}
+	if surface == CollaborationV1 {
+		if request.Options.Reasoning != "max" && request.Options.Reasoning != "ultra" {
+			return ""
+		}
+		return "<multi_agent_mode>" + ProactiveMultiAgentModeText + "</multi_agent_mode>"
+	}
+	configured := append([]string(nil), options.SubagentModels...)
+	if options.InjectionModel != "" {
+		configured = append(configured, options.InjectionModel)
+	}
+	var effective EffectiveSubagentRoster
+	if resolve != nil {
+		effective = resolve(configured, surface)
+	}
+	allowed := make(map[string]struct{}, len(options.SubagentModels))
+	for _, model := range options.SubagentModels {
+		allowed[model] = struct{}{}
+	}
+	rosterModels := make([]SubagentModel, 0, len(effective.Advertised))
+	for _, model := range effective.Advertised {
+		if _, exists := allowed[model.Model]; exists {
+			rosterModels = append(rosterModels, model)
+		}
+	}
+	roster := SubagentRosterText(rosterModels)
+	preferred := SubagentModel{}
+	for _, candidate := range effective.Candidates {
+		if candidate.Model == options.InjectionModel {
+			preferred = candidate
+			break
+		}
+	}
+	if options.InjectionPrompt != "" {
+		text := ApplyInjectionPlaceholders(options.InjectionPrompt, options.InjectionModel, options.InjectionEffort, roster, options.FallbackGuidance)
+		return "<multi_agent_mode>" + text + "</multi_agent_mode>"
+	}
+	if preferred.Model == "" && roster == "" && options.FallbackGuidance == "" {
+		return ""
+	}
+	text := "When the active spawn_agent tool supports optional \"model\" or \"reasoning_effort\" overrides, use only models listed for this collaboration surface. When setting either override, set fork_turns to \"none\" (or a positive turn count such as \"3\"; full-history forks reject overrides) and make the task message self-contained."
+	if preferred.Model != "" {
+		text += ` Preferred sub-agent: model "` + preferred.Model + `"`
+		if options.InjectionEffort != "" {
+			text += `, reasoning_effort "` + options.InjectionEffort + `"`
+		}
+		text += " — use it unless the user names another."
+	}
+	text += options.FallbackGuidance
+	if len(text)+len(roster) <= V2GuidanceCharacterBudget {
+		text += roster
+	}
+	return "<multi_agent_mode>" + text + "</multi_agent_mode>"
 }
 
 type SubagentModel struct {

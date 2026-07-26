@@ -47,11 +47,26 @@ func TestCompactCoordinatorNativeForward(t *testing.T) {
 	coordinator := CompactCoordinator{Resolve: func(string, http.Header) (CompactRoute, error) {
 		return CompactRoute{Model: "native-wire", Native: true, Endpoint: upstream.URL}, nil
 	}}
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"public","input":[]}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"public","input":[],"thread_id":"thread-1","metadata":{"keep":true},"reasoning":{"effort":"high"}}`))
 	response := httptest.NewRecorder()
 	coordinator.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || received["model"] != "native-wire" {
 		t.Fatalf("response = %d %s, body = %#v", response.Code, response.Body.String(), received)
+	}
+	if received["thread_id"] != "thread-1" || received["metadata"].(map[string]any)["keep"] != true {
+		t.Fatalf("native fields were dropped: %#v", received)
+	}
+	if _, exists := received["reasoning"]; exists {
+		t.Fatalf("reasoning must be stripped from native compact body: %#v", received)
+	}
+}
+
+func TestCompactCoordinatorRejectsTrailingJSON(t *testing.T) {
+	coordinator := CompactCoordinator{Resolve: func(string, http.Header) (CompactRoute, error) { return CompactRoute{}, nil }}
+	response := httptest.NewRecorder()
+	coordinator.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"m","input":[]} {"extra":true}`)))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "exactly one JSON object") {
+		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}
 }
 
