@@ -1,15 +1,15 @@
 package parity_test
 
 import (
+	"net/http"
 	"slices"
 	"testing"
 	"time"
 
 	core "github.com/lidge-jun/opencodex-go/internal"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	"github.com/lidge-jun/opencodex-go/internal/config"
-	"github.com/lidge-jun/opencodex-go/internal/registry"
-	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 func TestRouterBackfillsRegistryCapabilitiesWithoutOverridingUserConfig(t *testing.T) {
@@ -52,22 +52,37 @@ func TestRouterBackfillsRegistryCapabilitiesWithoutOverridingUserConfig(t *testi
 	}
 }
 
-func TestCodexAccountRouterAffinityAndRateLimitFailover(t *testing.T) {
-	router := registry.NewCodexRouter([]registry.CodexAccount{
-		{ID: "account-a", AccessToken: "synthetic-token-a", Usage: 10, Usable: true},
-		{ID: "account-b", AccessToken: "synthetic-token-b", Usage: 20, Usable: true},
+func TestCanonicalCodexRouterAffinityAndRateLimitFailover(t *testing.T) {
+	store := codex.NewAccountStore(t.TempDir() + "/codex-accounts.json")
+	for _, accountID := range []string{"account-a", "account-b"} {
+		if err := store.SaveCredential(accountID, codex.AccountCredentials{
+			AccessToken: "synthetic-token-" + accountID, RefreshToken: "synthetic-refresh-" + accountID,
+			ExpiresAt: time.Now().Add(time.Hour).UnixMilli(), ChatGPTAccountID: "chat-" + accountID,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	router := codex.NewRouter(store, func() (codex.MainAccountToken, bool) { return codex.MainAccountToken{}, false }, nil)
+	config := &codex.RoutingConfig{CodexAccounts: []codex.CodexAccount{{ID: "account-a"}, {ID: "account-b"}}}
+	router.SetAccountQuota("account-a", codex.AccountQuota{WeeklyPercent: float64Pointer(10)})
+	router.SetAccountQuota("account-b", codex.AccountQuota{WeeklyPercent: float64Pointer(20)})
+	now := time.UnixMilli(1_700_000_000_000)
+
+	first := router.ResolveCodexAccountForThread("thread-one", config, now)
+	if first != "account-a" {
+		t.Fatalf("initial pool selection=%q", first)
+	}
+	if affined := router.ResolveCodexAccountForThread("thread-one", config, now.Add(time.Second)); affined != first {
+		t.Fatalf("thread affinity selection=%q", affined)
+	}
+	router.RecordCodexUpstreamOutcome(config, first, http.StatusTooManyRequests, codex.CodexUpstreamOutcomeMeta{
+		RetryAfter: "60", ThreadID: "thread-one", Now: now.Add(2 * time.Second),
 	})
-	first, err := router.Resolve("thread-one")
-	if err != nil || first.ID != "account-a" {
-		t.Fatalf("initial pool selection=%q err=%v", first.ID, err)
+	if failedOver := router.ResolveCodexAccountForThread("thread-one", config, now.Add(3*time.Second)); failedOver != "account-b" {
+		t.Fatalf("rate-limit failover selection=%q", failedOver)
 	}
-	affined, err := router.Resolve("thread-one")
-	if err != nil || affined.ID != first.ID {
-		t.Fatalf("thread affinity selection=%q err=%v", affined.ID, err)
-	}
-	router.RecordOutcome(first.ID, types.OutcomeRateLimited, &types.RetryMeta{RetryAfter: time.Minute})
-	failedOver, err := router.Resolve("thread-one")
-	if err != nil || failedOver.ID != "account-b" {
-		t.Fatalf("rate-limit failover selection=%q err=%v", failedOver.ID, err)
-	}
+}
+
+func float64Pointer(value float64) *float64 {
+	return &value
 }
