@@ -46,39 +46,70 @@ running job and launches, but does not execute, an external worker. When
 ```
 
 The child receives a narrowly named internal environment marker, detached stdio, and
-no shell. `bin/ocx.mjs` accepts the hidden worker only with that marker, deletes it,
-then invokes the existing retained Bun TypeScript worker. This is an explicit update
-bridge exception: the mature worker already owns stop-first package replacement,
-Windows tray handoff, service reinstall with direct-start fallback, pinned port, and
-old-PID/target-version confirmation. Normal packaged commands still cannot execute Bun
-or source. A launch failure is persisted as a terminal failed job.
+no shell. `bin/ocx.mjs` accepts the hidden worker only with that marker and a matching
+persisted job ID, deletes the marker, then acts as a supervisor for the existing
+retained Bun TypeScript worker. This is an explicit update-bridge exception: the mature
+worker already owns stop-first package replacement, Windows tray handoff, service
+reinstall with direct-start fallback, pinned port, and old-PID/target-version
+confirmation.
+
+The Node supervisor must stay alive until the Bun child exits. If Bun resolution or
+spawn fails, the child exits nonzero, or the child exits zero while the same job is
+still `running`/`restarting`, the supervisor rereads the exact job ID and atomically
+writes a terminal `failed` state. It never overwrites a terminal state already written
+by the TS worker. This gives one terminal owner after child exit and prevents a
+successful OS spawn followed by bootstrap failure from permanently blocking updates.
+Concurrent Go status reads see either complete old or complete new JSON because both
+runtimes use temp-file plus rename replacement.
+
+Normal packaged commands still cannot execute Bun or source except for the separately
+documented, exact legacy-shim one-time migration. Tests use both a no-migration fixture
+and an exact legacy migration fixture so this new update exception does not weaken the
+existing boundary.
+
+An exact stable Node + package launcher pair is the only supported management-update
+topology. `resolveUpdateCheck`/`StartUpdate` report an explicit unsupported reason when
+that pair is absent; they do not enter the Go lifecycle and do not claim a direct/source
+GUI update. Direct invocation of an exact package-local Go binary may still use the
+existing binary-only updater, including the Windows npm recovery message. This closes
+the previously unreachable “fallback lifecycle” claim rather than inventing an
+executable identity for it.
 
 Required activation tests:
 
 - strict packaged npm `update` and `update --help` are intercepted before Go on all
   supported npm targets; help and normal Go commands never run npm/Bun;
 - packaged management update persists a job and launches the exact Node + launcher
-  hidden worker, while direct/source runtime retains the Go lifecycle;
-- external worker launch failure is terminal and recoverable through status;
+  hidden worker, while direct/source management update stays unavailable;
+- unsupported direct/source management checks cannot start an update;
+- external worker launch, Bun bootstrap, nonzero exit, and zero-without-terminal-state
+  failures are terminal and recoverable through status;
 - hidden worker without the internal marker fails closed;
-- the existing poison-install `ocx help` receipt remains Bun/source-free.
+- a dual-runtime fixture proves Go-write → TS-compatible update → Go-read, including
+  concurrent status reads across atomic replacement;
+- the no-migration poison-install `ocx help` receipt remains Bun/source-free, while the
+  exact one-time legacy-shim migration remains the only other packaged Bun exception.
 
 ## Go lifecycle backstop
 
-The non-packaged/direct fallback must execute the supplied `RestartPlan.Command`
-without a shell. Service-install failure executes a freshly built direct proxy plan on
-the captured port; failure of both commands returns both contexts. Add an identity
-probe to `LifecycleDependencies`, capture the pre-update PID, and after the stability
-window require npm restart evidence equivalent to upstream:
+Although management updates now fail closed outside the exact external-worker topology,
+the reusable Go lifecycle must not retain a callback that discards its plan. Its
+production dependency executes the supplied `RestartPlan.Command` without a shell.
+Service-install failure executes a freshly built direct proxy plan on the captured port;
+failure of both commands returns both contexts. Add an identity probe to
+`LifecycleDependencies`, capture the pre-update PID, and after the stability window
+require npm restart evidence equivalent to upstream:
 
 - a known old PID must change, with a matching target version when health reports one;
 - absent PID is accepted only when health reports the exact target version;
 - without a captured PID, exact target version is mandatory;
 - stale PID or a different reported version fails and restores the tray.
 
-Production uses `server.ProxyIdentityAt`; focused tests invoke the actual production
-callback and cover service success, service-to-direct fallback, stale PID, wrong
-version, and exact target success.
+The production dependency uses `server.ProxyIdentityAt`; focused dependency tests
+invoke the actual command callback and cover service success, service-to-direct
+fallback, stale PID, wrong version, and exact target success. These are correctness
+tests for the reusable lifecycle, not a claim that an unsupported direct/source GUI
+update is reachable.
 
 ## Release workflow corrections
 
@@ -91,11 +122,14 @@ or the exact-SHA Go gate.
 
 ### npm channel rechecks
 
-Factor a shell block that verifies both immutable version integrity and
-`dist-tags.${NPM_DIST_TAG} == RELEASE_VERSION`. Run it after publish visibility, again
-immediately before GitHub reconciliation, and once after reconciliation. A moved tag
-must stop before any later mutation or final success. Workflow tests assert all three
-post-classification checks and their ordering around the reconciliation command.
+Verify both immutable version integrity and
+`dist-tags.${NPM_DIST_TAG} == RELEASE_VERSION` after publish visibility. Pass package,
+version, tag, and expected integrity into `reconcile-release-assets.ts`; its
+`beforeMutation` gate re-queries npm immediately before every independent GitHub
+mutation: tag push, release creation, asset upload, and draft publication. It also
+rechecks before final success. A moved tag therefore stops before the next public
+mutation, even when it moves during reconciliation. Fake-npm tests move the tag before
+each mutation boundary and prove later `git`/`gh` mutators are unreachable.
 
 ### GitHub asset identity and bounds
 
