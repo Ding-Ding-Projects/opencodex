@@ -2,6 +2,8 @@ package codex
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,6 +26,116 @@ type InjectResult struct {
 	Changed                   bool
 	KeptUserBaseURL           bool
 	PreservedExternalProvider string
+}
+
+type CodexRoutingKind string
+
+const (
+	RoutingNative         CodexRoutingKind = "native"
+	RoutingOpenCodexLocal CodexRoutingKind = "opencodex-local"
+	RoutingCustomLocal    CodexRoutingKind = "custom-local"
+	RoutingCustomRemote   CodexRoutingKind = "custom-remote"
+	RoutingUnknown        CodexRoutingKind = "unknown"
+)
+
+func ShouldInjectAPIAuthHeader(hostname string) bool {
+	host := strings.Trim(strings.TrimSpace(hostname), "[]")
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback() && !ip.IsUnspecified()
+}
+
+func ExternalCodexModelProvider(content string) string {
+	routing, err := ResolveEffectiveProjectRouting([]byte(content))
+	if err != nil || routing.Provider == "" || routing.Provider == "openai" || routing.Provider == "opencodex" {
+		return ""
+	}
+	return routing.Provider
+}
+
+func ClassifyCodexRouting(content string) CodexRoutingKind {
+	routing, err := ResolveEffectiveProjectRouting([]byte(content))
+	if err != nil {
+		return RoutingUnknown
+	}
+	provider := routing.Provider
+	if provider == "" || provider == "openai" {
+		base := rootTOMLString(content, "openai_base_url")
+		if base == "" {
+			return RoutingNative
+		}
+		return classifyRoutingURL(base, false)
+	}
+	base := providerTableString(content, provider, "base_url")
+	if base == "" {
+		return RoutingUnknown
+	}
+	return classifyRoutingURL(base, provider == "opencodex")
+}
+
+func classifyRoutingURL(raw string, openCodex bool) CodexRoutingKind {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return RoutingUnknown
+	}
+	host := parsed.Hostname()
+	local := strings.EqualFold(host, "localhost")
+	if ip := net.ParseIP(host); ip != nil {
+		local = ip.IsLoopback() || ip.IsUnspecified()
+	}
+	if local && openCodex {
+		return RoutingOpenCodexLocal
+	}
+	if local {
+		return RoutingCustomLocal
+	}
+	return RoutingCustomRemote
+}
+
+func rootTOMLString(content, key string) string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	pattern := regexp.MustCompile(`^\s*` + regexp.QuoteMeta(key) + `\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')`)
+	for index := 0; index < firstTable(lines); index++ {
+		if match := pattern.FindStringSubmatch(lines[index]); match != nil {
+			return strings.Trim(parseQuotedTOML(match[1]), " ")
+		}
+	}
+	return ""
+}
+
+func providerTableString(content, provider, key string) string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	start, end := tableBounds(lines, "model_providers."+provider)
+	if start < 0 {
+		return ""
+	}
+	pattern := regexp.MustCompile(`^\s*` + regexp.QuoteMeta(key) + `\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')`)
+	for index := start + 1; index < end; index++ {
+		if match := pattern.FindStringSubmatch(lines[index]); match != nil {
+			return parseQuotedTOML(match[1])
+		}
+	}
+	return ""
+}
+
+func parseQuotedTOML(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 {
+		return value
+	}
+	if value[0] == '\'' {
+		return value[1 : len(value)-1]
+	}
+	parsed, err := strconv.Unquote(value)
+	if err != nil {
+		return value[1 : len(value)-1]
+	}
+	return parsed
 }
 
 func providerHost(hostname string) string {
@@ -95,6 +207,9 @@ func InjectConfig(content string, options InjectOptions) (string, InjectResult, 
 	}
 	normalized, eol := normalizeEOL(content)
 	cleaned := stripOpenCodexNormalized(normalized)
+	cleaned = StripRootContextWindowOverrides(cleaned)
+	cleaned = stripRootRoutedModel(cleaned)
+	cleaned = normalizeServiceTier(cleaned)
 	cleaned = setOwnedCatalog(cleaned, options.CatalogPath)
 	result := InjectResult{}
 	if options.IncludeAPIAuthHeader {
@@ -105,9 +220,66 @@ func InjectConfig(content string, options InjectOptions) (string, InjectResult, 
 		cleaned, kept = setInjectedBaseURL(cleaned, options)
 		result.KeptUserBaseURL = kept
 	}
+	cleaned = strings.TrimRight(cleaned, "\n") + "\n"
 	output := applyEOL(cleaned, eol)
 	result.Changed = output != content
 	return output, result, nil
+}
+
+func StripRootContextWindowOverrides(content string) string {
+	lines := strings.Split(content, "\n")
+	rootEnd := firstTable(lines)
+	pattern := regexp.MustCompile(`^\s*model_(?:context_window|auto_compact_token_limit)\s*=`)
+	out := make([]string, 0, len(lines))
+	for index, line := range lines {
+		if index < rootEnd && pattern.MatchString(line) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func stripRootRoutedModel(content string) string {
+	lines := strings.Split(content, "\n")
+	rootEnd := firstTable(lines)
+	pattern := regexp.MustCompile(`^\s*model\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*(?:#.*)?$`)
+	out := make([]string, 0, len(lines))
+	for index, line := range lines {
+		if index < rootEnd {
+			if match := pattern.FindStringSubmatch(line); match != nil && strings.Contains(parseQuotedTOML(match[1]), "/") {
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func normalizeServiceTier(content string) string {
+	pattern := regexp.MustCompile(`(?m)^(\s*service_tier\s*=\s*)["']priority["']\s*$`)
+	return pattern.ReplaceAllString(content, `${1}"fast"`)
+}
+
+func ensureFastModeFeature(content string) string {
+	lines := strings.Split(content, "\n")
+	start, end := tableBounds(lines, "features")
+	if start < 0 {
+		return strings.TrimRight(content, "\n") + "\n\n[features]\nfast_mode = true\n"
+	}
+	pattern := regexp.MustCompile(`^(\s*)fast_mode\s*=.*$`)
+	for index := start + 1; index < end; index++ {
+		if match := pattern.FindStringSubmatch(lines[index]); match != nil {
+			lines[index] = match[1] + "fast_mode = true"
+			return strings.Join(lines, "\n")
+		}
+	}
+	insert := end
+	for insert > start+1 && strings.TrimSpace(lines[insert-1]) == "" {
+		insert--
+	}
+	lines = append(lines[:insert], append([]string{"fast_mode = true"}, lines[insert:]...)...)
+	return strings.Join(lines, "\n")
 }
 
 // InjectCodexConfig atomically edits config.toml and writes the fallback profile.

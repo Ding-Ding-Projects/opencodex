@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"encoding/json"
 	"math"
 	"net/http"
 	"strconv"
@@ -85,8 +86,8 @@ func numericValue(value any) (float64, bool) {
 		number = float64(typed)
 	case int64:
 		number = float64(typed)
-	case jsonNumber:
-		parsed, err := strconv.ParseFloat(string(typed), 64)
+	case json.Number:
+		parsed, err := typed.Float64()
 		if err != nil {
 			return 0, false
 		}
@@ -105,9 +106,6 @@ func numericValue(value any) (float64, bool) {
 	}
 	return number, !math.IsNaN(number) && !math.IsInf(number, 0)
 }
-
-// jsonNumber is accepted without importing encoding/json solely for its alias.
-type jsonNumber string
 
 func isExplicitMonthlyWindow(window *UsageWindow) bool {
 	if window == nil {

@@ -97,6 +97,31 @@ func GetMaxConcurrentThreads(configPath string) (int, bool, error) {
 	return *settings.MaxConcurrentThreads, true, nil
 }
 
+// GetLogicalMaxThreads returns the active storage first and falls back to the
+// inactive version's key so transitions preserve the user's intended limit.
+func GetLogicalMaxThreads(configPath string) (int, bool, error) {
+	settings, err := ReadFeatureSettings(configPath)
+	if err != nil {
+		return 0, false, err
+	}
+	if settings.MultiAgentV2 {
+		if settings.MaxConcurrentThreads != nil {
+			return *settings.MaxConcurrentThreads, true, nil
+		}
+		if settings.LegacyMaxThreads != nil {
+			return *settings.LegacyMaxThreads, true, nil
+		}
+	} else {
+		if settings.LegacyMaxThreads != nil {
+			return *settings.LegacyMaxThreads, true, nil
+		}
+		if settings.MaxConcurrentThreads != nil {
+			return *settings.MaxConcurrentThreads, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
 // ToggleFeature changes a boolean feature while preserving unrelated formatting and comments.
 func ToggleFeature(configPath, name string, enabled bool) (bool, error) {
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(name) {
@@ -250,6 +275,9 @@ func SetMultiAgentV2(configPath string, enabled bool, threadLimit int) error {
 	if err != nil {
 		return err
 	}
+	if err = validateMultiAgentTransition(original); err != nil {
+		return err
+	}
 	if _, err = ToggleFeature(configPath, "multi_agent_v2", enabled); err != nil {
 		return err
 	}
@@ -268,6 +296,50 @@ func SetMultiAgentV2(configPath string, enabled bool, threadLimit int) error {
 		_ = atomicWriteFile(configPath, original, 0o600)
 	}
 	return err
+}
+
+func validateMultiAgentTransition(content []byte) error {
+	text := strings.ReplaceAll(string(content), "\r\n", "\n")
+	if regexp.MustCompile(`(?m)^\s*(?:features\.multi_agent_v2(?:\.[A-Za-z0-9_]+)?|agents\.max_threads)\s*=`).MatchString(text) {
+		return errors.New("dotted multi-agent config keys are not supported for automatic migration")
+	}
+	countTable := func(name string) int {
+		pattern := regexp.MustCompile(`(?m)^\s*\[` + regexp.QuoteMeta(name) + `\]\s*(?:#.*)?$`)
+		return len(pattern.FindAllString(text, -1))
+	}
+	if countTable("features.multi_agent_v2") > 1 || countTable("features") > 1 || countTable("agents") > 1 {
+		return errors.New("duplicate multi-agent TOML tables cannot be migrated safely")
+	}
+	lines := strings.Split(text, "\n")
+	featuresStart, featuresEnd := tableBounds(lines, "features")
+	dedicatedStart, dedicatedEnd := tableBounds(lines, "features.multi_agent_v2")
+	agentsStart, agentsEnd := tableBounds(lines, "agents")
+	countKey := func(start, end int, pattern *regexp.Regexp) int {
+		if start < 0 {
+			return 0
+		}
+		count := 0
+		for index := start + 1; index < end; index++ {
+			if pattern.MatchString(lines[index]) {
+				count++
+			}
+		}
+		return count
+	}
+	featureDefs := countKey(featuresStart, featuresEnd, regexp.MustCompile(`^\s*multi_agent_v2\s*=`))
+	if featureDefs > 1 || featureDefs == 1 && dedicatedStart >= 0 {
+		return errors.New("duplicate multi_agent_v2 definitions cannot be migrated safely")
+	}
+	if countKey(featuresStart, featuresEnd, regexp.MustCompile(`^\s*multi_agent_v2\.(?:enabled|max_concurrent_threads_per_session)\s*=`)) > 0 {
+		return errors.New("dotted multi_agent_v2 fields are not supported for automatic migration")
+	}
+	if countKey(agentsStart, agentsEnd, regexp.MustCompile(`^\s*max_threads\s*=`)) > 1 {
+		return errors.New("duplicate agents.max_threads definitions cannot be migrated safely")
+	}
+	if countKey(dedicatedStart, dedicatedEnd, regexp.MustCompile(`^\s*max_concurrent_threads_per_session\s*=`)) > 1 {
+		return errors.New("duplicate v2 thread-limit definitions cannot be migrated safely")
+	}
+	return nil
 }
 
 func removeTableKey(path, table, key string) error {

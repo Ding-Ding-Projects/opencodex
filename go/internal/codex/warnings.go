@@ -27,6 +27,12 @@ type ProjectConfigWarning struct {
 	Message     string
 }
 
+type ProjectConfigWarningGroup struct {
+	Path   string
+	Issues []string
+	Bypass string
+}
+
 type EffectiveProjectRouting struct {
 	Provider    string
 	ProfileName string
@@ -88,6 +94,132 @@ func AnalyzeProjectConfig(content []byte, configPath string) ([]ProjectConfigWar
 		warning.Message = fmt.Sprintf("project Codex config selects model_provider %q, bypassing OpenCodex", routing.Provider)
 	}
 	return []ProjectConfigWarning{warning}, nil
+}
+
+func IsGlobalOpenCodexRoutingActive(content []byte) bool {
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	rootEnd := firstTable(lines)
+	for index := 1; index < rootEnd; index++ {
+		if strings.Contains(lines[index-1], injectedMarker) && strings.HasPrefix(strings.TrimSpace(lines[index]), "openai_base_url") {
+			return true
+		}
+	}
+	routing, err := ResolveEffectiveProjectRouting(content)
+	return err == nil && routing.Provider == "opencodex"
+}
+
+func ParseTrustedProjectPaths(content []byte) []string {
+	var document map[string]any
+	if toml.Unmarshal(content, &document) != nil {
+		return nil
+	}
+	projects, ok := asTable(document["projects"])
+	if !ok {
+		return nil
+	}
+	paths := make([]string, 0, len(projects))
+	for path, value := range projects {
+		entry, ok := asTable(value)
+		if !ok {
+			continue
+		}
+		trust, _ := entry["trust_level"].(string)
+		if strings.EqualFold(strings.TrimSpace(trust), "trusted") && strings.TrimSpace(path) != "" {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func DedupeRelatedProjectConfigWarnings(warnings []ProjectConfigWarning) []ProjectConfigWarning {
+	providers := map[string]bool{}
+	for _, warning := range warnings {
+		if warning.Code == IssueProviderTable {
+			providers[warning.Provider] = true
+		}
+	}
+	result := make([]ProjectConfigWarning, 0, len(warnings))
+	for _, warning := range warnings {
+		if providers[warning.Provider] && (warning.Code == IssueProfile || warning.Code == IssueRootProvider) {
+			continue
+		}
+		result = append(result, warning)
+	}
+	return result
+}
+
+func SummarizeProjectConfigIssue(warning ProjectConfigWarning) string {
+	switch warning.Code {
+	case IssueProviderTable:
+		return "[model_providers." + warning.Provider + "]"
+	case IssueProfile:
+		if warning.ProfileName != "" {
+			return `profile="` + warning.ProfileName + `"`
+		}
+		return `model_provider="` + warning.Provider + `"`
+	default:
+		return `model_provider="` + warning.Provider + `"`
+	}
+}
+
+func humanizeProvider(provider string) string {
+	if provider == "opencode_go" {
+		return "OpenCode Go"
+	}
+	if strings.HasPrefix(provider, "opencode") {
+		return "OpenCode"
+	}
+	if provider == "opencodex" {
+		return "OpenCodex"
+	}
+	return provider
+}
+
+func ExplainProjectConfigBypass(warnings []ProjectConfigWarning) string {
+	seen := map[string]bool{}
+	targets := []string{}
+	for _, warning := range warnings {
+		target := humanizeProvider(warning.Provider)
+		if !seen[target] {
+			seen[target] = true
+			targets = append(targets, target)
+		}
+	}
+	return "Overrides OpenCodex — Codex uses " + strings.Join(targets, " / ") + " for this repo instead of the proxy (~/.codex/config.toml)."
+}
+
+func GroupProjectConfigWarningsByPath(warnings []ProjectConfigWarning) []ProjectConfigWarningGroup {
+	order := []string{}
+	grouped := map[string][]ProjectConfigWarning{}
+	for _, warning := range warnings {
+		if _, exists := grouped[warning.Path]; !exists {
+			order = append(order, warning.Path)
+		}
+		grouped[warning.Path] = append(grouped[warning.Path], warning)
+	}
+	result := make([]ProjectConfigWarningGroup, 0, len(order))
+	for _, path := range order {
+		items := grouped[path]
+		issues := make([]string, len(items))
+		for i, warning := range items {
+			issues[i] = SummarizeProjectConfigIssue(warning)
+		}
+		result = append(result, ProjectConfigWarningGroup{Path: path, Issues: issues, Bypass: ExplainProjectConfigBypass(items)})
+	}
+	return result
+}
+
+func FormatProjectConfigWarningsForConsole(warnings []ProjectConfigWarning) []string {
+	groups := GroupProjectConfigWarningsByPath(warnings)
+	if len(groups) == 0 {
+		return nil
+	}
+	lines := []string{"⚠️  Project Codex config bypasses OpenCodex:"}
+	for _, group := range groups {
+		lines = append(lines, "    "+group.Path+" — "+strings.Join(group.Issues, ", "), "    "+group.Bypass)
+	}
+	return append(lines, "    fix: remove those entries so OpenCodex proxy routing applies in this project")
 }
 
 // DiscoverProjectCodexConfigs recursively finds .codex/config.toml under root.

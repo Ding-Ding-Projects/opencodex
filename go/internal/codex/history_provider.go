@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -532,13 +531,4 @@ func CountPendingOpenCodexHistory(stateDBPath, backupPath string) PendingHistory
 		result.Failed = true
 	}
 	return result
-}
-
-// CopyFirstLine is a narrow test helper kept unexported in production behavior.
-func copyFirstLine(reader io.Reader) ([]byte, error) {
-	line, err := bufio.NewReader(reader).ReadBytes('\n')
-	if err != nil {
-		return nil, err
-	}
-	return line[:len(line)-1], nil
 }

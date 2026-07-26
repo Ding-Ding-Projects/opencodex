@@ -2,7 +2,6 @@ package codex
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -147,9 +146,6 @@ func routableFallbackModel(model string, config SubagentFallbackConfig) bool {
 		if strings.EqualFold(known, prefix) {
 			return true
 		}
-	}
-	if route, ok := routeFallback(config, model); ok {
-		return !route.Provider.Disabled
 	}
 	return false
 }
@@ -400,5 +396,3 @@ func SubagentFallbackGuidanceText(chain []string) string {
 	}
 	return " Subagent model fallback chain (priority order): " + strings.Join(quoted, ", ") + ". When the primary model is quota-exhausted, opencodex rewrites thread_spawn requests to the next available model automatically."
 }
-
-var errNoFallbackRoute = errors.New("no fallback route")

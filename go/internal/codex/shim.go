@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,19 @@ import (
 )
 
 const shimMarker = "opencodex codex autostart shim"
+const CodexShimStateMaxBytes = 1 << 20
+
+var codexInternalCommands = []string{
+	"app-server", "archive", "apply", "cloud", "completion", "debug", "delete", "doctor",
+	"exec-server", "features", "fork", "help", "login", "logout", "mcp", "plugin", "sandbox",
+	"unarchive", "update",
+}
+
+var codexGlobalOptionsWithValue = []string{
+	"-c", "--config", "--enable", "--disable", "--remote", "--remote-auth-token-env",
+	"-i", "--image", "-m", "--model", "--local-provider", "-p", "--profile", "-s",
+	"--sandbox", "-C", "--cd", "--add-dir", "-a", "--ask-for-approval",
+}
 
 type ShimState struct {
 	Platform    string `json:"platform"`
@@ -19,9 +33,16 @@ type ShimState struct {
 	BackupPath  string `json:"backupPath"`
 }
 
+type ShimDiagnostic struct {
+	Installed bool
+	Healthy   bool
+	Summary   string
+}
+
 type ShimInstallOptions struct {
 	ExecutablePath string
 	OpenCodexPath  string
+	TokenFile      string
 	StatePath      string
 	GOOS           string
 }
@@ -67,14 +88,44 @@ func FindCodexOnPath(pathValue, goos string) (string, error) {
 }
 
 func BuildUnixShim(realCodexPath, openCodexPath string) string {
+	return BuildUnixShimWithToken(realCodexPath, openCodexPath, "")
+}
+
+// BuildUnixShimWithToken injects only the token file path. The secret value is
+// read by the shell at invocation time and is never serialized into shim state.
+func BuildUnixShimWithToken(realCodexPath, openCodexPath, tokenFile string) string {
+	tokenPrelude := ""
+	if tokenFile != "" {
+		tokenPrelude = fmt.Sprintf(`if [ -z "$OPENCODEX_API_AUTH_TOKEN" ] && [ -f %s ]; then
+  OPENCODEX_API_AUTH_TOKEN="$(cat %s)"
+  export OPENCODEX_API_AUTH_TOKEN
+fi
+`, shellQuote(tokenFile), shellQuote(tokenFile))
+	}
+	internal := strings.Join(codexInternalCommands, "|")
+	valueOptions := strings.Join(codexGlobalOptionsWithValue, "|")
 	return fmt.Sprintf(`#!/usr/bin/env sh
 # %s
-case "${OCX_SHIM_BYPASS:-}:$1" in
-  :features|:help|:login|:logout|:mcp|:completion|:--help|:-h|:--version|:-V|?:*) ;;
-  *) %s ensure >/dev/null 2>&1 || true ;;
+%socx_subcommand=""
+ocx_skip_next=0
+for ocx_arg in "$@"; do
+  if [ "$ocx_skip_next" -eq 1 ]; then ocx_skip_next=0; continue; fi
+  case "$ocx_arg" in
+    --) break ;;
+    %s) ocx_skip_next=1 ;;
+    --help|-h|--version|-V) ocx_subcommand="$ocx_arg"; break ;;
+    -*) ;;
+    *) ocx_subcommand="$ocx_arg"; break ;;
+  esac
+done
+case "$ocx_subcommand" in
+  %s|--help|-h|--version|-V) ;;
+  *)
+    if [ -z "$OCX_SHIM_BYPASS" ]; then %s ensure >/dev/null 2>&1 || true; fi
+    ;;
 esac
 exec %s "$@"
-`, shimMarker, shellQuote(openCodexPath), shellQuote(realCodexPath))
+`, shimMarker, tokenPrelude, valueOptions, internal, shellQuote(openCodexPath), shellQuote(realCodexPath))
 }
 
 // BuildWindowsShim uses start /b only for the service bootstrap; call waits for
@@ -134,7 +185,7 @@ func InstallCodexShim(options ShimInstallOptions) (ShimState, error) {
 	var script string
 	switch {
 	case goos != "windows":
-		script = BuildUnixShim(backupPath, options.OpenCodexPath)
+		script = BuildUnixShimWithToken(backupPath, options.OpenCodexPath, options.TokenFile)
 	case extension == ".ps1":
 		script = "\ufeff" + BuildPowerShellShim(backupPath, options.OpenCodexPath)
 	default:
@@ -183,8 +234,20 @@ func UninstallCodexShim(statePath string) (bool, error) {
 }
 
 func readShimState(path string) (ShimState, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
+		return ShimState{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return ShimState{}, err
+	}
+	if info.Size() > CodexShimStateMaxBytes {
+		return ShimState{}, errors.New("shim state exceeds size limit")
+	}
+	data := make([]byte, info.Size())
+	if _, err := io.ReadFull(file, data); err != nil {
 		return ShimState{}, err
 	}
 	var state ShimState
@@ -195,6 +258,36 @@ func readShimState(path string) (ShimState, error) {
 		return ShimState{}, errors.New("invalid shim state")
 	}
 	return state, nil
+}
+
+func DiagnoseCodexShim(statePath string) ShimDiagnostic {
+	state, err := readShimState(statePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ShimDiagnostic{Summary: "Codex autostart shim is not installed."}
+		}
+		return ShimDiagnostic{Installed: true, Summary: fmt.Sprintf("Codex autostart shim state is invalid or corrupt at %s.", statePath)}
+	}
+	wrapperInfo, wrapperErr := os.Stat(state.WrapperPath)
+	backupInfo, backupErr := os.Stat(state.BackupPath)
+	healthy := wrapperErr == nil && !wrapperInfo.IsDir() && isShimFile(state.WrapperPath) && backupErr == nil && !backupInfo.IsDir()
+	wrapperStatus := "missing"
+	if wrapperErr == nil {
+		if isShimFile(state.WrapperPath) {
+			wrapperStatus = "shim present"
+		} else {
+			wrapperStatus = "present but not an opencodex shim"
+		}
+	}
+	backupStatus := "missing"
+	if backupErr == nil {
+		backupStatus = "present"
+	}
+	return ShimDiagnostic{
+		Installed: true,
+		Healthy:   healthy,
+		Summary:   fmt.Sprintf("Codex autostart shim: wrapper %s at %s; original backup %s at %s.", wrapperStatus, state.WrapperPath, backupStatus, state.BackupPath),
+	}
 }
 
 func backupPathFor(path string) string {
