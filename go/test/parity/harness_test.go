@@ -21,6 +21,9 @@ import (
 var parityBinary string
 
 func TestMain(main *testing.M) {
+	if os.Getenv("GO_WANT_CODEX_SHIM_HELPER") == "1" {
+		os.Exit(main.Run())
+	}
 	root := goModuleRoot()
 	directory, err := os.MkdirTemp("", "ocx-parity-binary-")
 	if err != nil {
@@ -52,6 +55,7 @@ func goModuleRoot() string {
 
 type proxyProcess struct {
 	baseURL string
+	home    string
 	command *exec.Cmd
 	done    chan error
 	stderr  *lockedBuffer
@@ -135,7 +139,7 @@ func startProxyWithSetup(t *testing.T, config map[string]any, setup func(string)
 	select {
 	case address := <-listening:
 		auth, _ := config["authToken"].(string)
-		process := &proxyProcess{baseURL: "http://" + address, command: command, done: done, stderr: stderr, auth: auth}
+		process := &proxyProcess{baseURL: "http://" + address, home: home, command: command, done: done, stderr: stderr, auth: auth}
 		t.Cleanup(func() { process.stop(t) })
 		return process
 	case err := <-done:
