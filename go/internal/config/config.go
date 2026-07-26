@@ -302,9 +302,6 @@ func (c Config) Validate() error {
 		if !providerNamePattern.MatchString(model.Provider) {
 			return &ConfigError{Field: field + ".provider", Message: "must be a valid provider name"}
 		}
-		if _, ok := c.Providers[model.Provider]; !ok {
-			return &ConfigError{Field: field + ".provider", Message: "must reference a configured provider"}
-		}
 		if strings.TrimSpace(model.ModelID) == "" || strings.Contains(model.ModelID, "/") {
 			return &ConfigError{Field: field + ".modelId", Message: "must be nonblank and must not contain /"}
 		}

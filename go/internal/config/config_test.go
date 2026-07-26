@@ -28,6 +28,21 @@ func TestLoadLegacyConfigWithoutNewCollections(t *testing.T) {
 	}
 }
 
+func TestLoadPreservesOrphanedCustomModelForProviderRemovalCompatibility(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	data := `{"port":10100,"hostname":"127.0.0.1","providers":{},"defaultProvider":"openai","customModels":[{"id":"legacy-id","provider":"removed","modelId":"model","addedAt":"2026-01-01T00:00:00Z"}]}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() orphaned custom model error = %v", err)
+	}
+	if len(cfg.CustomModels) != 1 || cfg.CustomModels[0].Provider != "removed" {
+		t.Fatalf("custom models = %#v", cfg.CustomModels)
+	}
+}
+
 func TestCustomModelsAndAPIKeyPoolRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := Default()

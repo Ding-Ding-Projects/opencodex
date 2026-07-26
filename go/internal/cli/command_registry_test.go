@@ -26,6 +26,7 @@ func TestCommandRegistrationTableIsUniqueAndComplete(t *testing.T) {
 		"serve", "stop", "restart", "health", "gui", "restore", "login", "logout",
 		"account", "provider", "models", "init", "status", "doctor", "diagnostics",
 		"completion", "config", "claude", "debug", "service", "tray", "update", "help", "version",
+		"ensure", "uninstall", "remove", "codex-shim", "sync-cache", "recover-history", "v2",
 	} {
 		if _, ok := seen[required]; !ok {
 			t.Fatalf("required command %q is not registered", required)
