@@ -32,6 +32,7 @@ func runStop(ctx context.Context, args []string, streams IO) error {
 	live := findLiveProxy(ctx, cfg)
 	if live == nil || live.PID <= 0 {
 		removeRuntimeFiles()
+		_ = uninstallSystemEnv(ctx)
 		teardownOwnedGrokFence(streams)
 		fmt.Fprintln(streams.Out, "Proxy is not running.")
 		return nil
@@ -47,6 +48,7 @@ func runStop(ctx context.Context, args []string, streams IO) error {
 		return err
 	}
 	removeRuntimeFiles()
+	_ = uninstallSystemEnv(ctx)
 	teardownOwnedGrokFence(streams)
 	fmt.Fprintln(streams.Out, "Proxy stopped.")
 	return nil

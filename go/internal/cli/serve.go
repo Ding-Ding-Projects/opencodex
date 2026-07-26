@@ -121,10 +121,15 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	if err != nil {
 		return err
 	}
-	auth, err := configuredAuthWithStore(runtimeCfg, credentialStore)
+	auth, err := configuredAuthWithStore(runtimeCfg, credentialStore, providerClient)
 	if err != nil {
 		return err
 	}
+	stopGuardian, err := activateTokenGuardian(ctx, runtimeCfg, credentialStore, providerClient)
+	if err != nil {
+		return fmt.Errorf("start OAuth token guardian: %w", err)
+	}
+	defer stopGuardian()
 	usageLog := usage.NewLog(filepath.Join(configHome, "usage.jsonl"))
 	debugLog := usage.NewDebugLog(filepath.Join(configHome, "usage-debug.jsonl"))
 	requestLogs := management.NewRequestLog(200)
@@ -166,6 +171,14 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		return err
 	}
 	defer removeRuntimeFiles()
+	systemEnvInstalled, err := installSystemEnv(ctx, *cfg, actualPort)
+	if err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("install system environment: %w", err)
+	}
+	if systemEnvInstalled {
+		defer func() { _ = uninstallSystemEnv(context.Background()) }()
+	}
 	fmt.Fprintf(streams.Out, "OpenCodex proxy listening on %s\n", listener.Addr())
 	if os.Getenv("OCX_SERVICE") == "" {
 		defer teardownOwnedGrokFence(streams)
@@ -273,7 +286,7 @@ func configuredAuth(cfg config.Config) (*oauth.AuthResolver, error) {
 	return configuredAuthWithStore(cfg, oauth.NewCredentialStore(filepath.Join(dir, "auth.json")))
 }
 
-func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*oauth.AuthResolver, error) {
+func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore, clients ...oauth.HTTPDoer) (*oauth.AuthResolver, error) {
 	configs := map[string]oauth.ProviderAuthConfig{"openai": {Mode: oauth.AuthModeForward}}
 	for name, provider := range cfg.Providers {
 		resolved, err := configuredProviderAuth(name, provider, store)
@@ -282,7 +295,11 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*
 		}
 		configs[name] = resolved
 	}
-	resolver := oauth.NewAuthResolver(store, configs, nil)
+	var client oauth.HTTPDoer
+	if len(clients) > 0 {
+		client = clients[0]
+	}
+	resolver := oauth.NewAuthResolver(store, configs, configuredOAuthRefreshers(cfg, client, false))
 	resolver.Pool = oauth.NewAccountPool(store, "openai")
 	return resolver, nil
 }
@@ -541,7 +558,8 @@ func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) serv
 			adapter := google.NewAdapter(mode, transport, auth)
 			adapter.Project = provider.Project
 			adapter.Location = provider.Location
-			return bindAdapterFetch(adapter, func(ctx context.Context, request *http.Request) (*http.Response, error) {
+			bound := bindVertexADC(adapter)
+			return bindAdapterFetch(bound, func(ctx context.Context, request *http.Request) (*http.Response, error) {
 				return adapter.Do(ctx, request, google.RetryOptions{})
 			}), nil
 		case "kiro":
