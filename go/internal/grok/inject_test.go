@@ -170,6 +170,12 @@ func TestManagedBlockUsesDirectChatCompletionsFields(t *testing.T) {
 	if strings.Contains(block, "model_providers") || strings.Contains(block, "env_key") {
 		t.Fatalf("managed block contains unsafe provider inheritance:\n%s", block)
 	}
+	wantOrder := "name = \"OCX cursor/grok-4.5\"\n" +
+		`extra_headers = { "x-opencodex-grok" = "1" }` + "\n" +
+		"context_window = 500000"
+	if !strings.Contains(block, wantOrder) {
+		t.Fatalf("managed block attribution header ordering differs:\n%s", block)
+	}
 }
 
 func TestBackupIsExclusiveAndConfigUsesPrivatePermissions(t *testing.T) {

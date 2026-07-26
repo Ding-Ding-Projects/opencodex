@@ -87,6 +87,7 @@ func BuildGrokManagedBlock(port int, models []InjectModel, hostname string, rese
 			`api_backend = "chat_completions"`,
 			`api_key = "opencodex-loopback"`,
 			"name = "+tomlString(name),
+			`extra_headers = { "x-opencodex-grok" = "1" }`,
 		)
 		if model.ContextWindow > 0 {
 			lines = append(lines, fmt.Sprintf("context_window = %d", model.ContextWindow))
