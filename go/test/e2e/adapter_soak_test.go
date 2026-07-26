@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 	"runtime/pprof"
 	"strings"
@@ -22,10 +23,24 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
-// Twelve thousand records model one hour of upstream progress at a 300ms cadence.
-const simulatedHourEvents = 12_000
+const (
+	deterministicStreamEvents = 512
+	// Twelve thousand records model one hour of upstream progress at a 300ms cadence.
+	simulatedHourEvents = 12_000
+	streamPerfEnv       = "OCX_RUN_STREAM_PERF"
+)
+
+func TestAdapterStreamsReleaseGoroutines(t *testing.T) {
+	testAdapterStreamsReleaseGoroutines(t, deterministicStreamEvents)
+}
 
 func TestAdapterHourEquivalentStreamsReleaseGoroutines(t *testing.T) {
+	requireStreamPerformance(t)
+	testAdapterStreamsReleaseGoroutines(t, simulatedHourEvents)
+}
+
+func testAdapterStreamsReleaseGoroutines(t *testing.T, eventCount int) {
+	t.Helper()
 	tests := []struct {
 		name     string
 		parse    streamParser
@@ -42,12 +57,12 @@ func TestAdapterHourEquivalentStreamsReleaseGoroutines(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			assertNoGoroutineLeak(t, func() {
-				var body io.ReadCloser = io.NopCloser(strings.NewReader(hourEquivalentSSE(test.terminal)))
+				var body io.ReadCloser = io.NopCloser(strings.NewReader(adapterSoakSSE(eventCount, test.terminal)))
 				if test.chunked {
-					body = &chunkedCommentReader{remaining: simulatedHourEvents, terminal: []byte(test.terminal)}
+					body = &chunkedCommentReader{remaining: eventCount, terminal: []byte(test.terminal)}
 				}
 				heartbeats, terminal := countStreamEvents(test.parse(context.Background(), body))
-				if want := simulatedHourEvents + test.extra; heartbeats != want {
+				if want := eventCount + test.extra; heartbeats != want {
 					t.Fatalf("heartbeats = %d, want %d", heartbeats, want)
 				}
 				if terminal != types.EventDone {
@@ -58,8 +73,18 @@ func TestAdapterHourEquivalentStreamsReleaseGoroutines(t *testing.T) {
 	}
 }
 
+func TestKiroStreamReleasesGoroutines(t *testing.T) {
+	testKiroStreamReleasesGoroutines(t, deterministicStreamEvents)
+}
+
 func TestKiroHourEquivalentStreamReleasesGoroutines(t *testing.T) {
-	payload := kiroHourEquivalentStream(t)
+	requireStreamPerformance(t)
+	testKiroStreamReleasesGoroutines(t, simulatedHourEvents)
+}
+
+func testKiroStreamReleasesGoroutines(t *testing.T, eventCount int) {
+	t.Helper()
+	payload := kiroSoakStream(t, eventCount)
 	assertNoGoroutineLeak(t, func() {
 		textEvents := 0
 		terminal := types.AdapterEventType("")
@@ -75,6 +100,13 @@ func TestKiroHourEquivalentStreamReleasesGoroutines(t *testing.T) {
 			t.Fatalf("text events = %d, terminal = %q", textEvents, terminal)
 		}
 	})
+}
+
+func requireStreamPerformance(t *testing.T) {
+	t.Helper()
+	if os.Getenv(streamPerfEnv) != "1" {
+		t.Skipf("set %s=1 for hour-equivalent stream soak", streamPerfEnv)
+	}
 }
 
 type chunkedCommentReader struct {
@@ -185,10 +217,10 @@ func BenchmarkCursorGoogleRequestScaling(b *testing.B) {
 	}
 }
 
-func hourEquivalentSSE(terminal string) string {
+func adapterSoakSSE(eventCount int, terminal string) string {
 	var payload strings.Builder
-	payload.Grow(simulatedHourEvents*13 + len(terminal))
-	for index := 0; index < simulatedHourEvents; index++ {
+	payload.Grow(eventCount*13 + len(terminal))
+	for index := 0; index < eventCount; index++ {
 		payload.WriteString(": keepalive\n\n")
 	}
 	payload.WriteString(terminal)
@@ -257,10 +289,10 @@ func cursorTerminalStream(tb testing.TB) []byte {
 	return append(terminal, end...)
 }
 
-func kiroHourEquivalentStream(tb testing.TB) []byte {
+func kiroSoakStream(tb testing.TB, eventCount int) []byte {
 	tb.Helper()
 	var stream bytes.Buffer
-	for index := 0; index < simulatedHourEvents; index++ {
+	for index := 0; index < eventCount; index++ {
 		writeKiroFrame(tb, &stream, "futureEvent", map[string]any{"sequence": index})
 	}
 	writeKiroFrame(tb, &stream, "assistantResponseEvent", map[string]any{"content": "done"})
