@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"sync"
 	"testing"
@@ -67,7 +68,44 @@ func TestTypeScriptAndGoOAuthAccountHealthProjection(t *testing.T) {
 	tsResult := captureManagementRequest(t, tsProxy.baseURL, http.MethodGet, "/api/oauth/accounts?provider=xai", "", nil)
 	assertSecretAbsent(t, goResult, "synthetic-oauth")
 	assertSecretAbsent(t, tsResult, "synthetic-oauth")
+	assertOAuthHealthSemanticParity(t, goResult.body, tsResult.body)
 	compareRuntimeBytes(t, "oauth/account-health", goResult, tsResult, true)
+}
+
+func assertOAuthHealthSemanticParity(t *testing.T, goBody, tsBody []byte) {
+	t.Helper()
+	var goEnvelope, tsEnvelope map[string]any
+	if err := json.Unmarshal(goBody, &goEnvelope); err != nil {
+		t.Fatalf("decode Go OAuth health response: %v", err)
+	}
+	if err := json.Unmarshal(tsBody, &tsEnvelope); err != nil {
+		t.Fatalf("decode TypeScript OAuth health response: %v", err)
+	}
+	if goEnvelope["activeAccountId"] != tsEnvelope["activeAccountId"] {
+		t.Fatalf("OAuth active account differs: Go=%v TypeScript=%v", goEnvelope["activeAccountId"], tsEnvelope["activeAccountId"])
+	}
+	goAccounts, goOK := goEnvelope["accounts"].([]any)
+	tsAccounts, tsOK := tsEnvelope["accounts"].([]any)
+	if !goOK || !tsOK || len(goAccounts) != len(tsAccounts) {
+		t.Fatalf("OAuth account collections differ: Go=%#v TypeScript=%#v", goEnvelope["accounts"], tsEnvelope["accounts"])
+	}
+	for index := range goAccounts {
+		goAccount, goOK := goAccounts[index].(map[string]any)
+		tsAccount, tsOK := tsAccounts[index].(map[string]any)
+		if !goOK || !tsOK {
+			t.Fatalf("OAuth account %d has invalid shape: Go=%#v TypeScript=%#v", index, goAccounts[index], tsAccounts[index])
+		}
+		goExpiry, goHasExpiry := goAccount["expiresAt"]
+		tsExpiry, tsHasExpiry := tsAccount["expiresAt"]
+		if goHasExpiry && (!tsHasExpiry || goExpiry != tsExpiry) {
+			t.Fatalf("OAuth account %d expiry differs: Go=%v TypeScript=%v", index, goExpiry, tsExpiry)
+		}
+		delete(goAccount, "expiresAt")
+		delete(tsAccount, "expiresAt")
+		if !reflect.DeepEqual(goAccount, tsAccount) {
+			t.Fatalf("OAuth account %d health projection differs: Go=%#v TypeScript=%#v", index, goAccount, tsAccount)
+		}
+	}
 }
 
 func writeOAuthHealthAccounts(t *testing.T, home string) {
@@ -123,9 +161,33 @@ func TestTypeScriptAndGoConcurrentManagementConvergence(t *testing.T) {
 		captureManagementRequest(t, tsProxy.baseURL, http.MethodGet, "/api/sidecar-settings", "", nil), true)
 }
 
+func TestTypeScriptAndGoAgentControlSettings(t *testing.T) {
+	config := differentialConfig("https://controls.invalid", []string{"probe"})
+	tsProxy := startTypeScriptProxy(t, config)
+	goProxy := startProxyWithConfig(t, config)
+	scenarios := []struct {
+		id     string
+		method string
+		path   string
+		body   any
+	}{
+		{id: "agent-controls/effort-put", method: http.MethodPut, path: "/api/effort-caps", body: map[string]any{"effortCap": "high", "subagentEffortCap": "medium"}},
+		{id: "agent-controls/effort-get", method: http.MethodGet, path: "/api/effort-caps"},
+		{id: "agent-controls/shadow-put", method: http.MethodPut, path: "/api/shadow-call-settings", body: map[string]any{"enabled": true, "model": "parity/probe"}},
+		{id: "agent-controls/shadow-get", method: http.MethodGet, path: "/api/shadow-call-settings"},
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.id, func(t *testing.T) {
+			goResult := captureManagementRequest(t, goProxy.baseURL, scenario.method, scenario.path, "", scenario.body)
+			tsResult := captureManagementRequest(t, tsProxy.baseURL, scenario.method, scenario.path, "", scenario.body)
+			compareRuntimeBytes(t, scenario.id, goResult, tsResult, true)
+		})
+	}
+}
+
 func TestTypeScriptAndGoOpenAITierConfigMigration(t *testing.T) {
 	bun := requireBun(t, exec.LookPath)
-	repositoryRoot := filepath.Dir(goModuleRoot())
+	repositoryRoot := typeScriptOracleRoot()
 	original := []byte(`{
   "port": 10100,
   "hostname": "127.0.0.1",

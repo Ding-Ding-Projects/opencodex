@@ -169,14 +169,8 @@ func observeCLILifecycle(t *testing.T, runtime lifecycleRuntime, bun string, por
 	}
 
 	reapply := doLifecycleRequest(t, http.MethodPost, process.baseURL+"/api/claude-desktop/apply", nil)
-	if runtime == lifecycleGo && reapply.status != http.StatusOK {
+	if reapply.status != http.StatusOK {
 		t.Fatalf("%s Claude Desktop reapply status=%d body=%s", runtime, reapply.status, reapply.body)
-	}
-	if runtime == lifecycleTS {
-		if reapply.status != http.StatusBadRequest || !bytes.Contains(reapply.body, []byte(`unknown field \"appliedFingerprint\"`)) {
-			t.Fatalf("%s Claude Desktop reapply changed behavior: status=%d body=%s", runtime, reapply.status, reapply.body)
-		}
-		t.Log("DIFFERENTIAL GAP: TypeScript Claude Desktop management reapply rejects its persisted appliedFingerprint")
 	}
 	assertParityFileBytes(t, string(runtime)+" idempotent config", desktopConfigPath, desktopConfig)
 	assertParityFileBytes(t, string(runtime)+" idempotent metadata", desktopMetaPath, desktopMeta)
@@ -241,7 +235,7 @@ func startLifecycleCLI(t *testing.T, runtime lifecycleRuntime, bun, home, config
 	if runtime == lifecycleGo {
 		command = exec.Command(parityBinary, "serve", "--config", configPath, "--port", fmt.Sprint(port))
 	} else {
-		command = exec.Command(bun, "run", filepath.Join(filepath.Dir(goModuleRoot()), "src", "cli", "index.ts"), "start")
+		command = exec.Command(bun, "run", filepath.Join(typeScriptOracleRoot(), "src", "cli", "index.ts"), "start")
 	}
 	environment := append(filteredEnvironment(os.Environ(), "HOME", "OPENCODEX_HOME", "CODEX_HOME", "OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR", "OCX_SERVICE"),
 		"HOME="+home,
@@ -280,7 +274,7 @@ func stopLifecycleCLI(t *testing.T, runtime lifecycleRuntime, bun string, proces
 	if runtime == lifecycleGo {
 		command = exec.Command(parityBinary, "stop")
 	} else {
-		command = exec.Command(bun, "run", filepath.Join(filepath.Dir(goModuleRoot()), "src", "cli", "index.ts"), "stop")
+		command = exec.Command(bun, "run", filepath.Join(typeScriptOracleRoot(), "src", "cli", "index.ts"), "stop")
 	}
 	command.Env = process.env
 	command.Dir = home

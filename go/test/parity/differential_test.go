@@ -40,7 +40,7 @@ func startTypeScriptProxyWithEnvironmentLookup(t *testing.T, config map[string]a
 	t.Helper()
 	requireRuntimeParity(t)
 	bun := requireBun(t, lookup)
-	repositoryRoot := filepath.Dir(goModuleRoot())
+	repositoryRoot := typeScriptOracleRoot()
 	serverModule := filepath.Join(repositoryRoot, "src", "server", "index.ts")
 	if _, err := os.Stat(serverModule); err != nil {
 		t.Skipf("TypeScript runtime source unavailable: %v", err)

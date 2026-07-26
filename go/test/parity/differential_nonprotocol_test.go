@@ -57,7 +57,7 @@ func TestTypeScriptAndGoUnknownCommandContract(t *testing.T) {
 	if err != nil {
 		t.Skip("Bun runtime is unavailable")
 	}
-	ts := captureProcess(exec.Command(bun, "run", filepath.Join(filepath.Dir(goModuleRoot()), "src", "cli", "index.ts"), "definitely-invalid-command"))
+	ts := captureProcess(exec.Command(bun, "run", filepath.Join(typeScriptOracleRoot(), "src", "cli", "index.ts"), "definitely-invalid-command"))
 	goResult := captureProcess(exec.Command(parityBinary, "definitely-invalid-command"))
 	if ts.exitCode != goResult.exitCode {
 		t.Fatalf("unknown command exit differs: Go=%d TS=%d", goResult.exitCode, ts.exitCode)
@@ -71,7 +71,7 @@ func TestTypeScriptAndGoUnixShimBytes(t *testing.T) {
 	if err != nil {
 		t.Skip("Bun runtime is unavailable")
 	}
-	module := filepath.Join(filepath.Dir(goModuleRoot()), "src", "codex", "shim.ts")
+	module := filepath.Join(typeScriptOracleRoot(), "src", "codex", "shim.ts")
 	script := `import { buildUnixCodexShim } from ` + string(mustJSON(module)) + `; process.stdout.write(buildUnixCodexShim("/opt/codex", "/opt/ocx", "/opt/opencodex-cli.ts", "/tmp/token"));`
 	tsOutput, commandErr := exec.Command(bun, "-e", script).Output()
 	if commandErr != nil {

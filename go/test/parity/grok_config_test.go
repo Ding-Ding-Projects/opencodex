@@ -26,7 +26,7 @@ func TestTypeScriptAndGoGrokSyncAndStopBytes(t *testing.T) {
 	if err != nil {
 		t.Skip("Bun runtime is unavailable")
 	}
-	repositoryRoot := filepath.Dir(goModuleRoot())
+	repositoryRoot := typeScriptOracleRoot()
 	injectModule := filepath.Join(repositoryRoot, "src", "grok", "inject.ts")
 	syncModule := filepath.Join(repositoryRoot, "src", "grok", "sync.ts")
 	for _, path := range []string{injectModule, syncModule} {

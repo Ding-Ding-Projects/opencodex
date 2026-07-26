@@ -32,7 +32,7 @@ func TestTypeScriptAndGoUpdateDryRunPlanning(t *testing.T) {
 	if err != nil {
 		t.Skip("Bun runtime is unavailable")
 	}
-	repositoryRoot := filepath.Dir(goModuleRoot())
+	repositoryRoot := typeScriptOracleRoot()
 	indexModule := filepath.Join(repositoryRoot, "src", "update", "index.ts")
 	jobModule := filepath.Join(repositoryRoot, "src", "update", "job.ts")
 	script := `

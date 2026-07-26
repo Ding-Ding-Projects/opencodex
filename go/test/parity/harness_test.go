@@ -22,6 +22,7 @@ import (
 var parityBinary string
 
 const runtimeParityEnv = "OCX_RUN_RUNTIME_PARITY"
+const typeScriptOracleRootEnv = "OCX_TS_ORACLE_ROOT"
 
 func TestMain(main *testing.M) {
 	if os.Getenv("GO_WANT_CODEX_SHIM_HELPER") == "1" {
@@ -54,6 +55,33 @@ func goModuleRoot() string {
 		panic("resolve parity test path")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+}
+
+func typeScriptOracleRoot() string {
+	if root := strings.TrimSpace(os.Getenv(typeScriptOracleRootEnv)); root != "" {
+		if absolute, err := filepath.Abs(root); err == nil {
+			return filepath.Clean(absolute)
+		}
+		return filepath.Clean(root)
+	}
+	return filepath.Dir(goModuleRoot())
+}
+
+func TestTypeScriptOracleRootSelection(t *testing.T) {
+	t.Setenv(typeScriptOracleRootEnv, "")
+	if got, want := typeScriptOracleRoot(), filepath.Dir(goModuleRoot()); got != want {
+		t.Fatalf("default TypeScript oracle root = %q, want %q", got, want)
+	}
+
+	override := filepath.Join(t.TempDir(), "nested", "..", "oracle")
+	t.Setenv(typeScriptOracleRootEnv, override)
+	absolute, err := filepath.Abs(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := typeScriptOracleRoot(), filepath.Clean(absolute); got != want {
+		t.Fatalf("overridden TypeScript oracle root = %q, want %q", got, want)
+	}
 }
 
 type proxyProcess struct {
