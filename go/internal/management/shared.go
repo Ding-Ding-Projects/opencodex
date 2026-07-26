@@ -191,8 +191,8 @@ func safeConfig(value *config.Config) any {
 		{name: "port", value: value.Port}, {name: "hostname", value: value.Host},
 		{name: "defaultProvider", value: value.DefaultProvider}, {name: "codexAutoStart", value: codexAutoStart(value.CodexAutoStart)},
 	}
-	if value.WebSockets {
-		result = append(result, orderedJSONField{name: "websockets", value: true})
+	if value.WebSocketsSet || value.WebSockets {
+		result = append(result, orderedJSONField{name: "websockets", value: value.WebSockets})
 	}
 	return append(result, orderedJSONField{name: "providers", value: providers})
 }

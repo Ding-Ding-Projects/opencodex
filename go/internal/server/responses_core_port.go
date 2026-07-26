@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	adapterpkg "github.com/lidge-jun/opencodex-go/internal/adapter"
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
 	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
@@ -458,10 +459,19 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		logSession.finishStream(ctx, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
 	events := core.eventsForResponse(ctx, adapter, response, record.Provider, false)
+	preflight := adapterpkg.PreflightEvents(ctx, events)
+	preflightDisconnect := preflight.Error != nil && isUpstreamDisconnectMessage(preflight.Error.Error)
+	if (preflight.Error != nil && !preflightDisconnect) || preflight.Empty {
+		message := "Adapter ended before producing a response"
+		if preflight.Error != nil && preflight.Error.Error != "" {
+			message = normalizePreflightError(preflight.Error.Error, response)
+		}
+		logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, message)
+		writeClassifiedJSONError(w, http.StatusBadGateway, "upstream_error", message)
+		return
+	}
+	events = preflight.Stream
 	events = GuardTerminalEventStream(ctx, normalized, events, GuardOptions{
 		AdapterName: adapterName,
 		Continuation: func(continuationContext context.Context, continuation *types.NormalizedRequest) (<-chan types.AdapterEvent, error) {
@@ -474,6 +484,9 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		},
 	})
 	events = core.observeEvents(ctx, events, auth, logSession)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
 	err := bridge.StreamWithOptions(ctx, w, requestedModel, events, bridge.StreamOptions{
 		StallTimeoutSec: core.config.StallTimeout,
 		OnCancel:        func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
@@ -482,6 +495,32 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		core.config.Logger.Error("responses_stream", "error", err)
 	}
 	logSession.finishStream(ctx, err)
+}
+
+func normalizePreflightError(message string, response *http.Response) string {
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "invalid byte in chunk length") || strings.Contains(lower, "invalid chunk") {
+		upstreamURL := ""
+		if response != nil && response.Request != nil && response.Request.URL != nil {
+			upstreamURL = response.Request.URL.String()
+		}
+		return fmt.Sprintf("Provider unreachable: InvalidHTTPResponse fetching %q. For more information, pass `verbose: true` in the second argument to fetch()", upstreamURL)
+	}
+	return normalizeUpstreamDisconnectMessage(message)
+}
+
+const bunSocketClosedMessage = "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+
+func normalizeUpstreamDisconnectMessage(message string) string {
+	if isUpstreamDisconnectMessage(message) {
+		return bunSocketClosedMessage
+	}
+	return message
+}
+
+func isUpstreamDisconnectMessage(message string) bool {
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "unexpected eof") || strings.Contains(lower, "connection reset by peer") || strings.Contains(lower, "socket connection was closed unexpectedly")
 }
 
 func useEagerResponsesRelay(streamMode, adapterName string, response *http.Response) bool {
@@ -588,6 +627,9 @@ func (core *ResponsesCore) observeEvents(ctx context.Context, source <-chan type
 		defer close(out)
 		terminal := false
 		for event := range source {
+			if event.Type == types.EventError {
+				event.Error = normalizeUpstreamDisconnectMessage(event.Error)
+			}
 			logSession.observe(event)
 			switch event.Type {
 			case types.EventDone:

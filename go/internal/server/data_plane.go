@@ -26,5 +26,5 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 }
 
 func unknownV1(w http.ResponseWriter, request *http.Request) {
-	writeJSONError(w, http.StatusNotFound, "not_found", "Unknown endpoint: "+request.Method+" "+request.URL.Path)
+	writeClassifiedJSONError(w, http.StatusNotFound, "not_found", "Unknown endpoint: "+request.Method+" "+request.URL.Path)
 }

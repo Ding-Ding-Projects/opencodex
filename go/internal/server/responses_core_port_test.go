@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -99,6 +100,20 @@ type inspectingStreamAdapter struct {
 type eagerRelayAdapter struct {
 	coreAdapter
 	parsed *bool
+}
+
+type preflightFailureAdapter struct {
+	coreAdapter
+	events []types.AdapterEvent
+}
+
+func (a preflightFailureAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
+	out := make(chan types.AdapterEvent, len(a.events))
+	for _, event := range a.events {
+		out <- event
+	}
+	close(out)
+	return out
 }
 
 func (a eagerRelayAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
@@ -484,5 +499,52 @@ func TestResponsesCoreValidationMatchesTypeScriptZodEnvelope(t *testing.T) {
 				t.Fatalf("response=%d %s\nwant=%s", response.Code, response.Body.String(), payload)
 			}
 		})
+	}
+}
+
+func TestResponsesCorePreflightsBeforeCommittingSSEHeaders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "broken")
+	}))
+	defer upstream.Close()
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL},
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return preflightFailureAdapter{coreAdapter: coreAdapter{endpoint: upstream.URL}, events: []types.AdapterEvent{{Type: types.EventHeartbeat}, {Type: types.EventError, Error: "read upstream SSE stream: invalid byte in chunk length", StatusCode: 502}}}, nil
+		},
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"provider/wire","input":"x","stream":true}`)))
+	wantMessage := fmt.Sprintf("Provider unreachable: InvalidHTTPResponse fetching %q. For more information, pass `verbose: true` in the second argument to fetch()", upstream.URL)
+	wantPayload, _ := bridge.FormatErrorResponse(http.StatusBadGateway, "upstream_error", wantMessage)
+	want := string(wantPayload)
+	if response.Code != http.StatusBadGateway || response.Header().Get("Content-Type") != "application/json" || response.Body.String() != want {
+		t.Fatalf("preflight=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+func TestResponsesCoreNormalizesMidStreamDisconnectMessage(t *testing.T) {
+	if got := normalizeUpstreamDisconnectMessage("read upstream SSE stream: unexpected EOF"); got != bunSocketClosedMessage {
+		t.Fatalf("message=%q", got)
+	}
+}
+
+func TestResponsesCoreDisconnectStillCommitsSSEWithBunMessage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "partial")
+	}))
+	defer upstream.Close()
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL},
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return preflightFailureAdapter{coreAdapter: coreAdapter{endpoint: upstream.URL}, events: []types.AdapterEvent{{Type: types.EventHeartbeat}, {Type: types.EventError, Error: "read upstream SSE stream: unexpected EOF", StatusCode: 502}}}, nil
+		},
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"provider/wire","input":"x","stream":true}`)))
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/event-stream" || !strings.Contains(response.Body.String(), bunSocketClosedMessage) || !strings.Contains(response.Body.String(), "event: response.failed") {
+		t.Fatalf("disconnect=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
 }

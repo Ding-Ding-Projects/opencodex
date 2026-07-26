@@ -58,7 +58,8 @@ func TestServerDoesNotExposeLegacyHealthRoute(t *testing.T) {
 	server := New(Config{})
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
-	if response.Code != http.StatusNotFound {
+	want := `{"error":{"message":"Unknown endpoint: GET /health","type":"not_found","code":"not_found"}}`
+	if response.Code != http.StatusNotFound || response.Body.String() != want {
 		t.Fatalf("/health=%d %s", response.Code, response.Body.String())
 	}
 }

@@ -53,6 +53,22 @@ func TestManagementAuthorizationRunsBeforeRouteAndBodyParsing(t *testing.T) {
 	}
 }
 
+func TestSafeConfigPreservesExplicitFalseWebSockets(t *testing.T) {
+	cfg := config.Default()
+	cfg.WebSocketsSet = true
+	cfg.WebSockets = false
+	api := newParityAPI(t, &cfg)
+	response := serveManagement(api, http.MethodGet, "/api/config", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"websockets":false`) {
+		t.Fatalf("config=%d %s", response.Code, response.Body.String())
+	}
+	cfg.WebSocketsSet = false
+	response = serveManagement(api, http.MethodGet, "/api/config", "")
+	if strings.Contains(response.Body.String(), `"websockets"`) {
+		t.Fatalf("unset websockets leaked into DTO: %s", response.Body.String())
+	}
+}
+
 func TestProviderDTOContainsNoCredentialMaterial(t *testing.T) {
 	provider := config.ProviderConfig{
 		Adapter: "openai-responses", BaseURL: "https://user:password@example.com/v1?api_key=query-secret#fragment",

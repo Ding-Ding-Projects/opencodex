@@ -55,6 +55,23 @@ func TestRequestLogStoreRingAndPrivacyRedaction(t *testing.T) {
 	}
 }
 
+func TestRequestLogPublicDTOAddsDisplayMetricsAndHidesOrdinaryAttempt(t *testing.T) {
+	store := NewRequestLogStore(2, nil)
+	store.Add(RequestLogEntry{
+		RequestID: "req", Timestamp: 1, Model: "success", Provider: "differential", Status: 200, DurationMS: 0,
+		UsageStatus: RequestUsageReported, Usage: &types.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5},
+		Attempts: []RequestAttemptLog{{Ordinal: 1, Provider: "differential", Model: "success", SendCount: 1}},
+	})
+	payload, err := json.Marshal(store.QueryRequestLogs(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(payload)
+	if !strings.Contains(text, `"displayMetrics":{"tokPerSecond":{"kind":"value","value":2000,"estimated":false},"cost":{"kind":"unavailable","reason":"price_unmatched"}}`) || strings.Contains(text, `"attempts"`) || strings.Contains(text, `"surface":"responses"`) {
+		t.Fatalf("public DTO=%s", text)
+	}
+}
+
 func TestRequestLogMetadataFinalizationAndFiltering(t *testing.T) {
 	started := time.UnixMilli(1_000)
 	context := &RequestLogContext{Model: "wire", Provider: "provider", ProviderAdapter: "openai", RequestedModel: "public"}

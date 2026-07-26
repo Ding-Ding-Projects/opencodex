@@ -186,7 +186,7 @@ func (s *responsesLogSession) finish(status int, terminal ResponsesTerminalStatu
 	}
 	s.finished = true
 	if message != "" && s.context.UpstreamError == "" {
-		s.context.UpstreamError = message
+		s.context.UpstreamError = normalizeUpstreamDisconnectMessage(message)
 	}
 	entry := FinalRequestLogEntry(s.requestID, s.started, time.Now(), &s.context, status, terminal, reason)
 	s.store.Add(entry)

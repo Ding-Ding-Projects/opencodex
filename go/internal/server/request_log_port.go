@@ -13,6 +13,7 @@ import (
 
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
+	"github.com/lidge-jun/opencodex-go/internal/usage"
 )
 
 var requestLogSequence atomic.Uint64
@@ -157,10 +158,156 @@ func (store *RequestLogStore) Clear() {
 }
 
 func (store *RequestLogStore) QueryRequestLogs(query url.Values) any {
-	return FilterRequestLogs(store.Entries(), query)
+	entries := FilterRequestLogs(store.Entries(), query)
+	result := make([]requestLogDTO, len(entries))
+	for index := range entries {
+		result[index] = newRequestLogDTO(entries[index])
+	}
+	return result
 }
 
 func (store *RequestLogStore) ClearRequestLogs() { store.Clear() }
+
+type metricValue struct {
+	Kind      string  `json:"kind"`
+	Value     float64 `json:"value,omitempty"`
+	Estimated *bool   `json:"estimated,omitempty"`
+	Reason    string  `json:"reason,omitempty"`
+}
+
+type costMetricValue struct {
+	Kind            string              `json:"kind"`
+	Estimate        *usage.CostEstimate `json:"estimate,omitempty"`
+	EstimateReasons []string            `json:"estimateReasons,omitempty"`
+	Reason          string              `json:"reason,omitempty"`
+}
+
+type requestDisplayMetrics struct {
+	TokPerSecond metricValue     `json:"tokPerSecond"`
+	Cost         costMetricValue `json:"cost"`
+}
+
+// requestLogDTO is the public TypeScript-compatible projection. Internal
+// attempt tracking stays available to the logger but ordinary non-combo rows do
+// not expose it, and display-only metrics are derived at read time.
+type requestLogDTO struct {
+	RequestID                string                  `json:"requestId"`
+	Timestamp                int64                   `json:"timestamp"`
+	Model                    string                  `json:"model"`
+	Provider                 string                  `json:"provider"`
+	Surface                  string                  `json:"surface,omitempty"`
+	RequestedModel           string                  `json:"requestedModel,omitempty"`
+	RequestedEffort          string                  `json:"requestedEffort,omitempty"`
+	RequestedServiceTier     string                  `json:"requestedServiceTier,omitempty"`
+	RequestedSpeedLabel      string                  `json:"requestedSpeedLabel,omitempty"`
+	ConfiguredServiceTier    string                  `json:"configuredServiceTier,omitempty"`
+	ConfiguredSpeedLabel     string                  `json:"configuredSpeedLabel,omitempty"`
+	ModelSupportsServiceTier *bool                   `json:"modelSupportsServiceTier,omitempty"`
+	ResponseServiceTier      string                  `json:"responseServiceTier,omitempty"`
+	ResolvedModel            string                  `json:"resolvedModel,omitempty"`
+	Status                   int                     `json:"status"`
+	DurationMS               int64                   `json:"durationMs"`
+	FirstOutputMS            *int64                  `json:"firstOutputMs,omitempty"`
+	ErrorCode                string                  `json:"errorCode,omitempty"`
+	TerminalStatus           ResponsesTerminalStatus `json:"terminalStatus,omitempty"`
+	CloseReason              RequestLogCloseReason   `json:"closeReason,omitempty"`
+	UpstreamError            string                  `json:"upstreamError,omitempty"`
+	UsageStatus              RequestUsageStatus      `json:"usageStatus"`
+	Usage                    *types.Usage            `json:"usage,omitempty"`
+	TotalTokens              *int                    `json:"totalTokens,omitempty"`
+	Attempts                 []RequestAttemptLog     `json:"attempts,omitempty"`
+	Affinity                 string                  `json:"affinity,omitempty"`
+	TransportPhase           string                  `json:"transportPhase,omitempty"`
+	TerminalSource           string                  `json:"terminalSource,omitempty"`
+	DisplayMetrics           requestDisplayMetrics   `json:"displayMetrics"`
+}
+
+func newRequestLogDTO(entry RequestLogEntry) requestLogDTO {
+	surface := entry.Surface
+	if surface != "claude" {
+		surface = ""
+	}
+	var attempts []RequestAttemptLog
+	if entry.Provider == "combo" || hasAdvancedAttempts(entry.Attempts) {
+		attempts = cloneRequestAttempts(entry.Attempts)
+	}
+	return requestLogDTO{
+		RequestID: entry.RequestID, Timestamp: entry.Timestamp, Model: entry.Model, Provider: entry.Provider,
+		Surface: surface, RequestedModel: entry.RequestedModel, RequestedEffort: entry.RequestedEffort,
+		RequestedServiceTier: entry.RequestedServiceTier, RequestedSpeedLabel: entry.RequestedSpeedLabel,
+		ConfiguredServiceTier: entry.ConfiguredServiceTier, ConfiguredSpeedLabel: entry.ConfiguredSpeedLabel,
+		ModelSupportsServiceTier: cloneBool(entry.ModelSupportsServiceTier), ResponseServiceTier: entry.ResponseServiceTier,
+		ResolvedModel: entry.ResolvedModel, Status: entry.Status, DurationMS: entry.DurationMS,
+		FirstOutputMS: cloneInt64(entry.FirstOutputMS), ErrorCode: entry.ErrorCode, TerminalStatus: entry.TerminalStatus,
+		CloseReason: entry.CloseReason, UpstreamError: entry.UpstreamError, UsageStatus: entry.UsageStatus,
+		Usage: cloneUsageValue(entry.Usage), TotalTokens: cloneInt(entry.TotalTokens), Attempts: attempts,
+		Affinity: entry.Affinity, TransportPhase: entry.TransportPhase, TerminalSource: entry.TerminalSource,
+		DisplayMetrics: displayMetricsFor(entry.Provider, entry.Model, entry.DurationMS, entry.UsageStatus, entry.Usage, entry.RequestedServiceTier, entry.ConfiguredServiceTier, entry.ResponseServiceTier),
+	}
+}
+
+func hasAdvancedAttempts(attempts []RequestAttemptLog) bool {
+	if len(attempts) > 1 {
+		return true
+	}
+	for _, attempt := range attempts {
+		if attempt.SendCount > 1 || len(attempt.RecoveryKinds) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func displayMetricsFor(provider, model string, duration int64, status RequestUsageStatus, value *types.Usage, requestedTier, configuredTier, responseTier string) requestDisplayMetrics {
+	metrics := requestDisplayMetrics{}
+	if value == nil {
+		reason := "usage_missing"
+		if status == RequestUsageUnsupported {
+			reason = "usage_unsupported"
+		}
+		metrics.TokPerSecond = metricValue{Kind: "unavailable", Reason: reason}
+		metrics.Cost = costMetricValue{Kind: "unavailable", Reason: reason}
+		return metrics
+	}
+	if status == RequestUsageUnsupported {
+		metrics.TokPerSecond = metricValue{Kind: "unavailable", Reason: "usage_unsupported"}
+	} else if speed, ok := usage.TokensPerSecond(value.OutputTokens, max(int64(1), duration)); ok {
+		estimated := status == RequestUsageEstimated || value.Estimated
+		metrics.TokPerSecond = metricValue{Kind: "value", Value: speed, Estimated: &estimated}
+	} else if value.OutputTokens <= 0 {
+		metrics.TokPerSecond = metricValue{Kind: "unavailable", Reason: "output_missing"}
+	} else {
+		metrics.TokPerSecond = metricValue{Kind: "unavailable", Reason: "invalid_duration"}
+	}
+	tier := responseTier
+	if tier == "" {
+		tier = requestedTier
+	}
+	if tier == "" {
+		tier = configuredTier
+	}
+	usageStatus := usage.Status(status)
+	if estimate, ok := usage.EstimateCostWithTier(provider, model, *value, usageStatus, nil, tier); ok {
+		reasons := []string{}
+		if status == RequestUsageEstimated || value.Estimated {
+			reasons = append(reasons, "usage_estimated")
+		}
+		if value.CachedInputTokens == 0 && value.CacheReadInputTokens == 0 && value.CacheCreationInputTokens == 0 {
+			reasons = append(reasons, "cache_detail_missing")
+		}
+		if estimate.Price.Source == "expected" {
+			reasons = append(reasons, "expected_price_overlay")
+		}
+		metrics.Cost = costMetricValue{Kind: "value", Estimate: &estimate, EstimateReasons: reasons}
+	} else {
+		reason := "price_unmatched"
+		if _, ok := usage.NormalizeCostTokens(*value); !ok {
+			reason = "invalid_cache_breakdown"
+		}
+		metrics.Cost = costMetricValue{Kind: "unavailable", Reason: reason}
+	}
+	return metrics
+}
 
 type requestIDContextKey struct{}
 
