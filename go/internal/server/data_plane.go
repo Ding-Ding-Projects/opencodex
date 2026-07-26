@@ -8,6 +8,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -17,6 +18,14 @@ func (s *Server) handleModels(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	models := s.config.Registry.ListModels()
+	if s.config.ManagementConfig != nil {
+		for index := range models {
+			cap, enabled := providers.ProviderContextCap(providers.ContextCapConfig{ProviderContextCaps: intMapToFloat(s.config.ManagementConfig.ProviderContextCaps)}, models[index].Provider)
+			if enabled {
+				models[index].ContextWindow = providers.ApplyProviderContextCap(models[index].ContextWindow, cap)
+			}
+		}
+	}
 	if s.config.ManagementConfig != nil {
 		models = codex.FilterVisibleRuntimeModels(models, *s.config.ManagementConfig)
 	}
@@ -76,6 +85,17 @@ func (s *Server) handleModels(w http.ResponseWriter, request *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+}
+
+func intMapToFloat(values map[string]int) map[string]float64 {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]float64, len(values))
+	for key, value := range values {
+		result[key] = float64(value)
+	}
+	return result
 }
 
 func writeModelsJSON(w http.ResponseWriter, value any) {

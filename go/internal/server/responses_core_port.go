@@ -57,6 +57,7 @@ type ResponsesCoreConfig struct {
 	// ValidateForwardAdmission rejects proxy admission credentials before a
 	// forward route can copy incoming authorization headers to an upstream.
 	ValidateForwardAdmission func(http.Header) error
+	ApplyProviderPolicy      func(*types.NormalizedRequest, *types.ResolvedModel) error
 	ItemIDRepair             func(string) *ResponsesItemIDRepairConfig
 	RotateAPIKeyOn429        func(string, string, string) (string, bool)
 	PrepareImageRetry        func(*types.NormalizedRequest) error
@@ -242,6 +243,12 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	if parsed.UnreadableEncrypted && (core.config.SubagentFallback == nil || !core.config.SubagentFallback.canonical(resolved)) {
 		writeJSONError(w, http.StatusBadRequest, "unreadable_encrypted_agent_task", "Routed V2 worker task is encrypted for the native ChatGPT backend and cannot be read by the selected provider. Use plaintext V2 agent-message delivery or select a native ChatGPT model.")
 		return
+	}
+	if core.config.ApplyProviderPolicy != nil {
+		if err := core.config.ApplyProviderPolicy(parsed.Normalized, resolved); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "provider_policy_error", err.Error())
+			return
+		}
 	}
 	applyResolvedResponsesModel(parsed.Normalized, resolved.Model)
 	applyResponsesEffortPolicy(parsed.Normalized, resolved, router, request.Header, core.config.EffortCap, core.config.SubagentEffortCap)

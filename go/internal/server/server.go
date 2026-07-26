@@ -91,6 +91,7 @@ type Server struct {
 }
 
 func New(config Config) *Server {
+	backfillGoogleModes(config.ManagementConfig)
 	if config.Client == nil {
 		config.Client = NewProviderClient(FetchTimeouts{Overall: 10 * time.Minute})
 	}
@@ -226,9 +227,10 @@ func New(config Config) *Server {
 		Registry: s.config.Registry, Combos: s.config.Combos, Auth: s.config.Auth,
 		ResolveAdapter: s.config.ResolveAdapter, Client: s.config.Client, Recorder: recorder,
 		Lifecycle: s.config.Lifecycle, Logger: s.config.Logger, EffortCap: s.config.EffortCap,
-		SubagentEffortCap: s.config.SubagentEffortCap,
-		StallTimeout:      s.config.StallTimeoutSec,
-		ShadowCall:        s.config.ShadowCall,
+		SubagentEffortCap:   s.config.SubagentEffortCap,
+		ApplyProviderPolicy: applyProviderPolicies,
+		StallTimeout:        s.config.StallTimeoutSec,
+		ShadowCall:          s.config.ShadowCall,
 		ConsumeQuotaHeaders: func(_ context.Context, accountID string, headers http.Header) {
 			quota.ApplyUpstreamHeaders(accountID, headers)
 		},
