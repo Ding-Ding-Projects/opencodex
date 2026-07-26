@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -25,10 +27,13 @@ type refreshableLoginFlow interface {
 	Refresh(context.Context, string) (oauth.OAuthCredentials, error)
 }
 
-type browserLoginFlow struct{ flow oauth.BrowserFlow }
+type browserLoginFlow struct {
+	flow   oauth.BrowserFlow
+	manual oauth.ManualCodeFunc
+}
 
 func (f browserLoginFlow) Login(ctx context.Context, onAuth func(oauth.Authorization)) (oauth.OAuthCredentials, error) {
-	return oauth.RunBrowserLogin(ctx, f.flow, onAuth, nil)
+	return oauth.RunBrowserLogin(ctx, f.flow, onAuth, f.manual)
 }
 
 func (f browserLoginFlow) Refresh(ctx context.Context, refresh string) (oauth.OAuthCredentials, error) {
@@ -94,6 +99,10 @@ func runLogin(ctx context.Context, args []string, streams IO) error {
 	if err != nil {
 		return err
 	}
+	if browser, ok := flow.(browserLoginFlow); ok {
+		browser.manual = manualCodeInput(streams)
+		flow = browser
+	}
 	onAuth := func(auth oauth.Authorization) {
 		fmt.Fprintf(streams.Out, "\nAuthentication for %s\n", storeName)
 		if auth.URL != "" {
@@ -126,6 +135,42 @@ func runLogin(ctx context.Context, args []string, streams IO) error {
 	}
 	fmt.Fprintf(streams.Out, "\nLogged in to %s.\n", storeName)
 	return nil
+}
+
+func manualCodeInput(streams IO) oauth.ManualCodeFunc {
+	if streams.In == nil {
+		return nil
+	}
+	if file, ok := streams.In.(*os.File); ok {
+		info, err := file.Stat()
+		if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+			return nil
+		}
+	}
+	reader := bufio.NewReader(io.LimitReader(streams.In, 16<<10))
+	return func(ctx context.Context, _ string) (string, error) {
+		fmt.Fprint(streams.Out, "Paste redirect URL or authorization code (or wait for browser): ")
+		result := make(chan struct {
+			value string
+			err   error
+		}, 1)
+		go func() {
+			value, err := reader.ReadString('\n')
+			if err == io.EOF && strings.TrimSpace(value) != "" {
+				err = nil
+			}
+			result <- struct {
+				value string
+				err   error
+			}{strings.TrimSpace(value), err}
+		}()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case result := <-result:
+			return result.value, result.err
+		}
+	}
 }
 
 func upsertOAuthProviderConfig(provider string) error {

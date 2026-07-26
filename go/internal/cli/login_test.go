@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -87,5 +89,20 @@ func TestConfigProviderFromSeedClonesMutableMaps(t *testing.T) {
 	converted.Models[0] = "changed"
 	if seed.Models[0] != original {
 		t.Fatal("config conversion aliased the registry model slice")
+	}
+}
+
+func TestManualCodeInputReadsBoundedRedirect(t *testing.T) {
+	var output bytes.Buffer
+	manual := manualCodeInput(IO{In: bytes.NewBufferString("https://localhost/callback?code=abc&state=expected\n"), Out: &output})
+	if manual == nil {
+		t.Fatal("manual input was not enabled for an injected reader")
+	}
+	value, err := manual(context.Background(), "expected")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "https://localhost/callback?code=abc&state=expected" {
+		t.Fatalf("manual value = %q", value)
 	}
 }

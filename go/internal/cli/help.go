@@ -12,11 +12,11 @@ var commandHelp = map[string]string{
 	"health":      "Usage: ocx health [--json]\n\nCheck whether the proxy is healthy.",
 	"gui":         "Usage: ocx gui\n\nStart the proxy if needed and open its dashboard.",
 	"restore":     "Usage: ocx restore\n\nRemove OpenCodex-owned entries from Codex config.",
-	"login":       "Usage: ocx login <chatgpt|anthropic>\n\nAuthenticate an OAuth provider in the browser.",
+	"login":       "Usage: ocx login <provider>\n\nAuthenticate xAI, Anthropic, Kimi, Kiro, Google Antigravity, Cursor, or GitHub Copilot.",
 	"logout":      "Usage: ocx logout <provider>\n\nRemove saved OAuth accounts for a provider.",
-	"account":     "Usage: ocx account <list|switch|add|remove|refresh> [arguments]",
-	"provider":    "Usage: ocx provider <list|add|remove|default> [arguments]",
-	"models":      "Usage: ocx models <list|add|remove> [arguments]",
+	"account":     accountUsage,
+	"provider":    providerUsage,
+	"models":      "Usage: ocx models <list|efforts|add|remove> [arguments]",
 	"init":        "Usage: ocx init\n\nInteractively configure a provider.",
 	"status":      "Usage: ocx status\n\nShow proxy and service status.",
 	"doctor":      "Usage: ocx doctor\n\nRun local configuration, process, and network diagnostics.",
@@ -32,40 +32,34 @@ var commandHelp = map[string]string{
 
 func PrintHelp(writer io.Writer, command string) error {
 	if command != "" {
-		text, ok := commandHelp[command]
+		canonical := command
+		if position, ok := commandIndex[command]; ok {
+			canonical = commandSpecs[position].Name
+		}
+		text, ok := commandHelp[canonical]
+		if !ok {
+			if position, exists := commandIndex[canonical]; exists {
+				spec := commandSpecs[position]
+				text, ok = "Usage: "+spec.Usage+"\n\n"+spec.Summary, true
+			}
+		}
 		if !ok {
 			return fmt.Errorf("unknown help topic %q", command)
 		}
 		_, err := fmt.Fprintln(writer, text)
 		return err
 	}
-	_, err := fmt.Fprint(writer, `opencodex (ocx) — Universal provider proxy for Codex
-
-Usage:
-  ocx serve [--port PORT]     Start the proxy server
-  ocx stop                    Gracefully stop the proxy
-  ocx restart                 Restart the proxy in background
-  ocx health [--json]         Check proxy health
-  ocx gui                     Open the dashboard
-  ocx restore                 Restore native Codex routing
-  ocx login <provider>        Authenticate an OAuth provider
-  ocx logout <provider>       Remove saved OAuth accounts
-  ocx init                    Interactive provider setup
-  ocx status                  Show proxy and service status
-  ocx doctor                  Run diagnostics
-  ocx diagnostics [--json]   Print a secret-free diagnostic report
-  ocx completion <shell>     Generate shell completions
-  ocx config <subcommand>    Inspect or update configuration
-  ocx service [subcommand]    Manage the background service
-  ocx tray [subcommand]       Manage the Windows tray companion
-  ocx provider <subcommand>   Manage providers
-  ocx account <subcommand>    Manage provider accounts
-  ocx models <subcommand>     List or edit configured models
-  ocx claude [args...]        Launch Claude Code through the proxy
-  ocx debug <subcommand>      Configure runtime diagnostics
-  ocx update [options]        Replace the binary with a verified update
-  ocx help [command]          Show help
-  ocx --version               Print version
-`)
+	if _, err := fmt.Fprintln(writer, "opencodex (ocx) — Universal provider proxy for Codex\n\nUsage:"); err != nil {
+		return err
+	}
+	for _, spec := range commandSpecs {
+		if spec.Hidden || spec.Name == "version" {
+			continue
+		}
+		if _, err := fmt.Fprintf(writer, "  %-38s %s\n", spec.Usage, spec.Summary); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(writer, "  ocx --version                          Print version")
 	return err
 }

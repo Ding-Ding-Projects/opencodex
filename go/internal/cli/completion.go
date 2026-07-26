@@ -6,11 +6,6 @@ import (
 	"strings"
 )
 
-var completionCommands = []string{
-	"account", "claude", "completion", "config", "debug", "diagnostics", "doctor",
-	"help", "init", "models", "provider", "serve", "service", "start", "status", "tray", "update", "version",
-}
-
 func runCompletion(args []string, streams IO) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ocx completion <bash|zsh|fish|powershell>")
@@ -24,6 +19,7 @@ func runCompletion(args []string, streams IO) error {
 }
 
 func completionScript(shell string) (string, error) {
+	completionCommands := registeredCommandNames(true)
 	commands := strings.Join(completionCommands, " ")
 	switch shell {
 	case "bash":

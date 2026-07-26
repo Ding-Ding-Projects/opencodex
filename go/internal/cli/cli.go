@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -21,6 +22,78 @@ type Command struct {
 	Args []string
 }
 
+type commandHandler func(context.Context, []string, IO) error
+
+type commandSpec struct {
+	Name    string
+	Aliases []string
+	Usage   string
+	Summary string
+	Handler commandHandler
+	Hidden  bool
+}
+
+var commandSpecs []commandSpec
+var commandIndex map[string]int
+
+func init() {
+	commandSpecs = defaultCommandSpecs()
+	commandIndex = buildCommandIndex(commandSpecs)
+}
+
+func defaultCommandSpecs() []commandSpec {
+	return []commandSpec{
+		{Name: "help", Usage: "ocx help [command]", Summary: "Show help", Handler: commandHelpHandler},
+		{Name: "version", Aliases: []string{"-v", "--version"}, Usage: "ocx --version", Summary: "Print version", Handler: commandVersionHandler},
+		{Name: "serve", Aliases: []string{"start"}, Usage: "ocx serve [--host HOST] [--port PORT]", Summary: "Start the proxy server", Handler: runServe},
+		{Name: "stop", Usage: "ocx stop", Summary: "Gracefully stop the proxy", Handler: runStop},
+		{Name: "restart", Usage: "ocx restart", Summary: "Restart the proxy in background", Handler: runRestart},
+		{Name: "health", Usage: "ocx health [--json]", Summary: "Check proxy health", Handler: runHealth},
+		{Name: "gui", Usage: "ocx gui", Summary: "Open the dashboard", Handler: runGUI},
+		{Name: "restore", Aliases: []string{"eject"}, Usage: "ocx restore", Summary: "Restore native Codex routing", Handler: noContext(runRestore)},
+		{Name: "login", Usage: "ocx login <provider>", Summary: "Authenticate an OAuth provider", Handler: runLogin},
+		{Name: "logout", Usage: "ocx logout <provider>", Summary: "Remove saved OAuth accounts", Handler: runLogout},
+		{Name: "account", Usage: "ocx account <subcommand>", Summary: "Manage provider accounts", Handler: runAccount},
+		{Name: "provider", Usage: "ocx provider <subcommand>", Summary: "Manage providers", Handler: noContext(runProvider)},
+		{Name: "models", Usage: "ocx models [subcommand]", Summary: "List models and effort support", Handler: noContext(runModels)},
+		{Name: "init", Usage: "ocx init", Summary: "Interactive provider setup", Handler: noContext(runInit)},
+		{Name: "status", Usage: "ocx status", Summary: "Show proxy and service status", Handler: runStatus},
+		{Name: "doctor", Usage: "ocx doctor [--json]", Summary: "Run environment diagnostics", Handler: runDoctor},
+		{Name: "diagnostics", Aliases: []string{"diagnose"}, Usage: "ocx diagnostics [--json]", Summary: "Print a secret-free diagnostic report", Handler: noContext(runDiagnostics)},
+		{Name: "completion", Usage: "ocx completion <shell>", Summary: "Generate shell completions", Handler: noContext(runCompletion)},
+		{Name: "config", Usage: "ocx config <subcommand>", Summary: "Inspect or update configuration", Handler: noContext(runConfig)},
+		{Name: "claude", Usage: "ocx claude [args...]", Summary: "Launch Claude Code through the proxy", Handler: runClaude},
+		{Name: "debug", Usage: "ocx debug <subcommand>", Summary: "Configure runtime diagnostics", Handler: noContext(runDebug)},
+		{Name: "service", Usage: "ocx service [subcommand]", Summary: "Manage the background service", Handler: noContext(runService)},
+		{Name: "tray", Usage: "ocx tray [subcommand]", Summary: "Manage the Windows tray companion", Handler: runTray},
+		{Name: "update", Usage: "ocx update [options]", Summary: "Replace the binary with a verified update", Handler: runUpdate},
+	}
+}
+
+func buildCommandIndex(specs []commandSpec) map[string]int {
+	index := make(map[string]int, len(specs)*2)
+	for position, spec := range specs {
+		index[spec.Name] = position
+		for _, alias := range spec.Aliases {
+			index[alias] = position
+		}
+	}
+	return index
+}
+
+func noContext(handler func([]string, IO) error) commandHandler {
+	return func(_ context.Context, args []string, streams IO) error { return handler(args, streams) }
+}
+
+func commandHelpHandler(_ context.Context, args []string, streams IO) error {
+	return PrintHelp(streams.Out, first(args))
+}
+
+func commandVersionHandler(_ context.Context, _ []string, streams IO) error {
+	_, err := fmt.Fprintf(streams.Out, "opencodex %s\n", Version)
+	return err
+}
+
 func Parse(args []string) (Command, error) {
 	if len(args) == 0 {
 		return Command{Name: "help"}, nil
@@ -29,10 +102,7 @@ func Parse(args []string) (Command, error) {
 	if name == "-h" || name == "--help" {
 		name = "help"
 	}
-	if name == "-v" || name == "--version" || name == "version" {
-		name = "version"
-	}
-	if strings.HasPrefix(name, "-") {
+	if _, exists := commandIndex[name]; !exists && strings.HasPrefix(name, "-") {
 		return Command{}, fmt.Errorf("unknown option %q", args[0])
 	}
 	return Command{Name: name, Args: append([]string(nil), args[1:]...)}, nil
@@ -49,66 +119,37 @@ func Run(ctx context.Context, args []string, streams IO) int {
 		fmt.Fprintln(streams.Err, "Error:", err)
 		return 2
 	}
-	var runErr error
-	switch command.Name {
-	case "help":
-		runErr = PrintHelp(streams.Out, first(command.Args))
-	case "version":
-		fmt.Fprintf(streams.Out, "opencodex %s\n", Version)
-	case "serve", "start":
-		runErr = runServe(ctx, command.Args, streams)
-	case "stop":
-		runErr = runStop(ctx, command.Args, streams)
-	case "restart":
-		runErr = runRestart(ctx, command.Args, streams)
-	case "health":
-		runErr = runHealth(ctx, command.Args, streams)
-	case "gui":
-		runErr = runGUI(ctx, command.Args, streams)
-	case "restore", "eject":
-		runErr = runRestore(command.Args, streams)
-	case "login":
-		runErr = runLogin(ctx, command.Args, streams)
-	case "logout":
-		runErr = runLogout(ctx, command.Args, streams)
-	case "account":
-		runErr = runAccount(ctx, command.Args, streams)
-	case "provider":
-		runErr = runProvider(command.Args, streams)
-	case "models":
-		runErr = runModels(command.Args, streams)
-	case "init":
-		runErr = runInit(command.Args, streams)
-	case "status":
-		runErr = runStatus(ctx, command.Args, streams)
-	case "doctor":
-		runErr = runDoctor(ctx, command.Args, streams)
-	case "diagnostics", "diagnose":
-		runErr = runDiagnostics(command.Args, streams)
-	case "completion":
-		runErr = runCompletion(command.Args, streams)
-	case "config":
-		runErr = runConfig(command.Args, streams)
-	case "claude":
-		runErr = runClaude(ctx, command.Args, streams)
-	case "debug":
-		runErr = runDebug(command.Args, streams)
-	case "service":
-		runErr = runService(command.Args, streams)
-	case "tray":
-		runErr = runTray(ctx, command.Args, streams)
-	case "update":
-		runErr = runUpdate(ctx, command.Args, streams)
-	default:
+	position, ok := commandIndex[command.Name]
+	if !ok {
 		fmt.Fprintf(streams.Err, "Unknown command: %s\n", command.Name)
 		_ = PrintHelp(streams.Err, "")
 		return 2
 	}
-	if runErr != nil {
+	spec := commandSpecs[position]
+	if runErr := spec.Handler(ctx, command.Args, streams); runErr != nil {
 		fmt.Fprintln(streams.Err, "Error:", runErr)
 		return 1
 	}
 	return 0
+}
+
+func registeredCommandNames(includeAliases bool) []string {
+	names := []string{}
+	for _, spec := range commandSpecs {
+		if spec.Hidden {
+			continue
+		}
+		names = append(names, spec.Name)
+		if includeAliases {
+			for _, alias := range spec.Aliases {
+				if !strings.HasPrefix(alias, "-") {
+					names = append(names, alias)
+				}
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func first(values []string) string {
