@@ -13,6 +13,7 @@ import (
 	"time"
 
 	adapterpkg "github.com/lidge-jun/opencodex-go/internal/adapter"
+	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
 	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
@@ -279,7 +280,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		core.stream(ctx, cancel, w, request.Header, parsed.Normalized, resolved, pick, parsed.RequestedModel, adapter, response, auth, record, logSession, attempt)
 		return
 	}
-	core.buffered(ctx, w, parsed.Normalized, resolved, parsed.RequestedModel, adapter, response, auth, record, logSession, attempt)
+	core.buffered(ctx, w, request.Header, parsed.Normalized, resolved, pick, parsed.RequestedModel, adapter, response, auth, record, logSession, attempt)
 }
 
 func (core *ResponsesCore) providerAdapter(resolved *types.ResolvedModel) string {
@@ -577,7 +578,7 @@ func (core *ResponsesCore) nextCombo(request *types.NormalizedRequest, pick *com
 }
 
 func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCauseFunc, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession, fallbackAttempt *subagentFallbackAttempt) {
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	adapterName := core.providerAdapter(resolved)
 	if useEagerResponsesRelay(core.config.StreamMode, adapterName, response) {
 		rememberEager := func(response map[string]any) {
@@ -614,6 +615,31 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 	}
 	events := core.eventsForResponse(ctx, adapter, response, record.Provider, false)
 	preflight := adapterpkg.PreflightEvents(ctx, events)
+	if preflight.Error != nil && preflight.Error.Code == cursoradapter.ContinuityRetryCode {
+		_ = response.Body.Close()
+		logSession.noteRecovery("cursor-invalid-argument")
+		nextAdapter, nextResponse, nextAuth, nextResolved, nextPick, err := core.forward(ctx, incoming, normalized, resolved, pick, logSession, fallbackAttempt)
+		if err != nil {
+			status := http.StatusBadGateway
+			var failure *forwardError
+			if errors.As(err, &failure) {
+				status = failure.status
+			}
+			logSession.finish(status, ResponsesFailed, RequestLogTerminal, err.Error())
+			core.writeForwardError(w, err)
+			return
+		}
+		adapter, response, auth, resolved, pick = nextAdapter, nextResponse, nextAuth, nextResolved, nextPick
+		adapterName = core.providerAdapter(resolved)
+		record.Provider, record.Model = resolved.Provider, resolved.Model
+		if auth != nil {
+			record.AccountID = auth.AccountID
+		} else {
+			record.AccountID = ""
+		}
+		events = core.eventsForResponse(ctx, adapter, response, record.Provider, false)
+		preflight = adapterpkg.PreflightEvents(ctx, events)
+	}
 	preflightDisconnect := preflight.Error != nil && isUpstreamDisconnectMessage(preflight.Error.Error)
 	if (preflight.Error != nil && !preflightDisconnect) || preflight.Empty {
 		message := "Adapter ended before producing a response"
@@ -788,21 +814,49 @@ func (writer *sseInspectionWriter) Write(payload []byte) (int, error) {
 	return written, err
 }
 
-func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession, fallbackAttempt *subagentFallbackAttempt) {
-	defer response.Body.Close()
-	payload, err := readResponsesBody(ctx, response, defaultResponsesResponseLimit)
-	if err != nil {
-		logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, err.Error())
-		writeJSONError(w, http.StatusBadGateway, "provider_response_error", err.Error())
-		return
-	}
-	events, err := adapter.ParseUnary(ctx, payload)
-	if err != nil {
-		core.noteSubagentFailure(fallbackAttempt, err.Error())
-		logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, err.Error())
-		core.recordAuthOutcome(auth, types.OutcomeProviderError, http.StatusBadGateway, err.Error(), "")
-		writeJSONError(w, http.StatusBadGateway, "provider_parse_error", err.Error())
-		return
+func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, requestedModel string, adapter types.Adapter, response *http.Response, auth *types.AuthContext, record *types.UsageRecord, logSession *responsesLogSession, fallbackAttempt *subagentFallbackAttempt) {
+	var events []types.AdapterEvent
+	continuityRetried := false
+	for {
+		payload, err := readResponsesBody(ctx, response, defaultResponsesResponseLimit)
+		_ = response.Body.Close()
+		if err != nil {
+			logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, err.Error())
+			writeJSONError(w, http.StatusBadGateway, "provider_response_error", err.Error())
+			return
+		}
+		events, err = adapter.ParseUnary(ctx, payload)
+		if !continuityRetried && cursoradapter.IsContinuityRetry(err) {
+			continuityRetried = true
+			logSession.noteRecovery("cursor-invalid-argument")
+			nextAdapter, nextResponse, nextAuth, nextResolved, nextPick, forwardErr := core.forward(ctx, incoming, normalized, resolved, pick, logSession, fallbackAttempt)
+			if forwardErr != nil {
+				status := http.StatusBadGateway
+				var failure *forwardError
+				if errors.As(forwardErr, &failure) {
+					status = failure.status
+				}
+				logSession.finish(status, ResponsesFailed, RequestLogTerminal, forwardErr.Error())
+				core.writeForwardError(w, forwardErr)
+				return
+			}
+			adapter, response, auth, resolved, pick = nextAdapter, nextResponse, nextAuth, nextResolved, nextPick
+			record.Provider, record.Model = resolved.Provider, resolved.Model
+			if auth != nil {
+				record.AccountID = auth.AccountID
+			} else {
+				record.AccountID = ""
+			}
+			continue
+		}
+		if err != nil {
+			core.noteSubagentFailure(fallbackAttempt, err.Error())
+			logSession.finish(http.StatusBadGateway, ResponsesFailed, RequestLogNonStream, err.Error())
+			core.recordAuthOutcome(auth, types.OutcomeProviderError, http.StatusBadGateway, err.Error(), "")
+			writeJSONError(w, http.StatusBadGateway, "provider_parse_error", err.Error())
+			return
+		}
+		break
 	}
 	_, result := bridge.Convert(requestedModel, events)
 	for _, event := range events {

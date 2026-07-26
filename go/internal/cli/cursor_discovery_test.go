@@ -26,8 +26,8 @@ func TestConfiguredCursorDiscoveryUsesStoredCredentialAndPopulatesCatalog(t *tes
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	cfg.Providers["cursor"] = config.ProviderConfig{Adapter: "cursor", BaseURL: "https://cursor.example", AuthMode: "oauth"}
-	payload := cursorModelsPayload("model-b", "model-a")
+	cfg.Providers["cursor"] = config.ProviderConfig{Adapter: "cursor", BaseURL: "https://cursor.example", AuthMode: "oauth", Models: []string{"model-a", "model-b"}, ModelContextWindows: map[string]int{"model-a": 321000}, ModelReasoningEfforts: map[string][]string{"model-a": {"low", "high"}}}
+	payload := cursorModelsPayload("cursor-model-b-high", "cursor-model-a-low", "cursor-unconfigured-high")
 	client := &http.Client{Transport: cursorDiscoveryRoundTrip(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path != "/agent.v1.AgentService/GetUsableModels" {
 			t.Fatalf("path = %s", request.URL.Path)
@@ -41,7 +41,11 @@ func TestConfiguredCursorDiscoveryUsesStoredCredentialAndPopulatesCatalog(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(models, ",") != "model-a,model-b" {
+	modelIDs := make([]string, 0, len(models))
+	for _, model := range models {
+		modelIDs = append(modelIDs, model.ID)
+	}
+	if strings.Join(modelIDs, ",") != "auto,auto-balance,auto-cost,auto-intelligence,model-a,model-b" {
 		t.Fatalf("models = %#v", models)
 	}
 	rows := configuredRegistryWithCursorModels(cfg, models).ListModels()
@@ -51,8 +55,19 @@ func TestConfiguredCursorDiscoveryUsesStoredCredentialAndPopulatesCatalog(t *tes
 			cursorRows = append(cursorRows, row.ID)
 		}
 	}
-	if strings.Join(cursorRows, ",") != "cursor/auto,cursor/model-a,cursor/model-b" {
+	if strings.Join(cursorRows, ",") != "cursor/auto,cursor/auto-balance,cursor/auto-cost,cursor/auto-intelligence,cursor/model-a,cursor/model-b" {
 		t.Fatalf("cursor catalog rows = %#v", cursorRows)
+	}
+	for _, row := range rows {
+		if row.Provider != "cursor" {
+			continue
+		}
+		if row.ID == "cursor/model-a" && (row.ContextWindow != 321000 || len(row.ReasoningEfforts) == 0) {
+			t.Fatalf("configured Cursor metadata was lost: %#v", row)
+		}
+		if strings.Contains(row.ID, "-high") || strings.Contains(row.ID, "-low") {
+			t.Fatalf("raw effort-suffixed Cursor ID leaked: %#v", row)
+		}
 	}
 }
 
@@ -69,6 +84,27 @@ func TestConfiguredCursorDiscoverySkipsWithoutCredentialOrWhenDisabled(t *testin
 	models, err = discoverConfiguredCursorModels(context.Background(), cfg, nil, client)
 	if err != nil || len(models) != 0 || called {
 		t.Fatalf("credential-less discovery models=%#v called=%v err=%v", models, called, err)
+	}
+}
+
+func TestConfiguredCursorDiscoveryFailureReturnsConfiguredSeed(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers["cursor"] = config.ProviderConfig{Adapter: "cursor", BaseURL: "https://cursor.example", APIKey: "cursor-key", Models: []string{"configured-model"}, ModelContextWindows: map[string]int{"configured-model": 456000}}
+	client := &http.Client{Transport: cursorDiscoveryRoundTrip(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("failed"))}, nil
+	})}
+	models, err := discoverConfiguredCursorModels(context.Background(), cfg, nil, client)
+	if err == nil {
+		t.Fatal("discovery failure was not reported")
+	}
+	foundConfigured := false
+	for _, model := range models {
+		if model.ID == "configured-model" {
+			foundConfigured = model.ContextWindow == 456000
+		}
+	}
+	if !foundConfigured {
+		t.Fatalf("configured fallback metadata was lost: %#v", models)
 	}
 }
 

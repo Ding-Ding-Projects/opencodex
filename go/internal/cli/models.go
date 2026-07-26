@@ -66,7 +66,9 @@ func modelsList(args []string, streams IO) error {
 		if store, storeErr := accountStore(); storeErr == nil {
 			if discovered, discoveryErr := discoverConfiguredCursorModels(context.Background(), *cfg, store, nil); discoveryErr == nil {
 				provider := cfg.Providers["cursor"]
-				provider.Models = append(provider.Models, discovered...)
+				for _, model := range discovered {
+					provider.Models = append(provider.Models, model.ID)
+				}
 				cfg.Providers["cursor"] = provider
 			} else if streams.Err != nil {
 				fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; showing configured models: %v\n", discoveryErr)

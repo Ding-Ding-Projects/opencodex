@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
@@ -18,7 +19,7 @@ import (
 // subsequent registry operation observes one persisted config snapshot.
 type configBackedRegistry struct {
 	config       *config.Config
-	cursorModels []string
+	cursorModels []cursoradapter.CursorModelInfo
 }
 
 func (r *configBackedRegistry) current() *registry.ProviderRegistry {
@@ -42,7 +43,7 @@ func (r *configBackedRegistry) ResolveTransport(provider string, credential *typ
 
 func (r *configBackedRegistry) ListModels() []types.ModelEntry { return r.current().ListModels() }
 
-func configBackedAdapterResolver(cfg *config.Config, cursorModels []string, client *http.Client, stores ...*oauth.CredentialStore) server.AdapterResolver {
+func configBackedAdapterResolver(cfg *config.Config, cursorModels []cursoradapter.CursorModelInfo, client *http.Client, stores ...*oauth.CredentialStore) server.AdapterResolver {
 	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
 		snapshot := *cfg
 		if resolved, err := config.ResolveEnvironment(snapshot); err == nil {

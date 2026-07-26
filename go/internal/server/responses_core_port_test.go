@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -165,6 +167,37 @@ type coreAdapter struct {
 	onBuild  func(*types.NormalizedRequest)
 }
 
+type cursorContinuityAdapter struct {
+	endpoint string
+	stream   bool
+	builds   *atomic.Int32
+	parses   *atomic.Int32
+}
+
+func (a cursorContinuityAdapter) BuildRequest(ctx context.Context, _ *types.NormalizedRequest) (*http.Request, error) {
+	a.builds.Add(1)
+	return http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, strings.NewReader(`{}`))
+}
+
+func (a cursorContinuityAdapter) ParseStream(ctx context.Context, _ io.ReadCloser) <-chan types.AdapterEvent {
+	out := make(chan types.AdapterEvent, 2)
+	if a.parses.Add(1) == 1 {
+		out <- types.AdapterEvent{Type: types.EventError, Error: "invalid conversation", Code: cursoradapter.ContinuityRetryCode, Retryable: true}
+	} else {
+		out <- types.AdapterEvent{Type: types.EventTextDelta, Text: "recovered"}
+		out <- types.AdapterEvent{Type: types.EventDone}
+	}
+	close(out)
+	return out
+}
+
+func (a cursorContinuityAdapter) ParseUnary(context.Context, []byte) ([]types.AdapterEvent, error) {
+	if a.parses.Add(1) == 1 {
+		return nil, &cursoradapter.ContinuityRetryError{Err: errors.New("invalid conversation")}
+	}
+	return []types.AdapterEvent{{Type: types.EventTextDelta, Text: "recovered"}, {Type: types.EventDone}}, nil
+}
+
 type inspectingStreamAdapter struct {
 	coreAdapter
 	seen chan string
@@ -314,6 +347,42 @@ func TestResponsesCoreStreamsResponsesEvents(t *testing.T) {
 	}
 	if len(recorder.records) != 1 || len(auth.outcomes) != 1 || auth.outcomes[0] != types.OutcomeSuccess {
 		t.Fatalf("records=%d outcomes=%#v", len(recorder.records), auth.outcomes)
+	}
+}
+
+func TestResponsesCoreRetriesCursorContinuityOnceBeforeStreamCommit(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) }))
+	defer upstream.Close()
+	var builds, parses atomic.Int32
+	adapter := cursorContinuityAdapter{endpoint: upstream.URL, stream: true, builds: &builds, parses: &parses}
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL}, ProviderAdapter: func(string) string { return "cursor" },
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return adapter, nil
+		},
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
+	if response.Code != http.StatusOK || builds.Load() != 2 || parses.Load() != 2 || !strings.Contains(response.Body.String(), "recovered") {
+		t.Fatalf("status=%d builds=%d parses=%d body=%s", response.Code, builds.Load(), parses.Load(), response.Body.String())
+	}
+}
+
+func TestResponsesCoreRetriesCursorContinuityOnceForBufferedResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) }))
+	defer upstream.Close()
+	var builds, parses atomic.Int32
+	adapter := cursorContinuityAdapter{endpoint: upstream.URL, builds: &builds, parses: &parses}
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: coreRegistry{endpoint: upstream.URL}, ProviderAdapter: func(string) string { return "cursor" },
+		ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+			return adapter, nil
+		},
+	})
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`)))
+	if response.Code != http.StatusOK || builds.Load() != 2 || parses.Load() != 2 || !strings.Contains(response.Body.String(), "recovered") {
+		t.Fatalf("status=%d builds=%d parses=%d body=%s", response.Code, builds.Load(), parses.Load(), response.Body.String())
 	}
 }
 
