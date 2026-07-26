@@ -19,15 +19,25 @@ func TestParseDefaultsToHelp(t *testing.T) {
 	}
 }
 
-func TestDispatchGuardedPersistsRedactedCrash(t *testing.T) {
+func TestProductionDispatchInstallsCanonicalCrashGuard(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("OPENCODEX_HOME", home)
-	var stderr bytes.Buffer
-	code := dispatchGuarded(func() int {
-		panic("https://user:secret@example.test/path?token=private")
-	}, &stderr)
-	if code != 1 || !strings.Contains(stderr.String(), "details written to crash.log") {
-		t.Fatalf("guarded dispatch = %d stderr=%q", code, stderr.String())
+	originalArgs, originalSpecs, originalIndex := os.Args, commandSpecs, commandIndex
+	t.Cleanup(func() {
+		os.Args, commandSpecs, commandIndex = originalArgs, originalSpecs, originalIndex
+	})
+	commandSpecs = append(append([]commandSpec(nil), commandSpecs...), commandSpec{
+		Name: "panic-test",
+		Handler: func(context.Context, []string, IO) error {
+			panic("https://user:secret@example.test/path?token=private")
+		},
+		Hidden: true,
+	})
+	commandIndex = buildCommandIndex(commandSpecs)
+	os.Args = []string{"ocx", "panic-test"}
+
+	if code := Dispatch(); code != 1 {
+		t.Fatalf("production dispatch exit = %d", code)
 	}
 	data, err := os.ReadFile(filepath.Join(home, "crash.log"))
 	if err != nil {
