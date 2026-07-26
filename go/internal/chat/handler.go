@@ -50,6 +50,8 @@ type HandlerConfig struct {
 	ClaudeBlockedSkills       []string
 	SearchLoop                *search.Loop
 	OnUsage                   func(*types.Usage)
+	Recorder                  types.UsageRecorder
+	RequestID                 func(context.Context) string
 }
 
 func (c HandlerConfig) runSearch(ctx context.Context, prepared *preparedRequest) ([]types.AdapterEvent, bool, error) {
@@ -162,6 +164,7 @@ var _ types.RouteHandler = (*Handler)(nil)
 func NewHandler(config HandlerConfig) *Handler { return &Handler{config: withHandlerDefaults(config)} }
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	raw, err := readRequestBody(w, r, h.config.BodyLimit)
 	if err != nil {
 		writeChatError(w, http.StatusBadRequest, err.Error())
@@ -182,17 +185,19 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.config.applyReasoningSafety(prepared)
+	record := h.config.newUsageRecord(r.Context(), r.Header, prepared, started, chatUsageSurface(r.Header))
 	if events, handled, err := h.config.runSearch(r.Context(), prepared); handled {
 		if err != nil {
 			writeChatError(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		if clientStream {
-			if err := WriteChatStream(r.Context(), w, requestedModel, adapterEventChannel(events)); err != nil && !errors.Is(err, context.Canceled) {
+			if err := WriteChatStream(r.Context(), w, requestedModel, h.config.trackUsage(r.Context(), record, adapterEventChannel(events))); err != nil && !errors.Is(err, context.Canceled) {
 				return
 			}
 			return
 		}
+		h.config.recordUsageEvents(r.Context(), record, events)
 		completion, err := BuildChatCompletion(events, requestedModel)
 		if err != nil {
 			writeChatError(w, http.StatusBadGateway, err.Error())
@@ -207,6 +212,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	response, streamEvents, err = h.config.doStream(r.Context(), prepared)
 	if err == nil && !clientStream && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 		unaryEvents, err = collectAdapterEvents(r.Context(), streamEvents)
+		if err == nil {
+			h.config.recordUsageEvents(r.Context(), record, unaryEvents)
+		}
 	}
 	if err != nil {
 		writeChatErrorFor(w, err)
@@ -220,7 +228,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if clientStream {
-		if err := WriteChatStream(r.Context(), w, requestedModel, streamEvents); err != nil && !errors.Is(err, context.Canceled) {
+		if err := WriteChatStream(r.Context(), w, requestedModel, h.config.trackUsage(r.Context(), record, streamEvents)); err != nil && !errors.Is(err, context.Canceled) {
 			return
 		}
 		return
@@ -231,6 +239,83 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, completion)
+}
+
+func chatUsageSurface(headers http.Header) string {
+	// Best-effort dashboard attribution only. Any client may stamp this header;
+	// it must never influence authentication, authorization, or billing.
+	if headers.Get("x-opencodex-grok") == "1" {
+		return "grok"
+	}
+	return ""
+}
+
+func (c HandlerConfig) newUsageRecord(ctx context.Context, headers http.Header, prepared *preparedRequest, started time.Time, surface string) *types.UsageRecord {
+	if c.Recorder == nil || c.RequestID == nil || prepared == nil || prepared.resolved == nil {
+		return nil
+	}
+	record := &types.UsageRecord{
+		RequestID: c.RequestID(ctx), ThreadID: headers.Get("thread-id"),
+		Provider: prepared.resolved.Provider, Model: prepared.resolved.Model,
+		Surface: surface, StartedAt: started,
+	}
+	if prepared.auth != nil {
+		record.AccountID = prepared.auth.AccountID
+	}
+	return record
+}
+
+func (c HandlerConfig) recordUsageEvents(ctx context.Context, record *types.UsageRecord, events []types.AdapterEvent) {
+	if record == nil {
+		return
+	}
+	var value *types.Usage
+	outcome := types.OutcomeProviderError
+	for _, event := range events {
+		if event.Usage != nil {
+			copy := *event.Usage
+			value = &copy
+		}
+		if event.Type == types.EventDone {
+			outcome = types.OutcomeSuccess
+		}
+	}
+	if value == nil {
+		return
+	}
+	copy := *record
+	copy.Usage, copy.Status, copy.Duration = *value, outcome, time.Since(record.StartedAt)
+	_ = c.Recorder.Record(context.WithoutCancel(ctx), &copy)
+}
+
+func (c HandlerConfig) trackUsage(ctx context.Context, record *types.UsageRecord, events <-chan types.AdapterEvent) <-chan types.AdapterEvent {
+	if record == nil {
+		return events
+	}
+	tracked := make(chan types.AdapterEvent)
+	go func() {
+		defer close(tracked)
+		observed := make([]types.AdapterEvent, 0, 2)
+		for event := range events {
+			if event.Usage != nil || event.Type == types.EventDone || event.Type == types.EventError || event.Type == types.EventIncomplete {
+				observed = append(observed, event)
+			}
+			terminal := event.Type == types.EventDone || event.Type == types.EventError || event.Type == types.EventIncomplete
+			if terminal {
+				c.recordUsageEvents(ctx, record, observed)
+			}
+			select {
+			case tracked <- event:
+			case <-ctx.Done():
+				return
+			}
+			if terminal {
+				return
+			}
+		}
+		c.recordUsageEvents(ctx, record, observed)
+	}()
+	return tracked
 }
 
 func adapterEventChannel(events []types.AdapterEvent) <-chan types.AdapterEvent {

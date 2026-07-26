@@ -16,8 +16,9 @@ func TestLogJSONLRoundTrip(t *testing.T) {
 	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
 	record := &types.UsageRecord{
 		RequestID: "req-1", ThreadID: "thread-1", Provider: "deepseek", Model: "deepseek-chat",
-		Usage:  types.Usage{InputTokens: 120, OutputTokens: 30, CacheReadInputTokens: 20},
-		Status: types.OutcomeSuccess, StartedAt: time.UnixMilli(1_700_000_000_000), Duration: 1250 * time.Millisecond,
+		Surface: string(SurfaceGrok),
+		Usage:   types.Usage{InputTokens: 120, OutputTokens: 30, CacheReadInputTokens: 20},
+		Status:  types.OutcomeSuccess, StartedAt: time.UnixMilli(1_700_000_000_000), Duration: 1250 * time.Millisecond,
 	}
 	if err := log.Record(context.Background(), record); err != nil {
 		t.Fatalf("Record() error = %v", err)
@@ -35,6 +36,9 @@ func TestLogJSONLRoundTrip(t *testing.T) {
 	}
 	if entries[0].RequestID != "req-1" || entries[0].DurationMS != 1250 {
 		t.Fatalf("first entry = %#v", entries[0])
+	}
+	if entries[0].Surface != SurfaceGrok {
+		t.Fatalf("surface = %q, want grok", entries[0].Surface)
 	}
 	if entries[0].TotalTokens == nil || *entries[0].TotalTokens != 150 {
 		t.Fatalf("total = %v, want 150", entries[0].TotalTokens)

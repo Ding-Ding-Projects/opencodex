@@ -52,7 +52,7 @@ func (h *CountTokensHandler) Handle(w http.ResponseWriter, request *http.Request
 	if encoded, encodeErr := json.Marshal(body); encodeErr == nil {
 		messages := &MessagesHandler{config: h.config}
 		if nativeBody, nativeModel, ok := messages.nativeAnthropicRequest(request, encoded); ok {
-			messages.nativePassthrough(w, request, nativeBody, nativeModel, "/v1/messages/count_tokens")
+			messages.nativePassthrough(w, request, nativeBody, nativeModel, "/v1/messages/count_tokens", nil)
 			return
 		}
 	}

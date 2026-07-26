@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
@@ -20,6 +21,7 @@ func NewMessagesHandler(config HandlerConfig) *MessagesHandler {
 }
 
 func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	if h.config.ClaudeEnabled != nil && !*h.config.ClaudeEnabled {
 		writeAnthropicJSON(w, http.StatusForbidden, anthropicErrorBody(http.StatusForbidden, "Claude inbound is disabled", "permission_error"))
 		return
@@ -41,7 +43,8 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if nativeBody, nativeModel, ok := h.nativeAnthropicRequest(r, raw); ok {
-		h.nativePassthrough(w, r, nativeBody, nativeModel, "/v1/messages")
+		nativeRecord := h.config.newUsageRecord(r.Context(), r.Header, &preparedRequest{resolved: &types.ResolvedModel{Provider: "anthropic", Model: nativeModel}}, started, string(claude.InboundSurfaceClaude))
+		h.nativePassthrough(w, r, nativeBody, nativeModel, "/v1/messages", nativeRecord)
 		return
 	}
 	translation, err := claude.TranslateAnthropicRequest(raw, h.config.claudeInboundConfig())
@@ -74,6 +77,7 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	internal.Stream = true
 	prepared.normalized = &internal
 	h.config.applyReasoningSafety(prepared)
+	record := h.config.newUsageRecord(r.Context(), r.Header, prepared, started, string(translation.Surface))
 	if events, handled, err := h.config.runSearch(r.Context(), prepared); handled {
 		if err != nil {
 			recordDesktopError()
@@ -81,11 +85,12 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if clientStream {
-			if err := writeAnthropicStream(r.Context(), w, requestedModel, adapterEventChannel(events)); err != nil {
+			if err := writeAnthropicStream(r.Context(), w, requestedModel, h.config.trackUsage(r.Context(), record, adapterEventChannel(events))); err != nil {
 				recordDesktopError()
 			}
 			return
 		}
+		h.config.recordUsageEvents(r.Context(), record, events)
 		message, err := buildAnthropicMessage(events, requestedModel)
 		if err != nil {
 			recordDesktopError()
@@ -101,6 +106,9 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	response, streamEvents, err = h.config.doStream(r.Context(), prepared)
 	if err == nil && !clientStream && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 		unaryEvents, err = collectAdapterEvents(r.Context(), streamEvents)
+		if err == nil {
+			h.config.recordUsageEvents(r.Context(), record, unaryEvents)
+		}
 	}
 	if err != nil {
 		recordDesktopError()
@@ -124,7 +132,7 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if clientStream {
-		if err := writeAnthropicStream(r.Context(), w, requestedModel, streamEvents); err != nil {
+		if err := writeAnthropicStream(r.Context(), w, requestedModel, h.config.trackUsage(r.Context(), record, streamEvents)); err != nil {
 			recordDesktopError()
 		}
 		return

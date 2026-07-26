@@ -111,6 +111,7 @@ func (l *Log) Record(ctx context.Context, record *types.UsageRecord) error {
 		ThreadID:    record.ThreadID,
 		Provider:    record.Provider,
 		Model:       record.Model,
+		Surface:     Surface(record.Surface),
 		Status:      outcomeHTTPStatus(record.Status),
 		DurationMS:  record.Duration.Milliseconds(),
 		UsageStatus: status,

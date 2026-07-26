@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -55,7 +56,7 @@ func hasAnthropicNativeCredential(header http.Header) bool {
 	return strings.HasPrefix(bearer, "sk-ant-") || strings.HasPrefix(strings.TrimSpace(header.Get("x-api-key")), "sk-ant-")
 }
 
-func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Request, raw []byte, model, pathname string) bool {
+func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Request, raw []byte, model, pathname string, usageRecord *types.UsageRecord) bool {
 	var body map[string]any
 	if json.Unmarshal(raw, &body) != nil {
 		writeAnthropicError(w, 400, "invalid request body")
@@ -114,8 +115,11 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 	stream, _ := body["stream"].(bool)
 	if stream && strings.Contains(contentType, "text/event-stream") {
 		w.WriteHeader(response.StatusCode)
-		err := WriteAnthropicPassthroughStream(r.Context(), w, response.Body, h.config.BodyStall, h.config.ResponseLimit, nil)
-		return err == nil && response.StatusCode >= 200 && response.StatusCode < 300
+		observer := &AnthropicSSEObserver{}
+		err := WriteAnthropicPassthroughStream(r.Context(), w, response.Body, h.config.BodyStall, h.config.ResponseLimit, observer)
+		success := err == nil && response.StatusCode >= 200 && response.StatusCode < 300 && observer.TerminalSeen()
+		h.config.recordNativeUsage(r.Context(), usageRecord, observer.Usage(), success)
+		return success
 	}
 	bodyResult := ReadBoundedPassthroughBody(r.Context(), response.Body, h.config.BodyStall, h.config.ResponseLimit)
 	if bodyResult.Err != nil {
@@ -133,7 +137,30 @@ func (h *MessagesHandler) nativePassthrough(w http.ResponseWriter, r *http.Reque
 	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(bodyResult.Data)
-	return response.StatusCode >= 200 && response.StatusCode < 300
+	success := response.StatusCode >= 200 && response.StatusCode < 300
+	h.config.recordNativeUsage(r.Context(), usageRecord, anthropicBodyUsage(bodyResult.Data), success)
+	return success
+}
+
+func anthropicBodyUsage(data []byte) *types.Usage {
+	var body map[string]any
+	if json.Unmarshal(data, &body) != nil {
+		return nil
+	}
+	observer := &AnthropicSSEObserver{}
+	observer.mergeUsage(body["usage"])
+	return observer.Usage()
+}
+
+func (c HandlerConfig) recordNativeUsage(ctx context.Context, record *types.UsageRecord, value *types.Usage, success bool) {
+	if value == nil {
+		return
+	}
+	event := types.AdapterEvent{Type: types.EventError, Usage: value}
+	if success {
+		event.Type = types.EventDone
+	}
+	c.recordUsageEvents(ctx, record, []types.AdapterEvent{event})
 }
 
 func nativeAnthropicURL(base, pathname, rawQuery string) (string, error) {

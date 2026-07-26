@@ -192,6 +192,7 @@ type UsageRecord struct {
 	ThreadID  string        `json:"threadId,omitempty"`
 	Provider  string        `json:"provider"`
 	Model     string        `json:"model"`
+	Surface   string        `json:"surface,omitempty"`
 	AccountID string        `json:"accountId,omitempty"`
 	Usage     Usage         `json:"usage"`
 	Status    OutcomeStatus `json:"status"`

@@ -19,18 +19,19 @@ import (
 )
 
 type RequestLogEntry struct {
-	RequestID     string       `json:"requestId"`
-	Timestamp     int64        `json:"timestamp"`
-	Provider      string       `json:"provider"`
-	Model         string       `json:"model"`
-	Status        int          `json:"status"`
-	DurationMS    int64        `json:"durationMs"`
-	FirstOutputMS *int64       `json:"firstOutputMs,omitempty"`
-	ErrorCode     string       `json:"errorCode,omitempty"`
-	UpstreamError string       `json:"upstreamError,omitempty"`
-	UsageStatus   usage.Status `json:"usageStatus"`
-	Usage         *types.Usage `json:"usage,omitempty"`
-	TotalTokens   *int         `json:"totalTokens,omitempty"`
+	RequestID     string        `json:"requestId"`
+	Timestamp     int64         `json:"timestamp"`
+	Provider      string        `json:"provider"`
+	Model         string        `json:"model"`
+	Surface       usage.Surface `json:"surface,omitempty"`
+	Status        int           `json:"status"`
+	DurationMS    int64         `json:"durationMs"`
+	FirstOutputMS *int64        `json:"firstOutputMs,omitempty"`
+	ErrorCode     string        `json:"errorCode,omitempty"`
+	UpstreamError string        `json:"upstreamError,omitempty"`
+	UsageStatus   usage.Status  `json:"usageStatus"`
+	Usage         *types.Usage  `json:"usage,omitempty"`
+	TotalTokens   *int          `json:"totalTokens,omitempty"`
 }
 
 type RequestLog struct {
@@ -99,7 +100,7 @@ func (l *RequestLog) Record(ctx context.Context, record *types.UsageRecord) erro
 	value := record.Usage
 	l.add(RequestLogEntry{
 		RequestID: record.RequestID, Timestamp: record.StartedAt.UnixMilli(),
-		Provider: record.Provider, Model: record.Model, Status: outcomeStatus(record.Status),
+		Provider: record.Provider, Model: record.Model, Surface: usage.Surface(record.Surface), Status: outcomeStatus(record.Status),
 		DurationMS: record.Duration.Milliseconds(), UsageStatus: status,
 		Usage: &value, TotalTokens: &total,
 	}, false)
@@ -109,7 +110,7 @@ func (l *RequestLog) Record(ctx context.Context, record *types.UsageRecord) erro
 	if persist != nil {
 		return persist.Append(usage.Entry{
 			RequestID: record.RequestID, Timestamp: record.StartedAt.UnixMilli(), ThreadID: record.ThreadID,
-			Provider: record.Provider, Model: record.Model, ResolvedModel: record.Model,
+			Provider: record.Provider, Model: record.Model, Surface: usage.Surface(record.Surface), ResolvedModel: record.Model,
 			Status: outcomeStatus(record.Status), DurationMS: record.Duration.Milliseconds(),
 			UsageStatus: status, Usage: &value, TotalTokens: &total,
 		})
@@ -146,7 +147,7 @@ func (l *RequestLog) add(entry RequestLogEntry, persistEntry bool) {
 	persist := l.usage
 	l.mu.Unlock()
 	if persistEntry && persist != nil {
-		_ = persist.Append(usage.Entry{RequestID: entry.RequestID, Timestamp: entry.Timestamp, Provider: entry.Provider, Model: entry.Model, Status: entry.Status, DurationMS: entry.DurationMS, FirstOutputMS: entry.FirstOutputMS, UsageStatus: entry.UsageStatus, Usage: entry.Usage, TotalTokens: entry.TotalTokens, ErrorCode: entry.ErrorCode, UpstreamError: entry.UpstreamError})
+		_ = persist.Append(usage.Entry{RequestID: entry.RequestID, Timestamp: entry.Timestamp, Provider: entry.Provider, Model: entry.Model, Surface: entry.Surface, Status: entry.Status, DurationMS: entry.DurationMS, FirstOutputMS: entry.FirstOutputMS, UsageStatus: entry.UsageStatus, Usage: entry.Usage, TotalTokens: entry.TotalTokens, ErrorCode: entry.ErrorCode, UpstreamError: entry.UpstreamError})
 	}
 }
 func (l *RequestLog) Entries(provider, status string, tail int) []RequestLogEntry {
@@ -173,7 +174,7 @@ func (l *RequestLog) Hydrate(entries []usage.Entry) {
 	defer l.mu.Unlock()
 	start := max(0, len(entries)-l.capacity)
 	for _, entry := range entries[start:] {
-		l.entries = append(l.entries, RequestLogEntry{RequestID: entry.RequestID, Timestamp: entry.Timestamp, Provider: entry.Provider, Model: entry.Model, Status: entry.Status, DurationMS: entry.DurationMS, FirstOutputMS: entry.FirstOutputMS, ErrorCode: entry.ErrorCode, UpstreamError: entry.UpstreamError, UsageStatus: entry.UsageStatus, Usage: entry.Usage, TotalTokens: entry.TotalTokens})
+		l.entries = append(l.entries, RequestLogEntry{RequestID: entry.RequestID, Timestamp: entry.Timestamp, Provider: entry.Provider, Model: entry.Model, Surface: entry.Surface, Status: entry.Status, DurationMS: entry.DurationMS, FirstOutputMS: entry.FirstOutputMS, ErrorCode: entry.ErrorCode, UpstreamError: entry.UpstreamError, UsageStatus: entry.UsageStatus, Usage: entry.Usage, TotalTokens: entry.TotalTokens})
 	}
 }
 

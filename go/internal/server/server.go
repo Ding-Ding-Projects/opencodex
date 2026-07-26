@@ -115,7 +115,22 @@ func New(config Config) *Server {
 	if injectionDebug == nil {
 		injectionDebug = ocxlib.NewDebugLogBuffer()
 	}
-	handlerConfig := baseChatHandlerConfig(config, claudeDebug)
+	requestLogs := config.RequestLogs
+	if requestLogs == nil {
+		requestLogs = management.NewRequestLog(200)
+	}
+	recorder := config.UsageRecorder
+	if log, ok := recorder.(*usage.Log); ok {
+		requestLogs.SetUsageLog(log)
+		recorder = requestLogs
+	} else if recorder == nil {
+		recorder = requestLogs
+	} else {
+		recorder = fanoutRecorder{requestLog: requestLogs, recorder: recorder}
+	}
+	chatConfig := config
+	chatConfig.UsageRecorder = recorder
+	handlerConfig := baseChatHandlerConfig(chatConfig, claudeDebug)
 	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
 		claudeConfig := config.ManagementConfig.ClaudeCode
 		handlerConfig.NativeAnthropicBaseURL = claudeConfig.AnthropicBaseURL
@@ -161,19 +176,6 @@ func New(config Config) *Server {
 	}
 	if config.CompactHandler == nil {
 		config.CompactHandler = chat.NewCompactHandler(handlerConfig)
-	}
-	requestLogs := config.RequestLogs
-	if requestLogs == nil {
-		requestLogs = management.NewRequestLog(200)
-	}
-	recorder := config.UsageRecorder
-	if log, ok := recorder.(*usage.Log); ok {
-		requestLogs.SetUsageLog(log)
-		recorder = requestLogs
-	} else if recorder == nil {
-		recorder = requestLogs
-	} else {
-		recorder = fanoutRecorder{requestLog: requestLogs, recorder: recorder}
 	}
 	quota := config.CodexQuota
 	if quota == nil {
@@ -398,6 +400,7 @@ func baseChatHandlerConfig(config Config, debug *claude.DebugRing) chat.HandlerC
 	result := chat.HandlerConfig{
 		Registry: config.Registry, Combos: config.Combos, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client,
 		ClaudeDebug: debug, SearchLoop: config.SearchLoop, OnUsage: config.OnUsage,
+		Recorder: config.UsageRecorder, RequestID: RequestIDFromContext,
 	}
 	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
 		result.ClaudeModelMap = maps.Clone(config.ManagementConfig.ClaudeCode.ModelMap)

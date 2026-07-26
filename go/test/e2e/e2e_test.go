@@ -202,13 +202,25 @@ func TestProxyEndToEnd(t *testing.T) {
 	}
 
 	records := recorder.Records()
-	if len(records) != 2 {
-		t.Fatalf("usage record count = %d, want 2: %#v", len(records), records)
+	if len(records) != 4 {
+		t.Fatalf("usage record count = %d, want 4: %#v", len(records), records)
 	}
+	claudeSurfaces := 0
 	for _, record := range records {
 		if record.Usage.InputTokens != 7 || record.Usage.OutputTokens != 3 || record.Status != types.OutcomeSuccess {
 			t.Fatalf("usage record = %#v", record)
 		}
+		if record.Surface == "claude" {
+			claudeSurfaces++
+			if record.Provider != "google" || record.Model != "gemini-canned" {
+				t.Fatalf("Claude usage record = %#v", record)
+			}
+		} else if record.Surface != "" {
+			t.Fatalf("unexpected usage surface = %q in %#v", record.Surface, record)
+		}
+	}
+	if claudeSurfaces != 1 {
+		t.Fatalf("Claude usage surface count = %d, want 1: %#v", claudeSurfaces, records)
 	}
 
 	harness.cancel()

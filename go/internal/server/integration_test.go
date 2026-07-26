@@ -69,8 +69,16 @@ func TestIntegrationWiresDataAndManagementRoutes(t *testing.T) {
 	assertRequest(t, http.MethodPost, server.URL+"/v1/responses/compact", `{"model":"acme/wire","input":[{"type":"message","role":"user","content":"retain me"}]}`, http.StatusOK, `"output"`)
 
 	entries, err := usageLog.ReadAll()
-	if err != nil || len(entries) != 1 || entries[0].Usage == nil || usage.CanonicalTotal(*entries[0].Usage) != 3 {
+	if err != nil || len(entries) != 3 {
 		t.Fatalf("usage entries = %+v, error = %v", entries, err)
+	}
+	for _, entry := range entries {
+		if entry.Usage == nil || usage.CanonicalTotal(*entry.Usage) != 3 {
+			t.Fatalf("usage entry = %+v, want three measured tokens", entry)
+		}
+	}
+	if entries[0].Surface != "" || entries[1].Surface != "" || entries[2].Surface != usage.SurfaceClaude {
+		t.Fatalf("usage surfaces = %q, %q, %q", entries[0].Surface, entries[1].Surface, entries[2].Surface)
 	}
 }
 
