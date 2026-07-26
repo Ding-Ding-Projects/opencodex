@@ -25,12 +25,30 @@ type InboundTranslation struct {
 	CacheKeySource string
 }
 
+type InboundSurface string
+
+const (
+	InboundSurfaceClaude        InboundSurface = "claude"
+	InboundSurfaceClaudeDesktop InboundSurface = "claude-desktop"
+)
+
+func DetectInboundSurface(model string) InboundSurface {
+	model = StripOneMillionMarker(model)
+	if _, ok := ResolveDesktop3pAlias(model); ok {
+		return InboundSurfaceClaudeDesktop
+	}
+	return InboundSurfaceClaude
+}
+
 func ResolveInboundModel(model string, cfg *InboundConfig) string {
 	model = StripOneMillionMarker(model)
 	if resolved, ok := ResolveAlias(model); ok {
 		return resolved
 	}
 	if resolved, ok := ResolveDesktop3pAlias(model); ok {
+		if strings.HasPrefix(resolved, nativeProvider+"/") {
+			return strings.TrimPrefix(resolved, nativeProvider+"/")
+		}
 		return resolved
 	}
 	if cfg != nil {

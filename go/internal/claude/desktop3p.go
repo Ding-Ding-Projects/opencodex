@@ -1,15 +1,11 @@
 package claude
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -28,6 +24,7 @@ type Desktop3pModelEntry struct {
 	AnthropicFamilyTier string `json:"anthropicFamilyTier"`
 	IsFamilyDefault     bool   `json:"isFamilyDefault,omitempty"`
 	Supports1M          bool   `json:"supports1m,omitempty"`
+	Prefer1M            bool   `json:"prefer1m,omitempty"`
 }
 
 type Desktop3pRoutedModel struct {
@@ -47,8 +44,9 @@ type Desktop3pConfig struct {
 
 var desktop3pAliases = struct {
 	sync.RWMutex
-	values map[string]string
-}{values: map[string]string{}}
+	values  map[string]string
+	byRoute map[string]string
+}{values: map[string]string{}, byRoute: map[string]string{}}
 
 func ParseDesktop3pModeArgs(flags []string) (Desktop3pConfigMode, error) {
 	known := map[string]Desktop3pConfigMode{"--static": Desktop3pStatic, "--hybrid": Desktop3pHybrid, "--discovery-only": Desktop3pDiscovery}
@@ -95,15 +93,31 @@ func LegacyDesktop3pAlias(provider, modelID string) string {
 }
 
 func BuildDesktop3pRegistry(nativeSlugs []string, routed []Desktop3pRoutedModel) map[string]string {
-	_, registry := collectDesktop3pModels(nativeSlugs, routed)
-	installDesktop3pRegistry(registry)
-	return cloneStringMap(registry)
+	registry, _ := BuildDesktop3pRegistryWithProfile(nativeSlugs, routed, nil)
+	return registry
+}
+
+func BuildDesktop3pRegistryWithProfile(nativeSlugs []string, routed []Desktop3pRoutedModel, profile *DesktopProfile) (map[string]string, error) {
+	_, registry, aliasesByRoute, err := collectDesktop3pModels(nativeSlugs, routed, profile)
+	if err != nil {
+		return nil, err
+	}
+	installDesktop3pRegistry(registry, aliasesByRoute)
+	return cloneStringMap(registry), nil
 }
 
 func GenerateDesktop3pModels(nativeSlugs []string, routed []Desktop3pRoutedModel) []Desktop3pModelEntry {
-	models, registry := collectDesktop3pModels(nativeSlugs, routed)
-	installDesktop3pRegistry(registry)
+	models, _ := GenerateDesktop3pModelsWithProfile(nativeSlugs, routed, nil)
 	return models
+}
+
+func GenerateDesktop3pModelsWithProfile(nativeSlugs []string, routed []Desktop3pRoutedModel, profile *DesktopProfile) ([]Desktop3pModelEntry, error) {
+	models, registry, aliasesByRoute, err := collectDesktop3pModels(nativeSlugs, routed, profile)
+	if err != nil {
+		return nil, err
+	}
+	installDesktop3pRegistry(registry, aliasesByRoute)
+	return models, nil
 }
 
 func ResolveDesktop3pAlias(alias string) (string, bool) {
@@ -113,7 +127,22 @@ func ResolveDesktop3pAlias(alias string) (string, bool) {
 	return value, ok
 }
 
+func ActiveDesktop3pAlias(provider, modelID string) string {
+	route := provider + "/" + modelID
+	desktop3pAliases.RLock()
+	alias := desktop3pAliases.byRoute[route]
+	desktop3pAliases.RUnlock()
+	if alias != "" {
+		return alias
+	}
+	return Desktop3pAlias(provider, modelID)
+}
+
 func GenerateDesktop3pConfig(port int, nativeSlugs []string, routed []Desktop3pRoutedModel, apiKey string, mode Desktop3pConfigMode) (Desktop3pConfig, error) {
+	return GenerateDesktop3pConfigWithProfile(port, nativeSlugs, routed, apiKey, mode, nil)
+}
+
+func GenerateDesktop3pConfigWithProfile(port int, nativeSlugs []string, routed []Desktop3pRoutedModel, apiKey string, mode Desktop3pConfigMode, profile *DesktopProfile) (Desktop3pConfig, error) {
 	if port < 1 || port > 65535 {
 		return Desktop3pConfig{}, fmt.Errorf("desktop gateway port must be between 1 and 65535")
 	}
@@ -134,9 +163,15 @@ func GenerateDesktop3pConfig(port int, nativeSlugs []string, routed []Desktop3pR
 		ModelDiscoveryEnabled:   mode != Desktop3pStatic,
 	}
 	if mode == Desktop3pDiscovery {
-		BuildDesktop3pRegistry(nativeSlugs, routed)
+		if _, err := BuildDesktop3pRegistryWithProfile(nativeSlugs, routed, profile); err != nil {
+			return Desktop3pConfig{}, err
+		}
 	} else {
-		cfg.InferenceModels = GenerateDesktop3pModels(nativeSlugs, routed)
+		models, err := GenerateDesktop3pModelsWithProfile(nativeSlugs, routed, profile)
+		if err != nil {
+			return Desktop3pConfig{}, err
+		}
+		cfg.InferenceModels = models
 	}
 	return cfg, nil
 }
@@ -152,97 +187,7 @@ func DecodeDesktop3pConfig(data []byte) (Desktop3pConfig, error) {
 	return cfg, nil
 }
 
-func DefaultDesktop3pLibraryPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	if runtime.GOOS != "darwin" {
-		return "", fmt.Errorf("Claude Desktop 3P config is supported only on macOS")
-	}
-	return filepath.Join(home, "Library", "Application Support", "Claude-3p", "configLibrary"), nil
-}
-
-func PersistDesktop3pConfig(libraryPath string, port int, nativeSlugs []string, routed []Desktop3pRoutedModel, apiKey string, mode Desktop3pConfigMode) (string, error) {
-	if strings.TrimSpace(libraryPath) == "" {
-		return "", fmt.Errorf("desktop config library path must not be blank")
-	}
-	cfg, err := GenerateDesktop3pConfig(port, nativeSlugs, routed, apiKey, mode)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(libraryPath, 0o700); err != nil {
-		return "", fmt.Errorf("create desktop config library: %w", err)
-	}
-	metadataPath := filepath.Join(libraryPath, "_meta.json")
-	metadata, entries, err := readDesktop3pMetadata(metadataPath)
-	if err != nil {
-		return "", err
-	}
-	id := ""
-	for _, entry := range entries {
-		if entry["name"] == "opencodex" {
-			if existing, ok := entry["id"].(string); ok && existing != "" {
-				id = existing
-				break
-			}
-		}
-	}
-	if id == "" {
-		id, err = randomUUID()
-		if err != nil {
-			return "", err
-		}
-		entries = append(entries, map[string]any{"id": id, "name": "opencodex"})
-	}
-	metadata["appliedId"] = id
-	metadata["entries"] = entries
-	configData, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("encode desktop config: %w", err)
-	}
-	metadataData, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("encode desktop metadata: %w", err)
-	}
-	configPath := filepath.Join(libraryPath, id+".json")
-	if err := atomicWriteFile(configPath, append(configData, '\n'), 0o600); err != nil {
-		return "", fmt.Errorf("write desktop config: %w", err)
-	}
-	if err := atomicWriteFile(metadataPath, append(metadataData, '\n'), 0o600); err != nil {
-		return "", fmt.Errorf("write desktop metadata: %w", err)
-	}
-	return configPath, nil
-}
-
-func readDesktop3pMetadata(path string) (map[string]any, []map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return map[string]any{}, []map[string]any{}, nil
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("read desktop metadata: %w", err)
-	}
-	var metadata map[string]any
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return nil, nil, fmt.Errorf("decode desktop metadata: %w", err)
-	}
-	rawEntries, ok := metadata["entries"].([]any)
-	if !ok {
-		return nil, nil, fmt.Errorf("Claude Desktop _meta.json has no entries array")
-	}
-	entries := make([]map[string]any, 0, len(rawEntries))
-	for _, raw := range rawEntries {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			return nil, nil, fmt.Errorf("Claude Desktop _meta.json contains an invalid entry")
-		}
-		entries = append(entries, entry)
-	}
-	return metadata, entries, nil
-}
-
-func collectDesktop3pModels(nativeSlugs []string, routed []Desktop3pRoutedModel) ([]Desktop3pModelEntry, map[string]string) {
+func collectDesktop3pModels(nativeSlugs []string, routed []Desktop3pRoutedModel, profile *DesktopProfile) ([]Desktop3pModelEntry, map[string]string, map[string]string, error) {
 	candidates := make([]Desktop3pRoutedModel, 0, len(nativeSlugs)+len(routed))
 	for _, id := range nativeSlugs {
 		candidates = append(candidates, Desktop3pRoutedModel{Provider: nativeProvider, ID: id})
@@ -250,13 +195,60 @@ func collectDesktop3pModels(nativeSlugs []string, routed []Desktop3pRoutedModel)
 	candidates = append(candidates, routed...)
 	models := make([]Desktop3pModelEntry, 0, len(candidates))
 	registry := make(map[string]string)
+	aliasesByRoute := make(map[string]string, len(candidates))
+	if profile != nil {
+		profileModels := make([]DesktopProfileModel, 0, len(candidates))
+		for _, candidate := range candidates {
+			if candidate.Provider == "" || candidate.ID == "" {
+				continue
+			}
+			profileModels = append(profileModels, DesktopProfileModel{Route: candidate.Provider + "/" + candidate.ID, Label: displayDesktop3pModelID(candidate.ID) + " (" + candidate.Provider + ")", ContextWindow: candidate.ContextWindow})
+		}
+		reconciled, err := ReconcileDesktopProfile(*profile, profileModels)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		rendered, err := RenderDesktopProfile(reconciled, profileModels)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, model := range rendered {
+			aliasesByRoute[model.Route] = model.Name
+			if !isRealAnthropicDesktopRoute(model.Route) {
+				if existing, collision := registry[model.Name]; collision && existing != model.Route {
+					return nil, nil, nil, fmt.Errorf("desktop alias %q collides between %q and %q", model.Name, existing, model.Route)
+				}
+				registry[model.Name] = model.Route
+			}
+			models = append(models, Desktop3pModelEntry{Name: model.Name, LabelOverride: model.Label, AnthropicFamilyTier: string(model.Family), IsFamilyDefault: model.IsFamilyDefault, Supports1M: model.Supports1M, Prefer1M: model.Supports1M})
+		}
+		sortedRendered := append([]RenderedDesktopModel(nil), rendered...)
+		sort.Slice(sortedRendered, func(i, j int) bool { return sortedRendered[i].Route < sortedRendered[j].Route })
+		for _, model := range sortedRendered {
+			if isRealAnthropicDesktopRoute(model.Route) {
+				continue
+			}
+			provider, id, _ := strings.Cut(model.Route, "/")
+			legacy := LegacyDesktop3pAlias(provider, id)
+			if existing, collision := registry[legacy]; collision && existing != model.Route {
+				continue
+			}
+			registry[legacy] = model.Route
+		}
+		return models, registry, aliasesByRoute, nil
+	}
 	for _, candidate := range candidates {
 		if candidate.Provider == "" || candidate.ID == "" {
 			continue
 		}
 		route := candidate.Provider + "/" + candidate.ID
 		alias := Desktop3pAlias(candidate.Provider, candidate.ID)
-		entry := Desktop3pModelEntry{Name: alias, LabelOverride: displayDesktop3pModelID(candidate.ID) + " (" + candidate.Provider + ")", AnthropicFamilyTier: "opus", Supports1M: candidate.ContextWindow >= OneMillion}
+		if !IsClaudeShapedID(alias) {
+			return nil, nil, nil, fmt.Errorf("desktop alias %q for route %q is not Claude-shaped", alias, route)
+		}
+		aliasesByRoute[route] = alias
+		supports1M := candidate.ContextWindow >= OneMillion
+		entry := Desktop3pModelEntry{Name: alias, LabelOverride: displayDesktop3pModelID(candidate.ID) + " (" + candidate.Provider + ")", AnthropicFamilyTier: "opus", Supports1M: supports1M, Prefer1M: supports1M}
 		if alias == candidate.ID {
 			models = append(models, entry)
 			continue
@@ -274,7 +266,7 @@ func collectDesktop3pModels(nativeSlugs []string, routed []Desktop3pRoutedModel)
 	if len(models) > 0 {
 		models[0].IsFamilyDefault = true
 	}
-	return models, registry
+	return models, registry, aliasesByRoute, nil
 }
 
 func displayDesktop3pModelID(id string) string {
@@ -290,9 +282,10 @@ func displayDesktop3pModelID(id string) string {
 	return strings.Join(parts, " ")
 }
 
-func installDesktop3pRegistry(registry map[string]string) {
+func installDesktop3pRegistry(registry, aliasesByRoute map[string]string) {
 	desktop3pAliases.Lock()
 	desktop3pAliases.values = cloneStringMap(registry)
+	desktop3pAliases.byRoute = cloneStringMap(aliasesByRoute)
 	desktop3pAliases.Unlock()
 }
 
@@ -302,51 +295,4 @@ func cloneStringMap(input map[string]string) map[string]string {
 		output[key] = value
 	}
 	return output
-}
-
-func randomUUID() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", fmt.Errorf("generate desktop config id: %w", err)
-	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	hexValue := hex.EncodeToString(value[:])
-	return hexValue[:8] + "-" + hexValue[8:12] + "-" + hexValue[12:16] + "-" + hexValue[16:20] + "-" + hexValue[20:], nil
-}
-
-func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".ocx-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	committed := false
-	defer func() {
-		_ = tmp.Close()
-		if !committed {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := tmp.Chmod(mode); err != nil {
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	committed = true
-	return nil
 }

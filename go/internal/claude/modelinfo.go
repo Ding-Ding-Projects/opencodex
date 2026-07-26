@@ -70,6 +70,13 @@ func BuildModelInfos(native []DiscoveryModel, routed []DiscoveryModel, auto Auto
 }
 
 func BuildModelInfosWithStyle(native []DiscoveryModel, routed []DiscoveryModel, auto AutoContextMode, style AnthropicIDStyle) []ModelInfo {
+	return BuildModelInfosWithAlias(native, routed, auto, style, Desktop3pAlias)
+}
+
+func BuildModelInfosWithAlias(native []DiscoveryModel, routed []DiscoveryModel, auto AutoContextMode, style AnthropicIDStyle, aliasForRoute func(provider, modelID string) string) []ModelInfo {
+	if aliasForRoute == nil {
+		aliasForRoute = Desktop3pAlias
+	}
 	out := []ModelInfo{}
 	seen := map[string]bool{}
 	push := func(info ModelInfo, window int, allowAuto bool) {
@@ -99,14 +106,14 @@ func BuildModelInfosWithStyle(native []DiscoveryModel, routed []DiscoveryModel, 
 	for _, m := range native {
 		id := ClaudeCodeNativeAlias(m.ID)
 		if style == AnthropicIDDesktop3P {
-			id = Desktop3pAlias("native", m.ID)
+			id = aliasForRoute("native", m.ID)
 		}
 		push(newModelInfo(id, m.ID+" (native)", m), m.ContextWindow, true)
 	}
 	for _, m := range routed {
 		id := ClaudeCodeAlias(m.Provider, m.ID)
 		if style == AnthropicIDDesktop3P {
-			id = Desktop3pAlias(m.Provider, m.ID)
+			id = aliasForRoute(m.Provider, m.ID)
 		}
 		push(newModelInfo(id, m.ID+" ("+m.Provider+")", m), m.ContextWindow, m.Provider != "anthropic")
 	}
