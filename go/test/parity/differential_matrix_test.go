@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -104,6 +105,8 @@ type expectedRuntimeDiff struct {
 }
 
 var knownRuntimeDiffs = map[string]expectedRuntimeDiff{
+	"api-access/host-header":                 {body: true},
+	"api-access/origin-priority":             {body: true},
 	"config/wrong-field-type":                {body: true},
 	"management-deletion/logs-delete":        {status: true, body: true},
 	"management-deletion/logs-empty":         {body: true},
@@ -171,6 +174,9 @@ func compareRuntimeBytes(t *testing.T, scenario string, goResult, tsResult runti
 	if runtimeDiffsEqual(actual, expected) {
 		if known {
 			t.Logf("KNOWN DIFFERENTIAL [%s]: status=%t headers=%v body=%t", scenario, actual.status, actual.headers, actual.body)
+			if os.Getenv("OCX_REVEAL_KNOWN_DIFFS") == "1" {
+				t.Logf("KNOWN DIFFERENTIAL BYTES [%s]\nGo=%s\nTS=%s", scenario, goResult.body, tsResult.body)
+			}
 		}
 		return
 	}

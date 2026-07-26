@@ -71,7 +71,7 @@ func TestTypeScriptAndGoEmptyResponsesPassthroughError(t *testing.T) {
 		if request.URL.Path != "/v1/responses" {
 			t.Errorf("passthrough path = %q; want /v1/responses", request.URL.Path)
 		}
-		writer.Header().Set("Retry-After", "17")
+		writer.Header().Set("Retry-After", "0")
 		writer.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(upstream.Close)

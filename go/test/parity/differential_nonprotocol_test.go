@@ -32,7 +32,7 @@ func TestTypeScriptAndGoConfigInterpretation(t *testing.T) {
 			scenario.mutate(config)
 			tsProxy := startTypeScriptProxy(t, config)
 			goProxy := startProxyWithConfig(t, config)
-			compareRuntimeBytes(t, "config/"+scenario.name, captureGET(t, goProxy.baseURL, "/api/config"), captureGET(t, tsProxy.baseURL, "/api/config"), false)
+			compareRuntimeBytes(t, "config/"+scenario.name, captureGET(t, goProxy.baseURL, "/api/config"), captureGET(t, tsProxy.baseURL, "/api/config"), true)
 		})
 	}
 }

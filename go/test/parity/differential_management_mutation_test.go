@@ -142,6 +142,49 @@ func TestTypeScriptAndGoManagementControlMutations(t *testing.T) {
 	compare("auto-switch-invalid", http.MethodPut, "/api/codex-auth/auto-switch", map[string]any{"threshold": 101})
 }
 
+func TestTypeScriptAndGoAPIAccessEndpoints(t *testing.T) {
+	upstream := newDifferentialUpstream(t)
+	config := differentialConfig(upstream.server.URL, []string{"success"})
+	config["hostname"] = "0.0.0.0"
+	config["authToken"] = managementParityToken
+	config["apiKeys"] = []any{map[string]any{
+		"id": "parity-management", "name": "Parity management", "key": managementParityToken, "createdAt": "2026-07-26T00:00:00.000Z",
+	}}
+	config["claudeCode"] = map[string]any{"enabled": false}
+	config["corsAllowOrigins"] = []string{"https://origin.example.test:8443"}
+	authEnvironment := "OPENCODEX_API_AUTH_TOKEN=" + managementParityToken
+	tsProxy := startTypeScriptProxy(t, config, authEnvironment)
+	goProxy := startProxyWithConfig(t, config, authEnvironment)
+	compare := func(scenario, host, origin string) {
+		t.Helper()
+		goResult := captureManagementRequestWithAuthority(t, goProxy.baseURL, "/api/keys", host, origin)
+		tsResult := captureManagementRequestWithAuthority(t, tsProxy.baseURL, "/api/keys", host, origin)
+		compareRuntimeBytes(t, "api-access/"+scenario, goResult, tsResult, true)
+	}
+	compare("host-header", "api.example.test:7777", "")
+	compare("origin-priority", "fallback.example.test:8888", "https://origin.example.test:8443")
+}
+
+func captureManagementRequestWithAuthority(t *testing.T, baseURL, path, host, origin string) runtimeResponse {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, baseURL+path, nil)
+	if err != nil {
+		return runtimeResponse{err: err}
+	}
+	request.Host = host
+	if origin != "" {
+		request.Header.Set("Origin", origin)
+	}
+	request.Header.Set("Authorization", "Bearer "+managementParityToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return runtimeResponse{err: err}
+	}
+	defer response.Body.Close()
+	payload, readErr := io.ReadAll(response.Body)
+	return runtimeResponse{status: response.StatusCode, header: response.Header.Clone(), body: payload, err: readErr}
+}
+
 func TestTypeScriptAndGoManagementLogDeletionMutations(t *testing.T) {
 	upstream := newDifferentialUpstream(t)
 	config := differentialConfig(upstream.server.URL, []string{"success"})

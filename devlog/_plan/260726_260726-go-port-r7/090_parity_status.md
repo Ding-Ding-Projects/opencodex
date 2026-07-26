@@ -64,6 +64,8 @@ Dynamic request-log fields are normalized separately and narrowly:
 | config | wrong known-field type | Go fallback config representation | TS repaired/default config representation |
 | management | DELETE `/api/logs`, `/api/debug/usage-logs`, and `/api/usage` | returns 200 and clears the corresponding Go state | route is absent and returns 404 |
 | management | GET `/api/logs` and `/api/usage` after the extra Go DELETE routes | empty state | original request remains visible |
+| management API access | GET `/api/keys` with an explicit Host | omits key `prefix`; map-sorted response fields | includes redacted key `prefix`; insertion-order response fields |
+| management API access | GET `/api/keys` on a wildcard bind with an allowed Origin | derives public endpoints from Host | prefers the Origin scheme and authority |
 
 Owner fixes promoted the unknown-command stdout/stderr contract and the
 `GET /health` 404 body to strict assertions. Socket-cut SSE status, headers,
@@ -88,10 +90,30 @@ owner fix at `go/internal/cli/serve.go:370` now matches
 also initially found a Responses passthrough difference in empty-body handling
 and Retry-After preservation. The concurrent server owner fix now matches the
 contract at `src/server/responses/passthrough-error.ts:23`, and that scenario is
-strict as well. The fixable known runtime set remains six scenarios: one config
-repair plus five management deletion outcomes.
+strict as well. Round 17 added API-access endpoint discovery and found two
+management response-body differences. The fixable known runtime set is now
+eight scenarios: one config repair, five management deletion outcomes, and two
+API-access response shapes.
 Status and body dimensions are tracked independently, so a disappearing
 difference cannot silently pass as a changed known-diff shape.
+
+### Round 17 owner handoff
+
+The config difference originates at `go/internal/config/config.go:289-303`
+and the startup fallback at `go/internal/cli/provider.go:65-85`. With
+`websockets: "true"`, Go currently exposes the fresh OpenAI default config;
+TS treats `websockets` as a passthrough field and preserves the configured
+`differential` provider (`src/config.ts:718-751`). Status is 200 on both sides;
+only the body differs.
+
+The five deletion scenarios originate from three Go-only handlers and their
+state effects: `go/internal/management/logs.go:190-196` (`DELETE /api/logs`),
+`:294-302` (`DELETE /api/debug/usage-logs`), and `:317-325`
+(`DELETE /api/usage`), all registered at
+`go/internal/management/api.go:133`. TS has only the corresponding GET routes
+at `src/server/management/logs-usage-routes.ts:66-69`, `:80-83`, and
+`:121-159`. Each DELETE is Go 200 `{"ok":true}` versus TS 404; the logs and
+usage follow-up GETs then differ because only Go cleared the state.
 
 ### Intentional native-distribution difference
 
@@ -127,7 +149,7 @@ Go statement coverage:
   Responses, Messages, and Chat request/stream/error families, including tools,
   reasoning, images, structured output, Unicode splits, cancellation,
   concurrency, failover, keep-alive, and large bodies.
-- **Whole user-facing product: about 57%.** This weighted inventory includes
+- **Whole user-facing product: about 58%.** This weighted inventory includes
   management, auth, lifecycle, platform, and sidecar features that have little
   or no differential coverage. It is the appropriate denominator for a claim
   that Go can replace the complete TypeScript application.
@@ -139,7 +161,7 @@ Go statement coverage:
 | Chat Completions | 8% | partial | production route and error paths; fewer advanced transform fixtures than Responses |
 | Routing, pools, combos, quota failover | 10% | partial | synthetic multi-account rotation/cooldown; no real provider rate-limit service |
 | Provider-native transports | 10% | partial | adapter selection, synthetic wire fixtures, and strict per-model Chat/Responses override; no live auth/provider contract |
-| Management API | 10% | substantial | provider/model/key mutation sequence, account-key switch, auth negative, debug controls, byte-locked sidecar settings, deletion-route audit, and persistence within one runtime session; OAuth account mutations remain |
+| Management API | 10% | substantial | provider/model/key mutation sequence, account-key switch, auth negative, debug controls, byte-locked sidecar settings, deletion-route audit, API-access endpoint discovery, and persistence within one runtime session; OAuth account mutations remain |
 | Config and migrations | 7% | partial | defaults, unknown fields, wrong type; no cross-version/corrupt-disk migration matrix |
 | CLI and service lifecycle | 5% | partial | built binary, unknown command, startup, and update/restart dry-run plans; no OS service-manager execution matrix |
 | Codex shim/inject integration | 5% | substantial | injected config plus four sequential shim-routed turns and backup restoration; no real Codex App session |
@@ -147,7 +169,7 @@ Go statement coverage:
 | Live WebSocket/realtime | 5% | partial | Responses WS six-turn connection and generated stream; Go live sideband text/binary byte relay; reconnect/backpressure and TS live relay fixture remain |
 | Platform, tray, update, storage, search, vision | 8% | minimal | package tests may exist, but no TS-vs-Go production-path differential lock |
 
-The weighted 57% is deliberately conservative and approximate. It must not be
+The weighted 58% is deliberately conservative and approximate. It must not be
 reported as branch or line coverage.
 
 ### Explicitly unobserved boundaries
@@ -192,9 +214,14 @@ connection per runtime before measuring reuse. This removes its former race with
 post-concurrency pool trimming; 20 consecutive focused runs passed without a
 retry or timing sleep.
 
-On the current workstation the Round 13 complete default parity package finishes
-in about 15–19 seconds (excluding the opt-in workloads), comfortably inside the
-repository's 300-second gate.
+On the current workstation the Round 17 complete default parity package finishes
+in 17.5 seconds (excluding the opt-in workloads), comfortably inside the
+repository's 300-second gate. The slowest test families are management mutation
+(5.16s), built-binary keepalive (2.43s), and advanced Responses (1.52s, of which
+the 12 MiB stream is 1.16s). No default test needs opt-in isolation. Changing
+the empty-503 fixture from `Retry-After: 17` to the equally valid `0` preserves
+header/body parity coverage while reducing that focused test from about 10.2s
+to 1.15s.
 
 ## Round 16 TypeScript baseline audit
 
@@ -219,6 +246,30 @@ policy reads the TS-shaped `AllowPrivateNetworkByDefault`, while the legacy Go
 registry exposed `AllowPrivateNetworkDefault`. The registry now publishes both
 names from one synchronized roster value, with a regression test covering all
 four local/private presets and a remote negative control.
+
+## Round 17 next-boundary assessment
+
+Quota-aware subagent fallback is suitable for the production differential
+harness. Two sequential `x-openai-subagent: collab_spawn` requests can use a
+local primary that returns 429 and a healthy local fallback. The first response
+must feed model health; the second must be rewritten to the fallback before
+route-dependent normalization. TS wires this at
+`src/server/responses/core.ts:880-934` and records failure feedback through
+`recordSubagentQuotaFailureForThreadSpawn`. Go has selection and feedback logic
+in `go/internal/codex/subagent_model_fallback.go`, but the production Responses
+core currently wires only guidance (`go/internal/server/responses_core_port.go`
+and `go/internal/server/server.go:173`). A hermetic two-turn differential test
+can therefore verify the missing integration without real provider accounts.
+
+Continuation state is also differentially testable, but `/api/system/memory`
+needs semantic rather than whole-body byte comparison because PID, runtime
+version, uptime, and heap counters intentionally differ. The production test
+should perform one stored response, a second request with
+`previous_response_id`, compare the expanded upstream input, then compare only
+`responseState.{count,totalBytes,largestBytes,oldestAgeMs}`. Go already has the
+store and metrics in `go/internal/claude/state.go:29-81`, but no production call
+sites and no `responseState` field in `go/internal/management/system.go:17-28`.
+Focused store unit tests are useful but cannot replace that end-to-end seam.
 
 ## Performance measurements
 
