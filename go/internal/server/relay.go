@@ -8,7 +8,39 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 )
+
+type RelayRetryClass string
+
+const (
+	RelayRetryNone            RelayRetryClass = "none"
+	RelayRetryTransientHTTP   RelayRetryClass = "transient_http"
+	RelayRetryConnectionReset RelayRetryClass = "connection_reset"
+)
+
+// ClassifyRelayRetry permits replay only before any response bytes are
+// committed and only when the request body can be rebuilt. Mid-stream failures
+// receive a synthetic terminal tail instead of a duplicate upstream send.
+func ClassifyRelayRetry(status int, err error, committed, replayable bool, elapsed time.Duration) RelayRetryClass {
+	if committed || !replayable || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return RelayRetryNone
+	}
+	if elapsed > 15*time.Second {
+		return RelayRetryNone
+	}
+	if err != nil {
+		if ocxlib.IsConnectionResetError(err) {
+			return RelayRetryConnectionReset
+		}
+		return RelayRetryNone
+	}
+	if ocxlib.IsTransientUpstreamStatus(status) {
+		return RelayRetryTransientHTTP
+	}
+	return RelayRetryNone
+}
 
 type RelayOptions struct {
 	Heartbeat time.Duration

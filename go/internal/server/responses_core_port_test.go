@@ -180,3 +180,20 @@ func TestResponsesCoreRejectsUnreadableEncryptedAgentTask(t *testing.T) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }
+
+func TestResponsesCoreExtractsQuotaHeadersBehindCallback(t *testing.T) {
+	var account, primary string
+	core := NewResponsesCore(ResponsesCoreConfig{ConsumeQuotaHeaders: func(_ context.Context, accountID string, headers http.Header) {
+		account = accountID
+		primary = headers.Get("X-Codex-Primary-Used-Percent")
+		headers.Set("X-Codex-Primary-Used-Percent", "mutated")
+	}})
+	headers := http.Header{"X-Codex-Primary-Used-Percent": {"73"}, "Retry-After": {"60"}}
+	core.consumeQuotaHeaders(context.Background(), &types.AuthContext{AccountID: "acct-1"}, headers)
+	if account != "acct-1" || primary != "73" {
+		t.Fatalf("quota callback account=%q primary=%q", account, primary)
+	}
+	if headers.Get("X-Codex-Primary-Used-Percent") != "73" {
+		t.Fatal("quota callback mutated the upstream response headers")
+	}
+}

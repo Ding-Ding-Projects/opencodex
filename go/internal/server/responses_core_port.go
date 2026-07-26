@@ -38,6 +38,10 @@ type ResponsesCoreConfig struct {
 	EffortCap         string
 	SubagentEffortCap string
 	ShadowCall        *ShadowCallIntercept
+	// ConsumeQuotaHeaders is invoked as soon as upstream headers arrive. The
+	// callback owns account-mode filtering and state; ResponsesCore only extracts
+	// the authenticated account identity and an isolated header snapshot.
+	ConsumeQuotaHeaders func(context.Context, string, http.Header)
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -250,6 +254,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			}
 			return nil, nil, auth, resolved, pick, &forwardError{status: http.StatusBadGateway, kind: "provider_fetch_error", err: err}
 		}
+		core.consumeQuotaHeaders(ctx, auth, response.Header)
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			if pick != nil {
 				core.config.Combos.NoteSuccess(pick)
@@ -273,6 +278,13 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		}
 		return nil, nil, auth, resolved, pick, &forwardError{status: response.StatusCode, kind: "upstream_error", retryAfter: response.Header.Get("Retry-After"), err: fmt.Errorf("%s", message)}
 	}
+}
+
+func (core *ResponsesCore) consumeQuotaHeaders(ctx context.Context, auth *types.AuthContext, headers http.Header) {
+	if core == nil || core.config.ConsumeQuotaHeaders == nil || auth == nil || strings.TrimSpace(auth.AccountID) == "" {
+		return
+	}
+	core.config.ConsumeQuotaHeaders(ctx, auth.AccountID, headers.Clone())
 }
 
 func (core *ResponsesCore) nextCombo(request *types.NormalizedRequest, pick *combos.Pick, status int, code, message, retryAfter string) (*combos.Pick, bool) {
