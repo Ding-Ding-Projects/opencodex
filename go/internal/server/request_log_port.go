@@ -224,7 +224,7 @@ type requestLogDTO struct {
 
 func newRequestLogDTO(entry RequestLogEntry) requestLogDTO {
 	surface := entry.Surface
-	if surface != "claude" && surface != "claude-desktop" {
+	if !isKnownUsageSurface(surface) {
 		surface = ""
 	}
 	var attempts []RequestAttemptLog
@@ -244,6 +244,10 @@ func newRequestLogDTO(entry RequestLogEntry) requestLogDTO {
 		Affinity: entry.Affinity, TransportPhase: entry.TransportPhase, TerminalSource: entry.TerminalSource,
 		DisplayMetrics: displayMetricsFor(entry.Provider, entry.Model, entry.DurationMS, entry.UsageStatus, entry.Usage, entry.RequestedServiceTier, entry.ConfiguredServiceTier, entry.ResponseServiceTier),
 	}
+}
+
+func isKnownUsageSurface(surface string) bool {
+	return surface == "claude" || surface == "claude-desktop" || surface == "grok"
 }
 
 func hasAdvancedAttempts(attempts []RequestAttemptLog) bool {

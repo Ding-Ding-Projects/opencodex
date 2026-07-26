@@ -210,6 +210,7 @@ func enrichRegistry(rows []ProviderRegistryEntry) {
 			e.Models, e.ModelContextWindows, e.ModelReasoningEfforts = cloneStrings(AntigravityModels), cloneIntMap(AntigravityModelContextWindows), cloneStringSlices(AntigravityModelEfforts)
 		case "kiro":
 			e.Models, e.ModelContextWindows, e.ModelReasoningEfforts = cloneStrings(KiroModels), cloneIntMap(KiroModelContextWindows), cloneStringSlices(KiroModelReasoningEfforts)
+			e.Note = "Import-first: reuses your installed Kiro CLI login — requires kiro-cli installed and signed in (`kiro-cli login`). Experimental third-party harness — see Kiro ToS."
 		case "anthropic", "anthropic-apikey":
 			e.JawcodeBundle = "anthropic"
 		case "openrouter":

@@ -53,6 +53,7 @@ type Config struct {
 	SubagentEffortCap           string                     `json:"subagentEffortCap,omitempty"`
 	MultiAgentMode              string                     `json:"multiAgentMode,omitempty"`
 	MultiAgentGuidanceEnabled   *bool                      `json:"multiAgentGuidanceEnabled,omitempty"`
+	GrokExcludedModels          []string                   `json:"grokExcludedModels,omitempty"`
 	DisabledModels              []string                   `json:"disabledModels,omitempty"`
 	CustomModels                []CustomModel              `json:"customModels,omitempty"`
 	ShadowCallIntercept         *ShadowCallInterceptConfig `json:"shadowCallIntercept,omitempty"`

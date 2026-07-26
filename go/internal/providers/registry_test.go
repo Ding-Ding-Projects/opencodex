@@ -2,6 +2,7 @@ package providers
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -121,4 +122,11 @@ func firstMatch(values []string, target string) string {
 		return target
 	}
 	return ""
+}
+
+func TestKiroRegistrySurfacesCLIPrerequisite(t *testing.T) {
+	entry, ok := GetProviderRegistryEntry("kiro")
+	if !ok || !strings.Contains(entry.Note, "kiro-cli login") || !strings.Contains(entry.Note, "requires kiro-cli installed") {
+		t.Fatalf("Kiro registry note = %q", entry.Note)
+	}
 }

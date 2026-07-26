@@ -24,6 +24,25 @@ func TestUsageFromResponsesPayload(t *testing.T) {
 	}
 }
 
+func TestRequestLogDTOKeepsKnownGrokSurface(t *testing.T) {
+	entry := RequestLogEntry{RequestID: "req-grok", Provider: "acme", Model: "model", Surface: "grok", Status: 200}
+	payload, err := json.Marshal(newRequestLogDTO(entry))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"surface":"grok"`) {
+		t.Fatalf("Grok surface was dropped: %s", payload)
+	}
+	entry.Surface = "unknown"
+	payload, err = json.Marshal(newRequestLogDTO(entry))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), `"surface"`) {
+		t.Fatalf("unknown surface leaked: %s", payload)
+	}
+}
+
 func TestRequestLogStoreRingAndPrivacyRedaction(t *testing.T) {
 	const secret = "sk-123456789-secret"
 	const body = `{"input":"private prompt body","account_id":"acct-private"}`

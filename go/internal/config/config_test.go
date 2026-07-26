@@ -32,6 +32,22 @@ func TestLoadLegacyConfigWithoutNewCollections(t *testing.T) {
 	}
 }
 
+func TestGrokExcludedModelsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.GrokExcludedModels = []string{"native/gpt-5.5", "acme/model"}
+	if err := Save(path, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded.GrokExcludedModels, cfg.GrokExcludedModels) {
+		t.Fatalf("grokExcludedModels = %#v, want %#v", loaded.GrokExcludedModels, cfg.GrokExcludedModels)
+	}
+}
+
 func TestLoadAcceptsUTF8BOMAndRewritesCanonicalJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	payload := []byte(`{"port":10100,"hostname":"127.0.0.1","providers":{"legacy":{"adapter":"openai-chat","baseUrl":"https://example.test/v1","apiKey":"legacy-secret"}},"defaultProvider":"legacy"}`)

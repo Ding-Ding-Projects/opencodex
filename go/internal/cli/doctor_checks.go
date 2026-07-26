@@ -217,7 +217,7 @@ func appendCodexRuntimeCheck(parent context.Context, report *doctorReport, deps 
 
 func appendProxyHealthCheck(parent context.Context, report *doctorReport, host string, port int) {
 	if port <= 0 {
-		report.add(doctorCheck{Name: "proxy health", Status: doctorInfo, Detail: "proxy is not running"})
+		report.add(doctorCheck{Name: "proxy health", Status: doctorInfo, Detail: "proxy is not running", Hint: proxyDownRestartHint(config.DefaultPort, false)})
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, doctorServiceTimeout)
@@ -227,6 +227,14 @@ func appendProxyHealthCheck(parent context.Context, report *doctorReport, host s
 	} else {
 		report.add(doctorCheck{Name: "proxy health", Status: doctorWarn, Detail: fmt.Sprintf("runtime record exists but %s:%d is not healthy", host, port), Hint: "Run 'ocx status' and inspect service logs."})
 	}
+}
+
+func proxyDownRestartHint(port int, serviceViable bool) string {
+	restart := "Restart it with 'ocx start', or install the persistent service: 'ocx service install'."
+	if serviceViable {
+		restart = "Restart it with 'ocx service start' (service installed) or 'ocx start'."
+	}
+	return fmt.Sprintf("Codex/Claude clients pinned to 127.0.0.1:%d fail with errors like \"error sending request for url (http://127.0.0.1:%d/v1/responses)\". %s", port, port, restart)
 }
 
 type serviceMemoryPayload struct {

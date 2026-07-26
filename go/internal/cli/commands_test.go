@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,55 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 )
+
+func TestProductionDispatchSurfacesProxyRestartGuidance(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", home)
+	t.Setenv("HOME", home)
+	cfg := config.Default()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	cfg.Port = listener.Addr().(*net.TCPAddr).Port
+	if err := config.Save(filepath.Join(home, "config.json"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	streams := IO{In: strings.NewReader(""), Out: &out, Err: &errOut}
+	if code := Run(context.Background(), []string{"status"}, streams); code != 0 {
+		t.Fatalf("status exit=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Codex/Claude requests will fail with connection errors") || !strings.Contains(out.String(), "ocx service install") {
+		t.Fatalf("status output missing restart guidance: %s", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run(context.Background(), []string{"doctor"}, streams); code != 0 {
+		t.Fatalf("doctor exit=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "error sending request for url") || !strings.Contains(out.String(), "ocx service install") {
+		t.Fatalf("doctor output missing restart guidance: %s", out.String())
+	}
+}
+
+func TestProductionDispatchSurfacesKiroCLIPrerequisite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("KIRO_ACCESS_TOKEN", "")
+	var out, errOut bytes.Buffer
+	if code := Run(context.Background(), []string{"login", "kiro"}, IO{In: strings.NewReader(""), Out: &out, Err: &errOut}); code == 0 {
+		t.Fatal("kiro login unexpectedly succeeded")
+	}
+	for _, fragment := range []string{"curl -fsSL https://cli.kiro.dev/install | bash", "kiro-cli login"} {
+		if !strings.Contains(errOut.String(), fragment) {
+			t.Fatalf("Kiro error missing %q: %s", fragment, errOut.String())
+		}
+	}
+}
 
 func TestCompletionScriptsContainCommands(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {

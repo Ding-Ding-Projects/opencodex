@@ -81,6 +81,10 @@ func runStatus(ctx context.Context, args []string, streams IO) error {
 		})
 	}
 	fmt.Fprintf(streams.Out, "Proxy:  healthy=%t pid=%d port=%d\n", healthy, pid, port)
+	if !healthy {
+		fmt.Fprintln(streams.Out, "        Not running — Codex/Claude requests will fail with connection errors.")
+		fmt.Fprintln(streams.Out, "        Restart with 'ocx start', or install the persistent service: 'ocx service install'.")
+	}
 	fmt.Fprintf(streams.Out, "Service: %s\n", serviceSummary)
 	if pid > 0 && !platform.ProcessAlive(pid) {
 		fmt.Fprintln(streams.Out, "Runtime: stale PID file")

@@ -49,7 +49,7 @@ func defaultCommandSpecs() []commandSpec {
 		{Name: "help", Usage: "ocx help [command]", Summary: "Show help", Handler: commandHelpHandler},
 		{Name: "version", Aliases: []string{"-v", "--version"}, Usage: "ocx --version", Summary: "Print version", Handler: commandVersionHandler},
 		{Name: "start", Aliases: []string{"serve"}, Usage: "ocx start [--host HOST] [--port PORT]", Summary: "Start the proxy server", Handler: runServe},
-		{Name: "stop", Usage: "ocx stop", Summary: "Gracefully stop the proxy", Handler: runStop},
+		{Name: "stop", Usage: "ocx stop", Summary: "Gracefully stop the proxy", Handler: runStopCommand},
 		{Name: "restart", Usage: "ocx restart", Summary: "Restart the proxy in background", Handler: runRestart},
 		{Name: "ensure", Usage: "ocx ensure", Summary: "Ensure the proxy is running", Handler: runEnsure},
 		{Name: "health", Usage: "ocx health [--json]", Summary: "Check proxy health", Handler: runHealth},

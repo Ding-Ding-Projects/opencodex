@@ -21,6 +21,14 @@ import (
 
 var reclaimListenPort = server.ReclaimListenPort
 
+func runStopCommand(ctx context.Context, args []string, streams IO) error {
+	if err := runStop(ctx, args, streams); err != nil {
+		return err
+	}
+	fmt.Fprintln(streams.Out, "Warning: Codex/Claude requests through the proxy will fail until it is restarted ('ocx start' or 'ocx service start').")
+	return nil
+}
+
 func runStop(ctx context.Context, args []string, streams IO) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: ocx stop")
