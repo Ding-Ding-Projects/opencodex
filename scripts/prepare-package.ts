@@ -20,6 +20,18 @@ function chmodTree(path: string): void {
   chmodIfExists(path, 0o644);
 }
 
+function chmodNativeBinaries(path: string): void {
+  if (!existsSync(path)) return;
+  const st = statSync(path);
+  if (st.isDirectory()) {
+    chmodIfExists(path, 0o755);
+    for (const entry of readdirSync(path)) chmodNativeBinaries(join(path, entry));
+    return;
+  }
+  chmodIfExists(path, path.endsWith(".txt") ? 0o644 : 0o755);
+}
+
 chmodIfExists(join(root, "bin", "ocx.mjs"), 0o755);
 chmodIfExists(join(root, "bin", "package-main.mjs"), 0o644);
+chmodNativeBinaries(join(root, "bin", "native"));
 chmodTree(join(root, "gui", "dist"));

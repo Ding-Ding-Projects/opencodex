@@ -360,7 +360,7 @@ func waitHTTPReady(t *testing.T, port int, logs *bytes.Buffer) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		response, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/health")
+		response, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/healthz")
 		if err == nil {
 			response.Body.Close()
 			if response.StatusCode == http.StatusOK {

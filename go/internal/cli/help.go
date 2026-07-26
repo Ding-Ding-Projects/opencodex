@@ -28,7 +28,7 @@ var commandHelp = map[string]string{
 	"debug":       "Usage: ocx debug <status|on|off|stack-on|stack-off>",
 	"service":     "Usage: ocx service [install|start|stop|status|uninstall]",
 	"tray":        "Usage: ocx tray [install|start|stop|restart|status|uninstall|run] [--json] [--no-start]\n\nManage the Windows system tray companion.",
-	"update":      "Usage: ocx update [--tag latest|preview] [--dry-run]\n       ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]",
+	"update":      "Usage: ocx update --tag latest|preview [--destination PATH] [--dry-run]\n       ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]\n\nResolve a platform-native GitHub release artifact, verify its SHA-256 manifest, and replace the current binary.",
 }
 
 func PrintHelp(writer io.Writer, command string) error {

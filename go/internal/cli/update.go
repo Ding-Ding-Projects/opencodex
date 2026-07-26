@@ -5,13 +5,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/platform"
-	"github.com/lidge-jun/opencodex-go/internal/tray"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
+
+var resolveNativeReleaseArtifact = func(ctx context.Context, channel updatepkg.Channel) (updatepkg.ReleaseArtifact, error) {
+	resolver := updatepkg.NewGitHubReleaseResolver()
+	return resolver.Resolve(ctx, channel)
+}
+
+var downloadNativeUpdate = platform.DownloadAndReplace
 
 func runUpdate(ctx context.Context, args []string, streams IO) error {
 	flags := flag.NewFlagSet("update", flag.ContinueOnError)
@@ -25,40 +30,36 @@ func runUpdate(ctx context.Context, args []string, streams IO) error {
 		return err
 	}
 	if *tag != "" {
+		if *url != "" || *sha != "" {
+			return fmt.Errorf("--tag cannot be combined with --url or --sha256")
+		}
 		channel := updatepkg.Channel(strings.ToLower(strings.TrimSpace(*tag)))
 		if err := updatepkg.ValidateChannel(channel); err != nil {
 			return err
 		}
-		installer := updatepkg.Installer(strings.ToLower(strings.TrimSpace(os.Getenv("OCX_INSTALLER"))))
-		if installer != updatepkg.InstallerBun && installer != updatepkg.InstallerNPM {
-			executable, _ := os.Executable()
-			installer = updatepkg.DetectInstaller(executable)
+		artifact, err := resolveNativeReleaseArtifact(ctx, channel)
+		if err != nil {
+			return fmt.Errorf("resolve %s release: %w", channel, err)
 		}
-		if installer == updatepkg.InstallerSource {
-			fmt.Fprintln(streams.Out, updatepkg.ManualSourceCommand())
-			return nil
-		}
-		command := updatepkg.InstallCommand(installer, channel, "")
-		if *dryRun {
-			fmt.Fprintln(streams.Out, command.String())
-			return nil
-		}
-		var trayManager tray.Manager
-		if runtime.GOOS == "windows" {
-			cfg, _, err := loadConfig()
+		if *destination == "" {
+			*destination, err = os.Executable()
 			if err != nil {
 				return err
 			}
-			trayManager, err = tray.New(trayConfig(*cfg))
-			if err != nil {
-				return fmt.Errorf("prepare Windows tray update: %w", err)
-			}
 		}
-		output, err := executePackageUpdate(ctx, updatepkg.ExecRunner{}, command, trayManager)
-		if len(output) > 0 {
-			fmt.Fprint(streams.Out, string(output))
+		if strings.TrimPrefix(Version, "v") == artifact.Version {
+			fmt.Fprintf(streams.Out, "Already on the latest %s release (v%s).\n", channel, artifact.Version)
+			return nil
 		}
-		return err
+		if *dryRun {
+			fmt.Fprintf(streams.Out, "Native update plan:\n  Version: v%s\n  Artifact: %s\n  URL: %s\n  SHA-256: %s\n  Destination: %s\n", artifact.Version, artifact.Name, artifact.URL, artifact.SHA256, *destination)
+			return nil
+		}
+		if err := downloadNativeUpdate(ctx, artifact.URL, artifact.SHA256, *destination); err != nil {
+			return err
+		}
+		fmt.Fprintf(streams.Out, "Updated %s to v%s (%s).\n", *destination, artifact.Version, artifact.Name)
+		return nil
 	}
 	if *url == "" || *sha == "" {
 		return fmt.Errorf("--url and --sha256 are required")
@@ -70,30 +71,9 @@ func runUpdate(ctx context.Context, args []string, streams IO) error {
 		}
 		*destination = executable
 	}
-	if err := platform.DownloadAndReplace(ctx, *url, *sha, *destination); err != nil {
+	if err := downloadNativeUpdate(ctx, *url, *sha, *destination); err != nil {
 		return err
 	}
 	fmt.Fprintf(streams.Out, "Updated %s.\n", *destination)
 	return nil
-}
-
-func executePackageUpdate(ctx context.Context, runner updatepkg.CommandRunner, command updatepkg.Command, trayManager tray.Manager) ([]byte, error) {
-	var handoff tray.Handoff
-	var err error
-	if trayManager != nil {
-		handoff, err = trayManager.PrepareUpdate(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("stop Windows tray before update: %w", err)
-		}
-	}
-	output, runErr := runner.Run(ctx, command)
-	if trayManager != nil {
-		if _, completeErr := trayManager.CompleteUpdate(ctx, handoff); completeErr != nil {
-			if runErr != nil {
-				return output, fmt.Errorf("%v; restore Windows tray after failed update: %w", runErr, completeErr)
-			}
-			return output, fmt.Errorf("refresh Windows tray after update: %w", completeErr)
-		}
-	}
-	return output, runErr
 }

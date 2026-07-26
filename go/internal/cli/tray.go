@@ -96,5 +96,5 @@ func trayConfig(cfg config.Config) tray.Config {
 		host = "127.0.0.1"
 	}
 	baseURL := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
-	return tray.Config{StateDir: filepath.Join(dir, "tray"), Executable: executable, RunArguments: []string{"tray", "run"}, DashboardURL: baseURL, HealthURL: baseURL + "/health", StartupHealthURL: baseURL + "/health", RestartCommand: tray.Command{Executable: executable, Arguments: []string{"service", "restart"}}}
+	return tray.Config{StateDir: filepath.Join(dir, "tray"), Executable: executable, RunArguments: []string{"tray", "run"}, DashboardURL: baseURL, HealthURL: baseURL + "/healthz", StartupHealthURL: baseURL + "/health/startup", RestartCommand: tray.Command{Executable: executable, Arguments: []string{"service", "restart"}}}
 }

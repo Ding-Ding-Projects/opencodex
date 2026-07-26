@@ -3,8 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/tray"
 )
 
@@ -63,5 +65,14 @@ func TestRunTrayManagerJSON(t *testing.T) {
 	}
 	if got := output.String(); !bytes.Contains([]byte(got), []byte(`"installed": true`)) || bytes.Contains([]byte(got), []byte("supported=")) {
 		t.Fatalf("JSON=%q", got)
+	}
+}
+
+func TestTrayConfigUsesPublicLivenessAndStartupEndpoints(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Port = 12001
+	resolved := trayConfig(cfg)
+	if !strings.HasSuffix(resolved.HealthURL, ":12001/healthz") || !strings.HasSuffix(resolved.StartupHealthURL, ":12001/health/startup") {
+		t.Fatalf("health=%q startup=%q", resolved.HealthURL, resolved.StartupHealthURL)
 	}
 }

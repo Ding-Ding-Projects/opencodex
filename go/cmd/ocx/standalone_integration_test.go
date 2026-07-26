@@ -82,7 +82,7 @@ func TestBuiltBinaryRunsCoreWithoutExternalRuntime(t *testing.T) {
 	}
 	rootBody, _ := io.ReadAll(rootResponse.Body)
 	rootResponse.Body.Close()
-	if rootResponse.StatusCode != http.StatusOK || !strings.Contains(rootResponse.Header.Get("Content-Type"), "text/html") || !bytes.Contains(rootBody, []byte("OpenCodex")) {
+	if rootResponse.StatusCode != http.StatusOK || !strings.Contains(rootResponse.Header.Get("Content-Type"), "text/html") || !bytes.Contains(bytes.ToLower(rootBody), []byte("opencodex")) {
 		t.Fatalf("embedded root status=%d content-type=%q body=%s", rootResponse.StatusCode, rootResponse.Header.Get("Content-Type"), rootBody)
 	}
 

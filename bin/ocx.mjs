@@ -2,11 +2,9 @@
 /**
  * opencodex npm bin launcher.
  *
- * The package source is TypeScript that runs on the Bun runtime. To let
- * `npm install -g @bitkyc08/opencodex` work without a separately-installed Bun,
- * we bundle the runtime via the `bun` npm dependency and exec it from this
- * Node shim. (Dev still runs `bun run src/cli/index.ts` directly via the shebang on
- * src/cli/index.ts — only the published npm `bin` routes through here.)
+ * Packaged native Go binaries take precedence when present. Until release
+ * packaging includes them, this launcher preserves the existing TypeScript/Bun
+ * runtime as an automatic fallback.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -15,6 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
+import { launchForwardingChild, resolveNativeGoBinary } from "./native-runtime.mjs";
 
 const PKG = "@bitkyc08/opencodex";
 const require = createRequire(import.meta.url);
@@ -38,6 +37,19 @@ function currentPackageVersion() {
     return JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")).version ?? "?";
   } catch {
     return "?";
+  }
+}
+
+function failGo(message) {
+  console.error(`opencodex: Go runtime ${message}`);
+  process.exit(1);
+}
+
+function resolveGoBinary() {
+  try {
+    return resolveNativeGoBinary({ here, version: currentPackageVersion() });
+  } catch (error) {
+    failGo(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -339,60 +351,23 @@ function resolveBun() {
   return bin;
 }
 
-// `ocx update --help` prints usage and exits WITHOUT side effects. The npm launcher
-// intercepts `update` before the Bun CLI starts, so the help short-circuit must live
-// here too — otherwise --help runs the real self-update, stops the proxy, and drops
-// in-flight routed streams (issue #168).
-const updateHelpRequested = process.argv[2] === "update" &&
-  process.argv.slice(3).some(a => a === "--help" || a === "-h" || a === "help");
-if (updateHelpRequested) {
-  console.log("Usage: ocx update [--tag latest|preview]\n\nUpdate opencodex. Preview installs stay on the preview tag unless overridden.");
-  process.exit(0);
-}
-
-if (process.argv[2] === "update" && isNodeModulesInstall() && !isBunGlobalInstall()) {
-  runNpmSelfUpdate();
-}
-
-const bun = resolveBun();
-
-// Run the Bun child asynchronously and FORWARD termination signals to it, then wait
-// for its graceful shutdown before this launcher exits. The previous blocking
-// spawnSync() could not run JS signal handlers and did not forward signals, so a
-// signal delivered only to this launcher (Codex app, IDE terminal, service wrapper,
-// or `kill -INT <launcherPid>`) killed the launcher and ORPHANED the Bun proxy —
-// port left bound, pid/runtime-port files left behind, Codex config not restored.
-const child = spawn(bun, [cliPath, ...process.argv.slice(2)], { stdio: "inherit" });
-
-// Windows has no real POSIX signals (no SIGHUP); forwarding is best-effort there.
-const FORWARDED = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
-const handlers = FORWARDED.map(sig => {
-  const handler = () => {
-    try {
-      child.kill(sig);
-    } catch {
-      /* child already exited */
-    }
-  };
-  process.on(sig, handler);
-  return [sig, handler];
-});
-const clearHandlers = () => {
-  for (const [sig, handler] of handlers) process.removeListener(sig, handler);
-};
-
-child.on("error", err => {
-  clearHandlers();
-  console.error(`opencodex: failed to launch Bun runtime: ${err.message}`);
-  process.exit(1);
-});
-
-child.on("exit", (code, signal) => {
-  clearHandlers();
-  // Mirror the child's terminating signal/exit code so this launcher's status matches.
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
+const goBinary = resolveGoBinary();
+if (goBinary) {
+  launchForwardingChild(goBinary, process.argv.slice(2), "Go runtime");
+} else {
+  // `ocx update --help` prints usage and exits WITHOUT side effects. The legacy npm
+  // launcher intercepts update only on the TypeScript path; native Go handles its own update.
+  const updateHelpRequested = process.argv[2] === "update" &&
+    process.argv.slice(3).some(a => a === "--help" || a === "-h" || a === "help");
+  if (updateHelpRequested) {
+    console.log("Usage: ocx update [--tag latest|preview]\n\nUpdate opencodex. Preview installs stay on the preview tag unless overridden.");
+    process.exit(0);
   }
-  process.exit(code ?? 1);
-});
+
+  if (process.argv[2] === "update" && isNodeModulesInstall() && !isBunGlobalInstall()) {
+    runNpmSelfUpdate();
+  }
+
+  const bun = resolveBun();
+  launchForwardingChild(bun, [cliPath, ...process.argv.slice(2)], "Bun runtime");
+}

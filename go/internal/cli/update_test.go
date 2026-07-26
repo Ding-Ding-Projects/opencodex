@@ -3,35 +3,26 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/lidge-jun/opencodex-go/internal/tray"
 	updatepkg "github.com/lidge-jun/opencodex-go/internal/update"
 )
 
-type failingUpdateRunner struct{}
-
-func (failingUpdateRunner) Run(context.Context, updatepkg.Command) ([]byte, error) {
-	return []byte("partial output"), errors.New("replacement failed")
-}
-
-func TestUpdateTagDryRunPlansPackageManagerCommand(t *testing.T) {
-	for _, test := range []struct{ installer, tag, want string }{
-		{"npm", "latest", "npm install -g @bitkyc08/opencodex@latest"},
-		{"bun", "preview", "bun add -g @bitkyc08/opencodex@preview"},
-	} {
-		t.Run(test.installer+"-"+test.tag, func(t *testing.T) {
-			t.Setenv("OCX_INSTALLER", test.installer)
-			var output bytes.Buffer
-			if err := runUpdate(context.Background(), []string{"--tag", test.tag, "--dry-run"}, IO{Out: &output, Err: &output}); err != nil {
-				t.Fatal(err)
-			}
-			if strings.TrimSpace(output.String()) != test.want {
-				t.Fatalf("plan = %q", output.String())
-			}
-		})
+func TestUpdateTagDryRunPlansNativeReleaseArtifact(t *testing.T) {
+	restore := stubNativeReleaseUpdate(t)
+	defer restore()
+	var output bytes.Buffer
+	destination := filepath.Join(t.TempDir(), "ocx")
+	if err := runUpdate(context.Background(), []string{"--tag", "preview", "--destination", destination, "--dry-run"}, IO{Out: &output, Err: &output}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"v2.9.0-preview.1", "ocx_2.9.0-preview.1_linux_amd64", strings.Repeat("a", 64), destination} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("dry-run missing %q: %s", want, output.String())
+		}
 	}
 }
 
@@ -41,13 +32,57 @@ func TestUpdateRejectsUnknownTagWithoutExecution(t *testing.T) {
 	}
 }
 
-func TestPackageUpdateRestoresTrayAfterReplacementFailure(t *testing.T) {
-	manager := &fakeTrayManager{status: tray.Status{Supported: true, Installed: true, Running: true}}
-	output, err := executePackageUpdate(context.Background(), failingUpdateRunner{}, updatepkg.InstallCommand(updatepkg.InstallerNPM, updatepkg.ChannelPreview, ""), manager)
-	if err == nil || !strings.Contains(err.Error(), "replacement failed") || string(output) != "partial output" {
-		t.Fatalf("output=%q err=%v", output, err)
+func TestUpdateTagDownloadsVerifiedNativeArtifact(t *testing.T) {
+	restore := stubNativeReleaseUpdate(t)
+	defer restore()
+	destination := filepath.Join(t.TempDir(), "ocx")
+	if err := os.WriteFile(destination, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if got := strings.Join(manager.calls, ","); got != "prepare-update,complete-update" {
-		t.Fatalf("tray handoff calls = %s", got)
+	if err := runUpdate(context.Background(), []string{"--tag", "latest", "--destination", destination}, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}); err != nil {
+		t.Fatal(err)
 	}
+	if got := string(mustReadFile(t, destination)); got != "downloaded:https://github.com/lidge-jun/opencodex/releases/download/v2.9.0-preview.1/ocx_2.9.0-preview.1_linux_amd64:"+strings.Repeat("a", 64) {
+		t.Fatalf("replacement=%q", got)
+	}
+}
+
+func TestUpdateTagDoesNotReplaceMatchingVersion(t *testing.T) {
+	restore := stubNativeReleaseUpdate(t)
+	defer restore()
+	previousVersion := Version
+	Version = "2.9.0-preview.1"
+	defer func() { Version = previousVersion }()
+	destination := filepath.Join(t.TempDir(), "ocx")
+	if err := os.WriteFile(destination, []byte("unchanged"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runUpdate(context.Background(), []string{"--tag", "preview", "--destination", destination}, IO{Out: &output, Err: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustReadFile(t, destination)); got != "unchanged" || !strings.Contains(output.String(), "Already on the latest preview release") {
+		t.Fatalf("destination=%q output=%q", got, output.String())
+	}
+}
+
+func stubNativeReleaseUpdate(t *testing.T) func() {
+	t.Helper()
+	previousResolve, previousDownload := resolveNativeReleaseArtifact, downloadNativeUpdate
+	resolveNativeReleaseArtifact = func(context.Context, updatepkg.Channel) (updatepkg.ReleaseArtifact, error) {
+		return updatepkg.ReleaseArtifact{Version: "2.9.0-preview.1", Name: "ocx_2.9.0-preview.1_linux_amd64", URL: "https://github.com/lidge-jun/opencodex/releases/download/v2.9.0-preview.1/ocx_2.9.0-preview.1_linux_amd64", SHA256: strings.Repeat("a", 64)}, nil
+	}
+	downloadNativeUpdate = func(_ context.Context, sourceURL, digest, destination string) error {
+		return os.WriteFile(destination, []byte("downloaded:"+sourceURL+":"+digest), 0o755)
+	}
+	return func() { resolveNativeReleaseArtifact, downloadNativeUpdate = previousResolve, previousDownload }
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
