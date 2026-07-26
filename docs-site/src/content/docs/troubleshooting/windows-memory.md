@@ -1,98 +1,60 @@
 ---
 title: Windows Memory Growth
-description: Why the bun process can grow to many gigabytes of RAM on Windows, what opencodex does about it today, and your options until the upstream Bun fixes ship.
+description: How the packaged Go runtime avoids the Bun proxy memory issue on supported Windows installs, and when Bun can still run.
 ---
 
-Some Windows users see the `bun` process behind opencodex grow to many
-gigabytes of RSS during long streaming sessions (reported as issue
-[#314](https://github.com/lidge-jun/opencodex/issues/314)). This page explains
-what is actually happening and what you can do about it, honestly.
+Supported Windows npm installations now run the exact package-local Go binary on both x64 and arm64.
+The small Node launcher validates that binary before starting the proxy. As a result, the normal
+installed proxy no longer runs inside Bun and is not exposed to the Bun-native memory growth reported
+in issue [#314](https://github.com/lidge-jun/opencodex/issues/314).
 
-## Root cause: upstream Bun runtime issues
+This is a runtime replacement, not a claim that the upstream Bun bugs were fixed. It also does not mean
+the npm package has removed every Bun-related file or dependency.
 
-opencodex bundles the Bun runtime (currently **1.3.14**). The memory growth is
-driven by known upstream Bun issues, not by JavaScript-level leaks in the
-proxy:
+## When Bun can still run
+
+The `bun` dependency remains installed but dormant during ordinary commands on supported Windows hosts.
+It is retained for a few bounded compatibility paths:
+
+- an older `ocx update` implementation installing the package that switches the runtime to Go;
+- a one-time refresh of a legacy Codex shim, after the packaged Go artifact has already been validated;
+- callers that explicitly use opencodex's Bun package API;
+- the compatibility bridge on an unsupported OS/architecture target; and
+- source development, which still uses a locally installed Bun CLI.
+
+Memory behavior on those paths is still Bun behavior. Removing the dependency is deferred until the
+old-updater and legacy-shim migration window can be closed; the Go cutover does not claim otherwise.
+
+## The historical Bun issue
+
+Older installed versions ran the proxy on bundled Bun 1.3.14. Long Windows streaming sessions could
+grow to many gigabytes of RSS because of upstream runtime behavior rather than a JavaScript-level leak
+in opencodex:
 
 | Bun issue | State (checked 2026-07-23) |
 |---|---|
-| [#28035](https://github.com/oven-sh/bun/issues/28035) — `fetch()` receive backpressure not coupled to JS consumption | Fixed by [PR #29831](https://github.com/oven-sh/bun/pull/29831); **which release carries it is unverified** — we assume the bundled 1.3.14 does not |
-| [#32111](https://github.com/oven-sh/bun/issues/32111) — crash when a client aborts an async-pull stream | Fix [PR #32120](https://github.com/oven-sh/bun/pull/32120) merged 2026-06-21; not assumed present in 1.3.14. Note: this crash is **not Windows-specific** (it also reproduced on macOS/Linux) |
-| [PR #31654](https://github.com/oven-sh/bun/pull/31654) — `node:net` socket handle leak | Still **open** upstream |
+| [#28035](https://github.com/oven-sh/bun/issues/28035) — `fetch()` receive backpressure not coupled to JS consumption | Fixed by [PR #29831](https://github.com/oven-sh/bun/pull/29831); the first carrying release was not verified for the old bundled runtime |
+| [#32111](https://github.com/oven-sh/bun/issues/32111) — crash when a client aborts an async-pull stream | Fix [PR #32120](https://github.com/oven-sh/bun/pull/32120) merged 2026-06-21; the crash was not Windows-specific |
+| [PR #31654](https://github.com/oven-sh/bun/pull/31654) — `node:net` socket handle leak | Still open when last checked |
 
-On Windows, opencodex must keep streaming responses on a conservative code
-path to avoid the #32111 crash, and that path is the one most exposed to the
-backpressure issue: a slow or stalled client can leave the runtime buffering
-upstream data in native memory that JavaScript cannot bound.
+The previous watchdog, runtime diagnostics, and alternate stream mode remain useful when intentionally
+running a Bun bridge or an older release, but they are mitigations for that runtime rather than the
+normal supported npm path.
 
-## What opencodex does today
+## What to check
 
-Bounded mitigation and visibility — **not a fix**. On the bundled 1.3.14
-runtime the leak itself remains an upstream problem:
+Run `ocx --version` and `ocx doctor` from the installed package. On Windows x64 or arm64, a current npm
+package should select its exact Go artifact. If it reports a compatibility bridge, first confirm that
+the package and host architecture match and reinstall the same release channel:
 
-- **Memory watchdog** — the proxy samples its own memory every minute and logs a
-  rate-limited warning when observed memory crosses 4 GiB. Observed memory is
-  the largest of RSS, `external`, and `arrayBuffers` (not their sum), because
-  Windows working-set/RSS counters can under-report committed external
-  retention.
-- **`ocx doctor`** — a "Memory / runtime" section shows the *service*
-  process's Bun version, RSS, external/ArrayBuffers counters, JS-heap context,
-  and stream-mode decision. On the bundled Bun 1.3.14 runtime, `heapUsed` /
-  `jscHeap` alone are not a leak discriminator; compare observed memory with
-  `responseState` and repeated samples before assigning an app-level leak.
-- **`GET /api/system/memory`** — the same data over the authenticated
-  management API for dashboards or scripts. Alongside RSS/heap/external counters
-  it reports a scalar `responseState` block (entry count, total/largest
-  serialized bytes, oldest-entry age) for the proxy's in-memory
-  `previous_response_id` continuation store. This further attributes growth: a
-  rising `responseState.totalBytes` under rising observed memory points at
-  conversation retention (long `store:false` chains re-expanding each turn),
-  whereas a flat `responseState` under rising observed memory points away from
-  that store. The values are scalar-only — no request bodies, tokens, paths, or
-  account identifiers — and the read is side-effect free (it never prunes or
-  evicts). The dashboard's **Memory observability** card renders the
-  same fields and offers a confirm-gated **Drain & restart** action: it shows
-  the current active-turn count, waits up to 60s for active turns (reusing
-  the existing 503 + `Retry-After` drain), then aborts any remaining turns and
-  restarts the proxy via `ocx start` on the live port (or a failure-only
-  service supervisor respawn) without tearing down Codex injection. That is a
-  longer, informed recycle than the short drain on `POST /api/stop`.
-- **A gated alternative stream path** — a bounded single-reader relay that
-  removes the unbounded buffering shape entirely. It becomes the default
-  automatically once a bundled Bun release verifiably carries the #32111 fix;
-  today it is opt-in only (see below).
+```powershell
+npm install -g @bitkyc08/opencodex@latest
+# or, if this installation follows preview:
+npm install -g @bitkyc08/opencodex@preview
+```
 
-Real-world RSS improvement from these changes is **awaiting verification by
-Windows users** — we do not claim the leak is fixed.
-
-Threshold-based auto-restart is deliberately **not** shipped. If the process
-crashes, the service managers (Task Scheduler/WinSW, launchd, systemd) already
-restart it.
-
-## Your options
-
-1. **Wait for a bundled runtime update.** Once a Bun release verifiably
-   carries the fixes, opencodex will bump the bundled runtime and the safer
-   stream path turns on automatically.
-
-2. **Run a Bun runtime you trust with `OPENCODEX_BUN_PATH`.** This is
-   unvalidated territory — you are running opencodex on a runtime we have not
-   tested; at your own risk. Important for service installs: the override is
-   read **when the service artifact is generated**, not at service start. Set
-   the environment variable, then re-run `ocx service install` from that same
-   shell so the path is baked into the durable service definition. Setting
-   the env alone does nothing for an already-installed service.
-
-3. **Opt into the bounded relay with `streamMode: "eager-relay"`.** Two ways:
-   edit `config.json` (add `"streamMode": "eager-relay"`), or call the
-   management API — a `PUT /api/settings` with `{"streamMode":"eager-relay"}`
-   applies to new turns without a restart. **Crash risk warning:** on Bun
-   1.3.14 this uses the stream shape affected by #32111, which can crash the
-   process mid-stream (on any OS, not just Windows). The service manager will
-   restart it, but in-flight requests fail. `"legacy-tee"` pins the current
-   default; `"auto"` (default) lets the runtime gate decide.
-
-If you try any of these on a real Windows workload, please report the before
-and after `ocx doctor` memory sections on
-[#314](https://github.com/lidge-jun/opencodex/issues/314) — that is exactly
-the verification this mitigation is waiting on.
+Do not install a separate Bun runtime to repair a missing or invalid Go artifact. Supported packaged
+launches fail closed instead of silently falling back to Bun. Please report the package version, Windows
+architecture, launcher error, and the scalar-only memory section from `ocx doctor` on
+[#314](https://github.com/lidge-jun/opencodex/issues/314); do not include tokens, request bodies, or
+account identifiers.

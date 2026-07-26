@@ -3,15 +3,15 @@ title: 安装
 description: 安装 opencodex(ocx)代理及其前置条件,并验证它能够运行。
 ---
 
-安装 opencodex 后会得到 `ocx` 和 `opencodex` 两个等价命令，它们都指向同一个基于 Bun 的
-小型本地 HTTP 服务器。模型请求会发往路由所选的 provider；当已路由模型需要时，可选的
+安装 opencodex 后会得到 `ocx` 和 `opencodex` 两个等价命令。在受支持的 npm 环境中，它们会用
+包内的 Go 运行时启动同一个小型本地 HTTP 服务器。模型请求会发往路由所选的 provider；当已路由模型需要时，可选的
 vision 和网络搜索 sidecar 也可以使用你的 ChatGPT 登录凭据。
 
 ## 前置条件
 
 | 要求 | 原因 |
 | --- | --- |
-| **[Node](https://nodejs.org) ≥ 18** | `ocx` 运行在 Bun 运行时上，但运行时会在 `npm install` 时自动打包，你**无需**自己安装 Bun。 |
+| **[Node](https://nodejs.org) ≥ 18** | 小型 launcher 会校验并启动 macOS、Linux 或 Windows 的 amd64/x64 与 arm64 对应 Go 二进制文件。你**无需**自行安装 Bun。 |
 | **[OpenAI Codex](https://openai.com/codex)**(CLI、App 或 SDK) | opencodex 所代理的客户端。opencodex 会写入 `$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`）。 |
 | 一个 provider 账号或 API key | Anthropic、xAI、Kimi、Ollama Cloud、OpenRouter、OpenAI API key、一个 OpenAI 兼容端点,或你的 ChatGPT 登录凭据。 |
 
@@ -21,18 +21,10 @@ vision 和网络搜索 sidecar 也可以使用你的 ChatGPT 登录凭据。
 npm install -g @bitkyc08/opencodex
 ```
 
-:::note[npm 拦截了 bun postinstall？]
-较新的 npm 可能会拦截 bun 的 postinstall 脚本（`npm warn install-scripts ...
-blocked because they are not covered by allowScripts`），导致捆绑的 Bun
-运行时未能就绪。请允许 bun 脚本后重新安装。注意 npm 警告给出的缩写命令
-缺少包名，会把当前目录重新安装进去，请始终显式写上包名：
-
-```bash
-npm install -g --allow-scripts=bun @bitkyc08/opencodex
-
-# 如果最初是用 sudo 安装的，请继续使用 sudo：
-sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
-```
+:::note[为什么仍会安装 Bun？]
+Bun 依赖会暂时保留，用于旧版 updater、一次性的旧 Codex shim 更新，以及明确调用 Bun
+包 API 的使用方。在六个受支持目标上，普通命令运行 Go，不会启动 Bun。未支持的平台仍可能
+使用兼容 bridge；删除 Bun 依赖要等这些迁移路径退役后再进行。
 :::
 
 确认两个命令都已加入 `PATH`：
@@ -55,7 +47,7 @@ ocx update --tag preview
 
 ## 从源码运行
 
-若要对 opencodex 本身进行开发:
+若要开发 opencodex 本身，请在本机安装 `bun` CLI 并将其加入 `PATH`：
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git

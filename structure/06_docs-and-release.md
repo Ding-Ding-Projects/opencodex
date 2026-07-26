@@ -39,8 +39,8 @@ bun run build
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | `pull_request`, `push` to `main`/`dev`/`preview`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs typecheck, `bun test --isolate tests`, the privacy scan, release-helper syntax check, GUI lint/build, and `ocx help`; `npm-global-smoke` (Node only, **no setup-bun**) builds package assets, packs the tarball, installs it globally, and runs `ocx help` to prove the bundled-Bun launcher works without a separate Bun install. |
-| `.github/workflows/go-ci.yml` | Pushes to `dev2-go` touching `go/**` or the workflow, or manual dispatch | Quality gate for the temporary Go rewrite track: build, vet, test, and race detection on Linux/macOS/Windows where supported; five-target cross-compilation; and the Go E2E suite. Superseded runs on the same ref are cancelled. |
+| `.github/workflows/ci.yml` | `pull_request`, `push` to `main`/`dev`/`preview`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs source typecheck/tests, privacy scan, release-helper syntax check, and GUI lint/build; `npm-global-smoke` (Node only, **no setup-bun**) installs the exact packed archive and runs `ocx help` through its package-local Go artifact. |
+| `.github/workflows/go-ci.yml` | Pushes to `dev2-go` touching `go/**` or the workflow, or manual dispatch | Quality gate for the temporary Go rewrite track: build, vet, test, race detection where supported, six-target cross-compilation (darwin/linux/windows × amd64/arm64), and the Go E2E suite. Superseded runs on the same ref are cancelled. |
 | `.github/workflows/release.yml` | Manual dispatch only | npm publish/dry-run workflow. It requires the exact `GITHUB_SHA` to have a successful Cross-platform CI run before publish or dry-run. |
 | `.github/workflows/deploy-docs.yml` | `push` to `main` touching `docs-site/**` or the workflow, or manual dispatch | Build and publish the Astro/Starlight docs site to GitHub Pages. |
 | `.github/workflows/service-lifecycle.yml` | `push` touching `src/service.ts`, `src/cli/index.ts`, or the workflow, or manual dispatch | Linux systemd smoke test: install, verify, `ocx stop` stops the service, uninstall. |
@@ -82,25 +82,26 @@ enforcement.
 - 다른 대안 대신 이 방식을 선택한 이유: A two-maintainer project needs clear ownership and sensitive-path review rules but does not yet need a separate governance framework.
 - 장점, 단점 및 영향: Contributors can identify reviewers and merge expectations directly from the repository. The roster must be updated when responsibilities change, and CODEOWNERS still requires branch-protection configuration to enforce approvals.
 
-## Package runtime (bundled Bun)
+## Package runtime (packaged Go)
 
-The source runs on Bun, but the published package does **not** require a user-installed Bun.
-`package.json` `bin` points at `bin/ocx.mjs` (a Node shim), and the Bun runtime ships as the `bun`
-npm dependency (esbuild-style: a tiny main package plus platform-specific `@oven/bun-*`
-`optionalDependencies`, finalized by the dependency's own `postinstall: node install.js`).
+The source-development toolchain remains Bun-native TypeScript, while supported npm installations
+run Go. `package.json` `bin` points at `bin/ocx.mjs`, a small Node launcher, and the tarball carries
+one exact Go artifact for each darwin/linux/windows × amd64/arm64 target.
 
 Invariants:
 
-- `bin/ocx.mjs` resolves the bundled binary via `require.resolve("bun/package.json")` and a size gate
-  (`>= 1 MB`) that rejects the ~450-byte placeholder stub left by `--ignore-scripts`/pnpm; it then
-  lazy-runs `install.js` and execs `src/cli/index.ts` under Bun, propagating exit code and signal.
-- `package.json` carries `"trustedDependencies": ["bun"]` so `bun install` runs the dependency's
-  postinstall, and `"engines": { "node": ">=18" }` (Bun is no longer a user prerequisite).
-- `src/service.ts` and `src/codex/shim.ts` bake `durableBunPath()` (the bundled binary, stable under
-  the npm global prefix) into launchd/systemd/Task Scheduler and the Codex autostart shim, so those
-  durable artifacts keep resolving across `ocx update`.
+- The launcher derives the target from the host, validates the exact package-local Go artifact, and
+  propagates arguments, signals, and exit status. Supported packaged launches do not accept a Bun or
+  arbitrary-Go override and fail closed when the expected artifact is absent or invalid.
+- Service, tray, and shim artifacts retain a stable Node-plus-launcher command so package updates can
+  change the versioned Go filename without leaving stale durable paths.
+- The `bun` dependency remains installed but dormant for ordinary supported-target commands. Its
+  bounded exceptions are an old updater, a one-time legacy-shim refresh after Go validation, explicit
+  Bun package API use, and the unsupported-platform bridge. Dependency removal is deferred.
+- Source development still requires the local `bun` CLI for install, tests, builds, and TypeScript
+  entrypoints. This requirement must not be presented as an npm-user prerequisite.
 - Public docs (root READMEs + `docs-site` installation pages, all locales) state Node 18+ as the only
-  prerequisite. Do not reintroduce "install Bun first" / "bun must be on PATH" guidance for npm users.
+  runtime prerequisite and identify all six supported Go targets.
 
 ## Release workflow
 
@@ -155,13 +156,13 @@ cd gui && bun install --frozen-lockfile && bun run lint && bun run build
 bun run src/cli/index.ts help
 ```
 
-and the Node-only global-install smoke path:
+and the Node-only global-install smoke path. It verifies and installs the same archive that release
+validation inspected, disables lifecycle scripts, poisons Bun compatibility execution, and then runs
+the installed launcher:
 
 ```bash
-npm install
-npm run build:gui
 npm pack --json > pack.json
-npm install -g ./bitkyc08-opencodex-*.tgz
+npm install -g --ignore-scripts ./bitkyc08-opencodex-*.tgz
 ocx help
 ```
 

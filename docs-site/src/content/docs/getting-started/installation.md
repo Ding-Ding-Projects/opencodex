@@ -4,14 +4,14 @@ description: Install the opencodex (ocx) proxy, its prerequisites, and verify it
 ---
 
 opencodex installs two equivalent command names, `ocx` and `opencodex`. Both launch the same small
-local HTTP server (built on Bun). Model requests go to the provider selected by routing; optional
+local HTTP server. Supported npm installations run the packaged Go runtime. Model requests go to the provider selected by routing; optional
 vision and web-search sidecars can also use your ChatGPT login when a routed model needs them.
 
 ## Prerequisites
 
 | Requirement | Why |
 | --- | --- |
-| **[Node](https://nodejs.org) ≥ 18** | `ocx` runs on the Bun runtime, but the runtime is bundled automatically on `npm install` — you do **not** need to install Bun yourself. |
+| **[Node](https://nodejs.org) ≥ 18** | A small launcher validates and starts the exact packaged Go binary for macOS, Linux, or Windows on amd64/x64 and arm64. You do **not** need to install Bun yourself. |
 | **[OpenAI Codex](https://openai.com/codex)** (CLI, App, or SDK) | The client opencodex sits in front of. opencodex writes to `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). |
 | A provider account or API key | Anthropic, xAI, Kimi, Ollama Cloud, OpenRouter, an OpenAI-compatible endpoint, or your ChatGPT login. |
 
@@ -21,19 +21,11 @@ vision and web-search sidecars can also use your ChatGPT login when a routed mod
 npm install -g @bitkyc08/opencodex
 ```
 
-:::note[npm blocked the bun postinstall?]
-Recent npm versions may block bun's postinstall script (`npm warn
-install-scripts ... blocked because they are not covered by allowScripts`),
-which leaves the bundled Bun runtime unprepared. Reinstall allowing bun's
-script — and always include the package name (npm's abbreviated suggestion
-omits it, which would reinstall the current directory instead):
-
-```bash
-npm install -g --allow-scripts=bun @bitkyc08/opencodex
-
-# if the original install used sudo, keep using sudo:
-sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
-```
+:::note[Why is Bun still installed?]
+Bun remains a dormant compatibility dependency for older updaters, a one-time legacy Codex-shim
+refresh, and callers that explicitly use the Bun package API. Normal commands on the six supported
+targets run Go. Unsupported platforms may use the compatibility bridge; removing the dependency is
+deferred until those migration paths can be retired.
 :::
 
 Verify both command aliases are on your `PATH`:
@@ -57,7 +49,7 @@ ocx update --tag preview
 
 ## Run from source
 
-To hack on opencodex itself:
+To hack on opencodex itself, install the `bun` CLI locally and keep it on your `PATH`:
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git

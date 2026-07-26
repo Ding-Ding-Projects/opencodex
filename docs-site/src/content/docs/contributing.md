@@ -5,8 +5,9 @@ description: Develop opencodex — setup, layout, conventions, and how to add a 
 
 ## Setup
 
-Source development requires the `bun` CLI on your `PATH`. The published npm package bundles its own
-Bun runtime for users, but this checkout's scripts run through your local Bun installation.
+Source development requires the `bun` CLI on your `PATH`. The published npm package runs its packaged
+Go binary on supported targets; its bundled Bun dependency remains dormant for compatibility. This
+checkout's scripts run through your local Bun installation.
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git
@@ -66,8 +67,8 @@ GitHub Actions intentionally stay small:
 - **Cross-platform CI** (`.github/workflows/ci.yml`) runs on pull requests and `main` pushes that
   touch runtime, tests, package, script, TypeScript, or workflow files. Its Bun matrix covers Linux,
   Windows, and macOS with install, typecheck, tests, privacy scan, a release-helper build smoke, GUI
-  build, and `ocx help`. A second three-OS lane proves npm global install works without a separately
-  installed Bun by using the package's bundled runtime.
+  build, and `ocx help`. A second three-OS lane proves npm global install selects and runs the exact
+  packaged Go runtime without a separately installed Bun.
 - **Release** (`.github/workflows/release.yml`) is manual. It does not act as a second full CI
   pipeline; before dry-run or publish it requires the exact release commit (`GITHUB_SHA`) to already
   have a successful Cross-platform CI run.

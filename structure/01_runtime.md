@@ -4,8 +4,10 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `bin/ocx.mjs` | Published npm `bin` entry (Node shim). Resolves the bundled Bun binary (`bun` dependency), lazy-runs its `install.js` if only the placeholder stub is present, then execs `src/cli/index.ts` under Bun. Lets `npm install -g` work without a separately-installed Bun. |
-| `src/lib/bun-runtime.ts` | Bundled-Bun resolution: `isRealBunBinary()` (size gate vs the ~450-byte placeholder stub), `bundledBunPath()`, `durableBunPath()` (path baked into service/shim artifacts). |
+| `bin/ocx.mjs` | Published npm `bin` entry (small Node launcher). On supported targets it validates the exact package-local Go artifact before any compatibility work, performs the guarded one-time legacy-shim refresh when needed, then forwards arguments, signals, and exit status to Go. Unsupported targets may enter the Bun bridge. |
+| `bin/native-runtime.mjs` | Maps darwin/linux/windows × amd64/arm64 to the exact packaged Go artifact, rejects unsafe or mismatched package state, and spawns the selected binary with signal and exit propagation. |
+| `go/cmd/ocx` | Installed CLI and proxy runtime for the six supported npm targets. The same package-local runtime is persisted into service, tray, and shim launch paths. |
+| `src/lib/bun-runtime.ts` | Compatibility-only bundled-Bun resolution for old updater and bridge paths. The dependency stays installed for now but is dormant during ordinary supported-target commands. |
 | `src/cli/index.ts` | `ocx` / `opencodex` CLI: init, start, stop, restore/eject, sync, status, login/logout, gui, service, update. After help/version early exits, ordinary commands run the bounded best-effort Codex-shim auto-restore policy before dispatch. Keeps the `#!/usr/bin/env bun` shebang for from-source dev (`bun run src/cli/index.ts`). |
 | `src/server/index.ts` | Bun server entrypoint: `startServer`, `/v1/responses` HTTP + WebSocket routing, exact `POST /v1/images/generations` and `POST /v1/images/edits` routing, `/v1/models`, `/v1/*` JSON 404 guard, GUI fallback, and facade re-exports for split server modules. |
 | `src/server/images.ts` | Standalone Images data plane: default OpenAI or explicit custom-provider selection, Codex account affinity, bounded opaque request relay, single-attempt upstream fetch, pool health recording, and safe response/cancellation relay. |
@@ -30,6 +32,18 @@ factory), `relay-eager.ts` (#314 gated eager bounded passthrough relay), `memory
 server infrastructure (`src/lib/bun-stream-caps.ts` owns the Bun stream-capability gate); and
 static GUI, WebSocket bridge, port/liveness, decompression, and adapter-resolution helpers live in
 their own files.
+
+## Installed runtime boundary
+
+The published npm package contains six Go binaries: macOS, Linux, and Windows on amd64 and arm64.
+Node 18+ runs only the small launcher that selects and validates the exact package-local artifact.
+An ordinary command on those targets must not execute Bun or `bun/install.js`.
+
+The `bun` dependency is intentionally retained but dormant. It exists only for an older updater to
+install the transition package, for one guarded legacy Codex-shim refresh after Go has validated,
+for callers that explicitly select the Bun package API, and as a bridge on unsupported platforms.
+Removing it is a later compatibility milestone, not part of the Go runtime cutover. Source development
+continues to use a locally installed Bun CLI and the TypeScript entrypoints.
 
 ## Lifecycle
 

@@ -4,14 +4,14 @@ description: opencodex(ocx)プロキシと前提条件をインストールし�
 ---
 
 opencodex をインストールすると同じ実行ファイルを指す `ocx` と `opencodex` コマンドが一緒に提供されます。
-どちらも Bun ベースの小さなローカル HTTP サーバーを実行します。モデルリクエストはルーティングで選ばれたプロバイダーに
+対応する npm 環境では、パッケージ同梱の Go ランタイムで小さなローカル HTTP サーバーを実行します。モデルリクエストはルーティングで選ばれたプロバイダーに
 転送され、必要に応じて vision とウェブ検索のサイドカーが ChatGPT ログインを使うこともあります。
 
 ## 前提条件
 
 | 要件 | 理由 |
  --- | --- |
-| **[Node](https://nodejs.org) ≥ 18** | `ocx` は Bun ランタイムで実行されますが、ランタイムは `npm install` 時に自動でバンドルされるため、Bun を自分でインストールする必要は**ありません**。 |
+| **[Node](https://nodejs.org) ≥ 18** | 小さなランチャーが macOS、Linux、Windows の amd64/x64・arm64 用 Go バイナリを検証して起動します。Bun を自分でインストールする必要は**ありません**。 |
 | **[OpenAI Codex](https://openai.com/codex)**(CLI、App、または SDK) | opencodex が前に立つクライアントです。opencodex は `$CODEX_HOME/config.toml`(デフォルト `~/.codex/config.toml`)に書き込みます。 |
 | プロバイダーアカウントまたは API キー | Anthropic、xAI、Kimi、Ollama Cloud、OpenRouter、OpenAI API キー、OpenAI 互換エンドポイント、または ChatGPT ログイン。 |
 
@@ -21,19 +21,11 @@ opencodex をインストールすると同じ実行ファイルを指す `ocx` 
 npm install -g @bitkyc08/opencodex
 ```
 
-:::note[npm が bun の postinstall をブロックした?]
-最新の npm は bun の postinstall スクリプトをブロックすることがあります(`npm warn
-install-scripts ... blocked because they are not covered by allowScripts`)。
-この場合バンドル Bun ランタイムが準備されないため、bun スクリプトを許可して
-再インストールしてください。npm 警告の省略コマンドにはパッケージ名が含まれておらず、現在の
-ディレクトリを再インストールしてしまうので、必ずパッケージ名を明示してください:
-
-```bash
-npm install -g --allow-scripts=bun @bitkyc08/opencodex
-
-# 最初に sudo でインストールした場合は sudo を維持してください:
-sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
-```
+:::note[Bun が引き続きインストールされる理由]
+Bun 依存関係は、旧 updater、従来の Codex shim を一度だけ更新する移行処理、Bun 向け
+パッケージ API を明示的に使う呼び出し元のために当面残ります。対応する 6 ターゲットの通常の
+コマンドでは Bun は起動しません。未対応プラットフォームでは互換ブリッジが Bun を使う場合があり、
+依存関係の削除はこれらの移行経路を廃止した後に行います。
 :::
 
 両方のコマンドが `PATH` にあることを確認します:
@@ -56,7 +48,7 @@ ocx update --tag preview
 
 ## ソースから実行
 
-opencodex 自体を直接修正しながら作業するには:
+opencodex 自体を開発するには、ローカルに `bun` CLI をインストールして `PATH` に追加してください:
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git

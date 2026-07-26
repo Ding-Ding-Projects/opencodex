@@ -4,14 +4,14 @@ description: opencodex(ocx) 프록시와 사전 요구 사항을 설치하고, �
 ---
 
 opencodex를 설치하면 같은 실행 파일을 가리키는 `ocx`와 `opencodex` 명령이 함께 제공됩니다.
-둘 다 Bun 기반의 작은 로컬 HTTP 서버를 실행합니다. 모델 요청은 라우팅으로 선택된 프로바이더에
+지원되는 npm 설치본에서는 패키지에 들어 있는 Go 런타임으로 작은 로컬 HTTP 서버를 실행합니다. 모델 요청은 라우팅으로 선택된 프로바이더에
 전달되며, 필요할 때 vision 및 웹 검색 sidecar가 ChatGPT 로그인을 사용할 수도 있습니다.
 
 ## 사전 요구 사항
 
 | 요구 사항 | 이유 |
 | --- | --- |
-| **[Node](https://nodejs.org) ≥ 18** | `ocx`는 Bun 런타임에서 실행되지만, 런타임이 `npm install` 시 자동으로 번들되므로 Bun을 직접 설치할 필요가 **없습니다**. |
+| **[Node](https://nodejs.org) ≥ 18** | 작은 launcher가 macOS, Linux, Windows의 amd64/x64 및 arm64용 Go 바이너리를 정확히 확인한 뒤 실행합니다. Bun을 직접 설치할 필요는 **없습니다**. |
 | **[OpenAI Codex](https://openai.com/codex)**(CLI, App, 또는 SDK) | opencodex가 앞단에 위치하는 클라이언트입니다. opencodex는 `$CODEX_HOME/config.toml`(기본값 `~/.codex/config.toml`)에 기록합니다. |
 | 프로바이더 계정 또는 API 키 | Anthropic, xAI, Kimi, Ollama Cloud, OpenRouter, OpenAI API 키, OpenAI 호환 엔드포인트, 또는 ChatGPT 로그인. |
 
@@ -21,19 +21,11 @@ opencodex를 설치하면 같은 실행 파일을 가리키는 `ocx`와 `opencod
 npm install -g @bitkyc08/opencodex
 ```
 
-:::note[npm이 bun postinstall을 차단했다면?]
-최신 npm은 bun의 postinstall 스크립트를 차단할 수 있습니다(`npm warn
-install-scripts ... blocked because they are not covered by allowScripts`).
-이 경우 번들 Bun 런타임이 준비되지 않으므로 bun 스크립트를 허용해서
-재설치하세요. npm 경고의 축약 명령에는 패키지 이름이 빠져 있어 현재
-디렉터리를 재설치하게 되니, 항상 패키지 이름을 명시해야 합니다:
-
-```bash
-npm install -g --allow-scripts=bun @bitkyc08/opencodex
-
-# 처음에 sudo로 설치했다면 sudo를 유지하세요:
-sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
-```
+:::note[Bun이 계속 설치되는 이유]
+Bun 의존성은 이전 updater, 기존 Codex shim을 한 번 갱신하는 전환 경로, Bun 패키지 API를
+명시적으로 쓰는 호출자를 위해 당분간 남아 있습니다. 지원되는 6개 대상의 일반 명령에서는
+Bun이 실행되지 않습니다. 미지원 플랫폼에서는 호환 bridge가 Bun을 사용할 수 있으며,
+이 전환 경로를 정리한 뒤에 의존성을 제거할 예정입니다.
 :::
 
 두 명령이 모두 `PATH`에 잡히는지 확인합니다:
@@ -56,7 +48,7 @@ ocx update --tag preview
 
 ## 소스에서 실행
 
-opencodex 자체를 직접 수정하며 작업하려면:
+opencodex 자체를 직접 수정하려면 로컬에 `bun` CLI를 설치하고 `PATH`에 등록해야 합니다:
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git

@@ -84,16 +84,19 @@ flowchart LR
 
 | OS | Status | Service manager |
 |---|---|---|
-| macOS (arm64 / x64) | Fully supported | launchd |
-| Linux (x64 / arm64) | Fully supported | systemd (user unit) |
-| Windows (x64) | Fully supported | Task Scheduler (hidden) / opt-in native service (`--native`, WinSW) |
+| macOS (arm64 / x64) | Fully supported (packaged Go runtime) | launchd |
+| Linux (arm64 / x64) | Fully supported (packaged Go runtime) | systemd (user unit) |
+| Windows (arm64 / x64) | Fully supported (packaged Go runtime) | Task Scheduler (hidden) / opt-in native service (`--native`, WinSW) |
 
-Requires [Node](https://nodejs.org) 18+. The Bun runtime is bundled automatically on `npm install` — no separate Bun install needed. All three platforms work natively (no WSL needed on Windows).
+Requires [Node](https://nodejs.org) 18+ for the small npm launcher. On the six supported OS/architecture
+targets, that launcher validates and starts the exact Go binary shipped in the package. Bun remains an
+installed but dormant compatibility dependency; normal installed commands do not start it. All three
+platforms work natively (no WSL needed on Windows).
 
 ## Quick start
 
 ```bash
-# Install (bundles the Bun runtime automatically — only Node 18+ required)
+# Install (ships the matching Go runtime — only Node 18+ required)
 # Prefer a user-owned Node (nvm/fnm) — avoid `sudo npm install -g …`
 npm install -g @bitkyc08/opencodex
 
@@ -111,30 +114,17 @@ codex "Write a hello world in Rust"
 ```
 
 <details>
-<summary><b>"bundled Bun runtime is missing" / npm blocked Bun install scripts?</b></summary>
+<summary><b>Why is Bun still present after installing the Go runtime?</b></summary>
 
 <br/>
 
-opencodex bundles the Bun runtime as a dependency and runs it via a Node
-launcher, so you do **not** need to install Bun yourself. If you see a
-"bundled Bun runtime is missing" error, the install skipped lifecycle scripts
-(including npm blocking bun's postinstall under `allowScripts`) or optional
-dependencies. Reinstall without those flags, allowing bun's install script:
+The package keeps Bun temporarily so older `ocx update` implementations can install the new package,
+and so a legacy Codex shim can refresh itself once before the validated Go binary takes over. Bun also
+remains available to callers that explicitly use the package's Bun API. It is not the proxy runtime on
+supported npm installations, and removing the dependency is a later compatibility cleanup.
 
-```bash
-npm install -g --allow-scripts=bun @bitkyc08/opencodex   # no --ignore-scripts, no --omit=optional
-
-# if the original install used sudo, keep using sudo:
-sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
-```
-
-npm's own warning suggests an abbreviated command without the package name —
-that would reinstall the current directory, so always pass
-`@bitkyc08/opencodex` explicitly.
-
-If you installed with `sudo` into a root-owned prefix, the sudo reinstall above
-unblocks that prefix — but prefer migrating to a user-owned Node (nvm, fnm, or
-a user npm prefix) when you can.
+Source checkouts still require a local Bun installation. Unsupported OS/architecture combinations may
+use the compatibility bridge instead of a packaged Go binary.
 
 </details>
 
@@ -320,6 +310,10 @@ ocx claude desktop             # save and apply the Claude Desktop four-family p
 ocx service [install|start|stop|status|uninstall]   # install/update/start background service
 ocx update [--tag preview]     # update opencodex; preview installs stay on @preview
 ```
+
+`ocx update` keeps the installed release channel. Updating an older preview or stable installation to a
+Go-runtime package naturally switches subsequent commands to its packaged Go binary; the retained Bun
+bridge exists only for the old updater and one-time legacy-shim transition.
 
 ### Claude Desktop profile
 
@@ -508,8 +502,9 @@ lives in [`SECURITY.md`](./SECURITY.md).
 
 ## Development
 
-Source development requires the `bun` CLI on your `PATH`. This is separate from the published npm
-package's bundled Bun runtime, which is used only by installed `ocx` commands.
+Source development requires the `bun` CLI on your `PATH`. The published npm package instead runs its
+packaged Go binary on supported targets; its bundled Bun dependency is dormant except for the old-updater
+and one-time legacy-shim bridge or explicit Bun package API use.
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git
