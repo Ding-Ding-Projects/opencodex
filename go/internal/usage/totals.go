@@ -5,6 +5,10 @@ import "github.com/lidge-jun/opencodex-go/internal/types"
 // CanonicalTotal treats input tokens as inclusive of cache reads/writes.
 func CanonicalTotal(value types.Usage) int {
 	base := value.InputTokens + value.OutputTokens
+	maxInt := int(^uint(0) >> 1)
+	if value.InputTokens >= 0 && value.OutputTokens > maxInt-value.InputTokens {
+		base = maxInt
+	}
 	if value.TotalTokens > base {
 		return value.TotalTokens
 	}

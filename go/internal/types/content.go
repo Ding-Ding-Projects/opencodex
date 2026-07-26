@@ -40,6 +40,20 @@ type ContentPart struct {
 	Namespace        string          `json:"namespace,omitempty"`
 }
 
+func (p ContentPart) MarshalJSON() ([]byte, error) {
+	type contentPartAlias ContentPart
+	if p.Type != ContentToolCall {
+		return json.Marshal(contentPartAlias(p))
+	}
+	// An empty arguments object is semantically different from a missing field.
+	// The embedded alias keeps the ordinary union shape while the outer field
+	// overrides `omitempty` for tool calls.
+	return json.Marshal(struct {
+		contentPartAlias
+		Arguments map[string]any `json:"arguments"`
+	}{contentPartAlias: contentPartAlias(p), Arguments: p.Arguments})
+}
+
 func TextPart(text string) ContentPart {
 	return ContentPart{Type: ContentText, Text: text}
 }

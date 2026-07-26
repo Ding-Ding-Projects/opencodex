@@ -8,10 +8,11 @@ type SplitEvent struct {
 }
 
 type ThinkingSplitter struct {
-	state    string
-	pre      string
-	thinking string
-	closeTag string
+	state            string
+	pre              string
+	thinking         string
+	closeTag         string
+	trimPostThinking bool
 }
 
 var thinkingOpenTags = []string{"<thinking>", "<think>", "<reasoning>"}
@@ -23,6 +24,13 @@ func (p *ThinkingSplitter) Feed(text string) []SplitEvent {
 		return nil
 	}
 	if p.state == "streaming" {
+		if p.trimPostThinking {
+			text = strings.TrimLeft(text, " \t\r\n")
+			if text == "" {
+				return nil
+			}
+			p.trimPostThinking = false
+		}
 		return []SplitEvent{{Text: text}}
 	}
 	if p.state == "thinking" {
@@ -72,14 +80,17 @@ func (p *ThinkingSplitter) Flush() []SplitEvent {
 func (p *ThinkingSplitter) drain() []SplitEvent {
 	if idx := strings.Index(p.thinking, p.closeTag); idx >= 0 {
 		reasoning := p.thinking[:idx]
-		after := strings.TrimLeft(p.thinking[idx+len(p.closeTag):], " \t\r\n")
+		after := p.thinking[idx+len(p.closeTag):]
 		p.thinking = ""
 		p.state = "streaming"
+		p.trimPostThinking = true
 		out := make([]SplitEvent, 0, 2)
 		if reasoning != "" {
 			out = append(out, SplitEvent{Reasoning: true, Text: reasoning})
 		}
+		after = strings.TrimLeft(after, " \t\r\n")
 		if after != "" {
+			p.trimPostThinking = false
 			out = append(out, SplitEvent{Text: after})
 		}
 		return out

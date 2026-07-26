@@ -63,11 +63,14 @@ func NormalizeCostTokens(value types.Usage) (CostTokens, bool) {
 	if value.CacheReadInputTokens == 0 && value.CachedInputTokens > 0 && write > 0 {
 		candidates = append(candidates, max(0, value.CachedInputTokens-write))
 	}
+	if write > value.InputTokens {
+		return CostTokens{}, false
+	}
 	for _, candidate := range candidates {
-		if candidate+write > value.InputTokens {
+		if candidate > value.InputTokens-write {
 			continue
 		}
-		return CostTokens{Input: value.InputTokens - candidate - write, Output: value.OutputTokens, CacheRead: candidate, CacheWrite: write}, true
+		return CostTokens{Input: value.InputTokens - write - candidate, Output: value.OutputTokens, CacheRead: candidate, CacheWrite: write}, true
 	}
 	return CostTokens{}, false
 }
