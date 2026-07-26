@@ -373,7 +373,7 @@ func New(config Config) *Server {
 
 func baseChatHandlerConfig(config Config, debug *claude.DebugRing) chat.HandlerConfig {
 	result := chat.HandlerConfig{
-		Registry: config.Registry, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client,
+		Registry: config.Registry, Combos: config.Combos, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client,
 		ClaudeDebug: debug, SearchLoop: config.SearchLoop, OnUsage: config.OnUsage,
 	}
 	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {

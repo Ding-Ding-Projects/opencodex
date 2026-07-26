@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/lidge-jun/opencodex-go/internal/combos"
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -84,6 +85,17 @@ func TestServerWiresSubagentFallbackGuidanceIntoResponsesCore(t *testing.T) {
 	guidance := proxy.responses.config.Guidance.FallbackGuidance
 	if !strings.Contains(guidance, `"anthropic/claude", "xai/grok"`) || !strings.Contains(guidance, "rewrites thread_spawn") {
 		t.Fatalf("fallback guidance=%q", guidance)
+	}
+}
+
+func TestBaseChatHandlerConfigWiresComboResolver(t *testing.T) {
+	resolver, err := combos.New(map[string]combos.Combo{}, map[string]combos.Provider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := baseChatHandlerConfig(Config{Combos: resolver}, nil)
+	if configured.Combos != resolver {
+		t.Fatal("chat/messages combo resolver was not wired")
 	}
 }
 
