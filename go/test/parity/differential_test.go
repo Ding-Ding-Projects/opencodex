@@ -34,10 +34,7 @@ func startTypeScriptProxyWithLookup(t *testing.T, config map[string]any, lookup 
 func startTypeScriptProxyWithEnvironmentLookup(t *testing.T, config map[string]any, lookup func(string) (string, error), extraEnvironment ...string) *tsProxyProcess {
 	t.Helper()
 	requireRuntimeParity(t)
-	bun, err := lookup("bun")
-	if err != nil {
-		t.Skip("Bun runtime is unavailable")
-	}
+	bun := requireBun(t, lookup)
 	repositoryRoot := filepath.Dir(goModuleRoot())
 	serverModule := filepath.Join(repositoryRoot, "src", "server", "index.ts")
 	if _, err := os.Stat(serverModule); err != nil {
@@ -150,12 +147,22 @@ func TestTypeScriptAndGoErrorResponseBytes(t *testing.T) {
 }
 
 func TestDifferentialHarnessSkipsWithoutBun(t *testing.T) {
+	t.Setenv(runtimeParityEnv, "1")
 	t.Run("missing Bun", func(t *testing.T) {
 		startTypeScriptProxyWithLookup(t, nil, func(string) (string, error) {
 			return "", exec.ErrNotFound
 		})
 		t.Fatal("missing Bun lookup did not skip the differential test")
 	})
+}
+
+func requireBun(t *testing.T, lookup func(string) (string, error)) string {
+	t.Helper()
+	bun, err := lookup("bun")
+	if err != nil {
+		t.Skip("Bun runtime is unavailable")
+	}
+	return bun
 }
 
 func firstDifferentByte(left, right []byte) int {

@@ -39,8 +39,11 @@ Observed on 2026-07-26:
   model fetch (`go/internal/cli/grok_lifecycle.go:20-25`) calls the not-yet-live
   proxy and reaches the 30-second fetch timeout.
 
-That startup ordering is owned by the CLI slice. Until it is fixed, tests that
-start real Go/TypeScript proxy processes are explicitly opt-in:
+The CLI slice fixed the startup ordering by creating the listener first and
+running `applyGrokFence(...)` from `serveListener`'s `afterStart` callback
+(`go/internal/cli/serve.go`). The proxy can now answer the model fetch instead
+of waiting on itself. Process tests remain explicitly opt-in because they form
+the slower cross-runtime CI matrix, not because startup is deadlocked:
 
 ```bash
 OCX_RUN_RUNTIME_PARITY=1 go test ./test/parity -count=1 -timeout 1200s
@@ -53,9 +56,46 @@ preserving an explicit command for the expensive runtime matrix.
 After the split, the default package completed in 2.36 seconds (`go test`
 reported 1.708 seconds), down from the 900-second timeout.
 
-The opt-in path was also exercised independently with
-`TestTypeScriptAndGoHealthRoute`; it completed successfully in 30.95 seconds,
-confirming the deep suite remains runnable rather than silently disabled.
+Before the CLI fix, an isolated `TestTypeScriptAndGoHealthRoute` took 30.95
+seconds. After the fix, the complete runtime matrix is green in 21.46 seconds
+of wall time (21.156 seconds reported by `go test`). This is a CI-viable
+duration. The first post-fix run exposed a stale chat-envelope assertion:
+direct TS/Go execution both preserved `insufficient_quota`, while the test had
+expected `rate_limit_error`; correcting the parity oracle closed the suite.
+
+## Parity suite switches
+
+| Environment variable | Additional coverage | Default CI behavior |
+| --- | --- | --- |
+| `OCX_RUN_RUNTIME_PARITY=1` | Real Go and Bun proxy processes: routing, management mutations, WebSocket/SSE, Grok serve/stop, and Claude Desktop lifecycle | Skipped |
+| `OCX_RUN_HEADER_STRESS=1` | Bun oversized-header characterization | Skipped |
+| `OCX_RUN_PERF=1` | Short local runtime throughput/RSS measurement | Skipped |
+| `OCX_RUN_STREAM_PERF=1` | Long-lived SSE throughput/RSS measurement | Skipped |
+
+The three stress/performance switches do not imply runtime parity; CI jobs that
+need those cases should set `OCX_RUN_RUNTIME_PARITY=1` as well. A machine without
+Bun safely skips TS-dependent tests. `TestDifferentialHarnessSkipsWithoutBun`
+forces the runtime switch on with an `exec.ErrNotFound` lookup to exercise that
+skip path rather than merely being skipped by the outer runtime gate.
+
+## Lifecycle differential findings
+
+`TestGrokAndClaudeDesktopCLILifecycleParity` runs Go and TypeScript sequentially
+on one fixed loopback port and isolated temporary homes. It covers proxy start,
+Grok injection, a real routed request, Claude Desktop apply/status/reapply,
+malformed-metadata failure preservation, canonical stop, byte-exact Grok restore,
+and cross-feature non-interference.
+
+The lifecycle currently records two source differences without weakening each
+implementation's data-safety assertions:
+
+- Go's CLI model source includes the full built-in registry, while TypeScript
+  emits native plus configured models. Grok and Claude Desktop catalog files
+  therefore differ in total length/digest, though their shared gateway fields
+  and configured parity model are equivalent.
+- TypeScript's Claude Desktop management reapply rejects the
+  `appliedFingerprint` persisted by its first apply as an unknown profile field.
+  Go reapply is idempotent. Both leave the first applied Desktop files unchanged.
 
 ## Grok safety coverage
 
