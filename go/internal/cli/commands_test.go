@@ -32,7 +32,11 @@ func TestConfigSetGetAndRedactedShow(t *testing.T) {
 	t.Setenv("OPENCODEX_HOME", home)
 	cfg := config.FreshInstall()
 	cfg.AuthToken = "secret-token"
-	cfg.Providers["custom"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://example.test/v1", APIKey: "secret-key"}
+	cfg.ExtraFields = map[string]json.RawMessage{"futureSecret": json.RawMessage(`{"accessToken":"future-top-secret","enabled":true}`)}
+	cfg.Providers["custom"] = config.ProviderConfig{
+		Adapter: "openai-chat", BaseURL: "https://example.test/v1", APIKey: "secret-key",
+		ExtraFields: map[string]json.RawMessage{"futureProvider": json.RawMessage(`{"apiKey":"future-provider-secret","mode":"safe"}`)},
+	}
 	if err := config.Save(filepath.Join(home, "config.json"), &cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +57,12 @@ func TestConfigSetGetAndRedactedShow(t *testing.T) {
 	if err := runConfig([]string{"show", "--json"}, streams); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "secret-token") || strings.Contains(out.String(), "secret-key") || strings.Count(out.String(), "[REDACTED]") != 2 {
+	for _, secret := range []string{"secret-token", "secret-key", "future-top-secret", "future-provider-secret"} {
+		if strings.Contains(out.String(), secret) {
+			t.Fatalf("show leaked %q: %s", secret, out.String())
+		}
+	}
+	if strings.Count(out.String(), "[REDACTED]") != 4 || !strings.Contains(out.String(), `"enabled": true`) || !strings.Contains(out.String(), `"mode": "safe"`) {
 		t.Fatalf("show did not redact secrets: %s", out.String())
 	}
 }

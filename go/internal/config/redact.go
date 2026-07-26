@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -33,6 +34,27 @@ func RedactMap(value map[string]any) map[string]any {
 			continue
 		}
 		redacted[key] = redactValue(item)
+	}
+	return redacted
+}
+
+// RedactRawFields preserves forward-compatible passthrough configuration while
+// applying the same secret-key and token-value policy used by diagnostics.
+func RedactRawFields(fields map[string]json.RawMessage) map[string]json.RawMessage {
+	if fields == nil {
+		return nil
+	}
+	redacted := make(map[string]json.RawMessage, len(fields))
+	for key, raw := range fields {
+		var value any
+		if json.Unmarshal(raw, &value) != nil {
+			continue
+		}
+		value = RedactMap(map[string]any{key: value})[key]
+		encoded, err := json.Marshal(value)
+		if err == nil {
+			redacted[key] = encoded
+		}
 	}
 	return redacted
 }

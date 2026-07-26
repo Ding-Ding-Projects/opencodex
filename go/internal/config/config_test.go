@@ -30,6 +30,68 @@ func TestLoadLegacyConfigWithoutNewCollections(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsUTF8BOMAndRewritesCanonicalJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	payload := []byte(`{"port":10100,"hostname":"127.0.0.1","providers":{"legacy":{"adapter":"openai-chat","baseUrl":"https://example.test/v1","apiKey":"legacy-secret"}},"defaultProvider":"legacy"}`)
+	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, payload...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil || cfg.DefaultProvider != "legacy" || cfg.Providers["legacy"].APIKey != "legacy-secret" {
+		t.Fatalf("BOM config load = %#v err=%v", cfg, err)
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.HasPrefix(saved, []byte{0xEF, 0xBB, 0xBF}) || !json.Valid(saved) {
+		t.Fatalf("canonical save = %q", saved)
+	}
+}
+
+func TestUnknownFieldsSurviveLoadSaveForForwardCompatibility(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	payload := `{"port":10100,"hostname":"127.0.0.1","providers":{"future":{"adapter":"openai-chat","baseUrl":"https://example.test/v1","futureProvider":{"mode":"safe"}}},"defaultProvider":"future","futureTopLevel":{"enabled":true}}`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ExtraFields["futureTopLevel"]) == 0 || len(cfg.Providers["future"].ExtraFields["futureProvider"]) == 0 {
+		t.Fatalf("passthrough fields were not retained: %#v %#v", cfg.ExtraFields, cfg.Providers["future"].ExtraFields)
+	}
+	// Known fields always win over passthrough data, including programmatically
+	// constructed configs that did not originate in the JSON decoder.
+	cfg.ExtraFields["port"] = json.RawMessage(`9999`)
+	future := cfg.Providers["future"]
+	future.ExtraFields["note"] = json.RawMessage(`"raw-shadow"`)
+	cfg.Providers["future"] = future
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(data, &saved) != nil {
+		t.Fatalf("saved config = %q err=%v", data, err)
+	}
+	provider := saved["providers"].(map[string]any)["future"].(map[string]any)
+	if saved["port"] != float64(10100) || saved["futureTopLevel"].(map[string]any)["enabled"] != true || provider["futureProvider"].(map[string]any)["mode"] != "safe" {
+		t.Fatalf("forward-compatible save = %#v", saved)
+	}
+	if _, shadowed := provider["note"]; shadowed {
+		t.Fatalf("passthrough shadowed omitted known field: %#v", provider)
+	}
+	reloaded, err := Load(path)
+	if err != nil || reloaded.Port != 10100 || len(reloaded.ExtraFields["futureTopLevel"]) == 0 || len(reloaded.Providers["future"].ExtraFields["futureProvider"]) == 0 {
+		t.Fatalf("forward-compatible reload = %#v err=%v", reloaded, err)
+	}
+}
+
 func TestLoadPreservesOrphanedCustomModelForProviderRemovalCompatibility(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	data := `{"port":10100,"hostname":"127.0.0.1","providers":{},"defaultProvider":"openai","customModels":[{"id":"legacy-id","provider":"removed","modelId":"model","addedAt":"2026-01-01T00:00:00Z"}]}`

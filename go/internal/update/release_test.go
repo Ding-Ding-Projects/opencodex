@@ -90,6 +90,34 @@ func TestGitHubReleaseResolverRejectsUntrustedAssetHost(t *testing.T) {
 	}
 }
 
+func TestGitHubReleaseResolverRejectsIncompleteAndDuplicateAssetSets(t *testing.T) {
+	resolver := GitHubReleaseResolver{AllowedAssetHosts: []string{"github.com"}}
+	version := "2.8.0"
+	binary := ReleaseArtifactName(version, "linux", "amd64")
+	checksum := ReleaseChecksumName(version)
+	asset := func(name string) releaseAsset {
+		return releaseAsset{Name: name, URL: "https://github.com/lidge-jun/opencodex/releases/download/v" + version + "/" + name}
+	}
+	for name, assets := range map[string][]releaseAsset{
+		"missing checksum":   {asset(binary)},
+		"duplicate binary":   {asset(binary), asset(binary), asset(checksum)},
+		"duplicate checksum": {asset(binary), asset(checksum), asset(checksum)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			release := githubRelease{TagName: "v" + version}
+			for _, candidate := range assets {
+				release.Assets = append(release.Assets, struct {
+					Name string `json:"name"`
+					URL  string `json:"browser_download_url"`
+				}{Name: candidate.Name, URL: candidate.URL})
+			}
+			if _, _, err := resolver.findReleaseAssets(release, binary, checksum); err == nil {
+				t.Fatal("invalid asset set was accepted")
+			}
+		})
+	}
+}
+
 func TestParseReleaseChecksumRejectsMissingDuplicateAndMalformedEntries(t *testing.T) {
 	name := "ocx_2.8.0_linux_amd64"
 	digest := strings.Repeat("a", 64)

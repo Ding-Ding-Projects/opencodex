@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,5 +28,20 @@ func TestRedactMap(t *testing.T) {
 	}
 	if got := RedactMap(input); !reflect.DeepEqual(got, want) {
 		t.Fatalf("RedactMap() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRedactRawFieldsPreservesSafeUnknownsAndScrubsSecrets(t *testing.T) {
+	fields := map[string]json.RawMessage{
+		"futureFeature": json.RawMessage(`{"enabled":true,"accessToken":"future-secret"}`),
+		"apiKey":        json.RawMessage(`"top-secret"`),
+	}
+	redacted := RedactRawFields(fields)
+	encoded, err := json.Marshal(redacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "future-secret") || strings.Contains(string(encoded), "top-secret") || !strings.Contains(string(encoded), "enabled") || !strings.Contains(string(encoded), RedactedSecret) {
+		t.Fatalf("raw redaction = %s", encoded)
 	}
 }

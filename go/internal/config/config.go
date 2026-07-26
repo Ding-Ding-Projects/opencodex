@@ -1,12 +1,14 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -80,6 +82,7 @@ type Config struct {
 	CORSAllowOrigins            []string                   `json:"corsAllowOrigins,omitempty"`
 	Debug                       DebugConfig                `json:"debug,omitempty"`
 	Log                         LogConfig                  `json:"log,omitempty"`
+	ExtraFields                 map[string]json.RawMessage `json:"-"`
 }
 
 type SidecarTimeoutConfig struct {
@@ -202,6 +205,7 @@ type ProviderConfig struct {
 	NativeLocalExec                 string                                         `json:"nativeLocalExec,omitempty"`
 	MCPServers                      map[string]CursorMCPServerConfig               `json:"mcpServers,omitempty"`
 	DesktopExecutor                 *CursorDesktopExecutorConfig                   `json:"desktopExecutor,omitempty"`
+	ExtraFields                     map[string]json.RawMessage                     `json:"-"`
 }
 
 // UnmarshalJSON mirrors the TypeScript schema's passthrough treatment of the
@@ -220,6 +224,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		*c = Config(decoded)
+		c.ExtraFields = unknownJSONFields(fields, reflect.TypeOf(decoded))
 		return nil
 	}
 	var enabled bool
@@ -230,6 +235,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		}
 		*c = Config(decoded)
 		c.WebSocketsSet = true
+		c.ExtraFields = unknownJSONFields(fields, reflect.TypeOf(decoded))
 		return nil
 	}
 	delete(fields, "websockets")
@@ -244,6 +250,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	*c = Config(decoded)
 	c.WebSocketsSet = true
 	c.WebSocketsRaw = append(json.RawMessage(nil), websockets...)
+	c.ExtraFields = unknownJSONFields(fields, reflect.TypeOf(decoded))
 	return nil
 }
 
@@ -252,15 +259,88 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 func (c Config) MarshalJSON() ([]byte, error) {
 	type wireConfig Config
 	encoded, err := json.Marshal(wireConfig(c))
-	if err != nil || len(c.WebSocketsRaw) == 0 {
+	if err != nil || len(c.WebSocketsRaw) == 0 && len(c.ExtraFields) == 0 {
 		return encoded, err
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		return nil, err
 	}
+	mergeUnknownJSONFields(fields, c.ExtraFields, reflect.TypeOf(wireConfig(c)))
 	fields["websockets"] = append(json.RawMessage(nil), c.WebSocketsRaw...)
+	if len(c.WebSocketsRaw) == 0 {
+		delete(fields, "websockets")
+		if c.WebSocketsSet || c.WebSockets {
+			value, _ := json.Marshal(c.WebSockets)
+			fields["websockets"] = value
+		}
+	}
 	return json.Marshal(fields)
+}
+
+func (p *ProviderConfig) UnmarshalJSON(data []byte) error {
+	type wireProvider ProviderConfig
+	decoded := wireProvider(*p)
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*p = ProviderConfig(decoded)
+	p.ExtraFields = unknownJSONFields(fields, reflect.TypeOf(decoded))
+	return nil
+}
+
+func (p ProviderConfig) MarshalJSON() ([]byte, error) {
+	type wireProvider ProviderConfig
+	encoded, err := json.Marshal(wireProvider(p))
+	if err != nil || len(p.ExtraFields) == 0 {
+		return encoded, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return nil, err
+	}
+	mergeUnknownJSONFields(fields, p.ExtraFields, reflect.TypeOf(wireProvider(p)))
+	return json.Marshal(fields)
+}
+
+func unknownJSONFields(fields map[string]json.RawMessage, typ reflect.Type) map[string]json.RawMessage {
+	known := make(map[string]bool, typ.NumField())
+	for index := 0; index < typ.NumField(); index++ {
+		name := strings.Split(typ.Field(index).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			known[name] = true
+		}
+	}
+	var extras map[string]json.RawMessage
+	for name, value := range fields {
+		if known[name] {
+			continue
+		}
+		if extras == nil {
+			extras = make(map[string]json.RawMessage)
+		}
+		extras[name] = append(json.RawMessage(nil), value...)
+	}
+	return extras
+}
+
+func mergeUnknownJSONFields(destination, extras map[string]json.RawMessage, typ reflect.Type) {
+	known := make(map[string]bool, typ.NumField())
+	for index := 0; index < typ.NumField(); index++ {
+		name := strings.Split(typ.Field(index).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			known[name] = true
+		}
+	}
+	for name, value := range extras {
+		if !known[name] {
+			destination[name] = append(json.RawMessage(nil), value...)
+		}
+	}
 }
 
 // PublicWebSocketsValue returns the passthrough value exposed by the TS
@@ -365,6 +445,7 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 
 	var raw any
 	if err := json.Unmarshal(data, &raw); err != nil {

@@ -141,8 +141,10 @@ func setConfigValue(cfg *config.Config, key, value string) error {
 
 func redactedConfig(cfg config.Config) config.Config {
 	cfg.AuthToken = redactValue(cfg.AuthToken)
+	cfg.ExtraFields = config.RedactRawFields(cfg.ExtraFields)
 	for name, provider := range cfg.Providers {
 		provider.APIKey = redactValue(provider.APIKey)
+		provider.ExtraFields = config.RedactRawFields(provider.ExtraFields)
 		for key, value := range provider.Headers {
 			if strings.Contains(strings.ToLower(key), "auth") || strings.Contains(strings.ToLower(key), "key") || strings.Contains(strings.ToLower(key), "token") {
 				provider.Headers[key] = redactValue(value)

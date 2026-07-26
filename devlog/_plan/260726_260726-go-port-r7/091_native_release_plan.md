@@ -278,6 +278,112 @@ rewrite files after the manifest is generated.
   automatic npm users can still use the bundled TS fallback while the corrective
   release is prepared.
 
+## Native transition checklist for operators
+
+Use preview first. Do not promote the release merely because all six files were
+cross-compiled; at least one native execution smoke is required on every target
+OS family.
+
+### Before publishing
+
+- [ ] Apply and review the `.github/workflows/release.yml` patch above on the
+  exact audited release commit; keep `scripts/release.ts` unchanged.
+- [ ] Run the full Go gate and existing Bun/typecheck/privacy gates on that SHA.
+- [ ] Produce six final binaries and `ocx_<version>_checksums.txt`. If signing is
+  enabled, generate the manifest after signing/notarization, never before.
+- [ ] Run `sha256sum --check ocx_<version>_checksums.txt` against the exact files
+  that will be attached and packed.
+- [ ] Inspect `npm pack --dry-run --json`: all six files must appear under
+  `bin/native/` with the exact versioned names expected by `native-runtime.mjs`.
+- [ ] Run `node --test scripts/ocx-native-launcher.test.mjs` against the packed
+  package fixture, covering auto Go, forced Go, forced TS, and fallback TS.
+- [ ] Confirm the preview GitHub Release is marked prerelease and includes six
+  binaries plus one checksum manifest. Stable and preview tags must not share
+  or overwrite assets.
+
+### Before switching an existing installation
+
+```bash
+mkdir -p ~/.opencodex/native-transition-backup
+cp -p ~/.opencodex/config.json ~/.opencodex/native-transition-backup/config.json 2>/dev/null || true
+cp -p ~/.opencodex/auth.json ~/.opencodex/native-transition-backup/auth.json 2>/dev/null || true
+chmod 700 ~/.opencodex/native-transition-backup
+chmod 600 ~/.opencodex/native-transition-backup/*.json 2>/dev/null || true
+
+ocx config validate
+ocx update --tag preview --dry-run
+```
+
+- [ ] Record the current `ocx --version`, installation method, service backend,
+  configured port, and previous release asset checksum.
+- [ ] Confirm the dry-run names the expected preview version, current platform
+  artifact, GitHub release URL, SHA-256, and executable destination.
+- [ ] Keep credential backups local and protected; never attach `auth.json` to
+  an issue, release, test artifact, or CI log.
+- [ ] Stop active long-running Codex/Claude sessions before replacing the
+  binary. Preserve `config.json`, `auth.json`, Codex config, and shim backups.
+
+### Preview cutover and acceptance
+
+For an npm installation whose preview package contains `bin/native/`:
+
+```bash
+npm install -g @bitkyc08/opencodex@preview
+OPENCODEX_RUNTIME=go ocx --version
+OPENCODEX_RUNTIME=go ocx config validate
+OPENCODEX_RUNTIME=go ocx doctor
+```
+
+Then start `ocx serve` in an isolated smoke environment and verify:
+
+- [ ] `status`, `provider list`, `models list`, and `config show --json` exit 0.
+- [ ] An offline request reaches a controlled local upstream and returns through
+  the proxy; no external provider credential is needed for this smoke.
+- [ ] OAuth/account metadata survives stop and restart without exposing access
+  tokens, refresh tokens, API keys, or physical account identifiers.
+- [ ] `ocx update --tag preview --dry-run` reports the installed preview as
+  current, or identifies only the intended next preview.
+- [ ] A service-managed installation is reinstalled with the same backend and
+  survives one stop/start cycle; Codex shim restore/back also succeeds.
+- [ ] On one host per OS family, run with Bun and Node absent from `PATH` and
+  confirm the standalone Go binary still serves the offline request.
+
+### Rollback runbook
+
+Choose the narrowest rollback that restores service:
+
+1. **Launcher-only rollback:** set `OPENCODEX_RUNTIME=ts` and rerun `ocx`. This
+   immediately selects the packaged TS/Bun fallback without changing config or
+   credentials.
+2. **Standalone binary rollback:** stop the proxy, select the preceding signed
+   release asset and its digest from that release's immutable checksum manifest,
+   then run:
+
+   ```bash
+   ocx update \
+     --url https://github.com/lidge-jun/opencodex/releases/download/v<previous>/ocx_<previous>_<os>_<arch> \
+     --sha256 <digest-from-previous-manifest> \
+     --destination "$(command -v ocx)"
+   ```
+
+   On Windows use the `.exe` asset and an explicit executable destination.
+3. **npm package rollback:** reinstall an exact previously accepted version,
+   not a moving dist-tag: `npm install -g @bitkyc08/opencodex@<previous>`.
+   Force `OPENCODEX_RUNTIME=ts` until its packaged native asset is verified.
+4. **Routing rollback:** run `ocx stop` and `ocx restore` so plain Codex no
+   longer points at the failed proxy. After recovery, `ocx restore back`
+   re-enables proxy routing.
+5. **Config rollback:** only while the proxy is stopped, restore the protected
+   `config.json` backup. For the OpenAI tier migration, retain and inspect
+   `config.json.pre-openai-tiers-v2.bak`; never overwrite a differing backup
+   automatically. Restore `auth.json` only if credential-store state itself was
+   damaged, preserving mode `0600` and directory mode `0700`.
+
+After any rollback, verify `ocx --version`, `ocx config validate`, `ocx doctor`,
+one offline proxy request, service state, and native Codex restoration. Publish
+a new corrective version; never replace assets or retarget a release tag that
+users may already have consumed.
+
 ## Release blockers and known limits
 
 - Current public preview releases do not contain the native artifact set.
