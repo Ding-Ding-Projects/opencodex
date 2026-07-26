@@ -60,6 +60,7 @@ type Config struct {
 	ConnectTimeoutMS            int                        `json:"connectTimeoutMs,omitempty"`
 	ShutdownTimeoutMS           int                        `json:"shutdownTimeoutMs,omitempty"`
 	WebSockets                  bool                       `json:"websockets,omitempty"`
+	WebSocketsSet               bool                       `json:"-"`
 	APIKeys                     []ProxyAPIKey              `json:"apiKeys,omitempty"`
 	CodexAutoStart              *bool                      `json:"codexAutoStart,omitempty"`
 	CodexShimAutoRestore        *bool                      `json:"codexShimAutoRestore,omitempty"`
@@ -298,9 +299,10 @@ func Load(path string) (*Config, error) {
 
 	cfg := loadBaseline()
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("decode config: %w", err)
+		return nil, configDecodeError(err)
 	}
 	if object, ok := raw.(map[string]any); ok {
+		_, cfg.WebSocketsSet = object["websockets"]
 		if _, present := object["openaiProviderTierVersion"]; !present {
 			cfg.OpenAIProviderTierVersion = 0
 		}
@@ -347,6 +349,36 @@ func Load(path string) (*Config, error) {
 		cfg = repaired
 	}
 	return &cfg, nil
+}
+
+// configDecodeError mirrors Zod's persisted-config diagnostics closely enough
+// that CLI fallback warnings identify the user-facing JSON field and both the
+// expected and received types. Keep syntax errors on the separate parse path.
+func configDecodeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return fmt.Errorf("decode config: %w", err)
+	}
+	field := strings.TrimSpace(typeErr.Field)
+	if field == "" {
+		field = "config"
+	}
+	expected := typeErr.Type.Kind().String()
+	switch expected {
+	case "bool":
+		expected = "boolean"
+	case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64":
+		expected = "number"
+	case "slice", "array":
+		expected = "array"
+	case "map", "struct":
+		expected = "object"
+	}
+	received := typeErr.Value
+	if strings.HasPrefix(received, "number ") {
+		received = "number"
+	}
+	return fmt.Errorf("%s: Invalid input: expected %s, received %s", field, expected, received)
 }
 
 // Save writes JSON to a same-directory temporary file and atomically renames it

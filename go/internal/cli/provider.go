@@ -66,6 +66,7 @@ func loadConfigFile(path string, warning io.Writer) (*config.Config, error) {
 	cfg, err := config.LoadMigrated(path)
 	if os.IsNotExist(err) || err != nil && strings.Contains(strings.ToLower(err.Error()), "no such file") {
 		defaults := config.FreshInstall()
+		defaults.WebSocketsSet = true
 		return &defaults, nil
 	}
 	if err == nil {
@@ -80,6 +81,7 @@ func loadConfigFile(path string, warning io.Writer) (*config.Config, error) {
 		fmt.Fprintf(warning, "Could not load opencodex config at %s: %v. Using default config.%s\n", path, err, backupNote)
 	}
 	defaults := config.FreshInstall()
+	defaults.WebSocketsSet = true
 	return &defaults, nil
 }
 

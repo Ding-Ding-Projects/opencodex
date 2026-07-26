@@ -158,3 +158,37 @@ func TestProviderTestUsesRunningProxyManagementEndpoint(t *testing.T) {
 		t.Fatalf("provider test output = %s", output.String())
 	}
 }
+
+func TestLoadConfigFileFallsBackAndReportsWrongKnownFieldType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := []byte(`{"port":10100,"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://chatgpt.com/backend-api/codex","authMode":"forward","codexAccountMode":"pool"}},"defaultProvider":"openai","websockets":"true"}`)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var warning bytes.Buffer
+	cfg, err := loadConfigFile(path, &warning)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.WebSocketsSet || cfg.WebSockets {
+		t.Fatalf("fallback websockets state = value:%t set:%t", cfg.WebSockets, cfg.WebSocketsSet)
+	}
+	wantPrefix := "Could not load opencodex config at " + path + ": websockets: Invalid input: expected boolean, received string. Using default config."
+	if !strings.HasPrefix(warning.String(), wantPrefix) {
+		t.Fatalf("warning = %q, want prefix %q", warning.String(), wantPrefix)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundBackup := false
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "config.json.invalid-") {
+			foundBackup = true
+		}
+	}
+	if !foundBackup {
+		t.Fatal("invalid config backup was not created")
+	}
+}

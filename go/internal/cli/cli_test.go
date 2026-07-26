@@ -42,6 +42,12 @@ func TestRunVersionAndUnknownCommand(t *testing.T) {
 		t.Fatalf("unknown exit=%d", code)
 	}
 	if !strings.Contains(errOut.String(), "Unknown command") {
-		t.Fatalf("unknown output: %q", errOut.String())
+		t.Fatalf("unknown stderr: %q", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "Usage:") {
+		t.Fatalf("unknown stderr must not contain usage: %q", errOut.String())
+	}
+	if !strings.Contains(out.String(), "Usage:") {
+		t.Fatalf("unknown stdout must contain usage: %q", out.String())
 	}
 }

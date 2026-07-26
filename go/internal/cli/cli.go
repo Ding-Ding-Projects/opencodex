@@ -129,7 +129,7 @@ func Run(ctx context.Context, args []string, streams IO) int {
 	position, ok := commandIndex[command.Name]
 	if !ok {
 		fmt.Fprintf(streams.Err, "Unknown command: %s\n", command.Name)
-		_ = PrintHelp(streams.Err, "")
+		_ = PrintHelp(streams.Out, "")
 		return 1
 	}
 	spec := commandSpecs[position]

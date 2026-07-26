@@ -372,6 +372,21 @@ func TestBackupInvalidConfigAndConcurrentAtomicSaves(t *testing.T) {
 	}
 }
 
+func TestLoadReportsWrongKnownFieldTypeLikeTypeScript(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	body := []byte(`{"port":10100,"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://chatgpt.com/backend-api/codex","authMode":"forward","codexAccountMode":"pool"}},"defaultProvider":"openai","websockets":"true"}`)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() succeeded with a string websockets value")
+	}
+	if got, want := err.Error(), "websockets: Invalid input: expected boolean, received string"; got != want {
+		t.Fatalf("Load() error = %q, want %q", got, want)
+	}
+}
+
 func TestSaveReturnsErrorWhenConfigParentIsNotDirectory(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(parent, []byte("occupied"), 0o600); err != nil {
