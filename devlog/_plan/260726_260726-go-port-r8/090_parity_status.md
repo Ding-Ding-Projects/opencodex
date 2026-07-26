@@ -110,6 +110,12 @@ buffered request reproduces the same three-message upstream history and state
 metrics in both runtimes. This closes a real streaming-session gap rather than
 adding another helper-level assertion.
 
+The next production-route slice adds `/v1/messages/count_tokens`: system,
+messages, tools, CJK text, and the `[1m]` marker return equal positive token
+values, while missing-model validation remains strict byte parity. Valid Go
+responses contain one extra trailing newline, so the value contract is
+semantic-only pending chat/server serialization alignment.
+
 The same pass removes parity's only direct `registry.CodexRouter` consumer.
 Account selection, thread affinity, quota ordering, 429 cooldown, and failover
 now exercise the canonical `codex.Router`, `AccountStore`, and `RoutingConfig`,
@@ -121,15 +127,16 @@ Two distinct metrics are reported and must not be interchanged.
 
 | Metric | Data plane | Whole product | Meaning |
 |---|---:|---:|---|
-| Differential scenario-family estimate | about 92% | about 71% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
-| Go statement coverage | 71.3% | 68.9% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
+| Differential scenario-family estimate | about 93% | about 72% | Weighted user-visible behavior inventory; successor to Round 7's approximately 89% / 58% snapshot. |
+| Go statement coverage | 71.6% | 69.2% | Instrumented statements under the commands below, including the current-oracle runtime matrix in the whole-product run. |
 
 The data-plane estimate rose modestly because multi-provider routing and
 concurrent isolation were added to an already mature HTTP/SSE/WebSocket matrix.
 The whole-product estimate rose more because migration, OAuth health, Grok,
 Desktop, lifecycle recovery, concurrent management, effort caps, and shadow
 calls were previously sparse or absent. Combo management lifecycle, storage,
-and buffered/streaming production continuation replay raise the whole-product estimate again.
+buffered/streaming continuation replay, and Messages token counting raise the
+whole-product estimate again.
 These remain bounded estimates, not line or branch coverage.
 
 Statement coverage was measured with:
@@ -157,7 +164,7 @@ go tool cover -func=/tmp/opencodex-product-r8.cover
 | `OCX_RUN_PERF=1` | Short local throughput/RSS measurement | Skipped |
 | `OCX_RUN_STREAM_PERF=1` | Long-lived SSE throughput/RSS plus 12,000-event adapter and Kiro resource-release soak | Skipped; default e2e runs the exact 512-event contract |
 
-The final current-oracle full runtime matrix completed in 28.659 seconds as
+The final current-oracle full runtime matrix completed in 27.845 seconds as
 reported by `go test`. Every TypeScript-dependent helper resolves Bun before
 starting and calls `t.Skip` when unavailable; the dedicated missing-Bun test
 forces that path with `exec.ErrNotFound`.
@@ -212,3 +219,5 @@ without changing the production queue policy or weakening the deep soak.
   differ from TypeScript's current on-disk catalog order.
 - Buffered continuation response values, expanded upstream messages, and state
   metrics match, but Chat-to-Responses JSON object key order differs.
+- Messages token-count values and validation match, but valid Go JSON responses
+  include one trailing newline that TypeScript omits.
