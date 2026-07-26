@@ -70,7 +70,7 @@ func TestChatBuildRequestShape(t *testing.T) {
 	}
 	tools := body["tools"].([]any)
 	function := tools[0].(map[string]any)["function"].(map[string]any)
-	if function["name"] != "fs.read" {
+	if function["name"] != "fs__read" {
 		t.Fatalf("tool name = %#v", function["name"])
 	}
 }

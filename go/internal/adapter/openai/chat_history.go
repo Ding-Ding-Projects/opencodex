@@ -14,6 +14,10 @@ type pendingHistoryToolCall struct {
 }
 
 func messagesToChat(req *types.NormalizedRequest, baseURL string) ([]map[string]any, error) {
+	return messagesToChatConfigured(req, baseURL, true, req.Context.Tools)
+}
+
+func messagesToChatConfigured(req *types.NormalizedRequest, baseURL string, preserveReasoning bool, nudgeTools []types.Tool) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(req.Context.Messages)+1)
 	systemParts := append([]string(nil), req.Context.SystemPrompt...)
 	for _, message := range req.Context.Messages {
@@ -24,7 +28,7 @@ func messagesToChat(req *types.NormalizedRequest, baseURL string) ([]map[string]
 		}
 	}
 	if ShouldInjectToolCatalogNudge(baseURL) {
-		if nudge := BuildToolCatalogNudgeForTools(req.Context.Tools); nudge != "" {
+		if nudge := BuildToolCatalogNudgeForTools(nudgeTools); nudge != "" {
 			systemParts = append(systemParts, nudge)
 		}
 	}
@@ -83,7 +87,7 @@ func messagesToChat(req *types.NormalizedRequest, baseURL string) ([]map[string]
 				out = append(out, wire)
 			}
 		case "assistant":
-			wire, calls, err := assistantMessageToChat(message, mintCallID, seenWireCallIDs)
+			wire, calls, err := assistantMessageToChat(message, mintCallID, seenWireCallIDs, preserveReasoning)
 			if err != nil {
 				return nil, err
 			}
@@ -200,6 +204,7 @@ func assistantMessageToChat(
 	message types.Message,
 	mintCallID func() string,
 	seenWireCallIDs map[string]struct{},
+	preserveReasoning bool,
 ) (map[string]any, []pendingHistoryToolCall, error) {
 	var content any
 	if err := json.Unmarshal(message.Content, &content); err != nil {
@@ -231,9 +236,7 @@ func assistantMessageToChat(
 					seenWireCallIDs[id] = struct{}{}
 				}
 				name := stringValue(part["name"])
-				if namespace := stringValue(part["namespace"]); namespace != "" {
-					name = namespace + "." + name
-				}
+				name = NamespacedToolName(types.Tool{Name: name, Namespace: stringValue(part["namespace"])})
 				encoded, err := json.Marshal(part["arguments"])
 				if err != nil {
 					return nil, nil, fmt.Errorf("encode assistant tool arguments: %w", err)
@@ -245,7 +248,7 @@ func assistantMessageToChat(
 		if text.Len() > 0 {
 			wire["content"] = text.String()
 		}
-		if reasoning.Len() > 0 {
+		if reasoning.Len() > 0 && preserveReasoning {
 			wire["reasoning_content"] = reasoning.String()
 		}
 		if len(calls) > 0 {

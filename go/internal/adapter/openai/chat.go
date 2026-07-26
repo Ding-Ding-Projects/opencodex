@@ -11,14 +11,19 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 type ChatAdapter struct {
-	BaseURL string
-	Client  *http.Client
-	APIKey  string
-	Headers map[string]string
+	BaseURL                string
+	Client                 *http.Client
+	APIKey                 string
+	Headers                map[string]string
+	Provider               config.ProviderConfig
+	OpenRouterRouting      *providers.OpenRouterProviderRouting
+	ModelOpenRouterRouting map[string]providers.OpenRouterProviderRouting
 }
 
 var _ types.Adapter = (*ChatAdapter)(nil)
@@ -38,7 +43,8 @@ func (a *ChatAdapter) BuildRequest(ctx context.Context, req *types.NormalizedReq
 	if err != nil {
 		return nil, err
 	}
-	body, err := chatRequestBody(req, a.BaseURL)
+	provider := a.providerConfig()
+	body, err := chatRequestBodyForProvider(req, a, provider)
 	if err != nil {
 		return nil, fmt.Errorf("build chat request body: %w", err)
 	}
@@ -61,6 +67,24 @@ func (a *ChatAdapter) BuildRequest(ctx context.Context, req *types.NormalizedReq
 	return httpReq, nil
 }
 
+// NewChatAdapter is the provider-aware constructor. Callers that use a struct
+// literal retain baseline OpenAI-compatible behavior, while production
+// provider factories should use this constructor to preserve registry policy.
+func NewChatAdapter(provider config.ProviderConfig, apiKey string, headers map[string]string) *ChatAdapter {
+	return &ChatAdapter{BaseURL: provider.BaseURL, APIKey: apiKey, Headers: headers, Provider: provider}
+}
+
+func (a *ChatAdapter) providerConfig() config.ProviderConfig {
+	provider := a.Provider
+	if a.BaseURL != "" {
+		provider.BaseURL = a.BaseURL
+	}
+	if provider.BaseURL == "" {
+		provider.BaseURL = "https://api.openai.com/v1"
+	}
+	return provider
+}
+
 func chatEndpoint(baseURL string) (string, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
@@ -77,52 +101,89 @@ func chatEndpoint(baseURL string) (string, error) {
 }
 
 func chatRequestBody(req *types.NormalizedRequest, baseURL string) (map[string]any, error) {
-	messages, err := messagesToChat(req, baseURL)
+	adapter := &ChatAdapter{BaseURL: baseURL}
+	return chatRequestBodyForProvider(req, adapter, adapter.providerConfig())
+}
+
+func chatRequestBodyForProvider(req *types.NormalizedRequest, adapter *ChatAdapter, provider config.ProviderConfig) (map[string]any, error) {
+	choice := parseChatToolChoice(req.Options.ToolChoice)
+	selectedTools := filterChatTools(req.Context.Tools, choice)
+	preserveReasoning := config.ModelInList(provider.PreserveReasoningContentModels, req.ModelID)
+	messages, err := messagesToChatConfigured(req, provider.BaseURL, preserveReasoning, selectedTools)
 	if err != nil {
 		return nil, err
 	}
-	body := map[string]any{"model": req.ModelID, "messages": messages, "stream": req.Stream}
-	if len(req.Context.Tools) > 0 {
-		tools := chatTools(req.Context.Tools, baseURL)
+	modelID := req.ModelID
+	if provider.ModelSuffixBracketStrip != nil && *provider.ModelSuffixBracketStrip {
+		modelID = stripBracketedModelSuffix(modelID)
+	}
+	body := map[string]any{"model": modelID, "messages": messages, "stream": req.Stream}
+	if routing, ok := resolveChatOpenRouterRouting(adapter, provider, req.ModelID); ok {
+		body["provider"] = routing
+	}
+	if len(selectedTools) > 0 {
+		tools := chatTools(selectedTools, provider.BaseURL)
 		if len(tools) > 0 {
 			body["tools"] = tools
-			parallel := true
+			if toolChoice := chatToolChoiceWire(choice, req.Context.Tools); toolChoice != nil {
+				if config.ModelInList(provider.AutoToolChoiceOnlyModels, req.ModelID) && toolChoice != "none" {
+					toolChoice = "auto"
+				}
+				body["tool_choice"] = toolChoice
+			}
+			parallel := provider.ParallelToolCalls == nil || *provider.ParallelToolCalls
 			if req.Options.ParallelToolCalls != nil {
-				parallel = *req.Options.ParallelToolCalls
+				parallel = parallel && *req.Options.ParallelToolCalls
 			}
 			body["parallel_tool_calls"] = parallel
 		}
 	}
-	applyRequestOptions(body, req.Options, req.Stream)
+	applyProviderRequestOptions(body, req, provider)
 	return body, nil
 }
 
-func applyRequestOptions(body map[string]any, options types.RequestOptions, stream bool) {
-	if options.MaxOutputTokens > 0 {
-		body["max_tokens"] = options.MaxOutputTokens
+func applyProviderRequestOptions(body map[string]any, req *types.NormalizedRequest, provider config.ProviderConfig) {
+	maxTokens := resolveChatMaxTokens(provider, req)
+	if maxTokens > 0 {
+		body["max_tokens"] = maxTokens
 	}
-	if options.Temperature != nil {
-		body["temperature"] = *options.Temperature
+	if req.Options.Temperature != nil && !config.ModelInList(provider.NoTemperatureModels, req.ModelID) {
+		body["temperature"] = *req.Options.Temperature
 	}
-	if options.TopP != nil {
-		body["top_p"] = *options.TopP
+	if req.Options.TopP != nil && !config.ModelInList(provider.NoTopPModels, req.ModelID) {
+		body["top_p"] = *req.Options.TopP
 	}
-	if len(options.StopSequences) > 0 {
-		body["stop"] = options.StopSequences
+	if len(req.Options.StopSequences) > 0 {
+		body["stop"] = req.Options.StopSequences
 	}
-	if len(options.ToolChoice) > 0 && json.Valid(options.ToolChoice) {
-		var choice any
-		if json.Unmarshal(options.ToolChoice, &choice) == nil {
-			body["tool_choice"] = choice
+	wireEffort := config.MapReasoningEffort(provider, req.ModelID, req.Options.Reasoning)
+	if wireEffort != "" {
+		switch {
+		case config.ModelInList(provider.ThinkingBudgetModels, req.ModelID):
+			if budget := thinkingBudgetForEffort(req.Options.Reasoning, wireEffort, maxTokens); budget >= 0 {
+				body["thinking_budget"] = budget
+			}
+		case config.ModelInList(provider.ThinkingToggleModels, req.ModelID) && (wireEffort == "enabled" || wireEffort == "disabled"):
+			body["thinking"] = map[string]any{"type": wireEffort}
+		default:
+			body["reasoning_effort"] = wireEffort
 		}
 	}
-	if options.Reasoning != "" {
-		body["reasoning_effort"] = options.Reasoning
+	if !config.ModelInList(provider.NoPenaltyModels, req.ModelID) {
+		if req.Options.PresencePenalty != nil {
+			body["presence_penalty"] = *req.Options.PresencePenalty
+		}
+		if req.Options.FrequencyPenalty != nil {
+			body["frequency_penalty"] = *req.Options.FrequencyPenalty
+		}
 	}
-	if options.ServiceTier != "" {
-		body["service_tier"] = options.ServiceTier
+	if provider.PromptCacheKey && req.Options.PromptCacheKey != "" {
+		body["prompt_cache_key"] = req.Options.PromptCacheKey
 	}
-	if stream {
+	if req.Options.ServiceTier != "" {
+		body["service_tier"] = req.Options.ServiceTier
+	}
+	if req.Stream {
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
 }
@@ -135,10 +196,13 @@ func chatTools(tools []types.Tool, baseURL string) []map[string]any {
 		if !ok {
 			continue
 		}
-		out = append(out, map[string]any{"type": "function", "function": map[string]any{
-			"name": NamespacedToolName(tool), "description": tool.Description,
-			"parameters": parameters, "strict": tool.Strict,
-		}})
+		function := map[string]any{
+			"name": NamespacedToolName(tool), "description": tool.Description, "parameters": parameters,
+		}
+		if tool.Strict {
+			function["strict"] = true
+		}
+		out = append(out, map[string]any{"type": "function", "function": function})
 	}
 	return out
 }
@@ -157,12 +221,12 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 		calls := make(map[string]*pendingChatCall)
 		order := make([]string, 0)
 		var usage *types.Usage
-		sawFinish := false
+		finishReason := ""
 		flush := func() bool { return flushChatCalls(ctx, out, calls, order) }
 		for frame := range decodeSSE(ctx, body) {
 			if frame.Data == "[DONE]" {
 				flush()
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage})
+				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})
 				return
 			}
 			var chunk map[string]any
@@ -184,14 +248,14 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 			}
 			choice, _ := choices[0].(map[string]any)
 			if finish := stringValue(choice["finish_reason"]); finish != "" {
-				sawFinish = true
+				finishReason = finish
 			}
 			delta, _ := choice["delta"].(map[string]any)
 			if text := stringValue(delta["content"]); text != "" {
 				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
 			}
 			if reasoning := stringValue(delta["reasoning_content"]); reasoning != "" {
-				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventReasoning, Reasoning: reasoning})
+				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventReasoningRawDelta, Text: reasoning})
 			}
 			accumulateChatCalls(delta["tool_calls"], calls, &order)
 			if stringValue(choice["finish_reason"]) != "" {
@@ -202,13 +266,24 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 			return
 		}
 		flush()
-		if !sawFinish && usage == nil {
+		if finishReason == "" && usage == nil {
 			sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "upstream stream ended without a terminal signal ([DONE] or finish_reason) — possible truncation"})
 			return
 		}
-		sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage})
+		sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})
 	}()
 	return out
+}
+
+func chatStopReason(reason string) string {
+	switch reason {
+	case "length":
+		return "max_tokens"
+	case "content_filter":
+		return "content_filter"
+	default:
+		return ""
+	}
 }
 
 func accumulateChatCalls(value any, calls map[string]*pendingChatCall, order *[]string) {
@@ -285,7 +360,7 @@ func (a *ChatAdapter) ParseUnary(_ context.Context, body []byte) ([]types.Adapte
 		events = append(events, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
 	}
 	if reasoning := stringValue(message["reasoning_content"]); reasoning != "" {
-		events = append(events, types.AdapterEvent{Type: types.EventReasoning, Reasoning: reasoning})
+		events = append(events, types.AdapterEvent{Type: types.EventReasoningRawDelta, Text: reasoning})
 	}
 	for _, rawCall := range sliceValue(message["tool_calls"]) {
 		wire, _ := rawCall.(map[string]any)

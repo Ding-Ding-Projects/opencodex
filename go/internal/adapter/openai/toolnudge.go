@@ -26,7 +26,7 @@ func NamespacedToolName(tool types.Tool) string {
 	if strings.TrimSpace(tool.Namespace) == "" {
 		return tool.Name
 	}
-	return tool.Namespace + "." + tool.Name
+	return tool.Namespace + "__" + tool.Name
 }
 
 // BuildToolCatalogNudge returns bounded, deterministic provider-neutral guidance.

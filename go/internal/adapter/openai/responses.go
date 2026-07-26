@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -29,6 +30,8 @@ type ResponsesAdapter struct {
 	Headers         map[string]string
 	IncomingHeaders http.Header
 	ForwardAuth     bool
+	ResponsesPath   string
+	Provider        config.ProviderConfig
 }
 
 var _ types.Adapter = (*ResponsesAdapter)(nil)
@@ -44,11 +47,16 @@ func (a *ResponsesAdapter) BuildRequest(ctx context.Context, req *types.Normaliz
 	if req == nil {
 		return nil, fmt.Errorf("build responses request: nil normalized request")
 	}
-	endpoint, err := responsesEndpoint(a.BaseURL, a.ForwardAuth)
+	provider := a.responsesProviderConfig()
+	responsesPath := a.ResponsesPath
+	if responsesPath == "" {
+		responsesPath = provider.ResponsesPath
+	}
+	endpoint, err := responsesEndpointWithPath(provider.BaseURL, a.ForwardAuth, responsesPath)
 	if err != nil {
 		return nil, err
 	}
-	body, err := responsesRequestBody(req, a.ForwardAuth)
+	body, err := responsesRequestBodyForProvider(req, a.ForwardAuth, provider)
 	if err != nil {
 		return nil, fmt.Errorf("build responses request body: %w", err)
 	}
@@ -74,7 +82,35 @@ func (a *ResponsesAdapter) BuildRequest(ctx context.Context, req *types.Normaliz
 	return httpReq, nil
 }
 
+func NewResponsesAdapter(provider config.ProviderConfig, apiKey string, headers map[string]string) *ResponsesAdapter {
+	return &ResponsesAdapter{
+		BaseURL: provider.BaseURL, APIKey: apiKey, Headers: headers, ForwardAuth: provider.AuthMode == "forward",
+		ResponsesPath: provider.ResponsesPath, Provider: provider,
+	}
+}
+
+func (a *ResponsesAdapter) responsesProviderConfig() config.ProviderConfig {
+	provider := a.Provider
+	if a.BaseURL != "" {
+		provider.BaseURL = a.BaseURL
+	}
+	if provider.BaseURL == "" {
+		provider.BaseURL = "https://api.openai.com"
+	}
+	if provider.Adapter == "" {
+		provider.Adapter = "openai-responses"
+	}
+	if a.ForwardAuth {
+		provider.AuthMode = "forward"
+	}
+	return provider
+}
+
 func responsesEndpoint(baseURL string, forward bool) (string, error) {
+	return responsesEndpointWithPath(baseURL, forward, "")
+}
+
+func responsesEndpointWithPath(baseURL string, forward bool, responsesPath string) (string, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
@@ -86,6 +122,12 @@ func responsesEndpoint(baseURL string, forward bool) (string, error) {
 	if forward {
 		return baseURL + "/responses", nil
 	}
+	if responsesPath != "" {
+		if !strings.HasPrefix(responsesPath, "/") {
+			responsesPath = "/" + responsesPath
+		}
+		return baseURL + responsesPath, nil
+	}
 	if strings.HasSuffix(baseURL, "/v1") {
 		return baseURL + "/responses", nil
 	}
@@ -93,6 +135,14 @@ func responsesEndpoint(baseURL string, forward bool) (string, error) {
 }
 
 func responsesRequestBody(req *types.NormalizedRequest, forward bool) ([]byte, error) {
+	provider := config.ProviderConfig{Adapter: "openai-responses"}
+	if forward {
+		provider.AuthMode = "forward"
+	}
+	return responsesRequestBodyForProvider(req, forward, provider)
+}
+
+func responsesRequestBodyForProvider(req *types.NormalizedRequest, forward bool, provider config.ProviderConfig) ([]byte, error) {
 	if len(bytes.TrimSpace(req.RawBody)) > 0 {
 		var body map[string]any
 		if err := json.Unmarshal(req.RawBody, &body); err != nil {
@@ -100,7 +150,7 @@ func responsesRequestBody(req *types.NormalizedRequest, forward bool) ([]byte, e
 		}
 		body["model"] = req.ModelID
 		body["stream"] = req.Stream
-		return json.Marshal(sanitizeResponsesBody(body, forward))
+		return json.Marshal(sanitizeResponsesBodyForRequest(body, forward, req, provider))
 	}
 	body := map[string]any{
 		"model":  req.ModelID,
@@ -117,7 +167,7 @@ func responsesRequestBody(req *types.NormalizedRequest, forward bool) ([]byte, e
 		body["tools"] = responsesTools(req.Context.Tools)
 	}
 	applyResponsesOptions(body, req.Options)
-	return json.Marshal(sanitizeResponsesBody(body, forward))
+	return json.Marshal(sanitizeResponsesBodyForRequest(body, forward, req, provider))
 }
 
 func applyResponsesOptions(body map[string]any, options types.RequestOptions) {
@@ -148,18 +198,30 @@ func applyResponsesOptions(body map[string]any, options types.RequestOptions) {
 }
 
 func sanitizeResponsesBody(body map[string]any, forward bool) map[string]any {
+	return sanitizeResponsesBodyForRequest(body, forward, &types.NormalizedRequest{ModelID: stringValue(body["model"])}, config.ProviderConfig{})
+}
+
+func sanitizeResponsesBodyForRequest(body map[string]any, forward bool, request *types.NormalizedRequest, provider config.ProviderConfig) map[string]any {
+	scrubResponsesCompactionItems(body)
 	if forward {
 		_, hadPreviousResponse := body["previous_response_id"]
 		delete(body, "previous_response_id")
-		repairOrphanedResponsesInput(body, hadPreviousResponse)
+		unexpandedMiss := hadPreviousResponse && !request.PreviousExpanded
+		repairOrphanedResponsesInput(body, unexpandedMiss)
 	} else {
 		stripConflictingHostedTools(body)
 	}
-	repairOversizedReplayCallIDs(body)
+	if forward || request.PreviousExpanded {
+		repairOversizedReplayCallIDs(body)
+	}
 	stripInvalidResponsesItemIDs(body)
 	stripUnstoredResponsesItemIDs(body)
 	stripUnsupportedResponsesHostedTools(body)
 	stripSparkResponsesCompatibility(body)
+	stripDisabledResponsesReasoningSummaries(body, provider, request.ModelID)
+	if request.CompactionRequest && isRoutedResponsesCompaction(provider) {
+		buildRoutedResponsesCompactionBody(body)
+	}
 
 	input, ok := body["input"].([]any)
 	if !ok {
