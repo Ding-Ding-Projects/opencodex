@@ -2,12 +2,43 @@ package openai
 
 import (
 	"context"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
+
+func turnQueuePumpCount() int {
+	buffer := make([]byte, 1<<20)
+	count := runtime.Stack(buffer, true)
+	return strings.Count(string(buffer[:count]), "openai.(*TurnQueue).pump")
+}
+
+func TestTurnQueueCancelledConsumerReleasesPump(t *testing.T) {
+	baseline := turnQueuePumpCount()
+	queue := NewTurnQueue(1)
+	_ = queue.Stream()
+	if !queue.Push(types.AdapterEvent{Type: types.EventTextDelta, Text: "queued"}) {
+		t.Fatal("failed to queue event")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if queue.Send(ctx, types.AdapterEvent{Type: types.EventDone}) {
+		t.Fatal("send unexpectedly succeeded after cancellation")
+	}
+	queue.Close()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if turnQueuePumpCount() <= baseline {
+			return
+		}
+		runtime.Gosched()
+	}
+	t.Fatalf("cancelled queue retained pump goroutine: baseline=%d current=%d", baseline, turnQueuePumpCount())
+}
 
 func TestTurnQueuePreservesOrdering(t *testing.T) {
 	queue := NewTurnQueue(0)

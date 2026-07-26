@@ -7,11 +7,6 @@ import (
 	"strings"
 )
 
-const (
-	AntigravityCLIVersion        = "1.0.13"
-	AntigravityGoogleAPIClientUA = "google-api-nodejs-client/10.3.0"
-)
-
 func ClaudeCodeHeaders() map[string]string {
 	return map[string]string{
 		"X-App":                       "cli",
@@ -34,11 +29,4 @@ func ClaudeCodeSessionID(token string) string {
 	hex := fmt.Sprintf("%x", digest[:])
 	variant := "89ab"[digest[8]&3]
 	return fmt.Sprintf("%s-%s-4%s-%c%s-%s", hex[:8], hex[8:12], hex[13:16], variant, hex[17:20], hex[20:32])
-}
-
-func AntigravityUserAgent(version string) string {
-	if version == "" {
-		version = AntigravityCLIVersion
-	}
-	return fmt.Sprintf("antigravity/cli/%s (aidev_client; os_type=darwin; arch=arm64)", version)
 }

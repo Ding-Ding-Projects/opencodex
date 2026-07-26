@@ -11,13 +11,14 @@ import (
 )
 
 type TurnQueue struct {
-	mu     sync.Mutex
-	queued []types.AdapterEvent
-	out    chan types.AdapterEvent
-	wake   chan struct{}
-	space  chan struct{}
-	closed bool
-	stream sync.Once
+	mu      sync.Mutex
+	queued  []types.AdapterEvent
+	out     chan types.AdapterEvent
+	wake    chan struct{}
+	space   chan struct{}
+	closed  bool
+	aborted bool
+	stream  sync.Once
 
 	MaxBacklog        int
 	OnBacklogExceeded func()
@@ -84,6 +85,7 @@ func (q *TurnQueue) Push(event types.AdapterEvent) bool {
 
 func (q *TurnQueue) Send(ctx context.Context, event types.AdapterEvent) bool {
 	if ctx.Err() != nil {
+		q.abort()
 		return false
 	}
 	// A live consumer can briefly trail a bursty parser even though it is draining
@@ -99,10 +101,24 @@ func (q *TurnQueue) Send(ctx context.Context, event types.AdapterEvent) bool {
 		case <-q.space:
 		case <-timer.C:
 		case <-ctx.Done():
+			q.abort()
 			return false
 		}
 	}
 	return q.Push(event)
+}
+
+func (q *TurnQueue) abort() {
+	q.mu.Lock()
+	if q.aborted {
+		q.mu.Unlock()
+		return
+	}
+	q.aborted = true
+	q.closed = true
+	q.queued = nil
+	q.mu.Unlock()
+	q.notify()
 }
 
 func (q *TurnQueue) Close() {
@@ -132,6 +148,10 @@ func (q *TurnQueue) pump() {
 	defer close(q.out)
 	for {
 		q.mu.Lock()
+		if q.aborted {
+			q.mu.Unlock()
+			return
+		}
 		if len(q.queued) == 0 {
 			closed := q.closed
 			q.mu.Unlock()
