@@ -3,12 +3,8 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
-	"time"
 )
-
-var desktopFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 type DesktopProfileError struct {
 	Path    string
@@ -54,14 +50,6 @@ func ParseDesktopProfile(value any) (DesktopProfile, error) {
 	}
 	if raw.Defaults == nil {
 		return DesktopProfile{}, &DesktopProfileError{Path: "profile.defaults", Message: "must be an object"}
-	}
-	if raw.AppliedFingerprint != "" && !desktopFingerprintPattern.MatchString(raw.AppliedFingerprint) {
-		return DesktopProfile{}, &DesktopProfileError{Path: "profile.appliedFingerprint", Message: "must be a 16-character lowercase SHA-256 prefix"}
-	}
-	if raw.AppliedAt != "" {
-		if _, err := time.Parse(time.RFC3339, raw.AppliedAt); err != nil {
-			return DesktopProfile{}, &DesktopProfileError{Path: "profile.appliedAt", Message: "must be an RFC3339 timestamp"}
-		}
 	}
 	assignments, err := parseDesktopAssignments(raw.Assignments)
 	if err != nil {

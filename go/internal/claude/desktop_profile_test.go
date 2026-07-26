@@ -75,3 +75,37 @@ func TestDesktopProfileRejectsClaudeShapedAliasCollision(t *testing.T) {
 		t.Fatalf("collision error = %v", err)
 	}
 }
+
+func TestDesktopProfileAppliedMarkersSurviveRebuilds(t *testing.T) {
+	profile := EmptyDesktopProfile()
+	profile.AppliedFingerprint = "0123456789abcdef"
+	profile.AppliedAt = "2026-07-26T12:34:56Z"
+	models := []DesktopProfileModel{{Route: "openrouter/model", Label: "Model"}}
+
+	reconciled, err := ReconcileDesktopProfile(profile, models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDesktopAppliedMarkers(t, reconciled, profile)
+	moved, err := MoveDesktopRoute(reconciled, "openrouter/model", DesktopFamilySonnet, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDesktopAppliedMarkers(t, moved, profile)
+	parsed, err := DecodeDesktopProfile([]byte(`{"version":1,"assignments":{},"defaults":{"opus":null,"fable":null,"sonnet":null,"haiku":null},"appliedFingerprint":"0123456789abcdef","appliedAt":"2026-07-26T12:34:56Z"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDesktopAppliedMarkers(t, parsed, profile)
+	opaque, err := DecodeDesktopProfile([]byte(`{"version":1,"assignments":{},"defaults":{"opus":null,"fable":null,"sonnet":null,"haiku":null},"appliedFingerprint":"legacy-marker","appliedAt":"external-state"}`))
+	if err != nil || opaque.AppliedFingerprint != "legacy-marker" || opaque.AppliedAt != "external-state" {
+		t.Fatalf("opaque applied markers were rejected: profile=%#v err=%v", opaque, err)
+	}
+}
+
+func assertDesktopAppliedMarkers(t *testing.T, got, want DesktopProfile) {
+	t.Helper()
+	if got.AppliedFingerprint != want.AppliedFingerprint || got.AppliedAt != want.AppliedAt {
+		t.Fatalf("applied markers got=%q/%q want=%q/%q", got.AppliedFingerprint, got.AppliedAt, want.AppliedFingerprint, want.AppliedAt)
+	}
+}

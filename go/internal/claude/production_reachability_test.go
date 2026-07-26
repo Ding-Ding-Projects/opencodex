@@ -11,7 +11,9 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/chat"
 	"github.com/lidge-jun/opencodex-go/internal/claude"
+	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -187,6 +189,109 @@ func TestProductionDesktopAliasRecordsHealthAndRoutes(t *testing.T) {
 	}
 	if after.RequestCount != before.RequestCount+1 || after.LastRequestAt == nil {
 		t.Fatalf("Desktop health before=%#v after=%#v", before, after)
+	}
+}
+
+func TestProductionClaudeDiscoveryAndContextComposition(t *testing.T) {
+	cfg := appconfig.Default()
+	cfg.ClaudeCode = &appconfig.ClaudeCodeConfig{Model: "acme/wide"}
+	cfg.Providers = map[string]appconfig.ProviderConfig{
+		"acme": {ModelInputModalities: map[string][]string{"wide": {"text", "image"}}},
+	}
+	reg := registry.New(registry.Provider{
+		ID: "acme", DefaultModel: "wide",
+		Models: []registry.ModelDefinition{{ID: "wide", ContextWindow: 400_000, ReasoningEfforts: []string{"low", "high"}}},
+	})
+	proxy := server.New(server.Config{Registry: reg, ManagementConfig: &cfg})
+	defer proxy.Close()
+
+	discovery := httptest.NewRecorder()
+	discoveryRequest := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=cli", nil)
+	discoveryRequest.Header.Set("anthropic-version", "2023-06-01")
+	proxy.Handler().ServeHTTP(discovery, discoveryRequest)
+	if discovery.Code != http.StatusOK {
+		t.Fatalf("discovery=%d %s", discovery.Code, discovery.Body.String())
+	}
+	for _, want := range []string{"claude-ocx-acme--wide", `"max_input_tokens":400000`, `"image_input":{"supported":true}`, `"high":{"supported":true}`} {
+		if !strings.Contains(discovery.Body.String(), want) {
+			t.Fatalf("production discovery missing %q: %s", want, discovery.Body.String())
+		}
+	}
+
+	settings := httptest.NewRecorder()
+	proxy.Handler().ServeHTTP(settings, httptest.NewRequest(http.MethodGet, "/api/claude-code", nil))
+	if settings.Code != http.StatusOK {
+		t.Fatalf("settings=%d %s", settings.Code, settings.Body.String())
+	}
+	for _, want := range []string{`"contextWindows"`, `"claude-ocx-acme--wide":400000`, `"effectiveModelEnv"`, `"ANTHROPIC_MODEL":"acme/wide[1m]"`} {
+		if !strings.Contains(settings.Body.String(), want) {
+			t.Fatalf("production Claude settings missing %q: %s", want, settings.Body.String())
+		}
+	}
+}
+
+func TestProductionClaudeDiscoveryUsesNativeEffectiveLadder(t *testing.T) {
+	cfg := appconfig.Default()
+	reg := registry.New(registry.Provider{
+		ID: "openai", DefaultModel: "gpt-5.5",
+		Models: []registry.ModelDefinition{{ID: "gpt-5.5", ContextWindow: 272_000}},
+	})
+	proxy := server.New(server.Config{Registry: reg, ManagementConfig: &cfg})
+	defer proxy.Close()
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=cli", nil)
+	proxy.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery=%d %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data []claude.ModelInfo `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	var effort *claude.EffortCapability
+	for index := range payload.Data {
+		if payload.Data[index].ID == claude.ClaudeCodeNativeAlias("gpt-5.5") {
+			effort = &payload.Data[index].Capabilities.Effort
+			break
+		}
+	}
+	if effort == nil {
+		t.Fatalf("gpt-5.5 missing from native discovery: %#v", payload.Data)
+	}
+	if !effort.Supported || !effort.Low.Supported || effort.XHigh == nil || !effort.XHigh.Supported || effort.Max.Supported {
+		t.Fatalf("gpt-5.5 effective ladder = %#v", effort)
+	}
+}
+
+func TestProductionDesktopDiscoveryRebuildsProfileAliasRegistry(t *testing.T) {
+	// Seed the process-global registry with the fallback alias. The production
+	// discovery request must replace it from the configured profile, as TS does.
+	claude.BuildDesktop3pRegistry(nil, []claude.Desktop3pRoutedModel{{Provider: "acme", ID: "wide"}})
+	profile := claude.EmptyDesktopProfile()
+	route := "acme/wide"
+	profile.Assignments[route] = claude.DesktopAssignment{Family: claude.DesktopFamilyOpus, Alias: "claude-opus-4-8-20260726"}
+	profile.Defaults[claude.DesktopFamilyOpus] = &route
+	cfg := appconfig.Default()
+	cfg.ClaudeCode = &appconfig.ClaudeCodeConfig{DesktopProfile: &profile}
+	cfg.Providers["acme"] = appconfig.ProviderConfig{Models: []string{"wide"}}
+	reg := registry.New(registry.Provider{
+		ID: "acme", DefaultModel: "wide",
+		Models: []registry.ModelDefinition{{ID: "wide", ContextWindow: 400_000}},
+	})
+	proxy := server.New(server.Config{Registry: reg, ManagementConfig: &cfg})
+	defer proxy.Close()
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=desktop", nil)
+	proxy.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery=%d %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"id":"claude-opus-4-8-20260726"`) {
+		t.Fatalf("Desktop discovery did not activate configured profile alias: %s", response.Body.String())
 	}
 }
 
