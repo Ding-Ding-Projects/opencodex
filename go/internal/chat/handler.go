@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -35,6 +36,7 @@ type HandlerConfig struct {
 	ConnectTimeout  time.Duration
 	BodyStall       time.Duration
 	ClaudeEnabled   *bool
+	ClaudeDebug     *claude.DebugRing
 }
 
 type Handler struct{ config HandlerConfig }

@@ -6,7 +6,9 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	"github.com/lidge-jun/opencodex-go/internal/usage"
 )
@@ -20,6 +22,12 @@ type Options struct {
 	RequestLogs         *RequestLog
 	OAuth               OAuthBackend
 	CodexAuth           CodexAuthBackend
+	DebugLogs           *ocxlib.DebugLogBuffer
+	InjectionLogs       *ocxlib.DebugLogBuffer
+	ClaudeDebug         *claude.DebugRing
+	ProviderQuotas      ProviderQuotaBackend
+	ClaudeRuntime       ClaudeCodeRuntime
+	RuntimeControl      RuntimeControlBackend
 	FetchModels         ModelFetcher
 	StorageHome         string
 	Version             string
@@ -51,6 +59,12 @@ type API struct {
 	memoryWatchdog      func() any
 	oauth               OAuthBackend
 	codexAuth           CodexAuthBackend
+	providerDebug       *ocxlib.DebugLogBuffer
+	injectionDebug      *ocxlib.DebugLogBuffer
+	claudeDebug         *claude.DebugRing
+	providerQuotas      ProviderQuotaBackend
+	claudeRuntime       ClaudeCodeRuntime
+	runtimeControl      RuntimeControlBackend
 	fetchModels         ModelFetcher
 	storageHome         string
 	version             string
@@ -93,7 +107,13 @@ func New(options Options) (*API, error) {
 	for _, model := range cfg.CustomModels {
 		customModels[model.ID] = model
 	}
-	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, oauth: options.OAuth, codexAuth: options.CodexAuth, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
+	if options.DebugLogs == nil {
+		options.DebugLogs = ocxlib.DefaultDebugLogBuffer
+	}
+	if options.InjectionLogs == nil {
+		options.InjectionLogs = ocxlib.NewDebugLogBuffer()
+	}
+	return &API{config: cfg, configPath: options.ConfigPath, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, oauth: options.OAuth, codexAuth: options.CodexAuth, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents}, nil
 }
 
 // NewAPI names the management composition point explicitly while preserving
@@ -109,7 +129,10 @@ var routes = []string{
 	"GET /api/key-providers", "GET /api/providers/keys", "POST /api/providers/keys", "DELETE /api/providers/keys", "PUT /api/providers/keys/active", "PUT /api/providers/keys/alias", "GET /api/keys", "POST /api/keys", "DELETE /api/keys",
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
 	"GET /api/logs", "DELETE /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "DELETE /api/debug/usage-logs", "GET /api/usage", "DELETE /api/usage", "GET /api/storage",
+	"GET /api/debug/logs", "GET /api/claude/inbound-debug", "GET /api/debug/injection-logs",
 	"GET /api/system/memory", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
+	"GET /api/subagent-model-fallback", "PUT /api/subagent-model-fallback", "GET /api/claude-code", "PUT /api/claude-code", "GET /api/shadow-call-settings", "PUT /api/shadow-call-settings", "GET /api/provider-quotas",
+	"GET /api/startup-health", "POST /api/startup-action", "GET /api/windows-tray", "POST /api/windows-tray", "POST /api/sync", "GET /api/update/check", "POST /api/update/run", "GET /api/update/status",
 }
 
 func RegisteredRoutes() []string { return append([]string(nil), routes...) }
@@ -128,7 +151,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
-	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
+	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleRuntimeSettings, a.handleRuntimeControl, a.handleModels, a.handleCombos, a.handleLogs, a.handleSystem, a.handleAgents} {
 		if handler(w, r) {
 			return
 		}

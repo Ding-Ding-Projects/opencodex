@@ -36,6 +36,9 @@ func (h *CountTokensHandler) Handle(w http.ResponseWriter, request *http.Request
 		writeAnthropicError(w, http.StatusBadRequest, "request body must be a JSON object")
 		return
 	}
+	if h.config.ClaudeDebug != nil {
+		h.config.ClaudeDebug.Capture("count_tokens", body, "", request.Header.Get("anthropic-beta"))
+	}
 	model, _ := body["model"].(string)
 	model = claude.StripOneMillionMarker(strings.TrimSpace(model))
 	if model == "" {

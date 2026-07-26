@@ -28,6 +28,12 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, 400, err.Error())
 		return
 	}
+	if h.config.ClaudeDebug != nil {
+		var debugBody map[string]any
+		if json.Unmarshal(raw, &debugBody) == nil {
+			h.config.ClaudeDebug.Capture("messages", debugBody, "", r.Header.Get("anthropic-beta"))
+		}
+	}
 	normalized, requestedModel, err := parseAnthropicInbound(raw)
 	if err != nil {
 		writeAnthropicError(w, 400, err.Error())

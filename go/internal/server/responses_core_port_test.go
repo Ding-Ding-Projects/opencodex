@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/bridge"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -458,5 +459,30 @@ func TestResponsesCoreInjectsConfiguredCollaborationGuidanceBeforeBuild(t *testi
 	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 	if response.Code != http.StatusOK || !contextGuidance || !rawGuidance {
 		t.Fatalf("response=%d %s context=%v raw=%v", response.Code, response.Body.String(), contextGuidance, rawGuidance)
+	}
+}
+
+func TestResponsesCoreValidationMatchesTypeScriptZodEnvelope(t *testing.T) {
+	core := NewResponsesCore(ResponsesCoreConfig{Registry: coreRegistry{endpoint: "http://unused.invalid"}, ResolveAdapter: func(*types.ResolvedModel, *types.Transport, *types.AuthContext, http.Header) (types.Adapter, error) {
+		return nil, errors.New("must not route")
+	}})
+	cases := []struct{ name, body, message string }{
+		{"malformed", `{"model":`, "Invalid JSON body"},
+		{"model", `{"model":42,"input":"x","stream":true}`, "responses parse error: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"model\"\n    ],\n    \"message\": \"Invalid input: expected string, received number\"\n  }\n]"},
+		{"input", `{"model":"m","input":{"bad":true},"stream":true}`, "responses parse error: [\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected string, received object\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"array\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected array, received object\"\n        }\n      ]\n    ],\n    \"path\": [\n      \"input\"\n    ],\n    \"message\": \"Invalid input\"\n  }\n]"},
+		{"stream", `{"model":"m","input":"x","stream":"yes"}`, "responses parse error: [\n  {\n    \"expected\": \"boolean\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"stream\"\n    ],\n    \"message\": \"Invalid input: expected boolean, received string\"\n  }\n]"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(test.body)))
+			payload, err := bridge.FormatErrorResponse(http.StatusBadRequest, "invalid_request_error", test.message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusBadRequest || response.Body.String() != string(payload) {
+				t.Fatalf("response=%d %s\nwant=%s", response.Code, response.Body.String(), payload)
+			}
+		})
 	}
 }

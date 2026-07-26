@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/storage"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 	"github.com/lidge-jun/opencodex-go/internal/usage"
@@ -194,38 +195,87 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return true
 	case "GET /api/debug":
-		a.mu.RLock()
-		enabled := a.debugEnabled
-		a.mu.RUnlock()
-		writeJSON(w, http.StatusOK, map[string]any{"usage": enabled})
+		writeJSON(w, http.StatusOK, debugSettingsDTO(ocxlib.GetDebugSettings()))
 		return true
 	case "PUT /api/debug":
 		var body struct {
-			Usage *bool `json:"usage,omitempty"`
-			Reset bool  `json:"reset,omitempty"`
+			Debug     *bool `json:"debug,omitempty"`
+			Usage     *bool `json:"usage,omitempty"`
+			Injection *bool `json:"injection,omitempty"`
+			Claude    *bool `json:"claude,omitempty"`
+			Reset     any   `json:"reset,omitempty"`
 		}
 		if !decodeJSON(w, r, &body) {
 			return true
 		}
-		if body.Reset {
-			a.mu.Lock()
-			a.debugEnabled = false
-			a.mu.Unlock()
-		} else if body.Usage != nil {
-			a.mu.Lock()
-			a.debugEnabled = *body.Usage
-			a.mu.Unlock()
-		} else {
-			writeError(w, http.StatusBadRequest, "provide usage boolean or reset:true")
+		var view ocxlib.DebugSettingsView
+		switch reset := body.Reset.(type) {
+		case bool:
+			if reset {
+				view = ocxlib.ClearDebugSettings()
+			}
+		case string:
+			flag := ocxlib.DebugFlag(reset)
+			if reset == "provider" {
+				flag = ocxlib.DebugProvider
+			}
+			if flag != ocxlib.DebugProvider && flag != ocxlib.DebugUsage && flag != ocxlib.DebugInjection && flag != ocxlib.DebugClaude {
+				writeError(w, http.StatusBadRequest, "provide debug/usage/injection/claude booleans or reset:true")
+				return true
+			}
+			view = ocxlib.ClearDebugSetting(flag)
+		}
+		values := map[ocxlib.DebugFlag]bool{}
+		for flag, value := range map[ocxlib.DebugFlag]*bool{ocxlib.DebugProvider: body.Debug, ocxlib.DebugUsage: body.Usage, ocxlib.DebugInjection: body.Injection, ocxlib.DebugClaude: body.Claude} {
+			if value != nil {
+				values[flag] = *value
+			}
+		}
+		if len(values) > 0 {
+			view = ocxlib.SetDebugSettings(values)
+		}
+		validReset := false
+		if reset, ok := body.Reset.(bool); ok && reset {
+			validReset = true
+		}
+		if reset, ok := body.Reset.(string); ok && reset != "" {
+			validReset = true
+		}
+		if !validReset && len(values) == 0 {
+			writeError(w, http.StatusBadRequest, "provide debug/usage/injection/claude booleans or reset:true")
 			return true
 		}
-		a.mu.RLock()
-		enabled := a.debugEnabled
-		a.mu.RUnlock()
-		if !enabled && a.debugLog != nil {
-			_ = a.debugLog.Clear()
+		if body.Claude != nil && a.claudeDebug != nil {
+			a.claudeDebug.SetEnabled(*body.Claude)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"usage": enabled})
+		if reset, ok := body.Reset.(string); ok && (reset == "claude") && a.claudeDebug != nil {
+			a.claudeDebug.SetEnabled(ocxlib.IsClaudeDebugEnabled())
+		}
+		if reset, ok := body.Reset.(bool); ok && reset && a.claudeDebug != nil {
+			a.claudeDebug.SetEnabled(ocxlib.IsClaudeDebugEnabled())
+		}
+		writeJSON(w, http.StatusOK, debugSettingsDTO(view))
+		return true
+	case "GET /api/debug/logs":
+		after, limit := debugLogQuery(r)
+		writeJSON(w, http.StatusOK, a.providerDebug.Entries(uint64(after), limit))
+		return true
+	case "GET /api/debug/injection-logs":
+		after, limit := debugLogQuery(r)
+		writeJSON(w, http.StatusOK, a.injectionDebug.Entries(uint64(after), limit))
+		return true
+	case "GET /api/claude/inbound-debug":
+		entries := []any{}
+		enabled := ocxlib.IsClaudeDebugEnabled()
+		if a.claudeDebug != nil {
+			enabled = a.claudeDebug.Enabled()
+			values := a.claudeDebug.Entries()
+			entries = make([]any, len(values))
+			for i := range values {
+				entries[i] = values[i]
+			}
+		}
+		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "enabled", value: enabled}, {name: "entries", value: entries}})
 		return true
 	case "GET /api/debug/usage-logs":
 		if a.debugLog == nil {
@@ -288,6 +338,36 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+func debugLogQuery(r *http.Request) (int, int) {
+	afterRaw := r.URL.Query().Get("after")
+	if afterRaw == "" {
+		afterRaw = r.URL.Query().Get("since")
+	}
+	after, _ := strconv.Atoi(afterRaw)
+	if after < 0 {
+		after = 0
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	return after, limit
+}
+
+func debugSettingsDTO(view ocxlib.DebugSettingsView) orderedJSONObject {
+	overrides, environment := orderedJSONObject{}, orderedJSONObject{}
+	for _, flag := range []ocxlib.DebugFlag{ocxlib.DebugProvider, ocxlib.DebugUsage, ocxlib.DebugInjection, ocxlib.DebugClaude} {
+		if value, ok := view.RuntimeOverride[flag]; ok {
+			overrides = append(overrides, orderedJSONField{name: string(flag), value: value})
+		}
+		environment = append(environment, orderedJSONField{name: string(flag), value: view.Env[flag]})
+	}
+	return orderedJSONObject{{name: "enabled", value: view.Enabled}, {name: "usage", value: view.Usage}, {name: "injection", value: view.Injection}, {name: "claude", value: view.Claude}, {name: "runtimeOverride", value: overrides}, {name: "env", value: environment}}
 }
 
 func matchesStatus(status int, filter string) bool {

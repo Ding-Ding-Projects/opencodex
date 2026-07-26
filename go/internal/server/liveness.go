@@ -15,7 +15,7 @@ type Liveness struct {
 }
 
 func isPublicHealthPath(path string) bool {
-	return path == "/health" || path == "/healthz" || path == "/ready" || path == "/health/startup"
+	return path == "/healthz" || path == "/ready" || path == "/health/startup"
 }
 
 func NewLiveness(version string) *Liveness { return &Liveness{Started: time.Now(), Version: version} }

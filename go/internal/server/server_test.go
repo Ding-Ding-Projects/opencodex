@@ -46,10 +46,30 @@ func TestResponsesRouteResolvesAndBridges(t *testing.T) {
 
 func TestHealthDoesNotRequireAuth(t *testing.T) {
 	server := New(Config{Token: "secret"})
-	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d", response.Code)
+	}
+}
+
+func TestServerDoesNotExposeLegacyHealthRoute(t *testing.T) {
+	server := New(Config{})
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("/health=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestOversizedHeaderResponseHasNoBody(t *testing.T) {
+	handler := oversizedHeaderMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request.Header.Set("X-Oversized-Parity", strings.Repeat("h", 1100<<10))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusRequestHeaderFieldsTooLarge || response.Body.Len() != 0 || response.Header().Get("Connection") != "close" {
+		t.Fatalf("oversized=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
 	}
 }

@@ -59,7 +59,7 @@ func TestIntegrationWiresDataAndManagementRoutes(t *testing.T) {
 	server := httptest.NewServer(proxy.Handler())
 	defer server.Close()
 
-	assertRequest(t, http.MethodGet, server.URL+"/health", "", http.StatusOK, `"status":"ok"`)
+	assertRequest(t, http.MethodGet, server.URL+"/healthz", "", http.StatusOK, `"status":"ok"`)
 	assertRequest(t, http.MethodPost, server.URL+"/v1/responses", `{"model":"acme/wire","stream":true}`, http.StatusOK, "event: response.completed")
 	assertRequest(t, http.MethodGet, server.URL+"/api/logs", "", http.StatusOK, `"provider":"acme"`)
 	assertRequest(t, http.MethodPost, server.URL+"/v1/chat/completions", `{"model":"acme/wire","messages":[{"role":"user","content":"hello"}]}`, http.StatusOK, `"object":"chat.completion"`)

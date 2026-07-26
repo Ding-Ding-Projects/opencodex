@@ -12,9 +12,11 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/bridge"
 	"github.com/lidge-jun/opencodex-go/internal/chat"
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -63,6 +65,11 @@ type Config struct {
 	MemoryWatchdogInterval time.Duration
 	MemoryWatchdogCapacity int
 	MemorySample           func() MemorySample
+	ClaudeDebug            *claude.DebugRing
+	InjectionDebug         *ocxlib.DebugLogBuffer
+	ProviderQuotas         management.ProviderQuotaBackend
+	ClaudeRuntime          management.ClaudeCodeRuntime
+	RuntimeControl         management.RuntimeControlBackend
 }
 
 type Server struct {
@@ -82,7 +89,15 @@ func New(config Config) *Server {
 	if config.Lifecycle == nil {
 		config.Lifecycle = NewLifecycle()
 	}
-	handlerConfig := chat.HandlerConfig{Registry: config.Registry, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client}
+	claudeDebug := config.ClaudeDebug
+	if claudeDebug == nil {
+		claudeDebug = claude.NewDebugRing(claude.DefaultDebugRingLimit, ocxlib.IsClaudeDebugEnabled())
+	}
+	injectionDebug := config.InjectionDebug
+	if injectionDebug == nil {
+		injectionDebug = ocxlib.NewDebugLogBuffer()
+	}
+	handlerConfig := chat.HandlerConfig{Registry: config.Registry, Auth: config.Auth, ResolveAdapter: chat.AdapterResolver(config.ResolveAdapter), Client: config.Client, ClaudeDebug: claudeDebug}
 	if config.ManagementConfig != nil && config.ManagementConfig.ClaudeCode != nil {
 		claudeConfig := config.ManagementConfig.ClaudeCode
 		handlerConfig.ClaudeEnabled = claudeConfig.Enabled
@@ -237,7 +252,9 @@ func New(config Config) *Server {
 	mux.HandleFunc("POST /v1/alpha/search", s.handleSidecar(SidecarSearch))
 	liveness := NewLiveness(config.Version)
 	health := NewHealthChecks(config.Version, config.ReadinessChecks)
-	mux.Handle("GET /health", liveness)
+	// TypeScript has no /health route. Reserve it before the SPA fallback so a
+	// bundled dashboard does not accidentally turn this unknown endpoint into 200.
+	mux.HandleFunc("GET /health", unknownV1)
 	mux.Handle("GET /healthz", liveness)
 	mux.HandleFunc("GET /ready", health.Ready)
 	mux.HandleFunc("GET /health/startup", health.Startup)
@@ -259,7 +276,7 @@ func New(config Config) *Server {
 	}
 	if managementRouter == nil {
 		usageLog, _ := config.UsageRecorder.(*usage.Log)
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {
@@ -283,7 +300,7 @@ func New(config Config) *Server {
 			middlewareConfig.AllowedOrigins = config.ManagementConfig.CORSAllowOrigins
 		}
 	}
-	s.handler = Middleware(recoveryMiddleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), config.Logger), middlewareConfig)
+	s.handler = oversizedHeaderMiddleware(Middleware(recoveryMiddleware(decompressionMiddleware(DrainAdmissionMiddleware(mux, s.lifecycle)), config.Logger), middlewareConfig))
 	return s
 }
 
@@ -364,9 +381,31 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) Lifecycle() *Lifecycle { return s.lifecycle }
 
 func (s *Server) HTTPServer(address string) *http.Server {
-	server := &http.Server{Addr: address, Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
+	// net/http's built-in oversized-header response includes a text body. Bun
+	// closes the connection or emits a bodyless 431, so admit a bounded amount
+	// here and enforce the TypeScript-compatible 1 MiB limit in the handler.
+	server := &http.Server{Addr: address, Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 2 << 20}
 	server.RegisterOnShutdown(s.Close)
 	return server
+}
+
+const publicHeaderLimit = 1 << 20
+
+func oversizedHeaderMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		size := len(request.Method) + len(request.URL.RequestURI()) + len(request.Proto) + 4
+		for name, values := range request.Header {
+			for _, value := range values {
+				size += len(name) + len(value) + 4
+			}
+		}
+		if size > publicHeaderLimit {
+			w.Header().Set("Connection", "close")
+			w.WriteHeader(http.StatusRequestHeaderFieldsTooLarge)
+			return
+		}
+		next.ServeHTTP(w, request)
+	})
 }
 
 func (s *Server) responsesEndpoint(websocketsEnabled bool) http.Handler {

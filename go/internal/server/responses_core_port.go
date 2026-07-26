@@ -88,11 +88,31 @@ func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit i
 	}
 	var body map[string]any
 	if json.Unmarshal(raw, &body) != nil {
-		return nil, fmt.Errorf("request body must be valid JSON")
+		return nil, fmt.Errorf("Invalid JSON body")
 	}
-	model, _ := body["model"].(string)
-	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("request body requires a model")
+	modelValue, exists := body["model"]
+	model, modelOK := modelValue.(string)
+	if !exists || !modelOK {
+		received := "undefined"
+		if exists {
+			received = javascriptType(modelValue)
+		}
+		return nil, zodTypeError("model", "string", received)
+	}
+	if model == "" {
+		return nil, fmt.Errorf("responses parse error: [\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"model\"\n    ],\n    \"message\": \"Too small: expected string to have >=1 characters\"\n  }\n]")
+	}
+	if input, exists := body["input"]; exists {
+		if _, stringOK := input.(string); !stringOK {
+			if _, arrayOK := input.([]any); !arrayOK {
+				return nil, zodInputUnionError(javascriptType(input))
+			}
+		}
+	}
+	if stream, exists := body["stream"]; exists {
+		if _, ok := stream.(bool); !ok {
+			return nil, zodTypeError("stream", "boolean", javascriptType(stream))
+		}
 	}
 	if input, ok := body["input"].([]any); ok {
 		if HasUnreadableEncryptedAgentTask(input) {
@@ -108,6 +128,32 @@ func parseResponsesRequest(w http.ResponseWriter, request *http.Request, limit i
 	}
 	normalized.ClientThreadID = strings.TrimSpace(request.Header.Get("X-Codex-Parent-Thread-Id"))
 	return &parsedResponsesRequest{RequestedModel: model, Normalized: normalized}, nil
+}
+
+func javascriptType(value any) string {
+	if value == nil {
+		return "null"
+	}
+	switch value.(type) {
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	case float64, float32, int, int32, int64, json.Number:
+		return "number"
+	case []any:
+		return "array"
+	default:
+		return "object"
+	}
+}
+
+func zodTypeError(field, expected, received string) error {
+	return fmt.Errorf("responses parse error: [\n  {\n    \"expected\": %q,\n    \"code\": \"invalid_type\",\n    \"path\": [\n      %q\n    ],\n    \"message\": %q\n  }\n]", expected, field, "Invalid input: expected "+expected+", received "+received)
+}
+
+func zodInputUnionError(received string) error {
+	return fmt.Errorf("responses parse error: [\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": %q\n        }\n      ],\n      [\n        {\n          \"expected\": \"array\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": %q\n        }\n      ]\n    ],\n    \"path\": [\n      \"input\"\n    ],\n    \"message\": \"Invalid input\"\n  }\n]", "Invalid input: expected string, received "+received, "Invalid input: expected array, received "+received)
 }
 
 func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Request) {
@@ -126,7 +172,7 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		if errors.As(err, &tooLarge) {
 			status = http.StatusRequestEntityTooLarge
 		}
-		writeJSONError(w, status, "invalid_request_error", err.Error())
+		writeClassifiedJSONError(w, status, "invalid_request_error", err.Error())
 		return
 	}
 	ApplyShadowCallIntercept(parsed.Normalized, core.config.ShadowCall)

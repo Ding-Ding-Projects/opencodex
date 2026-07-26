@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -54,5 +55,18 @@ func TestClaudeDisabledRejectsMessagesAndCountTokens(t *testing.T) {
 		if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"type":"permission_error"`) {
 			t.Fatalf("disabled response=%d %s", response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestClaudeInboundDebugRingIsFedByProductionHandlers(t *testing.T) {
+	ring := claude.NewDebugRing(20, true)
+	config := HandlerConfig{ClaudeDebug: ring}
+	count := NewCountTokensHandler(config)
+	count.Handle(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(`{"model":"m","messages":[],"metadata":{"user_id":"private"},"system":"secret system"}`)))
+	messages := NewMessagesHandler(config)
+	messages.Handle(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"m","max_tokens":1,"messages":[],"metadata":{"user_id":"private"}}`)))
+	entries := ring.Entries()
+	if len(entries) != 2 || entries[0].Endpoint != "messages" || entries[1].Endpoint != "count_tokens" || entries[0].UserIDTag == "" || entries[0].UserIDTag == "private" {
+		t.Fatalf("entries=%+v", entries)
 	}
 }
