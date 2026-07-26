@@ -9,7 +9,7 @@ Imports include:
 
 ```ts
 import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { validateNativeDirectory } from "./prepare-package";
 ```
@@ -20,18 +20,25 @@ Exact ownership:
   and `materialize --archive --sha256 --output --receipt`;
 - read `package.json.version` from repository root and require archive filename
   `bitkyc08-opencodex-<version>.tgz`;
-- require report length one and typed `filename`, `size`, `shasum`, `integrity`;
+- stat and cap the report before parsing; require report length one and typed `filename`,
+  `size`, `unpackedSize`, `shasum`, `integrity`, and `files`;
+- require archive size <= 192 MiB, unpackedSize <= 256 MiB, and the safe-integer sum
+  of every typed report file size to equal unpackedSize;
 - reject absolute, nested, dot-segment, newline/NUL, missing, non-regular, or symlink
   archive paths;
 - match size, SHA-1, and `sha512-<base64>` against the npm report;
 - reject existing/symlink output and receipt paths; require real non-symlink parents;
-- validate source archive bytes once, then exclusively write a mode-0600 retained copy
-  under the helper-created output root; later paths point only at that copy;
-- run `tar -tzf` by argument vector and require each exact canonical native member once;
+- open and fstat the capped regular source, then stream-hash/copy with a strict byte
+  counter into a mode-0600 retained file under the helper-created output root; never
+  allocate the whole archive and recheck the open snapshot identity;
+- run one `tar -tvzf` metadata scan by argument vector and require each exact canonical
+  native member once, regular, and within its size cap;
 - run `tar -xOzf <retained> -- <exact-member>` by argument vector. `prepare` uses the
   typed exact `pack.json.files` size; `materialize`/`verify` use named 40 MiB binary and
   1 MiB manifest caps, followed by exact observed-size/digest comparison;
 - never let tar write filesystem paths, so traversal/link metadata cannot escape;
+- cap list/stdout/stderr and enforce 30 seconds per tar child plus a 120-second helper
+  deadline; timeout kills and awaits the process before failing;
 - call `validateNativeDirectory(<output>/package/bin/native, version)` and rehash retained bytes;
 - exclusively write an atomic exact three-line receipt for `TARBALL`,
   `TARBALL_SHA256`, and `RELEASE_NATIVE_DIR`; reject CR/LF/NUL in every value;
@@ -63,9 +70,59 @@ Cases:
 8. mutate retained archive, binary, manifest, and a coherent binary+matching-manifest
    pair after prepare; each `verify` call fails through direct archive binding;
 9. pre-existing/dangling-symlink receipt rejects without truncation or injected env lines.
+10. over-cap report/archive/unpackedSize/file-size sum rejects before archive allocation;
+11. a fake tar that stalls or emits over-cap output is killed within the deadline;
+12. Unix mode assertions are platform-gated and link archives are generated without
+    requiring Windows host symlink privilege.
 
 All temp directories are removed in `finally`; tests do not touch repository
 `bin/native` or run a package lifecycle.
+
+## NEW `scripts/reconcile-release-assets.ts`
+
+This Bun CLI owns the post-notes Git tag and GitHub Release state machine. Inputs are
+explicit `--repository`, `--tag`, `--sha`, `--title`, `--notes`, `--prerelease`,
+`--archive`, `--archive-sha256`, and `--native-dir`. It derives the seven canonical
+asset names from package version and invokes `prepare-release-assets.ts verify` before
+every mutation.
+
+Exact behavior:
+
+1. `git ls-remote origin refs/tags/<tag> refs/tags/<tag>^{}` is the authoritative tag
+   read. Absent or exact SHA is allowed; any other/non-unique result fails.
+2. Read `gh api repos/<repo>/releases/tags/<tag>` without mutation. Existing metadata
+   must match tag/title/body/prerelease and expose its draft/published state.
+3. Fresh: create/push a lightweight tag only when remote is absent; re-read remote exact;
+   call `gh release create ... --verify-tag` with seven assets; re-read release+tag.
+4. Draft recovery: require expected asset-name subset, compare existing downloads,
+   upload only missing/mismatched assets with targeted `--clobber`, verify all seven,
+   re-read remote tag, run `gh release edit <tag> --draft=false`, then verify non-draft
+   and non-null publishedAt.
+5. Published recovery: never mutate assets; require all seven remote bytes already exact.
+6. Every path ends with a second authoritative remote-tag read, exact release metadata,
+   exact asset-name set, fresh download, local mode normalization, and archive-bound
+   `prepare-release-assets.ts verify`.
+
+All external commands are argument-vector spawns with bounded output/timeouts. Repo/tag/
+SHA/prerelease are schema-validated before use. The script never runs in workflow dry-run
+because its step retains `if: inputs.dry-run != true`.
+
+## NEW `tests/reconcile-release-assets.test.ts`
+
+Execute the real CLI with fake `git` and `gh` executables on `PATH`, a valid retained
+archive/native directory, scenario files, and an append-only command log. Cover:
+
+- fresh absent tag/release: exact tag+push+create sequence and final proof;
+- interrupted create leaving a draft with 0..6 assets: targeted repair, verify, explicit
+  `release edit --draft=false`, final published proof;
+- published exact release: zero mutation;
+- published missing/mismatched asset: fail without mutation;
+- tag force-move before create/upload/edit and before final proof: fail;
+- conflicting metadata/unexpected asset: fail;
+- fake command timeout/over-output: bounded failure.
+
+`tests/ci-workflows.test.ts` separately proves the reconciliation step itself is
+real-publish-only, so dry-run has zero npm/git/GitHub mutation reachability.
 
 ## MODIFY `.github/workflows/release.yml`
 
@@ -152,10 +209,10 @@ The earlier Preflight release metadata step therefore changes same-SHA/existing-
 errors into recovery-candidate notices, while retaining immediate failure for a tag at a
 different SHA. No exact-state decision is made before the retained archive and notes exist.
 
-Keep Post-publish registry smoke real-publish-only. In Create/reconcile GitHub release,
-keep the exact real-publish guard and materialize a fresh upload directory from the private
-archive. The helper's extraction routine is reused; no filesystem tar extraction appears.
-Immediately before create/upload:
+Keep Post-publish registry smoke real-publish-only. The existing release-note step keeps
+the exact real-publish guard and materializes a fresh upload directory from the private
+archive. After notes and local asset verification, replace all inline tag/release mutation
+logic with one argument-vector invocation:
 
 ```bash
 upload_root="${RUNNER_TEMP}/ocx-upload-assets-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -176,42 +233,17 @@ assets=(
   "${RELEASE_NATIVE_DIR}/ocx_${RELEASE_VERSION}_checksums.txt"
 )
 for asset in "${assets[@]}"; do test -f "$asset" && test ! -L "$asset"; done
+bun scripts/reconcile-release-assets.ts \
+  --repository "$GITHUB_REPOSITORY" \
+  --tag "$release_tag" \
+  --sha "$GITHUB_SHA" \
+  --title "$release_tag" \
+  --notes "$notes_file" \
+  --prerelease "$([ -n "$prerelease_flag" ] && printf true || printf false)" \
+  --archive "$TARBALL" \
+  --archive-sha256 "$TARBALL_SHA256" \
+  --native-dir "$RELEASE_NATIVE_DIR"
 ```
-
-The final mutation/recovery branch is:
-
-```diff
-+          if [ "$GITHUB_RELEASE_STATE" = "fresh" ]; then
-+            if [ -z "$existing_tag_sha" ]; then
-+              git tag "$release_tag" "$GITHUB_SHA"
-+              git push origin "refs/tags/${release_tag}"
-+            fi
-+            gh release create "$release_tag" "${assets[@]}" --target "$GITHUB_SHA" \
-+              --title "$release_tag" --notes-file "$notes_file" ${prerelease_flag:+$prerelease_flag}
-+          else
-+            # Compare existing expected assets first. Keep exact bytes and repair
-+            # only missing/mismatched names; gh --clobber deletes those names
-+            # before re-upload, so a failed replacement remains safely retryable.
-+            if [ "${#repair_assets[@]}" -gt 0 ]; then
-+              gh release upload "$release_tag" "${repair_assets[@]}" --clobber
-+            fi
-+          fi
-```
-
-After either branch, download exactly the seven named assets into a fresh directory,
-require no extras, chmod the six downloaded binaries to 0755 and manifest to 0644, then
-run archive-bound canonical validation plus byte-for-byte SHA-256 comparison against the
-upload directory. The remote contract is inventory+bytes, not transport mode preservation.
-A failed/partial upload therefore fails the run
-but the next exact-SHA rerun repairs it idempotently.
-
-Before a recovery upload, query the current asset-name list and require it to be a subset
-of the expected seven; an unexpected name is a conflict, not something `--clobber` may
-silently erase. Download each existing expected name and compare SHA-256 to the fresh
-local asset. `repair_assets` contains only missing or mismatched paths. After
-create/repair, require the remote list to equal all seven names, then download and
-verify. This explicitly accounts for `gh release upload --clobber` deleting an existing
-same-name asset before its replacement upload.
 
 ## MODIFY `.github/workflows/ci.yml`
 
@@ -272,12 +304,13 @@ Extend the release test with exact assertions:
 - exact npm retry skips publish only on matching registry integrity and dist-tag;
 - GitHub candidate presence is recorded before notes, but exact release state is decided
   only after generated title/body/prerelease metadata exists;
-- same-SHA tag and exact partial release resume through `upload --clobber`, then a fresh
-  download is mode-normalized and byte-verified against the retained archive; conflicts
-  fail before mutation;
+- workflow invokes the real reconciliation CLI only under the real-publish guard;
+- same-SHA draft and exact partial release resume through targeted upload, explicit draft
+  publication, authoritative tag rechecks, and fresh archive-bound download verification;
+- published releases are verification-only and any missing/mismatched asset fails;
 - coherent binary+manifest mutation fails direct archive-member comparison;
-- an executed fake-command harness covers dry-run zero mutation and interruptions after
-  npm publish, tag push, release creation, and partial asset upload;
+- the executed fake-command suite covers draft interruption, partial upload, remote tag
+  movement, published exact state, and conflicts; the workflow contract covers dry-run;
 - `ci.yml` includes `dev2-go` and preserves poison-install verification;
 - go-ci trigger/path and six-name dry-run are present;
 - all action references remain immutable SHA pins.

@@ -58,6 +58,8 @@ publishing.
 
 - `scripts/prepare-release-assets.ts`
 - `tests/prepare-release-assets.test.ts`
+- `scripts/reconcile-release-assets.ts`
+- `tests/reconcile-release-assets.test.ts`
 
 ### OUT
 
@@ -118,7 +120,13 @@ the corresponding native-directory file, so a coherently changed binary+manifest
 cannot detach the directory from the retained archive. `materialize`
 repeats the stdout-only member materialization from the retained archive into a second
 fresh directory and writes a fresh receipt. It never runs npm, git, or gh. Spawn failures,
-nonzero exits, excess output, and stderr are bounded and surfaced. Initial prepare uses
+nonzero exits, excess output, and stderr are bounded and surfaced. Before every report or
+archive read, the helper checks a regular-file snapshot and hard byte cap; hashing and the
+private retained copy stream through a strict counter rather than allocating the whole
+archive. The pack report must include typed `unpackedSize <= 256 MiB`, and the sum of its
+typed file sizes must equal that value. Archive metadata is scanned once, not once per
+member. Each tar child has a 30-second deadline and the helper has a 120-second aggregate
+deadline; timeout kills and awaits the child. Initial prepare uses
 the exact typed pack-report size per member; later retained-archive modes use the named
 40 MiB binary and 1 MiB manifest caps, then direct archive↔directory byte comparison.
 
@@ -132,6 +140,7 @@ Activation matrix:
 | malformed archive member | traversal, absolute, duplicate, extra, symlink, or hardlink native entry | no filesystem tar extraction; list/size/digest gate rejects |
 | bad native inventory/digest | remove, add, or corrupt one materialized artifact | canonical validator rejects |
 | between-step mutation | alter retained archive, binary, or manifest after prepare | immediate `verify` rejects before npm/gh |
+| oversized/decompression bomb | over-cap report/archive/unpacked sum or tar child exceeds deadline | reject before read or kill-and-wait timeout |
 | success | synthetic valid seven-file archive | exact receipt, private archive, and seven regular files |
 
 ### 2. Release workflow ordering
@@ -159,17 +168,24 @@ The old combined `Publish (or dry-run)` step becomes:
    Fresh state runs `npm publish "$TARBALL" --ignore-scripts ...`; exact state skips npm
    so a failed later GitHub operation can safely resume without republishing.
 4. Existing post-publish registry smoke remains real-publish-only.
-5. Existing release-note/tag step remains real-publish-only. It materializes a second
+5. Existing release-note assembly remains real-publish-only. After notes exist, it
+   invokes `scripts/reconcile-release-assets.ts`, which owns all tag/release mutations and
+   is executable under fake `git`/`gh` in tests. It materializes a second
    fresh upload directory from the retained archive, runs `verify` immediately before
    upload, and passes the seven quoted paths to `gh release create`. On exact retry, it
    requires byte-identical release metadata, downloads and compares every existing
    expected asset, keeps exact bytes, and uses `gh release upload --clobber` only for
    missing or mismatched names. Existing asset names must be a subset of the expected
-   seven before repair and exactly the expected seven afterward. It then downloads all
+   seven before repair and exactly the expected seven afterward. A matching interrupted
+   draft is repaired and explicitly published with `gh release edit --draft=false`;
+   an already-published release is immutable in this workflow and must already have exact
+   assets. It then downloads all
    seven assets into a third fresh directory, normalizes local modes to canonical
    0755/0644 (GitHub assets guarantee bytes, not npm-tar modes), and verifies the
-   archive-bound inventory/digests before succeeding. Same-SHA tags are
-   reusable; absent tags are created; conflicting tags/releases always fail.
+   archive-bound inventory/digests before succeeding. The authoritative remote tag is
+   queried with `git ls-remote` immediately before every create/upload/edit and again
+   before success; local fetched tag state is never the final authority. Same-SHA tags are
+   reusable; absent tags are created and re-read remotely; conflicts always fail.
 
 Thus dry-run executes every byte-producing and byte-validating operation, while
 `npm publish`, `git tag`, `git push`, `gh release create`, and `gh release upload`
@@ -192,7 +208,11 @@ proves exact permissions/action pins, required SHA, one-pack ordering, both WP3 
 before publish, exact real-publish guards, seven explicit GitHub assets, exact-retry
 reconciliation, and no mutator in unconditional/dry-run steps. A fake-command harness
 executes the dry-run decision path and the npm/tag/release/partial-upload retry states,
-asserting the precise zero-or-resume mutation log.
+asserting the precise zero-or-resume mutation log. `tests/reconcile-release-assets.test.ts`
+runs the real reconciliation CLI with fake `git`/`gh` executables and valid local assets.
+It covers dry-run/no invocation, fresh create, interruption leaving a draft, partial draft
+upload, explicit draft publication, concurrent tag movement before mutation/final success,
+published exact success, and every identity conflict.
 `structure/06_docs-and-release.md` records the retained-archive and asset contract.
 
 ## A round 1 fold-back
@@ -212,10 +232,20 @@ state is split into pre-notes candidate and post-notes final classification, and
 downloads normalize local modes before canonical byte validation. The stale runbook and
 ambiguous later-mode size caps are corrected below.
 
+## C round 1 fold-back
+
+The first implementation C audit returned two independent `VERDICT: FAIL` results.
+The helper had bounded emitted output but not bounded input allocation or decompression
+time. The workflow omitted `gh release create`'s documented draft intermediate and used
+a fetched tag snapshot across a long notes/upload window; its decision-table test did not
+execute workflow behavior. Official GitHub CLI documentation states that asset-bearing
+create performs separate draft-create, asset-upload, and publish calls. The stream/deadline
+rules and executable reconciliation owner above replace those failed assumptions.
+
 ## Verification
 
 ```bash
-bun test tests/prepare-release-assets.test.ts tests/ci-workflows.test.ts
+bun test tests/prepare-release-assets.test.ts tests/reconcile-release-assets.test.ts tests/ci-workflows.test.ts
 bun run typecheck
 actionlint .github/workflows/ci.yml .github/workflows/go-ci.yml .github/workflows/release.yml
 bun run build:gui
