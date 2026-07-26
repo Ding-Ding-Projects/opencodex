@@ -222,15 +222,15 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore) (*
 	reg := registry.New()
 	for name, provider := range cfg.Providers {
 		mode := oauth.AuthModeOAuth
-		if preset, ok := reg.Lookup(name); ok {
+		if provider.APIKey != "" || provider.AuthMode == "key" || provider.AuthMode == "api-key" {
+			mode = oauth.AuthModeAPIKey
+		} else if preset, ok := reg.Lookup(name); ok {
 			switch preset.AuthKind {
 			case registry.AuthForward:
 				mode = oauth.AuthModeForward
 			case registry.AuthKey, registry.AuthLocal:
 				mode = oauth.AuthModeAPIKey
 			}
-		} else if provider.APIKey != "" {
-			mode = oauth.AuthModeAPIKey
 		}
 		configs[name] = oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey}
 	}

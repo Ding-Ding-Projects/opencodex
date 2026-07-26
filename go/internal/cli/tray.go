@@ -14,6 +14,16 @@ import (
 )
 
 func runTray(ctx context.Context, args []string, streams IO) error {
+	jsonOutput := false
+	filtered := args[:0]
+	for _, arg := range args {
+		if arg == "--json" {
+			jsonOutput = true
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+	args = filtered
 	command := "status"
 	if len(args) > 0 {
 		command = args[0]
@@ -35,10 +45,10 @@ func runTray(ctx context.Context, args []string, streams IO) error {
 	if err != nil {
 		return err
 	}
-	return runTrayManager(ctx, manager, command, startNow, streams)
+	return runTrayManager(ctx, manager, command, startNow, jsonOutput, streams)
 }
 
-func runTrayManager(ctx context.Context, manager tray.Manager, command string, startNow bool, streams IO) error {
+func runTrayManager(ctx context.Context, manager tray.Manager, command string, startNow, jsonOutput bool, streams IO) error {
 	var status tray.Status
 	var err error
 	switch command {
@@ -63,6 +73,9 @@ func runTrayManager(ctx context.Context, manager tray.Manager, command string, s
 	}
 	if err != nil {
 		return err
+	}
+	if jsonOutput {
+		return writePrettyJSON(streams.Out, status)
 	}
 	fmt.Fprintf(streams.Out, "supported=%t installed=%t running=%t stale=%t state=%s\n", status.Supported, status.Installed, status.Running, status.Stale, status.State)
 	if strings.TrimSpace(status.Summary) != "" {

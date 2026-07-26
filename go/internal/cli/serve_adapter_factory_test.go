@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	googleadapter "github.com/lidge-jun/opencodex-go/internal/adapter/google"
 	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -185,6 +187,22 @@ func TestConfiguredRegistryAppliesStaticHeadersAndDefaultProvider(t *testing.T) 
 	}
 	if request.Header.Get("X-Provider-Policy") != "enabled" {
 		t.Fatalf("static provider headers were not applied: %#v", request.Header)
+	}
+}
+
+func TestConfiguredAuthHonorsExplicitKeyModeForOAuthRegistryProvider(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["kiro"] = config.ProviderConfig{Adapter: "kiro", BaseURL: "https://example.test", AuthMode: "key", APIKey: "configured-key"}
+	resolver, err := configuredAuthWithStore(cfg, oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := resolver.ResolveAuth(context.Background(), "kiro", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.APIKey != "configured-key" || auth.Kind != "api-key" {
+		t.Fatalf("auth = %#v", auth)
 	}
 }
 

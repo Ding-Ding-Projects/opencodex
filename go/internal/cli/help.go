@@ -27,7 +27,7 @@ var commandHelp = map[string]string{
 	"claude":      "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.",
 	"debug":       "Usage: ocx debug <status|on|off|stack-on|stack-off>",
 	"service":     "Usage: ocx service [install|start|stop|status|uninstall]",
-	"tray":        "Usage: ocx tray [install|start|stop|restart|status|uninstall|run]\n\nManage the Windows system tray companion.",
+	"tray":        "Usage: ocx tray [install|start|stop|restart|status|uninstall|run] [--json] [--no-start]\n\nManage the Windows system tray companion.",
 	"update":      "Usage: ocx update [--tag latest|preview] [--dry-run]\n       ocx update --url HTTPS_URL --sha256 HEX [--destination PATH]",
 }
 

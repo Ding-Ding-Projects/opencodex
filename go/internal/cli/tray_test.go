@@ -37,7 +37,7 @@ func (f *fakeTrayManager) CompleteUpdate(context.Context, tray.Handoff) (tray.St
 func TestRunTrayManagerRestartAndStatusOutput(t *testing.T) {
 	manager := &fakeTrayManager{status: tray.Status{Supported: true, Installed: true, Running: true, State: tray.StateOnline, Summary: "ready"}}
 	var out bytes.Buffer
-	if err := runTrayManager(context.Background(), manager, "restart", true, IO{Out: &out}); err != nil {
+	if err := runTrayManager(context.Background(), manager, "restart", true, false, IO{Out: &out}); err != nil {
 		t.Fatal(err)
 	}
 	if len(manager.calls) != 2 || manager.calls[0] != "stop" || manager.calls[1] != "start" {
@@ -48,7 +48,18 @@ func TestRunTrayManagerRestartAndStatusOutput(t *testing.T) {
 	}
 }
 func TestRunTrayManagerRejectsUnknown(t *testing.T) {
-	if err := runTrayManager(context.Background(), &fakeTrayManager{}, "bogus", true, IO{}); err == nil {
+	if err := runTrayManager(context.Background(), &fakeTrayManager{}, "bogus", true, false, IO{}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestRunTrayManagerJSON(t *testing.T) {
+	manager := &fakeTrayManager{status: tray.Status{Supported: true, Installed: true, State: tray.StateOffline, Summary: "stopped"}}
+	var output bytes.Buffer
+	if err := runTrayManager(context.Background(), manager, "status", true, true, IO{Out: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); !bytes.Contains([]byte(got), []byte(`"installed": true`)) || bytes.Contains([]byte(got), []byte("supported=")) {
+		t.Fatalf("JSON=%q", got)
 	}
 }

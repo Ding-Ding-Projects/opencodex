@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +34,7 @@ func TestBinaryCommandsUseIsolatedHomes(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := append(os.Environ(), "OPENCODEX_HOME="+ocxHome, "CODEX_HOME="+codexHome, "HOME="+home, "USERPROFILE="+home)
-	commands := [][]string{{"status"}, {"doctor", "--json"}, {"provider", "list", "--json"}, {"models", "list", "--json"}, {"config", "show", "--json"}}
+	commands := [][]string{{"status", "--json"}, {"doctor", "--json"}, {"provider", "list", "--json"}, {"models", "list", "--json"}, {"config", "show", "--json"}}
 	for _, args := range commands {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			command := exec.Command(binary, args...)
@@ -44,6 +45,12 @@ func TestBinaryCommandsUseIsolatedHomes(t *testing.T) {
 			}
 			if strings.TrimSpace(string(output)) == "" {
 				t.Fatalf("%v produced empty output", args)
+			}
+			if args[0] == "status" {
+				var status map[string]any
+				if json.Unmarshal(output, &status) != nil || status["schemaVersion"] != float64(1) || status["proxy"] == nil || status["listen"] == nil || status["service"] == nil {
+					t.Fatalf("status JSON shape = %s", output)
+				}
 			}
 		})
 	}
