@@ -83,7 +83,7 @@ func defaultStreamMode(value string) string {
 	return value
 }
 
-func sidecarSettingsDTO(config *appconfig.Config) map[string]any {
+func sidecarSettingsDTO(config *appconfig.Config) orderedJSONObject {
 	webModel, webBackend := "gpt-5.6-luna", ""
 	if config.WebSearchSidecar != nil {
 		if config.WebSearchSidecar.Model != "" {
@@ -98,9 +98,20 @@ func sidecarSettingsDTO(config *appconfig.Config) map[string]any {
 		}
 		visionBackend, maxDescriptions = config.VisionSidecar.Backend, config.VisionSidecar.MaxDescriptionsPerTurn
 	}
-	return map[string]any{
-		"webSearch": map[string]any{"model": webModel, "backend": nullable(webBackend)},
-		"vision":    map[string]any{"model": visionModel, "backend": nullable(visionBackend), "maxDescriptionsPerTurn": maxDescriptions},
+	webSearch := orderedJSONObject{{name: "model", value: webModel}}
+	if webBackend != "" {
+		webSearch = append(webSearch, orderedJSONField{name: "backend", value: webBackend})
+	}
+	vision := orderedJSONObject{{name: "model", value: visionModel}}
+	if visionBackend != "" {
+		vision = append(vision, orderedJSONField{name: "backend", value: visionBackend})
+	}
+	if maxDescriptions > 0 {
+		vision = append(vision, orderedJSONField{name: "maxDescriptionsPerTurn", value: maxDescriptions})
+	}
+	return orderedJSONObject{
+		{name: "webSearch", value: webSearch},
+		{name: "vision", value: vision},
 	}
 }
 
@@ -200,7 +211,7 @@ func (a *API) updateSidecarSettings(w http.ResponseWriter, r *http.Request) bool
 		writeError(w, http.StatusBadRequest, err.Error())
 		return true
 	}
-	response["ok"] = true
+	response = append(orderedJSONObject{{name: "ok", value: true}}, response...)
 	writeJSON(w, http.StatusOK, response)
 	return true
 }

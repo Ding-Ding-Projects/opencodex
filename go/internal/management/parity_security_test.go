@@ -217,11 +217,11 @@ func TestSidecarSettingsPersistReasoningWithoutExposingItInDTO(t *testing.T) {
 	cfg := config.Default()
 	api := newParityAPI(t, &cfg)
 	updated := serveManagement(api, http.MethodPut, "/api/sidecar-settings", `{"webSearch":{"model":"search","backend":"openai","reasoning":"high"}}`)
-	if updated.Code != http.StatusOK || strings.Contains(updated.Body.String(), "reasoning") || cfg.WebSearchSidecar == nil || cfg.WebSearchSidecar.Reasoning != "high" {
+	if updated.Code != http.StatusOK || updated.Body.String() != `{"ok":true,"webSearch":{"model":"search","backend":"openai"},"vision":{"model":"gpt-5.6-luna"}}` || strings.Contains(updated.Body.String(), "reasoning") || cfg.WebSearchSidecar == nil || cfg.WebSearchSidecar.Reasoning != "high" {
 		t.Fatalf("updated=%d %s config=%#v", updated.Code, updated.Body.String(), cfg.WebSearchSidecar)
 	}
 	loaded := serveManagement(api, http.MethodGet, "/api/sidecar-settings", "")
-	if loaded.Code != http.StatusOK || strings.Contains(loaded.Body.String(), "reasoning") {
+	if loaded.Code != http.StatusOK || loaded.Body.String() != `{"webSearch":{"model":"search","backend":"openai"},"vision":{"model":"gpt-5.6-luna"}}` || strings.Contains(loaded.Body.String(), "reasoning") {
 		t.Fatalf("loaded=%d %s", loaded.Code, loaded.Body.String())
 	}
 }
