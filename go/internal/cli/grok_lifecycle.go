@@ -22,7 +22,7 @@ func applyGrokFence(ctx context.Context, cfg *config.Config, port int, hostname 
 			if err != nil {
 				return nil, err
 			}
-			return visibleGrokModels(codex.FilterVisibleRuntimeModels(models, *cfg)), nil
+			return visibleGrokModels(visibleGrokCatalogModels(models, *cfg)), nil
 		},
 	}
 	var result grok.Result
@@ -37,6 +37,32 @@ func applyGrokFence(ctx context.Context, cfg *config.Config, port int, hostname 
 		fmt.Fprintln(streams.Err, "Grok config sync failed:", result.Message)
 	}
 	return nil
+}
+
+// visibleGrokCatalogModels applies the shared visibility policy without
+// replacing the live catalog's ordering with the static native-model order.
+func visibleGrokCatalogModels(models []types.ModelEntry, cfg config.Config) []types.ModelEntry {
+	allowed := codex.FilterVisibleRuntimeModels(models, cfg)
+	byID := make(map[string]types.ModelEntry, len(allowed))
+	for _, model := range allowed {
+		byID[model.ID] = model
+	}
+	result := make([]types.ModelEntry, 0, len(allowed))
+	seen := make(map[string]bool, len(allowed))
+	for _, model := range models {
+		visible, ok := byID[model.ID]
+		if !ok || seen[model.ID] {
+			continue
+		}
+		result = append(result, visible)
+		seen[model.ID] = true
+	}
+	for _, model := range allowed {
+		if !seen[model.ID] {
+			result = append(result, model)
+		}
+	}
+	return result
 }
 
 func visibleGrokModels(models []types.ModelEntry) []grok.InjectModel {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/grok"
 	"github.com/lidge-jun/opencodex-go/internal/service"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -54,6 +55,20 @@ func TestVisibleGrokModelsExcludesDisabledCatalogEntries(t *testing.T) {
 	})
 	if len(models) != 1 || models[0].ID != "provider/visible" || models[0].Name != "" || models[0].ContextWindow != 1000 {
 		t.Fatalf("visible models=%#v", models)
+	}
+}
+
+func TestVisibleGrokCatalogPreservesLiveModelOrder(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = map[string]config.ProviderConfig{"routed": {Models: []string{"model"}}}
+	models := []types.ModelEntry{
+		{ID: "routed/model", Provider: "routed"},
+		{ID: "gpt-5.6-luna", Provider: "openai"},
+		{ID: "gpt-5.6-terra", Provider: "openai"},
+	}
+	visible := visibleGrokCatalogModels(models, cfg)
+	if len(visible) < 3 || visible[0].ID != "routed/model" || visible[1].ID != "gpt-5.6-luna" || visible[2].ID != "gpt-5.6-terra" {
+		t.Fatalf("live catalog order was replaced: %#v", visible)
 	}
 }
 
