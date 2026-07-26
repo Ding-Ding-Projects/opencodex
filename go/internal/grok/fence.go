@@ -11,6 +11,7 @@ type Fence struct {
 	Port        int
 	Hostname    string
 	GrokHome    string
+	Excluded    map[string]struct{}
 	FetchModels FetchModelsFunc
 }
 
@@ -27,5 +28,5 @@ func (f Fence) Teardown() Result {
 }
 
 func (f Fence) sync(ctx context.Context) Result {
-	return SyncGrokConfig(ctx, f.Port, Options{GrokHome: f.GrokHome, Hostname: f.Hostname}, SyncDeps{FetchModels: f.FetchModels})
+	return SyncGrokConfig(ctx, f.Port, Options{GrokHome: f.GrokHome, Hostname: f.Hostname, Excluded: f.Excluded}, SyncDeps{FetchModels: f.FetchModels})
 }

@@ -71,3 +71,22 @@ func TestSyncThreadsAliasStableModelExclusion(t *testing.T) {
 		t.Fatalf("sync renumbered model after exclusion:\n%s", content)
 	}
 }
+
+func TestFenceThreadsModelExclusion(t *testing.T) {
+	home := tempGrokHome(t)
+	fence := Fence{
+		Port:     10100,
+		GrokHome: home,
+		Excluded: map[string]struct{}{"hidden": {}},
+		FetchModels: func(context.Context) ([]InjectModel, error) {
+			return []InjectModel{{ID: "visible"}, {ID: "hidden"}}, nil
+		},
+	}
+	if result := fence.Ensure(context.Background()); !result.OK || !result.Changed {
+		t.Fatalf("Fence.Ensure() = %#v", result)
+	}
+	content := mustRead(t, filepath.Join(home, "config.toml"))
+	if !strings.Contains(content, `model = "visible"`) || strings.Contains(content, `model = "hidden"`) {
+		t.Fatalf("fence did not apply exclusion:\n%s", content)
+	}
+}
