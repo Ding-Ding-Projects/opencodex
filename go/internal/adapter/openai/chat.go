@@ -247,6 +247,12 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 		finishReason := ""
 		flush := func() bool { return flushChatCalls(ctx, out, calls, order) }
 		for frame := range decodeSSE(streamCtx, body) {
+			if frame.Comment != nil {
+				if !sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventHeartbeat}) {
+					return
+				}
+				continue
+			}
 			if frame.Data == "[DONE]" {
 				flush()
 				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone, Usage: usage, StopReason: chatStopReason(finishReason)})

@@ -161,6 +161,17 @@ func TestChatParseStreamAssemblesToolCall(t *testing.T) {
 	}
 }
 
+func TestChatParseStreamCommentEmitsHeartbeat(t *testing.T) {
+	stream := strings.Join([]string{
+		`: keepalive`,
+		`data: [DONE]`, "",
+	}, "\n\n")
+	events := collectEvents((&ChatAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
+	if len(events) != 2 || events[0].Type != types.EventHeartbeat || events[1].Type != types.EventDone {
+		t.Fatalf("unexpected events: %#v", events)
+	}
+}
+
 func TestChatParseStreamUsageOnlyEOFIsDone(t *testing.T) {
 	stream := `data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1}}` + "\n\n"
 	events := collectEvents((&ChatAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
@@ -206,6 +217,17 @@ func TestResponsesParseStream(t *testing.T) {
 		"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n"
 	events := collectEvents((&ResponsesAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
 	if len(events) != 2 || events[0].Text != "hi" || events[1].Type != types.EventDone || events[1].Usage.InputTokens != 2 {
+		t.Fatalf("unexpected events: %#v", events)
+	}
+}
+
+func TestResponsesParseStreamCommentEmitsHeartbeat(t *testing.T) {
+	stream := strings.Join([]string{
+		`: keepalive`,
+		`data: {"type":"response.completed","response":{"status":"completed"}}`, "",
+	}, "\n\n")
+	events := collectEvents((&ResponsesAdapter{}).ParseStream(context.Background(), io.NopCloser(strings.NewReader(stream))))
+	if len(events) != 2 || events[0].Type != types.EventHeartbeat || events[1].Type != types.EventDone {
 		t.Fatalf("unexpected events: %#v", events)
 	}
 }

@@ -529,6 +529,12 @@ func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) 
 		defer cancel()
 		calls := make(map[string]*types.ToolCall)
 		for frame := range decodeSSE(streamCtx, body) {
+			if frame.Comment != nil {
+				if !sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventHeartbeat}) {
+					return
+				}
+				continue
+			}
 			if frame.Data == "[DONE]" {
 				sendAdapterEvent(ctx, out, types.AdapterEvent{Type: types.EventDone})
 				return

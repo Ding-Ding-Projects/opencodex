@@ -75,7 +75,7 @@ func decodeSSE(ctx context.Context, body io.ReadCloser) <-chan protocol.SSEEvent
 		defer close(out)
 		defer body.Close()
 		decoded := make(chan protocol.SSEEvent)
-		decoder := protocol.NewSSEDecoder(decoded)
+		decoder := protocol.NewSSEDecoderWithComments(decoded)
 		copyDone := make(chan struct{})
 		go func() {
 			_, _ = io.Copy(decoder, body)
