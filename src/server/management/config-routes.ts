@@ -226,11 +226,11 @@ export async function handleConfigRoutes(ctx: ManagementContext): Promise<Respon
 
   if (url.pathname === "/api/sync" && req.method === "POST") {
     const { syncModelsToCodex } = await import("../../codex/sync");
+    const { attachStaleAppServerHint } = await import("../../codex/app-server-processes");
     const result = await syncModelsToCodex(undefined, config, null);
-    return jsonResponse({
-      ...result,
-      staleAppServerHint: "If Codex App still shows an older model list, restart its long-lived app-server process after sync.",
-    }, result.ok ? 200 : 500);
+    // Hint only after a real catalog/cache write — never enumerate processes here
+    // (WMIC/PowerShell would block Bun's event loop on every dashboard sync).
+    return jsonResponse(attachStaleAppServerHint(result), result.ok ? 200 : 500);
   }
 
   if (url.pathname === "/api/update/check" && req.method === "GET") {
