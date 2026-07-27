@@ -40,7 +40,7 @@ bun run build
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | `pull_request`, `push` to `main`/`dev`/`preview`/`dev2-go`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs source typecheck/tests, privacy scan, release-helper syntax check, and GUI lint/build; `npm-global-smoke` (Node only, **no setup-bun**) installs the exact packed archive and runs `ocx help` through its package-local Go artifact. |
-| `.github/workflows/go-ci.yml` | Pushes to `dev2-go`, `main`, or `preview` touching Go, native packaging, package metadata, or governing workflow paths, or manual dispatch | Go/package release quality gate: build, vet, test, race detection where supported, six-target cross-compilation (darwin/linux/windows × amd64/arm64), a six-name dry-run inventory, and the Go E2E suite. Every job installs pinned Bun 1.3.14 so mandatory Go-to-TypeScript compatibility tests run on each operating system. Superseded runs on the same ref are cancelled. |
+| `.github/workflows/go-ci.yml` | Pushes to `dev2-go`, `main`, or `preview` touching Go, native packaging, GUI sources, the embed guard, package metadata, or governing workflow paths, or manual dispatch | Go/package release quality gate: embedded-GUI freshness (`bun scripts/embed-gui.ts --check` on the Linux leg, which builds the GUI because `gui/dist` is gitignored and the Go comparison test skips when it is absent), build, vet, test, race detection where supported, six-target cross-compilation (darwin/linux/windows × amd64/arm64), a six-name dry-run inventory, and the Go E2E suite. Every job installs pinned Bun 1.3.14 so mandatory Go-to-TypeScript compatibility tests run on each operating system. Superseded runs on the same ref are cancelled. |
 | `.github/workflows/release.yml` | Manual dispatch only | npm publish/dry-run workflow. It requires the exact `GITHUB_SHA` to have successful Cross-platform CI and Go CI runs before publish or dry-run. |
 | `.github/workflows/deploy-docs.yml` | `push` to `main` touching `docs-site/**` or the workflow, or manual dispatch | Build and publish the Astro/Starlight docs site to GitHub Pages. |
 | `.github/workflows/service-lifecycle.yml` | `push` touching `src/service.ts`, `src/cli/index.ts`, or the workflow, or manual dispatch | Linux systemd smoke test: install, verify, `ocx stop` stops the service, uninstall. |
@@ -111,10 +111,18 @@ Invariants:
 Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`;
 `prepublishOnly` rejects direct source publishing so only the release workflow may publish.
 `scripts/release.ts` runs local typecheck, the test suite, and `bun run privacy:scan`
-before the version bump, commit/push, Cross-platform CI wait, and GitHub Release workflow
-dispatch. Every dispatch must name the exact expected commit SHA and fails closed when it is
-empty or differs from `GITHUB_SHA`. The workflow builds the GUI, packs once, verifies that exact
-archive, runs the isolated poison-install receipt, and copies the validated bytes into a
+before the version bump. Because `gui/vite.config.ts` bakes the package version into the GUI
+bundle, the bump is followed by `bun scripts/embed-gui.ts`, and the regenerated
+`go/internal/server/static/**` plus `static-manifest.json` are staged with `package.json` so the
+release commit can pass the embed guard it triggers. The helper then commits, pushes, and waits
+for successful exact-SHA runs of Cross-platform CI, Service lifecycle, **and Go CI** before the
+live remote-head check and the GitHub Release workflow dispatch; the CI wait timeout and poll
+interval are environment-overridable for tests but keep their production defaults. Every dispatch
+must name the exact expected commit SHA and fails closed when it is empty or differs from
+`GITHUB_SHA`. The workflow builds the GUI, verifies `gui/dist` against the committed embedded
+bundle, packs once, verifies that exact archive, compares the packed `package/gui/dist` bytes to
+the embedded tree by per-file SHA-256, runs the isolated poison-install receipt, and copies the
+validated bytes into a
 runner-private retained archive identified by an absolute path and SHA-256. It materializes and
 validates exactly six native binaries plus their checksum manifest from that retained archive
 before publish. A dry-run performs all archive and asset preparation but cannot run npm, Git tag,

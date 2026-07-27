@@ -214,10 +214,62 @@ jobs:
         run: |
           set -euo pipefail
           npm run build:publish
+          # build:publish has just written gui/dist. Prove the committed Go embed matches those
+          # exact bytes BEFORE packing, so the published binary cannot serve a stale dashboard.
+          bun scripts/embed-gui.ts --verify-dist
           rm -f pack.json
           npm pack --json > pack.json
           npm run verify:native-package
           npm run verify:native-install
+
+          # npm pack runs the prepack hook after the check above, and the packed-artifact verifier
+          # checks GUI presence/size/mode rather than content — so compare the actual tarball bytes.
+          extract_root="${RUNNER_TEMP}/ocx-release-pack-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$extract_root"
+          mkdir -p "$extract_root"
+          tarball="$(node -p "require('./pack.json')[0].filename")"
+          tar -xzf "$tarball" -C "$extract_root"
+          # shellcheck disable=SC2016  # the single-quoted body is Node source, not shell
+          node -e '
+            const { createHash } = require("node:crypto");
+            const { readdirSync, readFileSync } = require("node:fs");
+            const { join, relative, sep } = require("node:path");
+            const packed = join(process.argv[1], "package", "gui", "dist");
+            const embedded = join("go", "internal", "server", "static");
+            const list = dir => {
+              const out = [];
+              const walk = current => {
+                for (const entry of readdirSync(current, { withFileTypes: true })) {
+                  const full = join(current, entry.name);
+                  if (entry.isDirectory()) walk(full);
+                  else if (entry.isFile()) out.push(relative(dir, full).split(sep).join("/"));
+                }
+              };
+              walk(dir);
+              return out.sort();
+            };
+            const digest = path => createHash("sha256").update(readFileSync(path)).digest("hex");
+            const packedFiles = list(packed);
+            const embeddedFiles = list(embedded);
+            const problems = [];
+            if (JSON.stringify(packedFiles) !== JSON.stringify(embeddedFiles)) {
+              problems.push(`file lists differ: packed=${packedFiles.length} embedded=${embeddedFiles.length}`);
+            }
+            for (const name of packedFiles) {
+              if (!embeddedFiles.includes(name)) { problems.push(`packed-only: ${name}`); continue; }
+              if (digest(join(packed, name)) !== digest(join(embedded, name))) problems.push(`content differs: ${name}`);
+            }
+            for (const name of embeddedFiles) {
+              if (!packedFiles.includes(name)) problems.push(`embedded-only: ${name}`);
+            }
+            if (problems.length > 0) {
+              console.error("::error::packed gui/dist does not match the embedded Go GUI bundle");
+              for (const problem of problems) console.error(`  ${problem}`);
+              process.exit(1);
+            }
+            console.log(`packed gui/dist matches the embedded bundle (${packedFiles.length} files)`);
+          ' "$extract_root"
+          rm -rf "$extract_root"
 
           asset_root="${RUNNER_TEMP}/ocx-release-assets-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           env_receipt="${RUNNER_TEMP}/ocx-release-assets-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.env"

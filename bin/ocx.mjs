@@ -63,6 +63,94 @@ function updateTag(currentVersion) {
   return String(currentVersion).includes("-preview.") ? "preview" : "latest";
 }
 
+/**
+ * Classify an `ocx update ...` invocation before ANY side effect runs.
+ *
+ * `--dry-run` is a planning flag in the Go CLI (go/internal/cli/update.go): it prints the
+ * plan and touches nothing. The launcher previously forwarded every non-help `update` to
+ * the real npm self-update, so a user asking for a plan got a live package replacement.
+ * Classification therefore has to happen before runtime selection AND before the legacy
+ * shim refresh, which is itself a mutation.
+ *
+ * Returns { kind: "help" | "dry-run" | "execute", tag } or { kind: "invalid", message }.
+ */
+export function parseLauncherUpdateArgs(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  let tag;
+  let dryRun = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--help" || arg === "-h" || arg === "help") return { kind: "help" };
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg.startsWith("--dry-run=")) {
+      // A value form is never accepted: silently treating `--dry-run=false` as "execute"
+      // is exactly the surprise this classifier exists to prevent.
+      return { kind: "invalid", message: `unsupported flag '${arg}' — use bare --dry-run` };
+    }
+    if (arg === "--tag") {
+      const value = args[index + 1];
+      if (value !== "latest" && value !== "preview") {
+        return { kind: "invalid", message: `--tag must be 'latest' or 'preview' (got ${value ?? "nothing"})` };
+      }
+      tag = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--tag=")) {
+      const value = arg.slice("--tag=".length);
+      if (value !== "latest" && value !== "preview") {
+        return { kind: "invalid", message: `--tag must be 'latest' or 'preview' (got ${value})` };
+      }
+      tag = value;
+      continue;
+    }
+    return { kind: "invalid", message: `unknown update argument '${arg}'` };
+  }
+  return { kind: dryRun ? "dry-run" : "execute", tag };
+}
+
+/** Describe the install layout so the dry-run plan names the command that would actually run. */
+function updateTopology() {
+  if (isNodeModulesInstall() && !isBunGlobalInstall()) return "npm";
+  if (isBunGlobalInstall()) return "bun";
+  if (isNodeModulesInstall()) return "npm";
+  return "source";
+}
+
+function printUpdatePlan(tag) {
+  const current = currentPackageVersion();
+  const topology = updateTopology();
+  if (topology === "source") {
+    console.log(`opencodex v${current} (source checkout)`);
+    console.log("Dry run: no update would be performed.");
+    console.log("Update a source checkout with:  git pull && bun install");
+    return;
+  }
+  const resolvedTag = tag ?? (String(current).includes("-preview.") ? "preview" : "latest");
+  const bin = topology === "bun" ? (process.platform === "win32" ? "bun.exe" : "bun") : npmBin();
+  const args = topology === "bun"
+    ? ["add", "-g", `${PKG}@${resolvedTag}`]
+    : ["install", "-g", `${PKG}@${resolvedTag}`];
+  console.log(`opencodex v${current} (installed via ${topology === "bun" ? "bun" : "npm"}, tag ${resolvedTag})`);
+  // Read-only registry probe. This is the only subprocess a dry run may start.
+  const probe = spawnSync(npmBin(), ["view", `${PKG}@${resolvedTag}`, "version"], {
+    encoding: "utf8",
+    timeout: 12000,
+    windowsHide: true,
+    shell: process.platform === "win32",
+  });
+  const latest = probe.status === 0 ? probe.stdout.trim() : "";
+  console.log("Update plan (dry run — nothing was changed):");
+  console.log(`  Current version: ${current}`);
+  console.log(`  Channel:         ${resolvedTag}`);
+  console.log(`  Latest version:  ${latest || "unresolved"}`);
+  console.log(`  Command:         ${bin} ${args.join(" ")}`);
+  if (latest && latest === current) console.log(`Already on the latest ${resolvedTag} version.`);
+}
+
 function expandUserPath(raw) {
   // Mirror src/config.ts expandUserPath — the Bun proxy expands `~`, so this launcher's
   // pid/state gates must resolve the same directory or they silently check the wrong path.
@@ -264,7 +352,10 @@ function runTrayLifecycle(launcher, action) {
   });
 }
 
-function runNpmSelfUpdate() {
+function runNpmSelfUpdate({ dryRun = false } = {}) {
+  // Fail closed: a future caller that forgets to branch on dry-run must crash here rather
+  // than silently replace the user's package.
+  if (dryRun) throw new Error("runNpmSelfUpdate must never run for a dry run");
   const current = currentPackageVersion();
   const tag = updateTag(current);
   const npm = npmBin();
@@ -500,17 +591,28 @@ function resolveBun(required = true) {
 const launcherCommand = process.argv[2];
 if (launcherCommand === "__gui-update-worker") await runInternalGuiUpdateWorker();
 
-// Help is side-effect free and must win before either package replacement or runtime
-// selection. npm package updates remain launcher-owned so Windows can replace the
-// package and every OS receives package-layout changes, not only a binary overwrite.
-const updateHelpRequested = launcherCommand === "update" &&
-  process.argv.slice(3).some(a => a === "--help" || a === "-h" || a === "help");
-if (updateHelpRequested) {
-  console.log("Usage: ocx update [--tag latest|preview]\n\nUpdate opencodex. Preview installs stay on the preview tag unless overridden.");
-  process.exit(0);
-}
-if (launcherCommand === "update" && isNodeModulesInstall() && !isBunGlobalInstall()) {
-  runNpmSelfUpdate();
+// Update classification runs before runtime selection AND before the legacy shim refresh,
+// because that refresh is itself a mutation. Help and dry runs are side-effect free and
+// terminate here for every topology. Executing npm updates stay launcher-owned so Windows
+// can replace the package and every OS receives package-layout changes.
+if (launcherCommand === "update") {
+  const parsed = parseLauncherUpdateArgs(process.argv.slice(3));
+  if (parsed.kind === "invalid") {
+    console.error(`opencodex: ${parsed.message}`);
+    console.error("Usage: ocx update [--tag latest|preview] [--dry-run]");
+    process.exit(2);
+  }
+  if (parsed.kind === "help") {
+    console.log("Usage: ocx update [--tag latest|preview] [--dry-run]\n\nUpdate opencodex. Preview installs stay on the preview tag unless overridden.\n--dry-run prints the plan and changes nothing.");
+    process.exit(0);
+  }
+  if (parsed.kind === "dry-run") {
+    printUpdatePlan(parsed.tag);
+    process.exit(0);
+  }
+  if (isNodeModulesInstall() && !isBunGlobalInstall()) {
+    runNpmSelfUpdate();
+  }
 }
 
 // A supported npm installation is Go-first and fail-closed. Validate the exact

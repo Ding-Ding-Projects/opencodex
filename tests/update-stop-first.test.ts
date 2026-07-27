@@ -91,21 +91,26 @@ describe("ocx update --help has no side effects (#168)", () => {
   test("the Bun CLI short-circuits help before importing the update runner", () => {
     const caseAt = cliSource.indexOf('case "update"');
     const helpAt = cliSource.indexOf('printSubcommandUsage("update")');
-    const runAt = cliSource.indexOf("await runUpdate()");
+    const runAt = cliSource.indexOf("await runUpdate(");
     expect(caseAt).toBeGreaterThan(-1);
     expect(helpAt).toBeGreaterThan(caseAt);
     expect(helpAt).toBeLessThan(runAt);
   });
 
   test("the npm launcher intercepts update --help before the self-update path", () => {
-    const helpAt = launcherSource.indexOf("updateHelpRequested");
+    // Classification now covers help AND --dry-run, and runs before runtime selection so no
+    // topology mutates the legacy shim first. Help/dry-run must still exit before any install.
+    const classifyAt = launcherSource.indexOf("parseLauncherUpdateArgs(process.argv.slice(3))");
+    const helpAt = launcherSource.indexOf('parsed.kind === "help"');
+    const dryRunAt = launcherSource.indexOf('parsed.kind === "dry-run"');
     const updateAt = launcherSource.indexOf("runNpmSelfUpdate();");
-    expect(helpAt).toBeGreaterThan(-1);
-    expect(launcherSource).toContain('process.argv[2] === "update" &&');
-    // The guard that CALLS the self-update must come after the help exit.
-    const guardAt = launcherSource.lastIndexOf('process.argv[2] === "update" && isNodeModulesInstall()');
-    expect(helpAt).toBeLessThan(guardAt);
-    expect(updateAt).toBeGreaterThan(guardAt);
+    const shimAt = launcherSource.indexOf("refreshLegacyCodexShimRuntime();");
+    expect(classifyAt).toBeGreaterThan(-1);
+    expect(helpAt).toBeGreaterThan(classifyAt);
+    expect(dryRunAt).toBeGreaterThan(helpAt);
+    expect(updateAt).toBeGreaterThan(dryRunAt);
+    // The shim refresh is itself a mutation, so classification must precede it.
+    expect(classifyAt).toBeLessThan(shimAt);
   });
 });
 

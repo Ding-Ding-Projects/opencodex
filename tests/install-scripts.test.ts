@@ -182,7 +182,7 @@ describe("install scripts", () => {
   test("Node launcher handles npm self-update before starting Bun", async () => {
     const launcher = await readText("bin/ocx.mjs");
 
-    expect(launcher).toContain('process.argv[2] === "update"');
+    expect(launcher).toContain('launcherCommand === "update"');
     expect(launcher).toContain('["install", "-g", `${PKG}@${tag}`]');
     expect(launcher).toContain('return String(currentVersion).includes("-preview.") ? "preview" : "latest"');
     expect(launcher).toContain("!isBunGlobalInstall()");

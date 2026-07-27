@@ -917,7 +917,7 @@ switch (command) {
       break;
     }
     const { runUpdate } = await import("../update");
-    await runUpdate();
+    await runUpdate(args.slice(1));
     break;
   }
   case "__refresh-version": {

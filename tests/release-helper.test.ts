@@ -17,6 +17,9 @@ interface LoggedCall {
 
 interface ReleaseScenario {
   branch?: string;
+  ciPollMs?: number;
+  ciWaitTimeoutMs?: number;
+  goCiMissing?: boolean;
   headSha?: string;
   remoteHeadSha?: string;
   privacyExitCode?: number;
@@ -143,6 +146,13 @@ if (args[0] === "run" && args[1] === "list") {
     process.exit(0);
   }
 
+  if (args.includes("go-ci.yml")) {
+    stdout(process.env.FAKE_GO_CI_MISSING === "1"
+      ? "[]"
+      : JSON.stringify([{ conclusion: "success", databaseId: 10, headSha, status: "completed", url: "https://example.test/go-ci" }]));
+    process.exit(0);
+  }
+
   if (args.includes("release.yml")) {
     stdout(JSON.stringify([{ createdAt: new Date().toISOString(), databaseId: 9, headSha, status: "queued", url: "https://example.test/release" }]));
     process.exit(0);
@@ -199,10 +209,13 @@ function runRelease(version: string, scenario: ReleaseScenario = {}) {
       FAKE_RELEASE_LOG: logPath,
       FAKE_GIT_BRANCH: scenario.branch ?? "main",
       FAKE_GIT_HEAD_SHA: scenario.headSha ?? "abc123def456",
+      FAKE_GO_CI_MISSING: scenario.goCiMissing ? "1" : "0",
       ...(scenario.remoteHeadSha ? { FAKE_GIT_REMOTE_HEAD_SHA: scenario.remoteHeadSha } : {}),
       FAKE_BUN_TSC_EXIT_CODE: String(scenario.typecheckExitCode ?? 0),
       FAKE_BUN_TEST_EXIT_CODE: String(scenario.testExitCode ?? 0),
       FAKE_BUN_PRIVACY_EXIT_CODE: String(scenario.privacyExitCode ?? 0),
+      OCX_RELEASE_CI_TIMEOUT_MS: String(scenario.ciWaitTimeoutMs ?? 20 * 60 * 1000),
+      OCX_RELEASE_CI_POLL_MS: String(scenario.ciPollMs ?? 10 * 1000),
     },
     encoding: "utf8",
   });
@@ -222,6 +235,19 @@ describe("release helper", () => {
     const testIndex = findCallIndex(calls, "bun", call => call.args.join(" ") === "test --isolate tests");
     const privacyIndex = findCallIndex(calls, "bun", call => call.args.join(" ") === "run privacy:scan");
     const versionIndex = findCallIndex(calls, "npm", call => call.args.join(" ") === "version 9.9.9 --no-git-tag-version");
+    const embedIndex = findCallIndex(calls, "bun", call => call.args.join(" ") === "scripts/embed-gui.ts");
+    const addIndex = findCallIndex(calls, "git", call =>
+      call.args[0] === "add"
+      && call.args.includes("package.json")
+      && call.args.includes("go/internal/server/static")
+      && call.args.includes("go/internal/server/static-manifest.json"),
+    );
+    const ciIndex = findCallIndex(calls, "gh", call => call.args.includes("ci.yml"));
+    const serviceIndex = findCallIndex(calls, "gh", call => call.args.includes("service-lifecycle.yml"));
+    const goCiIndex = findCallIndex(calls, "gh", call => call.args.includes("go-ci.yml"));
+    const liveRemoteHeadIndex = findCallIndex(calls, "git", call =>
+      call.args.join(" ") === "ls-remote origin refs/heads/main",
+    );
     const dispatchIndex = findCallIndex(calls, "gh", call =>
       call.args[0] === "workflow"
       && call.args[1] === "run"
@@ -234,7 +260,13 @@ describe("release helper", () => {
     expect(testIndex).toBeGreaterThan(typecheckIndex);
     expect(privacyIndex).toBeGreaterThan(testIndex);
     expect(versionIndex).toBeGreaterThan(privacyIndex);
-    expect(dispatchIndex).toBeGreaterThan(versionIndex);
+    expect(embedIndex).toBeGreaterThan(versionIndex);
+    expect(addIndex).toBeGreaterThan(embedIndex);
+    expect(ciIndex).toBeGreaterThan(addIndex);
+    expect(serviceIndex).toBeGreaterThan(ciIndex);
+    expect(goCiIndex).toBeGreaterThan(serviceIndex);
+    expect(liveRemoteHeadIndex).toBeGreaterThan(goCiIndex);
+    expect(dispatchIndex).toBeGreaterThan(liveRemoteHeadIndex);
   });
 
   test("failed privacy scan aborts before version bump, commit, and push", () => {
@@ -280,6 +312,19 @@ describe("release helper", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr + result.stdout).toContain("moved while waiting for CI");
+    expect(findCallIndex(calls, "gh", call => call.args[0] === "workflow" && call.args[1] === "run")).toBe(-1);
+  });
+
+  test("aborts before dispatch when the Go CI run is missing", () => {
+    const { calls, result } = runRelease("9.9.9", {
+      ciPollMs: 5,
+      ciWaitTimeoutMs: 50,
+      goCiMissing: true,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("timed out waiting for Go CI");
+    expect(findCallIndex(calls, "gh", call => call.args.includes("go-ci.yml"))).toBeGreaterThanOrEqual(0);
     expect(findCallIndex(calls, "gh", call => call.args[0] === "workflow" && call.args[1] === "run")).toBe(-1);
   });
 });

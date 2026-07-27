@@ -143,10 +143,29 @@ export function checkUpdatePackageIntegrity(
  * `ocx update` fallback for source checkouts and Bun global installs. npm global installs are updated
  * in the Node bin launcher before Bun starts, so Windows does not replace the running Bun binary.
  */
-export async function runUpdate(): Promise<void> {
+export async function runUpdate(argv: string[] = []): Promise<void> {
   const installer = detectInstall();
   const current = currentVersion();
   const tag = updateTag(current);
+  // `--dry-run` is a planning flag (mirrors go/internal/cli/update.go). It must return before
+  // the proxy stop, the Windows tray handoff, and package replacement — a user asking for a
+  // plan must never get a live update.
+  if (argv.includes("--dry-run")) {
+    console.log(`opencodex v${current} (installed via ${installer}, tag ${tag})`);
+    if (installer === "source") {
+      console.log("Dry run: no update would be performed.");
+      console.log("Update a source checkout with:  git pull && bun install");
+      return;
+    }
+    const latest = latestVersion(tag);
+    console.log("Update plan (dry run — nothing was changed):");
+    console.log(`  Current version: ${current}`);
+    console.log(`  Channel:         ${tag}`);
+    console.log(`  Latest version:  ${latest ?? "unresolved"}`);
+    console.log(`  Command:         ${updateCommandStr(installer, tag, latest)}`);
+    if (latest && latest === current) console.log(`Already on the latest ${tag} version.`);
+    return;
+  }
   console.log(`opencodex v${current} (installed via ${installer}, tag ${tag})`);
 
   if (installer === "source") {

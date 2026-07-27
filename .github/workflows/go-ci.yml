@@ -8,6 +8,8 @@ on:
       - "go/**"
       - "bin/**"
       - "src/update/job.ts"
+      - "gui/**"
+      - "scripts/embed-gui.ts"
       - "scripts/build-go-release.go"
       - "scripts/prepare-package.ts"
       - "scripts/prepare-release-assets.ts"
@@ -50,6 +52,16 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+
+      # The embedded GUI bundle is a committed copy of gitignored gui/dist, so nothing else
+      # in CI can notice when it goes stale. Building here is the whole point: the Go test
+      # that compares them skips when gui/dist is absent.
+      - name: Verify embedded GUI bundle
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: .
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/embed-gui.ts --check
 
       - name: Build
         run: go build ./...

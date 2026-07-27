@@ -255,3 +255,77 @@ test("supported npm packages keep update help inert and route package updates be
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+// `--dry-run` is a planning flag in the Go CLI (go/internal/cli/update.go). Before this
+// guard the launcher forwarded every non-help `update` to the real self-update, so asking
+// for a plan replaced the user's package. The state assertions below are deliberately
+// non-vacuous: durable files are pre-populated and their exact bytes are re-read after.
+test("update --dry-run plans without mutating any durable state", { skip: !hostTarget() || process.platform === "win32" }, () => {
+  const base = mkdtempSync(join(tmpdir(), "ocx-dry-run-launcher-"));
+  const dir = join(base, "node_modules", "@bitkyc08", "opencodex");
+  const binDir = join(base, "fake-bin");
+  const home = join(base, "home");
+  const npmLog = join(base, "npm.log");
+  const goLog = join(base, "go.log");
+  try {
+    mkdirSync(join(dir, "bin", "native"), { recursive: true });
+    mkdirSync(join(dir, "src", "update"), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    copyFileSync(launcher, join(dir, "bin", "ocx.mjs"));
+    copyFileSync(join(root, "bin", "native-runtime.mjs"), join(dir, "bin", "native-runtime.mjs"));
+    copyFileSync(join(root, "src", "update", "tray-update-plan.mjs"), join(dir, "src", "update", "tray-update-plan.mjs"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "@bitkyc08/opencodex", type: "module", version: "2.9.0" }));
+    const native = join(dir, "bin", "native", nativeArtifactName("2.9.0", hostTarget()));
+    writeFileSync(native, "#!/bin/sh\nprintf 'go:%s\\n' \"$*\" >> \"$OCX_GO_LOG\"\nexit 17\n");
+    chmodSync(native, 0o755);
+    const npm = join(binDir, "npm");
+    writeFileSync(npm, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$OCX_NPM_LOG\"\nif [ \"$1\" = view ]; then printf '2.9.1\\n'; fi\nexit 0\n");
+    chmodSync(npm, 0o755);
+
+    // Durable state a real update would rewrite or delete.
+    const durable = {
+      "service-state.json": JSON.stringify({ backend: "native" }),
+      "tray-state.json": JSON.stringify({ installed: true }),
+      "runtime-port.json": JSON.stringify({ port: 10100, pid: 424242 }),
+      "codex-shim.json": JSON.stringify({ runtime: "stale" }),
+    };
+    for (const [name, content] of Object.entries(durable)) writeFileSync(join(home, name), content);
+
+    const env = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      OPENCODEX_HOME: home,
+      OCX_NPM_LOG: npmLog,
+      OCX_GO_LOG: goLog,
+    };
+    const packageLauncher = join(dir, "bin", "ocx.mjs");
+
+    for (const args of [
+      ["update", "--dry-run"],
+      ["update", "--dry-run", "--tag", "latest"],
+      ["update", "--tag", "preview", "--dry-run"],
+    ]) {
+      const run = spawnSync(process.execPath, [packageLauncher, ...args], { encoding: "utf8", env });
+      assert.equal(run.status, 0, `${args.join(" ")}: ${run.stderr}`);
+      assert.match(run.stdout, /Update plan \(dry run/);
+      assert.equal(existsSync(goLog), false, `${args.join(" ")} must not forward to Go`);
+      const npmCalls = existsSync(npmLog) ? readFileSync(npmLog, "utf8").trim().split("\n").filter(Boolean) : [];
+      for (const call of npmCalls) {
+        assert.match(call, /^view /, `dry run started a mutating npm command: ${call}`);
+      }
+      for (const [name, content] of Object.entries(durable)) {
+        assert.equal(readFileSync(join(home, name), "utf8"), content, `${args.join(" ")} mutated ${name}`);
+      }
+    }
+
+    // A value form must be rejected rather than silently treated as "execute".
+    const rejected = spawnSync(process.execPath, [packageLauncher, "update", "--dry-run=false"], { encoding: "utf8", env });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /--dry-run/);
+    const afterReject = existsSync(npmLog) ? readFileSync(npmLog, "utf8") : "";
+    assert.equal(/install -g/.test(afterReject), false, "rejected argv must not reach a package install");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

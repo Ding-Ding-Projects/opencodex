@@ -36,8 +36,15 @@ interface CommandResult {
 
 const CI_WORKFLOW = "ci.yml";
 const SERVICE_WORKFLOW = "service-lifecycle.yml";
-const CI_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
-const CI_POLL_MS = 10 * 1000;
+const GO_CI_WORKFLOW = "go-ci.yml";
+
+function positiveIntegerFromEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const CI_WAIT_TIMEOUT_MS = positiveIntegerFromEnv("OCX_RELEASE_CI_TIMEOUT_MS", 20 * 60 * 1000);
+const CI_POLL_MS = positiveIntegerFromEnv("OCX_RELEASE_CI_POLL_MS", 10 * 1000);
 
 async function runQuiet(command: string[]): Promise<CommandResult> {
   const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
@@ -253,12 +260,14 @@ await $`bun test --isolate tests`;
 console.log("→ privacy scan");
 await $`bun run privacy:scan`;
 
-// 2. Bump package.json only; the workflow creates the version tag after npm publish.
+// 2. Bump package.json and regenerate the versioned embedded GUI; the workflow creates the version tag after npm publish.
 console.log(`→ bump package.json → ${version}`);
 await $`npm version ${version} --no-git-tag-version`;
+console.log("→ regenerate embedded GUI");
+await $`bun scripts/embed-gui.ts`;
 
 // 3. Commit + push the version bump.
-await $`git add package.json`;
+await $`git add package.json go/internal/server/static go/internal/server/static-manifest.json`;
 await $`git commit -m ${`release: v${version}`}`;
 const releaseSha = (await $`git rev-parse HEAD`.text()).trim();
 console.log(`→ push origin ${branch}`);
@@ -273,6 +282,9 @@ await waitForSuccessfulCi(releaseSha);
 // the release SHA. Wait for it too, or the dispatch races the still-running workflow.
 console.log(`→ wait for Service lifecycle (${releaseSha})`);
 await waitForSuccessfulCi(releaseSha, SERVICE_WORKFLOW, "Service lifecycle");
+
+console.log(`→ wait for Go CI (${releaseSha})`);
+await waitForSuccessfulCi(releaseSha, GO_CI_WORKFLOW, "Go CI");
 
 // Live-remote guard: re-read the actual remote head over the network immediately
 // before dispatch. The local remote-tracking ref can be minutes stale, and the
