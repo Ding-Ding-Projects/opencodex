@@ -3,7 +3,7 @@
 ## Status: NOT STARTED. Requirements only.
 
 This document is not an approved implementation plan. It is the accumulated requirement
-set from four C4 audit rounds, preserved so the next work-phase starts from evidence
+set from six C4 audit rounds, preserved so the next work-phase starts from evidence
 instead of rediscovering it. The release-gate half of the original WP4 repair scope was
 split out to [044_wp4_release_gates.md](./044_wp4_release_gates.md) and is the current
 work unit; this one gets its own P/A/B/C cycle afterwards.
@@ -20,7 +20,7 @@ exceptions beginning at line 99) and `structure/01_runtime.md:42` (the retained-
 `bun` dependency existing for an older updater to install the transition package). Those
 edits are part of this work-phase, not a side effect.
 
-All file:line citations in this document were refreshed against HEAD `066e84b9`. Refresh
+All file:line citations in this document were refreshed against HEAD `4055e9c6`. Refresh
 them again at the next P before treating them as authoritative, since `origin/dev` moves
 frequently.
 
@@ -30,8 +30,8 @@ Two independent GPT-5.6 Sol medium/priority C4 audits rejected the WP4 candidate
 `b4ebd346`. Each returned one release-blocking finding plus supporting mediums. The
 stale check then moved `origin/dev` again from `75f9fe5a5` to `703c6191` (Kiro
 retryability fixes plus the freeform issue-quality template gate), so the candidate was
-rebased onto `703c6191`. The rebased tree is `08015fd1`; this plan document itself is
-`6d5a67af`, which is the anchor the implementation and the next audit must use.
+rebased onto `703c6191`. Those historical commit ids (`08015fd1`, `6d5a67af`) are
+provenance only; the anchor for this document is `4055e9c6`.
 
 Two further audit rounds on this document returned FAIL. Round 2 showed the dry-run
 repair was scoped too narrowly, the worker claim was not cross-process atomic, and the
@@ -61,7 +61,8 @@ worker was retained for:
   (`go/internal/update/job.go:330-372`, `LifecycleDependencies` at
   `go/internal/update/planning.go:84`)
 - service reinstall arguments and direct-start fallback
-  (`go/internal/cli/runtime_management.go:495`, `service.ServiceReinstallArgs`)
+  (`go/internal/cli/runtime_management.go:500` for the arguments,
+  `go/internal/cli/runtime_management.go:591-619` for the direct-start fallback)
 - port reclaim before restart (`go/internal/update/job.go:423`)
 - old-PID and target-version restart correlation
   (`CorrelateRestartIdentity`, `go/internal/update/planning.go:117`)
@@ -91,13 +92,19 @@ invocation at `bin/ocx.mjs:271`. Either Go becomes the sole job and lifecycle wr
 OS-safe npm invocation, or Node keeps a package-only internal command that returns to Go and
 never touches lifecycle or job state.
 
-**The CLI update path must take the same lock.** Routing only the GUI worker through the
-claim leaves `bin/ocx.mjs:267` and `bin/ocx.mjs:376` mutating the package outside it, so
-a CLI update can still overlap a GUI worker despite perfect job-state transitions.
+**Exclusion must be one OS-visible cross-process protocol, and the CLI path must use it.**
+Today's exclusion is process-local on both sides: `JobStore` locks per instance
+(`go/internal/update/job.go:169-190`) and `JobManager.begin` holds only its own mutex
+(`go/internal/update/job.go:296-318`). Routing only the GUI worker through a claim leaves
+`bin/ocx.mjs:267` and `bin/ocx.mjs:376` mutating the package outside it, so a CLI update
+can still overlap a GUI worker despite perfect job-state transitions. The implementation
+must define one cross-process lock and claim/reclaim transaction used by **every** packaged
+Go updater path, re-read job state under that lock before every transition, and prove it
+with a two-real-process race test that yields exactly one winner.
 
-**The serving process must be stopped before replacement.** `go/internal/update/job.go:325`
-goes from tray preparation straight to installation; port reclaim happens only afterwards
-at `go/internal/update/job.go:423`. On Windows the original package-local executable stays
+**The serving process must be stopped before replacement.** `go/internal/update/job.go:337-343`
+prepares the tray and `:345-355` installs immediately after; port reclaim happens only
+afterwards at `go/internal/update/job.go:423`. On Windows the original package-local executable stays
 locked and `npm install -g` can still fail. A pre-install stage must stop the service or
 proxy and prove the serving PID and port are gone.
 
@@ -105,7 +112,7 @@ proxy and prove the serving PID and port are gone.
 `processRuntimeCommand` returns the copied executable with no launcher
 (`go/internal/cli/runtime_command.go:48`), so `productionUpdateLifecycle` would record the
 disposable copy as `RuntimeExecutable`, an empty launcher, and the worker's own PID as
-`OldPID` (`go/internal/cli/runtime_management.go:558`). Restart planning would then start
+`OldPID` (`go/internal/cli/runtime_management.go:558-587`). Restart planning would then start
 the disposable worker and correlate against the wrong PID
 (`go/internal/update/planning.go:182`). The serving PID, host/port, service arguments,
 package root, and stable Node/launcher identity must be persisted before detachment, and
@@ -133,7 +140,7 @@ before spawn.
 can outlive its parent and keep replacing the package. POSIX workers get a new session
 (`update_worker_process_unix.go:11`) but Windows only gets a detached process group
 (`update_worker_process_windows.go:15`), and the existing Windows termination targets a PID
-tree via a later command (`go/internal/platform/process.go:88`). Required: a stable process
+tree via a later command (`go/internal/platform/process.go:92-96`). Required: a stable process
 handle or pidfd where available, a Windows Job Object containing descendants, whole-group
 death proof, and refusal to terminalize when containment cannot be proven empty.
 
@@ -141,7 +148,7 @@ death proof, and refusal to terminalize when containment cannot be proven empty.
 field 22 is boot-relative, so PID plus start ticks can collide across reboots, and parsing
 must survive spaces and `)` inside `comm`. Unavailable or namespaced `/proc` must read as
 "unverifiable", never "dead". macOS uses `unix.SysctlKinfoProc`, Windows uses
-`GetProcessTimes`; `golang.org/x/sys` is already a dependency (`go/go.mod`), so no cgo is
+`GetProcessTimes`; `golang.org/x/sys` is already a dependency (`go/go.mod:9`), so no cgo is
 needed, but build-tagged implementations and a canonical representation are real work.
 
 **Windows staging hardening must not soft-fail.** The existing DACL helper soft-fails on
