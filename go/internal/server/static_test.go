@@ -135,6 +135,12 @@ func TestEmbeddedGUIBundleMatchesSourceDistWhenPresent(t *testing.T) {
 		if entry.IsDir() {
 			return nil
 		}
+		// npm drops nested README files from the published tarball regardless of `files`
+		// or `.npmignore`, so scripts/embed-gui.ts excludes them to keep the embedded tree
+		// byte-identical to what actually ships.
+		if isExcludedGUIAsset(name) {
+			return nil
+		}
 		source, readErr := os.ReadFile(filepath.Join(dist, filepath.FromSlash(name)))
 		if readErr != nil {
 			return readErr
@@ -164,4 +170,13 @@ func TestEmbeddedGUIBundleMatchesSourceDistWhenPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func isExcludedGUIAsset(name string) bool {
+	for _, segment := range strings.Split(name, "/") {
+		if strings.EqualFold(segment, "README.md") {
+			return true
+		}
+	}
+	return false
 }

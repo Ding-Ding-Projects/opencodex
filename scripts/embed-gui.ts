@@ -27,6 +27,16 @@ const distDir = join(root, "gui", "dist");
 const embedDir = join(root, "go", "internal", "server", "static");
 const manifestPath = join(root, "go", "internal", "server", "static-manifest.json");
 
+/**
+ * npm always drops nested README files from a package, no matter what `files`/`.npmignore` say,
+ * so `gui/dist/provider-icons/README.md` exists on disk but never ships. Excluding it here keeps
+ * the embedded tree byte-identical to what the tarball actually carries — which is what the
+ * release receipt compares.
+ */
+function isExcluded(relativePath: string): boolean {
+  return relativePath.split("/").some(segment => segment.toLowerCase() === "readme.md");
+}
+
 function fail(message: string): never {
   console.error(`embed-gui: ${message}`);
   process.exit(1);
@@ -39,7 +49,10 @@ function listFiles(dir: string): string[] {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const full = join(current, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.isFile()) out.push(relative(dir, full).split(sep).join("/"));
+      else if (entry.isFile()) {
+        const name = relative(dir, full).split(sep).join("/");
+        if (!isExcluded(name)) out.push(name);
+      }
     }
   };
   walk(dir);
@@ -82,7 +95,13 @@ function regenerate(): void {
   // orphaned assets embedded in the binary forever.
   rmSync(embedDir, { recursive: true, force: true });
   mkdirSync(embedDir, { recursive: true });
-  cpSync(distDir, embedDir, { recursive: true });
+  cpSync(distDir, embedDir, {
+    recursive: true,
+    filter: source => {
+      const name = relative(distDir, source).split(sep).join("/");
+      return name === "" || !isExcluded(name);
+    },
+  });
   writeManifest(embedDir);
   console.log(`embed-gui: regenerated ${listFiles(embedDir).length} files into go/internal/server/static`);
 }

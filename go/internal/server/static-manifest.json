@@ -26,10 +26,6 @@
       "sha256": "33d8e0753ca43f1d598e49800a2a9386346469ec32edf3e93f254160e2942132"
     },
     {
-      "path": "provider-icons/README.md",
-      "sha256": "44da8bd21ac3f75f383ba150604500ef55c8c8058a61a5796b466b40a4d3e4f2"
-    },
-    {
       "path": "provider-icons/alibaba-color.svg",
       "sha256": "bd57c416a7e64e6e10a017c1589c97093d5f482179259e42811884a5fc664401"
     },
