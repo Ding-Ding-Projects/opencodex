@@ -644,7 +644,7 @@ describe("GUI update execution decisions", () => {
       expect(waited).toEqual([{ port: 18765, hostname: "127.0.0.1" }]);
       expect(bakeDuringInstall).toEqual(["18765"]);
       expect(launchersDuringInstall).toHaveLength(1);
-      expect(launchersDuringInstall[0]?.endsWith("/bin/ocx.mjs")).toBe(true);
+      expect(launchersDuringInstall[0]?.endsWith(join("bin", "ocx.mjs"))).toBe(true);
       expect(process.env.OCX_BAKE_PORT).toBeUndefined();
     } finally {
       if (prev === undefined) delete process.env.OCX_BAKE_PORT;
