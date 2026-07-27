@@ -18,6 +18,20 @@ Base: `origin/dev` at `703c6191`; candidate rebased onto it. The only remote mut
 authorized is `git push --force-with-lease origin dev2-go`. No npm publish, git tag,
 GitHub Release, or workflow dispatch.
 
+## Release prerequisite (recorded, not waived)
+
+Completing 044 makes the branch defensible to push. It does **not** make it releasable.
+The packaged updater at this HEAD still has the defects catalogued in 045: CLI package
+replacement bypasses the GUI job exclusion (`bin/ocx.mjs:512`), Go exclusion is
+process-local (`go/internal/update/job.go:296`), Node and Bun independently rewrite the
+same job file (`bin/ocx.mjs:79`, `src/update/job.ts:141`), and a killed detached worker
+can leave an active job no one can clear (`go/internal/update/job.go:305`).
+
+Therefore 045 is a preview-release prerequisite. The convergence verdict
+(`050_convergence_verdict.md`) must record it as such, and any release attempt before 045
+lands has to instead disable packaged management-API updates. This is a maintainer
+decision, not something 044 resolves.
+
 ## Item 1 (release-blocking) — `ocx update --dry-run` must not mutate the install
 
 `bin/ocx.mjs:512` intercepts `update` for npm-layout installs that are not Bun globals
@@ -94,8 +108,13 @@ Repair:
   before dispatch is still the head check.
 - Extend the `gh` shim in `tests/release-helper.test.ts` with a `go-ci.yml` branch, and
   assert the recorded order is `ci.yml < service-lifecycle.yml < go-ci.yml < live remote
-  head read < release dispatch`. Add a case where the Go CI run is missing and the
-  script refuses to dispatch.
+  head read < release dispatch`.
+- Add a case where the Go CI run is missing and the script refuses to dispatch. This
+  needs a harness change first: `CI_WAIT_TIMEOUT_MS` is 20 minutes and `CI_POLL_MS` is 10
+  seconds (`scripts/release.ts:39-40`), while the test harness has no injected clock and a
+  30-second timeout, so a genuinely missing run would hang the test. Make both values
+  overridable from the environment (defaults unchanged), set them to small values in that
+  test, and assert the script exits nonzero without dispatching.
 
 ## Item 3 (gate) — the embedded Go GUI bundle is stale, and CI cannot catch it
 
@@ -137,8 +156,36 @@ Repair:
 - Release verification must check what actually ships. `release.yml:216` runs
   `build:publish` then `npm pack`, while `build:gui` writes `gui/dist` independently
   (`package.json:44`), so a `--check` that rebuilds into a temp directory does not prove
-  the packed bytes. Run `--verify-dist` in `release.yml` immediately before `npm pack`,
-  and put that comparison in the archive receipt.
+  the packed bytes. Run `--verify-dist` in `release.yml` immediately before `npm pack`.
+- `--verify-dist` before packing is still not sufficient on its own, because `npm pack`
+  then runs the `prepack` hook (`package.json:51`) and the existing verifier checks packed
+  GUI presence, size, and mode rather than content
+  (`scripts/prepare-package.ts:257-278`). So the receipt must also extract the produced
+  tarball and compare `package/gui/dist` against the committed embedded tree by SHA-256
+  per file, before release-asset preparation. That extraction goes in the archive receipt.
+
+### The release bump invalidates the embed, and the guard must account for it
+
+`gui/vite.config.ts:7` bakes `package.json`'s version into the bundle through
+`__APP_VERSION__`. `scripts/release.ts:256-265` commits only `package.json`, and
+`package.json` is a `go-ci.yml` trigger (`.github/workflows/go-ci.yml:17`). So the release
+bump commit would produce a GUI bundle whose bytes differ from the committed embedded
+tree, and the new `--check` step would fail every release — the guard would fire on the
+one commit that must pass.
+
+Repair, inside `scripts/release.ts`: after `npm version` and before the commit, run
+`bun scripts/embed-gui.ts` to regenerate, then stage `go/internal/server/static/**` and
+`go/internal/server/static-manifest.json` alongside `package.json`. Extend
+`tests/release-helper.test.ts` to assert the release commit contains those paths, so a
+future edit that drops the regeneration fails the suite rather than the release.
+
+## Item 4 — record the invariants this work-phase changes
+
+044 makes the Go CI wait mandatory in the release helper and adds embedded-GUI CI and
+archive gates. `structure/06_docs-and-release.md:43` and `structure/06_docs-and-release.md:113-116`
+still describe the previous Go CI and release-helper contracts, so they must be updated
+here. The Bun-worker invariants at `structure/06_docs-and-release.md:101` and
+`structure/01_runtime.md:42` describe the updater and stay with 045.
 
 ## Verification plan
 
@@ -158,9 +205,11 @@ Each command's fresh output is captured in the C-phase receipt:
    `diff -ru --no-dereference gui/dist go/internal/server/static`
 9. Exact archive receipt: `npm pack --json > pack.json` after removing prior artifacts
    with `unlink --`, then `bun scripts/prepare-package.ts --verify-pack pack.json`,
-   `node scripts/verify-native-install.mjs pack.json`, and the four
-   `prepare-release-assets.ts` stages. Helper temp directories must live under
-   `/private/tmp` because the helpers reject the `/tmp` symlink.
+   `node scripts/verify-native-install.mjs pack.json`, extraction of the produced tarball
+   with a per-file SHA-256 comparison of `package/gui/dist` against
+   `go/internal/server/static`, and the four `prepare-release-assets.ts` stages. Helper
+   temp directories must live under `/private/tmp` because the helpers reject the `/tmp`
+   symlink.
 10. `git diff --check`
 
 ## Out of scope
