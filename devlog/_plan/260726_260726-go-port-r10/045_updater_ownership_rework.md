@@ -1,6 +1,25 @@
-# 044 — WP4 updater/release repairs after the second C4 audit round
+# 045 — Packaged updater ownership rework (deferred work-phase)
 
-## Trigger and scope
+## Status: NOT STARTED. Requirements only.
+
+This document is not an approved implementation plan. It is the accumulated requirement
+set from four C4 audit rounds, preserved so the next work-phase starts from evidence
+instead of rediscovering it. The release-gate half of the original WP4 repair scope was
+split out to [044_wp4_release_gates.md](./044_wp4_release_gates.md) and is the current
+work unit; this one gets its own P/A/B/C cycle afterwards.
+
+Both round-4 auditors independently judged the combined scope too large for a single
+work-phase, and one named the split explicitly: updater handoff/install/restart;
+locking, recovery, and process identity; dry-run behavior; release and embedded-GUI
+gates. The last two are in 044. The first two are here.
+
+Implementing this requires updating two governing invariants that currently mandate the
+present design: `structure/06_docs-and-release.md:98` (the update supervisor copies the
+validated Bun executable outside the package before launch) and `structure/01_runtime.md:42`
+(Bun's bounded transition-worker exception). Those edits are part of this work-phase, not
+a side effect.
+
+## Original trigger and scope
 
 Two independent GPT-5.6 Sol medium/priority C4 audits rejected the WP4 candidate at
 `b4ebd346`. Each returned one release-blocking finding plus supporting mediums. The
@@ -15,7 +34,7 @@ GUI embed guard did not guard anything in CI. Round 3 showed something more impo
 every remaining blocker was a restatement of one structural fact, so patching them
 individually could not converge.
 
-### The structural finding, and the design change it forces
+### The structural finding, and the design change it points to
 
 `update-job.json` currently has three independent writers: Go
 (`go/internal/update/job.go`), the Node launcher (`bin/ocx.mjs:79`), and the Bun worker
@@ -29,9 +48,9 @@ Node supervisor rather than the Bun process that actually mutates the package, a
 worker with an expired lease becomes permanently unrecoverable, and re-validating the
 launcher path before `exec` still leaves a window before the OS opens the file.
 
-Rather than add a fourth mechanism to a three-writer design, this revision removes the
-writers. The packaged Go binary already owns every capability the Bun worker was
-retained for:
+Rather than add a fourth mechanism to a three-writer design, the candidate direction is
+to remove the writers. The packaged Go binary already owns every capability the Bun
+worker was retained for:
 
 - integrity pre-flight, tray handoff, tray refresh, and tray restore-on-failure
   (`go/internal/update/job.go:330-372`, `LifecycleDependencies` at
@@ -45,15 +64,87 @@ retained for:
   (`update_worker_process_unix.go:11` uses `Setsid`;
   `update_worker_process_windows.go:15` uses `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`)
 
-So the packaged update worker becomes a second, detached invocation of the **same Go
-binary**, copied out of the package first so the original can be replaced underneath it.
-`bin/ocx.mjs` keeps exactly one update responsibility — the npm-layout package
-replacement it must own because Windows cannot replace a running package from inside it —
-and stops writing job state entirely. `src/update/job.ts` keeps its worker only for the
-non-packaged Bun topologies, which never share a job file with a packaged Go binary.
+So the candidate direction is a packaged update worker that is a second, detached
+invocation of the **same Go binary**, copied out of the package first so the original can
+be replaced underneath it.
 
-That collapses the writer set to one process at a time in the packaged product, which is
-what makes the remaining repairs implementable instead of merely stated.
+Round 4 audited that direction and returned FAIL on both tracks, with findings that are
+requirements for whoever implements it rather than reasons to abandon it. They are
+recorded in "Round-4 requirements" below. In particular, the round-3 sketch's claim that
+Node keeps npm replacement while Go also runs `InstallCommand` is self-contradictory and
+must be resolved to one owner before any code is written.
+
+## Round-4 requirements (must be satisfied by any implementation)
+
+**Ownership must be singular and explicit.** The plan cannot say Node keeps npm
+replacement (`bin/ocx.mjs:288-435` performs stop, tray, service reinstall, restart, and
+exit — not a package-only operation) while the Go worker also calls `InstallCommand`.
+Direct Go execution is additionally invalid on Windows as written: `go/internal/update/job.go:90`
+invokes `npm.cmd` without a shell, while the launcher already documents and handles the
+required shell invocation at `bin/ocx.mjs:271`. Either Go becomes the sole job and
+lifecycle writer with an OS-safe npm invocation, or Node keeps a package-only internal
+command that returns to Go and never touches lifecycle or job state.
+
+**The CLI update path must take the same lock.** Routing only the GUI worker through the
+claim leaves `bin/ocx.mjs:267` and `bin/ocx.mjs:376` mutating the package outside it, so
+a CLI update can still overlap a GUI worker despite perfect job-state transitions.
+
+**The serving process must be stopped before replacement.** `go/internal/update/job.go:325`
+goes from tray preparation straight to installation; port reclaim happens only afterwards
+at `go/internal/update/job.go:423`. On Windows the original package-local executable stays
+locked and `npm install -g` can still fail. A pre-install stage must stop the service or
+proxy and prove the serving PID and port are gone.
+
+**Lifecycle state cannot be rebuilt inside the copy.** Outside `bin/native`,
+`processRuntimeCommand` returns the copied executable with no launcher
+(`go/internal/cli/runtime_command.go:48`), so `productionUpdateLifecycle` would record the
+disposable copy as `RuntimeExecutable`, an empty launcher, and the worker's own PID as
+`OldPID` (`go/internal/cli/runtime_management.go:558`). Restart planning would then start
+the disposable worker and correlate against the wrong PID
+(`go/internal/update/planning.go:182`). The serving PID, host/port, service arguments,
+package root, and stable Node/launcher identity must be persisted before detachment, and
+the restart must go through the newly installed package launcher.
+
+**Legacy coexistence is real, not hypothetical.** Both stores use
+`<config-dir>/update-job.json` (`src/update/job.ts:116`,
+`go/internal/cli/runtime_management.go:441`) and both derive the same caller-controlled
+`OPENCODEX_HOME` (`go/internal/cli/provider.go:33`, `src/config.ts:315`). During the
+TypeScript-to-Go transition the old Bun worker installs the new package, starts and probes
+the replacement runtime, and only then writes terminal status
+(`src/update/job.ts:818-857`) — so a new Go server genuinely runs while an old Bun worker
+still owns that file. This needs either separate legacy and Go job files or explicit
+backward-compatible ownership semantics, plus a real old-package-to-new-package transition
+test. Go must not reclaim a legacy Bun-owned active job until its worker is proven dead.
+
+**Copy staging must be handle-based and fail-closed.** Hashing after copy does not close
+the destination TOCTOU. Required: atomic creation of an unguessable directory; opening the
+destination through a trusted directory handle with `O_CREAT|O_EXCL|O_NOFOLLOW` or Windows
+`CREATE_NEW`; copying and hashing through that same handle; rejecting symlink and reparse
+components; sealing and verifying permissions or DACL; revalidating by handle immediately
+before spawn.
+
+**Recovery must prove the whole mutation unit is dead, not one PID.** A live `npm` child
+can outlive its parent and keep replacing the package. POSIX workers get a new session
+(`update_worker_process_unix.go:11`) but Windows only gets a detached process group
+(`update_worker_process_windows.go:15`), and the existing Windows termination targets a PID
+tree via a later command (`go/internal/platform/process.go:88`). Required: a stable process
+handle or pidfd where available, a Windows Job Object containing descendants, whole-group
+death proof, and refusal to terminalize when containment cannot be proven empty.
+
+**Process identity needs boot/session context and fail-closed parsing.** Linux `/proc/<pid>/stat`
+field 22 is boot-relative, so PID plus start ticks can collide across reboots, and parsing
+must survive spaces and `)` inside `comm`. Unavailable or namespaced `/proc` must read as
+"unverifiable", never "dead". macOS uses `unix.SysctlKinfoProc`, Windows uses
+`GetProcessTimes`; `golang.org/x/sys` is already a dependency (`go/go.mod`), so no cgo is
+needed, but build-tagged implementations and a canonical representation are real work.
+
+**Windows staging hardening must not soft-fail.** The existing DACL helper soft-fails on
+timeout (`go/internal/platform/winacl_common.go:57`), which is unsuitable for an executable
+staging boundary. Required: verified-success hardening, handle-based reparse-point
+rejection on every existing component, Windows case/volume canonicalization when proving
+the staging root is outside the package root, and failure when no safe root exists.
+
+## Original draft (retained for reference)
 
 This amendment stays inside the single WP4 release-readiness work unit. It repairs the
 packaged update path, the release dispatch ordering, and one embedded-asset staleness
