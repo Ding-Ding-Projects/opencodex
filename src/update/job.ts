@@ -307,7 +307,7 @@ function ensureJobDir(): void {
 
 function writeJob(job: UpdateJobState): void {
   ensureJobDir();
-  atomicWriteFile(updateJobPath(), `${JSON.stringify(job, null, 2)}\n`);
+  atomicWriteFile(updateJobPath(), `${JSON.stringify(sanitizeUpdateJobState(job), null, 2)}\n`);
 }
 
 export function readUpdateJob(jobId?: string | null): UpdateJobState | null {
@@ -321,14 +321,32 @@ export function readUpdateJob(jobId?: string | null): UpdateJobState | null {
   }
 }
 
+function sanitizeUpdateJobText(value: string): string {
+  return value
+    .replace(/(?:[A-Za-z]:\\|\/)[^\s"'<>]*ocx\.mjs\b/g, "ocx.mjs")
+    .replace(/(?:[A-Za-z]:\\|\/)[^\s"'<>]*(?:\.npm|_cacache|_npx|\.opencodex-)[^\s"'<>]*/g, "[redacted npm path]")
+    .replace(/\/(?:Users|home)\/[^/\s"'<>]+(?:\/[^\s"'<>]*)*/g, "[redacted user path]")
+    .replace(/\b(uid|gid)\s*[:=]\s*\d+\b/gi, "$1=[redacted]")
+    .replace(/\b(UID|GID)\s+\d+\b/g, "$1 [redacted]");
+}
+
+function sanitizeUpdateJobState(job: UpdateJobState): UpdateJobState {
+  return {
+    ...job,
+    command: sanitizeUpdateJobText(job.command),
+    log: job.log.map(sanitizeUpdateJobText),
+    ...(job.error ? { error: sanitizeUpdateJobText(job.error) } : {}),
+  };
+}
+
 function updateJob(job: UpdateJobState, patch: Partial<UpdateJobState>, logLine?: string): UpdateJobState {
   const current = readUpdateJob(job.id) ?? job;
-  const next = {
+  const next = sanitizeUpdateJobState({
     ...current,
     ...patch,
     updatedAt: new Date().toISOString(),
-    log: logLine ? [...current.log, logLine] : current.log,
-  };
+    log: logLine ? [...current.log, sanitizeUpdateJobText(logLine)] : current.log,
+  });
   writeJob(next);
   return next;
 }
@@ -407,7 +425,7 @@ export function checkForUpdate(
     installer,
     updateAvailable,
     canUpdate: installer !== "source" && updateAvailable,
-    command,
+    command: sanitizeUpdateJobText(command),
     releaseNotesUrl: RELEASE_NOTES_URL,
     ...(reason ? { reason } : {}),
   };

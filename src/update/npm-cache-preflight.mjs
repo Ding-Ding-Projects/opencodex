@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { accessSync, constants, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,7 @@ function errorCode(error) {
 /** Find the first cache entry whose uid differs from the current user. */
 export function findForeignOwnedNpmCacheEntry(cachePath, expectedUid, io = {}) {
   const lstat = io.lstat ?? lstatSync;
+  const access = io.access ?? accessSync;
   const readdir = io.readdir ?? (path => readdirSync(path, { encoding: "utf8" }));
   const realpath = io.realpath ?? realpathSync;
   const now = io.now ?? (() => Date.now());
@@ -92,6 +93,20 @@ export function findForeignOwnedNpmCacheEntry(cachePath, expectedUid, io = {}) {
     }
     if (path === cacheRoot && !stat.isDirectory()) {
       return { kind: "error", path, reason: "npm cache root is not a directory" };
+    }
+    try {
+      const accessMode = stat.isDirectory()
+        ? constants.R_OK | constants.W_OK | constants.X_OK
+        : constants.R_OK | constants.W_OK;
+      access(path, accessMode);
+    } catch (error) {
+      return {
+        kind: "error",
+        path,
+        reason: stat.isDirectory()
+          ? `npm cache directory is not readable, writable, and searchable (${errorCode(error)})`
+          : `npm cache entry is not readable and writable (${errorCode(error)})`,
+      };
     }
     if (!stat.isDirectory()) continue;
 

@@ -14,6 +14,7 @@ export interface NpmCachePreflightOptions {
   scanSpawn?: typeof import("node:child_process").spawnSync;
   scanBin?: string;
   scanScript?: string;
+  access?: (path: string, mode: number) => void;
   lstat?: (path: string) => NpmCacheEntryStat;
   readdir?: (path: string) => string[];
   realpath?: (path: string) => string;
@@ -43,7 +44,7 @@ export declare function findForeignOwnedNpmCacheEntry(
   expectedUid: number,
   io?: Pick<
     NpmCachePreflightOptions,
-    "lstat" | "readdir" | "realpath" | "now" | "maxEntries" | "maxDurationMs"
+    "access" | "lstat" | "readdir" | "realpath" | "now" | "maxEntries" | "maxDurationMs"
   >,
 ): NpmCacheOwnershipIssue | null;
 

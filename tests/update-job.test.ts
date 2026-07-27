@@ -110,6 +110,39 @@ describe("GUI update execution decisions", () => {
     });
   });
 
+  test("persists installer-derived job fields without raw cache paths or uid values", async () => {
+    const rawPath = "/home/alice/.npm/_cacache/tmp/entry";
+    const rawUid = "uid=1001";
+    const job: UpdateJobState = {
+      id: "sanitize-installer-output",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: `node ${rawPath}/bin/ocx.mjs update --tag latest`,
+      releaseNotesUrl: "",
+      log: [`npm failed at ${rawPath} ${rawUid}`],
+      error: `installer stderr ${rawPath} ${rawUid}`,
+    };
+    writeFileSync(updateJobPath(), JSON.stringify(job));
+    await restartAfterUpdateForTests(job, { port: 10100, hostname: "127.0.0.1" }, {
+      serviceInstalledFn: () => false,
+      readPidFn: () => null,
+      waitForPort: async () => false,
+      spawnStart: () => { throw new Error("must not spawn"); },
+    });
+    const persisted = JSON.stringify(readUpdateJob(job.id));
+    expect(persisted).not.toContain("/home/alice");
+    expect(persisted).not.toContain("_cacache");
+    expect(persisted).not.toContain("uid=1001");
+    expect(persisted).not.toContain("alice");
+    expect(readUpdateJob(job.id)?.command).toContain("ocx.mjs update --tag latest");
+  });
+
   test("recovery start logs label candidates without persisting launcher paths", () => {
     const retiredLauncher = "/Users/test/.npm-global/lib/node_modules/@bitkyc08/.opencodex-Ab12Cd34/bin/ocx.mjs";
     const line = formatProxyStartLog("npm", retiredLauncher, 10100);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, constants, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -112,6 +112,54 @@ describe("npm cache ownership pre-flight", () => {
     if (result.ok !== false) throw new Error("expected ownership failure");
     expect(formatNpmCacheOwnershipFailure(result)).toContain("before stopping the proxy");
     expect(formatNpmCacheOwnershipFailure(result)).toContain("configure a user-owned npm cache");
+  });
+
+  test("fails closed when the cache is owned by the user but not effectively writable", () => {
+    const uid = process.getuid?.() ?? 501;
+    const cacheRoot = realpathSync(dir);
+    const accessDenied = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const issue = findForeignOwnedNpmCacheEntry(dir, uid, {
+      lstat: (path) => {
+        const stat = lstatSync(path);
+        return {
+          uid,
+          isDirectory: () => stat.isDirectory(),
+          isSymbolicLink: () => stat.isSymbolicLink(),
+        };
+      },
+      readdir: path => readdirSync(path, { encoding: "utf8" }),
+      access: (path, mode) => {
+        if (path === cacheRoot && (mode & constants.W_OK) !== 0) throw accessDenied;
+      },
+    });
+    expect(issue).toEqual({
+      kind: "error",
+      path: cacheRoot,
+      reason: "npm cache directory is not readable, writable, and searchable (EACCES)",
+    });
+
+    const result = checkNpmCacheOwnership({
+      platform: "linux",
+      getuid: () => uid,
+      spawn: cacheLookup(dir),
+      scanSpawn: (() => ({
+        status: 0,
+        stdout: `${JSON.stringify(issue)}\n`,
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      })) as never,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      cachePath: dir,
+      entryPath: cacheRoot,
+      expectedUid: uid,
+      reason: "npm cache directory is not readable, writable, and searchable (EACCES)",
+    });
+    if (result.ok !== false) throw new Error("expected access failure");
+    expect(formatNpmCacheOwnershipFailure(result)).toContain("before stopping the proxy");
   });
 
   test("formats cache failures without persisting arbitrary path segments or account ids", () => {
