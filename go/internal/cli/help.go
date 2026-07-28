@@ -95,6 +95,7 @@ Usage:
   ocx provider <sub>          Manage providers (list|add|remove|show|set-default)
   ocx account <sub>           Accounts/keys (list|current|use|refresh|auto-switch|remove|add-key)
   ocx models <sub>            List models; manage custom models (add|remove|list-custom)
+  ocx config <sub>            Validated configuration show/get/set/import/export
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile
   ocx help [command]          Show help
