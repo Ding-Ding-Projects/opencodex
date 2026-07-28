@@ -411,3 +411,81 @@ func TestConfigBlocksPrototypeSegmentsEverywhere(t *testing.T) {
 		}
 	}
 }
+
+// The oracle's validateConfigCandidate returns a NORMALIZED config, so a file
+// that legitimately omits port still resolves it. Validating without
+// materializing the defaults made `config get port` report a missing path for
+// a config the TypeScript CLI reads fine.
+func TestConfigResolvesSchemaDefaults(t *testing.T) {
+	configHome(t, `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
+	out, err := runConfigParityWith(t, "", "get", "port")
+	if err != nil || strings.TrimSpace(out) != "10100" {
+		t.Fatalf("get port = %q, %v; the schema default must be materialized", out, err)
+	}
+	// A value the user actually wrote still wins over the default.
+	configHome(t, `{"port":12345,"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
+	out, err = runConfigParityWith(t, "", "get", "port")
+	if err != nil || strings.TrimSpace(out) != "12345" {
+		t.Fatalf("an explicit value must win: %q %v", out, err)
+	}
+}
+
+// --source reports where the config came from and, when the file could not be
+// used, why. `error` is present either way so a consumer reads one shape.
+func TestConfigShowSourceReportsDefaultAndFallback(t *testing.T) {
+	decode := func(t *testing.T, out string) map[string]any {
+		t.Helper()
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope
+	}
+
+	// No file at all.
+	dir := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", dir)
+	out, err := runConfigParityWith(t, "", "show", "--source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := decode(t, out)
+	if envelope["source"] != "default" {
+		t.Fatalf("source = %#v, want default", envelope["source"])
+	}
+	if envelope["error"] != nil {
+		t.Fatalf("error = %#v, want null on success", envelope["error"])
+	}
+	if config, _ := envelope["config"].(map[string]any); config["port"] == nil {
+		t.Fatalf("a default config must still be served: %s", out)
+	}
+
+	// A file that is not JSON at all.
+	configHome(t, "{not json")
+	envelope = decode(t, mustRun(t, "show", "--source"))
+	if envelope["source"] != "fallback" {
+		t.Fatalf("source = %#v, want fallback", envelope["source"])
+	}
+	if envelope["error"] != "invalid_json" {
+		t.Fatalf("error = %#v, want invalid_json", envelope["error"])
+	}
+
+	// A file that parses but cannot satisfy the schema.
+	configHome(t, `{"providers":{},"defaultProvider":"missing"}`)
+	envelope = decode(t, mustRun(t, "show", "--source"))
+	if envelope["source"] != "fallback" {
+		t.Fatalf("schema-invalid source = %#v, want fallback", envelope["source"])
+	}
+	if envelope["error"] == nil {
+		t.Fatalf("a fallback must report why: %s", out)
+	}
+}
+
+func mustRun(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := runConfigParityWith(t, "", args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}

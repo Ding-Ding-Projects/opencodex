@@ -27,38 +27,56 @@ const configUsage = `Usage:
 type configDocument map[string]any
 
 // readConfigDocument loads the config file as a generic tree plus its
-// diagnostics, mirroring readConfigDiagnostics.
-func readConfigDocument() (document configDocument, source string, loadErr error) {
+// diagnostics, mirroring readConfigDiagnostics: the config plus where it came
+// from and, when the file could not be used, why.
+type configDiagnostics struct {
+	document configDocument
+	source   string
+	failure  string
+}
+
+func readConfigDiagnostics() (configDiagnostics, error) {
 	path, err := configPath()
 	if err != nil {
-		return nil, "", err
+		return configDiagnostics{}, err
+	}
+	fallback := func(reason string) configDiagnostics {
+		// The oracle discards an unusable file and hands back defaults, so
+		// show/get/export never surface its contents. That matters beyond
+		// tidiness: exporting an unvalidated file would copy whatever
+		// credentials it holds into a new location.
+		return configDiagnostics{document: defaultConfigDocument(), source: "fallback", failure: reason}
 	}
 	raw, readErr := os.ReadFile(path)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
-			return defaultConfigDocument(), "default", nil
+			return configDiagnostics{document: defaultConfigDocument(), source: "default"}, nil
 		}
-		return nil, "", readErr
+		return configDiagnostics{}, readErr
 	}
 	// A BOM is stripped the way the oracle does before parsing.
-	trimmed := strings.TrimPrefix(string(raw), "\ufeff")
 	var decoded any
-	if json.Unmarshal([]byte(trimmed), &decoded) != nil {
-		return defaultConfigDocument(), "fallback", nil
+	if json.Unmarshal([]byte(strings.TrimPrefix(string(raw), "\ufeff")), &decoded) != nil {
+		return fallback("invalid_json"), nil
 	}
 	record, isObject := decoded.(map[string]any)
 	if !isObject {
-		return defaultConfigDocument(), "fallback", nil
+		return fallback("invalid_json"), nil
 	}
-	// NOTE: the oracle also downgrades a schema-invalid file to "fallback" and
-	// serves defaults instead. Routing this through validateConfigDocument does
-	// NOT reproduce that: Go's Config.Validate is stricter than the oracle's
-	// schema (it requires providers.*.adapter, which the schema defaults), so
-	// it rejects files the TypeScript CLI accepts. Reusing it here made `show`
-	// serve defaults for an ordinary valid config. Matching the oracle needs a
-	// schema-shaped validator, which belongs with the config-schema work rather
-	// than in this CLI slice.
-	return configDocument(record), "file", nil
+	normalized, normalizeErr := normalizeConfigDocument(configDocument(record))
+	if normalizeErr != nil {
+		return fallback(normalizeErr.Error()), nil
+	}
+	return configDiagnostics{document: normalized, source: "file"}, nil
+}
+
+// readConfigDocument is the common case: the effective config and its origin.
+func readConfigDocument() (configDocument, string, error) {
+	diagnostics, err := readConfigDiagnostics()
+	if err != nil {
+		return nil, "", err
+	}
+	return diagnostics.document, diagnostics.source, nil
 }
 
 // validateConfigDocument runs the same validation a write would, without
@@ -102,6 +120,35 @@ func validateConfigDocument(document configDocument) error {
 		return usageError("", "%s", err.Error())
 	}
 	return candidate.Validate()
+}
+
+// normalizeConfigDocument validates and returns the document with schema
+// defaults MATERIALIZED, the way the oracle's validateConfigCandidate hands
+// back a normalized config rather than the raw input.
+//
+// Without this, a file that legitimately omits `port` validates but then
+// `config get port` reports the path as missing, even though the oracle
+// resolves it to 10100.
+//
+// Defaults are layered UNDER the document rather than over it, so a key the
+// user actually wrote always wins, and unknown members survive untouched.
+func normalizeConfigDocument(document configDocument) (configDocument, error) {
+	if err := validateConfigDocument(document); err != nil {
+		return nil, err
+	}
+	defaults := config.FreshInstall()
+	encoded, err := json.Marshal(defaults)
+	if err != nil {
+		return nil, err
+	}
+	var base map[string]any
+	if err := json.Unmarshal(encoded, &base); err != nil {
+		return nil, err
+	}
+	for key, value := range document {
+		base[key] = value
+	}
+	return configDocument(base), nil
 }
 
 // saveConfigDocument writes the VALIDATED GENERIC document, not a typed
@@ -207,17 +254,26 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 		if err := rejectArgs(rest, configUsage, false); err != nil {
 			return err
 		}
-		document, origin, err := readConfigDocument()
+		diagnostics, err := readConfigDiagnostics()
 		if err != nil {
 			return err
 		}
-		redacted := redactConfigValue(map[string]any(document), "")
+		redacted := redactConfigValue(map[string]any(diagnostics.document), "")
 		if !source {
 			// show always prints JSON: the oracle passes true for wantsJson.
 			return printData(streams, redacted, true, nil)
 		}
+		// `error` is present either way, null on success, so a consumer can
+		// read one shape rather than test for the key.
+		var failure any
+		if diagnostics.failure != "" {
+			failure = diagnostics.failure
+		}
 		return printData(streams, map[string]any{
-			"config": redacted, "source": origin, "warnings": []any{},
+			"config":   redacted,
+			"source":   diagnostics.source,
+			"error":    failure,
+			"warnings": []any{},
 		}, true, nil)
 
 	case "get":
