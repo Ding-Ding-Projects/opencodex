@@ -67,6 +67,7 @@ func TestProductionResponsesRouteConsumesCursorConnectStream(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"cursor/gpt-5.6-sol","input":"hello","stream":false}`,
 	))
+	request.Host = "127.0.0.1:10100"
 	proxy.Handler().ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "routed through Cursor") {

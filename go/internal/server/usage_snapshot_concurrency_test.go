@@ -27,7 +27,7 @@ func TestProductionUsageSnapshotRebuildDoesNotBlockHealthz(t *testing.T) {
 	usageDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		response := httptest.NewRecorder()
-		proxy.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/usage?range=all", nil))
+		proxy.Handler().ServeHTTP(response, loopbackRequest(http.MethodGet, "/api/usage?range=all", nil))
 		usageDone <- response
 	}()
 
@@ -46,7 +46,7 @@ func TestProductionUsageSnapshotRebuildDoesNotBlockHealthz(t *testing.T) {
 	healthDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		response := httptest.NewRecorder()
-		proxy.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		proxy.Handler().ServeHTTP(response, loopbackRequest(http.MethodGet, "/healthz", nil))
 		healthDone <- response
 	}()
 	select {

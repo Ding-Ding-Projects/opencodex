@@ -26,7 +26,7 @@ func TestDrainAdmissionMiddlewareRejectsNewWorkButKeepsHealthAndStop(t *testing.
 		{path: "/api/stop", want: http.StatusNoContent},
 	} {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, test.path, nil))
+		handler.ServeHTTP(response, loopbackRequest(http.MethodPost, test.path, nil))
 		if response.Code != test.want {
 			t.Errorf("%s status = %d, want %d", test.path, response.Code, test.want)
 		}

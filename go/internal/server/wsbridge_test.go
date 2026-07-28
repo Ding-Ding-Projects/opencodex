@@ -11,7 +11,7 @@ import (
 
 func TestWebSocketBridgeValidatesHandshakeBeforeHijack(t *testing.T) {
 	handler := WebSocketBridge(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	request := httptest.NewRequest(http.MethodGet, "/v1/responses/ws", nil)
+	request := loopbackRequest(http.MethodGet, "/v1/responses/ws", nil)
 	request.Header.Set("Upgrade", "websocket")
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Sec-WebSocket-Key", base64.StdEncoding.EncodeToString(make([]byte, 16)))

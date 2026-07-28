@@ -20,7 +20,7 @@ func FuzzParseResponsesRequest(f *testing.F) {
 		if len(payload) > 64<<10 {
 			t.Skip()
 		}
-		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(payload)))
+		request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(payload)))
 		_, _ = parseResponsesRequest(httptest.NewRecorder(), request, 64<<10)
 	})
 }

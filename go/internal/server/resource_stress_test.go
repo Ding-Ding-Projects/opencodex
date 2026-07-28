@@ -57,7 +57,7 @@ func newResourceCore(upstreamURL string, chunks int, payload string, client *htt
 }
 
 func serveResourceStream(core *ResponsesCore) {
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`))
 	core.ServeHTTP(&discardResponseWriter{}, request)
 }
 
@@ -134,7 +134,7 @@ func BenchmarkResponsesBufferedRequest(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+		request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
 		core.ServeHTTP(&discardResponseWriter{}, request)
 	}
 }

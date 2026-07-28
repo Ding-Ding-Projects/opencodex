@@ -28,7 +28,7 @@ func TestCompactCoordinatorRoutedFallback(t *testing.T) {
 			return &types.CompactionResult{Summary: "checkpoint"}, nil
 		}),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"public","input":[{"type":"message","role":"user","content":"keep"}]}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"public","input":[{"type":"message","role":"user","content":"keep"}]}`))
 	response := httptest.NewRecorder()
 	coordinator.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "checkpoint") || !strings.Contains(response.Body.String(), "keep") {
@@ -47,7 +47,7 @@ func TestCompactCoordinatorNativeForward(t *testing.T) {
 	coordinator := CompactCoordinator{Resolve: func(string, http.Header) (CompactRoute, error) {
 		return CompactRoute{Model: "native-wire", Native: true, Endpoint: upstream.URL}, nil
 	}}
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"public","input":[],"thread_id":"thread-1","metadata":{"keep":true},"reasoning":{"effort":"high"}}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"public","input":[],"thread_id":"thread-1","metadata":{"keep":true},"reasoning":{"effort":"high"}}`))
 	response := httptest.NewRecorder()
 	coordinator.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || received["model"] != "native-wire" {
@@ -64,7 +64,7 @@ func TestCompactCoordinatorNativeForward(t *testing.T) {
 func TestCompactCoordinatorRejectsTrailingJSON(t *testing.T) {
 	coordinator := CompactCoordinator{Resolve: func(string, http.Header) (CompactRoute, error) { return CompactRoute{}, nil }}
 	response := httptest.NewRecorder()
-	coordinator.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"m","input":[]} {"extra":true}`)))
+	coordinator.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"m","input":[]} {"extra":true}`)))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "exactly one JSON object") {
 		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}

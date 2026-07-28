@@ -350,6 +350,11 @@ func TestProductionResponsesFeeds429IntoCanonicalCodexRouter(t *testing.T) {
 
 	for _, threadID := range []string{"first", "second"} {
 		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"openai/gpt","input":"hello","stream":false}`))
+		// httptest.NewRequest fills an absent Host with "example.com", which
+		// the loopback Host gate correctly refuses. net/http populates r.Host
+		// from the connection, so a real local request arrives as
+		// 127.0.0.1:<port>.
+		request.Host = "127.0.0.1:10100"
 		request.Header.Set("X-Codex-Parent-Thread-Id", threadID)
 		response := httptest.NewRecorder()
 		proxy.Handler().ServeHTTP(response, request)

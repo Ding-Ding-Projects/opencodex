@@ -42,7 +42,7 @@ func TestImageEditsRelaysMultipartBodyByteIdentically(t *testing.T) {
 	handler := sidecarHandler(SidecarImageEdits, func(_ context.Context, _ SidecarKind, _ http.Header) (SidecarTarget, error) {
 		return SidecarTarget{URL: upstream.URL, Transport: upstream.Client()}, nil
 	})
-	request := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(original))
+	request := loopbackRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(original))
 	request.Header.Set("Content-Type", contentType)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -52,7 +52,7 @@ func TestImageEditsRelaysMultipartBodyByteIdentically(t *testing.T) {
 }
 
 func TestMultipartRemainsRestrictedToImageEdits(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader("--boundary--"))
+	request := loopbackRequest(http.MethodPost, "/v1/images/generations", strings.NewReader("--boundary--"))
 	request.Header.Set("Content-Type", "multipart/form-data; boundary=boundary")
 	response := httptest.NewRecorder()
 	handler := sidecarHandler(SidecarImageGenerations, func(_ context.Context, _ SidecarKind, _ http.Header) (SidecarTarget, error) {

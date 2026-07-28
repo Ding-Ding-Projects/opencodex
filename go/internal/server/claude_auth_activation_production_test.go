@@ -22,7 +22,7 @@ type reentrantClaudeRuntime struct {
 func (r *reentrantClaudeRuntime) ApplyClaudeCodeSystemEnv(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
-		request := httptest.NewRequest(http.MethodGet, "/v1/models", nil).WithContext(ctx)
+		request := loopbackRequest(http.MethodGet, "/v1/models", nil).WithContext(ctx)
 		response := httptest.NewRecorder()
 		r.handler.ServeHTTP(response, request)
 		r.status = response.Code

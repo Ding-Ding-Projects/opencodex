@@ -69,6 +69,7 @@ func TestProductionOpenAIPoolForwardsPhysicalAccountID(t *testing.T) {
 	defer proxy.Close()
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"openai/gpt","input":"hello","stream":false}`))
+	request.Host = "127.0.0.1:10100"
 	request.Header.Set("Authorization", "Bearer caller-token")
 	response := httptest.NewRecorder()
 	proxy.Handler().ServeHTTP(response, request)

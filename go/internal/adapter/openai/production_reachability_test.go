@@ -68,6 +68,7 @@ func TestProductionResponsesRouteAbortsOpenAIBacklog(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 			`{"model":"openai/probe","input":"hello","stream":true}`,
 		))
+		request.Host = "127.0.0.1:10100"
 		proxy.Handler().ServeHTTP(writer, request)
 	}()
 

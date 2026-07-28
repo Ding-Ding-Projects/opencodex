@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"io"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -23,7 +22,7 @@ func TestDecompressRequest(t *testing.T) {
 			writer := tc.write(&compressed)
 			_, _ = writer.Write([]byte(`{"ok":true}`))
 			_ = writer.Close()
-			request := httptest.NewRequest("POST", "/", &compressed)
+			request := loopbackRequest("POST", "/", &compressed)
 			request.Header.Set("Content-Encoding", tc.encoding)
 			if err := DecompressRequest(request, 1024); err != nil {
 				t.Fatal(err)

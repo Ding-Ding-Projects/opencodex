@@ -67,7 +67,7 @@ func TestProductionUsageSurfaceAttribution(t *testing.T) {
 			})
 			defer proxy.Close()
 
-			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			request := loopbackRequest(http.MethodPost, test.path, strings.NewReader(test.body))
 			request.Header.Set("Content-Type", "application/json")
 			for name, value := range test.headers {
 				request.Header.Set(name, value)

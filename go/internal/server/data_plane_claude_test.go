@@ -19,7 +19,7 @@ func TestModelsEndpointServesAnthropicModelInfoForClaudeClients(t *testing.T) {
 		registry.Provider{ID: "p", DefaultModel: "m", Models: []registry.ModelDefinition{{ID: "m", ContextWindow: 500000, ReasoningEfforts: []string{"low", "high"}}}},
 	)
 	proxy := New(Config{Registry: reg, ManagementConfig: &cfg})
-	request := httptest.NewRequest(http.MethodGet, "/v1/models?ids=cli", nil)
+	request := loopbackRequest(http.MethodGet, "/v1/models?ids=cli", nil)
 	request.Header.Set("anthropic-version", "2023-06-01")
 	response := httptest.NewRecorder()
 	proxy.Handler().ServeHTTP(response, request)

@@ -26,7 +26,9 @@ func TestProductionStorageRouteUsesCanonicalScanner(t *testing.T) {
 	defer proxy.Close()
 
 	response := httptest.NewRecorder()
-	proxy.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/storage", nil))
+	storageRequest := httptest.NewRequest(http.MethodGet, "/api/storage", nil)
+	storageRequest.Host = "127.0.0.1:10100"
+	proxy.Handler().ServeHTTP(response, storageRequest)
 	if response.Code != http.StatusOK {
 		t.Fatalf("storage route = %d %s", response.Code, response.Body.String())
 	}

@@ -1,8 +1,9 @@
 package server
 
 import (
-	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/registry"
 )
 
 func TestModelRouterResolution(t *testing.T) {

@@ -331,6 +331,7 @@ func TestProductionServeCompositionUsesCanonicalProviderQuotaParserAndCache(t *t
 
 	requestQuota := func(target string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Host = "127.0.0.1:10100"
 		response := httptest.NewRecorder()
 		proxy.Handler().ServeHTTP(response, request)
 		return response
@@ -707,6 +708,7 @@ func callCLIManagement(t *testing.T, api *management.API, method, target string,
 		reader = bytes.NewReader(encoded)
 	}
 	request := httptest.NewRequest(method, target, reader)
+	request.Host = "127.0.0.1:10100"
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

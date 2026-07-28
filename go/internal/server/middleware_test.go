@@ -11,20 +11,20 @@ import (
 
 func TestAuthMiddleware(t *testing.T) {
 	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), MiddlewareConfig{Token: "secret"})
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request := loopbackRequest(http.MethodPost, "/v1/responses", nil)
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d", response.Code)
 	}
-	request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request = loopbackRequest(http.MethodPost, "/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer secret")
 	response = httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("authorized status = %d", response.Code)
 	}
-	request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request = loopbackRequest(http.MethodPost, "/v1/responses", nil)
 	request.Header.Set("Authorization", "secret")
 	response = httptest.NewRecorder()
 	h.ServeHTTP(response, request)
@@ -42,7 +42,7 @@ func TestMiddlewareCorrelatesAndLogsRejectedRequests(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}), MiddlewareConfig{Token: "secret", Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
 
-	authorized := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	authorized := loopbackRequest(http.MethodGet, "/api/config", nil)
 	authorized.Header.Set("Authorization", "Bearer secret")
 	authorized.Header.Set("X-Request-Id", "client-request")
 	response := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func TestMiddlewareCorrelatesAndLogsRejectedRequests(t *testing.T) {
 		t.Fatalf("headers = %v", response.Header())
 	}
 
-	rejected := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	rejected := loopbackRequest(http.MethodGet, "/api/config", nil)
 	response = httptest.NewRecorder()
 	h.ServeHTTP(response, rejected)
 	if response.Code != http.StatusUnauthorized || response.Header().Get("X-Request-Id") == "" {
@@ -66,7 +66,7 @@ func TestManagementAuthFailureUsesTypeScriptEnvelope(t *testing.T) {
 	h := Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("unauthorized management request reached handler")
 	}), MiddlewareConfig{Token: "secret"})
-	request := httptest.NewRequest(http.MethodPost, "/api/providers", strings.NewReader(`{}`))
+	request := loopbackRequest(http.MethodPost, "/api/providers", strings.NewReader(`{}`))
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized || response.Header().Get("Content-Type") != "application/json" || response.Body.String() != `{"error":"opencodex API key required"}` {
@@ -76,7 +76,7 @@ func TestManagementAuthFailureUsesTypeScriptEnvelope(t *testing.T) {
 
 func TestCORSAllowlist(t *testing.T) {
 	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}), MiddlewareConfig{AllowedOrigins: []string{"https://app.example"}})
-	request := httptest.NewRequest(http.MethodOptions, "/v1/responses", nil)
+	request := loopbackRequest(http.MethodOptions, "/v1/responses", nil)
 	request.Header.Set("Origin", "https://app.example")
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)

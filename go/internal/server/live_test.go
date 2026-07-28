@@ -127,7 +127,7 @@ func TestLiveHandlerRewritesBackendMultipartAndRelaysSafeHeaders(t *testing.T) {
 	_ = multipartWriter.WriteField("sdp", "offer")
 	_ = multipartWriter.WriteField("session", `{"voice":"alloy"}`)
 	_ = multipartWriter.Close()
-	request := httptest.NewRequest(http.MethodPost, "/v1/live", &inbound)
+	request := loopbackRequest(http.MethodPost, "/v1/live", &inbound)
 	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	request.Header.Set("OpenAI-Alpha", "quicksilver=v2")
 	request.Header.Set("Cookie", "must-not-forward")
@@ -152,12 +152,12 @@ func TestLiveHandlerMapsRequestOverflowAndTimeout(t *testing.T) {
 		return nil, request.Context().Err()
 	}), RequestLimit: 4, Timeout: 5 * time.Millisecond}
 	overflow := httptest.NewRecorder()
-	handler.ServeHTTP(overflow, httptest.NewRequest(http.MethodPost, "/v1/live", strings.NewReader("12345")))
+	handler.ServeHTTP(overflow, loopbackRequest(http.MethodPost, "/v1/live", strings.NewReader("12345")))
 	if overflow.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("overflow=%d %s", overflow.Code, overflow.Body.String())
 	}
 	timed := httptest.NewRecorder()
-	handler.ServeHTTP(timed, httptest.NewRequest(http.MethodPost, "/v1/live", strings.NewReader("1234")))
+	handler.ServeHTTP(timed, loopbackRequest(http.MethodPost, "/v1/live", strings.NewReader("1234")))
 	if timed.Code != http.StatusGatewayTimeout {
 		t.Fatalf("timeout=%d %s", timed.Code, timed.Body.String())
 	}

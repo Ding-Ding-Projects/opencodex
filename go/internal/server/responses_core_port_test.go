@@ -46,7 +46,7 @@ func TestReadResponsesBodyRejectsDeclaredAndStreamingOversize(t *testing.T) {
 
 func TestParseResponsesRequestPreservesCanonicalContextAndTools(t *testing.T) {
 	body := `{"model":"provider/public","instructions":"be concise","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":[{"type":"function","name":"lookup","description":"find it","parameters":{"type":"object"}}],"reasoning":{"effort":"high"},"stream":true}`
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 	request.Header.Set("X-Codex-Parent-Thread-Id", " parent-thread ")
 	parsed, err := parseResponsesRequest(httptest.NewRecorder(), request, 1<<20)
 	if err != nil {
@@ -108,7 +108,7 @@ func TestResponsesCoreRejectsProxyAdmissionCredentialBeforeForwardDispatch(t *te
 			return coreAdapter{}, nil
 		},
 	})
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`))
 	request.Header.Set("Authorization", "Bearer ocx-admission-secret")
 	response := httptest.NewRecorder()
 
@@ -129,7 +129,7 @@ func TestResponsesCoreAllowsIndependentProviderCredentialOnForwardRoute(t *testi
 	core.config.ValidateForwardAdmission = func(headers http.Header) error {
 		return ValidateForwardAdmissionCredential(headers, MiddlewareConfig{Token: "ocx-admission-secret"})
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`))
 	request.Header.Set("Authorization", "Bearer provider-secret")
 	response := httptest.NewRecorder()
 
@@ -153,7 +153,7 @@ func TestResponsesCoreLogsOnlySafeHostOnFetchFailure(t *testing.T) {
 		},
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","input":"ping"}`)))
 	if !strings.Contains(logs.String(), "host=example.test:8443") || strings.Contains(logs.String(), "user") || strings.Contains(logs.String(), "secret") {
 		t.Fatalf("unsafe upstream log = %q", logs.String())
 	}
@@ -161,7 +161,7 @@ func TestResponsesCoreLogsOnlySafeHostOnFetchFailure(t *testing.T) {
 
 func TestParseResponsesRequestRejectsMalformedInputBeforeDispatch(t *testing.T) {
 	body := `{"model":"public","input":[{"type":"function_call","name":"missing-call-id"}]}`
-	_, err := parseResponsesRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)), 1<<20)
+	_, err := parseResponsesRequest(httptest.NewRecorder(), loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)), 1<<20)
 	if err == nil || !strings.Contains(err.Error(), "requires call_id and name") {
 		t.Fatalf("parse error = %v", err)
 	}
@@ -354,7 +354,7 @@ func newCoreHarness(t *testing.T) (*ResponsesCore, *coreAuth, *coreRecorder, *ht
 func TestResponsesCoreBufferedRoutingAndTerminalRecord(t *testing.T) {
 	core, auth, recorder, upstream := newCoreHarness(t)
 	defer upstream.Close()
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
 	response := httptest.NewRecorder()
 	core.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -375,7 +375,7 @@ func TestResponsesCoreBufferedRoutingAndTerminalRecord(t *testing.T) {
 func TestResponsesCoreCarriesParentThreadAndProbeLeaseToOutcome(t *testing.T) {
 	core, auth, _, upstream := newCoreHarness(t)
 	defer upstream.Close()
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
 	request.Header.Set("X-Codex-Parent-Thread-Id", " parent-thread ")
 	response := httptest.NewRecorder()
 	core.ServeHTTP(response, request)
@@ -392,7 +392,7 @@ func TestResponsesCoreCarriesParentThreadAndProbeLeaseToOutcome(t *testing.T) {
 func TestResponsesCoreStreamsResponsesEvents(t *testing.T) {
 	core, auth, recorder, upstream := newCoreHarness(t)
 	defer upstream.Close()
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`))
 	response := httptest.NewRecorder()
 	core.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "event: response.completed") || !strings.Contains(response.Body.String(), "data: [DONE]") {
@@ -415,7 +415,7 @@ func TestResponsesCoreRetriesCursorContinuityOnceBeforeStreamCommit(t *testing.T
 		},
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
 	if response.Code != http.StatusOK || builds.Load() != 2 || parses.Load() != 2 || !strings.Contains(response.Body.String(), "recovered") {
 		t.Fatalf("status=%d builds=%d parses=%d body=%s", response.Code, builds.Load(), parses.Load(), response.Body.String())
 	}
@@ -433,7 +433,7 @@ func TestResponsesCoreRetriesCursorContinuityOnceForBufferedResponse(t *testing.
 		},
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`)))
 	if response.Code != http.StatusOK || builds.Load() != 2 || parses.Load() != 2 || !strings.Contains(response.Body.String(), "recovered") {
 		t.Fatalf("status=%d builds=%d parses=%d body=%s", response.Code, builds.Load(), parses.Load(), response.Body.String())
 	}
@@ -456,7 +456,7 @@ func TestResponsesCoreAppliesConfiguredItemIDRepairBeforeAdapterParsing(t *testi
 		},
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
 	repaired := <-seen
 	if strings.Contains(repaired, `"item_id":"placeholder"`) || strings.Contains(repaired, `"id":"placeholder"`) || !strings.Contains(repaired, `"item_id":"msg_`) {
 		t.Fatalf("adapter received unrepaired SSE: %s", repaired)
@@ -485,7 +485,7 @@ func TestResponsesCoreInvokesImageRetryPreparationOnAnthropic413(t *testing.T) {
 	})
 	body := `{"model":"public","stream":false,"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 	if response.Code != http.StatusOK || attempts != 2 || prepared != 1 {
 		t.Fatalf("status=%d upstreamAttempts=%d prepareCalls=%d body=%s", response.Code, attempts, prepared, response.Body.String())
 	}
@@ -506,7 +506,7 @@ func TestResponsesCoreTerminalGuardActuallyContinuesAnthropicStream(t *testing.T
 	})
 	body := `{"model":"public","stream":true,"input":[{"role":"user","content":[{"type":"input_text","text":"implement the fix"}]}],"tools":[{"type":"function","name":"edit","parameters":{"type":"object"}}]}`
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 	if response.Code != http.StatusOK || builds != 2 || !strings.Contains(response.Body.String(), `call-1`) || !strings.Contains(response.Body.String(), "event: response.completed") {
 		t.Fatalf("status=%d builds=%d body=%s", response.Code, builds, response.Body.String())
 	}
@@ -528,7 +528,7 @@ func TestResponsesCoreUsesProductionEagerRelayForNativeResponsesSSE(t *testing.T
 		},
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true}`)))
 	entries := logs.Entries()
 	if response.Code != http.StatusOK || parsed || !strings.Contains(response.Body.String(), `"type":"response.completed"`) || len(entries) != 1 || entries[0].TerminalStatus != ResponsesCompleted {
 		t.Fatalf("status=%d parsed=%v logs=%#v body=%s", response.Code, parsed, entries, response.Body.String())
@@ -541,7 +541,7 @@ func TestResponsesCoreRejectsUnreadableEncryptedAgentTask(t *testing.T) {
 	token := validFernetToken()
 	body := `{"model":"public","input":[{"type":"agent_message","content":[{"type":"encrypted_content","encrypted_content":"` + token + `"}]}]}`
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "encrypted for the native ChatGPT backend") {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
@@ -577,7 +577,7 @@ func TestResponsesCoreClassifiesUpstreamErrorWithoutRelayingRetryAfter(t *testin
 			return coreAdapter{endpoint: transport.BaseURL}, nil
 		},
 	})
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
 	response := httptest.NewRecorder()
 	core.ServeHTTP(response, request)
 	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "" || !strings.Contains(response.Body.String(), `Provider error 429:`) {
@@ -619,7 +619,7 @@ func TestResponsesCorePassthroughPreservesNonEmptyErrorBytesAndHeaders(t *testin
 		PassthroughRoute: func(*types.ResolvedModel) bool { return true },
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
 	if response.Code != http.StatusServiceUnavailable || response.Body.String() != upstreamBody {
 		t.Fatalf("response=%d body=%q", response.Code, response.Body.String())
 	}
@@ -644,7 +644,7 @@ func TestResponsesCoreCyberPolicyOverridesPassthroughServerStatus(t *testing.T) 
 		PassthroughRoute: func(*types.ResolvedModel) bool { return true },
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
 	if response.Code != http.StatusBadRequest || response.Body.String() != upstreamBody {
 		t.Fatalf("response=%d body=%q", response.Code, response.Body.String())
 	}
@@ -671,7 +671,7 @@ func TestResponsesCorePassthroughWrapsOnlyEmptyBodyAndValidatesRetryAfter(t *tes
 				PassthroughRoute: func(*types.ResolvedModel) bool { return true },
 			})
 			response := httptest.NewRecorder()
-			core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+			core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
 			want := `{"error":{"message":"Provider error 503: (empty body)","type":"server_error","code":"server_is_overloaded"}}`
 			if response.Code != http.StatusServiceUnavailable || response.Body.String() != want || response.Header().Get("Retry-After") != test.wantRetry {
 				t.Fatalf("response=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
@@ -720,7 +720,7 @@ func TestResponsesCoreSeparatesBootstrapTransportFromLocalBuildErrors(t *testing
 				},
 			})
 			response := httptest.NewRecorder()
-			core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
+			core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public"}`)))
 			if response.Code != test.status || !strings.Contains(response.Body.String(), `"code":"`+test.code+`"`) {
 				t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
 			}
@@ -745,7 +745,7 @@ func TestResponsesCoreInjectsConfiguredCollaborationGuidanceBeforeBuild(t *testi
 	})
 	body := `{"model":"public","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"}},{"type":"function","name":"send_message","parameters":{"type":"object"}}]}`
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 	if response.Code != http.StatusOK || !contextGuidance || !rawGuidance {
 		t.Fatalf("response=%d %s context=%v raw=%v", response.Code, response.Body.String(), contextGuidance, rawGuidance)
 	}
@@ -764,7 +764,7 @@ func TestResponsesCoreValidationMatchesTypeScriptZodEnvelope(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(test.body)))
+			core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(test.body)))
 			payload, err := bridge.FormatErrorResponse(http.StatusBadRequest, "invalid_request_error", test.message)
 			if err != nil {
 				t.Fatal(err)
@@ -789,7 +789,7 @@ func TestResponsesCorePreflightsBeforeCommittingSSEHeaders(t *testing.T) {
 		},
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"provider/wire","input":"x","stream":true}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"provider/wire","input":"x","stream":true}`)))
 	wantMessage := fmt.Sprintf("Provider unreachable: InvalidHTTPResponse fetching %q. For more information, pass `verbose: true` in the second argument to fetch()", upstream.URL)
 	wantPayload, _ := bridge.FormatErrorResponse(http.StatusBadGateway, "upstream_error", wantMessage)
 	want := string(wantPayload)
@@ -828,7 +828,7 @@ func TestResponsesCoreDisconnectStillCommitsSSEWithBunMessage(t *testing.T) {
 		},
 	})
 	response := httptest.NewRecorder()
-	core.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"provider/wire","input":"x","stream":true}`)))
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"provider/wire","input":"x","stream":true}`)))
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/event-stream" || !strings.Contains(response.Body.String(), bunSocketClosedMessage) || !strings.Contains(response.Body.String(), "event: response.failed") {
 		t.Fatalf("disconnect=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}

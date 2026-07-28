@@ -40,7 +40,7 @@ func TestResponsesProductionStreamStoresAndReplaysPreviousResponse(t *testing.T)
 		},
 	})
 	first := httptest.NewRecorder()
-	firstRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true,"input":"first"}`))
+	firstRequest := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":true,"input":"first"}`))
 	core.ServeHTTP(first, firstRequest)
 	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), "response.completed") {
 		t.Fatalf("first response=%d %s", first.Code, first.Body.String())
@@ -62,7 +62,7 @@ func TestResponsesProductionStreamStoresAndReplaysPreviousResponse(t *testing.T)
 	}
 	second := httptest.NewRecorder()
 	secondBody := `{"model":"public","stream":false,"previous_response_id":"` + responseID + `","input":"second"}`
-	core.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(secondBody)))
+	core.ServeHTTP(second, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(secondBody)))
 	items, _ := replayed["input"].([]any)
 	if second.Code != http.StatusOK || len(items) != 3 {
 		t.Fatalf("second=%d replay=%#v body=%s", second.Code, replayed, second.Body.String())

@@ -64,7 +64,9 @@ func TestProductionChatSurfacesForceInternalStreamAndStripUnsupportedReasoning(t
 		{path: "/v1/messages", body: `{"model":"acme/plain","max_tokens":10,"output_config":{"effort":"high"},"messages":[{"role":"user","content":"hi"}]}`},
 	} {
 		response := httptest.NewRecorder()
-		proxy.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body)))
+		chatRequest := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+		chatRequest.Host = "127.0.0.1:10100"
+		proxy.Handler().ServeHTTP(response, chatRequest)
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "routed") {
 			t.Fatalf("%s response=%d %s", test.path, response.Code, response.Body.String())
 		}

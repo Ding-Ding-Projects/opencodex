@@ -33,17 +33,30 @@ func ParseHTTPHost(value string) (*HTTPHost, error) {
 	return &HTTPHost{Hostname: strings.ToLower(parsed.Hostname()), Port: parsed.Port()}, nil
 }
 
-func IsLoopbackRequestHost(value string, configuredPort int) bool {
+// IsLoopbackRequestHost reports whether a Host header names the loopback
+// interface.
+//
+// Loopback is a trust boundary by HOSTNAME, not by port. `ssh -L
+// 20100:localhost:10100` legitimately arrives as `Host: localhost:20100`, and
+// requiring the port to equal the configured one refused it -- taking the
+// whole /v1/* data plane down with it, not just CORS.
+//
+// Port equality was never the rebinding defense either: a rebinding browser
+// connects to the real port and sends it verbatim, so the hostname check is
+// what rejected it then and now. The oracle's isLoopbackRequestHost
+// (src/server/auth-cors.ts) takes no port for exactly this reason.
+//
+// DELIBERATE DIVERGENCE: the oracle returns true for any Host it cannot parse
+// (fail-open); this rejects a non-empty malformed one. Go's HTTP server
+// already refuses a malformed wire-level Host before a handler runs, so the
+// stricter branch is unreachable in production. An ABSENT Host still returns
+// true, which is what local CLI callers send.
+func IsLoopbackRequestHost(value string) bool {
 	parsed, err := ParseHTTPHost(value)
 	if err != nil {
-		// Preserve local CLI compatibility for absent Host; the HTTP server itself
-		// rejects malformed wire-level Host values before handlers run.
 		return strings.TrimSpace(value) == ""
 	}
-	if !isLoopbackHostname(parsed.Hostname) {
-		return false
-	}
-	return parsed.Port == "" || configuredPort <= 0 || parsed.Port == strconv.Itoa(configuredPort)
+	return isLoopbackHostname(parsed.Hostname)
 }
 
 func IsLoopbackOriginValue(value string) bool {
@@ -188,13 +201,28 @@ func CanonicalAllowedOrigins(values []string) map[string]struct{} {
 
 func IsAllowedRequestOrigin(request *http.Request, config MiddlewareConfig) bool {
 	origin := strings.TrimSpace(request.Header.Get("Origin"))
-	if origin == "" {
-		return true
+	// On a LOOPBACK bind the Host gate runs FIRST, before the no-Origin
+	// allowance. Returning true for an absent Origin ahead of it let a request
+	// claiming `Host: attacker.test` through unchecked, because a page can omit
+	// Origin but cannot forge Host.
+	//
+	// The old `config.Port > 0` condition is gone with it. It skipped the gate
+	// entirely whenever no port was configured, which is not something the
+	// oracle does -- verified by running isAllowedRequestOrigin against a
+	// portless config, which still refuses `Host: example.com`.
+	if !IsAPIAuthRequired(config.Hostname) {
+		if !IsLoopbackRequestHost(request.Host) {
+			return false
+		}
+		if origin == "" || IsLoopbackOriginValue(origin) {
+			return true
+		}
+		_, ok := CanonicalAllowedOrigins(config.AllowedOrigins)[canonicalOrigin(origin)]
+		return ok
 	}
-	if !IsAPIAuthRequired(config.Hostname) && config.Port > 0 && !IsLoopbackRequestHost(request.Host, config.Port) {
-		return false
-	}
-	if IsLoopbackOriginValue(origin) || IsSameOriginAsRequest(request, origin) {
+	// On a non-loopback bind admission is enforced by the API token, so
+	// same-origin joins the allowed set. The oracle makes the same split.
+	if origin == "" || IsLoopbackOriginValue(origin) || IsSameOriginAsRequest(request, origin) {
 		return true
 	}
 	_, ok := CanonicalAllowedOrigins(config.AllowedOrigins)[canonicalOrigin(origin)]

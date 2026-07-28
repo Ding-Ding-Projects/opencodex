@@ -500,7 +500,7 @@ func TestRemoteAdmissionAndOriginParity(t *testing.T) {
 }
 
 func serveRequest(handler http.Handler, method, path, body string, headers http.Header) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request := loopbackRequest(method, path, strings.NewReader(body))
 	for name, values := range headers {
 		for _, value := range values {
 			request.Header.Add(name, value)

@@ -36,7 +36,7 @@ func TestResponsesRouteResolvesAndBridges(t *testing.T) {
 		}
 		return fakeAdapter{endpoint: upstream.URL}, nil
 	}})
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"acme/wire","stream":false}`))
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"acme/wire","stream":false}`))
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"completed"`) {
@@ -46,7 +46,7 @@ func TestResponsesRouteResolvesAndBridges(t *testing.T) {
 
 func TestHealthDoesNotRequireAuth(t *testing.T) {
 	server := New(Config{Token: "secret"})
-	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request := loopbackRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -57,7 +57,7 @@ func TestHealthDoesNotRequireAuth(t *testing.T) {
 func TestServerDoesNotExposeLegacyHealthRoute(t *testing.T) {
 	server := New(Config{})
 	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	server.Handler().ServeHTTP(response, loopbackRequest(http.MethodGet, "/health", nil))
 	want := `{"error":{"message":"Unknown endpoint: GET /health","type":"not_found","code":"not_found"}}`
 	if response.Code != http.StatusNotFound || response.Body.String() != want {
 		t.Fatalf("/health=%d %s", response.Code, response.Body.String())
@@ -66,7 +66,7 @@ func TestServerDoesNotExposeLegacyHealthRoute(t *testing.T) {
 
 func TestOversizedHeaderResponseHasNoBody(t *testing.T) {
 	handler := oversizedHeaderMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request := loopbackRequest(http.MethodPost, "/v1/responses", nil)
 	request.Header.Set("X-Oversized-Parity", strings.Repeat("h", 1100<<10))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

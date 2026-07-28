@@ -48,6 +48,7 @@ func TestProductionKiroRouteActivatesSmithySuccessAndCorruption(t *testing.T) {
 
 			response := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"kiro/probe","input":"hello","stream":false}`))
+			request.Host = "127.0.0.1:10100"
 			proxy.Handler().ServeHTTP(response, request)
 			body := response.Body.String()
 			if response.Code != test.wantStatus || !strings.Contains(body, test.wantBody) || test.wantFailed && !strings.Contains(body, `"status":"failed"`) {

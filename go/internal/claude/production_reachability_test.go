@@ -207,6 +207,7 @@ func TestProductionClaudeDiscoveryAndContextComposition(t *testing.T) {
 
 	discovery := httptest.NewRecorder()
 	discoveryRequest := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=cli", nil)
+	discoveryRequest.Host = "127.0.0.1:10100"
 	discoveryRequest.Header.Set("anthropic-version", "2023-06-01")
 	proxy.Handler().ServeHTTP(discovery, discoveryRequest)
 	if discovery.Code != http.StatusOK {
@@ -219,7 +220,9 @@ func TestProductionClaudeDiscoveryAndContextComposition(t *testing.T) {
 	}
 
 	settings := httptest.NewRecorder()
-	proxy.Handler().ServeHTTP(settings, httptest.NewRequest(http.MethodGet, "/api/claude-code", nil))
+	settingsRequest := httptest.NewRequest(http.MethodGet, "/api/claude-code", nil)
+	settingsRequest.Host = "127.0.0.1:10100"
+	proxy.Handler().ServeHTTP(settings, settingsRequest)
 	if settings.Code != http.StatusOK {
 		t.Fatalf("settings=%d %s", settings.Code, settings.Body.String())
 	}
@@ -241,6 +244,7 @@ func TestProductionClaudeDiscoveryUsesNativeEffectiveLadder(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=cli", nil)
+	request.Host = "127.0.0.1:10100"
 	proxy.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("discovery=%d %s", response.Code, response.Body.String())
@@ -286,6 +290,7 @@ func TestProductionDesktopDiscoveryRebuildsProfileAliasRegistry(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=desktop", nil)
+	request.Host = "127.0.0.1:10100"
 	proxy.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("discovery=%d %s", response.Code, response.Body.String())
@@ -322,6 +327,7 @@ func invokeMessages(t *testing.T, handler *chat.MessagesHandler, body map[string
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(payload)))
+	request.Host = "127.0.0.1:10100"
 	response := httptest.NewRecorder()
 	handler.Handle(response, request)
 	return response

@@ -69,7 +69,7 @@ func TestLiveSidebandHandlerRejectsCrossOriginBeforeUpgrade(t *testing.T) {
 	})
 	handler.Dialer = &websocket.Dialer{HandshakeTimeout: time.Millisecond}
 	// Origin rejection is tested directly to avoid making an upstream connection.
-	request := httptest.NewRequest(http.MethodGet, "http://localhost/v1/live/call_1", nil)
+	request := loopbackRequest(http.MethodGet, "http://localhost/v1/live/call_1", nil)
 	request.Host = "localhost"
 	request.Header.Set("Origin", "https://attacker.example")
 	check := handler.Upgrader

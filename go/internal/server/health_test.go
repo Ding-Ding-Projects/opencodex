@@ -15,7 +15,7 @@ func TestReadinessReportsDependencyFailureWithoutDetails(t *testing.T) {
 		"storage":  func(context.Context) error { return errors.New("secret disk path") },
 	})
 	response := httptest.NewRecorder()
-	health.Ready(response, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	health.Ready(response, loopbackRequest(http.MethodGet, "/ready", nil))
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"storage":"unavailable"`) || strings.Contains(response.Body.String(), "secret disk path") {
 		t.Fatalf("ready = %d %s", response.Code, response.Body.String())
 	}

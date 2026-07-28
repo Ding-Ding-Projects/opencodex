@@ -66,7 +66,7 @@ func TestManagementProviderAndModelCRUDThroughServer(t *testing.T) {
 
 func managementRequest(t *testing.T, handler http.Handler, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	request := loopbackRequest(method, target, strings.NewReader(body))
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}

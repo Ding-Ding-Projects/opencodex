@@ -371,7 +371,7 @@ func TestResponseStateRecoveryIsActiveFromProductionResponsesRoute(t *testing.T)
 			})
 			defer proxy.Close()
 			response := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false,"previous_response_id":"missing","input":"next"}`))
+			request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false,"previous_response_id":"missing","input":"next"}`))
 			proxy.Handler().ServeHTTP(response, request)
 			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"completed"`) {
 				t.Fatalf("response=%d %s", response.Code, response.Body.String())
