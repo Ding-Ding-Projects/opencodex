@@ -584,3 +584,59 @@ func TestConfigDefaultsMatchTheOracleShape(t *testing.T) {
 		}
 	}
 }
+
+// validate and import must degrade exactly as the read path does. Routing only
+// reads through the normalizer left both rejecting files the TypeScript CLI
+// accepts, and made import persist the raw document rather than the defaulted
+// one.
+func TestConfigValidateAndImportDegradeLikeTheReadPath(t *testing.T) {
+	path := configHome(t, `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
+	candidate := filepath.Join(t.TempDir(), "candidate.json")
+	body := `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}},"injectionModel":123}`
+	if err := os.WriteFile(candidate, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runConfigParityWith(t, "", "validate", candidate)
+	if err != nil || !strings.Contains(out, "Config is valid.") {
+		t.Fatalf("validate = %q, %v; a degradable field must not fail validation", out, err)
+	}
+
+	if _, err := runConfigParityWith(t, "", "import", candidate, "--yes"); err != nil {
+		t.Fatalf("import rejected a config the oracle accepts: %v", err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "injectionModel") {
+		t.Fatalf("import persisted the invalid field: %s", string(written))
+	}
+	// The normalized document is saved, so defaults are materialized.
+	if !strings.Contains(string(written), `"port"`) {
+		t.Fatalf("import saved the raw document rather than the normalized one: %s", string(written))
+	}
+}
+
+// streamMode degrades, but the oracle reports it only on the console, never in
+// the diagnostics envelope.
+func TestConfigStreamModeDegradesWithoutADiagnosticsWarning(t *testing.T) {
+	configHome(t, `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}},"streamMode":"bogus"}`)
+	out, err := runConfigParityWith(t, "", "show", "--source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope["source"] != "file" {
+		t.Fatalf("source = %#v, want file", envelope["source"])
+	}
+	if warnings, _ := envelope["warnings"].([]any); len(warnings) != 0 {
+		t.Fatalf("warnings = %#v; the oracle does not report streamMode here", warnings)
+	}
+	if config, _ := envelope["config"].(map[string]any); config["streamMode"] != nil {
+		t.Fatalf("the invalid streamMode must still be dropped: %s", out)
+	}
+}

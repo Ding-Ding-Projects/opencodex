@@ -67,8 +67,7 @@ func readConfigDiagnostics() (configDiagnostics, error) {
 	// Degrade before validating: the oracle's schema drops these fields rather
 	// than rejecting, so a single bad optional value must not send an
 	// otherwise-good file to fallback.
-	warnings := degradeInvalidFields(configDocument(record))
-	normalized, normalizeErr := normalizeConfigDocument(configDocument(record))
+	normalized, warnings, normalizeErr := normalizeConfigCandidate(configDocument(record))
 	if normalizeErr != nil {
 		return fallback(normalizeErr.Error()), nil
 	}
@@ -138,6 +137,29 @@ func validateConfigDocument(document configDocument) error {
 // Defaults are layered UNDER the document rather than over it, so a key the
 // user actually wrote always wins, and unknown members survive untouched.
 func normalizeConfigDocument(document configDocument) (configDocument, error) {
+	normalized, _, err := normalizeConfigCandidate(document)
+	return normalized, err
+}
+
+// normalizeConfigCandidate is the single entry point the oracle's
+// validateConfigCandidate corresponds to: degrade the fields its schema
+// declares with .catch(undefined), validate what remains, and return the
+// NORMALIZED document plus what was dropped.
+//
+// read, validate and import all go through here. Routing only the read path
+// through it left `validate <path>` and `import` rejecting files the
+// TypeScript CLI accepts, and made import save the raw document instead of the
+// defaulted one.
+func normalizeConfigCandidate(document configDocument) (configDocument, []string, error) {
+	warnings := degradeInvalidFields(document)
+	normalized, err := normalizeValidatedDocument(document)
+	if err != nil {
+		return nil, warnings, err
+	}
+	return normalized, warnings, nil
+}
+
+func normalizeValidatedDocument(document configDocument) (configDocument, error) {
 	if err := validateConfigDocument(document); err != nil {
 		return nil, err
 	}
@@ -372,7 +394,9 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 			}
 			document = loaded
 		}
-		if err := validateConfigDocument(document); err != nil {
+		// Degrade first, exactly as the read path does: a file the oracle
+		// accepts with a dropped field must validate here too.
+		if _, _, err := normalizeConfigCandidate(document); err != nil {
 			// Invalid config is a reported result, not a crash: the oracle
 			// prints the reason and exits 1.
 			if printErr := printData(streams, map[string]any{"ok": false, "error": err.Error()},
@@ -441,10 +465,13 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 		if err != nil {
 			return err
 		}
-		if err := validateConfigDocument(document); err != nil {
+		// Save the NORMALIZED candidate, not the raw one: import must persist
+		// the same defaulted, degraded document the oracle would have written.
+		normalized, _, err := normalizeConfigCandidate(document)
+		if err != nil {
 			return err
 		}
-		if err := saveConfigDocument(document); err != nil {
+		if err := saveConfigDocument(normalized); err != nil {
 			return err
 		}
 		return printData(streams, map[string]any{"ok": true, "source": source}, wantsJSON,
@@ -502,6 +529,18 @@ var degradableFields = map[string]string{
 
 // degradeInvalidFields removes malformed optional fields and reports what it
 // dropped, in the oracle's wording.
+// diagnosticsReportedFields are the degradable fields whose removal the
+// oracle surfaces in readConfigDiagnostics().warnings. streamMode degrades
+// too, but the oracle reports THAT one only on the console
+// (warnDegradedStreamMode), never in the diagnostics envelope, so adding it
+// here would put a warning in --source that the TypeScript CLI does not.
+var diagnosticsReportedFields = map[string]bool{
+	"injectionModel":            true,
+	"injectionEffort":           true,
+	"syncCodexSubagentDefaults": true,
+	"streamMode":                false,
+}
+
 func degradeInvalidFields(document configDocument) []string {
 	warnings := []string{}
 	for _, field := range []string{"injectionModel", "injectionEffort", "streamMode", "syncCodexSubagentDefaults"} {
@@ -522,7 +561,9 @@ func degradeInvalidFields(document configDocument) []string {
 		}
 		if !valid {
 			delete(document, field)
-			warnings = append(warnings, field+" ignored: expected "+expected)
+			if diagnosticsReportedFields[field] {
+				warnings = append(warnings, field+" ignored: expected "+expected)
+			}
 		}
 	}
 	return warnings
