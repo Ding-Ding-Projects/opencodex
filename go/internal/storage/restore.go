@@ -49,6 +49,7 @@ const (
 // filesystem cannot be asked to produce on demand.
 var errInjectedPendingWrite = errors.New("test_fail_pending_write")
 var errInjectedMoveFailure = errors.New("test_fail_after_move_count")
+var errInjectedSatelliteCommit = errors.New("test_fail_after_first_satellite")
 
 var errPathEscape = errors.New("path_escape")
 var errInvalidRelPath = errors.New("invalid_rel_path")

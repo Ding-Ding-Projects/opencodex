@@ -61,6 +61,10 @@ type RestoreMoveHooks struct {
 	// FailTombstoneDelete skips the best-effort tombstone removal, leaving an
 	// orphan the listing must still ignore.
 	FailTombstoneDelete bool
+	// FailAfterFirstSatelliteCommit throws once the first satellite store the
+	// BACKUP contains has committed. The oracle keys this off backup section
+	// presence rather than which commit actually ran.
+	FailAfterFirstSatelliteCommit bool
 }
 
 // RestoreMovedState is handed to the continuation while the locks are STILL
@@ -82,6 +86,8 @@ type RestoreMovedState struct {
 	AbortAfterMoves func(RestoreErrorCode) RestoreResult
 	// CodexHome is needed to reach the trash root during finalization.
 	CodexHome string
+	// Backup carries the remapped satellite backup to the commit step.
+	Backup *SatelliteBackup
 }
 
 // fullRestoreCounts is the count fixed at planning time.
@@ -307,5 +313,6 @@ func ExecuteRestoreMoves(
 		PersistPending:  persistPending,
 		AbortAfterMoves: abortAfterMoves,
 		CodexHome:       codexHome,
+		Backup:          pre.Backup,
 	})
 }
