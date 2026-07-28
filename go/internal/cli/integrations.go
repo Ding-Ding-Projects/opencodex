@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -33,7 +34,7 @@ func runGrok(ctx context.Context, args []string, streams IO) error {
 func grokDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	rest := append([]string{}, args...)
 	action := "status"
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+	if len(rest) > 0 {
 		action, rest = strings.ToLower(rest[0]), rest[1:]
 	}
 	wantsJSON := takeFlag(&rest, "--json")
@@ -70,7 +71,7 @@ func grokDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO
 	case "clear":
 		excluded = []string{}
 	case "exclude", "include", "set":
-		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+		if len(rest) == 0 {
 			return usageError(grokUsage, "comma-separated models are required")
 		}
 		requested := csvValues(rest[0])
@@ -86,25 +87,36 @@ func grokDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO
 		if err != nil {
 			return err
 		}
-		current := map[string]struct{}{}
+		// The oracle merges through a Set, which keeps whatever the server
+		// stored. Silently dropping an entry we cannot type-assert would make a
+		// relative edit destructive: `grok exclude c` would delete unrelated
+		// exclusions just because they were not strings.
+		current := []string{}
 		if record, ok := state.(map[string]any); ok {
 			if list, ok := record["excluded"].([]any); ok {
 				for _, item := range list {
-					if model, ok := item.(string); ok {
-						current[model] = struct{}{}
+					model, ok := item.(string)
+					if !ok {
+						return usageError(grokUsage,
+							"the proxy reported a non-string Grok exclusion (%v); fix it with `ocx grok set` before a relative edit", item)
 					}
+					current = append(current, model)
 				}
 			}
 		}
+		seen := map[string]struct{}{}
+		for _, model := range current {
+			seen[model] = struct{}{}
+		}
 		for _, model := range requested {
 			if action == "exclude" {
-				current[model] = struct{}{}
+				seen[model] = struct{}{}
 			} else {
-				delete(current, model)
+				delete(seen, model)
 			}
 		}
-		excluded = make([]string, 0, len(current))
-		for model := range current {
+		excluded = make([]string, 0, len(seen))
+		for model := range seen {
 			excluded = append(excluded, model)
 		}
 		sort.Strings(excluded)
@@ -158,7 +170,7 @@ func runIntegration(ctx context.Context, args []string, streams IO) error {
 func claudeConfigDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	rest := append([]string{}, args...)
 	action := "status"
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+	if len(rest) > 0 {
 		action, rest = strings.ToLower(rest[0]), rest[1:]
 	}
 	wantsJSON := takeFlag(&rest, "--json")
@@ -206,11 +218,14 @@ func claudeConfigDispatch(ctx context.Context, api runtimeAPI, args []string, st
 		if compact == "default" || compact == "-" {
 			body["autoCompactWindow"] = nil
 		} else {
+			// Validate as float64: converting first would reject a large but
+			// legitimate value the oracle accepts, because the int conversion
+			// cannot represent it.
 			parsed, valid := jsNumber(strings.NewReplacer("_", "", ",", "").Replace(compact))
-			if !valid || parsed != float64(int(parsed)) || int(parsed) <= 0 {
+			if !valid || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed != math.Trunc(parsed) || parsed <= 0 {
 				return usageError(claudeConfigUsage, "--compact-window must be a positive integer or default")
 			}
-			body["autoCompactWindow"] = int(parsed)
+			body["autoCompactWindow"] = parsed
 		}
 	}
 	if model, present, err := takeOption(&rest, "--small-fast-model"); err != nil {

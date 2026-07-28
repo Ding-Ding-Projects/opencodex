@@ -254,3 +254,64 @@ func TestIntegrationRoutesToBothSurfaces(t *testing.T) {
 		t.Fatal("expected an unknown integration to be rejected")
 	}
 }
+
+// A relative edit must never delete exclusions it cannot type-assert. The
+// oracle's Set keeps whatever the server stored, so silently dropping a
+// non-string entry would make `grok exclude c` destructive.
+func TestGrokRefusesToRewriteMalformedState(t *testing.T) {
+	server, calls := grokServer(t, `{"excluded":["a",42,null]}`)
+	if _, err := runGrokWith(t, server, "exclude", "c"); err == nil {
+		t.Fatal("expected malformed server state to be reported, not silently rewritten")
+	}
+	for _, call := range *calls {
+		if call.method == http.MethodPut {
+			t.Fatal("no write may happen against malformed state")
+		}
+	}
+}
+
+// A missing or null `excluded` is simply an empty list in both runtimes.
+func TestGrokTreatsAbsentStateAsEmpty(t *testing.T) {
+	for _, state := range []string{`{}`, `{"excluded":null}`} {
+		server, calls := grokServer(t, state)
+		if _, err := runGrokWith(t, server, "exclude", "c"); err != nil {
+			t.Fatalf("state %s: %v", state, err)
+		}
+		if got := strings.Join(excludedModels(t, lastPut(t, *calls)), ","); got != "c" {
+			t.Fatalf("state %s produced %q", state, got)
+		}
+	}
+}
+
+// The oracle accepts a compact window too large for an int; validating after
+// conversion would reject a value the TypeScript CLI takes.
+func TestClaudeConfigAcceptsLargeCompactWindow(t *testing.T) {
+	server, calls := grokServer(t, `{}`)
+	if _, err := runClaudeConfigWith(t, server, "set", "--compact-window", "1e30"); err != nil {
+		t.Fatalf("1e30 should be accepted like the oracle: %v", err)
+	}
+	if lastPut(t, *calls).body["autoCompactWindow"] != 1e30 {
+		t.Fatalf("autoCompactWindow = %#v", lastPut(t, *calls).body["autoCompactWindow"])
+	}
+}
+
+// integration must route the valid surfaces, not merely reject invalid ones.
+func TestIntegrationRoutesGrokAndClaudeToTheirRoutes(t *testing.T) {
+	server, calls := grokServer(t, `{"excluded":[]}`)
+	var out bytes.Buffer
+	api := testAPI(server)
+	if err := grokDispatch(context.Background(), api, []string{"status"}, IO{Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if (*calls)[0].path != "/api/grok" {
+		t.Fatalf("grok status hit %s", (*calls)[0].path)
+	}
+
+	server, calls = grokServer(t, `{}`)
+	if err := claudeConfigDispatch(context.Background(), testAPI(server), []string{"status"}, IO{Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if (*calls)[0].path != "/api/claude-code" {
+		t.Fatalf("claude status hit %s", (*calls)[0].path)
+	}
+}

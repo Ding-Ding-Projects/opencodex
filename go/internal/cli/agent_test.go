@@ -222,3 +222,26 @@ func TestAgentRejectsUnknownSections(t *testing.T) {
 		t.Fatalf("unknown sections must not reach the network, got %+v", *calls)
 	}
 }
+
+// The lower bound is inclusive: 5000 is a legal poll interval.
+func TestAgentFallbackAcceptsExactLowerBound(t *testing.T) {
+	server, calls := agentServer(t, `{}`)
+	if _, err := runAgentWith(t, server, "fallback", "set", "--poll-ms", "5000"); err != nil {
+		t.Fatalf("5000 is the documented minimum: %v", err)
+	}
+	if (*calls)[0].body["pollMs"] != float64(5000) {
+		t.Fatalf("pollMs = %#v", (*calls)[0].body["pollMs"])
+	}
+}
+
+// The oracle shifts the leading argument unconditionally, so a flag becomes the
+// action name and fails as unknown WITHOUT sending a request.
+func TestAgentLeadingFlagBecomesTheAction(t *testing.T) {
+	server, calls := agentServer(t, `{}`)
+	if _, err := runAgentWith(t, server, "--json"); err == nil {
+		t.Fatal("expected --json to be read as an unknown section")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("no request should have been sent, got %+v", *calls)
+	}
+}

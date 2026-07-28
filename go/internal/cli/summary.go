@@ -3,7 +3,9 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -62,7 +64,10 @@ func arrayText(items []any) string {
 	for _, item := range items {
 		switch item.(type) {
 		case nil, string, float64, bool, json.Number:
-			scalars = append(scalars, scalarText(item))
+			// Array elements go through JS Array.join, NOT the "-" placeholder:
+			// join renders null and "" as empty strings, so [null,"","a"] is
+			// ", , a". Reusing scalarText here would print "-, -, a".
+			scalars = append(scalars, joinText(item))
 		default:
 			return fmt.Sprintf("%d item(s)", len(items))
 		}
@@ -71,6 +76,17 @@ func arrayText(items []any) string {
 		return "none"
 	}
 	return strings.Join(scalars, ", ")
+}
+
+// joinText renders one array element the way Array.prototype.join does.
+func joinText(value any) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return scalarText(value)
 }
 
 // scalarText formats one value, collapsing null/empty to "-" the way the oracle
@@ -87,12 +103,7 @@ func scalarText(value any) string {
 	case bool:
 		return fmt.Sprintf("%t", typed)
 	case float64:
-		// JSON numbers decode as float64; render integers without a ".0" tail
-		// so a port number reads as 10100, not 10100.0.
-		if typed == float64(int64(typed)) {
-			return fmt.Sprintf("%d", int64(typed))
-		}
-		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%f", typed), "0"), ".")
+		return jsNumberText(typed)
 	default:
 		encoded, err := json.Marshal(typed)
 		if err != nil {
@@ -100,4 +111,34 @@ func scalarText(value any) string {
 		}
 		return string(encoded)
 	}
+}
+
+// jsNumberText formats a number the way JavaScript String(number) does.
+//
+// %f would round 1.23456789 to six decimals and collapse 1e-7 to "0.000000",
+// so the shortest round-trip form is used instead. Go writes exponents as
+// "1e+30" and JavaScript agrees above 1e21, but Go switches to exponent
+// notation far earlier, so the threshold is applied explicitly.
+func jsNumberText(value float64) string {
+	if value == math.Trunc(value) && math.Abs(value) < 1e21 {
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	}
+	formatted := strconv.FormatFloat(value, 'g', -1, 64)
+	// Go emits "1e-07"; JavaScript emits "1e-7".
+	if index := strings.IndexAny(formatted, "eE"); index != -1 {
+		mantissa, exponent := formatted[:index], formatted[index+1:]
+		sign := ""
+		if exponent != "" && (exponent[0] == '+' || exponent[0] == '-') {
+			sign, exponent = string(exponent[0]), exponent[1:]
+		}
+		exponent = strings.TrimLeft(exponent, "0")
+		if exponent == "" {
+			exponent = "0"
+		}
+		if sign == "" {
+			sign = "+"
+		}
+		return mantissa + "e" + sign + exponent
+	}
+	return formatted
 }

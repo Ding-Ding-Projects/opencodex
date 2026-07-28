@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,18 +39,22 @@ func parseComboTargets(raw string) ([]comboTarget, error) {
 		selector := part
 		var weight *int
 		if colon := strings.LastIndex(part, ":"); colon > strings.Index(part, "/") && colon != -1 {
-			if parsed, valid := jsNumber(part[colon+1:]); valid && parsed == float64(int(parsed)) {
-				value := int(parsed)
+			// Range-check while the value is still float64. Converting first
+			// cannot round-trip a huge value like 1e30, so the digits would
+			// silently stay in the model name and a bogus target would ship
+			// instead of being rejected.
+			if parsed, valid := jsNumber(part[colon+1:]); valid && !math.IsInf(parsed, 0) && !math.IsNaN(parsed) && parsed == math.Trunc(parsed) {
 				selector = part[:colon]
+				if parsed < 1 || parsed > 10_000 {
+					return nil, usageError(comboUsage, "target weight must be 1-10000: %s", part)
+				}
+				value := int(parsed)
 				weight = &value
 			}
 		}
 		slash := strings.Index(selector, "/")
 		if slash <= 0 || slash == len(selector)-1 {
 			return nil, usageError(comboUsage, "invalid target %q; use provider/model[:weight]", part)
-		}
-		if weight != nil && (*weight < 1 || *weight > 10_000) {
-			return nil, usageError(comboUsage, "target weight must be 1-10000: %s", part)
 		}
 		targets = append(targets, comboTarget{Provider: selector[:slash], Model: selector[slash+1:], Weight: weight})
 	}
@@ -85,7 +90,7 @@ func runCombo(ctx context.Context, args []string, streams IO) error {
 func comboDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	rest := append([]string{}, args...)
 	action := "list"
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+	if len(rest) > 0 {
 		action, rest = strings.ToLower(rest[0]), rest[1:]
 	}
 	switch action {
@@ -127,7 +132,7 @@ func comboList(ctx context.Context, api runtimeAPI, args []string, streams IO) e
 }
 
 func comboShow(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	if len(args) == 0 {
 		return usageError(comboUsage, "combo id is required")
 	}
 	id := args[0]
@@ -149,7 +154,7 @@ func comboShow(ctx context.Context, api runtimeAPI, args []string, streams IO) e
 }
 
 func comboSet(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	if len(args) == 0 {
 		return usageError(comboUsage, "combo id is required")
 	}
 	id := strings.TrimSpace(args[0])
@@ -235,7 +240,7 @@ func comboSet(ctx context.Context, api runtimeAPI, args []string, streams IO) er
 }
 
 func comboRemove(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	if len(args) == 0 {
 		return usageError(comboUsage, "combo id is required")
 	}
 	id := strings.TrimSpace(args[0])

@@ -42,7 +42,7 @@ func runAgent(ctx context.Context, args []string, streams IO) error {
 func agentDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	rest := append([]string{}, args...)
 	section := "status"
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+	if len(rest) > 0 {
 		section, rest = strings.ToLower(rest[0]), rest[1:]
 	}
 	switch section {
@@ -66,7 +66,7 @@ func agentDispatch(ctx context.Context, api runtimeAPI, args []string, streams I
 func agentSection(args []string) (action string, rest []string) {
 	action = "status"
 	rest = args
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+	if len(rest) > 0 {
 		action, rest = strings.ToLower(rest[0]), rest[1:]
 	}
 	return action, rest
@@ -209,7 +209,9 @@ func agentSubagents(ctx context.Context, api runtimeAPI, args []string, streams 
 	switch action {
 	case "clear":
 	case "set":
-		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+		// The oracle shifts this positional unconditionally, so a leading flag
+		// becomes the roster string and fails as an unexpected argument later.
+		if len(rest) == 0 {
 			return usageError(agentUsage, "comma-separated subagent models are required")
 		}
 		models = csvValues(rest[0])

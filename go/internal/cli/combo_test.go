@@ -154,3 +154,40 @@ func TestComboShowRejectsUnknownIdentifier(t *testing.T) {
 		t.Fatal("expected an unknown-combo error")
 	}
 }
+
+// A weight too large to survive an int conversion must still be rejected as
+// out-of-range. Converting first leaves the digits in the model name and ships
+// a target the user never asked for.
+func TestComboRejectsUnrepresentableWeight(t *testing.T) {
+	for _, raw := range []string{"a/b:1e30", "a/b:99999"} {
+		if _, err := parseComboTargets(raw); err == nil {
+			t.Fatalf("expected %q to be rejected as out-of-range", raw)
+		}
+	}
+	// The boundary values themselves stay valid.
+	for _, raw := range []string{"a/b:1", "a/b:10000"} {
+		if _, err := parseComboTargets(raw); err != nil {
+			t.Fatalf("%q should be accepted: %v", raw, err)
+		}
+	}
+}
+
+// The oracle shifts the positional unconditionally, so a leading flag becomes
+// the id and fails validation rather than being treated as absent.
+func TestComboTreatsLeadingFlagAsTheIdentifier(t *testing.T) {
+	server, calls := comboServer(t, `{"combos":[]}`)
+	if _, err := runComboWith(t, server, "show", "--json"); err == nil {
+		t.Fatal("expected --json to be consumed as the id and then rejected")
+	}
+	_ = calls
+}
+
+// route accepts only `route combo`; anything else must not silently do combo work.
+func TestRouteAcceptsOnlyCombo(t *testing.T) {
+	var out bytes.Buffer
+	for _, args := range [][]string{nil, {"bogus"}, {"combos"}} {
+		if err := runRoute(context.Background(), args, IO{Out: &out}); err == nil {
+			t.Fatalf("expected %v to be rejected", args)
+		}
+	}
+}

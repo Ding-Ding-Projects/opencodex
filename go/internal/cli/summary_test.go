@@ -1,0 +1,53 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+)
+
+// Numbers reach the terminal through String(value) in the oracle. Using %f here
+// would round 1.23456789 to six decimals and collapse 1e-7 to 0.000000, so a
+// user reading a rate or a price would see the wrong number.
+func TestSummaryNumbersFormatLikeJavaScript(t *testing.T) {
+	for _, testCase := range []struct {
+		value float64
+		want  string
+	}{
+		{1e-7, "1e-7"},
+		{1.23456789, "1.23456789"},
+		{10100, "10100"},
+		{1e21, "1e+21"},
+		{1e30, "1e+30"},
+		{0.1, "0.1"},
+		{0, "0"},
+	} {
+		if got := jsNumberText(testCase.value); got != testCase.want {
+			t.Errorf("jsNumberText(%v) = %q, want %q", testCase.value, got, testCase.want)
+		}
+	}
+}
+
+// Array elements go through Array.join, which renders null and "" as empty
+// strings. The "-" placeholder applies to scalar FIELDS, not to join output.
+func TestSummaryArraysJoinLikeJavaScript(t *testing.T) {
+	if got := arrayText([]any{nil, "", "a"}); got != ", , a" {
+		t.Fatalf("arrayText = %q, want %q", got, ", , a")
+	}
+	if got := arrayText([]any{}); got != "none" {
+		t.Fatalf("empty array = %q, want %q", got, "none")
+	}
+	if got := arrayText([]any{map[string]any{"a": 1}}); got != "1 item(s)" {
+		t.Fatalf("non-scalar array = %q, want a count", got)
+	}
+}
+
+// An unset scalar field reads as "-" so a missing setting is visibly missing.
+func TestSummaryScalarPlaceholders(t *testing.T) {
+	lines := summaryLines(map[string]any{"model": nil, "alias": "", "port": float64(10100)})
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"model: -", "alias: -", "port: 10100"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("lines = %q, want %q", joined, want)
+		}
+	}
+}
