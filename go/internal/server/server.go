@@ -58,9 +58,12 @@ type Config struct {
 	// AnthropicPoolConfig reports the opt-in settings at request time rather
 	// than at construction, so a live config change takes effect without a
 	// restart.
-	AnthropicPoolConfig    func() appconfig.NormalizedAnthropicPool
-	StorageHome            string
-	Stop                   func()
+	AnthropicPoolConfig func() appconfig.NormalizedAnthropicPool
+	StorageHome         string
+	Stop                func()
+	// Restart is the injected drain-and-restart backend for the dashboard
+	// memory card. Nil leaves POST /api/system/restart unavailable.
+	Restart                *management.RestartBackend
 	Version                string
 	EffortCap              string
 	SubagentEffortCap      string
@@ -81,20 +84,20 @@ type Config struct {
 	SearchLoop             *search.Loop
 	// ImageBridge arms the opt-in image bridge per request. Nil leaves the
 	// feature off, which is the default: it makes PAID upstream calls.
-	ImageBridge    ImageBridgeFactory
-	ImageMaxRounds int
-	OnUsage                func(*types.Usage)
-	InjectionDebug         *ocxlib.DebugLogBuffer
-	ProviderQuotas         management.ProviderQuotaBackend
-	ClaudeRuntime          management.ClaudeCodeRuntime
-	RuntimeControl         management.RuntimeControlBackend
-	ResponseState          *ResponseStateStore
-	SubagentFallbackState  *codex.SubagentFallbackState
-	PrimeSubagentQuota     func(context.Context, string) error
-	ConfiguredPort         int
-	SelectedPort           int
-	PreferredPort          int
-	PersistSelectedPort    func(int) error
+	ImageBridge           ImageBridgeFactory
+	ImageMaxRounds        int
+	OnUsage               func(*types.Usage)
+	InjectionDebug        *ocxlib.DebugLogBuffer
+	ProviderQuotas        management.ProviderQuotaBackend
+	ClaudeRuntime         management.ClaudeCodeRuntime
+	RuntimeControl        management.RuntimeControlBackend
+	ResponseState         *ResponseStateStore
+	SubagentFallbackState *codex.SubagentFallbackState
+	PrimeSubagentQuota    func(context.Context, string) error
+	ConfiguredPort        int
+	SelectedPort          int
+	PreferredPort         int
+	PersistSelectedPort   func(int) error
 }
 
 type Server struct {
@@ -289,7 +292,7 @@ func New(config Config) *Server {
 			})
 			return result
 		},
-		ShadowCall:          s.config.ShadowCall,
+		ShadowCall: s.config.ShadowCall,
 		ConsumeQuotaHeaders: func(_ context.Context, accountID string, headers http.Header) {
 			quota.ApplyUpstreamHeaders(accountID, headers)
 		},
@@ -458,7 +461,7 @@ func New(config Config) *Server {
 		if grokPort <= 0 && config.ManagementConfig != nil {
 			grokPort = config.ManagementConfig.Port
 		}
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, ConfigPersistence: config.ConfigPersistence, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, CodexRouter: config.CodexRouter, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, ConfigPersistence: config.ConfigPersistence, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, CodexRouter: config.CodexRouter, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, Restart: config.Restart, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {

@@ -24,6 +24,10 @@ func TestDrainAdmissionMiddlewareRejectsNewWorkButKeepsHealthAndStop(t *testing.
 		{path: "/healthz", want: http.StatusNoContent},
 		{path: "/health/startup", want: http.StatusNoContent},
 		{path: "/api/stop", want: http.StatusNoContent},
+		// A retried drain-and-restart must reach its handler to answer
+		// "already draining". A 503 here would make the dashboard look broken
+		// at exactly the moment the restart is working.
+		{path: "/api/system/restart", want: http.StatusNoContent},
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, loopbackRequest(http.MethodPost, test.path, nil))

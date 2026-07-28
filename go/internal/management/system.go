@@ -10,6 +10,9 @@ import (
 var processStarted = time.Now()
 
 func (a *API) handleSystem(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path == "/api/system/restart" && r.Method == http.MethodPost {
+		return a.handleSystemRestart(w, r)
+	}
 	if r.Method != http.MethodGet {
 		return false
 	}

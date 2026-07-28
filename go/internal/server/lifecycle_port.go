@@ -14,7 +14,12 @@ func DrainAdmissionMiddleware(next http.Handler, lifecycle *Lifecycle) http.Hand
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if !lifecycle.IsDraining() || isPublicHealthPath(request.URL.Path) || request.URL.Path == "/api/stop" {
+		// /api/system/restart stays reachable while draining for the same
+		// reason /api/stop does: its answer during a drain is the idempotent
+		// "already draining" report, and a 503 there would make the dashboard
+		// look broken at exactly the moment it is working.
+		if !lifecycle.IsDraining() || isPublicHealthPath(request.URL.Path) ||
+			request.URL.Path == "/api/stop" || request.URL.Path == "/api/system/restart" {
 			next.ServeHTTP(w, request)
 			return
 		}

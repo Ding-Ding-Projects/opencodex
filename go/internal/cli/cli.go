@@ -176,6 +176,13 @@ func Run(ctx context.Context, args []string, streams IO) int {
 	}
 	spec := commandSpecs[position]
 	if runErr := spec.Handler(ctx, command.Args, streams); runErr != nil {
+		// A drain-and-restart chose its own exit code and already said
+		// everything it needed to. Reporting it as an error would print a
+		// failure line for what is usually a successful recycle.
+		var restart *restartExitError
+		if errors.As(runErr, &restart) {
+			return restart.code
+		}
 		// A command that already reported its own outcome exits non-zero
 		// without a second "Error:" line. `config validate` prints the
 		// reason it found and then fails; printing again would repeat it.

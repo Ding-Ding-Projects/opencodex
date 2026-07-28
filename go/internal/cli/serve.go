@@ -166,7 +166,14 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		teardownOwnedGrokFence(streams)
 		stop.Stop()
 	}
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolverWithPersistence(cfg, configPersistence, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, CodexRouter: codexRouting.Router(), AnthropicPool: auth.Anthropic, AnthropicPoolConfig: liveAuth.anthropicPoolConfig, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore, configPersistence), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), ImageBridge: configuredImageBridge(runtimeCfg, providerClient), ImageMaxRounds: images.ResolveMaxRounds(runtimeCfg.Images), StorageHome: os.Getenv("CODEX_HOME"), Stop: apiStop, ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
+	// Created here rather than inside server.New so the restart backend and the
+	// server share one lifecycle: a drain started by the management route has
+	// to see the same in-flight turns the data plane is tracking.
+	proxyLifecycle := server.NewLifecycle()
+	// Buffered by one: the management handler must never block on a restart
+	// signal, and a second signal while one is in flight is redundant.
+	restartRequests := make(chan restartRequest, 1)
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolverWithPersistence(cfg, configPersistence, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, CodexRouter: codexRouting.Router(), AnthropicPool: auth.Anthropic, AnthropicPoolConfig: liveAuth.anthropicPoolConfig, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore, configPersistence), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), ImageBridge: configuredImageBridge(runtimeCfg, providerClient), ImageMaxRounds: images.ResolveMaxRounds(runtimeCfg.Images), StorageHome: os.Getenv("CODEX_HOME"), Lifecycle: proxyLifecycle, Stop: apiStop, Restart: configuredRestart(proxyLifecycle, restartRequests), ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
 		if err := configPersistence.Update(func(live *config.Config) { live.Port = port }); err != nil {
 			return fmt.Errorf("persist selected port: %w", err)
 		}
@@ -185,16 +192,31 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		return fmt.Errorf("install system environment: %w", err)
 	}
 	if systemEnvInstalled {
-		defer func() { _ = uninstallSystemEnv(context.Background()) }()
+		// Preserved on a recycle for the same reason as the Grok fence: the
+		// replacement process expects the system environment to still point at
+		// the proxy. Measured against the oracle, which skips revertSystemEnv
+		// when recycling but still removes the pid/port files.
+		defer func() {
+			if !IsRecycling() {
+				_ = uninstallSystemEnv(context.Background())
+			}
+		}()
 	}
 	fmt.Fprintf(streams.Out, "OpenCodex proxy listening on %s\n", listener.Addr())
 	if os.Getenv("OCX_SERVICE") == "" {
-		defer teardownOwnedGrokFence(streams)
+		// Skipped on a recycle: the replacement process inherits the fence, and
+		// tearing it down here would point Codex away from a proxy that is
+		// about to serve again.
+		defer func() {
+			if !IsRecycling() {
+				teardownOwnedGrokFence(streams)
+			}
+		}()
 	}
 	afterStart := func() {
 		go func() { _ = applyGrokFence(ctx, cfg, actualPort, cfg.Host, false, streams) }()
 	}
-	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart, proxy.Close)
+	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart, proxy.Close, restartRequests, newRestartControl(streams), actualPort)
 }
 
 func validateServeAuth(cfg config.Config, token string) error {
@@ -236,7 +258,7 @@ func (s *stopRouter) Register(mux *http.ServeMux) {
 // left to the http.Server's RegisterOnShutdown callback, which net/http starts
 // as `go f()` and does not wait for -- so shutdown returned while the memory
 // watchdog was still sampling and response state was still unflushed.
-func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listener net.Listener, stop <-chan struct{}, afterStart func(), closeServer func()) error {
+func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listener net.Listener, stop <-chan struct{}, afterStart func(), closeServer func(), restarts <-chan restartRequest, restart restartControl, port int) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
 	if afterStart != nil {
@@ -245,6 +267,12 @@ func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listene
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(signals)
+	// A drain-and-restart uses a longer window than an ordinary stop and ends
+	// by spawning a replacement. It has to come through here rather than
+	// finishing inside the management handler: only this function closes the
+	// listener, and only returning from it runs runServe's deferred cleanup.
+	drainTimeout := 8 * time.Second
+	recycle := false
 	select {
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -253,15 +281,47 @@ func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listene
 		return err
 	case <-signals:
 	case <-stop:
+	case request := <-restarts:
+		drainTimeout, recycle = request.timeout, true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
 	// Cleanup is passed to the drain rather than left to the server's
 	// RegisterOnShutdown callback, which net/http starts as `go f()` and does
 	// not wait for. Without this, `ocx start` returned from shutdown while the
 	// memory watchdog was still sampling and response state was still
 	// unflushed.
-	return server.DrainHTTPServer(ctx, httpServer, lifecycle, nil, closeServer)
+	drainErr := server.DrainHTTPServer(ctx, httpServer, lifecycle, nil, closeServer)
+	if !recycle {
+		return drainErr
+	}
+	// The port is free now, so the replacement can bind it. The exit code
+	// travels back as an ERROR rather than a package variable: an error is
+	// something Run already has to handle, so it cannot be silently dropped
+	// the way an unread global can.
+	code := restart.run(port)
+	// A drain that hit its deadline is a COMPLETED forced drain, not a failed
+	// one: DrainHTTPServer aborted what was left and closed the listener
+	// either way, and the replacement has already started. Reporting the
+	// deadline would turn a successful recycle into exit 1.
+	if drainErr != nil && !errors.Is(drainErr, context.DeadlineExceeded) {
+		return drainErr
+	}
+	if code != 0 {
+		return &restartExitError{code: code}
+	}
+	return nil
+}
+
+// restartExitError carries the exit code a completed drain-and-restart wants.
+//
+// Returned instead of calling os.Exit so every deferred cleanup in runServe
+// runs first — on a failed spawn those defers are exactly what restore Codex
+// and the Grok fence.
+type restartExitError struct{ code int }
+
+func (e *restartExitError) Error() string {
+	return "proxy exited for a drain-and-restart with code " + strconv.Itoa(e.code)
 }
 
 func configuredRegistry(cfg config.Config) *registry.ProviderRegistry {

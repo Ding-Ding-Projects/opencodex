@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
@@ -17,28 +18,31 @@ import (
 )
 
 type Options struct {
-	Config              *config.Config
-	ConfigPath          string
-	ConfigPersistence   *config.LivePersistence
-	Registry            types.Registry
-	UsageLog            *usage.Log
-	DebugLog            *usage.DebugLog
-	RequestLogs         *RequestLog
-	OAuth               OAuthBackend
-	CodexAuth           CodexAuthBackend
-	CodexRouter         *codex.Router
-	DebugLogs           *ocxlib.DebugLogBuffer
-	InjectionLogs       *ocxlib.DebugLogBuffer
-	ClaudeDebug         *claude.DebugRing
-	ProviderQuotas      ProviderQuotaBackend
-	ClaudeRuntime       ClaudeCodeRuntime
-	RuntimeControl      RuntimeControlBackend
-	GrokPort            int
-	GrokHostname        string
-	FetchModels         ModelFetcher
-	StorageHome         string
-	Version             string
-	Stop                func()
+	Config            *config.Config
+	ConfigPath        string
+	ConfigPersistence *config.LivePersistence
+	Registry          types.Registry
+	UsageLog          *usage.Log
+	DebugLog          *usage.DebugLog
+	RequestLogs       *RequestLog
+	OAuth             OAuthBackend
+	CodexAuth         CodexAuthBackend
+	CodexRouter       *codex.Router
+	DebugLogs         *ocxlib.DebugLogBuffer
+	InjectionLogs     *ocxlib.DebugLogBuffer
+	ClaudeDebug       *claude.DebugRing
+	ProviderQuotas    ProviderQuotaBackend
+	ClaudeRuntime     ClaudeCodeRuntime
+	RuntimeControl    RuntimeControlBackend
+	GrokPort          int
+	GrokHostname      string
+	FetchModels       ModelFetcher
+	StorageHome       string
+	Version           string
+	Stop              func()
+	// Restart is the injected drain-and-restart backend. Nil disables
+	// POST /api/system/restart rather than letting it half-work.
+	Restart             *RestartBackend
 	RefreshCatalog      func() error
 	OnAPIKeysChanged    func([]config.ProxyAPIKey)
 	ModelCache          ModelCacheInvalidator
@@ -86,6 +90,8 @@ type API struct {
 	storageHome         string
 	version             string
 	stop                func()
+	restart             *RestartBackend
+	restartAccepted     atomic.Bool
 	refreshCatalog      func() error
 	onAPIKeysChanged    func([]config.ProxyAPIKey)
 	modelCache          ModelCacheInvalidator
@@ -136,7 +142,7 @@ func New(options Options) (*API, error) {
 	if options.InjectionLogs == nil {
 		options.InjectionLogs = ocxlib.NewDebugLogBuffer()
 	}
-	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
+	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, restart: options.Restart, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
 	if api.configPersistence != nil {
 		api.configPersistence.BindConfigMutex(&api.mu)
 	}

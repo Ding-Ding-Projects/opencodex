@@ -33,7 +33,7 @@ func TestServeListenerStartsServingBeforePostListenWork(t *testing.T) {
 	}
 	// nil cleanup: this test covers the startup path, and the drain's cleanup
 	// contract has its own coverage in internal/server.
-	if err := serveListener(httpServer, server.NewLifecycle(), listener, stop, afterStart, nil); err != nil {
+	if err := serveListener(httpServer, server.NewLifecycle(), listener, stop, afterStart, nil, nil, restartControl{}, 0); err != nil {
 		t.Fatal(err)
 	}
 }
