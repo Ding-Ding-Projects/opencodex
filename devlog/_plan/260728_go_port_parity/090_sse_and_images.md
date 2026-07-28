@@ -133,3 +133,55 @@ Antigravity를 쓸 수 있다. OAuth 인증을 보내기 **전에** 레지스트
 IN: `go/internal/protocol/sse.go`, `go/internal/server/repair.go`,
 `responses_core_port.go` 삽입점, `go/internal/images/**`, `go/internal/server/images.go`.
 OUT: `src/**`, 실제 유료 이미지 호출(테스트는 스텁 사용).
+
+## 090.3 브리지 루프 드라이버 (wp9b-driver)
+
+090.2에서 활성화·충족·SSRF·아티팩트는 모두 포팅됐지만 **그것들을 순서대로 돌리는 주체가
+없다.** `FulfillImageCall`은 호출 한 건만 처리하고, 어댑터 이벤트를 훑어 이미지 호출을
+골라내는 스캐너와 라운드를 도는 드라이버가 Go 쪽에 통째로 빠져 있다. 이 슬라이스가 그
+구멍을 메운다.
+
+### 오라클을 읽지 않고 실행해서 측정한 사실
+
+`tests/`에 임시 프로브를 넣어 `runWithImageBridge`를 실제로 돌린 결과다. 읽기만 해서는
+틀리기 쉬운 것들이 섞여 있다.
+
+| 입력 | 실측 결과 |
+| --- | --- |
+| `tool_call_end` 없이 두 번째 `tool_call_start`가 옴 | 앞의 호출이 flush돼 **둘 다** 충족된다 |
+| 같은 턴에 이미지 호출 + 실제 도구 호출 | 이미지 호출은 **충족되지 않고 버려지며**, 실제 호출만 클라이언트로 간다 |
+| `tool_call_start` 없는 고아 `tool_call_delta` | 버려지고 나머지는 통과한다 |
+| 끝나지 않은 이미지 호출이 스트림 끝에 남음 | 버퍼된 인자로 그대로 충족된다 |
+| `maxRounds: 0` | 유료 호출 0건, 첫 턴이 곧 최종 턴 |
+
+두 번째 줄이 이 슬라이스의 핵심 계약이다. 실제 도구 호출이 섞이면 그 턴은 Codex 기준으로
+종결이므로, 이미지 호출을 충족하면 클라이언트가 볼 수 없는 유료 호출이 된다.
+
+### Go 변경
+
+`go/internal/images/bridge.go` 신규:
+
+- `ScanImageCalls(events, toolNames) (calls, passthrough, hasRealToolCall)` — 위 표의 다섯
+  가지를 그대로 재현한다. 이미지 호출의 start/delta/end는 passthrough에서 제거되고, 그
+  외 이벤트는 순서를 유지한다.
+- `ExtractIterationThinking(events)` — thinking/서명/redacted 블록을 순서와 블록별 서명을
+  유지한 채 모은다. 여러 블록을 하나로 합치면 Anthropic 확장 사고 재생이 400난다.
+- `Bridge.Run(ctx, request, adapter)` — `maxRounds+1` 하드캡, `i >= maxRounds`이면
+  forced-final(플랜이 아는 모든 별칭을 도구 목록에서 제거), 턴당 유료 호출 10건 상한,
+  충족 후 어시스턴트 1개 + toolResult n개를 `search.appendSearchExchange`와 같은 모양으로
+  주입한다.
+
+`internal/search/loop.go`의 `Loop`와 같은 형태(주입된 `Runner`, 이벤트 반환)로 맞춘다.
+뒤이을 chat 핸들러 배선이 `runSearch` 옆에 그대로 들어가게 하기 위해서다.
+
+### 수용 기준
+
+| # | 활성화 | 증거 |
+| --- | --- | --- |
+| 1 | 이미지 호출만 있는 턴 | 충족 후 다음 라운드로, 합성 호출은 passthrough에 없음 |
+| 2 | 실제 도구 호출 동반 | 유료 호출 0건, 실제 호출은 통과, 루프 종료 |
+| 3 | 미종결 호출 | 버퍼된 인자로 충족 |
+| 4 | 고아 delta | 무시, 나머지 통과 |
+| 5 | `maxRounds` 소진 | 상류 턴 ≤ `maxRounds+1`, 마지막 턴은 별칭 제거된 도구 목록 |
+| 6 | 턴당 10건 초과 | 초과분은 예산 소진 오류 결과, 유료 호출 없음 |
+| 7 | 취소 | 진행 중 중단, 추가 유료 호출 없음 |
