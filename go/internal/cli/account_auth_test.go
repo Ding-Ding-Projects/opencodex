@@ -293,13 +293,19 @@ func TestAccountLoginPollBudgetsMatchTheOracle(t *testing.T) {
 
 // --no-wait skips polling entirely.
 func TestAccountLoginNoWaitSkipsPolling(t *testing.T) {
-	// Both families: the two branches have separate poll loops, so covering
-	// one leaves the other free to regress.
-	for _, provider := range []string{"openai", "anthropic"} {
-		t.Run(provider, func(t *testing.T) {
+	// Both families AND reauth. The two families have separate poll loops, and
+	// reauth reaches them through a different entry point that appends
+	// --reauth, so covering only `login` leaves that path free to regress.
+	for _, testCase := range []struct{ sub, provider string }{
+		{sub: "login", provider: "openai"},
+		{sub: "login", provider: "anthropic"},
+		{sub: "reauth", provider: "openai"},
+		{sub: "reauth", provider: "anthropic"},
+	} {
+		t.Run(testCase.sub+"/"+testCase.provider, func(t *testing.T) {
 			harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
 				return 200, `{"flowId":"f1"}`
-			}, "", "login", provider, "--no-wait")
+			}, "", testCase.sub, testCase.provider, "--no-wait")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -318,14 +324,62 @@ func TestAccountLoginNoWaitSkipsPolling(t *testing.T) {
 // Query values are percent-encoded the way encodeURIComponent does, NOT the
 // way url.QueryEscape does. A space must be %20; QueryEscape's "+" would look
 // up a different flow or account.
+//
+// All FOUR call sites are covered. Testing only reset-credits left the three
+// login query values free to have QueryEscape reintroduced.
 func TestAccountAuthEncodesQueryValuesLikeTheOracle(t *testing.T) {
-	harness, err := runAccountAuth(t, nil, "", "reset-credits", "acct one/two")
-	if err != nil {
-		t.Fatal(err)
+	t.Run("reset-credits accountId", func(t *testing.T) {
+		harness, err := runAccountAuth(t, nil, "", "reset-credits", "acct one/two")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEncodedQuery(t, harness.requests[0].query, "accountId=acct%20one%2Ftwo")
+	})
+
+	t.Run("codex flowId and accountId", func(t *testing.T) {
+		harness, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+			if strings.Contains(request.path, "login-status") {
+				return 200, `{"status":"error","error":"stop"}`
+			}
+			return 200, `{"flowId":"flow one/two"}`
+		}, "", "login", "openai", "--reauth", "--id", "acct one/two")
+		if err == nil {
+			t.Fatal("the stub fails the flow so the poll stops after one round")
+		}
+		query := statusQuery(t, harness)
+		assertEncodedQuery(t, query, "flowId=flow%20one%2Ftwo")
+		assertEncodedQuery(t, query, "accountId=acct%20one%2Ftwo")
+	})
+
+	t.Run("provider name", func(t *testing.T) {
+		harness, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+			if strings.Contains(request.path, "status") {
+				return 200, `{"error":"stop"}`
+			}
+			return 200, `{}`
+		}, "", "login", "weird name")
+		if err == nil {
+			t.Fatal("the stub reports an error so the poll stops after one round")
+		}
+		assertEncodedQuery(t, statusQuery(t, harness), "provider=weird%20name")
+	})
+}
+
+func statusQuery(t *testing.T, harness *authHarness) string {
+	t.Helper()
+	for _, request := range harness.requests {
+		if strings.Contains(request.path, "status") {
+			return request.query
+		}
 	}
-	query := harness.requests[0].query
-	if !strings.Contains(query, "accountId=acct%20one%2Ftwo") {
-		t.Fatalf("query = %q; encodeURIComponent renders a space as %%20", query)
+	t.Fatalf("no status request was made: %v", harness.pathsHit())
+	return ""
+}
+
+func assertEncodedQuery(t *testing.T, query, want string) {
+	t.Helper()
+	if !strings.Contains(query, want) {
+		t.Fatalf("query = %q, want it to contain %q (encodeURIComponent renders a space as %%20)", query, want)
 	}
 	if strings.Contains(query, "+") {
 		t.Fatalf("query = %q; a + means url.QueryEscape leaked back in", query)
@@ -515,5 +569,30 @@ func TestAccountCancelUsesTheRightRoute(t *testing.T) {
 				t.Fatalf("path = %s, want %s", harness.requests[0].path, testCase.want)
 			}
 		})
+	}
+}
+
+// jsString stands in for JavaScript's String(value), which a login failure
+// message goes through when the server sends a non-string error. The expected
+// values are what `bun -e 'String(...)'` actually prints, not what the Go
+// implementation happens to produce.
+func TestJSStringMatchesJavaScript(t *testing.T) {
+	for _, testCase := range []struct {
+		value any
+		want  string
+	}{
+		// An array joins with commas and renders null as empty.
+		{value: []any{float64(1), nil, []any{"a", "b"}}, want: "1,,a,b"},
+		{value: []any{}, want: ""},
+		// Numbers use JS number formatting, not Go's %v.
+		{value: 1e21, want: "1e+21"},
+		{value: 0.000001, want: "0.000001"},
+		{value: map[string]any{}, want: "[object Object]"},
+		{value: true, want: "true"},
+		{value: nil, want: "null"},
+	} {
+		if got := jsString(testCase.value); got != testCase.want {
+			t.Fatalf("jsString(%#v) = %q, want %q", testCase.value, got, testCase.want)
+		}
 	}
 }
