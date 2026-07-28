@@ -114,7 +114,9 @@ func (r *AuthResolver) ResolveCodexAuthContext(
 	}
 	var resolution CodexThreadResolution
 	if options.ExcludeAccountID != "" {
-		accountID := r.Router.PickLowestUsageCodexAccount(config, options.ExcludeAccountID, now)
+		// Strategy-aware: a same-request retry under fill-first must advance the
+		// stable order rather than jump to the coolest account.
+		accountID := r.Router.PickAlternateCodexAccount(config, options.ExcludeAccountID, now.UnixMilli())
 		if accountID == "" {
 			resolution = CodexThreadResolution{Status: ThreadNone}
 		} else {

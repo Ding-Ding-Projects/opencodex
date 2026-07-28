@@ -88,8 +88,10 @@ func (r *Router) applyFailureFailoverLocked(config *RoutingConfig, active string
 	if !r.shouldFailoverLocked(config, active, now) {
 		return active
 	}
-	if best := r.pickLowestUsageLocked(config, active, now); best != "" {
-		r.setActiveLocked(config, best)
+	// Strategy-aware, and promoted rather than persisted: under fill-first the
+	// replacement is the next account in stable order, not the coolest one.
+	if best := r.pickAlternateLocked(config, active, now); best != "" {
+		r.promoteActiveLocked(config, best)
 		return best
 	}
 	return active

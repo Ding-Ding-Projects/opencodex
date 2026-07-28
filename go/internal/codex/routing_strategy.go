@@ -207,6 +207,10 @@ func (r *Router) pickUnboundStrategyLocked(routing *RoutingConfig, threadID stri
 func (r *Router) PickAlternateCodexAccount(routing *RoutingConfig, excludeID string, now int64) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.pickAlternateLocked(routing, excludeID, now)
+}
+
+func (r *Router) pickAlternateLocked(routing *RoutingConfig, excludeID string, now int64) string {
 	switch r.strategyLocked(routing) {
 	case config.AccountPoolStrategyRoundRobin:
 		eligible := r.eligibleAccountsLocked(routing, excludeID, now)
@@ -217,6 +221,18 @@ func (r *Router) PickAlternateCodexAccount(routing *RoutingConfig, excludeID str
 		return r.pickNextFillFirstLocked(routing, excludeID, eligible, now)
 	}
 	return r.pickLowestUsageLocked(routing, excludeID, now)
+}
+
+// promoteActiveLocked persists only under quota.
+//
+// Round-robin and fill-first promote into the runtime cursor instead, so a
+// failover step does not end up recorded on disk as an operator choice.
+func (r *Router) promoteActiveLocked(routing *RoutingConfig, accountID string) {
+	if r.strategyLocked(routing) == quotaStrategy {
+		r.setActiveLocked(routing, accountID)
+		return
+	}
+	r.rememberActiveLocked(accountID)
 }
 
 // SeedRotationAccount forces the next pick onto accountID for a manual

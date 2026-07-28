@@ -1,6 +1,10 @@
 package codex
 
-import "time"
+import (
+	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
+)
 
 func cooldownOnly(health UpstreamHealth) UpstreamHealth {
 	return UpstreamHealth{
@@ -17,6 +21,13 @@ func (r *Router) ResetCodexRoutingForManualSelection(accountID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	clear(r.threadAccounts)
+	// A manual selection is the operator speaking, so the automatic cursor is
+	// dropped rather than left to shadow the choice on the very next request.
+	r.runtimeActive = ""
+	// Seed the ring too: without this, round-robin would hand the next unbound
+	// session to whichever account the ring happened to be pointing at, and the
+	// operator's pick would appear to have been ignored.
+	r.rotation.SeedRotationAccount(oauth.PoolKeyCodex, accountID)
 	current, exists := r.health[accountID]
 	if !exists {
 		return
@@ -96,9 +107,15 @@ func (r *Router) RecordCodexUpstreamOutcome(config *RoutingConfig, accountID str
 		}
 		r.health[accountID] = next
 		r.clearThreadAccountMapForAccountLocked(accountID)
-		if config.ActiveCodexAccountID == accountID {
-			if fallback := r.pickLowestUsageLocked(config, accountID, nowMillis); fallback != "" {
-				r.setActiveLocked(config, fallback)
+		// A rate-limited account must not keep the sticky hold for the rest of
+		// its budget, so the failure is noted before anything is chosen.
+		r.rotation.NoteRotationFailure(oauth.PoolKeyCodex, accountID)
+		// Compared against the EFFECTIVE active: under a non-quota strategy the
+		// serving account lives in the runtime cursor, so testing the persisted
+		// field alone would skip the replacement exactly when rotation is on.
+		if r.effectiveActiveLocked(config) == accountID {
+			if fallback := r.pickAlternateLocked(config, accountID, nowMillis); fallback != "" {
+				r.promoteActiveLocked(config, fallback)
 			}
 		}
 		return
