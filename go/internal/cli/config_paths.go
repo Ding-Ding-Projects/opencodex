@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,10 @@ import (
 // live credential is not a behavior worth reproducing for byte parity, so the
 // stricter side wins and the divergence is recorded here rather than silently
 // dropped.
+// `authToken` is one name longer than the oracle's list. It is a Go-only
+// config field -- `rg authToken src/` finds nothing -- so it can never change
+// the masking of a field the TypeScript CLI also has, and leaving the proxy's
+// own admission token unmasked in `config show` would be the worse mistake.
 var secretKeyPattern = regexp.MustCompile(`(?i)^(authToken|apiKey|key|accessToken|refreshToken|idToken|token|password|clientSecret)$`)
 
 // blockedSegments are refused in a dot path. Go has no prototype chain, but
@@ -81,15 +86,25 @@ func getConfigPath(root any, path string) (any, error) {
 	}
 	current := root
 	for _, segment := range segments {
-		record, isObject := current.(map[string]any)
-		if !isObject {
+		switch container := current.(type) {
+		case map[string]any:
+			value, present := container[segment]
+			if !present {
+				return nil, usageError("", "config path not found: %s", path)
+			}
+			current = value
+		case []any:
+			// Object.hasOwn treats an array index as a real key, so the oracle
+			// resolves `models.0`. Refusing it would make a legitimate path
+			// look missing.
+			index, err := strconv.Atoi(segment)
+			if err != nil || index < 0 || index >= len(container) {
+				return nil, usageError("", "config path not found: %s", path)
+			}
+			current = container[index]
+		default:
 			return nil, usageError("", "config path not found: %s", path)
 		}
-		value, present := record[segment]
-		if !present {
-			return nil, usageError("", "config path not found: %s", path)
-		}
-		current = value
 	}
 	return current, nil
 }

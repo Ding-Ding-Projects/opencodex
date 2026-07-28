@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -174,6 +175,12 @@ func Run(ctx context.Context, args []string, streams IO) int {
 	}
 	spec := commandSpecs[position]
 	if runErr := spec.Handler(ctx, command.Args, streams); runErr != nil {
+		// A command that already reported its own outcome exits non-zero
+		// without a second "Error:" line. `config validate` prints the
+		// reason it found and then fails; printing again would repeat it.
+		if errors.Is(runErr, errSilentFailure) {
+			return 1
+		}
 		fmt.Fprintln(streams.Err, "Error:", runErr)
 		return 1
 	}

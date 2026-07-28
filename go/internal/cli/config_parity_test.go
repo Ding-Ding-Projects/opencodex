@@ -34,7 +34,7 @@ func runConfigParityWith(t *testing.T, stdin string, args ...string) (string, er
 // Secret-named fields are masked, but an EMPTY one is left alone: masking it
 // would read as "a credential is set" when none is.
 func TestConfigShowRedactsSecretsButNotEmptyOnes(t *testing.T) {
-	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{"apiKey":"SUPERSECRET","baseUrl":"u"},"q":{"apiKey":""}}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u","apiKey":"SUPERSECRET"},"q":{"adapter":"openai-chat","baseUrl":"http://v","apiKey":""}}}`)
 	out, err := runConfigParityWith(t, "", "show")
 	if err != nil {
 		t.Fatal(err)
@@ -48,13 +48,13 @@ func TestConfigShowRedactsSecretsButNotEmptyOnes(t *testing.T) {
 	if !strings.Contains(out, `"apiKey": ""`) {
 		t.Fatalf("an empty key must stay empty, not become a mask: %s", out)
 	}
-	if !strings.Contains(out, `"baseUrl": "u"`) {
+	if !strings.Contains(out, `"baseUrl": "http://u"`) {
 		t.Fatalf("non-secret fields must survive: %s", out)
 	}
 }
 
 func TestConfigGetWalksDotPathsAndRedacts(t *testing.T) {
-	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{"apiKey":"SUPERSECRET","models":["a","b"]}}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u","apiKey":"SUPERSECRET","models":["a","b"]}}}`)
 
 	out, err := runConfigParityWith(t, "", "get", "port")
 	if err != nil || strings.TrimSpace(out) != "12000" {
@@ -79,7 +79,7 @@ func TestConfigGetWalksDotPathsAndRedacts(t *testing.T) {
 // Prototype-poisoning segments are refused. Go has no prototype chain, but
 // accepting them would write keys the TypeScript CLI then refuses to edit.
 func TestConfigRejectsBlockedAndMissingPaths(t *testing.T) {
-	configHome(t, `{"port":12000,"providers":{"p":{}}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u"}}}`)
 	for _, testCase := range []struct {
 		args []string
 		want string
@@ -99,7 +99,7 @@ func TestConfigRejectsBlockedAndMissingPaths(t *testing.T) {
 // The oracle does NOT create missing parents; it rejects them. Creating them
 // would produce a config the TypeScript CLI refuses to write.
 func TestConfigSetRequiresAnExistingObjectParent(t *testing.T) {
-	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{}},"list":[1]}`)
+	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u"}},"list":[1]}`)
 	before, _ := os.ReadFile(path)
 
 	for _, testCase := range []struct {
@@ -156,7 +156,7 @@ func TestConfigSetAndUnsetPersist(t *testing.T) {
 // A value is JSON first, literal string second, which is what lets an
 // unquoted word work.
 func TestConfigSetParsesJSONThenFallsBackToText(t *testing.T) {
-	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
 	if _, err := runConfigParityWith(t, "", "set", "port", "13000"); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestConfigSetParsesJSONThenFallsBackToText(t *testing.T) {
 // Export is a BACKUP: it is not redacted, because a masked copy could not be
 // imported back. That is exactly why it must be written owner-only.
 func TestConfigExportIsUnredactedAndOwnerOnly(t *testing.T) {
-	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{"apiKey":"SUPERSECRET"}}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u","apiKey":"SUPERSECRET"}}}`)
 	target := filepath.Join(t.TempDir(), "backup.json")
 	if _, err := runConfigParityWith(t, "", "export", target); err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestConfigExportIsUnredactedAndOwnerOnly(t *testing.T) {
 }
 
 func TestConfigExportToStdout(t *testing.T) {
-	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
 	out, err := runConfigParityWith(t, "", "export", "-")
 	if err != nil || !strings.Contains(out, `"port": 12000`) {
 		t.Fatalf("export - = %q, %v", out, err)
@@ -206,9 +206,9 @@ func TestConfigExportToStdout(t *testing.T) {
 }
 
 func TestConfigImportRequiresConfirmationAndValidJSON(t *testing.T) {
-	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
 	source := filepath.Join(t.TempDir(), "in.json")
-	if err := os.WriteFile(source, []byte(`{"port":14000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte(`{"port":14000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(path)
@@ -242,19 +242,19 @@ func TestConfigImportRequiresConfirmationAndValidJSON(t *testing.T) {
 }
 
 func TestConfigValidateReadsFileAndStdin(t *testing.T) {
-	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
 
 	out, err := runConfigParityWith(t, "", "validate")
 	if err != nil || !strings.Contains(out, "Config is valid.") {
 		t.Fatalf("validate = %q, %v", out, err)
 	}
 
-	out, err = runConfigParityWith(t, `{"port":15000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`, "validate", "-")
+	out, err = runConfigParityWith(t, `{"port":15000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`, "validate", "-")
 	if err != nil || !strings.Contains(out, "Config is valid.") {
 		t.Fatalf("validate - = %q, %v", out, err)
 	}
 
-	out, err = runConfigParityWith(t, `{"port":-5,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`, "validate", "-")
+	out, err = runConfigParityWith(t, `{"port":-5,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`, "validate", "-")
 	if err == nil {
 		t.Fatalf("an invalid candidate must fail: %q", out)
 	}
@@ -265,7 +265,7 @@ func TestConfigValidateReadsFileAndStdin(t *testing.T) {
 
 // --source adds the diagnostics envelope rather than replacing the config.
 func TestConfigShowSourceAddsDiagnostics(t *testing.T) {
-	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
 	out, err := runConfigParityWith(t, "", "show", "--source")
 	if err != nil {
 		t.Fatal(err)
@@ -279,5 +279,82 @@ func TestConfigShowSourceAddsDiagnostics(t *testing.T) {
 	}
 	if _, hasConfig := envelope["config"]; !hasConfig {
 		t.Fatalf("--source must keep the config under its own key: %s", out)
+	}
+}
+
+// Editing one key must never discard a setting the user wrote. Round-tripping
+// the document through the typed config drops unknown members of a KNOWN
+// nested object, so the write path keeps the generic document instead.
+func TestConfigSetPreservesUnknownNestedSettings(t *testing.T) {
+	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u"}},"visionSidecar":{"model":"m","futureNested":"KEEPME"},"topLevelUnknown":{"a":1}}`)
+	if _, err := runConfigParityWith(t, "", "set", "port", "13000"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, survivor := range []string{"KEEPME", "topLevelUnknown", `"model": "m"`} {
+		if !strings.Contains(string(after), survivor) {
+			t.Fatalf("set deleted %s: %s", survivor, string(after))
+		}
+	}
+	if !strings.Contains(string(after), "13000") {
+		t.Fatalf("set did not apply: %s", string(after))
+	}
+}
+
+// WriteFile's mode applies only when it creates the file, so exporting over an
+// existing world-readable path would leave credentials readable.
+func TestConfigExportTightensAnExistingPermissiveFile(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u","apiKey":"SUPERSECRET"}}}`)
+	target := filepath.Join(t.TempDir(), "pre-existing.json")
+	if err := os.WriteFile(target, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfigParityWith(t, "", "export", target); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("export left mode %v on an existing file; credentials would stay readable", info.Mode().Perm())
+	}
+}
+
+// Object.hasOwn treats an array index as a real key, so the oracle resolves
+// models.0. Refusing it would make a legitimate path look missing.
+func TestConfigGetTraversesArrayIndexes(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u","models":["alpha","beta"]}}}`)
+	out, err := runConfigParityWith(t, "", "get", "providers.p.models.1")
+	if err != nil || strings.TrimSpace(out) != "beta" {
+		t.Fatalf("array index get = %q, %v", out, err)
+	}
+	if _, err := runConfigParityWith(t, "", "get", "providers.p.models.9"); err == nil {
+		t.Fatal("an out-of-range index must not resolve")
+	}
+}
+
+// A candidate missing providers, or naming one that does not exist, is
+// rejected before anything is written.
+func TestConfigImportEnforcesTheSchema(t *testing.T) {
+	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u"}}}`)
+	before, _ := os.ReadFile(path)
+	for _, candidate := range []string{
+		`{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai"}`,
+		`{"port":12000,"hostname":"127.0.0.1","defaultProvider":"missing","providers":{}}`,
+	} {
+		source := filepath.Join(t.TempDir(), "candidate.json")
+		if err := os.WriteFile(source, []byte(candidate), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runConfigParityWith(t, "", "import", source, "--yes"); err == nil {
+			t.Fatalf("%s should have been rejected", candidate)
+		}
+		if after, _ := os.ReadFile(path); string(after) != string(before) {
+			t.Fatalf("a rejected import wrote to disk: %s", candidate)
+		}
 	}
 }
