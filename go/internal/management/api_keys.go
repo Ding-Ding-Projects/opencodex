@@ -1,7 +1,9 @@
 package management
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"net/http"
 	"sort"
 	"strings"
@@ -268,7 +270,24 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 		if body.Name == "" {
 			body.Name = "default"
 		}
-		if !printableName(body.Name, 80) || len(body.Key) < 24 || len(body.Key) > 512 || strings.ContainsAny(body.Key, "\x00\r\n") {
+		if !printableName(body.Name, 80) {
+			writeError(w, http.StatusBadRequest, "name or key is invalid")
+			return
+		}
+		// The server MINTS the key when the caller does not bring one. The
+		// oracle generates it here and returns it once
+		// (src/server/management/oauth-account-routes.ts), so requiring a
+		// caller-supplied secret made `ocx access key create` unusable.
+		minted := body.Key == ""
+		if minted {
+			generated, genErr := generateProxyAPIKey()
+			if genErr != nil {
+				writeError(w, http.StatusInternalServerError, "API key could not be generated")
+				return
+			}
+			body.Key = generated
+		}
+		if len(body.Key) < 24 || len(body.Key) > 512 || strings.ContainsAny(body.Key, "\x00\r\n") {
 			writeError(w, http.StatusBadRequest, "name or key is invalid")
 			return
 		}
@@ -292,7 +311,19 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 			writeError(w, http.StatusInternalServerError, "API key could not be saved")
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"id": entry.ID, "name": entry.Name, "createdAt": entry.CreatedAt})
+		// The plaintext key is returned ONLY here, on creation. Every GET
+		// redacts it, so this response is the caller's single chance to store
+		// it — matching the oracle.
+		//
+		// A key the CALLER supplied is deliberately NOT echoed: the caller
+		// already has it, and reflecting a client secret back would put it in
+		// one more place (proxy logs, shell history of a piped response) for
+		// no benefit. That invariant predates this change and is kept.
+		response := map[string]any{"id": entry.ID, "name": entry.Name, "createdAt": entry.CreatedAt}
+		if minted {
+			response["key"] = entry.Key
+		}
+		writeJSON(w, http.StatusCreated, response)
 	case http.MethodDelete:
 		var body struct {
 			ID string `json:"id"`
@@ -404,4 +435,20 @@ func (a *API) notifyAPIKeysLocked() {
 	if a.onAPIKeysChanged != nil {
 		a.onAPIKeysChanged(append([]config.ProxyAPIKey(nil), a.config.APIKeys...))
 	}
+}
+
+// generateProxyAPIKey mints a proxy API key.
+//
+// The oracle derives its key from a SHA-256 over the provider keys, a random
+// salt and the clock, then prefixes "ocx_" and keeps 40 hex characters. The
+// shape is reproduced so a key looks the same to users and to anything
+// matching on the prefix; the entropy here comes from crypto/rand directly
+// rather than from hashing existing secrets, which is strictly stronger and
+// avoids deriving a new credential from stored ones.
+func generateProxyAPIKey() (string, error) {
+	buffer := make([]byte, 20)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return "ocx_" + hex.EncodeToString(buffer), nil
 }

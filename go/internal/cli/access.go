@@ -181,8 +181,13 @@ func accessModels(ctx context.Context, api runtimeAPI, args []string, streams IO
 
 func accessTest(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	rest := append([]string{}, args...)
+	// The oracle shifts the first token UNCONDITIONALLY, before parsing any
+	// flag. `access test --protocol chat m` therefore takes "--protocol" as
+	// the model and rejects the leftovers, rather than reading the flag.
+	// Skipping `--`-prefixed tokens here would silently accept an invocation
+	// the TypeScript CLI refuses.
 	model := ""
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "--") {
+	if len(rest) > 0 {
 		model, rest = rest[0], rest[1:]
 	}
 	wantsJSON := takeFlag(&rest, "--json")

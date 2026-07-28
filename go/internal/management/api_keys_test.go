@@ -1,6 +1,7 @@
 package management
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -99,5 +100,62 @@ func TestAPIAccessWildcardBindPrefersOriginOverHost(t *testing.T) {
 	api.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"baseUrl":"https://origin.example.test:8443/v1"`) || strings.Contains(response.Body.String(), "fallback.example.test") {
 		t.Fatalf("origin priority response=%d %s", response.Code, response.Body.String())
+	}
+}
+
+// The CLI sends only {name}: the oracle generates the key server-side and
+// returns it once. Requiring a caller-supplied secret made `ocx access key
+// create` impossible, which a permissive CLI stub had hidden.
+func TestProxyAPIKeyCreationMintsAndReturnsTheKeyOnce(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"desktop"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("created=%d %s", created.Code, created.Body.String())
+	}
+	var payload struct{ ID, Name, Key, CreatedAt string }
+	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Key == "" {
+		t.Fatal("creation must return the minted key; it is the caller's only chance to store it")
+	}
+	if !strings.HasPrefix(payload.Key, "ocx_") || len(payload.Key) != 44 {
+		t.Fatalf("key = %q, want the oracle's ocx_ + 40 hex shape", payload.Key)
+	}
+	if len(cfg.APIKeys) != 1 || cfg.APIKeys[0].Key != payload.Key {
+		t.Fatalf("the returned key must be the persisted one: %+v", cfg.APIKeys)
+	}
+
+	// Two creations must not collide.
+	second := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"laptop"}`)
+	var other struct{ Key string }
+	if err := json.Unmarshal(second.Body.Bytes(), &other); err != nil {
+		t.Fatal(err)
+	}
+	if other.Key == payload.Key {
+		t.Fatal("two minted keys must differ")
+	}
+
+	// Every later read redacts it.
+	listed := serveManagement(api, http.MethodGet, "/api/keys", "")
+	if strings.Contains(listed.Body.String(), payload.Key) {
+		t.Fatalf("listing leaked the key: %s", listed.Body.String())
+	}
+}
+
+// A key the caller brought is stored but never echoed: reflecting a client
+// secret would put it in one more place for no benefit.
+func TestProxyAPIKeyCreationDoesNotEchoACallerSuppliedKey(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+	secret := "ocx_caller_supplied_secret_123456789"
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"n","key":"`+secret+`"}`)
+	if created.Code != http.StatusCreated || strings.Contains(created.Body.String(), secret) {
+		t.Fatalf("created=%d %s", created.Code, created.Body.String())
+	}
+	if len(cfg.APIKeys) != 1 || cfg.APIKeys[0].Key != secret {
+		t.Fatalf("the supplied key must still be stored: %+v", cfg.APIKeys)
 	}
 }

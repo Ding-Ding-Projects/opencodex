@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/management"
 )
 
 // accessServer records every request and answers with the supplied payload.
@@ -244,6 +247,12 @@ func TestAccessTestRejectsBadInput(t *testing.T) {
 	}{
 		{args: []string{"test"}, want: "model is required"},
 		{args: []string{"test", "m", "--protocol", "grpc"}, want: "--protocol must be chat, responses, or messages"},
+		// The oracle shifts the first token unconditionally, so a flag placed
+		// before the model becomes the model and the rest are leftovers.
+		// Expected strings produced by running src/cli/access.ts.
+		{args: []string{"test", "--protocol", "chat", "m"}, want: "Unexpected argument(s): chat m"},
+		{args: []string{"test", "--protocol", "grpc"}, want: "Unexpected argument(s): grpc"},
+		{args: []string{"test", "--json", "m"}, want: "Unexpected argument(s): m"},
 	} {
 		server, calls := accessServer(t, `{}`)
 		_, _, err := runAccessWith(t, server, testCase.args...)
@@ -276,5 +285,47 @@ func TestAPIKeyAliasForwardsIntoAccessKey(t *testing.T) {
 	}
 	if reflect.ValueOf(commandSpecs[position].Handler).Pointer() != reflect.ValueOf(runAccessKey).Pointer() {
 		t.Fatal("api-key resolves to the wrong handler")
+	}
+}
+
+// End to end against the REAL management handler, not a permissive stub.
+//
+// The stub-only test above passes whatever the server would have rejected:
+// the Go server used to require a caller-supplied key and never returned one,
+// so `ocx access key create` could not work at all and no CLI-level test
+// noticed. This drives the actual handler.
+func TestAccessKeyCreateAgainstTheRealManagementHandler(t *testing.T) {
+	cfg := config.Default()
+	api, err := management.New(management.Options{Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(api)
+	t.Cleanup(server.Close)
+
+	var out, errOut bytes.Buffer
+	if err := accessDispatch(context.Background(), testAPI(server), []string{"key", "create", "desktop"},
+		IO{Out: &out, Err: &errOut}); err != nil {
+		t.Fatalf("create failed against the real server: %v", err)
+	}
+
+	if len(cfg.APIKeys) != 1 {
+		t.Fatalf("server stored %d keys, want 1", len(cfg.APIKeys))
+	}
+	stored := cfg.APIKeys[0].Key
+	if !strings.Contains(out.String(), "Key (shown once): "+stored) {
+		t.Fatalf("output %q does not present the stored key", out.String())
+	}
+	if strings.Contains(errOut.String(), stored) {
+		t.Fatalf("credential reached stderr: %q", errOut.String())
+	}
+
+	// The listing that follows must not repeat it.
+	var listOut bytes.Buffer
+	if err := accessDispatch(context.Background(), testAPI(server), []string{"key", "list"}, IO{Out: &listOut}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(listOut.String(), stored) {
+		t.Fatalf("listing leaked the key: %q", listOut.String())
 	}
 }
