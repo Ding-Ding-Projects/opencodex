@@ -255,8 +255,18 @@ func TestConfigValidateReadsFileAndStdin(t *testing.T) {
 	}
 
 	out, err = runConfigParityWith(t, `{"port":-5,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`, "validate", "-")
-	if err == nil {
-		t.Fatalf("an invalid candidate must fail: %q", out)
+	// The oracle REPORTS the failure and still exits 0: config-command.ts sets
+	// process.exitCode = 1 inside runCliAction's callback, which then returns
+	// 0, and index.ts assigns that return value over it. Measured:
+	//
+	//	$ ocx config validate bad.json; echo $?
+	//	Config is invalid: schema_invalid: port: Too small: ...
+	//	0
+	//
+	// Asserting a non-zero exit here pinned behavior the TypeScript CLI does
+	// not have.
+	if err != nil {
+		t.Fatalf("the oracle reports an invalid candidate without failing: %v", err)
 	}
 	if !strings.Contains(out, "Config is invalid") {
 		t.Fatalf("validate must report the reason: %q", out)

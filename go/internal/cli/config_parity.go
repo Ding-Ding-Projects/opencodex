@@ -34,6 +34,21 @@ type configDiagnostics struct {
 	source   string
 	failure  string
 	warnings []string
+	// keyOrder is the order the file listed its keys in. A Go map cannot
+	// carry it, and the output must reproduce it (see config_order.go).
+	keyOrder []string
+	// literalOrder marks a document that never went through the schema (the
+	// built-in defaults), so its keys print in their literal order rather
+	// than the schema's declaration order.
+	literalOrder bool
+}
+
+// ordered arranges the diagnostics' document for printing.
+func (d configDiagnostics) ordered(document map[string]any) orderedConfigDocument {
+	if d.literalOrder {
+		return orderDefaultConfigDocument(document, d.keyOrder)
+	}
+	return orderConfigDocument(document, d.keyOrder)
 }
 
 func readConfigDiagnostics() (configDiagnostics, error) {
@@ -46,15 +61,27 @@ func readConfigDiagnostics() (configDiagnostics, error) {
 		// show/get/export never surface its contents. That matters beyond
 		// tidiness: exporting an unvalidated file would copy whatever
 		// credentials it holds into a new location.
-		return configDiagnostics{document: defaultConfigDocument(), source: "fallback", failure: reason}
+		return configDiagnostics{
+			document:     defaultConfigDocument(),
+			source:       "fallback",
+			failure:      reason,
+			keyOrder:     defaultConfigKeyOrder(),
+			literalOrder: true,
+		}
 	}
 	raw, readErr := os.ReadFile(path)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
-			return configDiagnostics{document: defaultConfigDocument(), source: "default"}, nil
+			return configDiagnostics{
+				document:     defaultConfigDocument(),
+				source:       "default",
+				keyOrder:     defaultConfigKeyOrder(),
+				literalOrder: true,
+			}, nil
 		}
 		return configDiagnostics{}, readErr
 	}
+	fileOrder := readConfigKeyOrder([]byte(strings.TrimPrefix(string(raw), "\ufeff")))
 	// A BOM is stripped the way the oracle does before parsing.
 	var decoded any
 	if json.Unmarshal([]byte(strings.TrimPrefix(string(raw), "\ufeff")), &decoded) != nil {
@@ -69,7 +96,7 @@ func readConfigDiagnostics() (configDiagnostics, error) {
 	// otherwise-good file to fallback.
 	normalized, warnings, normalizeErr := normalizeConfigCandidate(configDocument(record))
 	if normalizeErr == nil {
-		return configDiagnostics{document: normalized, source: "file", warnings: warnings}, nil
+		return configDiagnostics{document: normalized, source: "file", warnings: warnings, keyOrder: fileOrder}, nil
 	}
 	// RETRY over the defaults before giving up, the way readConfigDiagnostics
 	// does. A file that only omits required keys -- or writes `providers` as
@@ -81,9 +108,33 @@ func readConfigDiagnostics() (configDiagnostics, error) {
 	// original schema error when even the merged form fails.
 	merged, mergedWarnings, mergedErr := normalizeConfigCandidate(mergeConfigDefaults(configDocument(record)))
 	if mergedErr == nil {
-		return configDiagnostics{document: merged, source: "file", warnings: mergedWarnings}, nil
+		// The merge layers the file OVER the defaults, so the resulting object
+		// is built in the defaults' order first. Keys the file added keep
+		// their file position after those.
+		return configDiagnostics{
+			document: merged,
+			source:   "file",
+			warnings: mergedWarnings,
+			keyOrder: append(defaultConfigKeyOrder(), fileOrder...),
+		}, nil
 	}
 	return fallback(normalizeErr.Error()), nil
+}
+
+// defaultConfigKeyOrder is the literal key order of the oracle's
+// getDefaultConfig(), which is what a default/fallback document prints in.
+func defaultConfigKeyOrder() []string {
+	return encodeConfigKeyOrder(configKeyOrder{
+		root: []string{
+			"port", "openaiProviderTierVersion", "providers", "defaultProvider",
+			"subagentModels", "multiAgentGuidanceEnabled", "websockets",
+			"codexAutoStart", "codexShimAutoRestore",
+		},
+		providers: []string{"openai"},
+		perName: map[string][]string{
+			"openai": {"adapter", "baseUrl", "authMode", "codexAccountMode"},
+		},
+	})
 }
 
 // mergeConfigDefaults layers the document over the defaults, mirroring the
@@ -201,11 +252,35 @@ func normalizeValidatedDocument(document configDocument) (configDocument, error)
 	if err := validateConfigDocument(document); err != nil {
 		return nil, err
 	}
-	base := map[string]any(defaultConfigDocument())
+	// Materialize ONLY the defaults the schema itself declares.
+	//
+	// configSchema has exactly two `.default(...)` entries -- port and
+	// defaultProvider -- so a parsed config gains those and nothing else.
+	// Layering the whole getDefaultConfig() document here added
+	// subagentModels, websockets, codexAutoStart and the rest to files that
+	// never contained them, which `config show` and `config export` then
+	// printed and `config set` would have PERSISTED.
+	normalized := make(map[string]any, len(document)+2)
 	for key, value := range document {
-		base[key] = value
+		normalized[key] = value
 	}
-	return configDocument(base), nil
+	if _, present := normalized["port"]; !present {
+		normalized["port"] = float64(10100)
+	}
+	if _, present := normalized["defaultProvider"]; !present {
+		normalized["defaultProvider"] = "openai"
+	}
+	return configDocument(normalized), nil
+}
+
+// redactedConfigMap masks the secret-named fields and returns the result as a
+// plain map, ready to be ordered for printing.
+func redactedConfigMap(document configDocument) map[string]any {
+	redacted, _ := redactConfigValue(map[string]any(document), "").(map[string]any)
+	if redacted == nil {
+		return map[string]any{}
+	}
+	return redacted
 }
 
 // saveConfigDocument writes the VALIDATED GENERIC document, not a typed
@@ -315,7 +390,7 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 		if err != nil {
 			return err
 		}
-		redacted := redactConfigValue(map[string]any(diagnostics.document), "")
+		redacted := diagnostics.ordered(redactedConfigMap(diagnostics.document))
 		if !source {
 			// show always prints JSON: the oracle passes true for wantsJson.
 			return printData(streams, redacted, true, nil)
@@ -326,12 +401,18 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 		if diagnostics.failure != "" {
 			failure = diagnostics.failure
 		}
-		return printData(streams, map[string]any{
-			"config":   redacted,
-			"source":   diagnostics.source,
-			"error":    failure,
-			"warnings": warningList(diagnostics.warnings),
-		}, true, nil)
+		// The envelope's own key order is the object literal's order in
+		// src/cli/config-command.ts, not alphabetical.
+		envelope, err := orderedObject([][2]any{
+			{"config", redacted},
+			{"source", diagnostics.source},
+			{"error", failure},
+			{"warnings", warningList(diagnostics.warnings)},
+		})
+		if err != nil {
+			return err
+		}
+		return printData(streams, envelope, true, nil)
 
 	case "get":
 		if len(rest) == 0 {
@@ -435,13 +516,24 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 		// Degrade first, exactly as the read path does: a file the oracle
 		// accepts with a dropped field must validate here too.
 		if _, _, err := normalizeConfigCandidate(document); err != nil {
-			// Invalid config is a reported result, not a crash: the oracle
-			// prints the reason and exits 1.
-			if printErr := printData(streams, map[string]any{"ok": false, "error": err.Error()},
-				wantsJSON, []string{"Config is invalid: " + err.Error()}); printErr != nil {
-				return printErr
-			}
-			return errSilentFailure
+			// Invalid config is a REPORTED result, and the oracle exits 0.
+			//
+			// That is not what config-command.ts appears to say: it runs
+			// `process.exitCode = 1` on the failure branch. But the assignment
+			// happens INSIDE runCliAction's action callback, which then
+			// returns 0, and index.ts overwrites process.exitCode with that
+			// return value -- so the 1 never survives. Measured:
+			//
+			//	$ ocx config validate bad.json; echo $?
+			//	Config is invalid: schema_invalid: ...
+			//	0
+			//
+			// Exiting 1 here would be the more useful behavior and it is what
+			// the TypeScript author intended, but the oracle is the contract:
+			// a script written against the TS CLI would break on the stricter
+			// Go one. Fixing it belongs in src/, which this port does not own.
+			return printData(streams, map[string]any{"ok": false, "error": err.Error()},
+				wantsJSON, []string{"Config is invalid: " + err.Error()})
 		}
 		reported := source
 		if reported == "" {
@@ -459,13 +551,14 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 		if err := rejectArgs(rest, configUsage, false); err != nil {
 			return err
 		}
-		document, _, err := readConfigDocument()
+		diagnostics, err := readConfigDiagnostics()
 		if err != nil {
 			return err
 		}
 		// Export is a BACKUP, so it is deliberately not redacted -- a masked
 		// copy could not be imported back. It is written 0600 for that reason.
-		encoded, err := json.MarshalIndent(map[string]any(document), "", "  ")
+		encoded, err := json.MarshalIndent(
+			diagnostics.ordered(map[string]any(diagnostics.document)), "", "  ")
 		if err != nil {
 			return err
 		}
