@@ -190,3 +190,31 @@ func jsonNumberOf(value float64) json.Number {
 	}
 	return json.Number(strconv.FormatFloat(value, 'g', -1, 64))
 }
+
+// policyAsMap renders a policy back into the untyped shape the normalizer
+// reads.
+//
+// The normalizer is the single place that decides what a policy means, so a
+// policy arriving from a loader goes back through it rather than being trusted
+// as-is. That requires handing it the same shape a parsed document has,
+// numbers included.
+func policyAsMap(policy StorageCleanupPolicy) map[string]any {
+	object := map[string]any{
+		"enabled":  policy.Enabled,
+		"trigger":  map[string]any{"archivedBytesOver": jsonNumberOf(policy.Trigger.ArchivedBytesOver)},
+		"target":   targetAsMap(policy.Target),
+		"schedule": string(policy.Schedule),
+		"mode":     policy.Mode,
+	}
+	if policy.LastRun != nil {
+		object["lastRun"] = map[string]any{
+			"at":         jsonNumberOf(policy.LastRun.At),
+			"freedBytes": jsonNumberOf(policy.LastRun.FreedBytes),
+			"removed":    jsonNumberOf(policy.LastRun.Removed),
+		}
+	}
+	if policy.NextRun != nil {
+		object["nextRun"] = jsonNumberOf(*policy.NextRun)
+	}
+	return object
+}
