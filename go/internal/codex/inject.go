@@ -202,9 +202,26 @@ func InjectConfig(content string, options InjectOptions) (string, InjectResult, 
 	if err != nil {
 		return content, InjectResult{}, err
 	}
+	// The external-provider check comes FIRST, matching the oracle: a config
+	// somebody else manages is returned untouched, and an ambiguous marker in
+	// it must not fail a sync that was never going to write anything.
 	if routing.Provider != "" && routing.Provider != "openai" && routing.Provider != "opencodex" {
 		return content, InjectResult{PreservedExternalProvider: routing.Provider}, nil
 	}
+	// Marker-owned native defaults are OpenCodex residue, not part of the
+	// user's baseline. They are cleaned before any root key is inserted,
+	// because inserting ahead of a marker-owned first table would separate
+	// that table's marker from its header and make the next run refuse.
+	//
+	// An ambiguous marker fails closed: injection returns the original content
+	// and an error rather than writing a config it could not read.
+	original := content
+	baseline := TransformManagedSubagentDefaults(content, nil)
+	if !baseline.OK {
+		return original, InjectResult{}, fmt.Errorf(
+			"existing OpenCodex-managed native sub-agent defaults are ambiguous: %s; no files were changed", baseline.Error)
+	}
+	content = baseline.Content
 	normalized, eol := normalizeEOL(content)
 	cleaned := stripOpenCodexNormalized(normalized)
 	cleaned = StripRootContextWindowOverrides(cleaned)
@@ -222,7 +239,10 @@ func InjectConfig(content string, options InjectOptions) (string, InjectResult, 
 	}
 	cleaned = strings.TrimRight(cleaned, "\n") + "\n"
 	output := applyEOL(cleaned, eol)
-	result.Changed = output != content
+	// Compared against the ORIGINAL bytes, not the already-cleaned ones:
+	// removing residue IS a change, and measuring against the cleaned content
+	// would report false and skip the write that persists the removal.
+	result.Changed = output != original
 	return output, result, nil
 }
 
@@ -315,6 +335,18 @@ func StripOpenCodexConfig(content string) (string, error) {
 	if err := validateTOML([]byte(content)); err != nil {
 		return content, err
 	}
+	// Managed native defaults are OpenCodex-owned too, so a restore has to take
+	// them with it. Leaving them would keep pointing Codex at a subagent model
+	// this proxy chose, after the user asked for their native setup back.
+	//
+	// Ambiguity fails closed here as well: better to leave the file alone and
+	// say why than to guess during a restore.
+	defaults := TransformManagedSubagentDefaults(content, nil)
+	if !defaults.OK {
+		return content, fmt.Errorf(
+			"existing OpenCodex-managed native sub-agent defaults are ambiguous: %s; no files were changed", defaults.Error)
+	}
+	content = defaults.Content
 	normalized, eol := normalizeEOL(content)
 	return applyEOL(stripOpenCodexNormalized(normalized), eol), nil
 }

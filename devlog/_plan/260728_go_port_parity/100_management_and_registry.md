@@ -123,6 +123,28 @@ Codex 주입/동기화 중 실행되며 `config.toml`의 표시된(marked) `[age
 | 6 | CRLF 파일 | 줄 끝 보존, 멱등 |
 | 7 | 외부 프로바이더 설정 | 불변 |
 
+### 100.3 분할 (측정 후 정정)
+
+오라클은 이 변환을 **세 곳**에서 부른다(`src/codex/inject.ts:511`, `:568`, `:703`).
+각각 성격이 다르다.
+
+| 호출 | 하는 일 | 상태 |
+| --- | --- | --- |
+| `:511` | 주입 전 baseline 정리, 모호하면 거부 | 포팅됨 |
+| `:703` | 복원 시 소유 잔여물 제거 | 포팅됨 |
+| `:568` | 설정에서 원하는 기본값을 계산해 **쓴다** | **미포팅** |
+
+쓰기 경로가 남은 이유는 변환 자체가 아니라 그 앞단이다.
+`configuredManagedSubagentDefaults(config)`가 `syncCodexSubagentDefaults` 옵트인,
+`injectionModel`, `injectionEffort`를 읽어 원하는 상태를 만들고, 사용자 소유
+`openai_base_url`이 있으면 **주입 자체를 포기하고 경고를 낸다**
+(`keptUserBaseUrl ? null : desired`). 그 설정 매핑과 경고 정책은 변환과 독립적인
+단위이므로 자체 슬라이스로 남긴다.
+
+지금 상태는 절반이 아니라 **안전한 절반**이다: Go는 관리 기본값을 쓰지 않지만,
+TypeScript가 쓴 것을 정리하고 복원할 수는 있다. 반대였다면 쓰기만 하고 치우지
+못하는 상태가 됐을 것이다.
+
 ## 스코프 경계
 
 IN: `management/api.go`, `management/system.go`, `management/agents.go`, `cli/serve.go`,
