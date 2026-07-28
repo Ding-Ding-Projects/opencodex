@@ -215,3 +215,77 @@ func TestNormalizeQuotaResetAtMatchesTheOracle(t *testing.T) {
 		})
 	}
 }
+
+// The oracle's toFiniteNumber accepts a numeric STRING, so utilization may
+// arrive as "0.42". Decoding into *float64 made the whole response fail, which
+// turned a known percentage into an unknown one and reshuffled rotation.
+func TestAnthropicQuotaAcceptsAStringUtilization(t *testing.T) {
+	cache, _ := quotaCacheAgainst(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"five_hour":{"utilization":"0.42","resets_at":"1800000000"}}`))
+	})
+	got := cache.Refresh(context.Background(), "acct-1", "bearer", false)
+	if !got.Known() {
+		t.Fatalf("a string utilization was dropped: %#v", got)
+	}
+	// Plain clamp, no rescaling: the oracle returns 0.42 for 0.42.
+	if *got.FiveHourPercent != 0.42 {
+		t.Fatalf("percent = %v, oracle returns 0.42", *got.FiveHourPercent)
+	}
+	if got.FiveHourResetAt == nil || got.FiveHourResetAt.UnixMilli() != 1800000000000 {
+		t.Fatalf("numeric reset string = %v, oracle returns 1800000000000 ms", got.FiveHourResetAt)
+	}
+}
+
+// toFiniteNumber rejects a non-numeric string rather than coercing it to zero,
+// which would make a drained account look empty.
+func TestToFiniteNumberMatchesTheOracle(t *testing.T) {
+	for _, testCase := range []struct {
+		raw  any
+		want *float64
+	}{
+		{raw: float64(42), want: func() *float64 { v := 42.0; return &v }()},
+		{raw: "0.42", want: func() *float64 { v := 0.42; return &v }()},
+		{raw: " 7 ", want: func() *float64 { v := 7.0; return &v }()},
+		{raw: "", want: nil},
+		{raw: "abc", want: nil},
+		{raw: nil, want: nil},
+		{raw: true, want: nil},
+	} {
+		got := toFiniteNumber(testCase.raw)
+		if (got == nil) != (testCase.want == nil) {
+			t.Fatalf("toFiniteNumber(%#v) = %v, want %v", testCase.raw, got, testCase.want)
+		}
+		if got != nil && *got != *testCase.want {
+			t.Fatalf("toFiniteNumber(%#v) = %v, want %v", testCase.raw, *got, *testCase.want)
+		}
+	}
+}
+
+// A stalled upstream must not hold the in-flight entry open forever. Without a
+// deadline one hung connection freezes quota refresh for the whole pool
+// instead of degrading to the last-good reading.
+func TestAnthropicQuotaProbeHasADeadline(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	cache, _ := quotaCacheAgainst(t, func(writer http.ResponseWriter, request *http.Request) {
+		select {
+		case <-block:
+		case <-request.Context().Done():
+		}
+	})
+	// Shorten the wait: the production deadline is 8s, but the point is that a
+	// deadline EXISTS and the caller is released rather than blocked forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	done := make(chan AccountQuota, 1)
+	go func() { done <- cache.Refresh(ctx, "acct-1", "bearer", false) }()
+	select {
+	case got := <-done:
+		if !got.Unavailable {
+			t.Fatalf("a stalled probe must report unavailable: %#v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Refresh never returned; the probe has no deadline")
+	}
+}

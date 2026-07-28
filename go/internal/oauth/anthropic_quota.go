@@ -34,6 +34,13 @@ const AnthropicUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 // (observed 429 under repeated probing).
 const accountQuotaTTL = 10 * time.Minute
 
+// quotaProbeTimeout matches the oracle's REQUEST_TIMEOUT_MS.
+//
+// Without a deadline a stalled upstream holds the in-flight entry open
+// forever, and every joiner blocks with it: one hung connection would freeze
+// quota refresh for the whole pool rather than degrading to last-good.
+const quotaProbeTimeout = 8 * time.Second
+
 // AccountQuota is one account's cached usage.
 type AccountQuota struct {
 	// FiveHourPercent is 0..100, or nil when never successfully probed.
@@ -166,6 +173,10 @@ func (c *AnthropicQuotaCache) probe(ctx context.Context, bearer string) (Account
 	if client == nil {
 		client = http.DefaultClient
 	}
+	// The deadline is applied here rather than relying on the caller, because a
+	// caller passing context.Background() is exactly the case that hangs.
+	ctx, cancel := context.WithTimeout(ctx, quotaProbeTimeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, AnthropicUsageEndpoint, nil)
 	if err != nil {
 		return AccountQuota{}, err
@@ -186,8 +197,12 @@ func (c *AnthropicQuotaCache) probe(ctx context.Context, bearer string) (Account
 	}
 	var body struct {
 		FiveHour *struct {
-			Utilization *float64 `json:"utilization"`
-			ResetsAt    any      `json:"resets_at"`
+			// `any`, not *float64: the oracle's toFiniteNumber accepts a
+			// STRING too, and a strict numeric decode fails the whole response
+			// when upstream sends "0.42" -- turning a known percentage into an
+			// unknown one and reshuffling rotation.
+			Utilization any `json:"utilization"`
+			ResetsAt    any `json:"resets_at"`
 		} `json:"five_hour"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
@@ -195,7 +210,7 @@ func (c *AnthropicQuotaCache) probe(ctx context.Context, bearer string) (Account
 	}
 	quota := AccountQuota{UpdatedAt: c.now()}
 	if body.FiveHour != nil {
-		if percent := normalizeQuotaPercent(body.FiveHour.Utilization); percent != nil {
+		if percent := normalizeQuotaPercent(toFiniteNumber(body.FiveHour.Utilization)); percent != nil {
 			quota.FiveHourPercent = percent
 		}
 		if resetAt := normalizeQuotaResetAt(body.FiveHour.ResetsAt); resetAt != nil {
@@ -282,3 +297,27 @@ func normalizeQuotaResetAt(raw any) *time.Time {
 }
 
 var numericStringPattern = regexp.MustCompile(`^\d+(\.\d+)?$`)
+
+// toFiniteNumber mirrors the oracle's helper of the same name: a finite number
+// passes through, a non-blank numeric STRING is parsed, and everything else is
+// absent. JSON from this endpoint has been seen carrying both shapes.
+func toFiniteNumber(raw any) *float64 {
+	switch value := raw.(type) {
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+		return &value
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return nil
+		}
+		parsed, err := strconv.ParseFloat(trimmed, 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return nil
+		}
+		return &parsed
+	}
+	return nil
+}
