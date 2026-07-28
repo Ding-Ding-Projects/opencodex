@@ -82,7 +82,7 @@ func comboRows(result any) []map[string]any {
 }
 
 func runCombo(ctx context.Context, args []string, streams IO) error {
-	return comboDispatch(ctx, runtimeAPI{}, args, streams)
+	return comboDispatch(ctx, newRuntimeAPI(), args, streams)
 }
 
 // comboDispatch is the seam a test drives with an injected client.
@@ -268,7 +268,7 @@ const routeUsage = `Usage:
 // runRoute is the `ocx route combo ...` wrapper. It accepts nothing else, so a
 // mistyped surface fails loudly instead of silently doing combo work.
 func runRoute(ctx context.Context, args []string, streams IO) error {
-	return routeDispatch(ctx, runtimeAPI{}, args, streams)
+	return routeDispatch(ctx, newRuntimeAPI(), args, streams)
 }
 
 // routeDispatch is split out so a test can assert the FORWARDED request rather

@@ -244,13 +244,13 @@ func TestConfigurationIsResolvedOncePerClient(t *testing.T) {
 	defer server.Close()
 
 	loads := 0
-	api := &runtimeAPI{
-		BaseURL: server.URL,
-		loadCfg: func() (*config.Config, error) {
-			loads++
-			return &config.Config{AuthToken: "t"}, nil
-		},
+	shared := newRuntimeAPI()
+	shared.BaseURL = server.URL
+	shared.loadCfg = func() (*config.Config, error) {
+		loads++
+		return &config.Config{AuthToken: "t"}, nil
 	}
+	api := &shared
 	for range 3 {
 		if _, err := api.request(context.Background(), http.MethodGet, "/api/combos", nil); err != nil {
 			t.Fatal(err)

@@ -38,7 +38,7 @@ var observeSleep = func(ctx context.Context, d time.Duration) error {
 var observeFollowRounds = 0
 
 func runObserve(ctx context.Context, args []string, streams IO) error {
-	return observeDispatch(ctx, runtimeAPI{}, args, streams)
+	return observeDispatch(ctx, newRuntimeAPI(), args, streams)
 }
 
 // The four top-level aliases the oracle dispatches straight into observe
@@ -87,15 +87,27 @@ func observeDispatch(ctx context.Context, api runtimeAPI, args []string, streams
 	return usageError(observeUsage, "unknown observe command %s", section)
 }
 
-// observeQuery builds a query string, omitting absent values and preserving the
-// caller's key order the way URLSearchParams does.
-func observeQuery(pairs [][2]string) string {
+// queryParam is one entry of a query string. Presence is tracked separately
+// from the value because they mean different things: the oracle calls
+// search.set for every DEFINED option, so `--provider ""` serializes as
+// `provider=` and actually filters, while an omitted option is absent from the
+// URI entirely. Collapsing the two would silently turn a deliberate
+// empty-string filter into no filter at all.
+type queryParam struct {
+	key     string
+	value   string
+	present bool
+}
+
+// observeQuery builds a query string, omitting absent parameters and
+// preserving the caller's key order the way URLSearchParams does.
+func observeQuery(params []queryParam) string {
 	parts := []string{}
-	for _, pair := range pairs {
-		if pair[1] == "" {
+	for _, param := range params {
+		if !param.present {
 			continue
 		}
-		parts = append(parts, formURLEncode(pair[0])+"="+formURLEncode(pair[1]))
+		parts = append(parts, formURLEncode(param.key)+"="+formURLEncode(param.value))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -260,7 +272,7 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 		if err != nil {
 			return err
 		}
-		rawRows := rawLogRows(raw)
+		rawRows := orderedLogRows(raw)
 		if !follow && wantsJSON {
 			if err := printData(streams, data, true, nil); err != nil {
 				return err
@@ -278,7 +290,7 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 					// Re-marshalling the decoded map would sort the keys; the
 					// oracle's JSON.stringify preserves the order it parsed.
 					if rowIndex < len(rawRows) {
-						line = string(rawRows[rowIndex])
+						line = rawRows[rowIndex]
 					} else {
 						encoded, marshalErr := json.Marshal(row)
 						if marshalErr != nil {
@@ -378,27 +390,44 @@ func observeSimple(ctx context.Context, api runtimeAPI, path string, args []stri
 	return printData(streams, result, wantsJSON, summaryLines(result))
 }
 
-// rawLogRows slices the response bytes into per-row JSON, preserving each
-// object's original key order for --jsonl output.
-func rawLogRows(raw []byte) []json.RawMessage {
-	if len(raw) == 0 {
+// orderedLogRows re-serializes each OBJECT row with its original key order.
+//
+// It applies the same object-only filter as logRows, so index N here is the
+// same row as index N there; a payload like [1, {...}] would otherwise pair the
+// object with the number's bytes. Rows are re-serialized rather than copied
+// verbatim, because the oracle prints JSON.stringify output, which normalizes
+// whitespace and escape spelling.
+func orderedLogRows(raw []byte) []string {
+	value, err := decodeOrdered(raw)
+	if err != nil {
 		return nil
 	}
-	var direct []json.RawMessage
-	if json.Unmarshal(raw, &direct) == nil {
-		return direct
-	}
-	var wrapper map[string]json.RawMessage
-	if json.Unmarshal(raw, &wrapper) != nil {
+	items := value.values
+	if !value.present || (value.kind != 'a' && value.kind != 'o') {
 		return nil
 	}
-	for _, key := range []string{"logs", "entries", "requests"} {
-		if nested, present := wrapper[key]; present {
-			var rows []json.RawMessage
-			if json.Unmarshal(nested, &rows) == nil {
-				return rows
+	if value.kind == 'o' {
+		items = nil
+		for index, key := range value.keys {
+			if key != "logs" && key != "entries" && key != "requests" {
+				continue
+			}
+			if value.values[index].kind == 'a' {
+				items = value.values[index].values
+				break
 			}
 		}
 	}
-	return nil
+	out := []string{}
+	for _, item := range items {
+		if !item.isObject() {
+			continue
+		}
+		encoded, marshalErr := item.MarshalJSON()
+		if marshalErr != nil {
+			return nil
+		}
+		out = append(out, string(encoded))
+	}
+	return out
 }

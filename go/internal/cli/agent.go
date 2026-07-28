@@ -35,7 +35,7 @@ func clearableOption(args *[]string, flag string) (value any, present bool, err 
 }
 
 func runAgent(ctx context.Context, args []string, streams IO) error {
-	return agentDispatch(ctx, runtimeAPI{}, args, streams)
+	return agentDispatch(ctx, newRuntimeAPI(), args, streams)
 }
 
 // agentDispatch is the seam a test drives with an injected client.

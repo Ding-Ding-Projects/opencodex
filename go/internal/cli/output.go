@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -71,3 +72,124 @@ func orderedObject(pairs [][2]any) (orderedJSON, error) {
 	}
 	return orderedJSON{raw: append(out, '}')}, nil
 }
+
+// orderedValue is a JSON value that remembers its object key order.
+//
+// Printing the server's raw bytes preserves order but also preserves its
+// whitespace and escape spelling, which JSON.stringify normalizes. Decoding
+// into a map normalizes correctly but loses the order. This keeps both: parse
+// with a token decoder to record order, then re-serialize compactly.
+type orderedValue struct {
+	kind    byte // 'o' object, 'a' array, 's' scalar
+	keys    []string
+	values  []orderedValue
+	scalar  json.RawMessage
+	present bool
+}
+
+// decodeOrdered parses JSON while recording object key order.
+func decodeOrdered(raw []byte) (orderedValue, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	value, err := decodeOrderedFrom(decoder)
+	if err != nil {
+		return orderedValue{}, err
+	}
+	return value, nil
+}
+
+func decodeOrderedFrom(decoder *json.Decoder) (orderedValue, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return orderedValue{}, err
+	}
+	switch typed := token.(type) {
+	case json.Delim:
+		if typed == '{' {
+			out := orderedValue{kind: 'o', present: true}
+			for decoder.More() {
+				keyToken, keyErr := decoder.Token()
+				if keyErr != nil {
+					return orderedValue{}, keyErr
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return orderedValue{}, fmt.Errorf("object key was not a string")
+				}
+				child, childErr := decodeOrderedFrom(decoder)
+				if childErr != nil {
+					return orderedValue{}, childErr
+				}
+				out.keys = append(out.keys, key)
+				out.values = append(out.values, child)
+			}
+			if _, err := decoder.Token(); err != nil {
+				return orderedValue{}, err
+			}
+			return out, nil
+		}
+		out := orderedValue{kind: 'a', present: true}
+		for decoder.More() {
+			child, childErr := decodeOrderedFrom(decoder)
+			if childErr != nil {
+				return orderedValue{}, childErr
+			}
+			out.values = append(out.values, child)
+		}
+		if _, err := decoder.Token(); err != nil {
+			return orderedValue{}, err
+		}
+		return out, nil
+	default:
+		encoded, marshalErr := json.Marshal(typed)
+		if marshalErr != nil {
+			return orderedValue{}, marshalErr
+		}
+		return orderedValue{kind: 's', scalar: encoded, present: true}, nil
+	}
+}
+
+// MarshalJSON re-serializes compactly, preserving the recorded key order.
+func (v orderedValue) MarshalJSON() ([]byte, error) {
+	switch v.kind {
+	case 'o':
+		out := []byte{'{'}
+		for index, key := range v.keys {
+			if index > 0 {
+				out = append(out, ',')
+			}
+			encodedKey, err := json.Marshal(key)
+			if err != nil {
+				return nil, err
+			}
+			encodedValue, err := v.values[index].MarshalJSON()
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, encodedKey...)
+			out = append(out, ':')
+			out = append(out, encodedValue...)
+		}
+		return append(out, '}'), nil
+	case 'a':
+		out := []byte{'['}
+		for index := range v.values {
+			if index > 0 {
+				out = append(out, ',')
+			}
+			encoded, err := v.values[index].MarshalJSON()
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, encoded...)
+		}
+		return append(out, ']'), nil
+	default:
+		if len(v.scalar) == 0 {
+			return []byte("null"), nil
+		}
+		return v.scalar, nil
+	}
+}
+
+func (v orderedValue) isObject() bool { return v.kind == 'o' }

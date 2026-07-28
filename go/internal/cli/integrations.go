@@ -27,7 +27,7 @@ const integrationUsage = `Usage:
   ocx integration <claude|grok> <subcommand>`
 
 func runGrok(ctx context.Context, args []string, streams IO) error {
-	return grokDispatch(ctx, runtimeAPI{}, args, streams)
+	return grokDispatch(ctx, newRuntimeAPI(), args, streams)
 }
 
 // grokDispatch is the seam a test drives with an injected client.
@@ -170,7 +170,7 @@ func parseModelMap(raw string) (map[string]string, error) {
 }
 
 func runIntegration(ctx context.Context, args []string, streams IO) error {
-	return integrationDispatch(ctx, runtimeAPI{}, args, streams)
+	return integrationDispatch(ctx, newRuntimeAPI(), args, streams)
 }
 
 // integrationDispatch is split out so a test can prove the top-level

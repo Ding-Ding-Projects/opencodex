@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -53,6 +54,17 @@ type runtimeAPI struct {
 	// through to BackupInvalidConfig, which WRITES a backup file when the
 	// config fails to parse, so a command issuing several requests against a
 	// broken config would litter backups and repeat the warning each time.
+	// state is a POINTER so the client stays copyable. Every dispatcher passes
+	// runtimeAPI by value, and embedding a sync.Once or sync.Mutex directly
+	// would make `go vet` reject each of those copies.
+	state *runtimeState
+}
+
+// runtimeState holds the lazily resolved configuration shared by copies of a
+// client. `system status` fans its reads out across goroutines sharing one
+// client, so this has to be synchronized.
+type runtimeState struct {
+	once   sync.Once
 	cached *config.Config
 }
 
@@ -63,23 +75,39 @@ func (api runtimeAPI) client() *http.Client {
 	return http.DefaultClient
 }
 
+// configuration resolves and memoizes the config for this client.
+//
+// The lock is not decoration: `system status` fans the six status reads out
+// across goroutines sharing one client, so an unguarded lazy field is a real
+// data race on the very first request. sync.Once rather than a plain mutex
+// because the load itself must happen exactly once — loadConfig can WRITE a
+// backup file when the config fails to parse, and racing loaders would write
+// several.
 func (api *runtimeAPI) configuration() *config.Config {
-	if api.cached != nil {
-		return api.cached
+	state := api.state
+	if state == nil {
+		// A client built as a bare literal has no shared state. Lazily
+		// assigning one here would itself be the race the pointer exists to
+		// avoid, because every goroutine in a fan-out holds its own copy of
+		// the struct. Resolve into a throwaway instead, and let
+		// newRuntimeAPI's callers get the shared, once-only behavior.
+		state = &runtimeState{}
 	}
-	load := api.loadCfg
-	if load == nil {
-		load = func() (*config.Config, error) {
-			cfg, _, err := loadConfig()
-			return cfg, err
+	state.once.Do(func() {
+		load := api.loadCfg
+		if load == nil {
+			load = func() (*config.Config, error) {
+				cfg, _, err := loadConfig()
+				return cfg, err
+			}
 		}
-	}
-	cfg, err := load()
-	if err != nil || cfg == nil {
-		cfg = &config.Config{}
-	}
-	api.cached = cfg
-	return cfg
+		cfg, err := load()
+		if err != nil || cfg == nil {
+			cfg = &config.Config{}
+		}
+		state.cached = cfg
+	})
+	return state.cached
 }
 
 // managementToken resolves the admission credential the proxy expects.
@@ -273,4 +301,15 @@ func (api *runtimeAPI) requestWithRaw(ctx context.Context, method, path string, 
 		}
 	}
 	return decoded, raw, nil
+}
+
+// newRuntimeAPI builds a client whose lazily resolved configuration is shared
+// by every copy of it.
+//
+// The zero value works too, but each copy would then resolve its own config,
+// and `system status` copies the client into six goroutines. Constructing the
+// shared state up front means the config is read once, which matters because
+// loadConfig can write a backup file for an unparseable config.
+func newRuntimeAPI() runtimeAPI {
+	return runtimeAPI{state: &runtimeState{}}
 }

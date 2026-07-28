@@ -19,7 +19,7 @@ const systemUsage = `Usage:
   ocx system update status <job-id> [--json]`
 
 func runSystem(ctx context.Context, args []string, streams IO) error {
-	return systemDispatch(ctx, runtimeAPI{}, args, streams)
+	return systemDispatch(ctx, newRuntimeAPI(), args, streams)
 }
 
 // systemDispatch is the seam a test drives with an injected client.

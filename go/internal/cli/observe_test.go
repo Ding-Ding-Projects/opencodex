@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -17,8 +18,13 @@ import (
 func observeServer(t *testing.T, payload string) (*httptest.Server, *[]recordedCall) {
 	t.Helper()
 	calls := &[]recordedCall{}
+	// system status fans its reads out across goroutines, so the recorder is
+	// written concurrently and needs its own lock.
+	var recordMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordMu.Lock()
 		*calls = append(*calls, recordedCall{method: r.Method, path: r.URL.RequestURI()})
+		recordMu.Unlock()
 		_, _ = w.Write([]byte(payload))
 	}))
 	t.Cleanup(server.Close)
@@ -288,5 +294,43 @@ func TestObserveJSONLPreservesOrderInsideWrappers(t *testing.T) {
 	}
 	if line := strings.TrimSpace(out); line != `{"z":1,"a":2}` {
 		t.Fatalf("jsonl line = %s, want the server's own key order", line)
+	}
+}
+
+// logRows drops non-object entries, so the raw slice has to apply the same
+// filter or row N pairs with the wrong source value.
+func TestObserveJSONLPairsRowsWithTheirOwnSource(t *testing.T) {
+	server, _ := observeServer(t, `[1,{"z":1,"a":2}]`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := strings.TrimSpace(out); line != `{"z":1,"a":2}` {
+		t.Fatalf("jsonl line = %s, want the object row, not the number's bytes", line)
+	}
+}
+
+// The oracle prints JSON.stringify output, which normalizes whitespace and
+// escape spelling. Copying the server's bytes verbatim would keep both.
+func TestObserveJSONLNormalizesLikeJSONStringify(t *testing.T) {
+	server, _ := observeServer(t, `[ { "z" : "\u0061", "a":2 } ]`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := strings.TrimSpace(out); line != `{"z":"a","a":2}` {
+		t.Fatalf("jsonl line = %s, want compact normalized output in source order", line)
+	}
+}
+
+// Numbers must not be reformatted on the way through.
+func TestObserveJSONLPreservesNumberSpelling(t *testing.T) {
+	server, _ := observeServer(t, `[{"big":12345678901234567890,"rate":1e-7}]`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := strings.TrimSpace(out); !strings.Contains(line, "12345678901234567890") {
+		t.Fatalf("jsonl line = %s, want the large integer intact", line)
 	}
 }

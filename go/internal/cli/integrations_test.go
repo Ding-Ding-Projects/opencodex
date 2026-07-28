@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
@@ -17,12 +18,17 @@ import (
 func grokServer(t *testing.T, state string) (*httptest.Server, *[]recordedCall) {
 	t.Helper()
 	calls := &[]recordedCall{}
+	// system status fans its reads out across goroutines, so the recorder is
+	// written concurrently and needs its own lock.
+	var recordMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{}
 		if raw, _ := io.ReadAll(r.Body); len(raw) > 0 {
 			_ = json.Unmarshal(raw, &body)
 		}
+		recordMu.Lock()
 		*calls = append(*calls, recordedCall{method: r.Method, path: r.URL.RequestURI(), body: body})
+		recordMu.Unlock()
 		if r.Method == http.MethodGet && r.URL.Path == "/api/grok" {
 			_, _ = w.Write([]byte(state))
 			return
@@ -33,8 +39,13 @@ func grokServer(t *testing.T, state string) (*httptest.Server, *[]recordedCall) 
 	return server, calls
 }
 
+// testAPI builds a client the way production does, so a test exercises the
+// same shared-state path rather than a copy-per-goroutine one.
 func testAPI(server *httptest.Server) runtimeAPI {
-	return runtimeAPI{BaseURL: server.URL, loadCfg: func() (*config.Config, error) { return &config.Config{}, nil }}
+	api := newRuntimeAPI()
+	api.BaseURL = server.URL
+	api.loadCfg = func() (*config.Config, error) { return &config.Config{}, nil }
+	return api
 }
 
 func runGrokWith(t *testing.T, server *httptest.Server, args ...string) (string, error) {
