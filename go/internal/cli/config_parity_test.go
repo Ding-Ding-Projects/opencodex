@@ -1,0 +1,283 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// configHome points the CLI at a throwaway config directory and seeds it.
+func configHome(t *testing.T, contents string) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", dir)
+	path := filepath.Join(dir, "config.json")
+	if contents != "" {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func runConfigParityWith(t *testing.T, stdin string, args ...string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	err := runConfigParity(context.Background(), args, IO{In: strings.NewReader(stdin), Out: &out})
+	return out.String(), err
+}
+
+// Secret-named fields are masked, but an EMPTY one is left alone: masking it
+// would read as "a credential is set" when none is.
+func TestConfigShowRedactsSecretsButNotEmptyOnes(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{"apiKey":"SUPERSECRET","baseUrl":"u"},"q":{"apiKey":""}}}`)
+	out, err := runConfigParityWith(t, "", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "SUPERSECRET") {
+		t.Fatalf("show leaked a credential: %s", out)
+	}
+	if !strings.Contains(out, `"apiKey": "********"`) {
+		t.Fatalf("show did not mask the set key: %s", out)
+	}
+	if !strings.Contains(out, `"apiKey": ""`) {
+		t.Fatalf("an empty key must stay empty, not become a mask: %s", out)
+	}
+	if !strings.Contains(out, `"baseUrl": "u"`) {
+		t.Fatalf("non-secret fields must survive: %s", out)
+	}
+}
+
+func TestConfigGetWalksDotPathsAndRedacts(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{"apiKey":"SUPERSECRET","models":["a","b"]}}}`)
+
+	out, err := runConfigParityWith(t, "", "get", "port")
+	if err != nil || strings.TrimSpace(out) != "12000" {
+		t.Fatalf("get port = %q, %v", out, err)
+	}
+
+	out, err = runConfigParityWith(t, "", "get", "providers.p.apiKey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "SUPERSECRET") || !strings.Contains(out, "********") {
+		t.Fatalf("get leaked the key: %q", out)
+	}
+
+	// An object leaf prints as JSON rather than Go's map formatting.
+	out, err = runConfigParityWith(t, "", "get", "providers.p.models")
+	if err != nil || !strings.Contains(out, `"a"`) {
+		t.Fatalf("get array = %q, %v", out, err)
+	}
+}
+
+// Prototype-poisoning segments are refused. Go has no prototype chain, but
+// accepting them would write keys the TypeScript CLI then refuses to edit.
+func TestConfigRejectsBlockedAndMissingPaths(t *testing.T) {
+	configHome(t, `{"port":12000,"providers":{"p":{}}}`)
+	for _, testCase := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"get", "providers.__proto__.x"}, want: "invalid config path"},
+		{args: []string{"get", "providers.constructor"}, want: "invalid config path"},
+		{args: []string{"get", "nope"}, want: "config path not found: nope"},
+		{args: []string{"get", "providers.p.missing"}, want: "config path not found: providers.p.missing"},
+	} {
+		_, err := runConfigParityWith(t, "", testCase.args...)
+		if err == nil || err.Error() != testCase.want {
+			t.Fatalf("%v => %v, want %q", testCase.args, err, testCase.want)
+		}
+	}
+}
+
+// The oracle does NOT create missing parents; it rejects them. Creating them
+// would produce a config the TypeScript CLI refuses to write.
+func TestConfigSetRequiresAnExistingObjectParent(t *testing.T) {
+	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{}},"list":[1]}`)
+	before, _ := os.ReadFile(path)
+
+	for _, testCase := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"set", "a.b.c", "1"}, want: "config parent path not found: a"},
+		{args: []string{"set", "list.0.x", "1"}, want: "config parent path not found: list"},
+		{args: []string{"set", "port.deep", "1"}, want: "config parent path not found: port"},
+		{args: []string{"unset", "providers.p.zzz"}, want: "config path not found: providers.p.zzz"},
+	} {
+		_, err := runConfigParityWith(t, "", testCase.args...)
+		if err == nil || err.Error() != testCase.want {
+			t.Fatalf("%v => %v, want %q", testCase.args, err, testCase.want)
+		}
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("a rejected set must not touch the file")
+	}
+}
+
+func TestConfigSetAndUnsetPersist(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"http://u","apiKey":"k"}}}`)
+
+	if _, err := runConfigParityWith(t, "", "set", "providers.p.baseUrl", "http://v"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runConfigParityWith(t, "", "get", "providers.p.baseUrl")
+	if err != nil || strings.TrimSpace(out) != "http://v" {
+		t.Fatalf("after set = %q, %v", out, err)
+	}
+
+	// unset removes an OPTIONAL field. Removing a required one is refused by
+	// validation, which is the point of validating before writing.
+	if _, err := runConfigParityWith(t, "", "set", "providers.p.label", `"x"`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfigParityWith(t, "", "unset", "providers.p.label"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfigParityWith(t, "", "get", "providers.p.label"); err == nil {
+		t.Fatal("unset did not remove the field")
+	}
+	if _, err := runConfigParityWith(t, "", "unset", "providers.p.baseUrl"); err == nil {
+		t.Fatal("removing a required field must fail validation before it is written")
+	}
+	out, err = runConfigParityWith(t, "", "get", "providers.p.baseUrl")
+	if err != nil || strings.TrimSpace(out) != "http://v" {
+		t.Fatalf("the refused unset must not have been written: %q %v", out, err)
+	}
+}
+
+// A value is JSON first, literal string second, which is what lets an
+// unquoted word work.
+func TestConfigSetParsesJSONThenFallsBackToText(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	if _, err := runConfigParityWith(t, "", "set", "port", "13000"); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := runConfigParityWith(t, "", "get", "port")
+	if strings.TrimSpace(out) != "13000" {
+		t.Fatalf("numeric value = %q", out)
+	}
+	if _, err := runConfigParityWith(t, "", "set", "hostname", "localhost"); err != nil {
+		t.Fatal(err)
+	}
+	out, _ = runConfigParityWith(t, "", "get", "hostname")
+	if strings.TrimSpace(out) != "localhost" {
+		t.Fatalf("bare word value = %q", out)
+	}
+}
+
+// Export is a BACKUP: it is not redacted, because a masked copy could not be
+// imported back. That is exactly why it must be written owner-only.
+func TestConfigExportIsUnredactedAndOwnerOnly(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{"p":{"apiKey":"SUPERSECRET"}}}`)
+	target := filepath.Join(t.TempDir(), "backup.json")
+	if _, err := runConfigParityWith(t, "", "export", target); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "SUPERSECRET") {
+		t.Fatal("export must not redact; a masked backup cannot be restored")
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("export mode = %v, want 0600 for a file holding credentials", info.Mode().Perm())
+	}
+}
+
+func TestConfigExportToStdout(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	out, err := runConfigParityWith(t, "", "export", "-")
+	if err != nil || !strings.Contains(out, `"port": 12000`) {
+		t.Fatalf("export - = %q, %v", out, err)
+	}
+}
+
+func TestConfigImportRequiresConfirmationAndValidJSON(t *testing.T) {
+	path := configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	source := filepath.Join(t.TempDir(), "in.json")
+	if err := os.WriteFile(source, []byte(`{"port":14000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+
+	if _, err := runConfigParityWith(t, "", "import", source); err == nil ||
+		err.Error() != "import requires --yes" {
+		t.Fatalf("import without --yes = %v", err)
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Fatal("a refused import must not write")
+	}
+
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfigParityWith(t, "", "import", bad, "--yes"); err == nil {
+		t.Fatal("invalid JSON must be rejected")
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Fatal("an invalid import must not write")
+	}
+
+	if _, err := runConfigParityWith(t, "", "import", source, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := runConfigParityWith(t, "", "get", "port")
+	if strings.TrimSpace(out) != "14000" {
+		t.Fatalf("import did not replace the config: get port = %q", out)
+	}
+}
+
+func TestConfigValidateReadsFileAndStdin(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+
+	out, err := runConfigParityWith(t, "", "validate")
+	if err != nil || !strings.Contains(out, "Config is valid.") {
+		t.Fatalf("validate = %q, %v", out, err)
+	}
+
+	out, err = runConfigParityWith(t, `{"port":15000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`, "validate", "-")
+	if err != nil || !strings.Contains(out, "Config is valid.") {
+		t.Fatalf("validate - = %q, %v", out, err)
+	}
+
+	out, err = runConfigParityWith(t, `{"port":-5,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`, "validate", "-")
+	if err == nil {
+		t.Fatalf("an invalid candidate must fail: %q", out)
+	}
+	if !strings.Contains(out, "Config is invalid") {
+		t.Fatalf("validate must report the reason: %q", out)
+	}
+}
+
+// --source adds the diagnostics envelope rather than replacing the config.
+func TestConfigShowSourceAddsDiagnostics(t *testing.T) {
+	configHome(t, `{"port":12000,"hostname":"127.0.0.1","defaultProvider":"openai","providers":{}}`)
+	out, err := runConfigParityWith(t, "", "show", "--source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope["source"] != "file" {
+		t.Fatalf("source = %#v", envelope["source"])
+	}
+	if _, hasConfig := envelope["config"]; !hasConfig {
+		t.Fatalf("--source must keep the config under its own key: %s", out)
+	}
+}
