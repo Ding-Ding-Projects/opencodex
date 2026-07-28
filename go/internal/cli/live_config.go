@@ -127,6 +127,19 @@ func (a *configBackedAuth) RecordOutcome(account string, status types.OutcomeSta
 	a.resolver.RecordOutcome(account, status, meta)
 }
 
+// anthropicPoolConfig reads the opt-in from LIVE config on every call.
+//
+// The server holds this as a function for the same reason the resolver does:
+// capturing the value at construction would keep serving the boot-time answer
+// after a config change, and the feature would look dead until restart.
+func (a *configBackedAuth) anthropicPoolConfig() config.NormalizedAnthropicPool {
+	var pool config.NormalizedAnthropicPool
+	readLiveConfig(a.config, a.persistence, func(live *config.Config) {
+		pool = config.NormalizeAnthropicPool(live.AnthropicAccountPool)
+	})
+	return pool
+}
+
 // SearchCredentialAvailable projects sidecar eligibility without selecting or
 // leasing an account. Startup planning must not perturb request-time pool order.
 func (a *configBackedAuth) SearchCredentialAvailable(provider string) bool {

@@ -328,3 +328,12 @@ func PinnedWireAdapter(providerName, modelID string) string {
 	}
 	return ""
 }
+
+// SharedCohortHeader marks a prompt-cache key that many unrelated
+// conversations share, so account affinity must not key on it.
+//
+// It lives here because the fact is discovered during Claude translation but
+// consumed at routing time, and the two packages cannot import each other. It
+// is set by this proxy only: inbound copies are stripped before routing,
+// because a client that could set it would control pool affinity.
+const SharedCohortHeader = "X-Ocx-Prompt-Cache-Shared-Cohort"

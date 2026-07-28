@@ -159,6 +159,16 @@ func promptCacheKeyOf(normalized *types.NormalizedRequest) string {
 	return normalized.Options.PromptCacheKey
 }
 
+// sharedCohortFromHeaders reports whether the prompt-cache key is shared by
+// many unrelated conversations.
+//
+// A shared key must never become an affinity key: every Desktop conversation
+// carrying it would be pinned to one account, concentrating traffic there and
+// causing the rate limits the pool exists to spread.
+func sharedCohortFromHeaders(headers http.Header) bool {
+	return headers.Get(types.SharedCohortHeader) == "1"
+}
+
 // AnthropicPoolMaxFailoversPerRequest caps account rotations inside one
 // request, matching ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST.
 //

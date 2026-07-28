@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -65,11 +66,15 @@ type ResponsesCoreConfig struct {
 	// replacement for the SAME request. Optional: an embedding without the
 	// opt-in pool leaves it nil and keeps the previous behaviour.
 	RotateAnthropicPoolOn429 func(failedAccountID, retryAfter, sessionKey string) (string, bool)
-	PrepareImageRetry        func(*types.NormalizedRequest) error
-	RequestLogs              *RequestLogStore
-	StreamMode               string
-	ResponseState            *ResponseStateStore
-	SubagentFallback         *responseSubagentFallback
+	// AnthropicPoolRetryAfter reports the earliest live cooldown in seconds, so
+	// an exhausted-pool 429 can tell the client when to come back instead of
+	// leaving it to guess.
+	AnthropicPoolRetryAfter func() (int, bool)
+	PrepareImageRetry       func(*types.NormalizedRequest) error
+	RequestLogs             *RequestLogStore
+	StreamMode              string
+	ResponseState           *ResponseStateStore
+	SubagentFallback        *responseSubagentFallback
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -352,13 +357,18 @@ func applyResponsesEffortPolicy(normalized *types.NormalizedRequest, resolved *t
 }
 
 type forwardError struct {
-	status      int
-	kind        string
-	retryAfter  string
-	passthrough bool
-	body        []byte
-	headers     http.Header
-	err         error
+	status     int
+	kind       string
+	retryAfter string
+	// poolRetryAfter is OUR OWN cooldown, not the upstream's. An upstream
+	// Retry-After is deliberately not relayed (it can leak provider capacity
+	// and is often wrong for a proxied client), but a wait this proxy computed
+	// from its own pool state is safe and useful to send.
+	poolRetryAfter string
+	passthrough    bool
+	body           []byte
+	headers        http.Header
+	err            error
 }
 
 func (e *forwardError) Error() string { return e.err.Error() }
@@ -384,7 +394,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			// id: an empty key makes the pool hold the active account rather
 			// than rotate, so the two must not be conflated.
 			auth, err = core.config.Auth.ResolveAuth(ctx, resolved.Provider,
-				authSelectionKey(resolved.Provider, incoming, promptCacheKeyOf(normalized), false))
+				authSelectionKey(resolved.Provider, incoming, promptCacheKeyOf(normalized), sharedCohortFromHeaders(incoming)))
 			if err != nil {
 				if next, ok := core.nextCombo(normalized, pick, http.StatusUnauthorized, "invalid_api_key", err.Error(), ""); ok {
 					pick, resolved = next, next.Resolved
@@ -394,10 +404,18 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 				// failure. Reporting 401 would tell a client to re-authenticate
 				// when the correct response is to wait and retry.
 				status, kind := http.StatusUnauthorized, "authentication_error"
+				retryAfter := ""
 				if errors.Is(err, oauth.ErrNoUsableAccount) {
 					status, kind = http.StatusTooManyRequests, "rate_limit_error"
+					// Every account is cooling, so the client can be told
+					// exactly how long to wait rather than backing off blindly.
+					if core.config.AnthropicPoolRetryAfter != nil {
+						if seconds, ok := core.config.AnthropicPoolRetryAfter(); ok {
+							retryAfter = strconv.Itoa(seconds)
+						}
+					}
 				}
-				return nil, nil, nil, resolved, pick, &forwardError{status: status, kind: kind, err: err}
+				return nil, nil, nil, resolved, pick, &forwardError{status: status, kind: kind, poolRetryAfter: retryAfter, err: err}
 			}
 		}
 		if overrideKey != "" {
@@ -512,7 +530,7 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			resolved.Provider == "anthropic" &&
 			auth != nil && auth.AccountID != "" &&
 			anthropicFailovers < AnthropicPoolMaxFailoversPerRequest {
-			sessionKey := authSelectionKey(resolved.Provider, incoming, promptCacheKeyOf(normalized), false)
+			sessionKey := authSelectionKey(resolved.Provider, incoming, promptCacheKeyOf(normalized), sharedCohortFromHeaders(incoming))
 			if next, ok := core.config.RotateAnthropicPoolOn429(auth.AccountID, response.Header.Get("Retry-After"), sessionKey); ok && next != "" && next != auth.AccountID {
 				anthropicFailovers++
 				logSession.noteRecovery("anthropic-oauth-429")
@@ -1068,6 +1086,13 @@ func (core *ResponsesCore) writeForwardError(w http.ResponseWriter, err error) {
 		message := failure.err.Error()
 		if failure.kind == "upstream_error" {
 			message = fmt.Sprintf("Provider error %d: %s", failure.status, message)
+		}
+		// Only OUR OWN pool cooldown is emitted here. An upstream Retry-After
+		// stays unrelayed, which is a deliberate existing contract, but a wait
+		// this proxy computed from its own state is exactly what the client
+		// needs to schedule its retry.
+		if failure.poolRetryAfter != "" {
+			w.Header().Set("Retry-After", failure.poolRetryAfter)
 		}
 		writeClassifiedJSONError(w, failure.status, failure.kind, message)
 		return

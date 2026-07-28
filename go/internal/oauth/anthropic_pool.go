@@ -413,13 +413,12 @@ func (p *AnthropicPool) NoteFailure(accountID, retryAfter string, now time.Time)
 	if accountID == "" {
 		return
 	}
-	delay := ParseAnthropicRetryAfter(retryAfter, now)
+	// Parsed ONCE. Calling the parser twice would be safe today because both
+	// calls share the same `now`, but it invites a future date-based value to
+	// straddle a second boundary and label a cooldown it did not produce.
+	delay, source := ParseAnthropicRetryAfter(retryAfter, now), "retry-after"
 	if delay <= 0 {
-		delay = anthropicDefaultCooldown
-	}
-	source := "default"
-	if strings.TrimSpace(retryAfter) != "" && ParseAnthropicRetryAfter(retryAfter, now) > 0 {
-		source = "retry-after"
+		delay, source = anthropicDefaultCooldown, "default"
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()

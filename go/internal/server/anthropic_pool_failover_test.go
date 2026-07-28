@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -167,3 +168,62 @@ func TestAnthropicPoolFailoverIgnoresASameAccountReplacement(t *testing.T) {
 		t.Fatalf("upstream calls = %d, want a single attempt when the replacement is the same account", got)
 	}
 }
+
+// A shared prompt-cache key must not become an affinity key. Every Desktop
+// conversation carrying the same system-derived key would otherwise pin to one
+// account, concentrating traffic there and causing the rate limits the pool
+// exists to spread.
+func TestAuthSelectionKeyRefusesASharedCohortCacheKey(t *testing.T) {
+	headers := http.Header{}
+	if got := authSelectionKey("anthropic", headers, "P", sharedCohortFromHeaders(headers)); got != "P" {
+		t.Fatalf("unmarked cache key = %q, want P", got)
+	}
+	headers.Set(types.SharedCohortHeader, "1")
+	if got := authSelectionKey("anthropic", headers, "P", sharedCohortFromHeaders(headers)); got != "" {
+		t.Fatalf("shared cohort key = %q, want no affinity key", got)
+	}
+	// Only the exact marker counts, so an unrelated value cannot disable
+	// affinity for everyone.
+	headers.Set(types.SharedCohortHeader, "true")
+	if got := authSelectionKey("anthropic", headers, "P", sharedCohortFromHeaders(headers)); got != "P" {
+		t.Fatalf("non-marker value = %q, want P", got)
+	}
+}
+
+// An exhausted pool answers 429 WITH a Retry-After. Without it a client can
+// only guess, and guessing wrong walks straight back into the rate limit.
+func TestExhaustedPoolReportsRetryAfter(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: anthropicRegistry{coreRegistry{endpoint: upstream.URL}},
+		Auth:     exhaustedAuth{},
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return coreAdapter{endpoint: transport.BaseURL}, nil
+		},
+		AnthropicPoolRetryAfter: func() (int, bool) { return 42, true },
+	})
+
+	response := httptest.NewRecorder()
+	core.ServeHTTP(response, loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`)))
+
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", response.Code)
+	}
+	if got := response.Header().Get("Retry-After"); got != "42" {
+		t.Fatalf("Retry-After = %q, want 42", got)
+	}
+	if !strings.Contains(response.Body.String(), "rate_limit_error") {
+		t.Fatalf("body = %s, want a rate_limit_error kind", response.Body.String())
+	}
+}
+
+type exhaustedAuth struct{}
+
+func (exhaustedAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
+	return nil, oauth.ErrNoUsableAccount
+}
+func (exhaustedAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}

@@ -375,6 +375,12 @@ func New(config Config) *Server {
 			next := s.config.AnthropicPool.RotateOn429(failedAccountID, retryAfter, sessionKey, pool, time.Now())
 			return next, next != ""
 		},
+		AnthropicPoolRetryAfter: func() (int, bool) {
+			if s.config.AnthropicPool == nil {
+				return 0, false
+			}
+			return s.config.AnthropicPool.RetryAfterSeconds(time.Now())
+		},
 		RequestLogs: advancedRequestLogs,
 		StreamMode: func() string {
 			if s.config.ManagementConfig != nil {

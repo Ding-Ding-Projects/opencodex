@@ -64,6 +64,14 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	incoming := r.Header.Clone()
+	// Never trust an inbound copy: this header is a proxy-internal fact, and a
+	// client that could set it would control pool affinity.
+	incoming.Del(types.SharedCohortHeader)
+	if translation.CacheKeySource == "system" {
+		// A system-derived prompt-cache key is shared by every conversation
+		// with the same system prompt, so it must not become an affinity key.
+		incoming.Set(types.SharedCohortHeader, "1")
+	}
 	if sessionID, ok := claude.PromptCacheSessionID(normalized.Options.PromptCacheKey, translation.CacheKeySource); ok {
 		incoming.Set("session_id", sessionID)
 	}
