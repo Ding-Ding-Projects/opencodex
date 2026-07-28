@@ -291,3 +291,32 @@ func TestFulfillImageCallRoutesURLImagesThroughTheDownloadGate(t *testing.T) {
 		t.Fatalf("refused = %#v", refused)
 	}
 }
+
+// Concurrent fulfillments sharing one directory must not prune each other's
+// just-written paths mid-filter. The oracle serializes through a promise chain;
+// this serializes through a mutex, and the observable requirement is the same:
+// every reported path exists when the call returns.
+func TestFulfillImageCallSerializesRetention(t *testing.T) {
+	dir := t.TempDir()
+	plan := argsPlan()
+	plan.ArtifactsKeepCount = 4
+	plan.HasArtifactsKeepCount = true
+
+	const callers = 6
+	results := make(chan ImageCallResult, callers)
+	for index := 0; index < callers; index++ {
+		go func() {
+			results <- FulfillImageCall(context.Background(), dir,
+				ImageToolCall{Arguments: `{"prompt":"a","n":2}`}, plan, nil, nil, nil,
+				inlineCaller(XaiImage{B64JSON: encodedPNG()}, XaiImage{B64JSON: encodedPNG()}))
+		}()
+	}
+	for index := 0; index < callers; index++ {
+		result := <-results
+		for _, path := range result.Files {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("a concurrent fulfillment reported a pruned path: %v", err)
+			}
+		}
+	}
+}
