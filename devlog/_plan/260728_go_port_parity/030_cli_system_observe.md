@@ -9,17 +9,31 @@ work-phase: `wp3` · 선행: `010` · 순서 정본: `006`
 | 서브명령 | 요청 |
 | --- | --- |
 | `status` | `GET /api/settings` + `GET /api/startup-health` + `GET /api/system/memory` 조합 |
-| `settings` | `GET /api/settings` |
-| `startup health\|status` | `GET /api/startup-health` |
-| `startup install-service\|install-shim` | `POST /api/startup-action` |
+| `settings` (플래그 없음) | `GET /api/settings` |
+| `settings --auto-start/--stream-mode` | `PUT /api/settings` |
+| `startup health\|status` (기본 `health`) | `GET /api/startup-health` |
+| `startup install-service\|install-shim` | `POST /api/startup-action`, 본문 `{action}` |
 | `diagnostics` | `GET /api/diagnostics/project-config` |
 | `sync` | `POST /api/sync` |
-| `update check` | `GET /api/update/check` |
-| `update status` | `GET /api/update/status` |
+| `update check` (기본) | `GET /api/update/check?tag=<channel>` |
+| `update status <job-id>` | `GET /api/update/status?jobId=<urlencoded>` |
 | `update run --yes` | `POST /api/update/run`, 본문 `{tag: <channel>, restart: <bool>}` |
 
-`update run`은 `--yes` 없이는 `update run requires --yes`로 거부한다
-(`system-command.ts:88`). `--channel`이 본문의 `tag`로 이름이 바뀌는 점에 주의.
+### P 페이즈 정정 (트리 대조에서 발견)
+
+초안은 세 가지를 틀리게 적었다. 실제 오라클을 읽어 정정한다.
+
+1. **`settings`는 읽기 전용이 아니다.** `--auto-start`(→ `codexAutoStart`)나
+   `--stream-mode`(→ `streamMode`)가 주어지면 PUT한다. 둘 다 없을 때만 GET이다
+   (`system-command.ts:36`). 읽기 전용으로 구현했으면 설정 변경 경로가 통째로 빠졌을 것이다.
+2. **`update status`는 위치 인자 `<job-id>`를 요구**하고 `?jobId=`로 보낸다. 없으면
+   `update job id is required`.
+3. **`update check`도 `--channel`을 받아** `?tag=<channel>`로 보낸다. 기본값 `latest`이며
+   `latest|preview`만 허용된다.
+
+추가 세부: `update run`의 `--restart` 기본값은 **`true`**이고, `--yes` 없이는
+`update run requires --yes`로 거부한다. `startup`의 기본 액션은 `health`이며,
+install 계열 응답은 서버의 `message`를 우선 출력하고 없으면 `<action> complete.`를 쓴다.
 
 모든 라우트는 Go에 이미 존재한다(`management/config.go:20`, `system.go:17`,
 `runtime_control.go:76`). 서버 변경 없음.
