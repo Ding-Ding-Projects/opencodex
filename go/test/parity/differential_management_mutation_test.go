@@ -141,6 +141,41 @@ func TestTypeScriptAndGoManagementControlMutations(t *testing.T) {
 	compare("failover", http.MethodPut, "/api/codex-auth/failover", map[string]any{"threshold": 4})
 	compare("active-get", http.MethodGet, "/api/codex-auth/active", nil)
 	compare("auto-switch-invalid", http.MethodPut, "/api/codex-auth/auto-switch", map[string]any{"threshold": 101})
+
+	// Opt-in Anthropic pool. Compared as real response bytes against the
+	// TypeScript proxy, which is the only check that catches a field being
+	// present but misnamed, misordered, or the wrong JSON type.
+	compare("pool-get-default", http.MethodGet, "/api/oauth/accounts/pool?provider=anthropic", nil)
+	compare("pool-get-wrong-provider", http.MethodGet, "/api/oauth/accounts/pool?provider=openai", nil)
+	compare("pool-put", http.MethodPut, "/api/oauth/accounts/pool", map[string]any{
+		"provider": "anthropic", "enabled": true, "autoSwitchThreshold": 55,
+		"strategy": "round-robin", "stickyLimit": 4,
+	})
+	compare("pool-get-after-put", http.MethodGet, "/api/oauth/accounts/pool?provider=anthropic", nil)
+	// PATCH must preserve the fields it does not mention.
+	compare("pool-patch-partial", http.MethodPatch, "/api/oauth/accounts/pool", map[string]any{
+		"provider": "anthropic", "stickyLimit": 9,
+	})
+	compare("pool-get-after-patch", http.MethodGet, "/api/oauth/accounts/pool?provider=anthropic", nil)
+	// Each invalid field must be refused with its own message, and must not
+	// apply the valid fields sent alongside it.
+	compare("pool-put-bad-strategy", http.MethodPut, "/api/oauth/accounts/pool", map[string]any{
+		"provider": "anthropic", "strategy": "rr", "enabled": false,
+	})
+	compare("pool-put-bad-sticky", http.MethodPut, "/api/oauth/accounts/pool", map[string]any{
+		"provider": "anthropic", "stickyLimit": 0,
+	})
+	compare("pool-put-bad-threshold", http.MethodPut, "/api/oauth/accounts/pool", map[string]any{
+		"provider": "anthropic", "autoSwitchThreshold": 101,
+	})
+	compare("pool-put-bad-enabled", http.MethodPut, "/api/oauth/accounts/pool", map[string]any{
+		"provider": "anthropic", "enabled": "yes",
+	})
+	compare("pool-put-wrong-provider", http.MethodPut, "/api/oauth/accounts/pool", map[string]any{
+		"provider": "openai", "enabled": true,
+	})
+	// A rejected write must have changed nothing.
+	compare("pool-get-after-rejections", http.MethodGet, "/api/oauth/accounts/pool?provider=anthropic", nil)
 }
 
 func TestTypeScriptAndGoAPIAccessEndpoints(t *testing.T) {
