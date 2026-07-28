@@ -24,7 +24,11 @@ const accountUsage = `Usage:
   ocx account alias <provider> <account-or-key-id> <display-name|-> [--json]
   ocx account add-key <provider> [--label LABEL] [--json]
   ocx account add <provider> [--json-stdin]
-  ocx account remove <provider> <account-id> --yes [--json]`
+  ocx account remove <provider> <account-id> --yes [--json]
+  ocx account login <provider> [--id <account-id>] [--reauth] [--code -] [--no-wait] [--json]
+  ocx account code <provider> [--flow <flow-id>] [--json]   (reads the code from stdin)
+  ocx account cancel <provider> [--flow <flow-id>] [--json]
+  ocx account reset-credits <account-id|main> [--consume --yes] [--json]`
 
 func accountStore() (*oauth.CredentialStore, error) {
 	dir, err := configDir()
@@ -37,6 +41,13 @@ func accountStore() (*oauth.CredentialStore, error) {
 func runAccount(ctx context.Context, args []string, streams IO) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprintln(streams.Out, accountUsage)
+		return err
+	}
+	// The auth surface is checked FIRST and does not need the credential
+	// store: login/code/cancel/reset-credits talk to the running proxy, and
+	// opening auth.json here would fail on a machine that has never logged in
+	// -- exactly the machine about to run `ocx account login`.
+	if err, owned := accountAuthDispatch(ctx, newRuntimeAPI(), args[0], args[1:], accountAuthDeps{}, streams); owned {
 		return err
 	}
 	store, err := accountStore()
