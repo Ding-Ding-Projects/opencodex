@@ -62,7 +62,8 @@ work-phase: `wp4` · 선행: `010` · 순서 정본: `006`
 | --- | --- | --- | --- |
 | 1 | `key create`가 평문 키를 정확한 문구로 1회 출력 | 스텁이 `{"id":"k1","name":"n","key":"SECRET"}` 반환 | stdout에 `Key (shown once): SECRET` 정확히 1회 |
 | 2 | `key remove`가 `--yes` 없이 거부 | `access key remove k1` | `remove requires --yes`, DELETE 미전송 |
-| 3 | `key remove`가 id 없이 거부 | `access key remove --yes` | `key id is required` |
+| 3 | `key remove`가 id 없이 거부 | `access key remove` (인자 없음) | `key id is required` |
+| 3a | `access key remove --yes` (id 없이) | 위치 인자를 먼저 shift하므로 `--yes`가 id로 소비됨 | **`remove requires --yes`** |
 | 4 | `endpoints` 필터가 정확 | 스텁이 `{"baseUrl":"u","chatEndpoint":"c","keys":[]}` 반환 | 출력에 `keys` 부재, `baseUrl`·`chatEndpoint` 존재 |
 | 5 | 프로토콜별 본문·경로가 표와 일치 | 세 프로토콜 각각 실행 | 기록된 (경로, 본문) 일치 |
 | 6 | 잘못된 프로토콜 거부 | `--protocol grpc` | 정확한 오류 문자열, 요청 미전송 |

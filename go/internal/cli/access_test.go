@@ -345,3 +345,43 @@ func TestAccessKeyCreateJSONKeepsOracleFieldOrder(t *testing.T) {
 		}
 	}
 }
+
+// Top-level selectors are compared exactly, like the oracle's === chain. Only
+// the key ACTIONS are lowercased.
+func TestAccessDispatchIsCaseSensitiveAtTheTopLevel(t *testing.T) {
+	server, calls := accessServer(t, `{}`)
+	for _, section := range []string{"KEYS", "Key", "ENDPOINTS", "Models", "TEST"} {
+		if _, _, err := runAccessWith(t, server, section); err == nil {
+			t.Fatalf("%q should be an unknown access command", section)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("an unknown section must not reach the network, got %+v", *calls)
+	}
+
+	// The key actions themselves still accept either case.
+	server, calls = accessServer(t, `{"keys":[]}`)
+	if _, _, err := runAccessWith(t, server, "key", "LIST"); err != nil {
+		t.Fatalf("key actions are lowercased by the oracle: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %+v, want the list request", *calls)
+	}
+}
+
+// The positional is shifted BEFORE --yes is read, so a lone --yes becomes the
+// id and the confirmation check is what fails.
+func TestAccessKeyRemoveReportsTheOraclesFirstFailure(t *testing.T) {
+	server, calls := accessServer(t, `{}`)
+	_, _, err := runAccessWith(t, server, "key", "remove", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "remove requires --yes") {
+		t.Fatalf("err = %v, want the confirmation error", err)
+	}
+	_, _, err = runAccessWith(t, server, "key", "remove")
+	if err == nil || !strings.Contains(err.Error(), "key id is required") {
+		t.Fatalf("err = %v, want the missing-id error", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatal("neither form may reach the network")
+	}
+}

@@ -193,3 +193,25 @@ func TestProxyAPIKeyCreationPreservesOracleFieldOrder(t *testing.T) {
 		}
 	}
 }
+
+// The oracle reads only `name`, so whatever else the body carries must not
+// change the outcome. A string key was already covered; these pin the shapes a
+// typed field would have turned into a 400.
+func TestProxyAPIKeyCreationToleratesAnyKeyShape(t *testing.T) {
+	for _, body := range []string{
+		`{"name":"n","key":123}`,
+		`{"name":"n","key":null}`,
+		`{"name":"n","key":{"nested":true}}`,
+		`{"name":"n","key":["a"]}`,
+	} {
+		cfg := config.Default()
+		api := newParityAPI(t, &cfg)
+		created := serveManagement(api, http.MethodPost, "/api/keys", body)
+		if created.Code != http.StatusCreated {
+			t.Fatalf("body %s => %d %s, want 201", body, created.Code, created.Body.String())
+		}
+		if len(cfg.APIKeys) != 1 || !strings.HasPrefix(cfg.APIKeys[0].Key, "ocx_") {
+			t.Fatalf("body %s stored %+v, want a server-minted key", body, cfg.APIKeys)
+		}
+	}
+}
