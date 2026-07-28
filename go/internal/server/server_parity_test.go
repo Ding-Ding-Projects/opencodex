@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -215,7 +216,6 @@ func TestUnknownManagementRoutesUseTypeScriptErrorBytes(t *testing.T) {
 
 func TestServerDynamicallyAppliesManagedAPIKeysAndClaudeToggle(t *testing.T) {
 	oldSecret := "ocx_existing_admission_secret_12345"
-	newSecret := "ocx_new_admission_secret_678901234"
 	disabled := false
 	cfg := appconfig.Default()
 	cfg.Host = "0.0.0.0"
@@ -226,10 +226,20 @@ func TestServerDynamicallyAppliesManagedAPIKeysAndClaudeToggle(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	proxy := New(Config{ManagementConfig: &cfg, Logger: logger, RefreshCatalog: func() error { refreshes.Add(1); return nil }})
 
-	create := serveRequest(proxy.Handler(), http.MethodPost, "/api/keys", `{"name":"new","key":"`+newSecret+`"}`, http.Header{"Authorization": {"Bearer " + oldSecret}})
-	if create.Code != http.StatusCreated || strings.Contains(create.Body.String(), newSecret) {
+	// The server mints the key; the caller cannot choose it. What this test is
+	// really about is that a newly created key authorizes immediately, without
+	// a restart, so the minted value is read back out of the response.
+	create := serveRequest(proxy.Handler(), http.MethodPost, "/api/keys", `{"name":"new"}`, http.Header{"Authorization": {"Bearer " + oldSecret}})
+	if create.Code != http.StatusCreated {
 		t.Fatalf("create=%d %s", create.Code, create.Body.String())
 	}
+	var minted struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(create.Body.Bytes(), &minted); err != nil || minted.Key == "" {
+		t.Fatalf("creation must return the minted key: %v %s", err, create.Body.String())
+	}
+	newSecret := minted.Key
 	authorized := serveRequest(proxy.Handler(), http.MethodGet, "/api/config", "", http.Header{"Authorization": {"Bearer " + newSecret}})
 	if authorized.Code != http.StatusOK {
 		t.Fatalf("new key was not activated without restart: %d %s", authorized.Code, authorized.Body.String())
