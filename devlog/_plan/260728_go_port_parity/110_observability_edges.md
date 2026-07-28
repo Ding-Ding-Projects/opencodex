@@ -26,6 +26,19 @@ Go `FilterRequestLogs`(`go/internal/server/request_log_port.go:721`)는 `provide
 수용: 같은 대화의 두 요청이 같은 ID를 갖고, 필터가 그 둘만 반환하며, 별칭 `conversation`도
 동작할 것.
 
+### 110.1 잔여 (측정 후 기록)
+
+구현 후 감사에서 나온 것들. 셋 다 이 슬라이스보다 넓다.
+
+| 항목 | 상태 | 이유 |
+| --- | --- | --- |
+| `usage.jsonl` 영속화 | 미구현 | `types.UsageRecord` → `usage.Entry` → `management/logs.go` 세 단계를 함께 넓혀야 한다. 지금은 재시작하면 상관관계가 사라진다. |
+| Claude/chat 표면 상관관계 | 부분 | 인그레스가 `ConversationUserID`를 실어 나르지만, **Go의 chat 표면은 request log를 아예 쓰지 않는다**. 붙일 대상이 없으므로 그 표면의 로깅 자체가 선행 과제다. |
+| 원시 `Thread-Id` 영속 | 선재 결함 | `authThreadID`가 클라이언트 헤더를 그대로 돌려주고 `ThreadID`로 저장된다. 이 슬라이스가 만든 것이 아니지만, 해싱의 전제와 정면으로 어긋난다 — 같은 요청에서 `conversationId`는 해시되고 `threadId`는 원문이 남는다. |
+
+마지막 항목이 가장 무겁다. 상관관계를 해시하는 이유가 "클라이언트가 보낸 값이 사용자가
+공유할 수 있는 파일에 원문으로 남지 않게" 하는 것인데, 바로 옆 필드가 그 규칙을 어기고 있다.
+
 ## 110.2 실효 reasoning effort
 
 Go는 요청 로그에 **요청된** effort를 갖고 있다(`request_log_port.go:33`). 오라클은 **실효**

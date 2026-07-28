@@ -80,10 +80,10 @@ type ResponsesCoreConfig struct {
 	// compacts natively and therefore never routes a compaction turn through
 	// the sidecars.
 	CanonicalOpenAIRoute func(*types.ResolvedModel) bool
-	RequestLogs             *RequestLogStore
-	StreamMode              string
-	ResponseState           *ResponseStateStore
-	SubagentFallback        *responseSubagentFallback
+	RequestLogs          *RequestLogStore
+	StreamMode           string
+	ResponseState        *ResponseStateStore
+	SubagentFallback     *responseSubagentFallback
 }
 
 // ResponsesCore is the protocol-independent Responses orchestration unit. It
@@ -289,6 +289,16 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	started := time.Now()
 	logSession := newResponsesLogSession(core.config.RequestLogs, started, parsed.RequestedModel, resolved, core.providerAdapter(resolved))
 	logSession.serviceTier(parsed.Normalized.Options.ServiceTier)
+	// Correlation comes from the request, in the oracle's priority order: an
+	// explicit parent thread beats a session header, which beats a thread
+	// header, which beats Cursor's own conversation id. Every one of these is
+	// client-controlled, so the value is hashed before it is stored.
+	logSession.correlate(ConversationIDFromResponsesRequest(
+		parsed.Normalized.ClientThreadID,
+		SessionIDHeader(request.Header),
+		request.Header.Get("Thread-Id"),
+		parsed.Normalized.CursorConversation,
+	))
 	bridgeRecord := &types.UsageRecord{
 		RequestID: core.nextRequestID(), ThreadID: authThreadID(request.Header),
 		Provider: resolved.Provider, Model: resolved.Model, StartedAt: started,

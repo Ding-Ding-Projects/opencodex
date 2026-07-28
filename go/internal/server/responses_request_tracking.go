@@ -36,6 +36,20 @@ func newResponsesLogSession(store *RequestLogStore, started time.Time, requested
 	return s
 }
 
+// correlate attaches the conversation id for this turn.
+//
+// Separate from construction because the id comes from the REQUEST while the
+// session is built from the route, and because a turn without any correlating
+// header must leave the field empty rather than inventing a group.
+func (s *responsesLogSession) correlate(conversationID string) {
+	if s == nil || conversationID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.context.ConversationID = conversationID
+}
+
 func (s *responsesLogSession) ensureAttempt(provider, model, adapter string) {
 	if s == nil || s.store == nil {
 		return

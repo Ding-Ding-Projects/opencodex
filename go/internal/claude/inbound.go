@@ -35,6 +35,12 @@ type AnthropicRequestTranslation struct {
 	ResolvedModel  string
 	Surface        InboundSurface
 	CacheKeySource string
+	// ConversationUserID is Claude Code's metadata.user_id, carried through so
+	// request logging can correlate a chat WITHOUT re-parsing the Anthropic
+	// body. Raw here and hashed by the consumer, which owns the persistence
+	// rule; never the Desktop system-hash fallback, which is derived from the
+	// machine and would group every Desktop request on a host together.
+	ConversationUserID string
 }
 
 type InboundSurface string
@@ -146,12 +152,20 @@ func TranslateAnthropicRequest(raw []byte, cfg *InboundConfig) (AnthropicRequest
 	if err != nil {
 		return AnthropicRequestTranslation{}, err
 	}
+	// Read from the ORIGINAL Anthropic body: the translated Responses body
+	// carries a hashed prompt_cache_key, not the user id, and the Desktop
+	// system-hash fallback must never be mistaken for one.
+	conversationUserID := ""
+	if metadata, ok := request["metadata"].(map[string]any); ok {
+		conversationUserID = stringField(metadata, "user_id")
+	}
 	return AnthropicRequestTranslation{
-		Request:        normalized,
-		RequestedModel: requestedModel,
-		ResolvedModel:  stringField(translated.Body, "model"),
-		Surface:        surface,
-		CacheKeySource: translated.CacheKeySource,
+		Request:            normalized,
+		RequestedModel:     requestedModel,
+		ResolvedModel:      stringField(translated.Body, "model"),
+		Surface:            surface,
+		CacheKeySource:     translated.CacheKeySource,
+		ConversationUserID: conversationUserID,
 	}, nil
 }
 

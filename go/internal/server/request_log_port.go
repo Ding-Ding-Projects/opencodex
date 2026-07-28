@@ -35,6 +35,7 @@ type RequestLogContext struct {
 	Provider                 string
 	ProviderAdapter          string
 	Surface                  string
+	ConversationID           string
 	RequestedModel           string
 	ComboID                  string
 	RequestedEffort          string
@@ -62,11 +63,15 @@ type RequestLogContext struct {
 // credential, account, or thread fields. This allow-list is the privacy
 // boundary for the in-memory diagnostics endpoint.
 type RequestLogEntry struct {
-	RequestID                string                  `json:"requestId"`
-	Timestamp                int64                   `json:"timestamp"`
-	Model                    string                  `json:"model"`
-	Provider                 string                  `json:"provider"`
-	FirstOutputMS            *int64                  `json:"firstOutputMs,omitempty"`
+	RequestID     string `json:"requestId"`
+	Timestamp     int64  `json:"timestamp"`
+	Model         string `json:"model"`
+	Provider      string `json:"provider"`
+	FirstOutputMS *int64 `json:"firstOutputMs,omitempty"`
+	// ConversationID groups requests from one chat session. Always a hashed
+	// digest: the sources are client-controlled headers, so the raw value
+	// never reaches a log the user might share.
+	ConversationID           string                  `json:"conversationId,omitempty"`
 	Surface                  string                  `json:"surface,omitempty"`
 	RequestedModel           string                  `json:"requestedModel,omitempty"`
 	RequestedEffort          string                  `json:"requestedEffort,omitempty"`
@@ -191,10 +196,13 @@ type requestDisplayMetrics struct {
 // attempt tracking stays available to the logger but ordinary non-combo rows do
 // not expose it, and display-only metrics are derived at read time.
 type requestLogDTO struct {
-	RequestID                string                  `json:"requestId"`
-	Timestamp                int64                   `json:"timestamp"`
-	Model                    string                  `json:"model"`
-	Provider                 string                  `json:"provider"`
+	RequestID string `json:"requestId"`
+	Timestamp int64  `json:"timestamp"`
+	Model     string `json:"model"`
+	Provider  string `json:"provider"`
+	// Exposed so the dashboard can show the grouping and build a link back to
+	// the same conversation. Already a digest, never the client's raw value.
+	ConversationID           string                  `json:"conversationId,omitempty"`
 	Surface                  string                  `json:"surface,omitempty"`
 	RequestedModel           string                  `json:"requestedModel,omitempty"`
 	RequestedEffort          string                  `json:"requestedEffort,omitempty"`
@@ -233,7 +241,8 @@ func newRequestLogDTO(entry RequestLogEntry) requestLogDTO {
 	}
 	return requestLogDTO{
 		RequestID: entry.RequestID, Timestamp: entry.Timestamp, Model: entry.Model, Provider: entry.Provider,
-		Surface: surface, RequestedModel: entry.RequestedModel, RequestedEffort: entry.RequestedEffort,
+		ConversationID: entry.ConversationID,
+		Surface:        surface, RequestedModel: entry.RequestedModel, RequestedEffort: entry.RequestedEffort,
 		RequestedServiceTier: entry.RequestedServiceTier, RequestedSpeedLabel: entry.RequestedSpeedLabel,
 		ConfiguredServiceTier: entry.ConfiguredServiceTier, ConfiguredSpeedLabel: entry.ConfiguredSpeedLabel,
 		ModelSupportsServiceTier: cloneBool(entry.ModelSupportsServiceTier), ResponseServiceTier: entry.ResponseServiceTier,
@@ -705,6 +714,7 @@ func FinalRequestLogEntry(requestID string, startedAt, finishedAt time.Time, log
 	entry := RequestLogEntry{
 		RequestID: requestID, Timestamp: startedAt.UnixMilli(), Model: model, Provider: provider,
 		FirstOutputMS: cloneInt64(logContext.FirstOutputMS), Surface: logContext.Surface,
+		ConversationID: logContext.ConversationID,
 		RequestedModel: logContext.RequestedModel, RequestedEffort: logContext.RequestedEffort,
 		RequestedServiceTier: logContext.RequestedServiceTier, RequestedSpeedLabel: logContext.RequestedSpeedLabel,
 		ConfiguredServiceTier: logContext.ConfiguredServiceTier, ConfiguredSpeedLabel: logContext.ConfiguredSpeedLabel,
@@ -721,12 +731,21 @@ func FinalRequestLogEntry(requestID string, startedAt, finishedAt time.Time, log
 func FilterRequestLogs(entries []RequestLogEntry, query url.Values) []RequestLogEntry {
 	provider := strings.TrimSpace(query.Get("provider"))
 	statusFilter := strings.ToLower(strings.TrimSpace(query.Get("status")))
+	// `conversation` is the documented alias, so a link built from either
+	// spelling works.
+	conversation := strings.TrimSpace(query.Get("conversationId"))
+	if conversation == "" {
+		conversation = strings.TrimSpace(query.Get("conversation"))
+	}
 	result := make([]RequestLogEntry, 0, len(entries))
 	for _, entry := range entries {
 		if provider != "" && entry.Provider != provider && !attemptsContainProvider(entry.Attempts, provider) {
 			continue
 		}
 		if statusFilter != "" && !matchesRequestLogStatus(entry.Status, statusFilter) {
+			continue
+		}
+		if conversation != "" && !MatchesLogConversationID(entry.ConversationID, conversation) {
 			continue
 		}
 		result = append(result, cloneRequestLogEntry(entry))
