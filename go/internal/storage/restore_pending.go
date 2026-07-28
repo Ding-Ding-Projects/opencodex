@@ -79,8 +79,8 @@ type RestorePendingRead struct {
 // acceptedDestRels each reject the WHOLE document. Typed decoding would
 // silently coerce or zero those cases and accept markers the oracle refuses.
 func parseRestorePendingState(raw []byte) *RestorePendingState {
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	decoded, ok := decodeSingleJSONDocument(raw)
+	if !ok {
 		return nil
 	}
 	object, ok := decoded.(map[string]any)
@@ -91,11 +91,10 @@ func parseRestorePendingState(raw []byte) *RestorePendingState {
 		return nil
 	}
 
-	// Strict `!== 1`. Plain json.Unmarshal decodes every JSON number into
-	// float64, which is exactly the IEEE-754 value JSON.parse produces, so
-	// 1, 1.0 and 1e0 all pass on both sides while "1" and 9007199254740993
-	// fail on both.
-	version, ok := object["version"].(float64)
+	// Strict `!== 1`. Numbers arrive as json.Number and are converted with the
+	// same IEEE-754 rounding JSON.parse applies, so 1, 1.0 and 1e0 all pass on
+	// both sides while "1" and 9007199254740993 fail on both.
+	version, ok := jsonNumberValue(object["version"])
 	if !ok || version != 1 {
 		return nil
 	}

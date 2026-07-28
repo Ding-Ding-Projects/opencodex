@@ -134,6 +134,51 @@ func TestParseRestorePendingAcceptsEveryNumericSpellingOfOne(t *testing.T) {
 	}
 }
 
+// The oracle's parser reads six keys and ignores everything else, so a marker
+// carrying an unknown field must stay readable. Plain json.Unmarshal fails the
+// whole document on an overflowing number, which would make Go reject markers
+// the runtime it ports accepts and would break forward compatibility the first
+// time a field is added.
+func TestParseRestorePendingIgnoresUnknownFieldsIncludingOverflowingNumbers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"unknown top-level overflow": `{"version":1,"filesRestored":true,"acceptedDestRels":[],` +
+			`"pending":{"state":true,"logs":true,"memories":true,"goals":true},"junk":1e400}`,
+		"unknown pending overflow": `{"version":1,"filesRestored":true,"acceptedDestRels":[],` +
+			`"pending":{"state":true,"logs":true,"memories":true,"goals":true,"future":1e400}}`,
+		"unknown ordinary field": `{"version":1,"filesRestored":true,"acceptedDestRels":[],` +
+			`"pending":{"state":true,"logs":true,"memories":true,"goals":true},"attempt":3}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if parseRestorePendingState([]byte(raw)) == nil {
+				t.Fatal("a marker the oracle reads without complaint was rejected")
+			}
+		})
+	}
+
+	// An overflowing VERSION still fails: +Inf is not 1 on either side.
+	overflowVersion := `{"version":1e400,"filesRestored":true,"acceptedDestRels":[],` +
+		`"pending":{"state":true,"logs":true,"memories":true,"goals":true}}`
+	if parseRestorePendingState([]byte(overflowVersion)) != nil {
+		t.Fatal("version 1e400 was accepted as 1")
+	}
+}
+
+// JSON.parse takes one value and throws on anything after it. Decoder.Decode
+// reads only the next value, so the trailing content has to be rejected
+// explicitly or a marker with junk appended would parse as valid.
+func TestParseRestorePendingRejectsTrailingContent(t *testing.T) {
+	valid := `{"version":1,"filesRestored":true,"acceptedDestRels":[],` +
+		`"pending":{"state":true,"logs":true,"memories":true,"goals":true}}`
+	if parseRestorePendingState([]byte(valid)) == nil {
+		t.Fatal("the baseline marker must parse")
+	}
+	for _, suffix := range []string{" 0", ` {"version":1}`, "[]"} {
+		if parseRestorePendingState([]byte(valid+suffix)) != nil {
+			t.Fatalf("trailing %q was accepted; JSON.parse throws on it", suffix)
+		}
+	}
+}
+
 // Criterion 4: an unreadable marker is INVALID, never missing. This is the
 // distinction the whole fail-closed rule rests on.
 func TestReadRestorePendingTreatsAnUnreadableMarkerAsInvalid(t *testing.T) {
