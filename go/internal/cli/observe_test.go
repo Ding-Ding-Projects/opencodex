@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -232,5 +233,60 @@ func TestObserveQueryOmitsEmptyFilters(t *testing.T) {
 	}
 	if empty := observeQuery([][2]string{{"provider", ""}}); empty != "" {
 		t.Fatalf("all-empty query = %q, want no query string at all", empty)
+	}
+}
+
+// summaryLines renders numbers with String(number) semantics. Expected values
+// were produced by running String(v) in Bun; the non-finite cases matter
+// because Go's FormatFloat writes "+Inf" where JavaScript writes "Infinity",
+// and a server reporting an unbounded quota would render differently.
+func TestJSNumberTextMatchesStringNumber(t *testing.T) {
+	tenth, fifth := 0.1, 0.2
+	for _, testCase := range []struct {
+		value float64
+		want  string
+	}{
+		{value: 1e21, want: "1e+21"},
+		{value: 1e-7, want: "1e-7"},
+		{value: 1e-6, want: "0.000001"},
+		{value: 1e30, want: "1e+30"},
+		{value: math.Copysign(0, -1), want: "0"},
+		{value: tenth + fifth, want: "0.30000000000000004"},
+		{value: 1.5, want: "1.5"},
+		{value: 100, want: "100"},
+		{value: math.NaN(), want: "NaN"},
+		{value: math.Inf(1), want: "Infinity"},
+		{value: math.Inf(-1), want: "-Infinity"},
+	} {
+		if got := jsNumberText(testCase.value); got != testCase.want {
+			t.Fatalf("jsNumberText(%v) = %q, want %q", testCase.value, got, testCase.want)
+		}
+	}
+}
+
+// JSON.stringify preserves the order a row was parsed in. Re-marshalling a
+// decoded Go map sorts the keys, so a scripted consumer diffing --jsonl output
+// against the TypeScript CLI would see every line reordered.
+func TestObserveJSONLPreservesServerKeyOrder(t *testing.T) {
+	server, _ := observeServer(t, `[{"timestamp":"t","id":"a","provider":"p"}]`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(out)
+	if line != `{"timestamp":"t","id":"a","provider":"p"}` {
+		t.Fatalf("jsonl line = %s, want the server's own key order", line)
+	}
+}
+
+// The same rule applies through the wrapper shapes.
+func TestObserveJSONLPreservesOrderInsideWrappers(t *testing.T) {
+	server, _ := observeServer(t, `{"logs":[{"z":1,"a":2}]}`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := strings.TrimSpace(out); line != `{"z":1,"a":2}` {
+		t.Fatalf("jsonl line = %s, want the server's own key order", line)
 	}
 }

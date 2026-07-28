@@ -31,3 +31,43 @@ func printData(streams IO, payload any, wantsJSON bool, lines []string) error {
 	}
 	return nil
 }
+
+// orderedJSON is a payload that already knows its own byte form.
+//
+// Go maps have no key order and json.Marshal sorts them, so a decoded object
+// re-serializes in a different order than the oracle's JSON.stringify, which
+// preserves parse order. Anything that must round-trip byte-faithfully carries
+// its original bytes instead.
+type orderedJSON struct {
+	raw []byte
+}
+
+func (o orderedJSON) MarshalJSON() ([]byte, error) {
+	if len(o.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return o.raw, nil
+}
+
+// orderedObject renders key/value pairs as a JSON object in the caller's order.
+func orderedObject(pairs [][2]any) (orderedJSON, error) {
+	var out []byte
+	out = append(out, '{')
+	for index, pair := range pairs {
+		if index > 0 {
+			out = append(out, ',')
+		}
+		key, encodeErr := json.Marshal(pair[0])
+		if encodeErr != nil {
+			return orderedJSON{}, encodeErr
+		}
+		value, encodeErr := json.Marshal(pair[1])
+		if encodeErr != nil {
+			return orderedJSON{}, encodeErr
+		}
+		out = append(out, key...)
+		out = append(out, ':')
+		out = append(out, value...)
+	}
+	return orderedJSON{raw: append(out, '}')}, nil
+}

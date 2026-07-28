@@ -90,12 +90,16 @@ func systemStatus(ctx context.Context, api runtimeAPI, args []string, streams IO
 		}
 	}
 	ordered := make([][2]any, len(sections))
-	result := map[string]any{}
 	for index, section := range sections {
 		ordered[index] = [2]any{section.key, values[index]}
-		result[section.key] = values[index]
 	}
-	return printData(streams, result, wantsJSON, orderedSummaryLines(ordered))
+	// A map would re-sort these keys for --json; the oracle's object keeps the
+	// order it was built in, so the payload carries its own byte form.
+	payload, err := orderedObject(ordered)
+	if err != nil {
+		return err
+	}
+	return printData(streams, payload, wantsJSON, orderedSummaryLines(ordered))
 }
 
 // systemSettings reads when given no flags and writes when given any. Treating

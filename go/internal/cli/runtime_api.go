@@ -217,10 +217,20 @@ func decodeBody(raw []byte) any {
 
 // request performs a management call and decodes the JSON body.
 func (api *runtimeAPI) request(ctx context.Context, method, path string, payload any) (any, error) {
+	decoded, _, err := api.requestWithRaw(ctx, method, path, payload)
+	return decoded, err
+}
+
+// requestWithRaw also returns the untouched response bytes.
+//
+// Callers that must reproduce JSON.stringify byte-for-byte need them: a decoded
+// map has no key order, so re-marshalling sorts the keys and diverges from the
+// oracle, which preserves parse order.
+func (api *runtimeAPI) requestWithRaw(ctx context.Context, method, path string, payload any) (any, []byte, error) {
 	cfg := api.configuration()
 	baseURL, err := api.runtimeBaseURL(ctx, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -229,13 +239,13 @@ func (api *runtimeAPI) request(ctx context.Context, method, path string, payload
 	if payload != nil {
 		encoded, marshalErr := json.Marshal(payload)
 		if marshalErr != nil {
-			return nil, marshalErr
+			return nil, nil, marshalErr
 		}
 		body = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, baseURL+path, body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for key, values := range api.managementHeaders(cfg) {
 		for _, value := range values {
@@ -244,7 +254,7 @@ func (api *runtimeAPI) request(ctx context.Context, method, path string, payload
 	}
 	response, err := api.client().Do(request)
 	if err != nil {
-		return nil, &RuntimeAPIError{
+		return nil, nil, &RuntimeAPIError{
 			Message: fmt.Sprintf("Management API is unreachable: %v", err),
 			Status:  http.StatusServiceUnavailable,
 		}
@@ -252,15 +262,15 @@ func (api *runtimeAPI) request(ctx context.Context, method, path string, payload
 	defer response.Body.Close()
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	decoded := decodeBody(raw)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, &RuntimeAPIError{
+		return nil, nil, &RuntimeAPIError{
 			Message: responseMessage(decoded, response.StatusCode),
 			Status:  response.StatusCode,
 			Body:    decoded,
 		}
 	}
-	return decoded, nil
+	return decoded, raw, nil
 }

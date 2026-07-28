@@ -73,3 +73,23 @@ func TestRootHelpListsThePortedCommands(t *testing.T) {
 		}
 	}
 }
+
+// `ocx help logs` must document the alias the way the oracle does, not fall
+// back to a generic spec summary.
+func TestObserveAliasHelpMatchesTheOracle(t *testing.T) {
+	for _, testCase := range []struct{ name, usage, summary string }{
+		{"logs", "ocx logs [filters] [--follow] [--json|--jsonl]", "Alias of ocx observe logs."},
+		{"usage", "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", "Alias of ocx observe usage."},
+		{"storage", "ocx storage [--json]", "Alias of ocx observe storage."},
+		{"memory", "ocx memory [--json]", "Alias of ocx observe memory."},
+	} {
+		position := commandIndex[testCase.name]
+		spec := commandSpecs[position]
+		if spec.Usage != testCase.usage {
+			t.Errorf("%s usage = %q, want %q", testCase.name, spec.Usage, testCase.usage)
+		}
+		if spec.Summary != testCase.summary {
+			t.Errorf("%s summary = %q, want %q", testCase.name, spec.Summary, testCase.summary)
+		}
+	}
+}

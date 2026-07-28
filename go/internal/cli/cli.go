@@ -75,10 +75,10 @@ func defaultCommandSpecs() []commandSpec {
 		// The oracle dispatches these four straight into observe sections. They
 		// are Hidden so they resolve without appearing twice in the root help,
 		// which is compared byte-for-byte against the TypeScript output.
-		{Name: "logs", Usage: "ocx logs [options]", Summary: "Request logs (alias for observe logs)", Handler: runObserveLogs, Hidden: true},
-		{Name: "usage", Usage: "ocx usage [options]", Summary: "Usage summary (alias for observe usage)", Handler: runObserveUsage, Hidden: true},
-		{Name: "storage", Usage: "ocx storage [options]", Summary: "Storage scan (alias for observe storage)", Handler: runObserveStorage, Hidden: true},
-		{Name: "memory", Usage: "ocx memory [options]", Summary: "Memory snapshot (alias for observe memory)", Handler: runObserveMemory, Hidden: true},
+		{Name: "logs", Usage: "ocx logs [filters] [--follow] [--json|--jsonl]", Summary: "Alias of ocx observe logs.", Handler: runObserveLogs, Hidden: true},
+		{Name: "usage", Usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", Summary: "Alias of ocx observe usage.", Handler: runObserveUsage, Hidden: true},
+		{Name: "storage", Usage: "ocx storage [--json]", Summary: "Alias of ocx observe storage.", Handler: runObserveStorage, Hidden: true},
+		{Name: "memory", Usage: "ocx memory [--json]", Summary: "Alias of ocx observe memory.", Handler: runObserveMemory, Hidden: true},
 		{Name: "integration", Usage: "ocx integration <claude|grok> <subcommand>", Summary: "Claude Code and Grok integration settings", Handler: runIntegration},
 		{Name: "init", Aliases: []string{"setup"}, Usage: "ocx init", Summary: "Interactive provider setup", Handler: noContext(runInit)},
 		{Name: "status", Usage: "ocx status", Summary: "Show proxy and service status", Handler: runStatus},

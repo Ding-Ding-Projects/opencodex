@@ -176,3 +176,22 @@ func TestSystemStatusReadsEverySurface(t *testing.T) {
 		}
 	}
 }
+
+// The oracle's status object is built settings/startup/memory and JSON.stringify
+// keeps that order. A Go map would emit memory/settings/startup.
+func TestSystemStatusJSONKeepsOracleFieldOrder(t *testing.T) {
+	server, _ := grokServer(t, `{}`)
+	out, err := runSystemWith(t, server, "status", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := strings.Index(out, `"settings"`)
+	startup := strings.Index(out, `"startup"`)
+	memory := strings.Index(out, `"memory"`)
+	if settings < 0 || startup < 0 || memory < 0 {
+		t.Fatalf("output = %s, want all three sections", out)
+	}
+	if !(settings < startup && startup < memory) {
+		t.Fatalf("output = %s, want settings before startup before memory", out)
+	}
+}

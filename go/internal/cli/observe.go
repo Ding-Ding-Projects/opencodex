@@ -256,16 +256,17 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 	// recent keys instead of an arbitrary map subset.
 	order := []string{}
 	for round := 0; ; round++ {
-		data, err := api.request(ctx, http.MethodGet, path, nil)
+		data, raw, err := api.requestWithRaw(ctx, http.MethodGet, path, nil)
 		if err != nil {
 			return err
 		}
+		rawRows := rawLogRows(raw)
 		if !follow && wantsJSON {
 			if err := printData(streams, data, true, nil); err != nil {
 				return err
 			}
 		} else {
-			for _, row := range logRows(data) {
+			for rowIndex, row := range logRows(data) {
 				key := logKey(row)
 				if follow {
 					if _, already := seen[key]; already {
@@ -274,11 +275,17 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 				}
 				line := formatLog(row)
 				if wantsJSONL {
-					encoded, marshalErr := json.Marshal(row)
-					if marshalErr != nil {
-						return marshalErr
+					// Re-marshalling the decoded map would sort the keys; the
+					// oracle's JSON.stringify preserves the order it parsed.
+					if rowIndex < len(rawRows) {
+						line = string(rawRows[rowIndex])
+					} else {
+						encoded, marshalErr := json.Marshal(row)
+						if marshalErr != nil {
+							return marshalErr
+						}
+						line = string(encoded)
 					}
-					line = string(encoded)
 				}
 				if _, err := fmt.Fprintln(streams.Out, line); err != nil {
 					return err
@@ -369,4 +376,29 @@ func observeSimple(ctx context.Context, api runtimeAPI, path string, args []stri
 		return err
 	}
 	return printData(streams, result, wantsJSON, summaryLines(result))
+}
+
+// rawLogRows slices the response bytes into per-row JSON, preserving each
+// object's original key order for --jsonl output.
+func rawLogRows(raw []byte) []json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var direct []json.RawMessage
+	if json.Unmarshal(raw, &direct) == nil {
+		return direct
+	}
+	var wrapper map[string]json.RawMessage
+	if json.Unmarshal(raw, &wrapper) != nil {
+		return nil
+	}
+	for _, key := range []string{"logs", "entries", "requests"} {
+		if nested, present := wrapper[key]; present {
+			var rows []json.RawMessage
+			if json.Unmarshal(nested, &rows) == nil {
+				return rows
+			}
+		}
+	}
+	return nil
 }

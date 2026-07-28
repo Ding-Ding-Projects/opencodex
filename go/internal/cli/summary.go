@@ -122,6 +122,19 @@ func scalarText(value any) string {
 // outside it, while Go's %g switches much earlier.
 func jsNumberText(value float64) string {
 	magnitude := math.Abs(value)
+	// Go's FormatFloat writes "NaN", "+Inf" and "-Inf"; JavaScript's
+	// String(number) writes "NaN", "Infinity" and "-Infinity". A server that
+	// reports an unbounded quota or a missing rate would otherwise render
+	// differently in the two CLIs.
+	if math.IsNaN(value) {
+		return "NaN"
+	}
+	if math.IsInf(value, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(value, -1) {
+		return "-Infinity"
+	}
 	// String(-0) is "0", not "-0".
 	if magnitude == 0 {
 		return "0"
