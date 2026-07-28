@@ -651,3 +651,23 @@ func TestAccountLoginJSONPrintsTheStartVerbatim(t *testing.T) {
 		})
 	}
 }
+
+// Key ORDER survives. JSON.stringify preserves the order the server wrote;
+// a decoded Go map has none and json.MarshalIndent sorts it, so a start of
+// {"z":1,"a":2} printed z,a in the oracle and a,z here.
+func TestAccountLoginJSONPreservesStartKeyOrder(t *testing.T) {
+	harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
+		return 200, `{"z":1,"flowId":"f1","a":2}`
+	}, "", "login", "openai", "--no-wait", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := harness.stdout.String()
+	zAt, flowAt, aAt := strings.Index(out, `"z"`), strings.Index(out, `"flowId"`), strings.Index(out, `"a"`)
+	if zAt < 0 || flowAt < 0 || aAt < 0 {
+		t.Fatalf("stdout lost a key: %s", out)
+	}
+	if !(zAt < flowAt && flowAt < aAt) {
+		t.Fatalf("stdout = %s\nkeys must stay in the order the server sent them (z, flowId, a)", out)
+	}
+}

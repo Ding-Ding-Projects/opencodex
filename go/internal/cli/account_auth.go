@@ -96,10 +96,15 @@ type loginStart struct {
 	FlowID       string `json:"flowId"`
 	Instructions string `json:"instructions"`
 	DeviceCode   string `json:"deviceCode"`
-	// raw is the response EXACTLY as decoded. `--no-wait --json` prints the
-	// start payload verbatim, so re-serializing the struct would turn a string
-	// or array response into `{}` and would add empty fields the server never
-	// sent.
+	// raw is the response EXACTLY as the server sent it. `--no-wait --json`
+	// prints the start payload verbatim, so re-serializing the struct would
+	// turn a string or array response into `{}` and would add empty fields the
+	// server never sent.
+	//
+	// It holds an orderedPayload rather than the plain decoded value because a
+	// decoded map has no key order and json.MarshalIndent sorts it, while the
+	// oracle's JSON.stringify preserves the order the server wrote. A start of
+	// {"z":1,"a":2} printed z,a there and a,z here.
 	raw any
 }
 
@@ -431,7 +436,7 @@ func runAccountResetCredits(ctx context.Context, api runtimeAPI, argv []string, 
 }
 
 func requestLoginStart(ctx context.Context, api runtimeAPI, method, path string, body map[string]any) (loginStart, error) {
-	decoded, err := api.request(ctx, method, path, body)
+	decoded, rawBytes, err := api.requestWithRaw(ctx, method, path, body)
 	if err != nil {
 		return loginStart{}, err
 	}
@@ -450,9 +455,9 @@ func requestLoginStart(ctx context.Context, api runtimeAPI, method, path string,
 	if !isObject {
 		// A string, array or number has no fields to read, but it is still
 		// what `--json` has to print.
-		return loginStart{raw: decoded}, nil
+		return loginStart{raw: orderedPayload(rawBytes, decoded)}, nil
 	}
-	start := loginStart{raw: decoded}
+	start := loginStart{raw: orderedPayload(rawBytes, decoded)}
 	if value, isString := record["url"].(string); isString {
 		start.URL = value
 	}
