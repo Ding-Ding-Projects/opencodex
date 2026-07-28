@@ -167,7 +167,7 @@ func RestoreImageGenCallsInJSON(text string, aliases map[string]NamespacedTool) 
 	if !changed {
 		return text
 	}
-	encoded, err := json.Marshal(restored)
+	encoded, err := encodeJSONValue(restored)
 	if err != nil {
 		return text
 	}
@@ -204,13 +204,13 @@ func (o *orderedObject) MarshalJSON() ([]byte, error) {
 		if index > 0 {
 			buffer.WriteByte(',')
 		}
-		encodedKey, err := json.Marshal(key)
+		encodedKey, err := encodeJSONValue(key)
 		if err != nil {
 			return nil, err
 		}
 		buffer.Write(encodedKey)
 		buffer.WriteByte(':')
-		encodedValue, err := json.Marshal(o.values[key])
+		encodedValue, err := encodeJSONValue(o.values[key])
 		if err != nil {
 			return nil, err
 		}
@@ -220,11 +220,39 @@ func (o *orderedObject) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// decodeOrdered parses JSON while retaining object key order. Numbers are kept
-// as json.Number so a large integer is not re-emitted in scientific notation.
+// encodeJSONValue encodes without Go's default HTML escaping.
+//
+// json.Marshal turns `<`, `>` and `&` into \u003c, \u003e and \u0026, while
+// JSON.stringify leaves them alone. Image prompts and tool arguments routinely
+// contain those characters, so the default would rewrite payload bytes on every
+// event that merely passes through here.
+func encodeJSONValue(value any) ([]byte, error) {
+	// Negative zero is the one number Go and JSON.stringify disagree on: Go
+	// emits -0, JavaScript emits 0. Normalized here rather than at decode time
+	// so the difference stays visible next to the reason for it.
+	if number, ok := value.(float64); ok && number == 0 {
+		value = float64(0)
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	// Encode appends a newline that Marshal does not.
+	return bytes.TrimRight(buffer.Bytes(), "\n"), nil
+}
+
+// decodeOrdered parses JSON while retaining object key order.
+//
+// Numbers go through float64 rather than being preserved verbatim, because
+// that is what the oracle does and matching it matters more than being more
+// precise than it. JSON.parse is float64-backed too, so 1.5e10 becomes
+// 15000000000 and a twenty-digit integer loses its tail on BOTH sides. Keeping
+// the original text would have made Go disagree with the oracle on every
+// exponent-form number.
 func decodeOrdered(text string) (any, error) {
 	decoder := json.NewDecoder(strings.NewReader(text))
-	decoder.UseNumber()
 	value, err := decodeOrderedValue(decoder)
 	if err != nil {
 		return nil, err

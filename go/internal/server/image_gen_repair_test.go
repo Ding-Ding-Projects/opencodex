@@ -164,12 +164,15 @@ func TestCreateImageGenCallRestoreRewriteIsNilWithoutAliases(t *testing.T) {
 }
 
 // Key order must survive, because Go's default map encoding sorts keys and the
-// oracle does not. A large integer must also not be re-emitted in scientific
-// notation.
-func TestRestorePreservesKeyOrderAndNumericFidelity(t *testing.T) {
+// oracle does not.
+//
+// Numbers deliberately match the oracle rather than beating it: JSON.parse is
+// float64-backed, so the twenty-digit id below loses its tail on BOTH sides.
+// Measured against the oracle, which returns 12345678901234567000.
+func TestRestorePreservesKeyOrderAndMatchesOracleNumbers(t *testing.T) {
 	aliases := imageGenAliases()
 	in := `{"zeta":1,"alpha":2,"id":12345678901234567890,"call":{"type":"function_call","name":"image_gen__create"}}`
-	want := `{"zeta":1,"alpha":2,"id":12345678901234567890,"call":{"type":"function_call","name":"create","namespace":"image_gen"}}`
+	want := `{"zeta":1,"alpha":2,"id":12345678901234567000,"call":{"type":"function_call","name":"create","namespace":"image_gen"}}`
 	if got := RestoreImageGenCallsInJSON(in, aliases); got != want {
 		t.Fatalf("restore = %s, want %s", got, want)
 	}
