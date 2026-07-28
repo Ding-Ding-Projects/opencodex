@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
+	"math"
 	"strings"
 	"time"
 )
@@ -181,9 +181,9 @@ func codexLogin(ctx context.Context, api runtimeAPI, provider, id, code string, 
 	if start.FlowID == "" {
 		return usageError("", "login did not return a flow id")
 	}
-	query := "/api/codex-auth/login-status?flowId=" + url.QueryEscape(start.FlowID)
+	query := "/api/codex-auth/login-status?flowId=" + encodeURIComponent(start.FlowID)
 	if id != "" {
-		query += "&accountId=" + url.QueryEscape(id)
+		query += "&accountId=" + encodeURIComponent(id)
 	}
 	if reauth {
 		query += "&reauth=1"
@@ -204,10 +204,18 @@ func codexLogin(ctx context.Context, api runtimeAPI, provider, id, code string, 
 		case "error", "expired":
 			// Stop immediately: continuing to poll a flow the server has
 			// already failed just delays the report.
-			if reason, isString := state["error"].(string); isString && reason != "" {
-				return usageError("", "%s", reason)
+			//
+			// The oracle is `String(state.error ?? \`login ${state.status}\`)`:
+			// NULLISH coalescing, so only an absent or null error falls back.
+			// An empty-string error is used verbatim, and a non-string one is
+			// stringified rather than ignored. Testing for a non-empty string
+			// instead would replace a server-supplied reason with a generic
+			// one whenever the server sent an object or an empty message.
+			reason, present := state["error"]
+			if !present || reason == nil {
+				return usageError("", "login %v", state["status"])
 			}
-			return usageError("", "login %v", state["status"])
+			return usageError("", "%s", jsString(reason))
 		}
 	}
 	return usageError("", "login timed out")
@@ -246,7 +254,7 @@ func providerLogin(ctx context.Context, api runtimeAPI, provider, id, code strin
 		}
 		return nil
 	}
-	query := "/api/oauth/status?provider=" + url.QueryEscape(provider)
+	query := "/api/oauth/status?provider=" + encodeURIComponent(provider)
 	for attempt := 0; attempt < providerLoginPollAttempts; attempt++ {
 		deps.pause(loginPollInterval)
 		state, err := requestStateMap(ctx, api, "GET", query)
@@ -256,8 +264,11 @@ func providerLogin(ctx context.Context, api runtimeAPI, provider, id, code strin
 		if state["loggedIn"] == true {
 			return printData(streams, state, wantsJSON, []string{"Logged in to " + provider + "."})
 		}
-		if reason, isString := state["error"].(string); isString && reason != "" {
-			return usageError("", "%s", reason)
+		// The oracle's test is `if (state.error)` -- JS TRUTHINESS, not "is a
+		// non-empty string". A server answering `{"error": true}` or
+		// `{"error": {...}}` fails there and would have polled to timeout here.
+		if jsTruthy(state["error"]) {
+			return usageError("", "%s", jsString(state["error"]))
 		}
 	}
 	return usageError("", "login timed out")
@@ -354,7 +365,14 @@ func runAccountCancel(ctx context.Context, api runtimeAPI, argv []string, stream
 	body := map[string]any{"provider": provider}
 	if codexNames[provider] {
 		path = "/api/codex-auth/login/cancel"
-		body = map[string]any{"flowId": flowID}
+		// JSON.stringify({ flowId: undefined }) OMITS the key, so an absent
+		// --flow sends `{}` rather than `{"flowId":""}`. The server currently
+		// treats both the same, but sending a key the oracle never sends is a
+		// divergence a future server change could act on.
+		body = map[string]any{}
+		if flowID != "" {
+			body["flowId"] = flowID
+		}
 	}
 	result, err := api.request(ctx, "POST", path, body)
 	if err != nil {
@@ -395,7 +413,7 @@ func runAccountResetCredits(ctx context.Context, api runtimeAPI, argv []string, 
 			map[string]any{"accountId": accountID})
 	} else {
 		result, err = api.request(ctx, "GET",
-			"/api/codex-auth/reset-credits?accountId="+url.QueryEscape(accountID), nil)
+			"/api/codex-auth/reset-credits?accountId="+encodeURIComponent(accountID), nil)
 	}
 	if err != nil {
 		return err
@@ -435,9 +453,64 @@ func requestStateMap(ctx context.Context, api runtimeAPI, method, path string) (
 	}
 	record, isObject := decoded.(map[string]any)
 	if !isObject {
+		// The oracle reads `state.status` straight off the response. On `null`
+		// that throws a TypeError and the login fails; coercing to an empty
+		// map instead made a malformed payload look like "still pending" and
+		// polled all the way to the timeout.
+		if decoded == nil {
+			return nil, fmt.Errorf("null is not an object (reading 'status')")
+		}
 		return map[string]any{}, nil
 	}
 	return record, nil
+}
+
+// jsTruthy reports whether a decoded JSON value is truthy in JavaScript.
+//
+// Only false, 0, "", and null/undefined are falsy; every object and array --
+// including an empty one -- is truthy. A Go `!= ""` test on a string field is
+// therefore NOT the same condition.
+func jsTruthy(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return typed
+	case float64:
+		return typed != 0 && !math.IsNaN(typed)
+	case string:
+		return typed != ""
+	}
+	return true
+}
+
+// jsString renders a value the way String(value) would for an error message.
+func jsString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case nil:
+		return "null"
+	case bool:
+		if typed {
+			return "true"
+		}
+		return "false"
+	case float64:
+		return jsNumberText(typed)
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if item == nil {
+				parts = append(parts, "")
+				continue
+			}
+			parts = append(parts, jsString(item))
+		}
+		return strings.Join(parts, ",")
+	}
+	// String({}) is "[object Object]".
+	return "[object Object]"
 }
 
 // accountAuthDispatch routes the four auth subcommands, reporting whether it

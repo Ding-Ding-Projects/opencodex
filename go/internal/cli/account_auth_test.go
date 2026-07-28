@@ -42,6 +42,11 @@ type authHarness struct {
 // recording every request, every sleep, and both streams.
 func runAccountAuth(t *testing.T, respond func(recordedRequest) (int, string), stdin string, args ...string) (*authHarness, error) {
 	t.Helper()
+	// ISOLATE THE HOME FIRST. runtimeAPI.configuration() reads the config even
+	// when BaseURL short-circuits discovery, and loadConfigFile's repair path
+	// WRITES a .invalid-* backup next to it. Without this the suite wrote
+	// backup files into the developer's real ~/.opencodex on every run.
+	configHome(t, `{"port":10100,"defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
 	harness := &authHarness{}
 	stub := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		raw, _ := io.ReadAll(request.Body)
@@ -179,32 +184,52 @@ func TestAccountCodeUsesTheProviderRouteForNonCodex(t *testing.T) {
 // A plain login must NOT block on stdin. Regression guard: making the stdin
 // read unconditional hangs every browser login.
 func TestAccountLoginDoesNotReadStdinWithoutACode(t *testing.T) {
-	blocking := &neverReadyReader{}
-	stub := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"flowId":"f1","url":"https://example.test/login"}`))
-	}))
-	t.Cleanup(stub.Close)
-	api := newRuntimeAPI()
-	api.BaseURL = stub.URL
-	var out, errOut bytes.Buffer
-	deps := accountAuthDeps{sleep: func(time.Duration) {}, stdin: blocking}
-	done := make(chan error, 1)
-	go func() {
-		err, _ := accountAuthDispatch(context.Background(), api, "login",
-			[]string{"openai", "--no-wait"}, deps, IO{In: blocking, Out: &out, Err: &errOut})
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("login blocked on stdin without --code")
-	}
-	if blocking.reads.Load() != 0 {
-		t.Fatalf("stdin was read %d time(s) without --code", blocking.reads.Load())
+	// Both provider families AND reauth, because the stdin decision is made
+	// before the branch: covering only `login openai` would leave the other
+	// three paths free to regress.
+	for _, testCase := range []struct {
+		name string
+		args []string
+	}{
+		{name: "codex login", args: []string{"openai", "--no-wait"}},
+		{name: "provider login", args: []string{"anthropic", "--no-wait"}},
+		{name: "codex reauth", args: []string{"openai", "--no-wait"}},
+		{name: "provider reauth", args: []string{"anthropic", "--no-wait"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			configHome(t, `{"port":10100,"defaultProvider":"openai","providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
+			blocking := &neverReadyReader{}
+			stub := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(`{"flowId":"f1","url":"https://example.test/login"}`))
+			}))
+			t.Cleanup(stub.Close)
+			api := newRuntimeAPI()
+			api.BaseURL = stub.URL
+			var out, errOut bytes.Buffer
+			deps := accountAuthDeps{sleep: func(time.Duration) {}, stdin: blocking}
+			sub := "login"
+			if strings.Contains(testCase.name, "reauth") {
+				sub = "reauth"
+			}
+			done := make(chan error, 1)
+			go func() {
+				err, _ := accountAuthDispatch(context.Background(), api, sub,
+					testCase.args, deps, IO{In: blocking, Out: &out, Err: &errOut})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("login blocked on stdin without --code")
+			}
+			if blocking.reads.Load() != 0 {
+				t.Fatalf("stdin was read %d time(s) without --code", blocking.reads.Load())
+			}
+		})
 	}
 }
 
@@ -268,19 +293,130 @@ func TestAccountLoginPollBudgetsMatchTheOracle(t *testing.T) {
 
 // --no-wait skips polling entirely.
 func TestAccountLoginNoWaitSkipsPolling(t *testing.T) {
-	harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
-		return 200, `{"flowId":"f1"}`
-	}, "", "login", "openai", "--no-wait")
+	// Both families: the two branches have separate poll loops, so covering
+	// one leaves the other free to regress.
+	for _, provider := range []string{"openai", "anthropic"} {
+		t.Run(provider, func(t *testing.T) {
+			harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
+				return 200, `{"flowId":"f1"}`
+			}, "", "login", provider, "--no-wait")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(harness.sleeps) != 0 {
+				t.Fatalf("--no-wait polled %d time(s)", len(harness.sleeps))
+			}
+			for _, path := range harness.pathsHit() {
+				if strings.Contains(path, "status") {
+					t.Fatalf("--no-wait still queried status: %v", harness.pathsHit())
+				}
+			}
+		})
+	}
+}
+
+// Query values are percent-encoded the way encodeURIComponent does, NOT the
+// way url.QueryEscape does. A space must be %20; QueryEscape's "+" would look
+// up a different flow or account.
+func TestAccountAuthEncodesQueryValuesLikeTheOracle(t *testing.T) {
+	harness, err := runAccountAuth(t, nil, "", "reset-credits", "acct one/two")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(harness.sleeps) != 0 {
-		t.Fatalf("--no-wait polled %d time(s)", len(harness.sleeps))
+	query := harness.requests[0].query
+	if !strings.Contains(query, "accountId=acct%20one%2Ftwo") {
+		t.Fatalf("query = %q; encodeURIComponent renders a space as %%20", query)
 	}
-	for _, path := range harness.pathsHit() {
-		if strings.Contains(path, "status") {
-			t.Fatalf("--no-wait still queried status: %v", harness.pathsHit())
+	if strings.Contains(query, "+") {
+		t.Fatalf("query = %q; a + means url.QueryEscape leaked back in", query)
+	}
+}
+
+// The oracle's provider-poll failure test is `if (state.error)` -- JS
+// truthiness. A non-string error must fail immediately rather than poll on.
+func TestAccountLoginFailsOnAnyTruthyProviderError(t *testing.T) {
+	for _, body := range []string{`{"error":true}`, `{"error":{"code":1}}`, `{"error":"boom"}`} {
+		t.Run(body, func(t *testing.T) {
+			harness, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+				if strings.Contains(request.path, "status") {
+					return 200, body
+				}
+				return 200, `{"flowId":"f1"}`
+			}, "", "login", "anthropic")
+			if err == nil {
+				t.Fatalf("a truthy error must fail: %s", body)
+			}
+			if len(harness.sleeps) != 1 {
+				t.Fatalf("polled %d times; a reported error must stop at once", len(harness.sleeps))
+			}
+		})
+	}
+}
+
+// A falsy error keeps polling, so the truthiness test above is not simply
+// "any error key present".
+func TestAccountLoginKeepsPollingOnAFalsyProviderError(t *testing.T) {
+	harness, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+		if strings.Contains(request.path, "status") {
+			return 200, `{"loggedIn":false,"error":""}`
 		}
+		return 200, `{"flowId":"f1"}`
+	}, "", "login", "anthropic")
+	if err == nil || !strings.Contains(err.Error(), "login timed out") {
+		t.Fatalf("error = %v, want the timeout", err)
+	}
+	if len(harness.sleeps) != 100 {
+		t.Fatalf("polled %d times; an empty error string is falsy and must not stop the loop", len(harness.sleeps))
+	}
+}
+
+// A null poll payload throws in the oracle. Coercing it to an empty object
+// made a malformed response look like "still pending" and burned the budget.
+func TestAccountLoginFailsOnANullPollPayload(t *testing.T) {
+	harness, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+		if strings.Contains(request.path, "login-status") {
+			return 200, `null`
+		}
+		return 200, `{"flowId":"f1"}`
+	}, "", "login", "openai")
+	if err == nil {
+		t.Fatal("a null poll payload must fail")
+	}
+	if len(harness.sleeps) != 1 {
+		t.Fatalf("polled %d times; a malformed payload must not poll to timeout", len(harness.sleeps))
+	}
+}
+
+// A Codex failure uses the server's reason verbatim through nullish
+// coalescing: only an absent or null error falls back to the generic text.
+func TestAccountLoginCodexUsesTheServerReasonVerbatim(t *testing.T) {
+	for _, testCase := range []struct{ body, want string }{
+		{body: `{"status":"error","error":"upstream refused"}`, want: "upstream refused"},
+		{body: `{"status":"expired"}`, want: "login expired"},
+		{body: `{"status":"error","error":null}`, want: "login error"},
+	} {
+		t.Run(testCase.want, func(t *testing.T) {
+			_, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+				if strings.Contains(request.path, "login-status") {
+					return 200, testCase.body
+				}
+				return 200, `{"flowId":"f1"}`
+			}, "", "login", "openai")
+			if err == nil || err.Error() != testCase.want {
+				t.Fatalf("error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+// An absent --flow omits the key rather than sending an empty one.
+func TestAccountCancelOmitsAnAbsentFlowId(t *testing.T) {
+	harness, err := runAccountAuth(t, nil, "", "cancel", "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := harness.requests[0].body["flowId"]; present {
+		t.Fatalf("body = %#v; an absent --flow must omit the key", harness.requests[0].body)
 	}
 }
 

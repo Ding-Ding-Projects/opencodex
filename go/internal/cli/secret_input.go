@@ -98,8 +98,13 @@ func readSecretLine(input io.Reader, label string) (string, error) {
 	}
 }
 
-// isTerminal reports whether the reader is an interactive terminal, so the
+// isTerminal reports whether the reader is an INTERACTIVE terminal, so the
 // caller knows whether a "paste it here" prompt makes sense.
+//
+// The character-device test alone is not enough: /dev/null is a character
+// device too, so `ocx account code p --code - </dev/null` printed a prompt
+// asking the user to paste into a stream that was already at EOF. The oracle
+// checks `input.isTTY`, which /dev/null does not satisfy.
 func isTerminal(input io.Reader) bool {
 	file, isFile := input.(*os.File)
 	if !isFile {
@@ -109,5 +114,9 @@ func isTerminal(input io.Reader) bool {
 	if err != nil {
 		return false
 	}
-	return info.Mode()&os.ModeCharDevice != 0
+	if info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	// A real terminal answers TCGETS; /dev/null and /dev/zero do not.
+	return isatty(file.Fd())
 }
