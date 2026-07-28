@@ -20,6 +20,11 @@ type responseSubagentFallback struct {
 	codexHome   string
 	prime       func(context.Context, string) error
 	now         func() time.Time
+	// effectiveAccount reports the account rotation would actually serve.
+	//
+	// Optional: when unset the persisted active account is used, which is the
+	// pre-rotation behaviour and still correct under the quota strategy.
+	effectiveAccount func() string
 }
 
 func newResponseSubagentFallback(config *appconfig.Config, registry types.Registry, quota *codex.QuotaStore, codexHome string, state *codex.SubagentFallbackState, prime func(context.Context, string) error, persistence ...*appconfig.LivePersistence) *responseSubagentFallback {
@@ -33,6 +38,17 @@ func newResponseSubagentFallback(config *appconfig.Config, registry types.Regist
 	if len(persistence) > 0 {
 		fallback.persistence = persistence[0]
 	}
+	return fallback
+}
+
+// withEffectiveAccount routes account assessment through the router's rotation
+// cursor. Kept separate from the constructor so callers that have no router
+// keep the previous behaviour instead of being forced to pass nil.
+func (fallback *responseSubagentFallback) withEffectiveAccount(router *codex.Router) *responseSubagentFallback {
+	if fallback == nil || router == nil {
+		return fallback
+	}
+	fallback.effectiveAccount = router.EffectiveActiveCodexAccountID
 	return fallback
 }
 
@@ -77,6 +93,14 @@ func (fallback *responseSubagentFallback) canonical(resolved *types.ResolvedMode
 }
 
 func (fallback *responseSubagentFallback) activeAccountID(cfg *appconfig.Config) string {
+	// The runtime cursor wins. Under round-robin or fill-first the persisted id
+	// can point at an exhausted account while a healthy one is serving, and
+	// assessing the wrong account makes the fallback skip a usable native route.
+	if fallback != nil && fallback.effectiveAccount != nil {
+		if id := strings.TrimSpace(fallback.effectiveAccount()); id != "" {
+			return id
+		}
+	}
 	if cfg != nil {
 		if id := strings.TrimSpace(cfg.ActiveCodexAccountID); id != "" {
 			return id

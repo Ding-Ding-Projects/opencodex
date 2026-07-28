@@ -151,7 +151,10 @@ func (r *Router) RecordCodexUpstreamOutcome(config *RoutingConfig, accountID str
 	if r.shouldFailoverLocked(config, accountID, nowMillis) {
 		r.clearThreadAccountMapForAccountLocked(accountID)
 	}
-	if config.ActiveCodexAccountID == accountID {
+	// Effective, not persisted: after a non-quota promotion the serving account
+	// is the runtime cursor, and comparing the persisted field would silently
+	// skip failover for the account that is actually taking the failures.
+	if r.effectiveActiveLocked(config) == accountID {
 		r.applyFailureFailoverLocked(config, accountID, nowMillis)
 	}
 }

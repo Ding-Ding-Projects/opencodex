@@ -250,3 +250,15 @@ func (r *Router) NoteRotationFailure(accountID string) {
 	defer r.mu.Unlock()
 	r.rotation.NoteRotationFailure(oauth.PoolKeyCodex, accountID)
 }
+
+// EffectiveActiveCodexAccountID reports the account that would actually serve:
+// the automatic rotation cursor when one is set, otherwise nothing.
+//
+// The persisted id is deliberately not consulted here, because the caller holds
+// the config and can fall back to it; returning it would hide whether rotation
+// is currently in charge.
+func (r *Router) EffectiveActiveCodexAccountID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.runtimeActive
+}

@@ -23,7 +23,18 @@ func (a *API) handleCodexAuth(w http.ResponseWriter, r *http.Request) bool {
 		active := a.config.ActiveCodexAccountID
 		autoSwitch := a.config.AutoSwitchThreshold
 		failover := a.config.UpstreamFailoverThreshold
+		strategy := config.NormalizedAccountPoolStrategy(a.config.AccountPoolStrategy)
+		stickyLimit := config.NormalizedAccountPoolStickyLimit(a.config.AccountPoolStickyLimit)
 		a.mu.RUnlock()
+		// The dashboard reads the account that is actually serving, which under
+		// a rotation strategy is the runtime cursor rather than the persisted
+		// field. Reporting the persisted one would show a stale account for the
+		// entire session.
+		if a.codexRouter != nil {
+			if effective := a.codexRouter.EffectiveActiveCodexAccountID(); effective != "" {
+				active = effective
+			}
+		}
 		if autoSwitch == 0 {
 			autoSwitch = 80
 		}
@@ -34,6 +45,8 @@ func (a *API) handleCodexAuth(w http.ResponseWriter, r *http.Request) bool {
 			{name: "activeCodexAccountId", value: nullable(active)},
 			{name: "autoSwitchThreshold", value: autoSwitch},
 			{name: "upstreamFailoverThreshold", value: failover},
+			{name: "accountPoolStrategy", value: strategy},
+			{name: "accountPoolStickyLimit", value: stickyLimit},
 		})
 		return true
 	case "PUT /api/codex-auth/active":

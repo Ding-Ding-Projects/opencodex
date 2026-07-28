@@ -253,7 +253,8 @@ func New(config Config) *Server {
 	if codexHome == "" {
 		codexHome = codex.ResolveCodexHome(codex.HomeOptions{})
 	}
-	subagentFallback := newResponseSubagentFallback(s.config.ManagementConfig, s.config.Registry, quota, codexHome, s.config.SubagentFallbackState, primeSubagentQuota, s.config.ConfigPersistence)
+	subagentFallback := newResponseSubagentFallback(s.config.ManagementConfig, s.config.Registry, quota, codexHome, s.config.SubagentFallbackState, primeSubagentQuota, s.config.ConfigPersistence).
+		withEffectiveAccount(s.config.CodexRouter)
 	s.responses = NewResponsesCore(ResponsesCoreConfig{
 		Registry: s.config.Registry, Combos: s.config.Combos, Auth: s.config.Auth,
 		ResolveAdapter: s.config.ResolveAdapter, Client: s.config.Client, Recorder: recorder,

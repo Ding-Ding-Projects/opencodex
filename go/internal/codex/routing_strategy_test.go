@@ -296,6 +296,37 @@ func TestQuotaCooldownDropsTheStickyHold(t *testing.T) {
 	}
 }
 
+// Oracle M16: transient failover is judged against the EFFECTIVE active. Under
+// fill-first a drained a hands serving to b while config still says a; two
+// 503s from b then move serving to c. Comparing the persisted field instead
+// would find no match and leave the failing account in place.
+func TestTransientFailoverUsesTheEffectiveActive(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	router, config := threeAccountStrategyFixture(t, "fill-first", 1)
+	config.UpstreamFailoverThreshold = intPointer(2)
+	router.SetAccountQuota("a", AccountQuota{WeeklyPercent: floatPointer(90), MonthlyPercent: floatPointer(90)})
+
+	if got := router.ResolveCodexAccountForThread("", config, now); got != "b" {
+		t.Fatalf("first = %q, oracle serves b while config still says a", got)
+	}
+	if config.ActiveCodexAccountID != "a" {
+		t.Fatalf("config active = %q, oracle leaves it at a", config.ActiveCodexAccountID)
+	}
+
+	router.RecordCodexUpstreamOutcome(config, "b", 503, CodexUpstreamOutcomeMeta{Now: now})
+	router.RecordCodexUpstreamOutcome(config, "b", 503, CodexUpstreamOutcomeMeta{Now: now.Add(time.Millisecond)})
+
+	// Read the cursor BEFORE resolving. A later resolve would re-evaluate and
+	// reach c on its own, which would hide whether the outcome path promoted at
+	// all; the oracle reports c here, at outcome time.
+	if got := router.EffectiveActiveCodexAccountID(); got != "c" {
+		t.Fatalf("cursor after two 503s on b = %q, oracle promotes to c at outcome time", got)
+	}
+	if got := router.ResolveCodexAccountForThread("", config, now.Add(time.Millisecond)); got != "c" {
+		t.Fatalf("after two 503s on b = %q, oracle moves to c", got)
+	}
+}
+
 // Oracle M10: fill-first follows the persisted active straight away, so a
 // manual pick of c is served by c on every following new session.
 func TestManualSelectionUnderFillFirst(t *testing.T) {
