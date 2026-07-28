@@ -189,3 +189,38 @@ func TestAllowedRequestOriginOnANonLoopbackBind(t *testing.T) {
 		t.Fatal("a cross origin must still be refused")
 	}
 }
+
+// The oracle gets IPv4 canonicalization for free from `new URL()`; Go's
+// net/url keeps the hostname as written. So `127.1`, `2130706433` and
+// `0x7f000001` all mean 127.0.0.1 there and were refused here -- a legitimate
+// `ssh -L` caller reaching the proxy as `Host: 127.1:20100` was rejected by Go
+// and accepted by the TypeScript CLI.
+//
+// Expected values are what the oracle actually returns, checked with
+// `bun -e 'isLoopbackRequestHost(...)'` for every row.
+func TestLoopbackRequestHostMatchesWHATWGNormalization(t *testing.T) {
+	for _, test := range []struct {
+		host string
+		want bool
+	}{
+		{host: "127.1:20100", want: true},
+		{host: "127.1", want: true},
+		{host: "2130706433", want: true},
+		{host: "2130706433:20100", want: true},
+		{host: "0x7f000001", want: true},
+		{host: "0177.0.0.1", want: true},
+		// A trailing dot names the same host; curl sends it verbatim.
+		{host: "localhost.", want: true},
+		{host: "LOCALHOST", want: true},
+		// Canonicalization must not turn a REMOTE address into a local one.
+		{host: "127.0.0.2", want: false},
+		{host: "2130706434", want: false},
+		{host: "1.2.3.4", want: false},
+		{host: "attacker.test", want: false},
+		{host: "attacker.test.", want: false},
+	} {
+		if got := IsLoopbackRequestHost(test.host); got != test.want {
+			t.Errorf("IsLoopbackRequestHost(%q) = %v, want %v", test.host, got, test.want)
+		}
+	}
+}

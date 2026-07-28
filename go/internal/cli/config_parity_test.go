@@ -758,3 +758,47 @@ func TestConfigImportDisablesUnsatisfiableSync(t *testing.T) {
 		t.Fatalf("import persisted an opt-in that show would disable: %s", string(written))
 	}
 }
+
+// An explicitly persisted `"apiKeyTransport": ""` is REJECTED by the schema.
+//
+// The runtime's own Config.Validate cannot see the difference between an
+// absent key and an empty one -- Go decodes both into the same zero value --
+// so this gate is what enforces it, and it is the gate the config command
+// actually runs. Measured against the oracle, which reports the identical
+// message and falls back to defaults.
+func TestConfigSchemaRejectsAnEmptyApiKeyTransport(t *testing.T) {
+	const message = `schema_invalid: providers.p.apiKeyTransport: Invalid option: expected one of "x-api-key"|"bearer"`
+	for _, test := range []struct {
+		value     string
+		wantError string
+	}{
+		{value: `""`, wantError: message},
+		{value: `"basic"`, wantError: message},
+		{value: `"bearer"`, wantError: ""},
+		{value: `"x-api-key"`, wantError: ""},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			configHome(t, `{"port":10100,"providers":{"p":{"adapter":"anthropic","baseUrl":"https://api.anthropic.com","authMode":"key","apiKeyTransport":`+test.value+`}},"defaultProvider":"p"}`)
+			out, err := runConfigParityWith(t, "", "show", "--source")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var envelope map[string]any
+			if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if test.wantError == "" {
+				if envelope["source"] != "file" || envelope["error"] != nil {
+					t.Fatalf("a valid value was rejected: source=%v error=%v", envelope["source"], envelope["error"])
+				}
+				return
+			}
+			if envelope["source"] != "fallback" {
+				t.Fatalf("source = %v, want fallback", envelope["source"])
+			}
+			if envelope["error"] != test.wantError {
+				t.Fatalf("error = %v, want %q", envelope["error"], test.wantError)
+			}
+		})
+	}
+}

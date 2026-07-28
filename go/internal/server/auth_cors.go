@@ -30,7 +30,92 @@ func ParseHTTPHost(value string) (*HTTPHost, error) {
 			return nil, errors.New("invalid HTTP host port")
 		}
 	}
-	return &HTTPHost{Hostname: strings.ToLower(parsed.Hostname()), Port: parsed.Port()}, nil
+	return &HTTPHost{Hostname: normalizeWHATWGHostname(parsed.Hostname()), Port: parsed.Port()}, nil
+}
+
+// normalizeWHATWGHostname reproduces the host normalization the oracle gets for
+// free from `new URL()`.
+//
+// Go's net/url keeps the hostname as written; the WHATWG parser rewrites an
+// IPv4 address into its canonical dotted-quad form first. So `127.1`,
+// `2130706433` and `0x7f000001` all become `127.0.0.1` there and stayed
+// verbatim here -- which meant a legitimate `ssh -L` caller reaching the proxy
+// as `Host: 127.1:20100` was refused by Go and accepted by the TypeScript CLI.
+//
+// These are not exotic spellings: `127.1` is what a hand-typed shortcut
+// produces, and both curl and ssh accept it.
+func normalizeWHATWGHostname(hostname string) string {
+	lowered := strings.ToLower(hostname)
+	// A bracketed IPv6 literal is already canonical and must not be run
+	// through the IPv4 rules.
+	if strings.HasPrefix(lowered, "[") {
+		return lowered
+	}
+	if canonical, ok := canonicalizeIPv4(lowered); ok {
+		return canonical
+	}
+	return lowered
+}
+
+// canonicalizeIPv4 implements the WHATWG IPv4 parser: one to four parts,
+// each decimal, octal (0-prefixed) or hex (0x-prefixed), with the LAST part
+// absorbing the remaining bytes.
+func canonicalizeIPv4(host string) (string, bool) {
+	// A trailing dot is allowed and ignored, matching the parser.
+	trimmed := strings.TrimSuffix(host, ".")
+	if trimmed == "" {
+		return "", false
+	}
+	parts := strings.Split(trimmed, ".")
+	if len(parts) > 4 {
+		return "", false
+	}
+	numbers := make([]uint64, 0, len(parts))
+	for _, part := range parts {
+		value, ok := parseIPv4Number(part)
+		if !ok {
+			return "", false
+		}
+		numbers = append(numbers, value)
+	}
+	// Every part but the last must fit in one byte.
+	for _, value := range numbers[:len(numbers)-1] {
+		if value > 255 {
+			return "", false
+		}
+	}
+	last := numbers[len(numbers)-1]
+	// The last part absorbs the bytes the omitted parts would have held.
+	if last >= 1<<(8*(5-uint(len(numbers)))) {
+		return "", false
+	}
+	address := last
+	for index, value := range numbers[:len(numbers)-1] {
+		address += value << (8 * (3 - uint(index)))
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", address>>24&0xff, address>>16&0xff, address>>8&0xff, address&0xff), true
+}
+
+func parseIPv4Number(part string) (uint64, bool) {
+	if part == "" {
+		return 0, false
+	}
+	base := 10
+	digits := part
+	switch {
+	case strings.HasPrefix(part, "0x"):
+		base, digits = 16, part[2:]
+		if digits == "" {
+			return 0, true
+		}
+	case len(part) > 1 && part[0] == '0':
+		base, digits = 8, part[1:]
+	}
+	value, err := strconv.ParseUint(digits, base, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 // IsLoopbackRequestHost reports whether a Host header names the loopback

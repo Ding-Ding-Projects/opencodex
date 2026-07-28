@@ -160,7 +160,12 @@ func canonicalOrigin(value string) string {
 }
 
 func isLoopbackHostname(hostname string) bool {
-	normalized := strings.Trim(strings.ToLower(strings.TrimSpace(hostname)), "[]")
+	// A fully-qualified "localhost." is the same host as "localhost": curl and
+	// some clients send the trailing dot verbatim, and refusing it 403s a
+	// legitimate loopback caller. The oracle strips ONE trailing dot for this
+	// reason (src/server/auth-cors.ts isLoopbackHostname).
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	normalized = strings.Trim(normalized, "[]")
 	return normalized == "" || normalized == "localhost" || normalized == "127.0.0.1" || normalized == "::1"
 }
 

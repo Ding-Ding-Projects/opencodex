@@ -1019,6 +1019,19 @@ func ValidateModelAdapters(providerName string, provider ProviderConfig) error {
 // src/config.ts, including the order of its three checks: the value, then the
 // adapter, then the auth mode. The order is user-visible, because only the
 // first failing message is reported.
+//
+// An EMPTY value is treated as absent here, which the oracle's schema does not
+// do -- it rejects an explicitly persisted `"apiKeyTransport": ""`. The
+// difference is a decoding artifact: Go unmarshals both an absent key and an
+// empty one into the same zero value, so this layer cannot tell them apart
+// without a presence-tracking decoder.
+//
+// It is not user-visible, because the CLI does not validate through here. The
+// config command runs the schema port in internal/cli/config_schema.go, which
+// DOES reject the empty string; measured against the oracle, `config show
+// --source` on such a file reports the identical schema_invalid message and
+// falls back to defaults in both CLIs. This function is the runtime's own
+// admission check, reached only after that gate has already accepted the file.
 func apiKeyTransportConfigError(name string, provider ProviderConfig) error {
 	transport := provider.APIKeyTransport
 	if transport == "" {
