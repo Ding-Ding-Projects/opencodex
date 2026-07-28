@@ -159,3 +159,40 @@ func TestRelayIsIndifferentToChunkBoundaries(t *testing.T) {
 		}
 	}
 }
+
+// A bare `data:` keep-alive is left alone. The oracle gates the rewrite on a
+// truthy payload, so an empty one is skipped; rewriting it would put content
+// into an event the upstream deliberately sent empty.
+func TestRelaySkipsAnEmptyDataPayload(t *testing.T) {
+	got := drainRelay(t, "data:\n\n", func(string) string { return "changed" })
+	if got != "data:\n\n" {
+		t.Fatalf("bare data relay = %q, oracle leaves it unchanged", got)
+	}
+	// A non-empty payload in the same shape IS rewritten.
+	if got := drainRelay(t, "data: x\n\n", func(string) string { return "changed" }); got != "data: changed\n\n" {
+		t.Fatalf("non-empty relay = %q", got)
+	}
+}
+
+// Closing the returned reader must close the upstream body, or a cancelled
+// client would leave the provider connection open.
+func TestRelayCloservePropagatesToTheUpstreamBody(t *testing.T) {
+	source := &closeTrackingReader{Reader: strings.NewReader("data: a\n\n")}
+	relay := RelaySSEWithPayloadRewrite(source, nil)
+	if err := relay.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if !source.closed {
+		t.Fatal("closing the relay did not close the upstream body")
+	}
+}
+
+type closeTrackingReader struct {
+	io.Reader
+	closed bool
+}
+
+func (r *closeTrackingReader) Close() error {
+	r.closed = true
+	return nil
+}

@@ -140,6 +140,11 @@ func ComposeSSEPayloadRewrites(rewrites ...SSEPayloadRewrite) SSEPayloadRewrite 
 // Framing and non-data fields are preserved, and a payload the rewrite leaves
 // untouched is emitted as the ORIGINAL bytes rather than a re-serialized copy,
 // so an unchanged event cannot be reshaped by passing through here.
+//
+// Closing the returned reader closes the upstream body when it is an
+// io.ReadCloser, which unblocks the pump. A plain io.Reader that blocks forever
+// cannot be interrupted from here, so callers passing one must cancel it
+// themselves; every production caller hands over an http.Response.Body.
 func RelaySSEWithPayloadRewrite(body io.Reader, rewrite SSEPayloadRewrite) io.ReadCloser {
 	if rewrite == nil {
 		rewrite = func(payload string) string { return payload }
@@ -198,7 +203,11 @@ func RelaySSEWithPayloadRewrite(body io.Reader, rewrite SSEPayloadRewrite) io.Re
 
 func rewriteSSEBlock(block string, rewrite SSEPayloadRewrite) string {
 	payload, ok := SSEDataPayload(block)
-	if !ok {
+	// An EMPTY payload is skipped, not rewritten. The oracle gates on
+	// `payload ? rewrite(payload) : undefined`, so a bare `data:` keep-alive is
+	// left alone; rewriting it would put content into an event the upstream
+	// deliberately sent empty.
+	if !ok || payload == "" {
 		return block
 	}
 	rewritten := rewrite(payload)

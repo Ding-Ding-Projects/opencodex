@@ -17,6 +17,14 @@ func TestRestoreMatchesTheOracleOnHostileInput(t *testing.T) {
 			`{"type":"function_call","name":"create","f":15000000000,"namespace":"image_gen"}`},
 		{"negative zero", `{"type":"function_call","name":"image_gen__create","z":-0}`,
 			`{"type":"function_call","name":"create","z":0,"namespace":"image_gen"}`},
+		// An unpaired surrogate must survive verbatim. Go's decoder substitutes
+		// U+FFFD, which silently changes what the client receives, so the
+		// original escape is re-emitted instead.
+		{"lone surrogate", `{"type":"function_call","name":"image_gen__create","s":"\ud800"}`,
+			`{"type":"function_call","name":"create","s":"\ud800","namespace":"image_gen"}`},
+		// A payload that genuinely contains U+FFFD is NOT special-cased.
+		{"real replacement character", `{"type":"function_call","name":"image_gen__create","s":"\ufffd"}`,
+			"{\"type\":\"function_call\",\"name\":\"create\",\"s\":\"\ufffd\",\"namespace\":\"image_gen\"}"},
 		{"empty containers", `{"type":"function_call","name":"image_gen__create","e":{},"a":[]}`,
 			`{"type":"function_call","name":"create","e":{},"a":[],"namespace":"image_gen"}`},
 	} {

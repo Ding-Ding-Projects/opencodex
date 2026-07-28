@@ -17,6 +17,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/lidge-jun/opencodex-go/internal/protocol"
 )
@@ -128,9 +129,11 @@ func restoreImageGenCalls(value any, aliases map[string]NamespacedTool) (any, bo
 		// Only a function_call is a restore target. A message carrying the same
 		// string in its name field must be left alone, which is why this is a
 		// structural rewrite rather than a textual one.
-		if kind, _ := typed.get("type"); kind == "function_call" {
+		if kind, _ := typed.get("type"); stringValue(kind) == "function_call" {
 			if raw, ok := typed.get("name"); ok {
-				if name, isString := raw.(string); isString && name != "" {
+				// Read through preservedString: a value wrapped for byte
+				// fidelity is still the string it decoded to.
+				if name := stringValue(raw); name != "" {
 					if target, found := aliases[name]; found {
 						restored.set("name", target.Name)
 						restored.set("namespace", target.Namespace)
@@ -227,6 +230,13 @@ func (o *orderedObject) MarshalJSON() ([]byte, error) {
 // contain those characters, so the default would rewrite payload bytes on every
 // event that merely passes through here.
 func encodeJSONValue(value any) ([]byte, error) {
+	// A string carrying a lone surrogate is emitted from its ORIGINAL escape
+	// rather than re-encoded. Go's decoder replaces an unpaired \ud800 with
+	// U+FFFD, which silently changes what the client receives; the oracle
+	// preserves it.
+	if preserved, ok := value.(preservedString); ok {
+		return []byte(preserved.raw), nil
+	}
 	// Negative zero is the one number Go and JSON.stringify disagree on: Go
 	// emits -0, JavaScript emits 0. Normalized here rather than at decode time
 	// so the difference stays visible next to the reason for it.
@@ -243,6 +253,81 @@ func encodeJSONValue(value any) ([]byte, error) {
 	return bytes.TrimRight(buffer.Bytes(), "\n"), nil
 }
 
+// preservedString is a string whose original JSON text must be re-emitted
+// verbatim, because decoding and re-encoding it would not round-trip.
+type preservedString struct {
+	value string
+	raw   string
+}
+
+// preserveLoneSurrogate returns a plain string when decoding was lossless, and
+// a preservedString carrying the original escape when it was not.
+//
+// Go's decoder substitutes U+FFFD for an unpaired surrogate, so the only way to
+// tell is that the decoded text now contains a replacement character. Payloads
+// that legitimately contain U+FFFD re-encode to the same bytes and are
+// unaffected.
+func preserveLoneSurrogate(text, raw string) any {
+	if !strings.ContainsRune(text, utf8.RuneError) || raw == "" {
+		return text
+	}
+	// The replacement character is only evidence of loss when the source did
+	// not actually contain one. An escaped or literal U+FFFD is re-encoded
+	// normally, because that is what the oracle does; only a lone surrogate
+	// that the decoder destroyed is re-emitted from its original bytes.
+	if strings.ContainsRune(unescapeJSONString(raw), utf8.RuneError) {
+		return text
+	}
+	return preservedString{value: text, raw: raw}
+}
+
+// unescapeJSONString decodes a JSON string literal, tolerating the lone
+// surrogate that makes the strict decoder lossy.
+func unescapeJSONString(raw string) string {
+	var decoded string
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return ""
+	}
+	// A literal U+FFFD in the source survives this round trip; a lone
+	// surrogate becomes one, so the two are told apart by looking for the
+	// escape in the raw text instead.
+	if strings.Contains(strings.ToLower(raw), `\ufffd`) || strings.ContainsRune(raw, utf8.RuneError) {
+		return decoded
+	}
+	return ""
+}
+
+// stringValue reads a decoded string whether or not it was wrapped to preserve
+// its original bytes.
+func stringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case preservedString:
+		return typed.value
+	}
+	return ""
+}
+
+// rawSlice returns the original source bytes of one token, or "" when the
+// offsets are unusable.
+func rawSlice(source string, start, end int64) string {
+	if start < 0 || end > int64(len(source)) || start >= end {
+		return ""
+	}
+	// InputOffset points at the position BEFORE the token was read, which for
+	// an object value sits on the preceding colon and any whitespace. Trim back
+	// to the opening quote so only the string literal itself is captured.
+	segment := strings.TrimSpace(source[start:end])
+	if quote := strings.IndexByte(segment, '"'); quote > 0 {
+		segment = segment[quote:]
+	}
+	if !strings.HasPrefix(segment, `"`) || !strings.HasSuffix(segment, `"`) {
+		return ""
+	}
+	return segment
+}
+
 // decodeOrdered parses JSON while retaining object key order.
 //
 // Numbers go through float64 rather than being preserved verbatim, because
@@ -253,7 +338,7 @@ func encodeJSONValue(value any) ([]byte, error) {
 // exponent-form number.
 func decodeOrdered(text string) (any, error) {
 	decoder := json.NewDecoder(strings.NewReader(text))
-	value, err := decodeOrderedValue(decoder)
+	value, err := decodeOrderedValue(decoder, text)
 	if err != nil {
 		return nil, err
 	}
@@ -265,17 +350,24 @@ func decodeOrdered(text string) (any, error) {
 
 var errTrailingJSON = errors.New("trailing JSON content")
 
-func decodeOrderedValue(decoder *json.Decoder) (any, error) {
+func decodeOrderedValue(decoder *json.Decoder, source string) (any, error) {
+	// The offsets bracket the raw bytes of this token, which is the only way to
+	// recover an escape the decoder has already normalized away.
+	start := decoder.InputOffset()
 	token, err := decoder.Token()
 	if err != nil {
 		return nil, err
 	}
-	return decodeOrderedFromToken(decoder, token)
+	end := decoder.InputOffset()
+	return decodeOrderedFromToken(decoder, token, source, start, end)
 }
 
-func decodeOrderedFromToken(decoder *json.Decoder, token json.Token) (any, error) {
+func decodeOrderedFromToken(decoder *json.Decoder, token json.Token, source string, start, end int64) (any, error) {
 	delimiter, isDelimiter := token.(json.Delim)
 	if !isDelimiter {
+		if text, isString := token.(string); isString {
+			return preserveLoneSurrogate(text, rawSlice(source, start, end)), nil
+		}
 		return token, nil
 	}
 	switch delimiter {
@@ -290,7 +382,7 @@ func decodeOrderedFromToken(decoder *json.Decoder, token json.Token) (any, error
 			if !ok {
 				return nil, errTrailingJSON
 			}
-			value, err := decodeOrderedValue(decoder)
+			value, err := decodeOrderedValue(decoder, source)
 			if err != nil {
 				return nil, err
 			}
@@ -303,7 +395,7 @@ func decodeOrderedFromToken(decoder *json.Decoder, token json.Token) (any, error
 	case '[':
 		items := []any{}
 		for decoder.More() {
-			value, err := decodeOrderedValue(decoder)
+			value, err := decodeOrderedValue(decoder, source)
 			if err != nil {
 				return nil, err
 			}
