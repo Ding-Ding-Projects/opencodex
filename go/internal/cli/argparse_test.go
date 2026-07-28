@@ -156,6 +156,12 @@ func TestTakeIntegerOptionMatchesOracleNumberGrammar(t *testing.T) {
 		{raw: ".5", want: rejected},
 		{raw: "abc", want: rejected},
 		{raw: "1.5", want: rejected},
+		{raw: "+0x10", want: rejected},
+		{raw: "-0x10", want: rejected},
+		{raw: "9223372036854775807", want: rejected},
+		{raw: "1e30", want: rejected},
+		{raw: "\u00a01\u00a0", want: "1"},
+		{raw: "\u20281\u2029", want: "1"},
 	} {
 		t.Run(testCase.raw, func(t *testing.T) {
 			args := []string{"--sticky", testCase.raw}

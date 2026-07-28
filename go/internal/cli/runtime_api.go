@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/platform"
@@ -170,14 +171,25 @@ func (api *runtimeAPI) runtimeBaseURL(ctx context.Context, cfg *config.Config) (
 // truncateLikeJS caps a string at 400 JavaScript string units.
 //
 // The oracle uses String.prototype.slice, which counts UTF-16 code units, so a
-// byte-based cut would both truncate multi-byte text far earlier and risk
-// splitting a rune into invalid UTF-8.
+// byte-based cut would truncate multi-byte text far earlier.
+//
+// The cut is deliberately pulled back to a whole-rune boundary. Slicing exactly
+// at the limit can land between the two halves of a surrogate pair; JavaScript
+// keeps the lone high surrogate, but Go has no way to carry one in a valid
+// string, and utf16.Decode would turn it into U+FFFD. Emitting a replacement
+// character invents content the server never sent, so the half-character is
+// dropped instead. The result is at most one code unit shorter than the
+// oracle's and never contains a substituted glyph.
 func truncateLikeJS(value string, limit int) string {
 	units := utf16.Encode([]rune(value))
 	if len(units) <= limit {
 		return value
 	}
-	return string(utf16.Decode(units[:limit]))
+	cut := limit
+	if utf16.IsSurrogate(rune(units[cut-1])) && utf16.DecodeRune(rune(units[cut-1]), rune(units[cut])) != utf8.RuneError {
+		cut--
+	}
+	return string(utf16.Decode(units[:cut]))
 }
 
 // responseMessage extracts the most specific human-readable error the body

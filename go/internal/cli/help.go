@@ -26,6 +26,9 @@ var commandHelp = map[string]string{
 	"config":      "Usage: ocx config <path|show|get|set|unset|validate> [arguments]\n\nInspect and update validated configuration values.",
 	"combo":       comboUsage,
 	"route":       routeUsage,
+	"agent":       agentUsage,
+	"grok":        grokUsage,
+	"integration": integrationUsage,
 	"claude": "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.\n\n" +
 		"Claude Desktop profile:\n" +
 		"  ocx claude desktop [apply] [--static|--hybrid|--discovery-only]\n" +
@@ -98,6 +101,8 @@ Usage:
   ocx account <sub>           Accounts/keys (list|current|use|refresh|auto-switch|remove|add-key)
   ocx models <sub>            List models; manage custom models (add|remove|list-custom)
   ocx combo <sub>             Combo failover/round-robin routing
+  ocx agent <sub>             Subagents, injection, effort caps, and sidecars
+  ocx grok <sub>              Grok Build model selection and apply
   ocx config <sub>            Validated configuration show/get/set/import/export
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile

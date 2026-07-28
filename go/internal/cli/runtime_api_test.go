@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 )
@@ -255,5 +256,79 @@ func TestConfigurationIsResolvedOncePerClient(t *testing.T) {
 	}
 	if loads != 1 {
 		t.Fatalf("config was loaded %d times, want exactly 1", loads)
+	}
+}
+
+// Slicing exactly at the limit can land between the halves of a surrogate
+// pair. JavaScript keeps the lone high surrogate; Go cannot carry one, and a
+// naive utf16.Decode would substitute U+FFFD, inventing content the server
+// never sent. The cut is pulled back to a whole rune instead.
+func TestTruncateStopsAtASurrogateBoundaryWithoutSubstituting(t *testing.T) {
+	value := strings.Repeat("x", 399) + "\U0001F600"
+	got := truncateLikeJS(value, 400)
+
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Fatal("truncation substituted a replacement character")
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("truncation produced invalid UTF-8")
+	}
+	if got != strings.Repeat("x", 399) {
+		t.Fatalf("got %q, want the text without the split emoji", got)
+	}
+
+	// A pair that fits whole is preserved untouched.
+	whole := strings.Repeat("x", 398) + "\U0001F600"
+	if truncateLikeJS(whole, 400) != whole {
+		t.Fatal("a surrogate pair inside the limit must survive")
+	}
+}
+
+// The service token file is how a managed service actually carries its
+// credential; reading only the config would 401 against exactly the deployment
+// most likely to be running.
+func TestManagementTokenPrefersResolvedServiceCredential(t *testing.T) {
+	api := &runtimeAPI{loadToken: func(*config.Config) string { return "file-token" }}
+	if got := api.managementToken(&config.Config{AuthToken: "config-token"}); got != "file-token" {
+		t.Fatalf("token = %q, want the service token", got)
+	}
+}
+
+// The server dereferences a `$NAME` config value before comparing, so a client
+// that sends the literal reference is rejected.
+func TestManagementTokenResolvesEnvironmentReference(t *testing.T) {
+	t.Setenv("OPENCODEX_TEST_TOKEN_REF", "dereferenced")
+	if got := resolveTokenReference("$OPENCODEX_TEST_TOKEN_REF"); got != "dereferenced" {
+		t.Fatalf("resolveTokenReference = %q", got)
+	}
+	if got := resolveTokenReference("literal"); got != "literal" {
+		t.Fatalf("a plain value must pass through, got %q", got)
+	}
+}
+
+// http.Header matching is case-insensitive, so a caller override must replace
+// the default rather than racing it through random map iteration.
+func TestCallerHeaderOverrideIsCaseInsensitive(t *testing.T) {
+	var gotContentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		if values := r.Header.Values("Content-Type"); len(values) != 1 {
+			t.Errorf("Content-Type sent %d times, want exactly 1: %v", len(values), values)
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	api := &runtimeAPI{
+		BaseURL:   server.URL,
+		Headers:   map[string]string{"content-type": "text/plain"},
+		loadCfg:   noConfig(),
+		loadToken: func(*config.Config) string { return "" },
+	}
+	if _, err := api.request(context.Background(), http.MethodGet, "/api/combos", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotContentType != "text/plain" {
+		t.Fatalf("Content-Type = %q, want the lowercase override to win", gotContentType)
 	}
 }
