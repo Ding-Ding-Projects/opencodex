@@ -113,3 +113,32 @@ func classifyIP(ip net.IP) (string, string) {
 	}
 	return "public", "public IP"
 }
+
+// ClassifyDestinationIP exposes the address classifier to callers that fetch
+// untrusted URLs, so the SSRF rules live in one place rather than being
+// re-derived per feature.
+func ClassifyDestinationIP(ip net.IP) (string, string) {
+	return classifyIP(ip)
+}
+
+// ClassifyDestinationHost classifies a bare hostname the way assessDestination
+// does, without needing a full URL.
+//
+// Returns "hostname" for a name that has to be resolved before it can be
+// judged, which the caller must then do.
+func ClassifyDestinationHost(host string) (string, string) {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "" {
+		return "", ""
+	}
+	if blockedMetadataHosts[host] {
+		return "metadata", "blocked metadata endpoint"
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return "localhost", "localhost destination"
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return classifyIP(ip)
+	}
+	return "hostname", "hostname destination"
+}
