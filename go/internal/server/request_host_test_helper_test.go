@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -26,11 +27,18 @@ import (
 // drop-in replacement.
 func loopbackRequest(method, target string, body io.Reader) *http.Request {
 	request := httptest.NewRequest(method, target, body)
-	// Only override the synthetic default. A test that deliberately sets a
-	// remote Host keeps it.
-	if request.Host == "example.com" {
-		request.Host = "127.0.0.1:10100"
+	// The substitution is keyed on the TARGET carrying no authority, not on
+	// the resulting Host string.
+	//
+	// Matching `Host == "example.com"` after the fact cannot tell httptest's
+	// synthetic filler from a test that deliberately requested
+	// `http://example.com/...`, and would rewrite that one to loopback too --
+	// turning an assertion that a remote Host is REFUSED into one that passes
+	// for the wrong reason. A reviewer flagged exactly that trap.
+	if parsed, err := url.Parse(target); err == nil && parsed.Host != "" {
+		return request // the caller named an authority, so it is theirs
 	}
+	request.Host = "127.0.0.1:10100"
 	return request
 }
 
@@ -47,5 +55,10 @@ func TestLoopbackRequestHelperPreservesADeliberateHost(t *testing.T) {
 	}
 	if got := loopbackRequest("GET", "/healthz", nil); got.Host != "127.0.0.1:10100" {
 		t.Fatalf("the helper did not replace the synthetic default: %q", got.Host)
+	}
+	// The case the reviewer named: an explicit example.com must survive,
+	// because the oracle refuses it and a test may be asserting that.
+	if got := loopbackRequest("GET", "http://example.com/v1/models", nil); got.Host != "example.com" {
+		t.Fatalf("a deliberate example.com Host was rewritten to %q", got.Host)
 	}
 }
