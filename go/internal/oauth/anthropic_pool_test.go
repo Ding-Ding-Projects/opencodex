@@ -330,6 +330,13 @@ func TestParseAnthropicRetryAfterMatchesTheOracle(t *testing.T) {
 		{raw: now.Add(30 * time.Second).Format(http.TimeFormat), want: 30 * time.Second},
 		{raw: now.Add(-time.Hour).Format(http.TimeFormat), want: 0},
 		{raw: now.Add(time.Hour).Format(http.TimeFormat), want: anthropicMaxCooldown},
+		// ISO 8601 is accepted by the oracle's Date.parse but NOT by
+		// http.ParseTime, which only knows the three HTTP date formats. Measured
+		// against the oracle: "2026-07-29T00:00:30Z" is 30s and
+		// "...T00:00:30.500Z" is 30.5s from this instant.
+		{raw: "2026-07-29T00:00:30Z", want: 30 * time.Second},
+		{raw: "2026-07-29T00:00:30.500Z", want: 30500 * time.Millisecond},
+		{raw: "2026-13-45", want: 0},
 	} {
 		if got := ParseAnthropicRetryAfter(testCase.raw, now); got != testCase.want {
 			t.Fatalf("ParseAnthropicRetryAfter(%q) = %v, want %v", testCase.raw, got, testCase.want)

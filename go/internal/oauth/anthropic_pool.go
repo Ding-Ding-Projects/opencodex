@@ -308,7 +308,13 @@ func (p *AnthropicPool) Resolve(sessionKey string, pool config.NormalizedAnthrop
 	// No session identity (Desktop turns without a sticky key): hold the current
 	// active rather than treating every turn as a brand new session, which would
 	// rotate the account mid-conversation.
-	if key == "" && pool.Strategy != config.AccountPoolStrategyQuota {
+	//
+	// Tested against the two rotating strategies by name rather than "not
+	// quota": NormalizeAnthropicPool can only produce the three literals, but a
+	// caller building the struct directly could pass anything, and an unknown
+	// value must behave like the default rather than silently enabling a hold.
+	if key == "" && (pool.Strategy == config.AccountPoolStrategyRoundRobin ||
+		pool.Strategy == config.AccountPoolStrategyFillFirst) {
 		if p.accountUsableLocked(set, set.ActiveAccountID, now) {
 			return AnthropicSelection{AccountID: set.ActiveAccountID, Reason: AnthropicReasonActive}
 		}
@@ -484,8 +490,8 @@ func ParseAnthropicRetryAfter(raw string, now time.Time) time.Duration {
 		}
 		return delay
 	}
-	timestamp, err := http.ParseTime(text)
-	if err != nil {
+	timestamp, parsed := parseRetryAfterDate(text)
+	if !parsed {
 		return 0
 	}
 	delay := timestamp.Sub(now)
@@ -496,4 +502,29 @@ func ParseAnthropicRetryAfter(raw string, now time.Time) time.Duration {
 		delay = anthropicMaxCooldown
 	}
 	return delay
+}
+
+// parseRetryAfterDate accepts what Date.parse accepts, not just what
+// http.ParseTime does.
+//
+// http.ParseTime only knows the three HTTP date formats, so it REJECTS an
+// ISO 8601 timestamp that the oracle happily parses. An upstream sending
+// "2026-07-29T00:00:30Z" would therefore have its cooldown silently replaced by
+// the 60-second default, putting the account back in rotation long before it
+// asked to be.
+func parseRetryAfterDate(text string) (time.Time, bool) {
+	if timestamp, err := http.ParseTime(text); err == nil {
+		return timestamp, true
+	}
+	// Only forms whose instant is unambiguous. A bare "2006-01-02T15:04:05"
+	// with no offset is LOCAL time to Date.parse but would be UTC to
+	// time.Parse, so accepting it here would introduce a timezone-sized
+	// disagreement instead of removing one; it is left unparsed, which at least
+	// fails the same way on every machine. Date-only IS UTC in both.
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+		if timestamp, err := time.Parse(layout, text); err == nil {
+			return timestamp, true
+		}
+	}
+	return time.Time{}, false
 }
