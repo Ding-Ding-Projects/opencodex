@@ -4,10 +4,16 @@ package providers
 // Keeping the dense roster separate leaves registry.go focused on catalog mechanics.
 
 var (
-	fullReasoningEfforts  = []string{"low", "medium", "high", "xhigh", "max"}
-	deepseekEfforts       = []string{"high", "xhigh", "max"}
-	deepseekEffortMap     = map[string]string{"low": "high", "medium": "high", "high": "high", "xhigh": "max", "max": "max"}
-	thinkingToggleModels  = []string{"mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-omni", "mimo-v2-pro", "glm-5", "glm-5.1"}
+	fullReasoningEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+	deepseekEfforts      = []string{"high", "xhigh", "max"}
+	deepseekEffortMap    = map[string]string{"low": "high", "medium": "high", "high": "high", "xhigh": "max", "max": "max"}
+	thinkingToggleModels = []string{"mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-omni", "mimo-v2-pro", "glm-5", "glm-5.1"}
+	// BigModel's own GLM roster. The text models and the single vision model
+	// are kept apart because only glm-4.6v accepts images; advertising vision
+	// on the rest would send images to models that reject them.
+	zhipuBigmodelText     = []string{"glm-4.6", "glm-4.7", "glm-4.7-flash", "glm-5", "glm-5.1"}
+	zhipuBigmodelModels   = append(append([]string(nil), zhipuBigmodelText...), "glm-4.6v")
+	zhipuBigmodelToggles  = []string{"glm-4.6", "glm-4.7", "glm-5", "glm-5.1"}
 	thinkingBudgetModels  = []string{"qwen3.5-397b", "qwen3.6-35b", "qwen3.5-plus", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus"}
 	opencodeBudgetModels  = []string{"qwen3.5-plus", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus"}
 	deepseekThinking      = []string{"deepseek-v4-pro", "deepseek-v4-flash"}
@@ -94,6 +100,8 @@ func applyProviderParityMetadata(rows []ProviderRegistryEntry) {
 			e.PreserveReasoningContentModels = cloneStrings(e.NoVisionModels)
 		case "alibaba-token-plan":
 			applyAlibabaPersonalMetadata(e)
+		case "zhipu-bigmodel":
+			applyZhipuBigmodelMetadata(e)
 		case "alibaba-token-plan-intl":
 			applyAlibabaInternationalMetadata(e)
 		case "opencode-free":
@@ -185,6 +193,44 @@ func applyOpenCodeGoMetadata(e *ProviderRegistryEntry) {
 	for _, model := range deepseekThinking {
 		e.ModelReasoningEffortMap[model] = cloneStringMap(deepseekEffortMap)
 	}
+}
+
+// applyZhipuBigmodelMetadata describes BigModel's domestic pay-as-you-go GLM
+// endpoint.
+//
+// GLM exposes a BINARY thinking knob rather than an effort ladder, so these ids
+// carry a wire map from effort to enabled/disabled. Registering the models
+// without it would send a reasoning_effort BigModel rejects outright, and the
+// provider would look broken for every reasoning request.
+//
+// No live-model claim: GET /api/paas/v4/models has not been observed to answer
+// on this host, and claiming discovery that fails leaves the user staring at an
+// empty picker rather than the static list.
+func applyZhipuBigmodelMetadata(e *ProviderRegistryEntry) {
+	e.Models = cloneStrings(zhipuBigmodelModels)
+	e.DefaultModel = "glm-4.6"
+	// Recorded for oracle parity. It does NOT resolve anything on this side:
+	// Go's only use of the bundle name is an alias map in derive.go, and no
+	// runtime resolver reads windows or modalities from it. So the windows
+	// below are declared directly rather than delegated.
+	e.JawcodeBundle = "zai"
+	// Every model carries its own window. Leaving the non-default ones to a
+	// bundle that never answers would advertise them with a generic fallback
+	// and start compacting a third of the way through the real context.
+	e.ModelContextWindows = map[string]int{
+		"glm-4.6": 204_800, "glm-4.7": 204_800, "glm-4.7-flash": 204_800,
+		"glm-5": 204_800, "glm-5.1": 204_800, "glm-4.6v": 204_800,
+	}
+	e.ModelInputModalities = make(map[string][]string, len(zhipuBigmodelModels))
+	for _, model := range zhipuBigmodelText {
+		e.ModelInputModalities[model] = []string{"text"}
+	}
+	e.ModelInputModalities["glm-4.6v"] = []string{"text", "image"}
+	e.ThinkingToggleModels = cloneStrings(zhipuBigmodelToggles)
+	e.ModelReasoningEfforts = effortsFor(zhipuBigmodelToggles, fullReasoningEfforts)
+	e.ModelReasoningEffortMap = nestedMapFor(zhipuBigmodelToggles, thinkingToggleWireMap)
+	e.PreserveReasoningContentModels = cloneStrings(zhipuBigmodelToggles)
+	e.Note = "Domestic BigModel pay-as-you-go endpoint (open.bigmodel.cn)"
 }
 
 func applyNeuralwattMetadata(e *ProviderRegistryEntry) {

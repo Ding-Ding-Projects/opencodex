@@ -92,6 +92,11 @@ func buildProviderRegistry() []ProviderRegistryEntry {
 		p("nvidia", "NVIDIA NIM", "openai-chat", "https://integrate.api.nvidia.com/v1", AuthKey),
 		p("venice", "Venice", "openai-chat", "https://api.venice.ai/api/v1", AuthKey),
 		p("zai", "Z.AI — GLM Coding Plan", "openai-chat", "https://api.z.ai/api/coding/paas/v4", AuthKey),
+		// Deliberately NOT registered as `glm` or `glm-cn`: both ids already
+		// resolve elsewhere (Z.AI and the BigModel CODING path). Reusing one
+		// would let catalog normalization retarget a saved config onto this
+		// base URL and send its API key to a host the user never chose.
+		p("zhipu-bigmodel", "Zhipu AI — BigModel", "openai-chat", "https://open.bigmodel.cn/api/paas/v4", AuthKey),
 		p("nanogpt", "NanoGPT", "openai-chat", "https://nano-gpt.com/api/v1", AuthKey),
 		p("synthetic", "Synthetic", "openai-chat", "https://api.synthetic.new/openai/v1", AuthKey),
 		p("siliconflow", "SiliconFlow", "openai-chat", "https://api.siliconflow.cn/v1", AuthKey),
@@ -141,7 +146,7 @@ func seedRegistryMetadata(rows []ProviderRegistryEntry) {
 		"google":           {"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"},
 	}
 	defaults := map[string]string{"openai-apikey": "gpt-5.5", "anthropic": "claude-sonnet-5", "anthropic-apikey": "claude-sonnet-5", "xai": "grok-4.5", "kimi": "kimi-k2.7-code", "kimi-code": "kimi-k2.7-code", "google": "gemini-3.5-flash", "cursor": "auto"}
-	dashboards := map[string]string{"openai-apikey": "https://platform.openai.com/api-keys", "anthropic-apikey": "https://console.anthropic.com/settings/keys", "openrouter": "https://openrouter.ai/keys", "groq": "https://console.groq.com/keys", "google": "https://aistudio.google.com/apikey", "kimi-code": "https://platform.moonshot.cn/console/api-keys", "moonshot": "https://platform.moonshot.ai/console/api-keys", "deepseek": "https://platform.deepseek.com/api_keys", "nvidia": "https://build.nvidia.com"}
+	dashboards := map[string]string{"openai-apikey": "https://platform.openai.com/api-keys", "anthropic-apikey": "https://console.anthropic.com/settings/keys", "openrouter": "https://openrouter.ai/keys", "groq": "https://console.groq.com/keys", "google": "https://aistudio.google.com/apikey", "kimi-code": "https://platform.moonshot.cn/console/api-keys", "moonshot": "https://platform.moonshot.ai/console/api-keys", "deepseek": "https://platform.deepseek.com/api_keys", "nvidia": "https://build.nvidia.com", "zhipu-bigmodel": "https://bigmodel.cn/console/usercenter/apikeys"}
 	for i := range rows {
 		e := &rows[i]
 		e.Featured = featured[e.ID]

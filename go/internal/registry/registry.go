@@ -84,6 +84,11 @@ var Providers = func() []Provider {
 		p("nvidia", "NVIDIA NIM", "openai-chat", "https://integrate.api.nvidia.com/v1", AuthKey),
 		p("venice", "Venice", "openai-chat", "https://api.venice.ai/api/v1", AuthKey),
 		p("zai", "Z.AI — GLM Coding Plan", "openai-chat", "https://api.z.ai/api/coding/paas/v4", AuthKey),
+		// Deliberately NOT `glm` or `glm-cn`: those ids already resolve to other
+		// Z.AI products, and reusing one would let normalization retarget a saved
+		// config onto this base URL and send its API key somewhere the user never
+		// chose.
+		p("zhipu-bigmodel", "Zhipu AI — BigModel", "openai-chat", "https://open.bigmodel.cn/api/paas/v4", AuthKey),
 		p("nanogpt", "NanoGPT", "openai-chat", "https://nano-gpt.com/api/v1", AuthKey),
 		p("synthetic", "Synthetic", "openai-chat", "https://api.synthetic.new/openai/v1", AuthKey),
 		p("siliconflow", "SiliconFlow", "openai-chat", "https://api.siliconflow.cn/v1", AuthKey),
@@ -159,6 +164,8 @@ var Providers = func() []Provider {
 			rows[i].DefaultModel = "deepseek-v4-flash"
 		case "zai":
 			rows[i].DefaultModel = "glm-5.2"
+		case "zhipu-bigmodel":
+			rows[i].DefaultModel = "glm-4.6"
 		case "moonshot":
 			rows[i].DefaultModel = "kimi-k2.7-code"
 		case "minimax", "minimax-cn":
@@ -191,7 +198,7 @@ var Providers = func() []Provider {
 		"azure-openai": "https://portal.azure.com", "deepseek": "https://platform.deepseek.com/api_keys", "cerebras": "https://cloud.cerebras.ai/platform/apikeys",
 		"together": "https://api.together.xyz/settings/api-keys", "fireworks": "https://fireworks.ai/account/api-keys", "firepass": "https://fireworks.ai/account/api-keys",
 		"moonshot": "https://platform.moonshot.ai/console/api-keys", "huggingface": "https://huggingface.co/settings/tokens", "nvidia": "https://build.nvidia.com",
-		"venice": "https://venice.ai/settings/api", "zai": "https://z.ai/manage-apikey/apikey-list", "nanogpt": "https://nano-gpt.com/api",
+		"venice": "https://venice.ai/settings/api", "zai": "https://z.ai/manage-apikey/apikey-list", "zhipu-bigmodel": "https://bigmodel.cn/console/usercenter/apikeys", "nanogpt": "https://nano-gpt.com/api",
 		"synthetic": "https://synthetic.new", "siliconflow": "https://cloud.siliconflow.cn/account/ak", "qwen-cloud": "https://docs.qwencloud.com",
 		"tencent-coding-plan": "https://console.cloud.tencent.com/tokenhub/codingplan", "alibaba": "https://dashscope.console.aliyun.com/apiKey",
 		"zenmux": "https://zenmux.ai", "mistral": "https://console.mistral.ai/api-keys", "minimax": "https://platform.minimax.io", "minimax-cn": "https://platform.minimaxi.com",

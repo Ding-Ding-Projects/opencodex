@@ -3,8 +3,10 @@ package registry
 import "testing"
 
 func TestRegistryContainsAllBuiltInProviders(t *testing.T) {
-	if got := len(Providers); got != 59 {
-		t.Fatalf("provider count = %d, want 59", got)
+	// Pinned to the oracle's PROVIDER_REGISTRY length. A count that drifts
+	// silently is how a provider goes missing without anyone noticing.
+	if got := len(Providers); got != 60 {
+		t.Fatalf("provider count = %d, want 60", got)
 	}
 	reg := New()
 	openrouter, ok := reg.Lookup("openrouter")
