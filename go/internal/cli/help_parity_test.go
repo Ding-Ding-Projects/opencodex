@@ -43,9 +43,10 @@ func TestRootHelpConvergesOnOracleBytes(t *testing.T) {
 
 	// Commands whose help line legitimately does not exist yet. Each entry is
 	// removed by the work-phase that ports the command.
-	pending := map[string]string{
-		"opencode": "050",
-	}
+	//
+	// Empty as of wp5 (050): every root help line the oracle prints now has a
+	// Go counterpart, so the comparison is a straight byte-for-byte match.
+	pending := map[string]string{}
 	isPending := func(line string) bool {
 		for name := range pending {
 			if strings.HasPrefix(line, "  ocx "+name+" ") {

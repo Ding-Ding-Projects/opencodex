@@ -111,6 +111,7 @@ Usage:
   ocx config <sub>            Validated configuration show/get/set/import/export
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile
+  ocx opencode [args...]      Launch opencode wired to the proxy (runtime provider config)
   ocx help [command]          Show help
   ocx --version | -v          Print version
 
