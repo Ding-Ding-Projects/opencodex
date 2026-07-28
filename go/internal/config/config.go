@@ -79,13 +79,20 @@ type Config struct {
 	Search                      *SidecarTimeoutConfig      `json:"search,omitempty"`
 	AutoSwitchThreshold         int                        `json:"autoSwitchThreshold,omitempty"`
 	UpstreamFailoverThreshold   int                        `json:"upstreamFailoverThreshold,omitempty"`
-	CodexAccounts               []CodexAccount             `json:"codexAccounts,omitempty"`
-	ActiveCodexAccountID        string                     `json:"activeCodexAccountId,omitempty"`
-	TokenGuardian               *TokenGuardianConfig       `json:"tokenGuardian,omitempty"`
-	CORSAllowOrigins            []string                   `json:"corsAllowOrigins,omitempty"`
-	Debug                       DebugConfig                `json:"debug,omitempty"`
-	Log                         LogConfig                  `json:"log,omitempty"`
-	ExtraFields                 map[string]json.RawMessage `json:"-"`
+	// New-session rotation for the Codex account pool. Both normalize on READ
+	// rather than reject, because a hand-edited config must not lock the user
+	// out of their own accounts; the management API is the strict surface.
+	AccountPoolStrategy    string `json:"accountPoolStrategy,omitempty"`
+	AccountPoolStickyLimit *int   `json:"accountPoolStickyLimit,omitempty"`
+	// Opt-in Anthropic OAuth account pool. Default OFF.
+	AnthropicAccountPool *AnthropicAccountPoolConfig `json:"anthropicAccountPool,omitempty"`
+	CodexAccounts        []CodexAccount              `json:"codexAccounts,omitempty"`
+	ActiveCodexAccountID string                      `json:"activeCodexAccountId,omitempty"`
+	TokenGuardian        *TokenGuardianConfig        `json:"tokenGuardian,omitempty"`
+	CORSAllowOrigins     []string                    `json:"corsAllowOrigins,omitempty"`
+	Debug                DebugConfig                 `json:"debug,omitempty"`
+	Log                  LogConfig                   `json:"log,omitempty"`
+	ExtraFields          map[string]json.RawMessage  `json:"-"`
 }
 
 type SidecarTimeoutConfig struct {
