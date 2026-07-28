@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
+	"strconv"
 )
 
 // printData renders a management result.
@@ -90,9 +93,17 @@ type orderedValue struct {
 // decodeOrdered parses JSON while recording object key order.
 func decodeOrdered(raw []byte) (orderedValue, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
+	// UseNumber keeps the literal so an out-of-range value like 1e400 reaches
+	// us instead of failing the decode: JSON.parse turns it into Infinity.
+	decoder.UseNumber()
 	value, err := decodeOrderedFrom(decoder)
 	if err != nil {
 		return orderedValue{}, err
+	}
+	// JSON.parse throws on anything after the root value, so `{} {}` is a
+	// SyntaxError rather than a successful parse of the first object.
+	if _, err := decoder.Token(); err != io.EOF {
+		return orderedValue{}, fmt.Errorf("unexpected trailing content after JSON value")
 	}
 	return value, nil
 }
@@ -150,7 +161,26 @@ func decodeOrderedFrom(decoder *json.Decoder) (orderedValue, error) {
 		// with String(number) semantics, so the source spelling is deliberately
 		// discarded: 12345678901234567890 becomes 12345678901234567000, 1.00
 		// becomes 1, and 1e+3 becomes 1000.
+		if literal, isNumber := typed.(json.Number); isNumber {
+			number, convErr := strconv.ParseFloat(literal.String(), 64)
+			if convErr != nil {
+				// Out of float64 range is Infinity in JavaScript, not an error.
+				if numErr, ok := convErr.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+					return orderedValue{kind: 's', scalar: []byte("null"), present: true}, nil
+				}
+				return orderedValue{}, convErr
+			}
+			if math.IsInf(number, 0) || math.IsNaN(number) {
+				return orderedValue{kind: 's', scalar: []byte("null"), present: true}, nil
+			}
+			return orderedValue{kind: 's', scalar: []byte(jsNumberText(number)), present: true}, nil
+		}
 		if number, isNumber := typed.(float64); isNumber {
+			// JSON.parse accepts 1e400 as Infinity and JSON.stringify renders
+			// a non-finite number as null, so neither is an error here.
+			if math.IsInf(number, 0) || math.IsNaN(number) {
+				return orderedValue{kind: 's', scalar: []byte("null"), present: true}, nil
+			}
 			return orderedValue{kind: 's', scalar: []byte(jsNumberText(number)), present: true}, nil
 		}
 		encoded, marshalErr := json.Marshal(typed)

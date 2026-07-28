@@ -164,25 +164,30 @@ func formURLEncode(value string) string {
 	return out.String()
 }
 
-func logRows(data any) []map[string]any {
-	extract := func(items []any) []map[string]any {
-		rows := make([]map[string]any, 0, len(items))
-		for _, item := range items {
-			if row, ok := item.(map[string]any); ok {
-				rows = append(rows, row)
-			}
-		}
-		return rows
-	}
+// logRows returns every entry of the log array, not only the objects.
+//
+// The oracle iterates the parsed array directly, so a malformed payload like
+// [1, {...}] prints BOTH rows. Filtering to objects here would silently drop
+// the number and, worse, shift the pairing against the ordered row list.
+func logRows(data any) []any {
 	if items, ok := data.([]any); ok {
-		return extract(items)
+		return items
 	}
 	if record, ok := data.(map[string]any); ok {
 		for _, key := range []string{"logs", "entries", "requests"} {
 			if items, ok := record[key].([]any); ok {
-				return extract(items)
+				return items
 			}
 		}
+	}
+	return nil
+}
+
+// rowObject narrows an entry for the field-reading helpers; a non-object row
+// still prints, it simply has no fields to read.
+func rowObject(row any) map[string]any {
+	if object, ok := row.(map[string]any); ok {
+		return object
 	}
 	return nil
 }
@@ -210,7 +215,8 @@ func firstText(row map[string]any, keys ...string) string {
 	return ""
 }
 
-func formatLog(row map[string]any) string {
+func formatLog(entry any) string {
+	row := rowObject(entry)
 	status := firstText(row, "status", "statusCode")
 	if status == "" {
 		status = "?"
@@ -235,7 +241,8 @@ func formatLog(row map[string]any) string {
 }
 
 // logKey identifies a row for follow-mode de-duplication.
-func logKey(row map[string]any) string {
+func logKey(entry any) string {
+	row := rowObject(entry)
 	if id := firstText(row, "id"); id != "" {
 		return id
 	}
@@ -452,9 +459,8 @@ func orderedLogRows(raw []byte) []string {
 	}
 	out := []string{}
 	for _, item := range items {
-		if !item.isObject() {
-			continue
-		}
+		// Every entry is kept: logRows no longer filters, so index N here must
+		// stay the same row as index N there.
 		encoded, marshalErr := item.MarshalJSON()
 		if marshalErr != nil {
 			return nil
