@@ -19,13 +19,18 @@ func TestProxyAPIKeysNeverReturnSecretsAndNotifyAdmission(t *testing.T) {
 		options.RefreshCatalog = func() error { refreshed.Add(1); return nil }
 		options.OnAPIKeysChanged = func(keys []config.ProxyAPIKey) { notified = append([]config.ProxyAPIKey(nil), keys...) }
 	})
-	secret := "ocx_client_supplied_secret_123456789"
-	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"desktop","key":"`+secret+`"}`)
-	if created.Code != http.StatusCreated || strings.Contains(created.Body.String(), secret) || len(notified) != 1 || notified[0].Key != secret {
+	// The oracle takes only `name`; the server mints the secret and returns it
+	// exactly once, so the created response is the only place it appears.
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"desktop"}`)
+	if created.Code != http.StatusCreated || len(notified) != 1 {
 		t.Fatalf("created=%d %s notified=%d", created.Code, created.Body.String(), len(notified))
 	}
+	secret := notified[0].Key
+	if !strings.HasPrefix(secret, "ocx_") || !strings.Contains(created.Body.String(), secret) {
+		t.Fatalf("creation must return the minted key once: %s", created.Body.String())
+	}
 	listed := serveManagement(api, http.MethodGet, "/api/keys", "")
-	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secret) || strings.Contains(listed.Body.String(), `"key"`) || !strings.Contains(listed.Body.String(), `"prefix":"ocx_clie..."`) {
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secret) || strings.Contains(listed.Body.String(), `"key"`) || !strings.Contains(listed.Body.String(), `"prefix":"`+secret[:8]+`..."`) {
 		t.Fatalf("listed=%d %s", listed.Code, listed.Body.String())
 	}
 	if !strings.HasPrefix(listed.Body.String(), `{"keys":[{"id":`) || !strings.Contains(listed.Body.String(), `"createdAt":"`) {
@@ -145,17 +150,46 @@ func TestProxyAPIKeyCreationMintsAndReturnsTheKeyOnce(t *testing.T) {
 	}
 }
 
-// A key the caller brought is stored but never echoed: reflecting a client
-// secret would put it in one more place for no benefit.
-func TestProxyAPIKeyCreationDoesNotEchoACallerSuppliedKey(t *testing.T) {
+// The oracle reads only `name` from the body and mints the secret itself, so a
+// caller-supplied key must be ignored rather than honoured. Accepting one would
+// let a client pick its own credential -- a weaker one, or one it has already
+// leaked -- through an endpoint the TypeScript runtime never offered for that.
+func TestProxyAPIKeyCreationIgnoresACallerSuppliedKey(t *testing.T) {
 	cfg := config.Default()
 	api := newParityAPI(t, &cfg)
 	secret := "ocx_caller_supplied_secret_123456789"
 	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"n","key":"`+secret+`"}`)
-	if created.Code != http.StatusCreated || strings.Contains(created.Body.String(), secret) {
+	if created.Code != http.StatusCreated {
 		t.Fatalf("created=%d %s", created.Code, created.Body.String())
 	}
-	if len(cfg.APIKeys) != 1 || cfg.APIKeys[0].Key != secret {
-		t.Fatalf("the supplied key must still be stored: %+v", cfg.APIKeys)
+	if strings.Contains(created.Body.String(), secret) {
+		t.Fatalf("the caller's secret was echoed: %s", created.Body.String())
+	}
+	if len(cfg.APIKeys) != 1 {
+		t.Fatalf("expected one stored key, got %+v", cfg.APIKeys)
+	}
+	if cfg.APIKeys[0].Key == secret {
+		t.Fatal("the caller's key was stored; the server must mint its own")
+	}
+	if !strings.HasPrefix(cfg.APIKeys[0].Key, "ocx_") {
+		t.Fatalf("stored key %q does not look server-minted", cfg.APIKeys[0].Key)
+	}
+}
+
+// The oracle returns id, name, key, createdAt IN THAT ORDER, and `--json`
+// prints the response verbatim. A Go map would serialize the keys sorted, so
+// this pins the ordered serializer rather than the field set alone.
+func TestProxyAPIKeyCreationPreservesOracleFieldOrder(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"desktop"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("created=%d %s", created.Code, created.Body.String())
+	}
+	body := created.Body.String()
+	for _, pair := range [][2]string{{`"id"`, `"name"`}, {`"name"`, `"key"`}, {`"key"`, `"createdAt"`}} {
+		if strings.Index(body, pair[0]) > strings.Index(body, pair[1]) {
+			t.Fatalf("%s must precede %s: %s", pair[0], pair[1], body)
+		}
 	}
 }

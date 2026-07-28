@@ -274,23 +274,18 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 			writeError(w, http.StatusBadRequest, "name or key is invalid")
 			return
 		}
-		// The server MINTS the key when the caller does not bring one. The
-		// oracle generates it here and returns it once
-		// (src/server/management/oauth-account-routes.ts), so requiring a
-		// caller-supplied secret made `ocx access key create` unusable.
-		minted := body.Key == ""
-		if minted {
-			generated, genErr := generateProxyAPIKey()
-			if genErr != nil {
-				writeError(w, http.StatusInternalServerError, "API key could not be generated")
-				return
-			}
-			body.Key = generated
-		}
-		if len(body.Key) < 24 || len(body.Key) > 512 || strings.ContainsAny(body.Key, "\x00\r\n") {
-			writeError(w, http.StatusBadRequest, "name or key is invalid")
+		// The server always mints the key. The oracle reads only `name` from
+		// the body and generates the secret itself
+		// (src/server/management/oauth-account-routes.ts:438), so honouring a
+		// caller-supplied key would let a client choose its own credential —
+		// a weaker one, or one it has already leaked — through an endpoint the
+		// TypeScript runtime never exposed for that.
+		generated, genErr := generateProxyAPIKey()
+		if genErr != nil {
+			writeError(w, http.StatusInternalServerError, "API key could not be generated")
 			return
 		}
+		body.Key = generated
 		a.mu.Lock()
 		if containsProxyKey(a.config.APIKeys, body.Key) {
 			a.mu.Unlock()
@@ -313,17 +308,17 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 		}
 		// The plaintext key is returned ONLY here, on creation. Every GET
 		// redacts it, so this response is the caller's single chance to store
-		// it — matching the oracle.
+		// it — matching the oracle, which returns id/name/key/createdAt.
 		//
-		// A key the CALLER supplied is deliberately NOT echoed: the caller
-		// already has it, and reflecting a client secret back would put it in
-		// one more place (proxy logs, shell history of a piped response) for
-		// no benefit. That invariant predates this change and is kept.
-		response := map[string]any{"id": entry.ID, "name": entry.Name, "createdAt": entry.CreatedAt}
-		if minted {
-			response["key"] = entry.Key
-		}
-		writeJSON(w, http.StatusCreated, response)
+		// orderedJSONObject, not a map: Go serializes map keys sorted, which
+		// would emit createdAt/id/key/name where the oracle emits
+		// id/name/key/createdAt, and `--json` prints this verbatim.
+		writeJSON(w, http.StatusCreated, orderedJSONObject{
+			{name: "id", value: entry.ID},
+			{name: "name", value: entry.Name},
+			{name: "key", value: entry.Key},
+			{name: "createdAt", value: entry.CreatedAt},
+		})
 	case http.MethodDelete:
 		var body struct {
 			ID string `json:"id"`
