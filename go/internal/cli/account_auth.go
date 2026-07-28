@@ -96,7 +96,16 @@ type loginStart struct {
 	FlowID       string `json:"flowId"`
 	Instructions string `json:"instructions"`
 	DeviceCode   string `json:"deviceCode"`
+	// raw is the response EXACTLY as decoded. `--no-wait --json` prints the
+	// start payload verbatim, so re-serializing the struct would turn a string
+	// or array response into `{}` and would add empty fields the server never
+	// sent.
+	raw any
 }
+
+// payload returns what `--json` must print: the original value, not a
+// reconstruction of it.
+func (s loginStart) payload() any { return s.raw }
 
 func runAccountLogin(ctx context.Context, api runtimeAPI, argv []string, deps accountAuthDeps, streams IO) error {
 	args := append([]string{}, argv...)
@@ -174,7 +183,7 @@ func codexLogin(ctx context.Context, api runtimeAPI, provider, id, code string, 
 	}
 	if noWait {
 		if wantsJSON {
-			return printData(streams, start, true, nil)
+			return printData(streams, start.payload(), true, nil)
 		}
 		return nil
 	}
@@ -250,7 +259,7 @@ func providerLogin(ctx context.Context, api runtimeAPI, provider, id, code strin
 	}
 	if noWait {
 		if wantsJSON {
-			return printData(streams, start, true, nil)
+			return printData(streams, start.payload(), true, nil)
 		}
 		return nil
 	}
@@ -426,11 +435,24 @@ func requestLoginStart(ctx context.Context, api runtimeAPI, method, path string,
 	if err != nil {
 		return loginStart{}, err
 	}
+	// `null` is the ONE non-object the oracle cannot survive: it reads
+	// `start.url` straight off the response, which throws. A string, an array
+	// or a number all yield undefined for every field and carry on, so only
+	// null becomes an error here.
+	//
+	// Coercing null to an empty start instead let `--no-wait` report success
+	// against a server that returned nothing, and made a provider login poll
+	// for the full 200 seconds before giving up.
+	if decoded == nil {
+		return loginStart{}, fmt.Errorf("null is not an object (evaluating 'start.url')")
+	}
 	record, isObject := decoded.(map[string]any)
 	if !isObject {
-		return loginStart{}, nil
+		// A string, array or number has no fields to read, but it is still
+		// what `--json` has to print.
+		return loginStart{raw: decoded}, nil
 	}
-	start := loginStart{}
+	start := loginStart{raw: decoded}
 	if value, isString := record["url"].(string); isString {
 		start.URL = value
 	}
@@ -458,7 +480,9 @@ func requestStateMap(ctx context.Context, api runtimeAPI, method, path string) (
 		// map instead made a malformed payload look like "still pending" and
 		// polled all the way to the timeout.
 		if decoded == nil {
-			return nil, fmt.Errorf("null is not an object (reading 'status')")
+			// The wording is the oracle's, verbatim: a user comparing the two
+			// CLIs sees the same message.
+			return nil, fmt.Errorf("null is not an object (evaluating 'null.status')")
 		}
 		return map[string]any{}, nil
 	}

@@ -436,6 +436,11 @@ func TestAccountLoginFailsOnANullPollPayload(t *testing.T) {
 	if err == nil {
 		t.Fatal("a null poll payload must fail")
 	}
+	// The MESSAGE matters, not just the failure: a user comparing the two CLIs
+	// should see the same text. This is what `bun -e 'null.status'` reports.
+	if err.Error() != "null is not an object (evaluating 'null.status')" {
+		t.Fatalf("error = %q, want the oracle's TypeError text", err.Error())
+	}
 	if len(harness.sleeps) != 1 {
 		t.Fatalf("polled %d times; a malformed payload must not poll to timeout", len(harness.sleeps))
 	}
@@ -594,5 +599,55 @@ func TestJSStringMatchesJavaScript(t *testing.T) {
 		if got := jsString(testCase.value); got != testCase.want {
 			t.Fatalf("jsString(%#v) = %q, want %q", testCase.value, got, testCase.want)
 		}
+	}
+}
+
+// A null login-start throws in the oracle, so it must fail here rather than
+// report success. With --no-wait the coerced version reported a successful
+// login against a server that returned nothing; with a provider login it
+// polled for the full budget first.
+func TestAccountLoginFailsOnANullStart(t *testing.T) {
+	for _, testCase := range []struct{ name, provider string }{
+		{name: "codex", provider: "openai"},
+		{name: "provider", provider: "anthropic"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
+				return 200, `null`
+			}, "", "login", testCase.provider, "--no-wait")
+			if err == nil {
+				t.Fatal("a null login-start must fail")
+			}
+			if len(harness.sleeps) != 0 {
+				t.Fatalf("polled %d time(s) on a null start", len(harness.sleeps))
+			}
+		})
+	}
+}
+
+// `--no-wait --json` prints the start payload VERBATIM. Rebuilding it from the
+// parsed struct turned a non-object response into "{}" and added empty fields
+// the server never sent.
+func TestAccountLoginJSONPrintsTheStartVerbatim(t *testing.T) {
+	for _, testCase := range []struct{ name, body, want string }{
+		{name: "string", body: `"text"`, want: `"text"`},
+		{name: "array", body: `[1,2]`, want: "[\n  1,\n  2\n]"},
+		{name: "number", body: `42`, want: "42"},
+		{name: "object keeps only what was sent", body: `{"flowId":"f1"}`, want: "\"flowId\": \"f1\""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
+				return 200, testCase.body
+			}, "", "login", "openai", "--no-wait", "--json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(harness.stdout.String(), testCase.want) {
+				t.Fatalf("stdout = %q, want it to contain %q", harness.stdout.String(), testCase.want)
+			}
+			if testCase.name == "object keeps only what was sent" && strings.Contains(harness.stdout.String(), `"url"`) {
+				t.Fatalf("a field the server never sent was printed: %s", harness.stdout.String())
+			}
+		})
 	}
 }
