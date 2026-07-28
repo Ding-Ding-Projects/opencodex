@@ -253,3 +253,30 @@ func TestCallXaiImagesSendsAnExplicitZeroCount(t *testing.T) {
 		t.Fatalf("default n = %v, oracle sends 1", got)
 	}
 }
+
+// An explicitly empty model is sent as empty. The oracle defaults with ??
+// rather than ||, and substituting the default would put a PAID model into a
+// request that deliberately asked for none — the same guarantee the bridge
+// config makes for bridgeModel.
+func TestCallXaiImagesSendsAnExplicitEmptyModel(t *testing.T) {
+	server, captured := xaiStub(t, `{"data":[]}`, http.StatusOK)
+	empty := ""
+	if _, err := CallXaiImages(context.Background(), server.Client(),
+		XaiImageRequest{Prompt: "p", Model: &empty},
+		BridgeAuth{BaseURL: server.URL + "/v1", Token: "t"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*captured)[0].Body["model"]; got != "" {
+		t.Fatalf("model = %v, oracle sends the empty string", got)
+	}
+
+	// An absent model still defaults.
+	defaulted, capturedDefault := xaiStub(t, `{"data":[]}`, http.StatusOK)
+	if _, err := CallXaiImages(context.Background(), defaulted.Client(),
+		XaiImageRequest{Prompt: "p"}, BridgeAuth{BaseURL: defaulted.URL + "/v1", Token: "t"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*capturedDefault)[0].Body["model"]; got != "grok-imagine-image-quality" {
+		t.Fatalf("default model = %v", got)
+	}
+}

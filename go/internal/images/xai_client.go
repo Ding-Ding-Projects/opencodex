@@ -31,7 +31,10 @@ const (
 // XaiImageRequest is one generation or edit.
 type XaiImageRequest struct {
 	Prompt string
-	Model  string
+	// Model is a pointer for the same reason N is: the oracle defaults with ??
+	// rather than ||, so an explicitly empty model is a real request and must
+	// not be replaced by the PAID default the caller did not ask for.
+	Model *string
 	// N is a pointer so an explicit 0 survives; the oracle defaults with ??,
 	// not ||, so zero is a real value rather than "unset".
 	N       *int
@@ -141,9 +144,9 @@ func CallXaiImages(
 		endpoint = "/images/edits"
 	}
 
-	model := request.Model
-	if model == "" {
-		model = xaiDefaultModel
+	model := xaiDefaultModel
+	if request.Model != nil {
+		model = *request.Model
 	}
 	// N is a pointer so an explicit 0 is distinguishable from an absent value:
 	// the oracle uses ?? and therefore sends 0 when 0 was asked for.
