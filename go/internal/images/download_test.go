@@ -193,3 +193,57 @@ func TestDownloadImageToArtifactChargesTheBudget(t *testing.T) {
 		t.Fatalf("err = %v, want a budget refusal", err)
 	}
 }
+
+// A transport may return a live body ALONGSIDE an error. Returning without
+// closing it leaks a socket on exactly the provider-controlled failures this
+// path exists to handle.
+func TestDownloadImageToArtifactClosesTheBodyOnTransportError(t *testing.T) {
+	dir := t.TempDir()
+	spy := &closeSpy{Reader: strings.NewReader("partial")}
+	failing := func(context.Context, string, PinnedAddress) (int, io.ReadCloser, error) {
+		return 0, spy, errors.New("dial refused")
+	}
+	_, err := DownloadImageToArtifact(context.Background(), dir, "https://8.8.8.8/x.png", nil, publicLookup, failing)
+	if err == nil || err.Error() != "dial refused" {
+		t.Fatalf("err = %v", err)
+	}
+	if !spy.closed {
+		t.Fatal("the body was not closed when the transport returned an error")
+	}
+}
+
+// The body is also closed on every refusal AFTER a successful transport call.
+func TestDownloadImageToArtifactClosesTheBodyOnRefusal(t *testing.T) {
+	dir := t.TempDir()
+	for _, testCase := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"non-2xx", 404, "nope"},
+		{"empty body", 200, ""},
+		{"non-image body", 200, "\x01\x02\x03\x04"},
+	} {
+		spy := &closeSpy{Reader: strings.NewReader(testCase.body)}
+		transport := func(context.Context, string, PinnedAddress) (int, io.ReadCloser, error) {
+			return testCase.status, spy, nil
+		}
+		if _, err := DownloadImageToArtifact(context.Background(), dir, "https://8.8.8.8/x.png",
+			nil, publicLookup, transport); err == nil {
+			t.Fatalf("%s: expected a refusal", testCase.name)
+		}
+		if !spy.closed {
+			t.Fatalf("%s: the body was not closed", testCase.name)
+		}
+	}
+}
+
+type closeSpy struct {
+	io.Reader
+	closed bool
+}
+
+func (s *closeSpy) Close() error {
+	s.closed = true
+	return nil
+}

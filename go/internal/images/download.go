@@ -84,7 +84,13 @@ func DownloadImageToArtifact(
 	}
 
 	status, body, err := download(ctx, rawURL, pinned)
+	// Closed BEFORE the error is returned, not after. A transport can hand back
+	// a live body alongside an error, and returning first would leak the socket
+	// on exactly the provider-controlled failures this path exists to handle.
 	if err != nil {
+		if body != nil {
+			_ = body.Close()
+		}
 		return "", err
 	}
 	if body != nil {
