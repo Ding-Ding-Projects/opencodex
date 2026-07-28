@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -407,25 +408,23 @@ func TestOrderedDecodeRejectsMalformedJSON(t *testing.T) {
 }
 
 // The four aliases must forward their flags into the right observe section.
-// Verifying they are merely registered proves nothing: an alias that dropped
-// its arguments, or prepended the wrong section, would still be registered.
+// The test drives the SAME functions the registry calls, so a wrapper that
+// names the wrong section or drops its arguments fails here.
 func TestObserveAliasesForwardArgumentsToTheirSection(t *testing.T) {
 	for _, testCase := range []struct {
 		alias   string
+		run     func(context.Context, runtimeAPI, []string, IO) error
 		args    []string
 		wantURI string
 	}{
-		{alias: "logs", args: []string{"--status", "5xx", "--limit", "7", "--jsonl"}, wantURI: "/api/logs?status=5xx&limit=7"},
-		{alias: "usage", args: []string{"--range", "7d", "--surface", "codex", "--json"}, wantURI: "/api/usage?range=7d&surface=codex"},
-		{alias: "storage", args: []string{"--limit", "3", "--json"}, wantURI: "/api/storage?limit=3"},
-		{alias: "memory", args: []string{"--json"}, wantURI: "/api/system/memory"},
+		{alias: "logs", run: runObserveLogsWith, args: []string{"--status", "5xx", "--limit", "7", "--jsonl"}, wantURI: "/api/logs?status=5xx&limit=7"},
+		{alias: "usage", run: runObserveUsageWith, args: []string{"--range", "7d", "--surface", "codex", "--json"}, wantURI: "/api/usage?range=7d&surface=codex"},
+		{alias: "storage", run: runObserveStorageWith, args: []string{"--limit", "3", "--json"}, wantURI: "/api/storage?limit=3"},
+		{alias: "memory", run: runObserveMemoryWith, args: []string{"--json"}, wantURI: "/api/system/memory"},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
 			server, calls := observeServer(t, `[]`)
-			// Drive the REAL wrapper, not observeDispatch with the section
-			// already inserted: a wrapper that prepended the wrong section or
-			// dropped its arguments has to fail here.
-			if err := observeAlias(context.Background(), testAPI(server), testCase.alias, testCase.args, IO{Out: &bytes.Buffer{}}); err != nil {
+			if err := testCase.run(context.Background(), testAPI(server), testCase.args, IO{Out: &bytes.Buffer{}}); err != nil {
 				t.Fatal(err)
 			}
 			if len(*calls) != 1 {
@@ -474,6 +473,19 @@ func TestObserveAliasesAreRegisteredAndHidden(t *testing.T) {
 		}
 		if !commandSpecs[position].Hidden {
 			t.Fatalf("%q must be hidden so it does not appear in the root help", alias)
+		}
+	}
+	// Presence is not enough: the registry must resolve each alias to ITS OWN
+	// wrapper, or `ocx storage` could quietly run the usage handler.
+	for alias, want := range map[string]commandHandler{
+		"logs":    runObserveLogs,
+		"usage":   runObserveUsage,
+		"storage": runObserveStorage,
+		"memory":  runObserveMemory,
+	} {
+		got := commandSpecs[commandIndex[alias]].Handler
+		if reflect.ValueOf(got).Pointer() != reflect.ValueOf(want).Pointer() {
+			t.Fatalf("%q resolves to the wrong handler", alias)
 		}
 	}
 	for _, name := range registeredCommandNames(false) {

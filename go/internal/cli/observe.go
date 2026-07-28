@@ -45,25 +45,44 @@ func runObserve(ctx context.Context, args []string, streams IO) error {
 // sections (src/cli/index.ts:1000). They are registered as hidden commands so
 // they resolve without appearing twice in the root help, which is compared
 // byte-for-byte against the TypeScript output.
+// Each wrapper is a thin adapter over its *With twin so a test can drive the
+// SAME function the registry calls. A test that reimplements the prepend
+// proves only that prepending works, which is not the thing that can break:
+// what breaks is a wrapper naming the wrong section.
 func runObserveLogs(ctx context.Context, args []string, streams IO) error {
-	return observeAlias(ctx, newRuntimeAPI(), "logs", args, streams)
+	return runObserveLogsWith(ctx, newRuntimeAPI(), args, streams)
+}
+
+func runObserveLogsWith(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
+	return observeAlias(ctx, api, "logs", args, streams)
 }
 
 func runObserveUsage(ctx context.Context, args []string, streams IO) error {
-	return observeAlias(ctx, newRuntimeAPI(), "usage", args, streams)
+	return runObserveUsageWith(ctx, newRuntimeAPI(), args, streams)
+}
+
+func runObserveUsageWith(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
+	return observeAlias(ctx, api, "usage", args, streams)
 }
 
 func runObserveStorage(ctx context.Context, args []string, streams IO) error {
-	return observeAlias(ctx, newRuntimeAPI(), "storage", args, streams)
+	return runObserveStorageWith(ctx, newRuntimeAPI(), args, streams)
+}
+
+func runObserveStorageWith(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
+	return observeAlias(ctx, api, "storage", args, streams)
 }
 
 func runObserveMemory(ctx context.Context, args []string, streams IO) error {
-	return observeAlias(ctx, newRuntimeAPI(), "memory", args, streams)
+	return runObserveMemoryWith(ctx, newRuntimeAPI(), args, streams)
+}
+
+func runObserveMemoryWith(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
+	return observeAlias(ctx, api, "memory", args, streams)
 }
 
 // observeAlias prepends the section an alias stands for and forwards the rest
-// unchanged. It takes the client so a test can drive the real wrapper rather
-// than reimplementing the prepend and proving nothing about it.
+// unchanged.
 func observeAlias(ctx context.Context, api runtimeAPI, section string, args []string, streams IO) error {
 	return observeDispatch(ctx, api, append([]string{section}, args...), streams)
 }
