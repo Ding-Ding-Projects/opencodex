@@ -108,6 +108,16 @@ func Scan(codexHome string) (Report, error) {
 			continue
 		}
 		if entry.IsDir() {
+			// Quarantine trash is NOT storage the user still owns: it is
+			// already-deleted data waiting to be reaped, so counting it
+			// inflates both `other` and the total the dashboard reports.
+			// Measured against the oracle with a 500-byte file under .trash
+			// and a 100-byte active session: TS reports total 100 / other 0,
+			// Go reported total 600 / other 500. src/storage/scanner.ts skips
+			// it for the same reason.
+			if entry.Name() == TrashDir {
+				continue
+			}
 			bucket := directoryBuckets[entry.Name()]
 			if bucket == "" {
 				bucket = BucketOther
