@@ -55,6 +55,9 @@ type Tool struct {
 	ToolSearch           bool           `json:"toolSearch,omitempty"`
 	LoadedFromToolSearch bool           `json:"loadedFromToolSearch,omitempty"`
 	WebSearch            bool           `json:"webSearch,omitempty"`
+	// ImageGeneration marks the synthetic tool the image bridge intercepts.
+	// The call is fulfilled locally and never relayed upstream.
+	ImageGeneration bool `json:"imageGeneration,omitempty"`
 }
 
 type RequestOptions struct {
