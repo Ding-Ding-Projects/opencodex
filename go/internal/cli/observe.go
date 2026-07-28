@@ -243,16 +243,10 @@ func formatLog(entry any) string {
 // logKey identifies a row for follow-mode de-duplication.
 func logKey(entry any) string {
 	row := rowObject(entry)
-	// A non-object row has no properties, so every field reads as undefined and
+	// A primitive row has no properties, so every field reads as undefined and
 	// the oracle's template literal collapses them all to one key. Reproducing
-	// the exact text keeps follow-mode de-duplication identical, and it is
-	// internal: this string is never printed.
-	//
-	// One deliberate divergence: the oracle reads `row.id` before the null
-	// check, so a null entry throws a TypeError and kills the command after
-	// printing the earlier rows. Crashing the CLI to copy a crash would make a
-	// malformed response harder to diagnose, not easier, so a null row is
-	// simply treated as fieldless.
+	// the exact text keeps follow-mode de-duplication identical. A nil row never
+	// reaches here: the caller stops on it, the way the oracle throws.
 	if row == nil {
 		return "undefined:undefined:undefined:undefined"
 	}
@@ -328,6 +322,15 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 			}
 		} else {
 			for rowIndex, row := range logRows(data) {
+				// The oracle computes this key by reading row.id BEFORE it
+				// prints, so a null entry throws a TypeError there: the rows
+				// before it are already on screen, the null row never prints,
+				// and the command exits non-zero. A Go nil row reproduces that
+				// boundary rather than quietly rendering something the oracle
+				// would never show.
+				if row == nil {
+					return fmt.Errorf("cannot read properties of null (reading 'id')")
+				}
 				key := logKey(row)
 				if follow {
 					if _, already := seen[key]; already {

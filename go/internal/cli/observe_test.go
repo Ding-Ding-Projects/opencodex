@@ -331,16 +331,15 @@ func TestObserveJSONLPreservesOrderInsideWrappers(t *testing.T) {
 }
 
 // The oracle iterates the parsed array directly, so a malformed payload prints
-// EVERY entry, and each line must be the entry it belongs to. Filtering to
-// objects would drop the number and shift the pairing.
+// every entry it reaches. Filtering to objects would drop the primitives.
 func TestObserveJSONLPrintsEveryRowInOrder(t *testing.T) {
-	server, _ := observeServer(t, `[1,{"z":1,"a":2},"text",null]`)
+	server, _ := observeServer(t, `[1,{"z":1,"a":2},"text"]`)
 	out, err := runObserveWith(t, server, "logs", "--jsonl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	want := []string{"1", `{"z":1,"a":2}`, `"text"`, "null"}
+	want := []string{"1", `{"z":1,"a":2}`, `"text"`}
 	if len(lines) != len(want) {
 		t.Fatalf("got %d lines %q, want %d", len(lines), lines, len(want))
 	}
@@ -348,6 +347,29 @@ func TestObserveJSONLPrintsEveryRowInOrder(t *testing.T) {
 		if lines[index] != want[index] {
 			t.Fatalf("line %d = %s, want %s", index+1, lines[index], want[index])
 		}
+	}
+}
+
+// The oracle reads row.id to build the dedup key BEFORE printing, so a null
+// entry throws there: earlier rows are already on screen, the null row never
+// prints, and the command fails. Rendering it instead would show the user
+// something the TypeScript CLI never produces.
+func TestObserveStopsAtANullRowLikeTheOracle(t *testing.T) {
+	server, _ := observeServer(t, `[{"id":"a","timestamp":"t1"},null,{"id":"b"}]`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err == nil {
+		t.Fatal("a null row must fail the command, as it does in the oracle")
+	}
+	if !strings.Contains(err.Error(), "reading 'id'") {
+		t.Fatalf("err = %q, want the oracle's property-access wording", err)
+	}
+	// The rows before it were already printed; the null row and the row after
+	// it were not.
+	if !strings.Contains(out, `"id":"a"`) {
+		t.Fatalf("output = %q, want the row before the null one", out)
+	}
+	if strings.Contains(out, `"id":"b"`) || strings.Contains(out, "null") {
+		t.Fatalf("output = %q, want nothing from the null row onward", out)
 	}
 }
 
