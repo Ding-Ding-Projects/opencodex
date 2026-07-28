@@ -156,8 +156,13 @@ func TestSystemUpdateStatusEscapesJobID(t *testing.T) {
 	if _, err := runSystemWith(t, server, "update", "status", "a b/c"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains((*calls)[0].path, "jobId=a%20b%2Fc") {
-		t.Fatalf("path = %q, want an encodeURIComponent-escaped id", (*calls)[0].path)
+	// The full URI, not a substring: a wrong endpoint carrying the right query
+	// would otherwise pass.
+	if len(*calls) != 1 || (*calls)[0].method != http.MethodGet {
+		t.Fatalf("calls = %+v, want one GET", *calls)
+	}
+	if (*calls)[0].path != "/api/update/status?jobId=a%20b%2Fc" {
+		t.Fatalf("path = %q, want /api/update/status?jobId=a%%20b%%2Fc", (*calls)[0].path)
 	}
 }
 
@@ -166,8 +171,16 @@ func TestSystemStatusReadsEverySurface(t *testing.T) {
 	if _, err := runSystemWith(t, server); err != nil {
 		t.Fatal(err)
 	}
+	// Exactly three reads, all GET: a fourth would mean a duplicate fetch and a
+	// non-GET would mean status is mutating something.
+	if len(*calls) != 3 {
+		t.Fatalf("status issued %d requests, want exactly 3: %+v", len(*calls), *calls)
+	}
 	seen := map[string]bool{}
 	for _, call := range *calls {
+		if call.method != http.MethodGet {
+			t.Fatalf("status issued %s %s; it must only read", call.method, call.path)
+		}
 		seen[call.path] = true
 	}
 	for _, path := range []string{"/api/settings", "/api/startup-health", "/api/system/memory"} {

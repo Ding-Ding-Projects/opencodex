@@ -73,11 +73,14 @@ func TestObserveLogsSendsEveryFilter(t *testing.T) {
 		"--provider", "openai", "--model", "gpt", "--status", "5xx", "--limit", "10"); err != nil {
 		t.Fatal(err)
 	}
-	path := (*calls)[0].path
-	for _, want := range []string{"provider=openai", "model=gpt", "status=5xx", "limit=10"} {
-		if !strings.Contains(path, want) {
-			t.Fatalf("path = %q, missing %s", path, want)
-		}
+	// The exact URI, including key order: URLSearchParams preserves insertion
+	// order, so a reordered query is a byte difference the differential sees.
+	if len(*calls) != 1 || (*calls)[0].method != http.MethodGet {
+		t.Fatalf("calls = %+v, want one GET", *calls)
+	}
+	const want = "/api/logs?provider=openai&model=gpt&status=5xx&limit=10"
+	if (*calls)[0].path != want {
+		t.Fatalf("path = %q, want %q", (*calls)[0].path, want)
 	}
 }
 
@@ -399,6 +402,62 @@ func TestOrderedDecodeRejectsMalformedJSON(t *testing.T) {
 	for _, raw := range []string{`{"a":`, `[1,`, `{`, ``} {
 		if _, err := decodeOrdered([]byte(raw)); err == nil {
 			t.Fatalf("expected %q to fail", raw)
+		}
+	}
+}
+
+// The four aliases must forward their flags into the right observe section.
+// Verifying they are merely registered proves nothing: an alias that dropped
+// its arguments, or prepended the wrong section, would still be registered.
+func TestObserveAliasesForwardArgumentsToTheirSection(t *testing.T) {
+	for _, testCase := range []struct {
+		alias   string
+		args    []string
+		wantURI string
+	}{
+		{alias: "logs", args: []string{"--status", "5xx", "--limit", "7", "--jsonl"}, wantURI: "/api/logs?status=5xx&limit=7"},
+		{alias: "usage", args: []string{"--range", "7d", "--surface", "codex", "--json"}, wantURI: "/api/usage?range=7d&surface=codex"},
+		{alias: "storage", args: []string{"--limit", "3", "--json"}, wantURI: "/api/storage?limit=3"},
+		{alias: "memory", args: []string{"--json"}, wantURI: "/api/system/memory"},
+	} {
+		t.Run(testCase.alias, func(t *testing.T) {
+			server, calls := observeServer(t, `[]`)
+			args := append([]string{testCase.alias}, testCase.args...)
+			if err := observeDispatch(context.Background(), testAPI(server), args, IO{Out: &bytes.Buffer{}}); err != nil {
+				t.Fatal(err)
+			}
+			if len(*calls) != 1 {
+				t.Fatalf("calls = %+v, want exactly one", *calls)
+			}
+			if (*calls)[0].path != testCase.wantURI {
+				t.Fatalf("%s => %q, want %q", testCase.alias, (*calls)[0].path, testCase.wantURI)
+			}
+		})
+	}
+}
+
+// The guard messages are the oracle's, verbatim. Paraphrasing them would be a
+// user-visible divergence that no path assertion catches.
+func TestObserveGuardsUseTheOracleWording(t *testing.T) {
+	for _, testCase := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"logs", "--json", "--jsonl"}, want: "--json and --jsonl cannot be combined"},
+		{args: []string{"logs", "--follow", "--json"}, want: "--follow uses --jsonl, not --json"},
+		{args: []string{"usage", "--range", "90d"}, want: "--range must be 7d, 30d, or all"},
+		{args: []string{"usage", "--surface", "bogus"}, want: "--surface must be all, codex, claude, or grok"},
+	} {
+		server, calls := observeServer(t, `[]`)
+		err := observeDispatch(context.Background(), testAPI(server), testCase.args, IO{Out: &bytes.Buffer{}})
+		if err == nil {
+			t.Fatalf("%v should have been rejected", testCase.args)
+		}
+		if err.Error() != testCase.want {
+			t.Fatalf("%v => %q, want %q", testCase.args, err.Error(), testCase.want)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("%v sent %+v; validation must precede the request", testCase.args, *calls)
 		}
 	}
 }
