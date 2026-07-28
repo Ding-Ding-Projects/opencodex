@@ -91,7 +91,13 @@ func validateConfigDocument(document configDocument) error {
 	if err != nil {
 		return err
 	}
-	var candidate config.Config
+	// Decode ONTO the defaults, not onto a zero value. The oracle's schema
+	// supplies a hostname when the document omits one, so validating a
+	// zero-valued struct rejected ordinary TypeScript-written configs with
+	// "hostname: must not be blank" -- a config the TS CLI calls valid.
+	candidate := config.FreshInstall()
+	candidate.Providers = nil
+	candidate.Combos = nil
 	if err := json.Unmarshal(encoded, &candidate); err != nil {
 		return usageError("", "%s", err.Error())
 	}

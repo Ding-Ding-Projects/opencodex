@@ -358,3 +358,56 @@ func TestConfigImportEnforcesTheSchema(t *testing.T) {
 		}
 	}
 }
+
+// The oracle's schema supplies a hostname when the document omits one, so a
+// TypeScript-written config without it is valid. Validating a zero-valued Go
+// struct rejected those with "hostname: must not be blank".
+func TestConfigAcceptsADocumentWithoutHostname(t *testing.T) {
+	configHome(t, `{"port":10100,"hostname":"127.0.0.1","providers":{"p":{"adapter":"openai-chat","baseUrl":"https://example.com"}},"defaultProvider":"p"}`)
+	candidate := filepath.Join(t.TempDir(), "candidate.json")
+	document := `{"port":10100,"providers":{"p":{"adapter":"openai-chat","baseUrl":"https://example.com"}},"defaultProvider":"p"}`
+	if err := os.WriteFile(candidate, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runConfigParityWith(t, "", "validate", candidate)
+	if err != nil {
+		t.Fatalf("a config without hostname is valid to the oracle: %v", err)
+	}
+	if !strings.Contains(out, "Config is valid.") {
+		t.Fatalf("out = %q", out)
+	}
+	// The same document must import, which is the path a user actually takes.
+	if _, err := runConfigParityWith(t, "", "import", candidate, "--yes"); err != nil {
+		t.Fatalf("import rejected a config the oracle accepts: %v", err)
+	}
+}
+
+// Only strings are masked, and the match is case-insensitive. A numeric or
+// object value under a secret-looking key is left alone, exactly as the
+// oracle's `typeof value === "string"` guard does.
+func TestConfigRedactionAppliesOnlyToStrings(t *testing.T) {
+	configHome(t, `{"port":10100,"hostname":"127.0.0.1","defaultProvider":"p","providers":{"p":{"adapter":"openai-chat","baseUrl":"https://example.com","APIKEY":"UPPERSECRET"}},"subagentModels":["m1"]}`)
+	out, err := runConfigParityWith(t, "", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "UPPERSECRET") {
+		t.Fatalf("case-insensitive key was not masked: %s", out)
+	}
+}
+
+// Every entry point refuses the blocked segments, not just get.
+func TestConfigBlocksPrototypeSegmentsEverywhere(t *testing.T) {
+	configHome(t, `{"port":10100,"hostname":"127.0.0.1","providers":{"p":{"adapter":"openai-chat","baseUrl":"https://example.com"}},"defaultProvider":"p"}`)
+	for _, segment := range []string{"__proto__", "prototype", "constructor"} {
+		for _, args := range [][]string{
+			{"get", segment + ".x"},
+			{"set", segment + ".x", "1"},
+			{"unset", segment + ".x"},
+		} {
+			if _, err := runConfigParityWith(t, "", args...); err == nil {
+				t.Fatalf("%v with %q must be refused", args, segment)
+			}
+		}
+	}
+}
