@@ -6,7 +6,9 @@
 
 ## A. 최상위 명령 대조
 
-Go에 **없는** TS 최상위 명령(별칭 포함):
+Go에 **없는** TS 최상위 명령. 아래는 **구현 그룹 10개 / 정규 명령 토큰 11개**다
+(`grok`과 `integration`은 TS에서 별도 디스패치된다, `src/cli/index.ts:1018`).
+별칭은 표 안에 괄호로 적었고 토큰 수에는 포함하지 않는다.
 
 | 명령 | 성격 | TS 구현 | 규모 |
 | --- | --- | --- | --- |
@@ -17,7 +19,8 @@ Go에 **없는** TS 최상위 명령(별칭 포함):
 | `agent` | 관리 리소스 | `src/cli/agent.ts` | 184줄 |
 | `observe` (+`logs`/`usage`/`storage`/`memory`) | 관측 | `src/cli/observe.ts` | 117줄 |
 | `access` (+`api-key`) | 어드미션 | `src/cli/access.ts` | 108줄 |
-| `grok` / `integration` | 통합 | `src/cli/integrations.ts` | 142줄 |
+| `grok` | 통합 | `src/cli/integrations.ts` | 142줄 (공유) |
+| `integration` | 통합 | 같은 모듈, 별도 디스패치 | 공유 |
 | `system` | 런타임 제어 | `src/cli/system-command.ts` | 112줄 |
 | `opencode` | 외부 런처 | `src/cli/opencode.ts` | 701줄 |
 
@@ -61,10 +64,31 @@ TS의 숨은 워커 동사 6종(`__refresh-version`, `__tray-start`, `__tray-res
 | provider/account/models 줄 | 능력 중심 서술 | 서브명령 나열식 |
 | 누락 줄 | — | `combo`,`agent`,`observe`,`access`,`grok`,`system`,`config`,`opencode` 전부 없음 |
 
-`config`는 Go에 **등록되어 있으나 루트 도움말에서 빠져 있다**(`cli.go:74` vs `help.go`).
-즉 이 한 줄은 구현이 아니라 도움말 누락이다.
+`config`는 Go에 등록되어 있고 루트 도움말에서 빠져 있다(`cli.go:74` vs `help.go`).
+
+**정정(감사 B1):** 처음에는 이것을 "도움말 누락일 뿐"으로 적었으나 **틀렸다**. Go의
+`config`는 고정 키 몇 개만 다루고 `export`/`import`/임의 점 경로/`--source`가 없다
+(`go/internal/cli/config_command.go:13` vs `src/cli/config-command.ts`). 등록되어 있다는
+사실은 파리티를 뜻하지 않는다. 전용 슬라이스는 `045`.
+
+**정정(감사 B2):** `account`도 "Go에 있음"으로 표시했으나, 명령은 있고 **인증 서브명령
+전체**(`login`/`reauth`, `code`, `cancel`, `reset-credits`)가 없다
+(`go/internal/cli/account.go:18` vs `src/cli/account-auth.ts:215`). 전용 슬라이스는 `046`.
 
 ## 이 인벤토리가 만드는 work-phase
 
-wp1(도움말/별칭/전송 기반) → wp2(combo/agent/grok) → wp3(system/observe + 서버 쿼리 수정)
-→ wp4(access) → wp5(opencode + `/api/models` 계약). 의존성 순서이며 난이도 순서가 아니다.
+**정정(감사 B5):** 처음에는 `wp1 → wp2 → wp3 → wp4 → wp5`로 적었으나 그것은 DAG가 아니라
+순번이었다. 실제 코드 의존성은 다음과 같다.
+
+```
+010 (전송·파싱·출력 원시요소)
+ ├─> 020  combo/route, agent, grok/integration
+ ├─> 030  system, observe
+ ├─> 040  access/api-key
+ ├─> 045  config 파리티
+ ├─> 046  account 인증
+ └─> 050  opencode 런처
+```
+
+`010` 이후 여섯 슬라이스는 **서로 독립**이며 임의 순서·병렬로 진행할 수 있다. 간선은
+"앞 단계가 만든 구체적 심볼/API를 뒤 단계가 소비할 때"만 긋는다.

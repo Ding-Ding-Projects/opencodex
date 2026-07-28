@@ -1,6 +1,6 @@
 # 040 — wp4: access / api-key CLI 명령
 
-work-phase: `wp4` · 선행: `010` · 후속: 050
+work-phase: `wp4` · 선행: `010` · 순서 정본: `006`
 
 ## 왜 별도 단계인가
 

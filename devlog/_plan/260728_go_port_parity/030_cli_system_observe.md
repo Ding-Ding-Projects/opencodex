@@ -1,6 +1,6 @@
 # 030 — wp3: system + observe CLI 명령
 
-work-phase: `wp3` · 선행: `010`, `020` · 후속: 040
+work-phase: `wp3` · 선행: `010` · 순서 정본: `006`
 
 ## system
 

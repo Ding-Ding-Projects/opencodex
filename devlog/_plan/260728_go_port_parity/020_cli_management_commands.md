@@ -1,6 +1,6 @@
 # 020 — wp2: 관리 리소스 CLI 명령 (combo/route, agent, grok/integration)
 
-work-phase: `wp2` · 선행: `010` (전송·파싱·출력 원시요소) · 후속: 030
+work-phase: `wp2` · 선행: `010` (전송·파싱·출력 원시요소) · 순서 정본: `006`
 
 ## 왜 여기인가
 
