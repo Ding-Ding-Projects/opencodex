@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
 )
 
 const (
@@ -33,6 +35,14 @@ type RoutingConfig struct {
 	ActiveCodexAccountID      string         `json:"activeCodexAccountId,omitempty"`
 	AutoSwitchThreshold       *float64       `json:"autoSwitchThreshold,omitempty"`
 	UpstreamFailoverThreshold *int           `json:"upstreamFailoverThreshold,omitempty"`
+
+	// New-session rotation strategy and its sticky budget.
+	//
+	// Both are read leniently: an unrecognized value normalizes to the default
+	// rather than refusing, because rejecting here would hide every configured
+	// account behind one typo. Strict parsing belongs to management writes.
+	AccountPoolStrategy    string `json:"accountPoolStrategy,omitempty"`
+	AccountPoolStickyLimit *int   `json:"accountPoolStickyLimit,omitempty"`
 }
 
 type AccountQuota struct {
@@ -80,6 +90,15 @@ type Router struct {
 	quotas         map[string]AccountQuota
 	reauth         map[string]struct{}
 	mainPlan       string
+	rotation       *oauth.RotationRegistry
+
+	// runtimeActive is the automatic rotation cursor.
+	//
+	// It exists so round-robin and fill-first can advance without touching
+	// config.ActiveCodexAccountID, which the caller persists to disk. Writing
+	// there would freeze a transient rotation step as if the operator had
+	// chosen it, and an unrelated config save would then make it permanent.
+	runtimeActive string
 }
 
 func NewRouter(store RoutingAccountStore, mainToken func() (MainAccountToken, bool)) *Router {
@@ -87,7 +106,7 @@ func NewRouter(store RoutingAccountStore, mainToken func() (MainAccountToken, bo
 		store: store, mainToken: mainToken,
 		threadAccounts: make(map[string]threadAffinityEntry),
 		health:         make(map[string]UpstreamHealth), quotas: make(map[string]AccountQuota),
-		reauth: make(map[string]struct{}),
+		reauth: make(map[string]struct{}), rotation: oauth.NewRotationRegistry(),
 	}
 }
 
@@ -269,10 +288,29 @@ func (r *Router) PickLowestUsageCodexAccount(config *RoutingConfig, excludeID st
 }
 
 func (r *Router) setActiveLocked(config *RoutingConfig, accountID string) {
+	// An explicit selection supersedes any automatic cursor, so the cursor is
+	// dropped here rather than left to shadow the persisted choice.
+	r.runtimeActive = ""
 	if config.ActiveCodexAccountID == accountID {
 		return
 	}
 	config.ActiveCodexAccountID = accountID
+}
+
+// rememberActiveLocked moves the automatic cursor only.
+//
+// Rotation must not be mistaken for an operator decision: config is left
+// untouched so nothing persists it to disk.
+func (r *Router) rememberActiveLocked(accountID string) {
+	r.runtimeActive = accountID
+}
+
+// effectiveActiveLocked prefers the automatic cursor over the persisted choice.
+func (r *Router) effectiveActiveLocked(config *RoutingConfig) string {
+	if r.runtimeActive != "" {
+		return r.runtimeActive
+	}
+	return config.ActiveCodexAccountID
 }
 
 func (r *Router) bindThreadLocked(threadID, accountID string, now int64) {

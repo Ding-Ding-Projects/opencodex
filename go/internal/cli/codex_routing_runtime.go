@@ -113,6 +113,10 @@ func (r *codexRoutingRuntime) routingConfig() *codex.RoutingConfig {
 		ActiveCodexAccountID: cfg.ActiveCodexAccountID,
 		AutoSwitchThreshold:  &autoSwitch, UpstreamFailoverThreshold: &failover,
 		CodexAccounts: make([]codex.CodexAccount, 0, len(cfg.CodexAccounts)),
+		// Without these two the router cannot see the strategy at all, and a
+		// configured round-robin silently behaves like quota.
+		AccountPoolStrategy:    cfg.AccountPoolStrategy,
+		AccountPoolStickyLimit: cfg.AccountPoolStickyLimit,
 	}
 	for _, account := range cfg.CodexAccounts {
 		result.CodexAccounts = append(result.CodexAccounts, codex.CodexAccount{

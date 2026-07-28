@@ -115,8 +115,11 @@ func (r *Router) PreviewCodexAccountForRequest(threadID string, config *RoutingC
 			r.generationLiveLocked(entry.accountID, entry.generation) &&
 			r.selectableLocked(config, entry.accountID, nowMillis) &&
 			!r.shouldFailoverLocked(config, entry.accountID, nowMillis) {
+			// Only quota re-evaluates a bound thread. Under round-robin and
+			// fill-first, rotation is a NEW-SESSION decision, so an ongoing
+			// thread keeps its account even past the threshold.
 			threshold := thresholdOrDefault(config.AutoSwitchThreshold)
-			if threshold > 0 {
+			if r.strategyLocked(config) == quotaStrategy && threshold > 0 {
 				quota, ok := r.quotas[entry.accountID]
 				var quotaPointer *AccountQuota
 				if ok {
@@ -132,7 +135,11 @@ func (r *Router) PreviewCodexAccountForRequest(threadID string, config *RoutingC
 			return entry.accountID
 		}
 	}
-	active := config.ActiveCodexAccountID
+	// A preview must not perturb rotation, so this peeks rather than picks.
+	if picked := r.pickUnboundStrategyLocked(config, "", nowMillis, false); picked != "" {
+		return picked
+	}
+	active := r.effectiveActiveLocked(config)
 	if active == "" {
 		return r.pickLowestUsageLocked(config, "", nowMillis)
 	}
@@ -185,7 +192,11 @@ func (r *Router) ResolveCodexAccountForThreadDetailed(threadID string, config *R
 				r.selectableLocked(config, entry.accountID, nowMillis) &&
 				!r.shouldFailoverLocked(config, entry.accountID, nowMillis) {
 				entry.lastUsedAt = nowMillis
-				if nowMillis-entry.lastReevalAt >= CodexThreadAffinityReevalInterval.Milliseconds() {
+				// Same rule as the preview path: non-quota strategies rotate
+				// only on new sessions, so a bound thread is never re-evaluated
+				// out from under itself.
+				if r.strategyLocked(config) == quotaStrategy &&
+					nowMillis-entry.lastReevalAt >= CodexThreadAffinityReevalInterval.Milliseconds() {
 					entry.lastReevalAt = nowMillis
 					if threshold := thresholdOrDefault(config.AutoSwitchThreshold); threshold > 0 {
 						quota, ok := r.quotas[entry.accountID]
@@ -210,7 +221,11 @@ func (r *Router) ResolveCodexAccountForThreadDetailed(threadID string, config *R
 		}
 	}
 
-	active := config.ActiveCodexAccountID
+	if picked := r.pickUnboundStrategyLocked(config, threadID, nowMillis, true); picked != "" {
+		return CodexThreadResolution{Status: ThreadSelected, AccountID: picked}
+	}
+
+	active := r.effectiveActiveLocked(config)
 	if active == "" {
 		active = r.pickLowestUsageLocked(config, "", nowMillis)
 		if active == "" {
