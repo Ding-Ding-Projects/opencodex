@@ -193,7 +193,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	afterStart := func() {
 		go func() { _ = applyGrokFence(ctx, cfg, actualPort, cfg.Host, false, streams) }()
 	}
-	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart)
+	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart, proxy.Close)
 }
 
 func validateServeAuth(cfg config.Config, token string) error {
@@ -231,7 +231,11 @@ func (s *stopRouter) Register(mux *http.ServeMux) {
 	})
 }
 
-func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listener net.Listener, stop <-chan struct{}, afterStart func()) error {
+// `closeServer` is the owning proxy's cleanup. It is threaded in rather than
+// left to the http.Server's RegisterOnShutdown callback, which net/http starts
+// as `go f()` and does not wait for -- so shutdown returned while the memory
+// watchdog was still sampling and response state was still unflushed.
+func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listener net.Listener, stop <-chan struct{}, afterStart func(), closeServer func()) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
 	if afterStart != nil {
@@ -251,8 +255,12 @@ func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listene
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	_ = lifecycle.Drain(ctx)
-	return httpServer.Shutdown(ctx)
+	// Cleanup is passed to the drain rather than left to the server's
+	// RegisterOnShutdown callback, which net/http starts as `go f()` and does
+	// not wait for. Without this, `ocx start` returned from shutdown while the
+	// memory watchdog was still sampling and response state was still
+	// unflushed.
+	return server.DrainHTTPServer(ctx, httpServer, lifecycle, nil, closeServer)
 }
 
 func configuredRegistry(cfg config.Config) *registry.ProviderRegistry {

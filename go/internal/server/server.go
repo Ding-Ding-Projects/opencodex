@@ -602,6 +602,20 @@ func (s *Server) HTTPServer(address string) *http.Server {
 	// closes the connection or emits a bodyless 431, so admit a bounded amount
 	// here and enforce the TypeScript-compatible 1 MiB limit in the handler.
 	server := &http.Server{Addr: address, Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 2 << 20}
+	// The registration is a BACKSTOP, not the guarantee.
+	//
+	// net/http runs each registered callback as `go f()` (Server.Shutdown), and
+	// the stdlib documentation says the function "should not wait for shutdown
+	// to complete" -- so Shutdown returns while s.Close is still in flight. The
+	// watchdog kept sampling after Shutdown returned, which the parity test
+	// caught as a flake under `-count=40 -race`, and responseState.Flush had
+	// not necessarily run before the process moved on to exit, which is the
+	// half that loses data.
+	//
+	// It stays registered so a caller that shuts down through raw net/http
+	// still gets cleanup EVENTUALLY. Callers that need it to have HAPPENED use
+	// DrainHTTPServer, which closes synchronously; Close is idempotent, so both
+	// running is harmless.
 	server.RegisterOnShutdown(s.Close)
 	return server
 }

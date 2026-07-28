@@ -68,19 +68,45 @@ func (body *trackedResponseBody) finish(cause error) {
 
 // DrainHTTPServer stops new work, waits for tracked turns, flushes state, and
 // then invokes net/http graceful shutdown.
-func DrainHTTPServer(ctx context.Context, server *http.Server, lifecycle *Lifecycle, flush func() error) error {
+//
+// `closer` is the owning Server's cleanup and runs AFTER Shutdown returns, on
+// this goroutine, so the call does not come back while the memory watchdog is
+// still sampling or response state is still unflushed. Registering it with
+// RegisterOnShutdown cannot give that guarantee: net/http starts each
+// registered callback as `go f()`, and its documentation says the callback
+// "should not wait for shutdown to complete".
+//
+// The order is deliberate. Cleanup runs after the drain rather than before it,
+// because stopping the watchdog first would discard the samples covering the
+// shutdown itself, and flushing first would miss whatever the still-draining
+// requests went on to write.
+func DrainHTTPServer(ctx context.Context, server *http.Server, lifecycle *Lifecycle, flush func() error, closer ...func()) error {
+	runClosers := func() {
+		// Cleanup runs even when the drain failed: leaving the watchdog
+		// sampling because shutdown reported an error is strictly worse.
+		for _, close := range closer {
+			if close != nil {
+				close()
+			}
+		}
+	}
 	if lifecycle != nil {
 		if err := lifecycle.Drain(ctx); err != nil && ctx.Err() == nil {
+			runClosers()
 			return err
 		}
 	}
 	if flush != nil {
 		if err := flush(); err != nil {
+			runClosers()
 			return err
 		}
 	}
 	if server == nil {
+		runClosers()
 		return nil
 	}
-	return server.Shutdown(ctx)
+	err := server.Shutdown(ctx)
+	runClosers()
+	return err
 }

@@ -171,13 +171,85 @@ func TestServerStartsMemoryWatchdogAndStopsItWithHTTPServer(t *testing.T) {
 		t.Fatalf("management memory route did not expose active watchdog: %d %s", memory.Code, memory.Body.String())
 	}
 	httpServer := proxy.HTTPServer("127.0.0.1:0")
-	if err := httpServer.Shutdown(context.Background()); err != nil {
+	// DrainHTTPServer, not a bare Shutdown.
+	//
+	// A bare Shutdown CANNOT give this guarantee, and the test asserting it did
+	// was the flake: net/http starts each RegisterOnShutdown callback as
+	// `go f()` and returns without waiting, so whether the watchdog had stopped
+	// by the time Shutdown returned was a race the test lost roughly one run in
+	// twenty under `-count=60 -race`.
+	//
+	// The fix is not a longer sleep. Production has the same problem: `ocx
+	// start` returned from shutdown with the watchdog still sampling and
+	// response state still unflushed. DrainHTTPServer runs the cleanup on the
+	// caller's goroutine after Shutdown returns, and that is the path the CLI
+	// now uses, so the test exercises the contract the product actually has.
+	if err := DrainHTTPServer(context.Background(), httpServer, proxy.Lifecycle(), nil, proxy.Close); err != nil {
 		t.Fatal(err)
 	}
 	stoppedAt := samples.Load()
+	// No sleep is needed for correctness -- the drain has already completed --
+	// but one is kept so a regression that re-detaches the cleanup has a window
+	// in which to be caught rather than passing by timing.
 	time.Sleep(5 * time.Millisecond)
 	if samples.Load() != stoppedAt {
-		t.Fatalf("watchdog continued after HTTP shutdown: before=%d after=%d", stoppedAt, samples.Load())
+		t.Fatalf("watchdog continued after the drain returned: before=%d after=%d", stoppedAt, samples.Load())
+	}
+}
+
+// The drain must stop the watchdog ON ITS OWN, without the http.Server's
+// RegisterOnShutdown backstop finishing first.
+//
+// The test above cannot show that: it drives a real *http.Server, so the
+// detached backstop is racing alongside and usually wins, which means removing
+// the synchronous cleanup entirely still passed. Verified by mutation --
+// deleting the closer call left that test green, and only deleting BOTH paths
+// turned it red.
+//
+// Passing a nil server removes the backstop from the picture, so the only
+// thing that can stop the watchdog is the closer DrainHTTPServer runs, and the
+// assertion is exact rather than probabilistic.
+func TestDrainRunsCleanupSynchronouslyWithoutTheShutdownBackstop(t *testing.T) {
+	var samples atomic.Int32
+	proxy := New(Config{MemoryWatchdogInterval: time.Millisecond, MemoryWatchdogCapacity: 4, MemorySample: func() MemorySample {
+		n := samples.Add(1)
+		return MemorySample{At: time.Now(), RSS: uint64(n)}
+	}})
+	deadline := time.Now().Add(2 * time.Second)
+	for samples.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if samples.Load() < 2 {
+		t.Fatalf("watchdog never started: samples=%d", samples.Load())
+	}
+	// A SLOW closer is what makes the difference observable. Timing alone does
+	// not settle it: proxy.Close stops the watchdog in well under a
+	// millisecond, so even a detached `go closer()` finishes before any
+	// reasonable sleep and the assertion passed either way -- confirmed by
+	// mutation before this was written.
+	const closerDuration = 120 * time.Millisecond
+	var closed atomic.Bool
+	start := time.Now()
+	err := DrainHTTPServer(context.Background(), nil, proxy.Lifecycle(), nil, func() {
+		time.Sleep(closerDuration)
+		proxy.Close()
+		closed.Store(true)
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !closed.Load() {
+		t.Fatal("the drain returned before the cleanup finished: it is detached, not synchronous")
+	}
+	if elapsed < closerDuration {
+		t.Fatalf("the drain returned in %v, faster than the %v cleanup it must wait for", elapsed, closerDuration)
+	}
+	// And the watchdog really is stopped once the drain has returned.
+	stoppedAt := samples.Load()
+	time.Sleep(10 * time.Millisecond)
+	if got := samples.Load(); got != stoppedAt {
+		t.Fatalf("the drain returned while the watchdog was still sampling: before=%d after=%d", stoppedAt, got)
 	}
 }
 
