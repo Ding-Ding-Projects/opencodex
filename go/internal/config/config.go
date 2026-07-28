@@ -75,7 +75,7 @@ type Config struct {
 	CacheRetention              string                     `json:"cacheRetention,omitempty"`
 	WebSearchSidecar            *WebSearchSidecarConfig    `json:"webSearchSidecar,omitempty"`
 	VisionSidecar               *VisionSidecarConfig       `json:"visionSidecar,omitempty"`
-	Images                      *SidecarTimeoutConfig      `json:"images,omitempty"`
+	Images                      *ImagesConfig              `json:"images,omitempty"`
 	Search                      *SidecarTimeoutConfig      `json:"search,omitempty"`
 	AutoSwitchThreshold         int                        `json:"autoSwitchThreshold,omitempty"`
 	UpstreamFailoverThreshold   int                        `json:"upstreamFailoverThreshold,omitempty"`
@@ -97,6 +97,19 @@ type Config struct {
 
 type SidecarTimeoutConfig struct {
 	TimeoutMS int `json:"timeoutMs,omitempty"`
+}
+
+// ImagesConfig extends the sidecar timeout with the opt-in image bridge.
+//
+// BridgeEnabled defaults to false and is a master switch: the bridge makes
+// PAID upstream image calls, so it is never armed implicitly.
+type ImagesConfig struct {
+	Provider           string `json:"provider,omitempty"`
+	TimeoutMS          int    `json:"timeoutMs,omitempty"`
+	BridgeEnabled      *bool  `json:"bridgeEnabled,omitempty"`
+	BridgeModel        string `json:"bridgeModel,omitempty"`
+	MaxRounds          *int   `json:"maxRounds,omitempty"`
+	ArtifactsKeepCount *int   `json:"artifactsKeepCount,omitempty"`
 }
 
 type VisionSidecarConfig struct {
