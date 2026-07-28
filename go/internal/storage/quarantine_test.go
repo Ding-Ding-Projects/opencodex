@@ -1,8 +1,11 @@
 package storage
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 )
@@ -187,6 +190,12 @@ func TestRenameNoReplaceMovesTheFile(t *testing.T) {
 
 // A missing source is a plain failure, not dest_exists — the distinction
 // drives a 500 rather than a 409.
+//
+// It is not "unsupported" either. The oracle converts only EXDEV, EPERM,
+// ENOTSUP and EINVAL into that classification and rethrows everything else, so
+// claiming a missing file means hard links are unavailable would misdescribe
+// the filesystem. Windows keeps the broader mapping because its link error
+// codes could not be verified.
 func TestRenameNoReplaceClassifiesAMissingSource(t *testing.T) {
 	dir := t.TempDir()
 	err := RenameNoReplace(filepath.Join(dir, "absent.jsonl"), filepath.Join(dir, "to.jsonl"))
@@ -196,7 +205,17 @@ func TestRenameNoReplaceClassifiesAMissingSource(t *testing.T) {
 	if IsDestinationExists(err) {
 		t.Fatalf("err = %v classified as dest_exists; a missing source is not a 409", err)
 	}
-	if !IsRenameNoReplaceUnsupported(err) {
-		t.Fatalf("err = %v, want the unsupported classification", err)
+	if runtime.GOOS == "windows" {
+		if !IsRenameNoReplaceUnsupported(err) {
+			t.Fatalf("err = %v, want the conservative Windows classification", err)
+		}
+		return
+	}
+	if IsRenameNoReplaceUnsupported(err) {
+		t.Fatalf("err = %v was folded into unsupported; ENOENT is not one of the "+
+			"four codes the oracle converts", err)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want the original not-exist error preserved", err)
 	}
 }

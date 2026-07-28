@@ -39,7 +39,16 @@ const (
 	// put back, so restoring the files alone would leave the user with
 	// rollouts the app cannot see.
 	RestoreDBReconcileFailed RestoreErrorCode = "db_reconcile_failed"
+	// RestoreCodexBusy means a live Codex holds the database. It is retryable,
+	// and it must stay distinct from a reconcile failure so the user is told
+	// to close the app rather than shown an error.
+	RestoreCodexBusy RestoreErrorCode = "codex_busy"
 )
+
+// errInjectedPendingWrite and errInjectedMoveFailure stand in for failures the
+// filesystem cannot be asked to produce on demand.
+var errInjectedPendingWrite = errors.New("test_fail_pending_write")
+var errInjectedMoveFailure = errors.New("test_fail_after_move_count")
 
 var errPathEscape = errors.New("path_escape")
 var errInvalidRelPath = errors.New("invalid_rel_path")

@@ -120,12 +120,20 @@ func RenameNoReplace(from, to string) error {
 			// destination is occupied, not merely that something failed.
 			return errDestinationExists
 		}
-		// Anything else means hard links are unavailable here. Refuse rather
-		// than fall back to a replacing rename. The Windows error codes could
-		// not be verified without a Windows host, so this deliberately treats
-		// every non-EEXIST link failure as unsupported: the unverified cases
-		// end in a refusal, never in an overwrite.
-		return errRenameNoReplaceUnsupported
+		// Only the four errors the oracle recognizes mean "hard links are
+		// unavailable here". Everything else keeps its original identity, so a
+		// missing source or a permission problem is not misreported as an
+		// unsupported filesystem.
+		//
+		// No branch ever falls back to a replacing rename, so this narrowing
+		// cannot introduce an overwrite. On Windows the link error codes could
+		// not be verified without a Windows host, so that platform keeps the
+		// original conservative behavior: every non-EEXIST failure is treated
+		// as unsupported, which refuses rather than risks clobbering.
+		if isUnsupportedLinkError(err) {
+			return errRenameNoReplaceUnsupported
+		}
+		return err
 	}
 	if err := os.Remove(from); err != nil {
 		// BEST-EFFORT rollback, matching the oracle: it attempts to remove the
