@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -113,6 +114,49 @@ func authThreadID(headers http.Header) string {
 		return threadID
 	}
 	return strings.TrimSpace(headers.Get("X-Codex-Parent-Thread-Id"))
+}
+
+// anthropicSessionKey derives the Anthropic pool's affinity key.
+//
+// Deliberately separate from authThreadID: that function feeds Codex thread
+// affinity and has its own priority, while this one must match the oracle's
+// anthropicSessionKeyFromParts. Reusing authThreadID here produced an empty key
+// for requests carrying only session-id, and an empty key makes the pool hold
+// the active account instead of rotating.
+func anthropicSessionKey(headers http.Header, promptCacheKey string, sharedCohort bool) string {
+	sessionID := headers.Get("session_id")
+	if sessionID == "" {
+		sessionID = headers.Get("session-id")
+	}
+	return oauth.AnthropicSessionKey(oauth.AnthropicSessionKeyParts{
+		ClientThreadID:               headers.Get("X-Codex-Parent-Thread-Id"),
+		SessionID:                    sessionID,
+		ThreadID:                     headers.Get("Thread-Id"),
+		PromptCacheKey:               promptCacheKey,
+		PromptCacheKeyIsSharedCohort: sharedCohort,
+	})
+}
+
+// authSelectionKey is what the resolver receives: the Anthropic pool needs its
+// own key, every other provider keeps the existing thread id.
+func authSelectionKey(provider string, headers http.Header, promptCacheKey string, sharedCohort bool) string {
+	if provider == "anthropic" {
+		if key := anthropicSessionKey(headers, promptCacheKey, sharedCohort); key != "" {
+			return key
+		}
+		// An empty key is meaningful to the pool - it means "no session
+		// identity, hold the active account" - so it is passed through rather
+		// than replaced with the thread id.
+		return ""
+	}
+	return authThreadID(headers)
+}
+
+func promptCacheKeyOf(normalized *types.NormalizedRequest) string {
+	if normalized == nil {
+		return ""
+	}
+	return normalized.Options.PromptCacheKey
 }
 
 func sidecarHandler(kind SidecarKind, resolver SidecarResolver) http.HandlerFunc {

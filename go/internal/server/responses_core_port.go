@@ -18,6 +18,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -372,13 +373,24 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 		var auth *types.AuthContext
 		var err error
 		if core.config.Auth != nil {
-			auth, err = core.config.Auth.ResolveAuth(ctx, resolved.Provider, authThreadID(incoming))
+			// Anthropic needs the oracle's session key, not the Codex thread
+			// id: an empty key makes the pool hold the active account rather
+			// than rotate, so the two must not be conflated.
+			auth, err = core.config.Auth.ResolveAuth(ctx, resolved.Provider,
+				authSelectionKey(resolved.Provider, incoming, promptCacheKeyOf(normalized), false))
 			if err != nil {
 				if next, ok := core.nextCombo(normalized, pick, http.StatusUnauthorized, "invalid_api_key", err.Error(), ""); ok {
 					pick, resolved = next, next.Resolved
 					continue
 				}
-				return nil, nil, nil, resolved, pick, &forwardError{status: http.StatusUnauthorized, kind: "authentication_error", err: err}
+				// Every account cooling down is a rate limit, not an auth
+				// failure. Reporting 401 would tell a client to re-authenticate
+				// when the correct response is to wait and retry.
+				status, kind := http.StatusUnauthorized, "authentication_error"
+				if errors.Is(err, oauth.ErrNoUsableAccount) {
+					status, kind = http.StatusTooManyRequests, "rate_limit_error"
+				}
+				return nil, nil, nil, resolved, pick, &forwardError{status: status, kind: kind, err: err}
 			}
 		}
 		if overrideKey != "" {
