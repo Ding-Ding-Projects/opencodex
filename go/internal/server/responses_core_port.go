@@ -687,7 +687,11 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		//
 		// Client-facing only: the inspector above still sees the raw upstream
 		// names, because a replay has to go back to the provider unchanged.
-		if restore := CreateImageGenCallRestoreRewrite(core.imageGenAliases(normalized)); restore != nil {
+		// Forward-auth routes are excluded. The client authenticated directly
+		// with the upstream there, so the private namespace is left exactly as
+		// the provider sent it rather than rewritten on its behalf.
+		forwardRoute := core.config.ForwardRoute != nil && core.config.ForwardRoute(resolved)
+		if restore := CreateImageGenCallRestoreRewrite(core.imageGenAliases(normalized, forwardRoute)); restore != nil {
 			body = protocol.RelaySSEWithPayloadRewrite(body, restore)
 		}
 		err := RelaySSE(ctx, w, io.NopCloser(body), RelayOptions{Inspector: inspector})

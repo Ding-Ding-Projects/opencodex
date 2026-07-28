@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -121,7 +123,7 @@ func restoreImageGenCalls(value any, aliases map[string]NamespacedTool) (any, bo
 		return restored, true
 	case *orderedObject:
 		changed := false
-		restored := &orderedObject{values: make(map[string]any, len(typed.values))}
+		restored := &orderedObject{values: make(map[string]any, len(typed.values)), rawKeys: typed.rawKeys}
 		for _, key := range typed.keys {
 			next, entryChanged := restoreImageGenCalls(typed.values[key], aliases)
 			restored.set(key, next)
@@ -185,8 +187,21 @@ func RestoreImageGenCallsInJSON(text string, aliases map[string]NamespacedTool) 
 // through here. The oracle preserves order, so a byte-level differential
 // requires preserving it too.
 type orderedObject struct {
-	keys   []string
-	values map[string]any
+	keys    []string
+	values  map[string]any
+	rawKeys map[string]string
+}
+
+// setWithRaw records the key's original source text so a lone surrogate in a
+// property NAME survives, exactly as one in a value does.
+func (o *orderedObject) setWithRaw(key, raw string, value any) {
+	o.set(key, value)
+	if preserved, ok := preserveLoneSurrogate(key, raw).(preservedString); ok {
+		if o.rawKeys == nil {
+			o.rawKeys = map[string]string{}
+		}
+		o.rawKeys[key] = preserved.raw
+	}
 }
 
 func (o *orderedObject) get(key string) (any, bool) {
@@ -208,11 +223,15 @@ func (o *orderedObject) MarshalJSON() ([]byte, error) {
 		if index > 0 {
 			buffer.WriteByte(',')
 		}
-		encodedKey, err := encodeJSONValue(key)
-		if err != nil {
-			return nil, err
+		if raw, preserved := o.rawKeys[key]; preserved {
+			buffer.WriteString(raw)
+		} else {
+			encodedKey, err := encodeJSONValue(key)
+			if err != nil {
+				return nil, err
+			}
+			buffer.Write(encodedKey)
 		}
-		buffer.Write(encodedKey)
 		buffer.WriteByte(':')
 		encodedValue, err := encodeJSONValue(o.values[key])
 		if err != nil {
@@ -238,12 +257,7 @@ func encodeJSONValue(value any) ([]byte, error) {
 	if preserved, ok := value.(preservedString); ok {
 		return []byte(preserved.raw), nil
 	}
-	// Negative zero is the one number Go and JSON.stringify disagree on: Go
-	// emits -0, JavaScript emits 0. Normalized here rather than at decode time
-	// so the difference stays visible next to the reason for it.
-	if number, ok := value.(float64); ok && number == 0 {
-		value = float64(0)
-	}
+	value = normalizeNegativeZero(value)
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
@@ -251,7 +265,60 @@ func encodeJSONValue(value any) ([]byte, error) {
 		return nil, err
 	}
 	// Encode appends a newline that Marshal does not.
-	return bytes.TrimRight(buffer.Bytes(), "\n"), nil
+	return unescapeGoOnlyEscapes(bytes.TrimRight(buffer.Bytes(), "\n")), nil
+}
+
+// unescapeGoOnlyEscapes undoes escapes Go emits that JSON.stringify does not.
+//
+// Go escapes U+2028 and U+2029 unconditionally, even with HTML escaping off,
+// and it spells a replacement character as \ufffd where JavaScript writes the
+// literal. Both are valid JSON, but the bytes differ, and a byte-level
+// differential against the oracle is the whole point of this file.
+func unescapeGoOnlyEscapes(encoded []byte) []byte {
+	for escape, literal := range map[string]string{
+		`\u2028`: "\u2028",
+		`\u2029`: "\u2029",
+		`\ufffd`: "\ufffd",
+	} {
+		encoded = bytes.ReplaceAll(encoded, []byte(escape), []byte(literal))
+	}
+	return encoded
+}
+
+// numberValue converts a decoded literal the way JSON.parse plus
+// JSON.stringify do together.
+//
+// Both are float64-backed, so precision is lost identically on each side. A
+// literal too large for float64 becomes Infinity in JavaScript, which
+// JSON.stringify then writes as null; returning nil here reproduces that rather
+// than failing the decode and leaving the whole document unrestored.
+func numberValue(number json.Number) any {
+	parsed, err := strconv.ParseFloat(number.String(), 64)
+	if err != nil || math.IsInf(parsed, 0) || math.IsNaN(parsed) {
+		return nil
+	}
+	return parsed
+}
+
+// normalizeNegativeZero replaces -0 with 0 ANYWHERE in the document.
+//
+// Go emits -0 and JavaScript emits 0, and doing this only for a top-level value
+// would leave an array element unnormalized, because a slice is encoded by
+// json.Marshal without passing back through here.
+func normalizeNegativeZero(value any) any {
+	switch typed := value.(type) {
+	case float64:
+		if typed == 0 {
+			return float64(0)
+		}
+	case []any:
+		normalized := make([]any, len(typed))
+		for index, entry := range typed {
+			normalized[index] = normalizeNegativeZero(entry)
+		}
+		return normalized
+	}
+	return value
 }
 
 // preservedString is a string whose original JSON text must be re-emitted
@@ -281,11 +348,10 @@ func preserveLoneSurrogate(text, raw string) any {
 	if !strings.ContainsRune(text, utf8.RuneError) || raw == "" {
 		return text
 	}
-	// The replacement character is only evidence of loss when the source did
-	// not actually contain one. An escaped or literal U+FFFD is re-encoded
-	// normally, because that is what the oracle does; only a lone surrogate
-	// that the decoder destroyed is re-emitted from its original bytes.
-	if strings.ContainsRune(unescapeJSONString(raw), utf8.RuneError) {
+	// Counting matters, not mere presence: a string holding BOTH a real U+FFFD
+	// and a lone surrogate decodes to two replacement characters where the
+	// source only spelled one, and that difference is the evidence of loss.
+	if strings.Count(text, string(utf8.RuneError)) <= countSourceReplacements(raw) {
 		return text
 	}
 	// The escape is lowercased, because the oracle normalizes it: measured,
@@ -310,20 +376,11 @@ func lowerUnicodeEscapes(raw string) string {
 	return builder.String()
 }
 
-// unescapeJSONString decodes a JSON string literal, tolerating the lone
-// surrogate that makes the strict decoder lossy.
-func unescapeJSONString(raw string) string {
-	var decoded string
-	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-		return ""
-	}
-	// A literal U+FFFD in the source survives this round trip; a lone
-	// surrogate becomes one, so the two are told apart by looking for the
-	// escape in the raw text instead.
-	if strings.Contains(strings.ToLower(raw), `\ufffd`) || strings.ContainsRune(raw, utf8.RuneError) {
-		return decoded
-	}
-	return ""
+// countSourceReplacements counts the replacement characters the SOURCE text
+// actually spelled, whether literally or as an escape.
+func countSourceReplacements(raw string) int {
+	return strings.Count(raw, string(utf8.RuneError)) +
+		strings.Count(strings.ToLower(raw), `\ufffd`)
 }
 
 // stringValue reads a decoded string whether or not it was wrapped to preserve
@@ -367,6 +424,11 @@ func rawSlice(source string, start, end int64) string {
 // exponent-form number.
 func decodeOrdered(text string) (any, error) {
 	decoder := json.NewDecoder(strings.NewReader(text))
+	// UseNumber so an out-of-range literal reaches us instead of failing the
+	// whole decode; it is converted to float64 below, where an overflow becomes
+	// null exactly as JSON.parse produces Infinity and JSON.stringify writes
+	// null.
+	decoder.UseNumber()
 	value, err := decodeOrderedValue(decoder, text)
 	if err != nil {
 		return nil, err
@@ -397,12 +459,16 @@ func decodeOrderedFromToken(decoder *json.Decoder, token json.Token, source stri
 		if text, isString := token.(string); isString {
 			return preserveLoneSurrogate(text, rawSlice(source, start, end)), nil
 		}
+		if number, isNumber := token.(json.Number); isNumber {
+			return numberValue(number), nil
+		}
 		return token, nil
 	}
 	switch delimiter {
 	case '{':
 		object := &orderedObject{values: map[string]any{}}
 		for decoder.More() {
+			keyStart := decoder.InputOffset()
 			keyToken, err := decoder.Token()
 			if err != nil {
 				return nil, err
@@ -411,11 +477,14 @@ func decodeOrderedFromToken(decoder *json.Decoder, token json.Token, source stri
 			if !ok {
 				return nil, errTrailingJSON
 			}
+			// Keys carry escapes too, and a lone surrogate in a property name
+			// is corrupted just as readily as one in a value.
+			keyRaw := rawSlice(source, keyStart, decoder.InputOffset())
 			value, err := decodeOrderedValue(decoder, source)
 			if err != nil {
 				return nil, err
 			}
-			object.set(key, value)
+			object.setWithRaw(key, keyRaw, value)
 		}
 		if _, err := decoder.Token(); err != nil {
 			return nil, err
@@ -453,8 +522,10 @@ func CreateImageGenCallRestoreRewrite(aliases map[string]NamespacedTool) protoco
 //
 // Returns nothing when the request declares no image-gen tools, which is the
 // common case, so an ordinary stream is never wrapped.
-func (core *ResponsesCore) imageGenAliases(normalized *types.NormalizedRequest) map[string]NamespacedTool {
-	if normalized == nil {
+func (core *ResponsesCore) imageGenAliases(normalized *types.NormalizedRequest, forwardRoute bool) map[string]NamespacedTool {
+	// A forward-auth route is left untouched: the client authenticated with the
+	// upstream directly, so its private namespace is not ours to rewrite.
+	if normalized == nil || forwardRoute {
 		return nil
 	}
 	namespaced := map[string]NamespacedTool{}

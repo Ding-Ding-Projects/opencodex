@@ -22,7 +22,7 @@ func TestImageGenAliasesAreDerivedFromTheRequest(t *testing.T) {
 	fromTools := &types.NormalizedRequest{
 		Context: types.RequestContext{Tools: []types.Tool{{Namespace: "image_gen", Name: "create"}}},
 	}
-	aliases := core.imageGenAliases(fromTools)
+	aliases := core.imageGenAliases(fromTools, false)
 	if _, ok := aliases["image_gen__create"]; !ok {
 		t.Fatalf("parsed tools produced %v", aliases)
 	}
@@ -31,8 +31,8 @@ func TestImageGenAliasesAreDerivedFromTheRequest(t *testing.T) {
 	fromBody := &types.NormalizedRequest{
 		RawBody: json.RawMessage(`{"tools":[{"type":"function","name":"image_gen.legacy"}]}`),
 	}
-	if _, ok := core.imageGenAliases(fromBody)["image_gen__legacy"]; !ok {
-		t.Fatalf("raw body produced %v", core.imageGenAliases(fromBody))
+	if _, ok := core.imageGenAliases(fromBody, false)["image_gen__legacy"]; !ok {
+		t.Fatalf("raw body produced %v", core.imageGenAliases(fromBody, false))
 	}
 
 	// A request with no image tools must yield nothing, so an ordinary stream
@@ -41,10 +41,10 @@ func TestImageGenAliasesAreDerivedFromTheRequest(t *testing.T) {
 		Context: types.RequestContext{Tools: []types.Tool{{Namespace: "other", Name: "thing"}}},
 		RawBody: json.RawMessage(`{"tools":[{"type":"function","name":"unrelated"}]}`),
 	}
-	if got := core.imageGenAliases(plain); got != nil {
+	if got := core.imageGenAliases(plain, false); got != nil {
 		t.Fatalf("a request without image tools produced %v", got)
 	}
-	if core.imageGenAliases(nil) != nil {
+	if core.imageGenAliases(nil, false) != nil {
 		t.Fatal("a nil request produced aliases")
 	}
 }
@@ -55,7 +55,7 @@ func TestDerivedAliasesRestoreAStream(t *testing.T) {
 	core := &ResponsesCore{}
 	aliases := core.imageGenAliases(&types.NormalizedRequest{
 		Context: types.RequestContext{Tools: []types.Tool{{Namespace: "image_gen", Name: "create"}}},
-	})
+	}, false)
 	restore := CreateImageGenCallRestoreRewrite(aliases)
 	if restore == nil {
 		t.Fatal("declared image tools produced no rewrite")
@@ -84,11 +84,17 @@ func TestStreamBranchInstallsTheImageGenRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fragment := range []string{
-		"CreateImageGenCallRestoreRewrite(core.imageGenAliases(normalized))",
+		"CreateImageGenCallRestoreRewrite(core.imageGenAliases(normalized, forwardRoute))",
 		"protocol.RelaySSEWithPayloadRewrite(body, restore)",
 	} {
 		if !strings.Contains(string(source), fragment) {
 			t.Fatalf("the stream branch no longer contains %q; image-gen restore would be inert", fragment)
 		}
+	}
+}
+
+func imageToolRequest() *types.NormalizedRequest {
+	return &types.NormalizedRequest{
+		Context: types.RequestContext{Tools: []types.Tool{{Namespace: "image_gen", Name: "create"}}},
 	}
 }
