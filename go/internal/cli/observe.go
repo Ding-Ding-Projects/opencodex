@@ -46,19 +46,26 @@ func runObserve(ctx context.Context, args []string, streams IO) error {
 // they resolve without appearing twice in the root help, which is compared
 // byte-for-byte against the TypeScript output.
 func runObserveLogs(ctx context.Context, args []string, streams IO) error {
-	return runObserve(ctx, append([]string{"logs"}, args...), streams)
+	return observeAlias(ctx, newRuntimeAPI(), "logs", args, streams)
 }
 
 func runObserveUsage(ctx context.Context, args []string, streams IO) error {
-	return runObserve(ctx, append([]string{"usage"}, args...), streams)
+	return observeAlias(ctx, newRuntimeAPI(), "usage", args, streams)
 }
 
 func runObserveStorage(ctx context.Context, args []string, streams IO) error {
-	return runObserve(ctx, append([]string{"storage"}, args...), streams)
+	return observeAlias(ctx, newRuntimeAPI(), "storage", args, streams)
 }
 
 func runObserveMemory(ctx context.Context, args []string, streams IO) error {
-	return runObserve(ctx, append([]string{"memory"}, args...), streams)
+	return observeAlias(ctx, newRuntimeAPI(), "memory", args, streams)
+}
+
+// observeAlias prepends the section an alias stands for and forwards the rest
+// unchanged. It takes the client so a test can drive the real wrapper rather
+// than reimplementing the prepend and proving nothing about it.
+func observeAlias(ctx context.Context, api runtimeAPI, section string, args []string, streams IO) error {
+	return observeDispatch(ctx, api, append([]string{section}, args...), streams)
 }
 
 // observeDispatch is the seam a test drives with an injected client.

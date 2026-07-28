@@ -422,8 +422,10 @@ func TestObserveAliasesForwardArgumentsToTheirSection(t *testing.T) {
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
 			server, calls := observeServer(t, `[]`)
-			args := append([]string{testCase.alias}, testCase.args...)
-			if err := observeDispatch(context.Background(), testAPI(server), args, IO{Out: &bytes.Buffer{}}); err != nil {
+			// Drive the REAL wrapper, not observeDispatch with the section
+			// already inserted: a wrapper that prepended the wrong section or
+			// dropped its arguments has to fail here.
+			if err := observeAlias(context.Background(), testAPI(server), testCase.alias, testCase.args, IO{Out: &bytes.Buffer{}}); err != nil {
 				t.Fatal(err)
 			}
 			if len(*calls) != 1 {
@@ -458,6 +460,26 @@ func TestObserveGuardsUseTheOracleWording(t *testing.T) {
 		}
 		if len(*calls) != 0 {
 			t.Fatalf("%v sent %+v; validation must precede the request", testCase.args, *calls)
+		}
+	}
+}
+
+// Each top-level alias must resolve to its own wrapper, and none of them may
+// become visible: the root help is compared byte-for-byte with the oracle.
+func TestObserveAliasesAreRegisteredAndHidden(t *testing.T) {
+	for _, alias := range []string{"logs", "usage", "storage", "memory"} {
+		position, ok := commandIndex[alias]
+		if !ok {
+			t.Fatalf("%q is not registered", alias)
+		}
+		if !commandSpecs[position].Hidden {
+			t.Fatalf("%q must be hidden so it does not appear in the root help", alias)
+		}
+	}
+	for _, name := range registeredCommandNames(false) {
+		switch name {
+		case "logs", "usage", "storage", "memory":
+			t.Fatalf("%q leaked into the visible command list", name)
 		}
 	}
 }
