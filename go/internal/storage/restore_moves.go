@@ -54,6 +54,13 @@ type RestoreMoveHooks struct {
 	// HoldAfterFileMovesMS spins after the moves so a cleanup can race an
 	// in-flight restore. Zero and absent behave identically in the oracle.
 	HoldAfterFileMovesMS int
+	// FailAtLeftoverStageGate fails the leftover-rollout scan.
+	FailAtLeftoverStageGate bool
+	// FailStageTombstoneRename fails the rename that hides a finished stage.
+	FailStageTombstoneRename bool
+	// FailTombstoneDelete skips the best-effort tombstone removal, leaving an
+	// orphan the listing must still ignore.
+	FailTombstoneDelete bool
 }
 
 // RestoreMovedState is handed to the continuation while the locks are STILL
@@ -73,6 +80,8 @@ type RestoreMovedState struct {
 	// AbortAfterMoves is the oracle's post-move failure path: roll back the
 	// locks, best-effort rewrite the marker, and report the plan-time counts.
 	AbortAfterMoves func(RestoreErrorCode) RestoreResult
+	// CodexHome is needed to reach the trash root during finalization.
+	CodexHome string
 }
 
 // fullRestoreCounts is the count fixed at planning time.
@@ -297,5 +306,6 @@ func ExecuteRestoreMoves(
 		Pending:         &pending,
 		PersistPending:  persistPending,
 		AbortAfterMoves: abortAfterMoves,
+		CodexHome:       codexHome,
 	})
 }
