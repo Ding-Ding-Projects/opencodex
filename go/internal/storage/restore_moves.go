@@ -65,6 +65,9 @@ type RestoreMoveHooks struct {
 	// BACKUP contains has committed. The oracle keys this off backup section
 	// presence rather than which commit actually ran.
 	FailAfterFirstSatelliteCommit bool
+	// FailAfterStateCommit aborts once the thread rows are in and recorded,
+	// before any satellite store is touched.
+	FailAfterStateCommit bool
 }
 
 // RestoreMovedState is handed to the continuation while the locks are STILL

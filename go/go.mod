@@ -3,6 +3,8 @@ module github.com/lidge-jun/opencodex-go
 go 1.26.4
 
 require (
+	github.com/gorilla/websocket v1.5.3
+	github.com/klauspost/compress v1.19.1
 	github.com/lxn/walk v0.0.0-20210112085537-c389da54e794
 	github.com/pelletier/go-toml/v2 v2.2.4
 	golang.org/x/image v0.44.0
@@ -13,7 +15,6 @@ require (
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
