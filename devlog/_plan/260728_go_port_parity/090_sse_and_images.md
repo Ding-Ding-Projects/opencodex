@@ -185,3 +185,70 @@ OUT: `src/**`, 실제 유료 이미지 호출(테스트는 스텁 사용).
 | 5 | `maxRounds` 소진 | 상류 턴 ≤ `maxRounds+1`, 마지막 턴은 별칭 제거된 도구 목록 |
 | 6 | 턴당 10건 초과 | 초과분은 예산 소진 오류 결과, 유료 호출 없음 |
 | 7 | 취소 | 진행 중 중단, 추가 유료 호출 없음 |
+
+## 090.4 프로덕션 배선 (wp9b-wire)
+
+> **정정 (측정 후).** 이 절은 처음에 배선 지점을 `internal/chat/`으로 잡았다. 틀렸다.
+> `internal/chat/inbound.go`의 `parseChatTools`는 `ImageGeneration`을 **아예 채우지
+> 않는다.** 오라클도 마찬가지라서 `_imageGeneration`은 `src/responses/parser.ts:638`
+> 한 곳에서만 설정된다. Go에서 그 자리는 이름과 달리 Responses 파서인
+> `internal/claude/parser.go:334`이고, 그 파서를 부르는 것은
+> `internal/server/responses_core_port.go`다. chat 표면에 건 배선은 손으로 만든 테스트
+> 요청에서만 동작하는 죽은 코드였다. 아래는 실제 위치로 다시 쓴 계획이다.
+
+090.2와 090.3이 끝나도 **아무도 브리지를 부르지 않는다.** 이 포팅에서 "구현은 끝났는데
+호출자가 없는" 패턴이 나온 것은 이번이 여섯 번째다. 그래서 이 슬라이스의 수용 기준에는
+동작뿐 아니라 **호출 지점이 사라지면 시끄럽게 깨지는 테스트**가 포함된다.
+
+### 오라클의 디스패치 규칙
+
+`src/server/responses/core.ts:1758` 부근:
+
+- 라우팅된 compaction 턴은 브리지에 **들어가지 않는다**. compaction이 tools/_webSearch는
+  비우지만 `_imageGeneration`은 남기므로, 그대로 두면 Codex가 기대하는 합성 compaction
+  아이템 대신 평범한 완료가 돌아간다(#424).
+- 웹서치와 이미지가 둘 다 자격을 갖추면 **웹서치가 이긴다**. 단 `adapter.runTurn`이 있는
+  어댑터(Cursor)에서는 웹서치 루프가 buildRequest/fetch/parseStream만 지원하므로 건너뛰고
+  이미지 브리지가 돌 수 있다.
+- 비스트리밍 요청은 400으로 거부한다. 브리지는 내부적으로 stream을 강제하고 SSE를
+  반환하므로, JSON을 기대하는 클라이언트에 SSE를 줄 수는 없다.
+- 기존 `image_gen` 별칭 도구는 **교체**하지 중복 추가하지 않는다.
+- 호스티드 `image_generation`을 겨냥한 tool_choice/allowed_tools는 합성 함수 이름으로
+  다시 매핑한다.
+
+### Go 변경 (정정본)
+
+- 배선 지점은 `internal/server/responses_core_port.go`, `core.forward` **직전**이다.
+  forward 뒤에 두면 이미 원치 않는 유료 상류 요청이 나간 뒤가 된다.
+- 구조 분리가 선행되어야 한다. 지금 `forward`는 auth/transport/adapter 준비와 전송을
+  한 함수에서 한다. 브리지는 **준비된 어댑터를 전송 전에** 받아야 하므로 그 둘을 분리해야
+  한다.
+- compaction 제외는 `CompactionBoundary`가 아니라 `CompactionRequest`
+  **및** `providers.IsCanonicalOpenAiForwardProvider`로 판정한다. 오라클 조건은
+  `_compactionRequest && !isCanonicalOpenAiForwardProvider(route.provider)`이고,
+  `CompactionBoundary`는 Cursor 컨텍스트 리셋 신호로 성격이 다르다.
+- 턴 러너는 chat의 `routedTurnRunner`를 가져오지 않는다. Responses 코어가 이미 자기
+  복구 경로를 갖고 있다(combo 실패조치는 `forward`, Cursor continuity 재시도는 `buffered`와
+  `stream`). chat 추상화를 끌어오면 `chat.preparedRequest`까지 따라와야 한다.
+- 비스트리밍 요청은 브리지 실행 **전에** `400 image bridge requires stream=true`로 거부한다.
+  chat 경로처럼 내부적으로 stream을 켜는 것은 관측 가능한 계약이 다르다.
+- `internal/cli/serve.go`에서 의존성을 조립하고,
+  `config.ImagesConfig.MaxRounds`(*int)와 `images.ClampImageMaxRounds`(*float64)의 타입
+  불일치를 `images.ResolveMaxRounds`로 해소한다.
+
+**선행 갭:** Go의 `types.Adapter`에는 `runTurn`이 없다. 오라클의
+`imgPlan && (!wsPlan || adapter.runTurn)` 우선순위는 그대로 옮길 수 없으므로, 등가 조건을
+먼저 정의해야 웹서치/이미지 우선순위 패리티를 주장할 수 있다.
+
+### 수용 기준
+
+| # | 활성화 | 증거 |
+| --- | --- | --- |
+| 1 | 옵트인 off | 브리지 미진입, 기존 경로 그대로 |
+| 2 | 호스티드 이미지 도구 선언 + 옵트인 on + xAI 키 | 브리지가 실제로 돈다 |
+| 3 | 웹서치와 동시 자격 | 웹서치 우선 |
+| 4 | 호출 지점 삭제 | 테스트가 깨진다(소스 수준 단언) |
+| 5 | 설정 maxRounds | 루프에 실제로 전달됨(타입 불일치 해소 증명) |
+| 6 | 비스트리밍 요청 | 브리지 실행 전 400 |
+| 7 | 라우팅된 compaction 턴 | 브리지 미진입 |
+| 8 | OpenAI 네이티브 라우팅 | 브리지 미진입 |
