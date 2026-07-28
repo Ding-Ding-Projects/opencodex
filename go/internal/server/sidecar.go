@@ -159,6 +159,13 @@ func promptCacheKeyOf(normalized *types.NormalizedRequest) string {
 	return normalized.Options.PromptCacheKey
 }
 
+// AnthropicPoolMaxFailoversPerRequest caps account rotations inside one
+// request, matching ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST.
+//
+// Without a cap a short Retry-After returned by several accounts in turn would
+// keep the request alive indefinitely while the caller waits.
+const AnthropicPoolMaxFailoversPerRequest = 3
+
 func sidecarHandler(kind SidecarKind, resolver SidecarResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if resolver == nil {

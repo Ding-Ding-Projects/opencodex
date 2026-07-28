@@ -19,6 +19,7 @@ import (
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/management"
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/search"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -28,29 +29,36 @@ import (
 type AdapterResolver func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error)
 
 type Config struct {
-	Registry               types.Registry
-	Combos                 *combos.Resolver
-	Auth                   types.AuthProvider
-	ResolveAdapter         AdapterResolver
-	Client                 *http.Client
-	Token                  string
-	AllowedOrigins         []string
-	Logger                 *slog.Logger
-	Lifecycle              *Lifecycle
-	Management             types.ManagementRouter
-	ChatHandler            types.RouteHandler
-	MessagesHandler        types.RouteHandler
-	CountTokensHandler     types.RouteHandler
-	CompactHandler         types.RouteHandler
-	UsageRecorder          types.UsageRecorder
-	RequestLogs            *management.RequestLog
-	ManagementConfig       *appconfig.Config
-	ConfigPath             string
-	ConfigPersistence      *appconfig.LivePersistence
-	DebugLog               *usage.DebugLog
-	OAuthManagement        management.OAuthBackend
-	CodexAuthManagement    management.CodexAuthBackend
-	CodexRouter            *codex.Router
+	Registry            types.Registry
+	Combos              *combos.Resolver
+	Auth                types.AuthProvider
+	ResolveAdapter      AdapterResolver
+	Client              *http.Client
+	Token               string
+	AllowedOrigins      []string
+	Logger              *slog.Logger
+	Lifecycle           *Lifecycle
+	Management          types.ManagementRouter
+	ChatHandler         types.RouteHandler
+	MessagesHandler     types.RouteHandler
+	CountTokensHandler  types.RouteHandler
+	CompactHandler      types.RouteHandler
+	UsageRecorder       types.UsageRecorder
+	RequestLogs         *management.RequestLog
+	ManagementConfig    *appconfig.Config
+	ConfigPath          string
+	ConfigPersistence   *appconfig.LivePersistence
+	DebugLog            *usage.DebugLog
+	OAuthManagement     management.OAuthBackend
+	CodexAuthManagement management.CodexAuthBackend
+	CodexRouter         *codex.Router
+	// AnthropicPool is the opt-in account pool. Optional: an embedding that
+	// does not build one keeps the pre-pool behaviour.
+	AnthropicPool *oauth.AnthropicPool
+	// AnthropicPoolConfig reports the opt-in settings at request time rather
+	// than at construction, so a live config change takes effect without a
+	// restart.
+	AnthropicPoolConfig    func() appconfig.NormalizedAnthropicPool
 	StorageHome            string
 	Stop                   func()
 	Version                string
@@ -359,7 +367,15 @@ func New(config Config) *Server {
 			return rotated, true
 		},
 		PrepareImageRetry: ApplyAnthropicImageTierRetry,
-		RequestLogs:       advancedRequestLogs,
+		RotateAnthropicPoolOn429: func(failedAccountID, retryAfter, sessionKey string) (string, bool) {
+			if s.config.AnthropicPool == nil || s.config.AnthropicPoolConfig == nil {
+				return "", false
+			}
+			pool := s.config.AnthropicPoolConfig()
+			next := s.config.AnthropicPool.RotateOn429(failedAccountID, retryAfter, sessionKey, pool, time.Now())
+			return next, next != ""
+		},
+		RequestLogs: advancedRequestLogs,
 		StreamMode: func() string {
 			if s.config.ManagementConfig != nil {
 				return s.config.ManagementConfig.StreamMode

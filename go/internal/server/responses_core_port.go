@@ -61,6 +61,10 @@ type ResponsesCoreConfig struct {
 	ApplyProviderPolicy      func(*types.NormalizedRequest, *types.ResolvedModel) error
 	ItemIDRepair             func(string) *ResponsesItemIDRepairConfig
 	RotateAPIKeyOn429        func(string, string, string) (string, bool)
+	// RotateAnthropicPoolOn429 cools the failed account and returns a
+	// replacement for the SAME request. Optional: an embedding without the
+	// opt-in pool leaves it nil and keeps the previous behaviour.
+	RotateAnthropicPoolOn429 func(failedAccountID, retryAfter, sessionKey string) (string, bool)
 	PrepareImageRetry        func(*types.NormalizedRequest) error
 	RequestLogs              *RequestLogStore
 	StreamMode               string
@@ -362,6 +366,9 @@ func (e *forwardError) Error() string { return e.err.Error() }
 func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, normalized *types.NormalizedRequest, resolved *types.ResolvedModel, pick *combos.Pick, logSession *responsesLogSession, attempt *subagentFallbackAttempt) (types.Adapter, *http.Response, *types.AuthContext, *types.ResolvedModel, *combos.Pick, error) {
 	var overrideKey string
 	imageRetryAttempted := false
+	// Counted per REQUEST, not per loop iteration: the cap exists so a short
+	// Retry-After spread across several accounts cannot spin forever.
+	anthropicFailovers := 0
 	for {
 		logSession.ensureAttempt(resolved.Provider, resolved.Model, core.providerAdapter(resolved))
 		forwardRoute := core.config.ForwardRoute != nil && core.config.ForwardRoute(resolved)
@@ -486,6 +493,29 @@ func (core *ResponsesCore) forward(ctx context.Context, incoming http.Header, no
 			if nextKey, ok := core.config.RotateAPIKeyOn429(resolved.Provider, attempted, response.Header.Get("Retry-After")); ok && strings.TrimSpace(nextKey) != "" && nextKey != attempted {
 				overrideKey = nextKey
 				logSession.noteRecovery("key-429")
+				continue
+			}
+		}
+		// Opt-in Anthropic pool: cool the rate-limited account and retry the
+		// same request on another one.
+		//
+		// Bounded per request, because a short Retry-After across several
+		// accounts could otherwise spin this loop indefinitely. The bound is on
+		// FAILOVERS rather than iterations so an unrelated retry above cannot
+		// consume the budget.
+		//
+		// Safe here specifically because the response body has already been
+		// read and closed: nothing has been written to the client yet, so the
+		// retry cannot replay bytes the caller already saw.
+		if response.StatusCode == http.StatusTooManyRequests &&
+			core.config.RotateAnthropicPoolOn429 != nil &&
+			resolved.Provider == "anthropic" &&
+			auth != nil && auth.AccountID != "" &&
+			anthropicFailovers < AnthropicPoolMaxFailoversPerRequest {
+			sessionKey := authSelectionKey(resolved.Provider, incoming, promptCacheKeyOf(normalized), false)
+			if next, ok := core.config.RotateAnthropicPoolOn429(auth.AccountID, response.Header.Get("Retry-After"), sessionKey); ok && next != "" && next != auth.AccountID {
+				anthropicFailovers++
+				logSession.noteRecovery("anthropic-oauth-429")
 				continue
 			}
 		}
