@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/config"
 	shared "github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -18,6 +19,13 @@ type AuthResolver struct {
 	Store *CredentialStore
 	Pool  *AccountPool
 	Skew  time.Duration
+
+	// Anthropic is the opt-in Anthropic pool. It is a separate field rather
+	// than another AccountPool because the two select on different contracts:
+	// this one is session-keyed and strategy-driven, and its own config decides
+	// whether it participates at all.
+	Anthropic       *AnthropicPool
+	AnthropicConfig func() config.NormalizedAnthropicPool
 
 	mu         sync.RWMutex
 	configs    map[string]ProviderAuthConfig
@@ -102,6 +110,14 @@ func (r *AuthResolver) resolveOAuth(ctx context.Context, provider, threadID stri
 }
 
 func (r *AuthResolver) selectAccount(ctx context.Context, provider, threadID string, usePool bool) (ProviderAccount, error) {
+	// Anthropic routes through its own pool when the opt-in is on. Checked
+	// before usePool because that flag belongs to the Codex pool and is never
+	// set for this provider.
+	if provider == anthropicPoolProvider && r.Anthropic != nil && r.AnthropicConfig != nil {
+		if pool := r.AnthropicConfig(); pool.Enabled {
+			return r.selectAnthropicAccount(provider, threadID, pool)
+		}
+	}
 	if usePool {
 		if r.Pool == nil {
 			return ProviderAccount{}, ErrNoUsableAccount
@@ -120,6 +136,34 @@ func (r *AuthResolver) selectAccount(ctx context.Context, provider, threadID str
 	}
 	for _, account := range set.Accounts {
 		if account.ID == set.ActiveAccountID && !account.NeedsReauth {
+			return account, nil
+		}
+	}
+	return ProviderAccount{}, fmt.Errorf("%w: %s", ErrLoginRequired, provider)
+}
+
+// selectAnthropicAccount resolves through the opt-in pool and reports why it
+// failed, because "every account is cooling down" and "no account is logged in"
+// need different operator responses.
+func (r *AuthResolver) selectAnthropicAccount(
+	provider, sessionKey string, pool config.NormalizedAnthropicPool,
+) (ProviderAccount, error) {
+	selection := r.Anthropic.Resolve(sessionKey, pool, time.Now())
+	if selection.AccountID == "" {
+		if selection.Reason == AnthropicReasonAllCooled {
+			return ProviderAccount{}, ErrNoUsableAccount
+		}
+		return ProviderAccount{}, fmt.Errorf("%w: %s", ErrLoginRequired, provider)
+	}
+	set, ok, err := r.Store.GetAccountSet(provider)
+	if err != nil {
+		return ProviderAccount{}, err
+	}
+	if !ok {
+		return ProviderAccount{}, fmt.Errorf("%w: %s", ErrLoginRequired, provider)
+	}
+	for _, account := range set.Accounts {
+		if account.ID == selection.AccountID {
 			return account, nil
 		}
 	}

@@ -221,6 +221,51 @@ func TestAnthropicPoolFillFirstAdvancesOneSortedStep(t *testing.T) {
 
 // Oracle W9: no accounts is reason "none" rather than an error, so the caller
 // can tell "log in" apart from "wait".
+
+// The pool has to be REACHABLE, not merely correct. An earlier version of this
+// work was complete and inert: nothing constructed the pool or routed
+// Anthropic through it, so enabling the opt-in changed nothing at all.
+func TestAuthResolverRoutesAnthropicThroughThePool(t *testing.T) {
+	now := time.Now()
+	pool, set := anthropicPoolFixture(t, "a", "b", "c")
+	active := accountIDFor(t, set, "a")
+	activate(t, pool, active)
+
+	enabled := poolConfig(true, 80, "round-robin", 1)
+	resolver := NewAuthResolver(pool.store, map[string]ProviderAuthConfig{
+		anthropicPoolProvider: {Mode: AuthModeOAuth},
+	}, nil)
+	resolver.Anthropic = pool
+	resolver.AnthropicConfig = func() config.NormalizedAnthropicPool { return enabled }
+
+	seen := map[string]struct{}{}
+	for index := 1; index <= 4; index++ {
+		account, err := resolver.selectAccount(context.Background(), anthropicPoolProvider, string(rune('0'+index)), false)
+		if err != nil {
+			t.Fatalf("selectAccount %d: %v", index, err)
+		}
+		seen[account.ID] = struct{}{}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("the resolver served %d distinct accounts, want the pool's full rotation of 3", len(seen))
+	}
+
+	// With the opt-in OFF the resolver must fall back to the stored active,
+	// which is what makes enabling the pool a deliberate choice.
+	disabled := poolConfig(false, 80, "round-robin", 1)
+	resolver.AnthropicConfig = func() config.NormalizedAnthropicPool { return disabled }
+	for index := 0; index < 3; index++ {
+		account, err := resolver.selectAccount(context.Background(), anthropicPoolProvider, "k", false)
+		if err != nil {
+			t.Fatalf("disabled selectAccount: %v", err)
+		}
+		if account.ID != active {
+			t.Fatalf("disabled pool served %q, want the stored active %q", account.ID, active)
+		}
+	}
+	_ = now
+}
+
 func TestAnthropicPoolWithNoAccountsReportsNone(t *testing.T) {
 	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
 	pool := NewAnthropicPool(store)

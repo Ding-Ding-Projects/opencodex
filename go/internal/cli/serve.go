@@ -316,6 +316,12 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore, cl
 	}
 	resolver := oauth.NewAuthResolver(store, configs, configuredOAuthRefreshers(cfg, client, false))
 	resolver.Pool = oauth.NewAccountPool(store, "openai")
+	// The Anthropic pool is always constructed; its own config decides whether
+	// it participates, so a disabled pool costs nothing and an enabled one does
+	// not need a restart to become reachable.
+	resolver.Anthropic = oauth.NewAnthropicPool(store)
+	anthropicPool := config.NormalizeAnthropicPool(cfg.AnthropicAccountPool)
+	resolver.AnthropicConfig = func() config.NormalizedAnthropicPool { return anthropicPool }
 	return resolver, nil
 }
 
