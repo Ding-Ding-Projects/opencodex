@@ -35,6 +35,10 @@ const (
 	// RestoreDestExists means a destination is occupied by something this
 	// restore did not place. Surfaced as HTTP 409.
 	RestoreDestExists RestoreErrorCode = "dest_exists"
+	// RestoreDBReconcileFailed means the metadata behind these files cannot be
+	// put back, so restoring the files alone would leave the user with
+	// rollouts the app cannot see.
+	RestoreDBReconcileFailed RestoreErrorCode = "db_reconcile_failed"
 )
 
 var errPathEscape = errors.New("path_escape")
@@ -128,6 +132,11 @@ type RestorePlan struct {
 	// ToMove are files still sitting in the stage.
 	ToMove  []StagedFile
 	Entries []CleanupManifestEntry
+	// PriorPending is the marker this plan was built from, or nil for a fresh
+	// restore. It is carried rather than re-read: the preflight derives what
+	// each section still owes from it, and a second read could observe a
+	// different marker than the one the plan was decided against.
+	PriorPending *RestorePendingState
 }
 
 // PlannedDestRels is what the pending marker records.
@@ -186,6 +195,9 @@ func PlanTrashRestore(trashID, codexHome string) (RestorePlan, RestoreErrorCode)
 	}
 
 	plan := RestorePlan{TrashDirID: id, StageDir: stageDir, Entries: entries}
+	if pending.Status == RestorePendingValid {
+		plan.PriorPending = pending.State
+	}
 	for _, entry := range entries {
 		for _, rel := range entry.PhysicalRelPaths {
 			from := filepath.Join(stageDir, filepath.Base(rel))
