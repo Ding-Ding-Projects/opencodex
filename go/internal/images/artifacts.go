@@ -48,7 +48,16 @@ var artifactIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.(
 // to garbage bytes that then fail a confusing magic-byte check instead.
 var base64Pattern = regexp.MustCompile(`^[A-Za-z0-9+/]*={0,2}$`)
 
-var whitespacePattern = regexp.MustCompile(`\s+`)
+// jsWhitespacePattern matches what JavaScript's \s matches, which is WIDER
+// than Go's.
+//
+// RE2's \s is ASCII-only, so a base64 payload carrying a non-breaking space or
+// a BOM would keep that character, fail the strict alphabet check, and be
+// rejected as invalid — while the oracle strips it and decodes the image
+// fine. Measured against the oracle with NBSP, figure space, BOM, line
+// separator, ideographic space and vertical tab: all six decode.
+var jsWhitespacePattern = regexp.MustCompile(
+	"[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
 
 // ImageBudget tracks decoded bytes across one response.
 type ImageBudget struct {
@@ -113,7 +122,7 @@ func GuessExtFromMagic(bytes []byte) (string, error) {
 // The size is computed from the ENCODED length first, so an oversized payload
 // is refused before it is expanded in memory.
 func DecodeValidatedImageBase64(data string) ([]byte, error) {
-	normalized := whitespacePattern.ReplaceAllString(data, "")
+	normalized := jsWhitespacePattern.ReplaceAllString(data, "")
 	if !base64Pattern.MatchString(normalized) || len(normalized)%4 != 0 {
 		return nil, errors.New("inline image data is not valid base64")
 	}

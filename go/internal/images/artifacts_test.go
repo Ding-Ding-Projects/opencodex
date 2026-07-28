@@ -212,3 +212,55 @@ func TestPruneOldArtifactsKeepsTheNewest(t *testing.T) {
 	// A missing directory is survivable, not fatal.
 	PruneOldArtifacts(filepath.Join(dir, "absent"), 1)
 }
+
+// A symlink inside the artifacts directory resolves to its target on BOTH
+// sides: the oracle's existsSync/statSync follow links and so does os.Stat.
+// Pinned as a known, matched behaviour rather than left to be discovered as a
+// surprise, since the id pattern is what actually bounds what can be requested.
+func TestResolveArtifactPathFollowsSymlinksLikeTheOracle(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(filepath.Dir(dir), "outside-artifact.png")
+	if err := os.WriteFile(outside, pngBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	link := filepath.Join(dir, "link.png")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// The returned path stays INSIDE the artifacts directory even though the
+	// bytes live elsewhere, so nothing outside is ever named to a caller.
+	if got := ResolveArtifactPath(dir, "link.png"); got != link {
+		t.Fatalf("symlink resolved to %q, want %q", got, link)
+	}
+}
+
+// The encoded-size ceiling must equal the oracle's Math.ceil computation
+// exactly, since it is the gate that refuses an oversized payload before it is
+// expanded in memory. Measured: 69905067.
+func TestMaxEncodedBytesMatchesTheOracle(t *testing.T) {
+	if MaxEncodedBytesPerImage != 69905067 {
+		t.Fatalf("MaxEncodedBytesPerImage = %d, oracle computes 69905067", MaxEncodedBytesPerImage)
+	}
+}
+
+// JavaScript's \s is wider than Go's, so a payload carrying Unicode whitespace
+// must still decode. RE2's \s is ASCII-only, which would leave the character in
+// place and fail the strict alphabet check on input the oracle accepts.
+func TestDecodeValidatedImageBase64StripsUnicodeWhitespace(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString(pngBytes)
+	for name, space := range map[string]string{
+		"non-breaking space": "\u00a0",
+		"figure space":       "\u2007",
+		"byte order mark":    "\ufeff",
+		"line separator":     "\u2028",
+		"ideographic space":  "\u3000",
+		"vertical tab":       "\v",
+	} {
+		spaced := encoded[:4] + space + encoded[4:]
+		decoded, err := DecodeValidatedImageBase64(spaced)
+		if err != nil || len(decoded) != len(pngBytes) {
+			t.Fatalf("%s: decode = (%d, %v), oracle decodes it", name, len(decoded), err)
+		}
+	}
+}
