@@ -208,13 +208,13 @@ func codexLogin(ctx context.Context, api runtimeAPI, provider, id, code string, 
 		if err != nil {
 			return err
 		}
-		switch state["status"] {
+		switch state.fields["status"] {
 		case "done":
 			line := "Logged in."
-			if email, isString := state["email"].(string); isString && email != "" {
+			if email, isString := state.fields["email"].(string); isString && email != "" {
 				line = "Logged in as " + email + "."
 			}
-			return printData(streams, state, wantsJSON, []string{line})
+			return printData(streams, state.payload, wantsJSON, []string{line})
 		case "error", "expired":
 			// Stop immediately: continuing to poll a flow the server has
 			// already failed just delays the report.
@@ -225,9 +225,9 @@ func codexLogin(ctx context.Context, api runtimeAPI, provider, id, code string, 
 			// stringified rather than ignored. Testing for a non-empty string
 			// instead would replace a server-supplied reason with a generic
 			// one whenever the server sent an object or an empty message.
-			reason, present := state["error"]
+			reason, present := state.fields["error"]
 			if !present || reason == nil {
-				return usageError("", "login %v", state["status"])
+				return usageError("", "login %v", state.fields["status"])
 			}
 			return usageError("", "%s", jsString(reason))
 		}
@@ -275,14 +275,14 @@ func providerLogin(ctx context.Context, api runtimeAPI, provider, id, code strin
 		if err != nil {
 			return err
 		}
-		if state["loggedIn"] == true {
-			return printData(streams, state, wantsJSON, []string{"Logged in to " + provider + "."})
+		if state.fields["loggedIn"] == true {
+			return printData(streams, state.payload, wantsJSON, []string{"Logged in to " + provider + "."})
 		}
 		// The oracle's test is `if (state.error)` -- JS TRUTHINESS, not "is a
 		// non-empty string". A server answering `{"error": true}` or
 		// `{"error": {...}}` fails there and would have polled to timeout here.
-		if jsTruthy(state["error"]) {
-			return usageError("", "%s", jsString(state["error"]))
+		if jsTruthy(state.fields["error"]) {
+			return usageError("", "%s", jsString(state.fields["error"]))
 		}
 	}
 	return usageError("", "login timed out")
@@ -350,11 +350,13 @@ func runAccountCode(ctx context.Context, api runtimeAPI, argv []string, deps acc
 		path = "/api/codex-auth/login/code"
 		body = map[string]any{"flowId": flowID, "input": input}
 	}
-	result, err := api.request(ctx, "POST", path, body)
+	result, rawBytes, err := api.requestWithRaw(ctx, "POST", path, body)
 	if err != nil {
 		return err
 	}
-	return printData(streams, result, wantsJSON, []string{"Login code submitted."})
+	// orderedPayload, not the decoded value: `--json` prints the server's
+	// response and a decoded map re-serializes with its keys sorted.
+	return printData(streams, orderedPayload(rawBytes, result), wantsJSON, []string{"Login code submitted."})
 }
 
 func runAccountCancel(ctx context.Context, api runtimeAPI, argv []string, streams IO) error {
@@ -388,11 +390,11 @@ func runAccountCancel(ctx context.Context, api runtimeAPI, argv []string, stream
 			body["flowId"] = flowID
 		}
 	}
-	result, err := api.request(ctx, "POST", path, body)
+	result, rawBytes, err := api.requestWithRaw(ctx, "POST", path, body)
 	if err != nil {
 		return err
 	}
-	return printData(streams, result, wantsJSON, []string{"Cancelled " + provider + " login."})
+	return printData(streams, orderedPayload(rawBytes, result), wantsJSON, []string{"Cancelled " + provider + " login."})
 }
 
 func runAccountResetCredits(ctx context.Context, api runtimeAPI, argv []string, streams IO) error {
@@ -421,18 +423,21 @@ func runAccountResetCredits(ctx context.Context, api runtimeAPI, argv []string, 
 		accountID = "__main__"
 	}
 	var result any
+	var rawBytes []byte
 	var err error
 	if consume {
-		result, err = api.request(ctx, "POST", "/api/codex-auth/reset-credits/consume",
+		result, rawBytes, err = api.requestWithRaw(ctx, "POST", "/api/codex-auth/reset-credits/consume",
 			map[string]any{"accountId": accountID})
 	} else {
-		result, err = api.request(ctx, "GET",
+		result, rawBytes, err = api.requestWithRaw(ctx, "GET",
 			"/api/codex-auth/reset-credits?accountId="+encodeURIComponent(accountID), nil)
 	}
 	if err != nil {
 		return err
 	}
-	return printData(streams, result, wantsJSON, nil)
+	// reset-credits has NO human summary, so this payload is what the user
+	// always sees -- the key order is not a --json-only concern here.
+	return printData(streams, orderedPayload(rawBytes, result), wantsJSON, nil)
 }
 
 func requestLoginStart(ctx context.Context, api runtimeAPI, method, path string, body map[string]any) (loginStart, error) {
@@ -473,10 +478,21 @@ func requestLoginStart(ctx context.Context, api runtimeAPI, method, path string,
 	return start, nil
 }
 
-func requestStateMap(ctx context.Context, api runtimeAPI, method, path string) (map[string]any, error) {
-	decoded, err := api.request(ctx, method, path, nil)
+// loginState carries the poll response twice: as a map for the field tests,
+// and as an order-preserving payload for `--json`.
+//
+// A decoded map cannot do both. Reading `state["status"]` needs the map, but
+// printing it needs the server's key order, which a Go map does not have and
+// json.MarshalIndent sorts away.
+type loginState struct {
+	fields  map[string]any
+	payload any
+}
+
+func requestStateMap(ctx context.Context, api runtimeAPI, method, path string) (loginState, error) {
+	decoded, rawBytes, err := api.requestWithRaw(ctx, method, path, nil)
 	if err != nil {
-		return nil, err
+		return loginState{}, err
 	}
 	record, isObject := decoded.(map[string]any)
 	if !isObject {
@@ -487,11 +503,11 @@ func requestStateMap(ctx context.Context, api runtimeAPI, method, path string) (
 		if decoded == nil {
 			// The wording is the oracle's, verbatim: a user comparing the two
 			// CLIs sees the same message.
-			return nil, fmt.Errorf("null is not an object (evaluating 'null.status')")
+			return loginState{}, fmt.Errorf("null is not an object (evaluating 'null.status')")
 		}
-		return map[string]any{}, nil
+		return loginState{fields: map[string]any{}, payload: orderedPayload(rawBytes, decoded)}, nil
 	}
-	return record, nil
+	return loginState{fields: record, payload: orderedPayload(rawBytes, decoded)}, nil
 }
 
 // jsTruthy reports whether a decoded JSON value is truthy in JavaScript.

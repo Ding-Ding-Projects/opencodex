@@ -671,3 +671,78 @@ func TestAccountLoginJSONPreservesStartKeyOrder(t *testing.T) {
 		t.Fatalf("stdout = %s\nkeys must stay in the order the server sent them (z, flowId, a)", out)
 	}
 }
+
+// Every payload this command prints must keep the server's key order, not just
+// the login-start one. A decoded Go map re-serializes with its keys sorted,
+// which is why each of these goes through orderedPayload.
+func TestAccountAuthPreservesServerKeyOrderEverywhere(t *testing.T) {
+	// Deliberately not alphabetical in either direction, so a sort in either
+	// order fails.
+	const body = `{"z":1,"m":2,"a":3}`
+	assertOrder := func(t *testing.T, out string) {
+		t.Helper()
+		zAt, mAt, aAt := strings.Index(out, `"z"`), strings.Index(out, `"m"`), strings.Index(out, `"a"`)
+		if zAt < 0 || mAt < 0 || aAt < 0 {
+			t.Fatalf("a key went missing: %s", out)
+		}
+		if !(zAt < mAt && mAt < aAt) {
+			t.Fatalf("stdout = %s\nkeys must stay in the order the server sent them (z, m, a)", out)
+		}
+	}
+
+	t.Run("code result", func(t *testing.T) {
+		harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
+			return 200, body
+		}, "secret\n", "code", "openai", "--flow", "f1", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOrder(t, harness.stdout.String())
+	})
+
+	t.Run("cancel result", func(t *testing.T) {
+		harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
+			return 200, body
+		}, "", "cancel", "openai", "--flow", "f1", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOrder(t, harness.stdout.String())
+	})
+
+	t.Run("reset-credits result", func(t *testing.T) {
+		harness, err := runAccountAuth(t, func(recordedRequest) (int, string) {
+			return 200, body
+		}, "", "reset-credits", "acct-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOrder(t, harness.stdout.String())
+	})
+
+	t.Run("codex poll result", func(t *testing.T) {
+		harness, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+			if strings.Contains(request.path, "login-status") {
+				return 200, `{"z":1,"status":"done","m":2,"a":3}`
+			}
+			return 200, `{"flowId":"f1"}`
+		}, "", "login", "openai", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOrder(t, harness.stdout.String())
+	})
+
+	t.Run("provider poll result", func(t *testing.T) {
+		harness, err := runAccountAuth(t, func(request recordedRequest) (int, string) {
+			if strings.Contains(request.path, "status") {
+				return 200, `{"z":1,"loggedIn":true,"m":2,"a":3}`
+			}
+			return 200, `{}`
+		}, "", "login", "anthropic", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOrder(t, harness.stdout.String())
+	})
+}
