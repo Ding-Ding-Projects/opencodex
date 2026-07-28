@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -152,5 +153,84 @@ func TestObserveRejectsUnknownSection(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatal("an unknown section must not reach the network")
+	}
+}
+
+// A log row may legitimately contain the literal string "-". scalarText uses
+// "-" to mean "unset" when rendering a settings field, so reusing that sentinel
+// here would silently drop a real provider or model name.
+func TestObserveFormatKeepsLiteralDashValues(t *testing.T) {
+	line := formatLog(map[string]any{
+		"timestamp": "t1", "provider": "-", "model": "m", "status": float64(200),
+	})
+	if !strings.Contains(line, "-/m") {
+		t.Fatalf("line = %q, want the literal dash preserved in the route", line)
+	}
+}
+
+// The oracle trims the seen-set to its most recent 2500 keys rather than
+// clearing it. Clearing outright would make the next poll reprint rows the user
+// has already been shown.
+func TestObserveFollowTrimRetainsRecentKeys(t *testing.T) {
+	seen := map[string]struct{}{}
+	order := []string{}
+	for index := 0; index < 5_001; index++ {
+		key := strconv.Itoa(index)
+		seen[key] = struct{}{}
+		order = append(order, key)
+	}
+	if len(order) > 5_000 {
+		order = append([]string{}, order[len(order)-2_500:]...)
+		seen = make(map[string]struct{}, len(order))
+		for _, key := range order {
+			seen[key] = struct{}{}
+		}
+	}
+	if len(seen) != 2_500 {
+		t.Fatalf("retained %d keys, want 2500", len(seen))
+	}
+	// The most recent key must survive; the oldest must not.
+	if _, present := seen["5000"]; !present {
+		t.Fatal("the newest key was dropped")
+	}
+	if _, present := seen["0"]; present {
+		t.Fatal("the oldest key should have been trimmed")
+	}
+}
+
+// URLSearchParams is not url.QueryEscape: it escapes `~` and leaves `*` alone,
+// while Go does the reverse. Both parse back to the same value, so this only
+// shows up as a byte difference in the request URI -- which is precisely what
+// the unknown-command differential compares. Expected values were produced by
+// running new URLSearchParams({k: v}).toString() in Bun.
+func TestFormURLEncodeMatchesURLSearchParams(t *testing.T) {
+	for _, testCase := range []struct{ raw, want string }{
+		{raw: "a b", want: "a+b"},
+		{raw: "a~b", want: "a%7Eb"},
+		{raw: "a*b", want: "a*b"},
+		{raw: "a!b", want: "a%21b"},
+		{raw: "a'b", want: "a%27b"},
+		{raw: "a(b)", want: "a%28b%29"},
+		{raw: "é", want: "%C3%A9"},
+		{raw: "a.b", want: "a.b"},
+		{raw: "a_b", want: "a_b"},
+		{raw: "a-b", want: "a-b"},
+	} {
+		if got := formURLEncode(testCase.raw); got != testCase.want {
+			t.Fatalf("formURLEncode(%q) = %q, want %q", testCase.raw, got, testCase.want)
+		}
+	}
+}
+
+// An unset filter must be omitted entirely rather than sent as an empty value:
+// the oracle only calls search.set for defined entries, so `?provider=` would
+// be a filter the server actually applies.
+func TestObserveQueryOmitsEmptyFilters(t *testing.T) {
+	got := observeQuery([][2]string{{"provider", "openai"}, {"model", ""}, {"status", "5xx"}})
+	if got != "?provider=openai&status=5xx" {
+		t.Fatalf("observeQuery = %q", got)
+	}
+	if empty := observeQuery([][2]string{{"provider", ""}}); empty != "" {
+		t.Fatalf("all-empty query = %q, want no query string at all", empty)
 	}
 }

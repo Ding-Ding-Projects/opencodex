@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 )
 
 const systemUsage = `Usage:
@@ -63,19 +65,37 @@ func systemStatus(ctx context.Context, api runtimeAPI, args []string, streams IO
 	if err := rejectArgs(args, systemUsage, false); err != nil {
 		return err
 	}
-	result := map[string]any{}
-	for _, section := range []struct{ key, path string }{
+	// The oracle issues these concurrently via Promise.all and renders them in
+	// this order. A map would re-sort the sections alphabetically, so the pairs
+	// are kept ordered and only converted for JSON output.
+	sections := []struct{ key, path string }{
 		{"settings", "/api/settings"},
 		{"startup", "/api/startup-health"},
 		{"memory", "/api/system/memory"},
-	} {
-		value, err := api.request(ctx, http.MethodGet, section.path, nil)
+	}
+	values := make([]any, len(sections))
+	errs := make([]error, len(sections))
+	var wait sync.WaitGroup
+	for index, section := range sections {
+		wait.Add(1)
+		go func(index int, path string) {
+			defer wait.Done()
+			values[index], errs[index] = api.request(ctx, http.MethodGet, path, nil)
+		}(index, section.path)
+	}
+	wait.Wait()
+	for _, err := range errs {
 		if err != nil {
 			return err
 		}
-		result[section.key] = value
 	}
-	return printData(streams, result, wantsJSON, summaryLines(result))
+	ordered := make([][2]any, len(sections))
+	result := map[string]any{}
+	for index, section := range sections {
+		ordered[index] = [2]any{section.key, values[index]}
+		result[section.key] = values[index]
+	}
+	return printData(streams, result, wantsJSON, orderedSummaryLines(ordered))
 }
 
 // systemSettings reads when given no flags and writes when given any. Treating
@@ -212,4 +232,10 @@ func systemUpdate(ctx context.Context, api runtimeAPI, args []string, streams IO
 		return err
 	}
 	return printData(streams, result, wantsJSON, []string{fmt.Sprintf("Update started (%s).", channel)})
+}
+
+// lowerASCII lowercases a subcommand word the way String.prototype.toLowerCase
+// does for the ASCII keywords these dispatchers compare against.
+func lowerASCII(value string) string {
+	return strings.ToLower(value)
 }

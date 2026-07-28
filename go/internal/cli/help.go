@@ -27,6 +27,8 @@ var commandHelp = map[string]string{
 	"combo":       comboUsage,
 	"route":       routeUsage,
 	"agent":       agentUsage,
+	"system":      systemUsage,
+	"observe":     observeUsage,
 	"grok":        grokUsage,
 	"integration": integrationUsage,
 	"claude": "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.\n\n" +
@@ -101,7 +103,9 @@ Usage:
   ocx models <sub>            Live/custom models, visibility, context, and shadow calls
   ocx combo <sub>             Combo failover/round-robin routing
   ocx agent <sub>             Subagents, injection, effort caps, and sidecars
+  ocx observe <sub>           Logs, usage, storage, memory, and debug data
   ocx grok <sub>              Grok Build model selection and apply
+  ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -96,12 +95,35 @@ func observeQuery(pairs [][2]string) string {
 		if pair[1] == "" {
 			continue
 		}
-		parts = append(parts, url.QueryEscape(pair[0])+"="+url.QueryEscape(pair[1]))
+		parts = append(parts, formURLEncode(pair[0])+"="+formURLEncode(pair[1]))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return "?" + strings.Join(parts, "&")
+}
+
+// formURLEncode reproduces URLSearchParams' application/x-www-form-urlencoded
+// serializer.
+//
+// url.QueryEscape is close but not the same set: it leaves `~` alone and
+// escapes `*`, while the browser serializer does the reverse. Both parse back
+// to the same value, so this only matters for byte-level parity with the
+// oracle's request URI -- which is exactly what the differential test compares.
+func formURLEncode(value string) string {
+	const unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*-._"
+	var out strings.Builder
+	for _, b := range []byte(value) {
+		switch {
+		case strings.IndexByte(unreserved, b) >= 0:
+			out.WriteByte(b)
+		case b == ' ':
+			out.WriteByte('+')
+		default:
+			out.WriteString(fmt.Sprintf("%%%02X", b))
+		}
+	}
+	return out.String()
 }
 
 func logRows(data any) []map[string]any {
@@ -127,13 +149,25 @@ func logRows(data any) []map[string]any {
 	return nil
 }
 
+// firstText returns the first present, non-empty value among the keys.
+//
+// It deliberately does NOT reuse scalarText's "-" placeholder: that sentinel
+// means "unset" when rendering a settings field, but a log row may legitimately
+// contain the literal string "-", and the oracle prints it. Filtering it here
+// would silently drop a real provider or model name.
 func firstText(row map[string]any, keys ...string) string {
 	for _, key := range keys {
-		if value, present := row[key]; present && value != nil {
-			if text := scalarText(value); text != "-" {
-				return text
-			}
+		value, present := row[key]
+		if !present || value == nil {
+			continue
 		}
+		if text, ok := value.(string); ok {
+			if text == "" {
+				continue
+			}
+			return text
+		}
+		return scalarText(value)
 	}
 	return ""
 }
@@ -218,6 +252,9 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 		{"status", status}, {"limit", strconv.Itoa(limit)},
 	})
 	seen := map[string]struct{}{}
+	// order preserves arrival sequence so the trim below can keep the most
+	// recent keys instead of an arbitrary map subset.
+	order := []string{}
 	for round := 0; ; round++ {
 		data, err := api.request(ctx, http.MethodGet, path, nil)
 		if err != nil {
@@ -246,15 +283,26 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 				if _, err := fmt.Fprintln(streams.Out, line); err != nil {
 					return err
 				}
-				seen[key] = struct{}{}
+				if _, already := seen[key]; !already {
+					seen[key] = struct{}{}
+					order = append(order, key)
+				}
 			}
 		}
 		if !follow {
 			return nil
 		}
-		// Bound the memory of a long-running follow the way the oracle does.
-		if len(seen) > 5_000 {
-			seen = map[string]struct{}{}
+		// Bound the memory of a long-running follow. The oracle keeps the most
+		// recent 2500 keys rather than clearing outright, and the difference is
+		// user-visible: dropping everything makes the next poll reprint rows the
+		// user already saw. Go maps have no insertion order, so arrival order is
+		// tracked alongside the set.
+		if len(order) > 5_000 {
+			order = append([]string{}, order[len(order)-2_500:]...)
+			seen = make(map[string]struct{}, len(order))
+			for _, key := range order {
+				seen[key] = struct{}{}
+			}
 		}
 		if observeFollowRounds > 0 && round+1 >= observeFollowRounds {
 			return nil

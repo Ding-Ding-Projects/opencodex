@@ -70,6 +70,15 @@ func defaultCommandSpecs() []commandSpec {
 		{Name: "route", Usage: "ocx route combo <subcommand>", Summary: "Routing surfaces (combo)", Handler: runRoute},
 		{Name: "agent", Usage: "ocx agent <subcommand>", Summary: "Subagents, injection, effort caps, and sidecars", Handler: runAgent},
 		{Name: "grok", Usage: "ocx grok <subcommand>", Summary: "Grok Build model selection and apply", Handler: runGrok},
+		{Name: "system", Usage: "ocx system <subcommand>", Summary: "Runtime settings, startup, sync, and updates", Handler: runSystem},
+		{Name: "observe", Usage: "ocx observe <subcommand>", Summary: "Logs, usage, storage, memory, and debug data", Handler: runObserve},
+		// The oracle dispatches these four straight into observe sections. They
+		// are Hidden so they resolve without appearing twice in the root help,
+		// which is compared byte-for-byte against the TypeScript output.
+		{Name: "logs", Usage: "ocx logs [options]", Summary: "Request logs (alias for observe logs)", Handler: runObserveLogs, Hidden: true},
+		{Name: "usage", Usage: "ocx usage [options]", Summary: "Usage summary (alias for observe usage)", Handler: runObserveUsage, Hidden: true},
+		{Name: "storage", Usage: "ocx storage [options]", Summary: "Storage scan (alias for observe storage)", Handler: runObserveStorage, Hidden: true},
+		{Name: "memory", Usage: "ocx memory [options]", Summary: "Memory snapshot (alias for observe memory)", Handler: runObserveMemory, Hidden: true},
 		{Name: "integration", Usage: "ocx integration <claude|grok> <subcommand>", Summary: "Claude Code and Grok integration settings", Handler: runIntegration},
 		{Name: "init", Aliases: []string{"setup"}, Usage: "ocx init", Summary: "Interactive provider setup", Handler: noContext(runInit)},
 		{Name: "status", Usage: "ocx status", Summary: "Show proxy and service status", Handler: runStatus},

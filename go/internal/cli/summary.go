@@ -148,3 +148,18 @@ func jsNumberText(value float64) string {
 	}
 	return formatted
 }
+
+// orderedSummaryLines renders sections in the caller's order.
+//
+// summaryLines sorts keys because a decoded JSON object has no recoverable
+// insertion order in Go. When the CALLER knows the order — a status command
+// that assembles fixed sections — that ordering is part of the oracle's output
+// and must survive.
+func orderedSummaryLines(sections [][2]any) []string {
+	lines := []string{}
+	for _, section := range sections {
+		key, _ := section[0].(string)
+		lines = append(lines, summaryLinesAt(section[1], key, 1)...)
+	}
+	return lines
+}
