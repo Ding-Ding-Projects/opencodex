@@ -672,3 +672,108 @@ func TestRuntimeLoadRejectsAnExplicitlyEmptyApiKeyTransport(t *testing.T) {
 		})
 	}
 }
+
+// Provider fields whose invalidity the TYPED decode cannot see.
+//
+// encoding/json turns an explicit `null` -- and for the string fields an
+// explicit `""` -- into the same zero value an absent key produces, so
+// Config.Validate has nothing to complain about. The oracle's schema sees the
+// difference and refuses the file.
+//
+// The direction is what makes this matter: before the presence check covered
+// these, Go accepted 7 of the 14 cases below and started up on a config the
+// TypeScript runtime discards. Every expectation here is the oracle's measured
+// answer from validateConfigCandidate.
+func TestRuntimeLoadRejectsPresenceOnlyProviderDefects(t *testing.T) {
+	for _, test := range []struct {
+		field string
+		value string
+	}{
+		{field: "adapter", value: `null`},
+		{field: "baseUrl", value: `null`},
+		{field: "responsesPath", value: `""`},
+		{field: "responsesPath", value: `null`},
+		{field: "responsesPath", value: `123`},
+		{field: "allowPrivateNetwork", value: `null`},
+		{field: "allowPrivateNetwork", value: `""`},
+		{field: "allowPrivateNetwork", value: `"yes"`},
+		{field: "codexAccountMode", value: `""`},
+		{field: "codexAccountMode", value: `null`},
+		{field: "codexAccountMode", value: `"bogus"`},
+		{field: "responsesItemIdRepair", value: `null`},
+		{field: "responsesItemIdRepair", value: `""`},
+		{field: "responsesItemIdRepair", value: `[]`},
+	} {
+		t.Run(test.field+"="+test.value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			document := `{"port":10199,"providers":{"p":{"adapter":"anthropic","baseUrl":"https://x.test","` +
+				test.field + `":` + test.value + `}},"defaultProvider":"p"}`
+			if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err == nil {
+				t.Fatalf("Load accepted %s=%s and came up on port %d; the oracle rejects it",
+					test.field, test.value, cfg.Port)
+			}
+			if !strings.Contains(err.Error(), test.field) {
+				t.Fatalf("error = %v, want it to name %s", err, test.field)
+			}
+		})
+	}
+}
+
+// The presence check must not refuse configurations the oracle accepts. A
+// rejection-only test would pass just as well with a rule that refused
+// everything.
+func TestRuntimeLoadKeepsValidProviderFields(t *testing.T) {
+	for _, extra := range []string{
+		``,
+		`,"responsesPath":"/v1/responses"`,
+		`,"allowPrivateNetwork":true`,
+		`,"allowPrivateNetwork":false`,
+		`,"responsesItemIdRepair":{"repairMissingTerminalIds":true}`,
+		`,"apiKeyTransport":"bearer"`,
+	} {
+		t.Run(extra, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			document := `{"port":10199,"providers":{"p":{"adapter":"anthropic","baseUrl":"https://x.test","authMode":"key"` +
+				extra + `}},"defaultProvider":"p"}`
+			if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load rejected a config the oracle accepts: %v", err)
+			}
+			if cfg.Port != 10199 {
+				t.Fatalf("port = %d, want the configured 10199", cfg.Port)
+			}
+		})
+	}
+}
+
+// codexAccountMode gets its own case because it is only valid on the canonical
+// built-in openai provider. Asserting it on an anthropic provider would be
+// wrong in the same way the oracle is: it refuses that too, with
+// "codexAccountMode is valid only on the canonical built-in openai provider".
+func TestRuntimeLoadKeepsCodexAccountModeOnTheCanonicalProvider(t *testing.T) {
+	for _, mode := range []string{"pool", "direct"} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			document := `{"port":10199,"providers":{"openai":{"adapter":"openai-responses",` +
+				`"baseUrl":"https://chatgpt.com/backend-api/codex","authMode":"forward",` +
+				`"codexAccountMode":"` + mode + `"}},"defaultProvider":"openai"}`
+			if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load rejected a valid canonical config: %v", err)
+			}
+			if cfg.Port != 10199 {
+				t.Fatalf("port = %d, want 10199", cfg.Port)
+			}
+		})
+	}
+}

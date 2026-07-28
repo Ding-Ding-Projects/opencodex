@@ -1094,19 +1094,83 @@ func validatePresenceOnlyFields(raw any) error {
 		if !isProviderObject {
 			continue
 		}
-		value, present := provider["apiKeyTransport"]
-		if !present {
-			continue
-		}
-		text, isString := value.(string)
-		if !isString || (text != "x-api-key" && text != "bearer") {
-			return &ConfigError{
-				Field:   "providers." + name + ".apiKeyTransport",
-				Message: `apiKeyTransport must be "x-api-key" or "bearer"`,
+		for _, rule := range presenceOnlyProviderRules {
+			value, present := provider[rule.field]
+			if !present {
+				continue
+			}
+			if message := rule.check(value); message != "" {
+				return &ConfigError{Field: "providers." + name + "." + rule.field, Message: message}
 			}
 		}
 	}
 	return nil
+}
+
+// presenceOnlyProviderRules are the provider fields whose invalidity the typed
+// decode cannot see.
+//
+// Each of these decodes an explicit `null` -- and for the string ones, an
+// explicit `""` -- into the same zero value an ABSENT key produces, so
+// Config.Validate has nothing to complain about. The oracle's schema sees the
+// difference and refuses the file. Measured over 14 cases before this existed,
+// Go accepted 7 that the oracle rejects, every one of them in the permissive
+// direction: the runtime came up on a config the TypeScript runtime discards.
+//
+// The checks run in FIELD order rather than schema order because only one
+// error is reported and these are independent fields; within a field the order
+// follows the oracle, which is why codexAccountMode tests its enum before the
+// canonical-provider rule that lives in Validate.
+var presenceOnlyProviderRules = []struct {
+	field string
+	check func(any) string
+}{
+	{field: "adapter", check: nonEmptyStringRule("adapter")},
+	{field: "baseUrl", check: nonEmptyStringRule("baseUrl")},
+	{field: "responsesPath", check: nonEmptyStringRule("responsesPath")},
+	{field: "apiKeyTransport", check: enumRule("apiKeyTransport", "x-api-key", "bearer")},
+	{field: "codexAccountMode", check: enumRule("codexAccountMode", "pool", "direct")},
+	{field: "allowPrivateNetwork", check: func(value any) string {
+		if _, isBool := value.(bool); !isBool {
+			return "allowPrivateNetwork must be a boolean"
+		}
+		return ""
+	}},
+	{field: "responsesItemIdRepair", check: func(value any) string {
+		// An explicit null, a string, or an array all reach the typed decode
+		// as a nil struct pointer, which reads as "not configured".
+		if _, isObject := value.(map[string]any); !isObject {
+			return "responsesItemIdRepair must be an object"
+		}
+		return ""
+	}},
+}
+
+func nonEmptyStringRule(field string) func(any) string {
+	return func(value any) string {
+		text, isString := value.(string)
+		if !isString {
+			return field + " must be a string"
+		}
+		if text == "" {
+			return field + " must not be blank"
+		}
+		return ""
+	}
+}
+
+func enumRule(field string, allowed ...string) func(any) string {
+	return func(value any) string {
+		text, isString := value.(string)
+		if isString {
+			for _, candidate := range allowed {
+				if text == candidate {
+					return ""
+				}
+			}
+		}
+		return field + ` must be "` + strings.Join(allowed, `" or "`) + `"`
+	}
 }
 
 // sortedProviderNames keeps the reported field stable when several providers
