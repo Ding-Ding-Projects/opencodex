@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -236,11 +237,44 @@ func decodeBody(raw []byte) any {
 	if len(raw) == 0 {
 		return nil
 	}
+	// UseNumber first, then convert: plain Unmarshal rejects a literal beyond
+	// float64 range, but JSON.parse accepts 1e400 as Infinity. Failing here
+	// would treat a valid body as raw text and drop every row in it.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
 	var decoded any
-	if json.Unmarshal(raw, &decoded) != nil {
+	if decoder.Decode(&decoded) != nil {
 		return string(raw)
 	}
-	return decoded
+	return convertJSONNumbers(decoded)
+}
+
+// convertJSONNumbers turns json.Number into float64 the way JSON.parse does,
+// mapping an out-of-range literal to infinity rather than an error.
+func convertJSONNumbers(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		number, err := strconv.ParseFloat(typed.String(), 64)
+		if err != nil {
+			if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+				return number
+			}
+			return typed.String()
+		}
+		return number
+	case map[string]any:
+		for key, child := range typed {
+			typed[key] = convertJSONNumbers(child)
+		}
+		return typed
+	case []any:
+		for index, child := range typed {
+			typed[index] = convertJSONNumbers(child)
+		}
+		return typed
+	default:
+		return value
+	}
 }
 
 // request performs a management call and decodes the JSON body.

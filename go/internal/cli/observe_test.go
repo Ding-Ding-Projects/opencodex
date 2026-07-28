@@ -330,16 +330,24 @@ func TestObserveJSONLPreservesOrderInsideWrappers(t *testing.T) {
 	}
 }
 
-// logRows drops non-object entries, so the raw slice has to apply the same
-// filter or row N pairs with the wrong source value.
-func TestObserveJSONLPairsRowsWithTheirOwnSource(t *testing.T) {
-	server, _ := observeServer(t, `[1,{"z":1,"a":2}]`)
+// The oracle iterates the parsed array directly, so a malformed payload prints
+// EVERY entry, and each line must be the entry it belongs to. Filtering to
+// objects would drop the number and shift the pairing.
+func TestObserveJSONLPrintsEveryRowInOrder(t *testing.T) {
+	server, _ := observeServer(t, `[1,{"z":1,"a":2},"text",null]`)
 	out, err := runObserveWith(t, server, "logs", "--jsonl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if line := strings.TrimSpace(out); line != `{"z":1,"a":2}` {
-		t.Fatalf("jsonl line = %s, want the object row, not the number's bytes", line)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	want := []string{"1", `{"z":1,"a":2}`, `"text"`, "null"}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines %q, want %d", len(lines), lines, len(want))
+	}
+	for index := range want {
+		if lines[index] != want[index] {
+			t.Fatalf("line %d = %s, want %s", index+1, lines[index], want[index])
+		}
 	}
 }
 
@@ -493,5 +501,32 @@ func TestObserveAliasesAreRegisteredAndHidden(t *testing.T) {
 		case "logs", "usage", "storage", "memory":
 			t.Fatalf("%q leaked into the visible command list", name)
 		}
+	}
+}
+
+// JSON.parse accepts a literal beyond float64 range as Infinity, and
+// JSON.stringify renders a non-finite number as null. Letting the Go decoder
+// reject it would drop the whole row.
+func TestObserveJSONLRendersOutOfRangeNumbersAsNull(t *testing.T) {
+	server, _ := observeServer(t, `[{"n":1e400,"m":-1e400}]`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := strings.TrimSpace(out); line != `{"n":null,"m":null}` {
+		t.Fatalf("jsonl line = %s, want non-finite numbers as null", line)
+	}
+}
+
+// JSON.parse throws on anything after the root value.
+func TestOrderedDecodeRejectsTrailingContent(t *testing.T) {
+	for _, raw := range []string{`{} {}`, `[] garbage`, `1 2`, `{"a":1}x`} {
+		if _, err := decodeOrdered([]byte(raw)); err == nil {
+			t.Fatalf("expected %q to be rejected as trailing content", raw)
+		}
+	}
+	// A single root value with surrounding whitespace stays valid.
+	if _, err := decodeOrdered([]byte("  {\"a\":1}\n")); err != nil {
+		t.Fatalf("a lone value must still parse: %v", err)
 	}
 }
