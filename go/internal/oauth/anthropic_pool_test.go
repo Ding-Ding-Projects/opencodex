@@ -467,3 +467,99 @@ func TestParseAnthropicRetryAfterMatchesTheOracle(t *testing.T) {
 		}
 	}
 }
+
+// Oracle E1/E2: same-request 429 failover is strategy-aware. Quota takes the
+// coolest remaining account; fill-first advances one place in sorted order.
+func TestAnthropicRotateOn429FollowsTheStrategy(t *testing.T) {
+	now := time.Now()
+
+	quotaPool, quotaSet := anthropicPoolFixture(t, "a", "b", "c")
+	quotaIDs := sortedAccountIDs(quotaSet)
+	activate(t, quotaPool, quotaIDs[0])
+	setUsage(quotaPool, quotaIDs[1], 70)
+	setUsage(quotaPool, quotaIDs[2], 10)
+	next := quotaPool.RotateOn429(quotaIDs[0], "30", "sess", poolConfig(true, 80, "quota", 1), now)
+	if next != quotaIDs[2] {
+		t.Fatalf("quota failover = %q, oracle takes the coolest remaining account", next)
+	}
+
+	fillPool, fillSet := anthropicPoolFixture(t, "a", "b", "c")
+	fillIDs := sortedAccountIDs(fillSet)
+	activate(t, fillPool, fillIDs[0])
+	setUsage(fillPool, fillIDs[1], 70)
+	setUsage(fillPool, fillIDs[2], 10)
+	moved := fillPool.RotateOn429(fillIDs[0], "30", "sess", poolConfig(true, 80, "fill-first", 1), now)
+	if moved != fillIDs[1] {
+		t.Fatalf("fill-first failover = %q, oracle advances one place in sorted order", moved)
+	}
+}
+
+// Oracle E3: the replacement is bound to the session key immediately, so the
+// next resolution for the same session reports affinity rather than picking
+// again. Leaving the binding until success would let a concurrent request send
+// the same session somewhere else.
+func TestAnthropicRotateOn429BindsTheSession(t *testing.T) {
+	now := time.Now()
+	pool, set := anthropicPoolFixture(t, "a", "b", "c")
+	ids := sortedAccountIDs(set)
+	activate(t, pool, ids[0])
+	enabled := poolConfig(true, 80, "quota", 1)
+
+	next := pool.RotateOn429(ids[0], "30", "sess", enabled, now)
+	if next == "" || next == ids[0] {
+		t.Fatalf("failover = %q, want a different account", next)
+	}
+	resolved := pool.Resolve("sess", enabled, now)
+	if resolved.AccountID != next || resolved.Reason != AnthropicReasonAffinity {
+		t.Fatalf("resolve after failover = %#v, oracle returns the replacement with reason affinity", resolved)
+	}
+}
+
+// Oracle E4: with everything cooled there is no replacement, and the caller has
+// to answer 429 rather than 401. Retry-After comes from the earliest cooldown.
+func TestAnthropicRotateOn429ReportsExhaustion(t *testing.T) {
+	now := time.Now()
+	pool, set := anthropicPoolFixture(t, "a", "b", "c")
+	ids := sortedAccountIDs(set)
+	activate(t, pool, ids[0])
+	enabled := poolConfig(true, 80, "quota", 1)
+
+	for _, id := range ids {
+		pool.RotateOn429(id, "300", "", enabled, now)
+	}
+	if next := pool.RotateOn429(ids[0], "300", "", enabled, now); next != "" {
+		t.Fatalf("failover with everything cooled = %q, oracle returns nothing", next)
+	}
+	seconds, present := pool.RetryAfterSeconds(now)
+	if !present || seconds != 300 {
+		t.Fatalf("Retry-After = (%d, %v), oracle reports 300 seconds", seconds, present)
+	}
+}
+
+// Oracle E5: a disabled pool does nothing at all, including no cooldown, so
+// turning the pool off cannot leave stale state behind.
+func TestAnthropicRotateOn429IsANoOpWhenDisabled(t *testing.T) {
+	now := time.Now()
+	pool, set := anthropicPoolFixture(t, "a", "b", "c")
+	ids := sortedAccountIDs(set)
+	activate(t, pool, ids[0])
+
+	if next := pool.RotateOn429(ids[0], "30", "sess", poolConfig(false, 80, "quota", 1), now); next != "" {
+		t.Fatalf("disabled failover = %q, oracle returns nothing", next)
+	}
+	if _, _, cooled := pool.CooldownUntil(ids[0], now); cooled {
+		t.Fatal("a disabled pool cooled an account")
+	}
+	if _, present := pool.RetryAfterSeconds(now); present {
+		t.Fatal("a disabled pool reported a Retry-After")
+	}
+}
+
+func sortedAccountIDs(set ProviderAccountSet) []string {
+	ids := make([]string, 0, len(set.Accounts))
+	for _, account := range set.Accounts {
+		ids = append(ids, account.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}

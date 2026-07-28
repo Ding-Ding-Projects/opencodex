@@ -433,6 +433,81 @@ func (p *AnthropicPool) NoteFailure(accountID, retryAfter string, now time.Time)
 }
 
 // CooldownUntil reports a live cooldown, expiring a stale one on read.
+
+// RotateOn429 cools the failed account and returns a replacement for the SAME
+// request, mirroring rotateAnthropicAccountOn429.
+//
+// The replacement is bound to the session key immediately, unlike a fresh
+// selection: the caller is mid-request and about to retry, so leaving the
+// binding until success would let a concurrent request pick a different
+// account for the same session.
+//
+// Returns "" when nothing else is eligible, which the caller must surface as a
+// rate limit rather than an auth failure.
+func (p *AnthropicPool) RotateOn429(
+	failedAccountID, retryAfter, sessionKey string, pool config.NormalizedAnthropicPool, now time.Time,
+) string {
+	if !pool.Enabled || failedAccountID == "" {
+		return ""
+	}
+	p.NoteFailure(failedAccountID, retryAfter, now)
+
+	set, found, err := p.store.GetAccountSet(anthropicPoolProvider)
+	if err != nil || !found {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	eligible := make([]string, 0, len(set.Accounts))
+	for _, id := range p.eligibleLocked(set, now) {
+		if id != failedAccountID {
+			eligible = append(eligible, id)
+		}
+	}
+	next := ""
+	switch pool.Strategy {
+	case config.AccountPoolStrategyRoundRobin:
+		next, _ = p.rotation.PickRoundRobinAccount(PoolKeyAnthropic, eligible, pool.StickyLimit)
+	case config.AccountPoolStrategyFillFirst:
+		next = p.pickNextFillFirstLocked(set, failedAccountID, eligible, pool.AutoSwitchThreshold)
+	default:
+		next = p.pickLowestUsageLocked(eligible, failedAccountID)
+	}
+	if next == "" {
+		return ""
+	}
+	if key := strings.TrimSpace(sessionKey); key != "" {
+		p.affinity[key] = anthropicAffinity{accountID: next, lastUsedAt: now}
+		p.pruneAffinityLocked(now)
+	}
+	return next
+}
+
+// RetryAfterSeconds is the earliest remaining cooldown across all accounts, for
+// the Retry-After header on a 429. Rounded UP and floored at one second, since
+// telling a client to retry in zero seconds invites an immediate re-failure.
+func (p *AnthropicPool) RetryAfterSeconds(now time.Time) (int, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	earliest := time.Time{}
+	for _, entry := range p.cooldowns {
+		if !entry.until.After(now) {
+			continue
+		}
+		if earliest.IsZero() || entry.until.Before(earliest) {
+			earliest = entry.until
+		}
+	}
+	if earliest.IsZero() {
+		return 0, false
+	}
+	seconds := int(math.Ceil(earliest.Sub(now).Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	return seconds, true
+}
+
 func (p *AnthropicPool) CooldownUntil(accountID string, now time.Time) (time.Time, string, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
