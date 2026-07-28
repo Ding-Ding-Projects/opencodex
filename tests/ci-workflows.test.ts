@@ -97,6 +97,10 @@ describe("GitHub Actions hardening", () => {
       ".npmignore",
       "bin/**",
       "bun.lock",
+      // go-ci.yml has no pull_request trigger, so this filter is the ONLY
+      // pull-request coverage for Go changes. Dropping it would let a Go-only
+      // PR merge with no cross-platform run at all.
+      "go/**",
       "gui/**",
       "package.json",
       "scripts/**",
@@ -1813,7 +1817,14 @@ describe("GitHub Actions hardening", () => {
     const ci = await readText(".github/workflows/ci.yml");
     const goCi = await readText(".github/workflows/go-ci.yml");
 
-    expect(ci).toMatch(/push:[\s\S]*?branches: \[main, preview, dev, dev2-go\]/);
+    // dev2-go is covered on push by go-ci.yml, not by cross-platform ci.yml.
+    // Upstream deliberately keeps ci.yml's push trigger to the release-promotion
+    // branches (main, preview, dev) and pins that list in
+    // "PR checks reach every branch the target gate accepts". dev2-go still gets
+    // cross-platform coverage through ci.yml's pull_request trigger, which does
+    // list it, so an accepted PR is still a checked one.
+    expect(ci).toMatch(/pull_request:[\s\S]*?branches: \[main, dev, dev2-go\]/);
+    expect(ci).toMatch(/push:[\s\S]*?branches: \[main, preview, dev\]/);
     expect(ci).toContain("npm run verify:native-install");
     expect(goCi).toMatch(/push:[\s\S]*?branches: \[dev2-go, main, preview\]/);
     expect(count(goCi, "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6")).toBe(3);
