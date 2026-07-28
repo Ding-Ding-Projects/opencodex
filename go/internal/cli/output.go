@@ -279,3 +279,18 @@ func jsSafe(value any) any {
 func marshalIndentLikeJS(payload any) ([]byte, error) {
 	return json.MarshalIndent(jsSafe(payload), "", "  ")
 }
+
+// orderedPayload returns a value that re-serializes with the SERVER's key
+// order, falling back to the decoded value when the bytes are not an object.
+//
+// Decoding a response into map[string]any and handing that to printData loses
+// the order, because Go serializes map keys sorted while JSON.stringify keeps
+// insertion order. Text output does not care, but `--json` prints the payload
+// verbatim and the differential compares bytes.
+func orderedPayload(raw []byte, decoded any) any {
+	value, err := decodeOrdered(raw)
+	if err != nil || !value.present {
+		return decoded
+	}
+	return value
+}

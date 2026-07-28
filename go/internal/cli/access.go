@@ -85,17 +85,20 @@ func accessKey(ctx context.Context, api runtimeAPI, args []string, streams IO) e
 		if err := rejectArgs(rest, accessUsage, false); err != nil {
 			return err
 		}
-		result, err := api.request(ctx, http.MethodPost, "/api/keys", map[string]any{"name": name})
+		result, raw, err := api.requestWithRaw(ctx, http.MethodPost, "/api/keys", map[string]any{"name": name})
 		if err != nil {
 			return err
 		}
+		// --json prints the payload verbatim, so it must keep the server's key
+		// order (id, name, key, createdAt) rather than a Go map's sorted one.
+		payload := orderedPayload(raw, result)
 		created := name
 		if reported := scalarField(asRecord(result), "name"); reported != "" {
 			created = reported
 		}
 		// The plaintext key is returned ONCE. It goes to stdout and nowhere
 		// else: not into an error, not into a log, not into a retry message.
-		return printData(streams, result, wantsJSON, []string{
+		return printData(streams, payload, wantsJSON, []string{
 			fmt.Sprintf("Created API key %s (%s).", created, scalarField(asRecord(result), "id")),
 			fmt.Sprintf("Key (shown once): %s", scalarField(asRecord(result), "key")),
 		})

@@ -329,3 +329,28 @@ func TestAccessKeyCreateAgainstTheRealManagementHandler(t *testing.T) {
 		t.Fatalf("listing leaked the key: %q", listOut.String())
 	}
 }
+
+// --json prints the payload verbatim, so it must carry the server's key order.
+// Decoding into a map and re-serializing would sort them, which text output
+// hides but the differential does not.
+func TestAccessKeyCreateJSONKeepsOracleFieldOrder(t *testing.T) {
+	cfg := config.Default()
+	api, err := management.New(management.Options{Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(api)
+	t.Cleanup(server.Close)
+
+	var out bytes.Buffer
+	if err := accessDispatch(context.Background(), testAPI(server),
+		[]string{"key", "create", "desktop", "--json"}, IO{Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+	for _, pair := range [][2]string{{`"id"`, `"name"`}, {`"name"`, `"key"`}, {`"key"`, `"createdAt"`}} {
+		if strings.Index(body, pair[0]) > strings.Index(body, pair[1]) {
+			t.Fatalf("%s must precede %s: %s", pair[0], pair[1], body)
+		}
+	}
+}
