@@ -33,9 +33,13 @@ func runAccessKeyWith(ctx context.Context, api runtimeAPI, args []string, stream
 // accessDispatch is the seam a test drives with an injected client.
 func accessDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	rest := append([]string{}, args...)
+	// Top-level selectors are compared exactly, like the oracle's === chain;
+	// only the key ACTIONS below are lowercased. Normalizing here would make
+	// `access KEYS` a live list request where the oracle reports an unknown
+	// command.
 	section := "key"
 	if len(rest) > 0 {
-		section, rest = strings.ToLower(rest[0]), rest[1:]
+		section, rest = rest[0], rest[1:]
 	}
 	switch section {
 	case "key", "keys":

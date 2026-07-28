@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -262,16 +263,25 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 			{name: "endpoint", value: endpoints["endpoint"]},
 		})
 	case http.MethodPost:
-		var body struct{ Name, Key string }
+		// Only `name` is used. `key` is still declared, and deliberately typed
+		// as json.RawMessage rather than string, for two reasons: this API
+		// rejects unknown fields wholesale, so dropping the field would turn a
+		// body carrying one into a 400; and typing it as a string would make a
+		// non-string value a 400 too. The oracle reads only `name` and ignores
+		// whatever else arrives, so neither shape may fail here.
+		var body struct {
+			Name string
+			Key  json.RawMessage
+		}
 		if !decodeJSON(w, request, &body) {
 			return
 		}
-		body.Name, body.Key = strings.TrimSpace(body.Name), strings.TrimSpace(body.Key)
+		body.Name = strings.TrimSpace(body.Name)
 		if body.Name == "" {
 			body.Name = "default"
 		}
 		if !printableName(body.Name, 80) {
-			writeError(w, http.StatusBadRequest, "name or key is invalid")
+			writeError(w, http.StatusBadRequest, "name is invalid")
 			return
 		}
 		// The server always mints the key. The oracle reads only `name` from
@@ -280,20 +290,19 @@ func (a *API) handleProxyAPIKeys(w http.ResponseWriter, request *http.Request) {
 		// caller-supplied key would let a client choose its own credential —
 		// a weaker one, or one it has already leaked — through an endpoint the
 		// TypeScript runtime never exposed for that.
-		generated, genErr := generateProxyAPIKey()
+		minted, genErr := generateProxyAPIKey()
 		if genErr != nil {
 			writeError(w, http.StatusInternalServerError, "API key could not be generated")
 			return
 		}
-		body.Key = generated
 		a.mu.Lock()
-		if containsProxyKey(a.config.APIKeys, body.Key) {
+		if containsProxyKey(a.config.APIKeys, minted) {
 			a.mu.Unlock()
 			writeError(w, http.StatusConflict, "key already exists")
 			return
 		}
 		previous := append([]config.ProxyAPIKey(nil), a.config.APIKeys...)
-		entry := config.ProxyAPIKey{ID: randomID(), Name: body.Name, Key: body.Key, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		entry := config.ProxyAPIKey{ID: randomID(), Name: body.Name, Key: minted, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 		a.config.APIKeys = append(a.config.APIKeys, entry)
 		err := a.saveLocked()
 		if err != nil {

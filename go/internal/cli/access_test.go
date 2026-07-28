@@ -56,8 +56,13 @@ func TestAccessKeyCreateShowsThePlaintextKeyExactlyOnce(t *testing.T) {
 	if (*calls)[0].body["name"] != "n" {
 		t.Fatalf("body = %#v, want the supplied name", (*calls)[0].body)
 	}
-	if got := strings.Count(out, "Key (shown once): SUPERSECRET"); got != 1 {
+	// Count the SECRET itself, not the line that carries it: a second leak
+	// anywhere else in stdout would still satisfy a line-shaped assertion.
+	if got := strings.Count(out, "SUPERSECRET"); got != 1 {
 		t.Fatalf("plaintext key appeared %d times in %q, want exactly 1", got, out)
+	}
+	if !strings.Contains(out, "Key (shown once): SUPERSECRET") {
+		t.Fatalf("output = %q, missing the one-time key line", out)
 	}
 	if !strings.Contains(out, "Created API key n (k1).") {
 		t.Fatalf("output = %q, missing the created line", out)
@@ -187,33 +192,24 @@ func TestAccessModelsRendersIdAndOwner(t *testing.T) {
 	}
 }
 
-// Each protocol has its own endpoint and body shape.
+// Each protocol has its own endpoint and its own COMPLETE body. Spot-checking a
+// field would let an extra or missing key through, and the oracle's bodies are
+// exact.
 func TestAccessTestSendsTheProtocolSpecificRequest(t *testing.T) {
+	userMessage := []any{map[string]any{"role": "user", "content": "Reply with OK."}}
 	for _, testCase := range []struct {
 		protocol string
 		path     string
-		check    func(*testing.T, map[string]any)
+		want     map[string]any
 	}{
-		{protocol: "chat", path: "/v1/chat/completions", check: func(t *testing.T, body map[string]any) {
-			if body["max_tokens"] != float64(16) || body["stream"] != false {
-				t.Fatalf("chat body = %#v", body)
-			}
+		{protocol: "chat", path: "/v1/chat/completions", want: map[string]any{
+			"model": "m", "messages": userMessage, "max_tokens": float64(16), "stream": false,
 		}},
-		{protocol: "responses", path: "/v1/responses", check: func(t *testing.T, body map[string]any) {
-			if body["input"] != "Reply with OK." || body["max_output_tokens"] != float64(16) {
-				t.Fatalf("responses body = %#v", body)
-			}
-			if _, hasMessages := body["messages"]; hasMessages {
-				t.Fatal("responses must not send messages")
-			}
+		{protocol: "responses", path: "/v1/responses", want: map[string]any{
+			"model": "m", "input": "Reply with OK.", "max_output_tokens": float64(16),
 		}},
-		{protocol: "messages", path: "/v1/messages", check: func(t *testing.T, body map[string]any) {
-			if body["max_tokens"] != float64(16) {
-				t.Fatalf("messages body = %#v", body)
-			}
-			if _, hasStream := body["stream"]; hasStream {
-				t.Fatal("messages must not send stream")
-			}
+		{protocol: "messages", path: "/v1/messages", want: map[string]any{
+			"model": "m", "messages": userMessage, "max_tokens": float64(16),
 		}},
 	} {
 		t.Run(testCase.protocol, func(t *testing.T) {
@@ -222,19 +218,14 @@ func TestAccessTestSendsTheProtocolSpecificRequest(t *testing.T) {
 			if testCase.protocol != "chat" {
 				args = append(args, "--protocol", testCase.protocol)
 			}
-			out, _, err := runAccessWith(t, server, args...)
-			if err != nil {
+			if _, _, err := runAccessWith(t, server, args...); err != nil {
 				t.Fatal(err)
 			}
 			if len(*calls) != 1 || (*calls)[0].method != http.MethodPost || (*calls)[0].path != testCase.path {
 				t.Fatalf("calls = %+v, want one POST %s", *calls, testCase.path)
 			}
-			if (*calls)[0].body["model"] != "m" {
-				t.Fatalf("body = %#v, want the model", (*calls)[0].body)
-			}
-			testCase.check(t, (*calls)[0].body)
-			if !strings.Contains(out, "m: "+testCase.protocol+" request succeeded.") {
-				t.Fatalf("output = %q", out)
+			if !reflect.DeepEqual((*calls)[0].body, testCase.want) {
+				t.Fatalf("body = %#v, want exactly %#v", (*calls)[0].body, testCase.want)
 			}
 		})
 	}
