@@ -20,6 +20,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
+	"github.com/lidge-jun/opencodex-go/internal/protocol"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -678,6 +679,16 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 			if repair := core.config.ItemIDRepair(record.Provider); HasResponsesItemIDRepair(repair) {
 				body = RepairResponsesItemIDsWithConfig(body, *repair)
 			}
+		}
+		// Image-gen namespace restore rides the shared payload-rewrite relay
+		// rather than adding a second stream wrapper. Two wrappers would each
+		// parse and re-frame every event, which is the double-framing this
+		// relay exists to prevent.
+		//
+		// Client-facing only: the inspector above still sees the raw upstream
+		// names, because a replay has to go back to the provider unchanged.
+		if restore := CreateImageGenCallRestoreRewrite(core.imageGenAliases(normalized)); restore != nil {
+			body = protocol.RelaySSEWithPayloadRewrite(body, restore)
 		}
 		err := RelaySSE(ctx, w, io.NopCloser(body), RelayOptions{Inspector: inspector})
 		if usage := inspector.Usage(); usage != nil && core.config.Recorder != nil {

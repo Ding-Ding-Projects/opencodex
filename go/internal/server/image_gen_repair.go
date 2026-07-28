@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/lidge-jun/opencodex-go/internal/protocol"
+	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 const (
@@ -418,4 +419,32 @@ func CreateImageGenCallRestoreRewrite(aliases map[string]NamespacedTool) protoco
 	return func(payload string) string {
 		return RestoreImageGenCallsInJSON(payload, aliases)
 	}
+}
+
+// imageGenAliases derives the restore targets for one request.
+//
+// Returns nothing when the request declares no image-gen tools, which is the
+// common case, so an ordinary stream is never wrapped.
+func (core *ResponsesCore) imageGenAliases(normalized *types.NormalizedRequest) map[string]NamespacedTool {
+	if normalized == nil {
+		return nil
+	}
+	namespaced := map[string]NamespacedTool{}
+	for _, tool := range normalized.Context.Tools {
+		if tool.Namespace == "" {
+			continue
+		}
+		namespaced[tool.Namespace+"__"+tool.Name] = NamespacedTool{Namespace: tool.Namespace, Name: tool.Name}
+	}
+	var body any
+	if len(normalized.RawBody) > 0 {
+		if err := json.Unmarshal(normalized.RawBody, &body); err != nil {
+			body = nil
+		}
+	}
+	aliases := ImageGenToolCallAliases(namespaced, body)
+	if len(aliases) == 0 {
+		return nil
+	}
+	return aliases
 }
