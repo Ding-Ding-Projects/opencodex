@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -294,15 +296,70 @@ func TestManagementTokenPrefersResolvedServiceCredential(t *testing.T) {
 	}
 }
 
-// The server dereferences a `$NAME` config value before comparing, so a client
-// that sends the literal reference is rejected.
+// The server dereferences the config token through config.ResolveEnvValue
+// before comparing, so a client that sends the literal reference is rejected.
+// Both spellings must work: a hand-rolled "$" strip silently misses "${NAME}".
 func TestManagementTokenResolvesEnvironmentReference(t *testing.T) {
 	t.Setenv("OPENCODEX_TEST_TOKEN_REF", "dereferenced")
-	if got := resolveTokenReference("$OPENCODEX_TEST_TOKEN_REF"); got != "dereferenced" {
-		t.Fatalf("resolveTokenReference = %q", got)
+	// Isolate from a real ~/.opencodex/service-api-token: that file legitimately
+	// outranks the config, so without this the test fails on any machine with a
+	// managed service installed.
+	t.Setenv("OPENCODEX_HOME", t.TempDir())
+	api := &runtimeAPI{loadToken: nil}
+	for _, spelling := range []string{"$OPENCODEX_TEST_TOKEN_REF", "${OPENCODEX_TEST_TOKEN_REF}"} {
+		t.Run(spelling, func(t *testing.T) {
+			t.Setenv("OPENCODEX_API_AUTH_TOKEN", "")
+			got := api.managementToken(&config.Config{AuthToken: spelling})
+			if got != "dereferenced" {
+				t.Fatalf("%s => %q, want the resolved value", spelling, got)
+			}
+		})
 	}
-	if got := resolveTokenReference("literal"); got != "literal" {
+	if got := api.managementToken(&config.Config{AuthToken: "literal"}); got != "literal" {
 		t.Fatalf("a plain value must pass through, got %q", got)
+	}
+}
+
+// End to end: a proxy configured with a braced reference must receive the
+// resolved credential on the wire, not the literal text.
+func TestRuntimeRequestSendsResolvedBracedToken(t *testing.T) {
+	t.Setenv("OPENCODEX_TEST_BRACED", "resolved-secret")
+	t.Setenv("OPENCODEX_API_AUTH_TOKEN", "")
+	// Same isolation as above: a real service token file would win instead.
+	t.Setenv("OPENCODEX_HOME", t.TempDir())
+	var gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("X-OpenCodex-API-Key")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	api := &runtimeAPI{
+		BaseURL: server.URL,
+		loadCfg: func() (*config.Config, error) {
+			return &config.Config{AuthToken: "${OPENCODEX_TEST_BRACED}"}, nil
+		},
+	}
+	if _, err := api.request(context.Background(), http.MethodGet, "/api/combos", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "resolved-secret" {
+		t.Fatalf("X-OpenCodex-API-Key = %q, want the resolved value", gotKey)
+	}
+}
+
+// The real filesystem loader, not the seam: a managed service carries its
+// credential in service-api-token and must authenticate through it.
+func TestManagementTokenReadsServiceTokenFile(t *testing.T) {
+	t.Setenv("OPENCODEX_API_AUTH_TOKEN", "")
+	dir := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", dir)
+	if err := os.WriteFile(filepath.Join(dir, "service-api-token"), []byte("  file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := &runtimeAPI{}
+	if got := api.managementToken(&config.Config{AuthToken: "config-secret"}); got != "file-secret" {
+		t.Fatalf("token = %q, want the service token file to win", got)
 	}
 }
 

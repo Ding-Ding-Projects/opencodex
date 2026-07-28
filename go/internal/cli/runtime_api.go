@@ -104,19 +104,11 @@ func (api *runtimeAPI) managementToken(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	// The server resolves `$NAME` indirection before comparing, so a config
-	// holding a reference must be dereferenced here too or the client sends
-	// the literal text and is rejected.
-	return strings.TrimSpace(resolveTokenReference(cfg.AuthToken))
-}
-
-// resolveTokenReference expands a leading `$` environment reference.
-func resolveTokenReference(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if name, found := strings.CutPrefix(trimmed, "$"); found && name != "" {
-		return strings.TrimSpace(os.Getenv(name))
-	}
-	return trimmed
+	// The server resolves environment indirection through ResolveEnvValue
+	// before comparing (serve.go via config.ResolveEnvironment), so the client
+	// must use the SAME resolver. A hand-rolled `$NAME` strip silently misses
+	// the braced `${NAME}` form and sends the literal text, which 401s.
+	return strings.TrimSpace(config.ResolveEnvValue(strings.TrimSpace(cfg.AuthToken)))
 }
 
 // managementHeaders builds the headers for a management request.
