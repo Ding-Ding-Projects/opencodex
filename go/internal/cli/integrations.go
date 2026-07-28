@@ -170,14 +170,21 @@ func parseModelMap(raw string) (map[string]string, error) {
 }
 
 func runIntegration(ctx context.Context, args []string, streams IO) error {
+	return integrationDispatch(ctx, runtimeAPI{}, args, streams)
+}
+
+// integrationDispatch is split out so a test can prove the top-level
+// forwarding itself, not just the two handlers it delegates to. Driving the
+// handlers directly would still pass if this routing broke.
+func integrationDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	if len(args) == 0 {
 		return usageError(integrationUsage, "integration requires claude or grok")
 	}
 	switch args[0] {
 	case "grok":
-		return runGrok(ctx, args[1:], streams)
+		return grokDispatch(ctx, api, args[1:], streams)
 	case "claude":
-		return claudeConfigDispatch(ctx, runtimeAPI{}, args[1:], streams)
+		return claudeConfigDispatch(ctx, api, args[1:], streams)
 	}
 	return usageError(integrationUsage, "integration requires claude or grok")
 }

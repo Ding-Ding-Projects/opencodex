@@ -51,6 +51,18 @@ func runClaudeConfigWith(t *testing.T, server *httptest.Server, args ...string) 
 	return out.String(), err
 }
 
+// lastPut returns the final PUT and asserts it targeted the expected endpoint.
+// Accepting any PUT would let a request aimed at the wrong path pass every
+// body assertion built on top of it.
+func lastPutTo(t *testing.T, calls []recordedCall, path string) recordedCall {
+	t.Helper()
+	call := lastPut(t, calls)
+	if call.path != path {
+		t.Fatalf("PUT went to %q, want %q", call.path, path)
+	}
+	return call
+}
+
 func lastPut(t *testing.T, calls []recordedCall) recordedCall {
 	t.Helper()
 	for index := len(calls) - 1; index >= 0; index-- {
@@ -82,7 +94,7 @@ func TestGrokExcludeAndIncludeAmendServerState(t *testing.T) {
 	if _, err := runGrokWith(t, server, "exclude", "c"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(excludedModels(t, lastPut(t, *calls)), ","); got != "a,b,c" {
+	if got := strings.Join(excludedModels(t, lastPutTo(t, *calls, "/api/grok/selection")), ","); got != "a,b,c" {
 		t.Fatalf("exclude produced %q, want the union", got)
 	}
 
@@ -90,7 +102,7 @@ func TestGrokExcludeAndIncludeAmendServerState(t *testing.T) {
 	if _, err := runGrokWith(t, server, "include", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(excludedModels(t, lastPut(t, *calls)), ","); got != "b" {
+	if got := strings.Join(excludedModels(t, lastPutTo(t, *calls, "/api/grok/selection")), ","); got != "b" {
 		t.Fatalf("include produced %q, want the model removed", got)
 	}
 }
@@ -106,7 +118,7 @@ func TestGrokSetReplacesWithoutReadingState(t *testing.T) {
 			t.Fatal("set must not read current state")
 		}
 	}
-	if got := strings.Join(excludedModels(t, lastPut(t, *calls)), ","); got != "z" {
+	if got := strings.Join(excludedModels(t, lastPutTo(t, *calls, "/api/grok/selection")), ","); got != "z" {
 		t.Fatalf("set produced %q", got)
 	}
 }
@@ -117,7 +129,7 @@ func TestGrokClearSendsEmptySelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(excludedModels(t, lastPut(t, *calls))) != 0 {
+	if len(excludedModels(t, lastPutTo(t, *calls, "/api/grok/selection"))) != 0 {
 		t.Fatal("clear must send an empty list")
 	}
 	if !strings.Contains(out, "none") {
@@ -173,7 +185,7 @@ func TestClaudeConfigCompactWindow(t *testing.T) {
 		if _, err := runClaudeConfigWith(t, server, "set", "--compact-window", raw); err != nil {
 			t.Fatal(err)
 		}
-		value, present := lastPut(t, *calls).body["autoCompactWindow"]
+		value, present := lastPutTo(t, *calls, "/api/claude-code").body["autoCompactWindow"]
 		if !present || value != nil {
 			t.Fatalf("%q => %#v, want an explicit null", raw, value)
 		}
@@ -183,8 +195,8 @@ func TestClaudeConfigCompactWindow(t *testing.T) {
 	if _, err := runClaudeConfigWith(t, server, "set", "--compact-window", "120_000"); err != nil {
 		t.Fatal(err)
 	}
-	if lastPut(t, *calls).body["autoCompactWindow"] != float64(120000) {
-		t.Fatalf("separator form = %#v", lastPut(t, *calls).body["autoCompactWindow"])
+	if lastPutTo(t, *calls, "/api/claude-code").body["autoCompactWindow"] != float64(120000) {
+		t.Fatalf("separator form = %#v", lastPutTo(t, *calls, "/api/claude-code").body["autoCompactWindow"])
 	}
 
 	for _, raw := range []string{"0", "-5", "abc", "1.5"} {
@@ -205,17 +217,17 @@ func TestClaudeConfigModelMap(t *testing.T) {
 	if _, err := runClaudeConfigWith(t, server, "set", "--model-map", "a=b, c = d"); err != nil {
 		t.Fatal(err)
 	}
-	mapped, ok := lastPut(t, *calls).body["modelMap"].(map[string]any)
+	mapped, ok := lastPutTo(t, *calls, "/api/claude-code").body["modelMap"].(map[string]any)
 	if !ok || mapped["a"] != "b" || mapped["c"] != "d" {
-		t.Fatalf("modelMap = %#v", lastPut(t, *calls).body["modelMap"])
+		t.Fatalf("modelMap = %#v", lastPutTo(t, *calls, "/api/claude-code").body["modelMap"])
 	}
 
 	server, calls = grokServer(t, `{}`)
 	if _, err := runClaudeConfigWith(t, server, "set", "--model-map", "-"); err != nil {
 		t.Fatal(err)
 	}
-	if cleared, ok := lastPut(t, *calls).body["modelMap"].(map[string]any); !ok || len(cleared) != 0 {
-		t.Fatalf("`-` should clear the map, got %#v", lastPut(t, *calls).body["modelMap"])
+	if cleared, ok := lastPutTo(t, *calls, "/api/claude-code").body["modelMap"].(map[string]any); !ok || len(cleared) != 0 {
+		t.Fatalf("`-` should clear the map, got %#v", lastPutTo(t, *calls, "/api/claude-code").body["modelMap"])
 	}
 
 	for _, raw := range []string{"=b", "a=", "ab"} {
@@ -232,7 +244,7 @@ func TestClaudeConfigSidecarsAreIndependent(t *testing.T) {
 	if _, err := runClaudeConfigWith(t, server, "set", "--web-model", "m", "--web-backend", "-"); err != nil {
 		t.Fatal(err)
 	}
-	body := lastPut(t, *calls).body
+	body := lastPutTo(t, *calls, "/api/claude-code").body
 	web, ok := body["webSearchSidecar"].(map[string]any)
 	if !ok || web["model"] != "m" {
 		t.Fatalf("webSearchSidecar = %#v", body["webSearchSidecar"])
@@ -289,7 +301,7 @@ func TestGrokTreatsAbsentStateAsEmpty(t *testing.T) {
 		if _, err := runGrokWith(t, server, "exclude", "c"); err != nil {
 			t.Fatalf("state %s: %v", state, err)
 		}
-		if got := strings.Join(excludedModels(t, lastPut(t, *calls)), ","); got != "c" {
+		if got := strings.Join(excludedModels(t, lastPutTo(t, *calls, "/api/grok/selection")), ","); got != "c" {
 			t.Fatalf("state %s produced %q", state, got)
 		}
 	}
@@ -302,14 +314,15 @@ func TestClaudeConfigAcceptsLargeCompactWindow(t *testing.T) {
 	if _, err := runClaudeConfigWith(t, server, "set", "--compact-window", "1e30"); err != nil {
 		t.Fatalf("1e30 should be accepted like the oracle: %v", err)
 	}
-	if lastPut(t, *calls).body["autoCompactWindow"] != 1e30 {
-		t.Fatalf("autoCompactWindow = %#v", lastPut(t, *calls).body["autoCompactWindow"])
+	if lastPutTo(t, *calls, "/api/claude-code").body["autoCompactWindow"] != 1e30 {
+		t.Fatalf("autoCompactWindow = %#v", lastPutTo(t, *calls, "/api/claude-code").body["autoCompactWindow"])
 	}
 }
 
-// integration must route the valid surfaces, not merely reject invalid ones.
+// integration must route through its OWN dispatcher. Driving grokDispatch and
+// claudeConfigDispatch directly would still pass if the top-level `integration
+// grok` forwarding broke, which is the only thing this test exists to prove.
 func TestIntegrationRoutesGrokAndClaudeToTheirRoutes(t *testing.T) {
-	var out bytes.Buffer
 	for _, testCase := range []struct {
 		surface string
 		path    string
@@ -318,16 +331,27 @@ func TestIntegrationRoutesGrokAndClaudeToTheirRoutes(t *testing.T) {
 		{"grok", "/api/grok", `{"excluded":[]}`},
 		{"claude", "/api/claude-code", `{}`},
 	} {
-		server, calls := grokServer(t, testCase.state)
-		dispatch := grokDispatch
-		if testCase.surface == "claude" {
-			dispatch = claudeConfigDispatch
+		t.Run(testCase.surface, func(t *testing.T) {
+			var out bytes.Buffer
+			server, calls := grokServer(t, testCase.state)
+			err := integrationDispatch(context.Background(), testAPI(server), []string{testCase.surface, "status"}, IO{Out: &out})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(*calls) != 1 || (*calls)[0].method != http.MethodGet || (*calls)[0].path != testCase.path {
+				t.Fatalf("%s status = %+v, want one GET %s", testCase.surface, *calls, testCase.path)
+			}
+		})
+	}
+
+	// An unknown or missing surface is rejected without touching the network.
+	for _, args := range [][]string{{}, {"bogus"}, {"GROK"}} {
+		server, calls := grokServer(t, `{}`)
+		if err := integrationDispatch(context.Background(), testAPI(server), args, IO{Out: &bytes.Buffer{}}); err == nil {
+			t.Fatalf("integration %v should have been rejected", args)
 		}
-		if err := dispatch(context.Background(), testAPI(server), []string{"status"}, IO{Out: &out}); err != nil {
-			t.Fatal(err)
-		}
-		if len(*calls) != 1 || (*calls)[0].method != http.MethodGet || (*calls)[0].path != testCase.path {
-			t.Fatalf("%s status = %+v, want one GET %s", testCase.surface, *calls, testCase.path)
+		if len(*calls) != 0 {
+			t.Fatalf("integration %v sent %+v", args, *calls)
 		}
 	}
 }

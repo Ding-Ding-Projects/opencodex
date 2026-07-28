@@ -268,13 +268,33 @@ func TestRouteAcceptsOnlyComboAndForwardsTheRest(t *testing.T) {
 	}
 
 	for _, args := range [][]string{{}, {"bogus"}, {"COMBO"}, {"combos"}} {
+		// A fresh recorder AND the client that points at it: reusing the outer
+		// api would have observed the wrong server's calls.
 		server, calls := comboServer(t, `{}`)
-		_ = server
-		if err := routeDispatch(context.Background(), api, args, IO{Out: &bytes.Buffer{}}); err == nil {
+		rejectAPI := runtimeAPI{BaseURL: server.URL, loadCfg: func() (*config.Config, error) { return &config.Config{}, nil }}
+		if err := routeDispatch(context.Background(), rejectAPI, args, IO{Out: &bytes.Buffer{}}); err == nil {
 			t.Fatalf("route %v should have been rejected", args)
 		}
 		if len(*calls) != 0 {
 			t.Fatalf("route %v sent %+v", args, *calls)
 		}
+	}
+}
+
+// The counterpart to the absent-renameFrom assertion: when --rename-from is
+// supplied it must reach the server, or a rename silently becomes a create.
+func TestComboSetForwardsRenameFrom(t *testing.T) {
+	server, calls := comboServer(t, `{"ok":true}`)
+	if _, err := runComboWith(t, server, "set", "new", "--targets", "a/b", "--rename-from", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0].method != http.MethodPut || (*calls)[0].path != "/api/combos" {
+		t.Fatalf("calls = %+v, want one PUT /api/combos", *calls)
+	}
+	if (*calls)[0].body["renameFrom"] != "old" {
+		t.Fatalf("renameFrom = %#v, want \"old\"", (*calls)[0].body["renameFrom"])
+	}
+	if (*calls)[0].body["id"] != "new" {
+		t.Fatalf("id = %#v, want \"new\"", (*calls)[0].body["id"])
 	}
 }
