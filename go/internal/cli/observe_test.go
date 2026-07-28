@@ -232,13 +232,42 @@ func TestFormURLEncodeMatchesURLSearchParams(t *testing.T) {
 // An unset filter must be omitted entirely rather than sent as an empty value:
 // the oracle only calls search.set for defined entries, so `?provider=` would
 // be a filter the server actually applies.
-func TestObserveQueryOmitsEmptyFilters(t *testing.T) {
-	got := observeQuery([][2]string{{"provider", "openai"}, {"model", ""}, {"status", "5xx"}})
+func TestObserveQueryDistinguishesAbsentFromEmpty(t *testing.T) {
+	// An OMITTED option is absent from the URI.
+	got := observeQuery([]queryParam{
+		{key: "provider", value: "openai", present: true},
+		{key: "model"},
+		{key: "status", value: "5xx", present: true},
+	})
 	if got != "?provider=openai&status=5xx" {
 		t.Fatalf("observeQuery = %q", got)
 	}
-	if empty := observeQuery([][2]string{{"provider", ""}}); empty != "" {
-		t.Fatalf("all-empty query = %q, want no query string at all", empty)
+	// An EXPLICIT empty is a real filter and must be serialized: the oracle
+	// calls search.set for every defined option, producing "provider=".
+	explicit := observeQuery([]queryParam{
+		{key: "provider", value: "", present: true},
+		{key: "status", value: "5xx", present: true},
+	})
+	if explicit != "?provider=&status=5xx" {
+		t.Fatalf("explicit empty = %q, want ?provider=&status=5xx", explicit)
+	}
+	if empty := observeQuery([]queryParam{{key: "provider"}}); empty != "" {
+		t.Fatalf("all-absent query = %q, want no query string at all", empty)
+	}
+}
+
+// End to end through the command: `--provider ""` must reach the server as a
+// filter, not vanish.
+func TestObserveLogsSendsAnExplicitlyEmptyFilter(t *testing.T) {
+	server, calls := observeServer(t, `[]`)
+	if _, err := runObserveWith(t, server, "logs", "--provider", "", "--jsonl"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %+v, want exactly one", *calls)
+	}
+	if (*calls)[0].path != "/api/logs?provider=&limit=200" {
+		t.Fatalf("path = %q, want the empty provider filter preserved", (*calls)[0].path)
 	}
 }
 

@@ -226,15 +226,15 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 	if takeFlag(&args, "-f") {
 		follow = true
 	}
-	provider, _, err := takeOption(&args, "--provider")
+	provider, hasProvider, err := takeOption(&args, "--provider")
 	if err != nil {
 		return err
 	}
-	model, _, err := takeOption(&args, "--model")
+	model, hasModel, err := takeOption(&args, "--model")
 	if err != nil {
 		return err
 	}
-	status, _, err := takeOption(&args, "--status")
+	status, hasStatus, err := takeOption(&args, "--status")
 	if err != nil {
 		return err
 	}
@@ -259,9 +259,12 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 		return usageError(observeUsage, "--follow uses --jsonl, not --json")
 	}
 
-	path := "/api/logs" + observeQuery([][2]string{
-		{"provider", provider}, {"model", model},
-		{"status", status}, {"limit", strconv.Itoa(limit)},
+	path := "/api/logs" + observeQuery([]queryParam{
+		{key: "provider", value: provider, present: hasProvider},
+		{key: "model", value: model, present: hasModel},
+		{key: "status", value: status, present: hasStatus},
+		// limit always has a value: the oracle defaults it to 200 and sends it.
+		{key: "limit", value: strconv.Itoa(limit), present: true},
 	})
 	seen := map[string]struct{}{}
 	// order preserves arrival sequence so the trim below can keep the most
@@ -362,7 +365,10 @@ func observeUsageSection(ctx context.Context, api runtimeAPI, args []string, str
 		return err
 	}
 	result, err := api.request(ctx, http.MethodGet,
-		"/api/usage"+observeQuery([][2]string{{"range", rangeValue}, {"surface", surface}}), nil)
+		"/api/usage"+observeQuery([]queryParam{
+			{key: "range", value: rangeValue, present: true},
+			{key: "surface", value: surface, present: true},
+		}), nil)
 	if err != nil {
 		return err
 	}
@@ -381,7 +387,7 @@ func observeSimple(ctx context.Context, api runtimeAPI, path string, args []stri
 	}
 	query := ""
 	if hasLimit {
-		query = observeQuery([][2]string{{"limit", strconv.Itoa(limit)}})
+		query = observeQuery([]queryParam{{key: "limit", value: strconv.Itoa(limit), present: true}})
 	}
 	result, err := api.request(ctx, http.MethodGet, path+query, nil)
 	if err != nil {
