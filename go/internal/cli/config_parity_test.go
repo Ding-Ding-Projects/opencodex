@@ -489,3 +489,98 @@ func mustRun(t *testing.T, args ...string) string {
 	}
 	return out
 }
+
+// Array indexes must be spelled canonically. Object.hasOwn(array, "00") is
+// false, so a lenient Atoi would resolve a path the oracle reports as missing.
+func TestConfigGetRejectsNonCanonicalArrayIndexes(t *testing.T) {
+	configHome(t, `{"port":10100,"hostname":"127.0.0.1","providers":{"p":{"adapter":"openai-chat","baseUrl":"https://example.com"}},"defaultProvider":"p","subagentModels":["m1","m2"]}`)
+	if out, err := runConfigParityWith(t, "", "get", "subagentModels.1"); err != nil || strings.TrimSpace(out) != "m2" {
+		t.Fatalf("canonical index must resolve: %q %v", out, err)
+	}
+	// " 1" is deliberately absent: the oracle trims each segment before
+	// indexing, so it resolves there too.
+	for _, segment := range []string{"00", "+1", "01", "1.0"} {
+		if _, err := runConfigParityWith(t, "", "get", "subagentModels."+segment); err == nil {
+			t.Fatalf("index %q must not resolve", segment)
+		}
+	}
+}
+
+// `config show` on a fresh home prints the default document verbatim, so its
+// FIELD SET is user-visible. The runtime struct carries a few fields the
+// oracle's default does not emit, and omits one it does.
+func TestConfigDefaultDocumentMatchesTheOracleFieldSet(t *testing.T) {
+	document := defaultConfigDocument()
+	for _, runtimeOnly := range []string{"hostname", "debug", "log"} {
+		if _, present := document[runtimeOnly]; present {
+			t.Errorf("default document should not carry the runtime-only %q", runtimeOnly)
+		}
+	}
+	for _, required := range []string{"websockets", "port", "providers", "defaultProvider", "subagentModels"} {
+		if _, present := document[required]; !present {
+			t.Errorf("default document is missing %q", required)
+		}
+	}
+}
+
+// The oracle's schema declares these fields with .catch(undefined): an invalid
+// value is DROPPED with a warning rather than rejecting the file, so one
+// hand-edited typo cannot hide every provider and account the user configured.
+func TestConfigDegradesInvalidOptionalFieldsWithWarnings(t *testing.T) {
+	configHome(t, `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}},"injectionModel":123}`)
+	out, err := runConfigParityWith(t, "", "show", "--source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope["source"] != "file" {
+		t.Fatalf("source = %#v; a degradable field must not send the file to fallback", envelope["source"])
+	}
+	if envelope["error"] != nil {
+		t.Fatalf("error = %#v, want null", envelope["error"])
+	}
+	warnings, _ := envelope["warnings"].([]any)
+	if len(warnings) != 1 || warnings[0] != "injectionModel ignored: expected a string" {
+		t.Fatalf("warnings = %#v, want the oracle's wording", envelope["warnings"])
+	}
+	// The rest of the config survives, which is the point of degrading.
+	config, _ := envelope["config"].(map[string]any)
+	if providers, _ := config["providers"].(map[string]any); providers["openai"] == nil {
+		t.Fatalf("degrading dropped unrelated settings: %s", out)
+	}
+	if _, kept := config["injectionModel"]; kept {
+		t.Fatalf("the invalid field must be dropped: %s", out)
+	}
+}
+
+// The default document must be the ORACLE's shape, not Go's struct marshalled.
+func TestConfigDefaultsMatchTheOracleShape(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OPENCODEX_HOME", dir)
+	out, err := runConfigParityWith(t, "", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(out), &document); err != nil {
+		t.Fatal(err)
+	}
+	// Go's struct marshals these; getDefaultConfig() does not carry them.
+	for _, goOnly := range []string{"hostname", "debug", "log", "streamMode"} {
+		if _, present := document[goOnly]; present {
+			t.Fatalf("%q is a Go-only default the oracle does not emit: %s", goOnly, out)
+		}
+	}
+	// And it does carry this, which Go's zero value drops.
+	if value, present := document["websockets"]; !present || value != false {
+		t.Fatalf("websockets = %#v, want false as the oracle emits: %s", value, out)
+	}
+	for _, required := range []string{"port", "providers", "defaultProvider", "subagentModels"} {
+		if _, present := document[required]; !present {
+			t.Fatalf("default config is missing %q: %s", required, out)
+		}
+	}
+}

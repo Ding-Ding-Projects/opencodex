@@ -98,7 +98,10 @@ func getConfigPath(root any, path string) (any, error) {
 			// resolves `models.0`. Refusing it would make a legitimate path
 			// look missing.
 			index, err := strconv.Atoi(segment)
-			if err != nil || index < 0 || index >= len(container) {
+			// The spelling has to be canonical. Object.hasOwn(array, "00") is
+			// false, so Atoi alone would resolve a path the oracle reports as
+			// missing; "+1" and " 1" are rejected for the same reason.
+			if err != nil || index < 0 || index >= len(container) || strconv.Itoa(index) != segment {
 				return nil, usageError("", "config path not found: %s", path)
 			}
 			current = container[index]

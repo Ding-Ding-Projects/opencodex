@@ -33,6 +33,7 @@ type configDiagnostics struct {
 	document configDocument
 	source   string
 	failure  string
+	warnings []string
 }
 
 func readConfigDiagnostics() (configDiagnostics, error) {
@@ -63,11 +64,15 @@ func readConfigDiagnostics() (configDiagnostics, error) {
 	if !isObject {
 		return fallback("invalid_json"), nil
 	}
+	// Degrade before validating: the oracle's schema drops these fields rather
+	// than rejecting, so a single bad optional value must not send an
+	// otherwise-good file to fallback.
+	warnings := degradeInvalidFields(configDocument(record))
 	normalized, normalizeErr := normalizeConfigDocument(configDocument(record))
 	if normalizeErr != nil {
 		return fallback(normalizeErr.Error()), nil
 	}
-	return configDiagnostics{document: normalized, source: "file"}, nil
+	return configDiagnostics{document: normalized, source: "file", warnings: warnings}, nil
 }
 
 // readConfigDocument is the common case: the effective config and its origin.
@@ -136,15 +141,7 @@ func normalizeConfigDocument(document configDocument) (configDocument, error) {
 	if err := validateConfigDocument(document); err != nil {
 		return nil, err
 	}
-	defaults := config.FreshInstall()
-	encoded, err := json.Marshal(defaults)
-	if err != nil {
-		return nil, err
-	}
-	var base map[string]any
-	if err := json.Unmarshal(encoded, &base); err != nil {
-		return nil, err
-	}
+	base := map[string]any(defaultConfigDocument())
 	for key, value := range document {
 		base[key] = value
 	}
@@ -273,7 +270,7 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 			"config":   redacted,
 			"source":   diagnostics.source,
 			"error":    failure,
-			"warnings": []any{},
+			"warnings": warningList(diagnostics.warnings),
 		}, true, nil)
 
 	case "get":
@@ -466,10 +463,14 @@ var errSilentFailure = errors.New("reported failure")
 // rather than an empty object, so `validate` succeeds on a fresh home and
 // `get providers.openai.adapter` resolves before the user has written anything.
 func defaultConfigDocument() configDocument {
-	// FreshInstall, not Default: Default is the minimal construction baseline
-	// with an EMPTY providers map, so a document built from it fails its own
-	// defaultProvider check. FreshInstall is the TypeScript-compatible config a
-	// new installation gets, which is what getDefaultConfig() returns.
+	// Built from FreshInstall, then reconciled with the oracle's
+	// getDefaultConfig() SHAPE.
+	//
+	// The two are not the same document. Go's struct marshals hostname, debug
+	// and log that the oracle omits, and the oracle carries websockets:false
+	// that Go's zero value drops. Serving or persisting the Go shape would
+	// write a config the TypeScript CLI did not produce, so the extras are
+	// removed and the missing key restored.
 	defaults := config.FreshInstall()
 	encoded, err := json.Marshal(defaults)
 	if err != nil {
@@ -479,5 +480,60 @@ func defaultConfigDocument() configDocument {
 	if json.Unmarshal(encoded, &document) != nil {
 		return configDocument{}
 	}
+	for _, goOnly := range []string{"hostname", "debug", "log", "streamMode"} {
+		delete(document, goOnly)
+	}
+	if _, present := document["websockets"]; !present {
+		document["websockets"] = false
+	}
 	return configDocument(document)
+}
+
+// degradableFields are the schema entries the oracle declares with
+// `.catch(undefined)`: an invalid value is DROPPED with a warning rather than
+// rejecting the whole file, so one hand-edited typo cannot hide every provider
+// and account the user has configured.
+var degradableFields = map[string]string{
+	"injectionModel":            "a string",
+	"injectionEffort":           "a string",
+	"streamMode":                "a string",
+	"syncCodexSubagentDefaults": "a boolean",
+}
+
+// degradeInvalidFields removes malformed optional fields and reports what it
+// dropped, in the oracle's wording.
+func degradeInvalidFields(document configDocument) []string {
+	warnings := []string{}
+	for _, field := range []string{"injectionModel", "injectionEffort", "streamMode", "syncCodexSubagentDefaults"} {
+		value, present := document[field]
+		if !present || value == nil {
+			continue
+		}
+		expected := degradableFields[field]
+		valid := false
+		switch typed := value.(type) {
+		case string:
+			valid = expected == "a string"
+			if field == "streamMode" && valid {
+				valid = typed == "auto" || typed == "legacy-tee" || typed == "eager-relay"
+			}
+		case bool:
+			valid = expected == "a boolean"
+		}
+		if !valid {
+			delete(document, field)
+			warnings = append(warnings, field+" ignored: expected "+expected)
+		}
+	}
+	return warnings
+}
+
+// warningList renders warnings as a JSON array, empty rather than null when
+// there are none.
+func warningList(warnings []string) []any {
+	out := make([]any, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, warning)
+	}
+	return out
 }
