@@ -622,3 +622,53 @@ func TestAPIKeyTransportValidation(t *testing.T) {
 		})
 	}
 }
+
+// An explicitly persisted `"apiKeyTransport": ""` must be refused by the
+// RUNTIME load path, not only by the CLI's schema port.
+//
+// Go decodes an absent key and an empty one into the same zero value, so
+// Validate alone cannot tell them apart. The oracle's schema can: its enum has
+// no empty member, so the file is discarded and the runtime serves defaults.
+// Before the presence check existed, `ocx start` came up on this file with the
+// user's real port and providers while the TypeScript runtime fell back --
+// verified by running `config get port` under both CLIs on the same file.
+//
+// The repair path needs the check too: it re-decodes the same document, so a
+// presence-only defect survives it untouched.
+func TestRuntimeLoadRejectsAnExplicitlyEmptyApiKeyTransport(t *testing.T) {
+	for _, test := range []struct {
+		value  string
+		reject bool
+	}{
+		{value: `""`, reject: true},
+		{value: `"basic"`, reject: true},
+		{value: `123`, reject: true},
+		{value: `null`, reject: true},
+		{value: `"bearer"`, reject: false},
+		{value: `"x-api-key"`, reject: false},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			document := `{"port":10199,"providers":{"p":{"adapter":"anthropic","baseUrl":"https://api.anthropic.com","authMode":"key","apiKeyTransport":` + test.value + `}},"defaultProvider":"p"}`
+			if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if test.reject {
+				if err == nil {
+					t.Fatalf("Load accepted %s and came up on port %d", test.value, cfg.Port)
+				}
+				if !strings.Contains(err.Error(), "apiKeyTransport") {
+					t.Fatalf("error = %v, want it to name the field", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load rejected a valid value: %v", err)
+			}
+			if cfg.Port != 10199 {
+				t.Fatalf("port = %d, want the configured 10199", cfg.Port)
+			}
+		})
+	}
+}

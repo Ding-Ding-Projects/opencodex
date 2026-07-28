@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
@@ -478,6 +479,9 @@ func Load(path string) (*Config, error) {
 	if validationErr == nil {
 		validationErr = validateDefaultProvider(cfg)
 	}
+	if validationErr == nil {
+		validationErr = validatePresenceOnlyFields(raw)
+	}
 	if validationErr != nil {
 		repaired := FreshInstall()
 		if decodeErr := json.Unmarshal(data, &repaired); decodeErr != nil {
@@ -500,6 +504,14 @@ func Load(path string) (*Config, error) {
 		repairErr := repaired.Validate()
 		if repairErr == nil {
 			repairErr = validateDefaultProvider(repaired)
+		}
+		// The repair path re-decodes the SAME document, so a presence-only
+		// defect survives it untouched. Without this the repair silently
+		// "fixed" a config the oracle discards, and the runtime came up on the
+		// user's port and providers while the TypeScript runtime served
+		// defaults.
+		if repairErr == nil {
+			repairErr = validatePresenceOnlyFields(raw)
 		}
 		if repairErr != nil {
 			return nil, validationErr
@@ -1020,18 +1032,15 @@ func ValidateModelAdapters(providerName string, provider ProviderConfig) error {
 // adapter, then the auth mode. The order is user-visible, because only the
 // first failing message is reported.
 //
-// An EMPTY value is treated as absent here, which the oracle's schema does not
-// do -- it rejects an explicitly persisted `"apiKeyTransport": ""`. The
-// difference is a decoding artifact: Go unmarshals both an absent key and an
-// empty one into the same zero value, so this layer cannot tell them apart
-// without a presence-tracking decoder.
+// An empty value is treated as absent HERE, because Go unmarshals both an
+// absent key and an explicitly empty one into the same zero value. That is a
+// decoding limit of this layer, not a decision: the oracle's schema rejects an
+// explicitly persisted `"apiKeyTransport": ""`, and so must the port.
 //
-// It is not user-visible, because the CLI does not validate through here. The
-// config command runs the schema port in internal/cli/config_schema.go, which
-// DOES reject the empty string; measured against the oracle, `config show
-// --source` on such a file reports the identical schema_invalid message and
-// falls back to defaults in both CLIs. This function is the runtime's own
-// admission check, reached only after that gate has already accepted the file.
+// validatePresenceOnlyFields closes it, in Load, against the RAW document,
+// which is where the presence information still exists. Relying on the CLI's
+// schema port would not have been enough -- `ocx start` reaches Load directly
+// and never passes through it.
 func apiKeyTransportConfigError(name string, provider ProviderConfig) error {
 	transport := provider.APIKeyTransport
 	if transport == "" {
@@ -1049,4 +1058,57 @@ func apiKeyTransportConfigError(name string, provider ProviderConfig) error {
 		return &ConfigError{Field: field, Message: "apiKeyTransport requires Anthropic API-key authentication"}
 	}
 	return nil
+}
+
+// validatePresenceOnlyFields rejects values whose invalidity depends on the key
+// being PRESENT rather than on the decoded value.
+//
+// Go decodes an absent key and an explicitly written empty one into the same
+// zero value, so Validate cannot tell `{"apiKeyTransport": ""}` from a config
+// that omits the field. The oracle's schema can, and rejects the first: its
+// enum has no empty member, so the file is refused and the runtime falls back
+// to defaults. Without this check, Go started up on a file the TypeScript
+// runtime discards -- with the user's real port and providers, while TS served
+// defaults.
+//
+// The raw document is already decoded here for the websockets and
+// openaiProviderTierVersion presence checks, so this costs nothing extra.
+func validatePresenceOnlyFields(raw any) error {
+	object, isObject := raw.(map[string]any)
+	if !isObject {
+		return nil
+	}
+	providers, hasProviders := object["providers"].(map[string]any)
+	if !hasProviders {
+		return nil
+	}
+	for _, name := range sortedProviderNames(providers) {
+		provider, isProviderObject := providers[name].(map[string]any)
+		if !isProviderObject {
+			continue
+		}
+		value, present := provider["apiKeyTransport"]
+		if !present {
+			continue
+		}
+		text, isString := value.(string)
+		if !isString || (text != "x-api-key" && text != "bearer") {
+			return &ConfigError{
+				Field:   "providers." + name + ".apiKeyTransport",
+				Message: `apiKeyTransport must be "x-api-key" or "bearer"`,
+			}
+		}
+	}
+	return nil
+}
+
+// sortedProviderNames keeps the reported field stable when several providers
+// are wrong, instead of letting Go's map order pick one at random.
+func sortedProviderNames(providers map[string]any) []string {
+	names := make([]string, 0, len(providers))
+	for name := range providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
