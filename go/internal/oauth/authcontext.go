@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -199,6 +200,20 @@ func CredentialGenerationNumber(credential OAuthCredentials) int64 {
 }
 
 func (r *AuthResolver) RecordOutcome(account string, status shared.OutcomeStatus, meta *shared.RetryMeta) {
+	// Anthropic outcomes go to the opt-in pool, which the legacy pool knows
+	// nothing about. Without this a 429 changed no state at all, so the very
+	// next request on the same session kept selecting the account that had just
+	// rejected it.
+	if r.Anthropic != nil && meta != nil && meta.Provider == anthropicPoolProvider {
+		if status == shared.OutcomeRateLimited || status == shared.OutcomeAuthError {
+			retryAfter := ""
+			if meta.RetryAfter > 0 {
+				retryAfter = strconv.FormatFloat(meta.RetryAfter.Seconds(), 'f', -1, 64)
+			}
+			r.Anthropic.NoteFailure(account, retryAfter, time.Now())
+		}
+		return
+	}
 	if r.Pool != nil {
 		r.Pool.RecordOutcome(account, status, meta)
 	}

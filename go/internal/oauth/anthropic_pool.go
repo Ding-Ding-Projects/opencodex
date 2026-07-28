@@ -11,6 +11,8 @@ package oauth
 // deliberate act rather than a behaviour that creeps in.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"net/http"
 	"regexp"
@@ -464,6 +466,60 @@ func (p *AnthropicPool) Clear() {
 }
 
 var anthropicRetryAfterSeconds = regexp.MustCompile(`^\d+(?:\.\d+)?$`)
+
+// AnthropicSessionKeyParts are the request fields the session key is built from.
+type AnthropicSessionKeyParts struct {
+	ClientThreadID string
+	SessionID      string
+	ThreadID       string
+	PromptCacheKey string
+	// PromptCacheKeyIsSharedCohort marks a Desktop cohort key shared by many
+	// users, which must not become an affinity key or unrelated sessions would
+	// be pinned to one account.
+	PromptCacheKeyIsSharedCohort bool
+}
+
+// AnthropicSessionKey derives the affinity key, mirroring the oracle's
+// anthropicSessionKeyFromParts.
+//
+// The preference order is deliberate: a client thread id is the most specific
+// identity, a session header is next, and a bare thread id last. Without a key
+// the pool treats the request as having no session identity and holds the
+// active account instead of rotating, so getting this wrong changes both
+// affinity and rotation.
+//
+// Anything longer than 128 characters is hashed rather than truncated, since
+// truncation could collide two distinct sessions onto one account.
+func AnthropicSessionKey(parts AnthropicSessionKeyParts) string {
+	// The oracle uses ?? here, so an EMPTY string still wins over the next
+	// field: only a missing value falls through. Reproduced by checking
+	// presence before trimming.
+	preferred := parts.ClientThreadID
+	if preferred == "" {
+		preferred = parts.SessionID
+	}
+	if preferred == "" {
+		preferred = parts.ThreadID
+	}
+	if trimmed := strings.TrimSpace(preferred); trimmed != "" {
+		return boundedSessionKey(trimmed)
+	}
+	if parts.PromptCacheKeyIsSharedCohort {
+		return ""
+	}
+	if cacheKey := strings.TrimSpace(parts.PromptCacheKey); cacheKey != "" {
+		return boundedSessionKey(cacheKey)
+	}
+	return ""
+}
+
+func boundedSessionKey(value string) string {
+	if len(value) <= 128 {
+		return value
+	}
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
 
 // ParseAnthropicRetryAfter reads both Retry-After forms.
 //

@@ -12,10 +12,12 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	shared "github.com/lidge-jun/opencodex-go/internal/types"
 )
 
 func anthropicPoolFixture(t *testing.T, ids ...string) (*AnthropicPool, ProviderAccountSet) {
@@ -264,6 +266,83 @@ func TestAuthResolverRoutesAnthropicThroughThePool(t *testing.T) {
 		}
 	}
 	_ = now
+}
+
+// A 429 has to reach the pool through RecordOutcome, otherwise it changes no
+// state and the next request on the same session selects the account that just
+// rejected it.
+func TestAuthResolverRoutesAnthropicOutcomesToThePool(t *testing.T) {
+	now := time.Now()
+	pool, set := anthropicPoolFixture(t, "a", "b", "c")
+	active := accountIDFor(t, set, "a")
+	activate(t, pool, active)
+
+	resolver := NewAuthResolver(pool.store, map[string]ProviderAuthConfig{
+		anthropicPoolProvider: {Mode: AuthModeOAuth},
+	}, nil)
+	resolver.Anthropic = pool
+	resolver.SetAnthropicPoolConfig(poolConfig(true, 80, "quota", 1))
+
+	first, err := resolver.selectAccount(context.Background(), anthropicPoolProvider, "sticky", false)
+	if err != nil {
+		t.Fatalf("first select: %v", err)
+	}
+
+	resolver.RecordOutcome(first.ID, shared.OutcomeRateLimited, &shared.RetryMeta{
+		Provider: anthropicPoolProvider, RetryAfter: 90 * time.Second,
+	})
+
+	if _, _, cooled := pool.CooldownUntil(first.ID, now); !cooled {
+		t.Fatal("a 429 did not cool the account; the outcome never reached the pool")
+	}
+	second, err := resolver.selectAccount(context.Background(), anthropicPoolProvider, "sticky", false)
+	if err != nil {
+		t.Fatalf("second select: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("the same session was handed back to the account that just rate-limited it")
+	}
+
+	// An openai outcome must still reach the legacy pool untouched.
+	resolver.Pool = NewAccountPool(pool.store, "openai")
+	resolver.RecordOutcome("someone", shared.OutcomeRateLimited, &shared.RetryMeta{Provider: "openai"})
+	if _, cooledOpenAI := resolver.Pool.CooldownUntil("someone"); !cooledOpenAI {
+		t.Fatal("an openai outcome stopped reaching the legacy pool")
+	}
+}
+
+// Session-key derivation, measured against anthropicSessionKeyFromParts. The
+// preference order decides both affinity and whether rotation happens at all:
+// with no key the pool holds the active account instead of rotating.
+func TestAnthropicSessionKeyMatchesTheOracle(t *testing.T) {
+	long := strings.Repeat("x", 129)
+	exactly128 := strings.Repeat("y", 128)
+	for name, testCase := range map[string]struct {
+		parts AnthropicSessionKeyParts
+		want  string
+	}{
+		"client thread wins":         {parts: AnthropicSessionKeyParts{ClientThreadID: "CT", SessionID: "S", ThreadID: "T", PromptCacheKey: "P"}, want: "CT"},
+		"session over thread":        {parts: AnthropicSessionKeyParts{SessionID: "S", ThreadID: "T"}, want: "S"},
+		"thread only":                {parts: AnthropicSessionKeyParts{ThreadID: "T"}, want: "T"},
+		"cache key fallback":         {parts: AnthropicSessionKeyParts{PromptCacheKey: "P"}, want: "P"},
+		"shared cohort is not a key": {parts: AnthropicSessionKeyParts{PromptCacheKey: "P", PromptCacheKeyIsSharedCohort: true}, want: ""},
+		"all empty":                  {parts: AnthropicSessionKeyParts{}, want: ""},
+		// A blank-but-present value wins over the next field and then trims to
+		// empty, so the derivation returns nothing. That is the oracle's ??
+		// semantics rather than a bug.
+		"blank preferred beats a real thread id": {parts: AnthropicSessionKeyParts{ClientThreadID: "  ", ThreadID: "T"}, want: ""},
+		"exactly 128 is kept":                    {parts: AnthropicSessionKeyParts{ClientThreadID: exactly128}, want: exactly128},
+	} {
+		if got := AnthropicSessionKey(testCase.parts); got != testCase.want {
+			t.Fatalf("%s: AnthropicSessionKey = %q, oracle returns %q", name, got, testCase.want)
+		}
+	}
+	// Over 128 is hashed rather than truncated, because truncation could
+	// collide two distinct sessions onto one account.
+	hashed := AnthropicSessionKey(AnthropicSessionKeyParts{ClientThreadID: long})
+	if len(hashed) != 64 || hashed == long[:64] {
+		t.Fatalf("long key = %q, oracle returns a 64-char sha256 hex digest", hashed)
+	}
 }
 
 func TestAnthropicPoolWithNoAccountsReportsNone(t *testing.T) {
