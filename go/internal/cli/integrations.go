@@ -94,8 +94,15 @@ func grokDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO
 		current := []string{}
 		if record, ok := state.(map[string]any); ok {
 			// Only absent or null counts as empty. The oracle builds a Set from
-			// this value, and `new Set(42)` throws, so a present non-array is a
-			// hard failure there and must not become a silent overwrite here.
+			// this value, and `new Set(42)` throws, so a present non-array must
+			// not become a silent overwrite here.
+			//
+			// One deliberate divergence: `new Set("ab")` iterates the string
+			// into ["a","b"] and the oracle would happily PUT that back. Doing
+			// the same would let a malformed server value be rewritten into a
+			// plausible-looking exclusion list, so a string is rejected too.
+			// This can only refuse a write the oracle would have made; it can
+			// never delete an exclusion.
 			if raw, present := record["excluded"]; present && raw != nil {
 				list, ok := raw.([]any)
 				if !ok {

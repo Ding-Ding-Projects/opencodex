@@ -83,7 +83,26 @@ func TestComboSetSerializesClearSentinels(t *testing.T) {
 	if len(*calls) != 1 || (*calls)[0].method != http.MethodPut {
 		t.Fatalf("calls = %+v", *calls)
 	}
+	// Assert the full envelope, not just the sentinels: without this the test
+	// would still pass if the PUT targeted the wrong path or dropped id or
+	// targets entirely.
+	if (*calls)[0].path != "/api/combos" {
+		t.Fatalf("path = %q, want /api/combos", (*calls)[0].path)
+	}
+	if (*calls)[0].body["id"] != "x" {
+		t.Fatalf("id = %#v, want \"x\"", (*calls)[0].body["id"])
+	}
+	if _, renamed := (*calls)[0].body["renameFrom"]; renamed {
+		t.Fatal("renameFrom must be absent when --rename-from was not given")
+	}
 	combo, _ := (*calls)[0].body["combo"].(map[string]any)
+	targets, _ := combo["targets"].([]any)
+	if len(targets) != 1 {
+		t.Fatalf("targets = %#v, want exactly one", combo["targets"])
+	}
+	if first, _ := targets[0].(map[string]any); first["provider"] != "a" || first["model"] != "b" {
+		t.Fatalf("target = %#v, want provider a model b", targets[0])
+	}
 	effort, hasEffort := combo["defaultEffort"]
 	if !hasEffort || effort != nil {
 		t.Fatalf("defaultEffort = %#v, want an explicit null", effort)
@@ -108,6 +127,10 @@ func TestComboRemoveRequiresConfirmation(t *testing.T) {
 	}
 }
 
+// The id is escaped with encodeURIComponent semantics, so a space becomes
+// %20 rather than the "+" url.QueryEscape would emit. The whole URI is
+// asserted, not merely a substring, so a wrong path or a dropped query
+// cannot slip past.
 func TestComboRemoveEscapesTheIdentifier(t *testing.T) {
 	server, calls := comboServer(t, `{}`)
 	if _, err := runComboWith(t, server, "remove", "a b/c", "--yes"); err != nil {
@@ -116,8 +139,8 @@ func TestComboRemoveEscapesTheIdentifier(t *testing.T) {
 	if len(*calls) != 1 || (*calls)[0].method != http.MethodDelete {
 		t.Fatalf("calls = %+v", *calls)
 	}
-	if !strings.Contains((*calls)[0].path, "id=a+b%2Fc") {
-		t.Fatalf("path = %q, want an escaped id", (*calls)[0].path)
+	if (*calls)[0].path != "/api/combos?id=a%20b%2Fc" {
+		t.Fatalf("path = %q, want /api/combos?id=a%%20b%%2Fc", (*calls)[0].path)
 	}
 }
 
@@ -204,6 +227,54 @@ func TestRouteAcceptsOnlyCombo(t *testing.T) {
 	for _, args := range [][]string{nil, {"bogus"}, {"combos"}} {
 		if err := runRoute(context.Background(), args, IO{Out: &out}); err == nil {
 			t.Fatalf("expected %v to be rejected", args)
+		}
+	}
+}
+
+// The parser rejects before anything reaches the network, so a bad --targets
+// or an out-of-range --sticky cannot half-apply a combo.
+func TestComboSetRejectsWithoutSendingARequest(t *testing.T) {
+	for _, args := range [][]string{
+		{"set", "x", "--targets", "openai/m:0"},
+		{"set", "x", "--targets", "openai/m:10001"},
+		{"set", "x", "--targets", "bogus"},
+		{"set", "x"},
+		{"set", "x", "--targets", "a/b", "--sticky", "101"},
+		{"set", "x", "--targets", "a/b", "--strategy", "bogus"},
+	} {
+		server, calls := comboServer(t, `{}`)
+		if _, err := runComboWith(t, server, args...); err == nil {
+			t.Fatalf("%v should have been rejected", args)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("%v sent %+v; nothing should reach the network", args, *calls)
+		}
+	}
+}
+
+// `route` is a thin wrapper that must accept ONLY `combo` and must forward the
+// remaining arguments unchanged. Asserting the forwarded request, not merely
+// the absence of an error, is what proves the delegation.
+func TestRouteAcceptsOnlyComboAndForwardsTheRest(t *testing.T) {
+	server, calls := comboServer(t, `{"combos":[]}`)
+	api := runtimeAPI{BaseURL: server.URL, loadCfg: func() (*config.Config, error) { return &config.Config{}, nil }}
+
+	var out bytes.Buffer
+	if err := routeDispatch(context.Background(), api, []string{"combo", "list"}, IO{Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0].method != http.MethodGet || (*calls)[0].path != "/api/combos" {
+		t.Fatalf("calls = %+v, want one GET /api/combos", *calls)
+	}
+
+	for _, args := range [][]string{{}, {"bogus"}, {"COMBO"}, {"combos"}} {
+		server, calls := comboServer(t, `{}`)
+		_ = server
+		if err := routeDispatch(context.Background(), api, args, IO{Out: &bytes.Buffer{}}); err == nil {
+			t.Fatalf("route %v should have been rejected", args)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("route %v sent %+v", args, *calls)
 		}
 	}
 }

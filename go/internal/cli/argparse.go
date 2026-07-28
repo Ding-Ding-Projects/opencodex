@@ -272,3 +272,22 @@ func isECMAScriptWhitespace(r rune) bool {
 	}
 	return r >= 0x2000 && r <= 0x200a
 }
+
+// encodeURIComponent matches the JavaScript function of the same name.
+//
+// url.QueryEscape is NOT equivalent: it encodes a space as "+", which is
+// correct for form bodies but wrong inside a query VALUE, and it escapes the
+// sub-delimiters JavaScript leaves alone. A combo id containing a space would
+// therefore be looked up under a different key than the oracle uses.
+func encodeURIComponent(value string) string {
+	const unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()"
+	var out strings.Builder
+	for _, b := range []byte(value) {
+		if strings.IndexByte(unreserved, b) >= 0 {
+			out.WriteByte(b)
+			continue
+		}
+		out.WriteString(fmt.Sprintf("%%%02X", b))
+	}
+	return out.String()
+}

@@ -125,14 +125,26 @@ func TestGrokClearSendsEmptySelection(t *testing.T) {
 	}
 }
 
-func TestGrokApplyPrefersServerMessage(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+// Apply is a POST to its own endpoint. Asserting the method and path matters:
+// without it this test would still pass if apply silently issued a GET, or hit
+// the selection endpoint instead and mutated nothing.
+func TestGrokApplyPostsToTheApplyEndpoint(t *testing.T) {
+	var calls []recordedCall
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, recordedCall{method: r.Method, path: r.URL.RequestURI()})
 		_, _ = w.Write([]byte(`{"message":"Applied 3 models."}`))
 	}))
 	defer server.Close()
+
 	out, err := runGrokWith(t, server, "apply")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %+v, want exactly one", calls)
+	}
+	if calls[0].method != http.MethodPost || calls[0].path != "/api/grok/apply" {
+		t.Fatalf("call = %+v, want POST /api/grok/apply", calls[0])
 	}
 	if !strings.Contains(out, "Applied 3 models.") {
 		t.Fatalf("output = %q, want the server's own message", out)
@@ -320,10 +332,14 @@ func TestIntegrationRoutesGrokAndClaudeToTheirRoutes(t *testing.T) {
 	}
 }
 
-// A present but non-array `excluded` is a hard failure in the oracle, because
-// new Set(42) throws. It must not be treated as empty and overwritten.
+// A present but non-array `excluded` must not be treated as empty and
+// overwritten. new Set(42) throws in the oracle, so it never writes either.
+//
+// The string case is a deliberate divergence: new Set("ab") iterates into
+// ["a","b"] and the oracle would PUT that back, rewriting a malformed value
+// into a plausible-looking list. Refusing can only skip a write, never delete.
 func TestGrokRefusesNonListState(t *testing.T) {
-	for _, state := range []string{`{"excluded":42}`, `{"excluded":{"a":1}}`, `{"excluded":"a"}`} {
+	for _, state := range []string{`{"excluded":42}`, `{"excluded":{"a":1}}`, `{"excluded":"ab"}`} {
 		server, calls := grokServer(t, state)
 		if _, err := runGrokWith(t, server, "exclude", "c"); err == nil {
 			t.Fatalf("state %s should be rejected", state)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -256,7 +255,7 @@ func comboRemove(ctx context.Context, api runtimeAPI, args []string, streams IO)
 	if err := rejectArgs(args, comboUsage, false); err != nil {
 		return err
 	}
-	result, err := api.request(ctx, http.MethodDelete, "/api/combos?id="+url.QueryEscape(id), nil)
+	result, err := api.request(ctx, http.MethodDelete, "/api/combos?id="+encodeURIComponent(id), nil)
 	if err != nil {
 		return err
 	}
@@ -269,8 +268,15 @@ const routeUsage = `Usage:
 // runRoute is the `ocx route combo ...` wrapper. It accepts nothing else, so a
 // mistyped surface fails loudly instead of silently doing combo work.
 func runRoute(ctx context.Context, args []string, streams IO) error {
+	return routeDispatch(ctx, runtimeAPI{}, args, streams)
+}
+
+// routeDispatch is split out so a test can assert the FORWARDED request rather
+// than only that no error occurred. The comparison is case-sensitive because
+// the oracle compares the literal string "combo".
+func routeDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	if len(args) == 0 || args[0] != "combo" {
 		return usageError(routeUsage, "route requires the combo subcommand")
 	}
-	return runCombo(ctx, args[1:], streams)
+	return comboDispatch(ctx, api, args[1:], streams)
 }

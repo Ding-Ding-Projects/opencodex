@@ -72,7 +72,7 @@ func PrintHelp(writer io.Writer, command string) error {
 const rootHelp = `opencodex (ocx) — Universal provider proxy for Codex
 
 Usage:
-  ocx init                    Interactive setup (provider + Codex config injection)
+  ocx setup                   Interactive setup (alias: init)
   ocx start [--port <port>]   Start the proxy server (auto-syncs models to Codex)
   ocx stop                    Stop the proxy AND restore native Codex (plain codex works again)
   ocx restore                 Restore native Codex without stopping (alias: eject)
@@ -88,18 +88,17 @@ Usage:
   ocx sync-cache              Refresh Codex's model cache from the active catalog
   ocx status                  Check proxy server status
   ocx doctor                  Diagnose environment/network issues (WSL, proxy, ChatGPT reachability)
-  ocx debug [provider|usage ...]
-                              provider/usage on|off|status|reset|logs [-f]
-  ocx login <provider>        OAuth login (xai) — opens browser, stores token in ~/.opencodex/auth.json
+  ocx debug <scope>           provider/usage/injection/claude on|off|status|reset
+  ocx login <provider>        OAuth or API-key provider login
   ocx logout <provider>       Remove a stored OAuth login
   ocx gui                     Open the opencodex dashboard
   ocx update [--tag <tag>]    Update opencodex (keeps preview installs on @preview)
   ocx restart                  Stop and restart the proxy
   ocx v2 <sub>                multi_agent_v2 surface (status|on|off|mode|threads)
   ocx health [--json]          Check proxy health (exit 0=healthy, 1=not)
-  ocx provider <sub>          Manage providers (list|add|remove|show|set-default)
-  ocx account <sub>           Accounts/keys (list|current|use|refresh|auto-switch|remove|add-key)
-  ocx models <sub>            List models; manage custom models (add|remove|list-custom)
+  ocx provider <sub>          Providers, connectivity, quota, and selected models
+  ocx account <sub>           Accounts, login/reauth, key pools, and quota controls
+  ocx models <sub>            Live/custom models, visibility, context, and shadow calls
   ocx combo <sub>             Combo failover/round-robin routing
   ocx agent <sub>             Subagents, injection, effort caps, and sidecars
   ocx grok <sub>              Grok Build model selection and apply

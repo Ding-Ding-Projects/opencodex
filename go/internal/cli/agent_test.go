@@ -78,8 +78,16 @@ func TestAgentStatusReadsEverySurface(t *testing.T) {
 	if _, err := runAgentWith(t, server); err != nil {
 		t.Fatal(err)
 	}
+	// Exactly six reads, all GET: a seventh would mean a duplicate fetch and a
+	// non-GET would mean status is mutating something.
+	if len(*calls) != 6 {
+		t.Fatalf("status issued %d requests, want exactly 6: %+v", len(*calls), *calls)
+	}
 	seen := map[string]bool{}
 	for _, call := range *calls {
+		if call.method != http.MethodGet {
+			t.Fatalf("status issued %s %s; it must only read", call.method, call.path)
+		}
 		seen[call.path] = true
 	}
 	for _, path := range []string{

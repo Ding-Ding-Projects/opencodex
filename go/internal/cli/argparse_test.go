@@ -221,3 +221,24 @@ func TestConsumingParsersDoNotCorruptSharedBackingArray(t *testing.T) {
 		t.Fatalf("caller's slice was rewritten: %v", options)
 	}
 }
+
+// url.QueryEscape encodes a space as "+" and escapes sub-delimiters that
+// JavaScript leaves alone, so a combo id containing either would be looked up
+// under a different key than the oracle uses. Expected values were produced by
+// running encodeURIComponent in Bun.
+func TestEncodeURIComponentMatchesJavaScript(t *testing.T) {
+	for _, testCase := range []struct{ raw, want string }{
+		{raw: "a b/c", want: "a%20b%2Fc"},
+		{raw: "x+y", want: "x%2By"},
+		{raw: "é", want: "%C3%A9"},
+		{raw: "a~b", want: "a~b"},
+		{raw: "a!b", want: "a!b"},
+		{raw: "a'b", want: "a'b"},
+		{raw: "a(b)", want: "a(b)"},
+		{raw: "a*b", want: "a*b"},
+	} {
+		if got := encodeURIComponent(testCase.raw); got != testCase.want {
+			t.Fatalf("encodeURIComponent(%q) = %q, want %q", testCase.raw, got, testCase.want)
+		}
+	}
+}
