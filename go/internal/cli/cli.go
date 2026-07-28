@@ -79,6 +79,8 @@ func defaultCommandSpecs() []commandSpec {
 		{Name: "usage", Usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", Summary: "Alias of ocx observe usage.", Handler: runObserveUsage, Hidden: true},
 		{Name: "storage", Usage: "ocx storage [--json]", Summary: "Alias of ocx observe storage.", Handler: runObserveStorage, Hidden: true},
 		{Name: "memory", Usage: "ocx memory [--json]", Summary: "Alias of ocx observe memory.", Handler: runObserveMemory, Hidden: true},
+		{Name: "access", Usage: "ocx access <subcommand>", Summary: "External API keys and endpoint information", Handler: runAccess},
+		{Name: "api-key", Usage: "ocx api-key <subcommand>", Summary: "API access keys (alias for access key)", Handler: runAccessKey, Hidden: true},
 		{Name: "integration", Usage: "ocx integration <claude|grok> <subcommand>", Summary: "Claude Code and Grok integration settings", Handler: runIntegration},
 		{Name: "init", Aliases: []string{"setup"}, Usage: "ocx init", Summary: "Interactive provider setup", Handler: noContext(runInit)},
 		{Name: "status", Usage: "ocx status", Summary: "Show proxy and service status", Handler: runStatus},

@@ -21,7 +21,7 @@ import (
 // human summary must print nothing, not dump JSON at the user.
 func printData(streams IO, payload any, wantsJSON bool, lines []string) error {
 	if wantsJSON || lines == nil {
-		encoded, err := json.MarshalIndent(payload, "", "  ")
+		encoded, err := marshalIndentLikeJS(payload)
 		if err != nil {
 			return err
 		}
@@ -65,7 +65,7 @@ func orderedObject(pairs [][2]any) (orderedJSON, error) {
 		if encodeErr != nil {
 			return orderedJSON{}, encodeErr
 		}
-		value, encodeErr := json.Marshal(pair[1])
+		value, encodeErr := json.Marshal(jsSafe(pair[1]))
 		if encodeErr != nil {
 			return orderedJSON{}, encodeErr
 		}
@@ -243,4 +243,39 @@ func indexOfKey(keys []string, key string) int {
 		}
 	}
 	return -1
+}
+
+// jsSafe replaces non-finite floats with nil.
+//
+// JSON.stringify renders Infinity and NaN as null, while Go's encoder refuses
+// them outright. A management response carrying an out-of-range number would
+// otherwise fail to print at all.
+func jsSafe(value any) any {
+	switch typed := value.(type) {
+	case float64:
+		if math.IsInf(typed, 0) || math.IsNaN(typed) {
+			return nil
+		}
+		return typed
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			out[key] = jsSafe(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for index, child := range typed {
+			out[index] = jsSafe(child)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// marshalIndentLikeJS indents like the oracle's JSON.stringify(value, null, 2)
+// while tolerating the non-finite numbers JSON.parse can produce.
+func marshalIndentLikeJS(payload any) ([]byte, error) {
+	return json.MarshalIndent(jsSafe(payload), "", "  ")
 }

@@ -243,6 +243,19 @@ func formatLog(entry any) string {
 // logKey identifies a row for follow-mode de-duplication.
 func logKey(entry any) string {
 	row := rowObject(entry)
+	// A non-object row has no properties, so every field reads as undefined and
+	// the oracle's template literal collapses them all to one key. Reproducing
+	// the exact text keeps follow-mode de-duplication identical, and it is
+	// internal: this string is never printed.
+	//
+	// One deliberate divergence: the oracle reads `row.id` before the null
+	// check, so a null entry throws a TypeError and kills the command after
+	// printing the earlier rows. Crashing the CLI to copy a crash would make a
+	// malformed response harder to diagnose, not easier, so a null row is
+	// simply treated as fieldless.
+	if row == nil {
+		return "undefined:undefined:undefined:undefined"
+	}
 	if id := firstText(row, "id"); id != "" {
 		return id
 	}

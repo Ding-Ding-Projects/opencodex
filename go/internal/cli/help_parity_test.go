@@ -44,7 +44,6 @@ func TestRootHelpConvergesOnOracleBytes(t *testing.T) {
 	// Commands whose help line legitimately does not exist yet. Each entry is
 	// removed by the work-phase that ports the command.
 	pending := map[string]string{
-		"access":   "040",
 		"opencode": "050",
 	}
 	isPending := func(line string) bool {

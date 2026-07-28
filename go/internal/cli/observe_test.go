@@ -530,3 +530,17 @@ func TestOrderedDecodeRejectsTrailingContent(t *testing.T) {
 		t.Fatalf("a lone value must still parse: %v", err)
 	}
 }
+
+// A non-object row has no properties, so the oracle's key template collapses
+// every one of them to the same string. Follow-mode de-duplication depends on
+// that collapse, so the exact text is pinned.
+func TestObserveLogKeyForNonObjectRows(t *testing.T) {
+	for _, row := range []any{float64(1), "text", nil} {
+		if got := logKey(row); got != "undefined:undefined:undefined:undefined" {
+			t.Fatalf("logKey(%#v) = %q, want the oracle's collapsed key", row, got)
+		}
+		if got := formatLog(row); got != "?" {
+			t.Fatalf("formatLog(%#v) = %q, want %q", row, got, "?")
+		}
+	}
+}
