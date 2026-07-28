@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/server"
 )
 
@@ -33,13 +35,18 @@ type runtimeAPI struct {
 	// BaseURL short-circuits proxy discovery. Tests inject an httptest URL.
 	BaseURL string
 	Client  *http.Client
-	// Headers are merged OVER the defaults, so a caller can override
+	// Headers are applied OVER the defaults, so a caller can override
 	// Content-Type without having to restate the management credential.
+	// Applied through http.Header.Set, so the match is case-insensitive
+	// exactly like the oracle's Headers object.
 	Headers map[string]string
 	// findProxy and loadCfg are seams so a test can drive the discovery and
 	// credential paths without a live proxy or a real config file.
 	findProxy func(context.Context, *config.Config) (hostname string, port int, ok bool)
 	loadCfg   func() (*config.Config, error)
+	// loadToken resolves the admission credential. Tests inject it to avoid
+	// touching the real config directory.
+	loadToken func(*config.Config) string
 	// cached holds the resolved configuration for this client's lifetime.
 	// Re-reading per request is not free of consequence: loadConfig falls
 	// through to BackupInvalidConfig, which WRITES a backup file when the
@@ -74,23 +81,62 @@ func (api *runtimeAPI) configuration() *config.Config {
 	return cfg
 }
 
-// managementHeaders builds the default headers for a management request.
+// managementToken resolves the admission credential the proxy expects.
+//
+// The order is the one the rest of this CLI already uses (status.go,
+// service.go): environment variable, then the service token file, then the
+// configured value. A managed service is started with its token in
+// `service-api-token` and never in the config, so reading only the config
+// makes every management command 401 against exactly the deployment most
+// likely to be running.
+func (api *runtimeAPI) managementToken(cfg *config.Config) string {
+	if api.loadToken != nil {
+		return strings.TrimSpace(api.loadToken(cfg))
+	}
+	tokenFile := ""
+	if dir, err := configDir(); err == nil {
+		tokenFile = filepath.Join(dir, "service-api-token")
+	}
+	if token, err := platform.LoadServiceToken(os.Getenv("OPENCODEX_API_AUTH_TOKEN"), tokenFile); err == nil && token != "" {
+		return token
+	}
+	if cfg == nil {
+		return ""
+	}
+	// The server resolves `$NAME` indirection before comparing, so a config
+	// holding a reference must be dereferenced here too or the client sends
+	// the literal text and is rejected.
+	return strings.TrimSpace(resolveTokenReference(cfg.AuthToken))
+}
+
+// resolveTokenReference expands a leading `$` environment reference.
+func resolveTokenReference(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if name, found := strings.CutPrefix(trimmed, "$"); found && name != "" {
+		return strings.TrimSpace(os.Getenv(name))
+	}
+	return trimmed
+}
+
+// managementHeaders builds the headers for a management request.
 //
 // The oracle's runningProxyUpdateHeaders always sets Content-Type and adds the
 // admission credential when one is configured. Omitting the credential is not a
 // harmless default: the proxy answers /api/* with 401, so every ported command
 // would fail against a protected proxy.
-func (api *runtimeAPI) managementHeaders(cfg *config.Config) map[string]string {
-	headers := map[string]string{"Content-Type": "application/json"}
-	token := strings.TrimSpace(os.Getenv("OPENCODEX_API_AUTH_TOKEN"))
-	if token == "" && cfg != nil {
-		token = strings.TrimSpace(cfg.AuthToken)
-	}
-	if token != "" {
-		headers["X-OpenCodex-API-Key"] = token
+//
+// http.Header is used rather than a plain map so caller overrides match
+// case-insensitively. With a map, a caller passing `content-type` would leave
+// the default `Content-Type` entry in place and random map iteration would
+// decide which one won.
+func (api *runtimeAPI) managementHeaders(cfg *config.Config) http.Header {
+	headers := http.Header{}
+	headers.Set("Content-Type", "application/json")
+	if token := api.managementToken(cfg); token != "" {
+		headers.Set("X-OpenCodex-API-Key", token)
 	}
 	for key, value := range api.Headers {
-		headers[key] = value
+		headers.Set(key, value)
 	}
 	return headers
 }
@@ -187,8 +233,10 @@ func (api *runtimeAPI) request(ctx context.Context, method, path string, payload
 	if err != nil {
 		return nil, err
 	}
-	for key, value := range api.managementHeaders(cfg) {
-		request.Header.Set(key, value)
+	for key, values := range api.managementHeaders(cfg) {
+		for _, value := range values {
+			request.Header.Set(key, value)
+		}
 	}
 	response, err := api.client().Do(request)
 	if err != nil {

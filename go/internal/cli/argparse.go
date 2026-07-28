@@ -89,10 +89,29 @@ func takeBooleanOption(args *[]string, flag string) (bool, bool, error) {
 // while accepting Go-only spellings. Approximating it means the Go CLI silently
 // accepts or rejects values the TypeScript CLI does not.
 func jsNumber(raw string) (float64, bool) {
-	trimmed := strings.Trim(raw, " \t\n\r\v\f\u00a0\ufeff")
+	// The ECMAScript StrWhiteSpace set, not Go's: it includes the Unicode Zs
+	// category, U+0085 is excluded, and U+00A0/U+FEFF are included.
+	trimmed := strings.TrimFunc(raw, isECMAScriptWhitespace)
 	// Number("") and Number("   ") are both 0, not NaN.
 	if trimmed == "" {
 		return 0, true
+	}
+	// Radix literals admit NO sign at all in ECMAScript: both Number("-0x10")
+	// and Number("+0x10") are NaN, so this check precedes sign handling.
+	for _, radix := range []struct {
+		prefix string
+		base   int
+	}{{"0x", 16}, {"0X", 16}, {"0o", 8}, {"0O", 8}, {"0b", 2}, {"0B", 2}} {
+		if digits, found := strings.CutPrefix(trimmed, radix.prefix); found {
+			if digits == "" {
+				return 0, false
+			}
+			value, err := strconv.ParseUint(digits, radix.base, 64)
+			if err != nil {
+				return 0, false
+			}
+			return float64(value), true
+		}
 	}
 	sign := 1.0
 	unsigned := trimmed
@@ -104,18 +123,10 @@ func jsNumber(raw string) (float64, bool) {
 	if unsigned == "Infinity" {
 		return sign * math.Inf(1), true
 	}
-	// Radix literals are unsigned in ECMAScript: Number("-0x10") is NaN.
-	for prefix, base := range map[string]int{"0x": 16, "0X": 16, "0o": 8, "0O": 8, "0b": 2, "0B": 2} {
-		if digits, found := strings.CutPrefix(unsigned, prefix); found {
-			if sign < 0 || digits == "" {
-				return 0, false
-			}
-			value, err := strconv.ParseUint(digits, base, 64)
-			if err != nil {
-				return 0, false
-			}
-			return float64(value), true
-		}
+	// A radix prefix behind a sign is NaN, and so is any other Go-only
+	// spelling ParseFloat would otherwise accept.
+	if strings.ContainsAny(unsigned, "xXoObB") {
+		return 0, false
 	}
 	value, err := strconv.ParseFloat(trimmed, 64)
 	if err != nil {
@@ -150,8 +161,12 @@ func takeIntegerOption(args *[]string, flag string, min *int) (int, bool, error)
 		return reject()
 	}
 	// Number.isInteger accepts magnitudes beyond int64; converting those is
-	// implementation-defined in Go, so refuse instead of wrapping.
-	if parsed > math.MaxInt64 || parsed < math.MinInt64 {
+	// implementation-defined in Go, so refuse instead of wrapping. The bound is
+	// written as 2^63 rather than math.MaxInt64 because float64(math.MaxInt64)
+	// rounds UP to exactly 2^63, so a `>` comparison against it lets 2^63
+	// through and int(parsed) is then undefined.
+	const twoToThe63 = float64(1<<62) * 2
+	if parsed >= twoToThe63 || parsed < -twoToThe63 {
 		return reject()
 	}
 	value := int(parsed)
@@ -242,4 +257,18 @@ func inlineSecretOption(arg string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// isECMAScriptWhitespace reports whether r is trimmed by Number(string).
+//
+// The set is StrWhiteSpace from the spec: the Unicode Zs category plus tab,
+// line feed, vertical tab, form feed, carriage return, line/paragraph
+// separator, and the byte order mark. Notably U+0085 NEXT LINE is NOT in it,
+// even though Go's unicode.IsSpace accepts it.
+func isECMAScriptWhitespace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', 0x00a0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
+		return true
+	}
+	return r >= 0x2000 && r <= 0x200a
 }

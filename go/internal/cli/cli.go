@@ -66,6 +66,8 @@ func defaultCommandSpecs() []commandSpec {
 		{Name: "account", Usage: "ocx account <subcommand>", Summary: "Manage provider accounts", Handler: runAccount},
 		{Name: "provider", Usage: "ocx provider <subcommand>", Summary: "Manage providers", Handler: noContext(runProvider)},
 		{Name: "models", Aliases: []string{"model"}, Usage: "ocx models [subcommand]", Summary: "List models and effort support", Handler: noContext(runModels)},
+		{Name: "combo", Usage: "ocx combo <subcommand>", Summary: "Manage combo failover/round-robin routing", Handler: runCombo},
+		{Name: "route", Usage: "ocx route combo <subcommand>", Summary: "Routing surfaces (combo)", Handler: runRoute},
 		{Name: "init", Aliases: []string{"setup"}, Usage: "ocx init", Summary: "Interactive provider setup", Handler: noContext(runInit)},
 		{Name: "status", Usage: "ocx status", Summary: "Show proxy and service status", Handler: runStatus},
 		{Name: "doctor", Usage: "ocx doctor [--json]", Summary: "Run environment diagnostics", Handler: runDoctor},

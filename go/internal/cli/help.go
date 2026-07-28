@@ -24,6 +24,8 @@ var commandHelp = map[string]string{
 	"diagnostics": "Usage: ocx diagnostics [--json]\n\nPrint a secret-free local diagnostic report.",
 	"completion":  "Usage: ocx completion <bash|zsh|fish|powershell>\n\nGenerate shell completion setup.",
 	"config":      "Usage: ocx config <path|show|get|set|unset|validate> [arguments]\n\nInspect and update validated configuration values.",
+	"combo":       comboUsage,
+	"route":       routeUsage,
 	"claude": "Usage: ocx claude [claude arguments...]\n\nLaunch Claude Code with proxy environment variables.\n\n" +
 		"Claude Desktop profile:\n" +
 		"  ocx claude desktop [apply] [--static|--hybrid|--discovery-only]\n" +
@@ -95,6 +97,7 @@ Usage:
   ocx provider <sub>          Manage providers (list|add|remove|show|set-default)
   ocx account <sub>           Accounts/keys (list|current|use|refresh|auto-switch|remove|add-key)
   ocx models <sub>            List models; manage custom models (add|remove|list-custom)
+  ocx combo <sub>             Combo failover/round-robin routing
   ocx config <sub>            Validated configuration show/get/set/import/export
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile
