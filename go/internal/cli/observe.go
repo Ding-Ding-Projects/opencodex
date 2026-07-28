@@ -329,7 +329,7 @@ func observeLogs(ctx context.Context, api runtimeAPI, args []string, streams IO)
 				// boundary rather than quietly rendering something the oracle
 				// would never show.
 				if row == nil {
-					return fmt.Errorf("cannot read properties of null (reading 'id')")
+					return fmt.Errorf("null is not an object (evaluating 'row.id')")
 				}
 				key := logKey(row)
 				if follow {

@@ -21,3 +21,7 @@ devlog/
 # Test-generated artifacts
 tests/.tmp-*/
 .claude/
+
+# `go build ./cmd/ocx` from inside go/ drops the binary next to the source.
+go/ocx
+go/ocx.exe

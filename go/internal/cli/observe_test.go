@@ -360,8 +360,11 @@ func TestObserveStopsAtANullRowLikeTheOracle(t *testing.T) {
 	if err == nil {
 		t.Fatal("a null row must fail the command, as it does in the oracle")
 	}
-	if !strings.Contains(err.Error(), "reading 'id'") {
-		t.Fatalf("err = %q, want the oracle's property-access wording", err)
+	// The oracle's exact runtime message, not merely a substring of it: a
+	// paraphrase would still pass a Contains check while reading differently
+	// from the TypeScript CLI.
+	if err.Error() != "null is not an object (evaluating 'row.id')" {
+		t.Fatalf("err = %q, want the oracle's exact wording", err)
 	}
 	// The rows before it were already printed; the null row and the row after
 	// it were not.
