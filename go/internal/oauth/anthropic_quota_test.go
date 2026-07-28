@@ -140,9 +140,15 @@ func TestAnthropicQuotaLookupNeverProbes(t *testing.T) {
 	}
 }
 
-// Utilization arrives as a fraction in some responses and a percentage in
-// others; a non-finite value is dropped rather than clamped, because NaN
-// becoming 0 would make a drained account look empty.
+// The oracle's normalizePercent is a plain clamp with NO rescaling. These
+// expectations were captured by running its exact expression:
+//
+//	42 -> 42, 0.42 -> 0.42, 1 -> 1, 150 -> 100, -5 -> 0, NaN -> undefined
+//
+// An earlier version of this port rescaled values in (0,1] by 100, which
+// turned an account at 0.42% into one at 42% and changed which account
+// rotation picked. A non-finite value is dropped rather than clamped, matching
+// toFiniteNumber returning undefined.
 func TestNormalizeQuotaPercent(t *testing.T) {
 	value := func(v float64) *float64 { return &v }
 	for _, testCase := range []struct {
@@ -150,9 +156,9 @@ func TestNormalizeQuotaPercent(t *testing.T) {
 		raw  *float64
 		want *float64
 	}{
-		{name: "percentage", raw: value(42), want: value(42)},
-		{name: "fraction is scaled", raw: value(0.42), want: value(42)},
-		{name: "one is a fraction", raw: value(1), want: value(100)},
+		{name: "percentage passes through", raw: value(42), want: value(42)},
+		{name: "a small value is NOT rescaled", raw: value(0.42), want: value(0.42)},
+		{name: "one stays one", raw: value(1), want: value(1)},
 		{name: "over 100 clamps", raw: value(150), want: value(100)},
 		{name: "negative clamps", raw: value(-5), want: value(0)},
 		{name: "absent stays absent", raw: nil, want: nil},
@@ -169,18 +175,43 @@ func TestNormalizeQuotaPercent(t *testing.T) {
 	}
 }
 
-// resets_at has been observed as epoch seconds, epoch millis and RFC 3339.
-func TestNormalizeQuotaResetAt(t *testing.T) {
-	if got := normalizeQuotaResetAt(float64(1800000000)); got == nil || got.Year() != 2027 {
-		t.Fatalf("epoch seconds = %v", got)
-	}
-	if got := normalizeQuotaResetAt(float64(1800000000000)); got == nil || got.Year() != 2027 {
-		t.Fatalf("epoch millis = %v", got)
-	}
-	if got := normalizeQuotaResetAt("2026-07-28T12:00:00Z"); got == nil || got.Year() != 2026 {
-		t.Fatalf("rfc3339 = %v", got)
-	}
-	if got := normalizeQuotaResetAt("not a time"); got != nil {
-		t.Fatalf("garbage parsed to %v", got)
+// Expected epoch-millisecond values captured by RUNNING the oracle's
+// normalizeResetAt expression from src/providers/quota.ts.
+//
+// The boundary cases are the point. The seconds-vs-millis cutoff is EXACTLY
+// 10_000_000_000: 10000000000 is still treated as seconds and multiplied,
+// while 10000000001 is already milliseconds. And "1771077734000" must be read
+// as a numeric epoch string, because Date.parse rejects it — treating it as
+// text would silently drop the reset time.
+func TestNormalizeQuotaResetAtMatchesTheOracle(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		raw  any
+		want int64 // oracle's epoch milliseconds; 0 means undefined
+	}{
+		{name: "epoch seconds", raw: float64(1800000000), want: 1800000000000},
+		{name: "epoch millis", raw: float64(1800000000000), want: 1800000000000},
+		{name: "exactly at the cutoff is seconds", raw: float64(10000000000), want: 10000000000000},
+		{name: "one past the cutoff is millis", raw: float64(10000000001), want: 10000000001},
+		{name: "numeric epoch string", raw: "1771077734000", want: 1771077734000},
+		{name: "rfc3339", raw: "2026-07-28T12:00:00Z", want: 1785240000000},
+		{name: "garbage", raw: "not a time", want: 0},
+		{name: "empty", raw: "", want: 0},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := normalizeQuotaResetAt(testCase.raw)
+			if testCase.want == 0 {
+				if got != nil {
+					t.Fatalf("got %v, oracle returns undefined", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("got nil, oracle returns %d", testCase.want)
+			}
+			if got.UnixMilli() != testCase.want {
+				t.Fatalf("got %d ms, oracle returns %d ms", got.UnixMilli(), testCase.want)
+			}
+		})
 	}
 }

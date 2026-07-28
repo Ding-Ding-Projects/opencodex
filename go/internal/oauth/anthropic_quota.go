@@ -19,6 +19,9 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -209,48 +212,73 @@ func (e *QuotaProbeError) Error() string {
 	return "anthropic usage probe failed with status " + http.StatusText(e.Status)
 }
 
-// normalizeQuotaPercent clamps to 0..100.
+// normalizeQuotaPercent clamps to 0..100 and nothing else.
 //
-// Anthropic reports utilization as a fraction in some responses and as a
-// percentage in others, so a value in 0..1 is scaled. A non-finite value is
-// dropped rather than clamped: NaN would otherwise become 0 and make a drained
+// It deliberately does NOT rescale small values. An earlier version treated a
+// value in (0,1] as a fraction and multiplied by 100, which is wrong: the
+// oracle's normalizePercent (src/providers/quota.ts) is a plain
+// Math.max(0, Math.min(100, n)), so it returns 0.42 for 0.42 and 1 for 1.
+// Scaling turned an account at 0.42% into one at 42% and changed which account
+// rotation picked.
+//
+// A non-finite value is DROPPED rather than clamped, matching the oracle's
+// toFiniteNumber returning undefined: clamping NaN to 0 would make a drained
 // account look empty.
 func normalizeQuotaPercent(raw *float64) *float64 {
 	if raw == nil || math.IsNaN(*raw) || math.IsInf(*raw, 0) {
 		return nil
 	}
-	value := *raw
-	if value > 0 && value <= 1 {
-		value *= 100
-	}
-	value = math.Max(0, math.Min(100, value))
+	value := math.Max(0, math.Min(100, *raw))
 	return &value
 }
 
-// normalizeQuotaResetAt accepts epoch seconds, epoch milliseconds, or an
-// RFC 3339 string, which are the three shapes this endpoint has been observed
-// to return.
+// normalizeQuotaResetAt mirrors normalizeResetAt in src/providers/quota.ts.
+//
+// Three details are copied deliberately, because each one changes the answer:
+//
+//   - the seconds-vs-millis cutoff is EXACTLY 10_000_000_000, not a rounder
+//     10^11. A value above it is already milliseconds; anything else is
+//     seconds and is multiplied by 1000.
+//   - a NUMERIC STRING is handled before date parsing. Some upstreams return
+//     a unix-ms decimal string such as "1771077734000", which Date.parse
+//     rejects outright, so treating it as text would silently drop the reset
+//     time.
+//   - a non-numeric string goes through general date parsing rather than
+//     strict RFC 3339, matching Date.parse.
 func normalizeQuotaResetAt(raw any) *time.Time {
-	switch value := raw.(type) {
-	case float64:
-		if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+	const millisecondCutoff = 10_000_000_000.0
+	fromEpoch := func(value float64) *time.Time {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil
 		}
-		// Seconds and milliseconds are told apart by magnitude: anything below
-		// 10^11 cannot be a plausible millisecond timestamp.
-		if value < 1e11 {
-			parsed := time.Unix(int64(value), 0).UTC()
-			return &parsed
+		if value <= millisecondCutoff {
+			value *= 1000
 		}
 		parsed := time.UnixMilli(int64(value)).UTC()
 		return &parsed
+	}
+	switch value := raw.(type) {
+	case float64:
+		return fromEpoch(value)
 	case string:
-		parsed, err := time.Parse(time.RFC3339, value)
-		if err != nil {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
 			return nil
 		}
-		parsed = parsed.UTC()
-		return &parsed
+		if numericStringPattern.MatchString(trimmed) {
+			if numeric, err := strconv.ParseFloat(trimmed, 64); err == nil {
+				return fromEpoch(numeric)
+			}
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, time.RFC1123, http.TimeFormat} {
+			if parsed, err := time.Parse(layout, trimmed); err == nil {
+				parsed = parsed.UTC()
+				return &parsed
+			}
+		}
+		return nil
 	}
 	return nil
 }
+
+var numericStringPattern = regexp.MustCompile(`^\d+(\.\d+)?$`)
