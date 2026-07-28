@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -83,7 +82,11 @@ type imageCallArgs struct {
 // array parses as an object in JavaScript and therefore reaches the
 // missing-prompt branch instead of the invalid-JSON one.
 func parseImageCallArgs(raw string, plan Plan) (imageCallArgs, error) {
-	if strings.TrimSpace(raw) == "" {
+	// Only a genuinely absent argument string becomes "{}". Whitespace is NOT
+	// trimmed first: the oracle passes " " to JSON.parse, which rejects it, so
+	// trimming here would turn an invalid-JSON refusal into a missing-prompt
+	// one and report the wrong thing to the model.
+	if raw == "" {
 		raw = "{}"
 	}
 	var decoded any
@@ -102,8 +105,12 @@ func parseImageCallArgs(raw string, plan Plan) (imageCallArgs, error) {
 		return imageCallArgs{}, errors.New("invalid arguments JSON")
 	}
 
-	prompt, _ := fields["prompt"].(string)
-	if prompt == "" {
+	// The fallback is on TYPE, not on emptiness. A present-but-empty prompt
+	// wins over input and then fails the missing-prompt check, which is what
+	// stops an empty primary field from quietly triggering a PAID call with
+	// somebody else's text.
+	prompt, isString := fields["prompt"].(string)
+	if !isString {
 		prompt, _ = fields["input"].(string)
 	}
 	if prompt == "" {
@@ -118,8 +125,11 @@ func parseImageCallArgs(raw string, plan Plan) (imageCallArgs, error) {
 		count = int(math.Max(1, math.Min(4, math.Floor(raw))))
 	}
 
-	imageURL, _ := fields["image_url"].(string)
-	if imageURL == "" {
+	// Same rule: an empty image_url is still a chosen image_url, so the call
+	// stays a generation rather than silently becoming an edit against a
+	// fallback URL the caller did not select.
+	imageURL, isString := fields["image_url"].(string)
+	if !isString {
 		imageURL, _ = fields["image"].(string)
 	}
 	size, ok := fields["size"].(string)

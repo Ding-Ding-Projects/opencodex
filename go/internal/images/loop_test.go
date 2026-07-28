@@ -320,3 +320,45 @@ func TestFulfillImageCallSerializesRetention(t *testing.T) {
 		}
 	}
 }
+
+// The oracle's fallbacks are TYPE checks, not emptiness checks. A
+// present-but-empty primary field wins and then fails validation, which is what
+// stops an empty prompt from quietly triggering a paid call with the text from
+// a different field.
+func TestParseImageCallArgsFallsBackOnTypeNotEmptiness(t *testing.T) {
+	plan := argsPlan()
+
+	// An empty prompt does NOT fall through to input.
+	_, err := parseImageCallArgs(`{"prompt":"","input":"fallback"}`, plan)
+	if err == nil || err.Error() != "missing prompt" {
+		t.Fatalf("err = %v, oracle returns missing prompt rather than using the fallback", err)
+	}
+
+	// An empty image_url does NOT fall through to image, so the call stays a
+	// generation instead of becoming an edit against a URL nobody chose.
+	args, err := parseImageCallArgs(`{"prompt":"p","image_url":"","image":"https://f/i.png"}`, plan)
+	if err != nil || args.ImageURL != "" {
+		t.Fatalf("image url = %q err = %v, oracle keeps the empty image_url", args.ImageURL, err)
+	}
+
+	// A MISSING primary field still falls through, which is the case the
+	// fallback exists for.
+	fallback, err := parseImageCallArgs(`{"input":"b","image":"https://f/i.png"}`, plan)
+	if err != nil || fallback.Prompt != "b" || fallback.ImageURL != "https://f/i.png" {
+		t.Fatalf("fallback = %#v err = %v", fallback, err)
+	}
+}
+
+// Whitespace-only arguments are invalid JSON, not an empty object. Trimming
+// first would report missing-prompt where the oracle reports a parse failure.
+func TestParseImageCallArgsRejectsWhitespaceArguments(t *testing.T) {
+	_, err := parseImageCallArgs(" ", argsPlan())
+	if err == nil || err.Error() != "invalid arguments JSON" {
+		t.Fatalf("err = %v, oracle returns invalid arguments JSON", err)
+	}
+	// A genuinely absent argument string is still an empty object.
+	_, err = parseImageCallArgs("", argsPlan())
+	if err == nil || err.Error() != "missing prompt" {
+		t.Fatalf("empty string err = %v, oracle treats it as {}", err)
+	}
+}
