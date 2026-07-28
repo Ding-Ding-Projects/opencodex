@@ -90,7 +90,6 @@ type orderedValue struct {
 // decodeOrdered parses JSON while recording object key order.
 func decodeOrdered(raw []byte) (orderedValue, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
 	value, err := decodeOrderedFrom(decoder)
 	if err != nil {
 		return orderedValue{}, err
@@ -120,6 +119,12 @@ func decodeOrderedFrom(decoder *json.Decoder) (orderedValue, error) {
 				if childErr != nil {
 					return orderedValue{}, childErr
 				}
+				// Duplicate keys overwrite in place, the way JSON.parse keeps
+				// the last occurrence while retaining the first position.
+				if existing := indexOfKey(out.keys, key); existing >= 0 {
+					out.values[existing] = child
+					continue
+				}
 				out.keys = append(out.keys, key)
 				out.values = append(out.values, child)
 			}
@@ -141,6 +146,13 @@ func decodeOrderedFrom(decoder *json.Decoder) (orderedValue, error) {
 		}
 		return out, nil
 	default:
+		// JSON.parse yields an IEEE-754 double and JSON.stringify renders it
+		// with String(number) semantics, so the source spelling is deliberately
+		// discarded: 12345678901234567890 becomes 12345678901234567000, 1.00
+		// becomes 1, and 1e+3 becomes 1000.
+		if number, isNumber := typed.(float64); isNumber {
+			return orderedValue{kind: 's', scalar: []byte(jsNumberText(number)), present: true}, nil
+		}
 		encoded, marshalErr := json.Marshal(typed)
 		if marshalErr != nil {
 			return orderedValue{}, marshalErr
@@ -193,3 +205,12 @@ func (v orderedValue) MarshalJSON() ([]byte, error) {
 }
 
 func (v orderedValue) isObject() bool { return v.kind == 'o' }
+
+func indexOfKey(keys []string, key string) int {
+	for index, candidate := range keys {
+		if candidate == key {
+			return index
+		}
+	}
+	return -1
+}

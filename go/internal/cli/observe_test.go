@@ -352,14 +352,53 @@ func TestObserveJSONLNormalizesLikeJSONStringify(t *testing.T) {
 	}
 }
 
-// Numbers must not be reformatted on the way through.
-func TestObserveJSONLPreservesNumberSpelling(t *testing.T) {
-	server, _ := observeServer(t, `[{"big":12345678901234567890,"rate":1e-7}]`)
+// Numbers go through IEEE-754 exactly as JSON.parse does, so the source
+// spelling is deliberately NOT preserved. Bun: 12345678901234567890 becomes
+// 12345678901234567000, 1.00 becomes 1, and 1e+3 becomes 1000.
+func TestObserveJSONLNormalizesNumbersLikeJavaScript(t *testing.T) {
+	server, _ := observeServer(t, `[{"big":12345678901234567890,"round":1.00,"exp":1e+3,"rate":1e-7}]`)
 	out, err := runObserveWith(t, server, "logs", "--jsonl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if line := strings.TrimSpace(out); !strings.Contains(line, "12345678901234567890") {
-		t.Fatalf("jsonl line = %s, want the large integer intact", line)
+	line := strings.TrimSpace(out)
+	if line != `{"big":12345678901234567000,"round":1,"exp":1000,"rate":1e-7}` {
+		t.Fatalf("jsonl line = %s, want JavaScript number normalization", line)
+	}
+}
+
+// JSON.parse keeps the LAST value for a duplicate key while retaining the
+// position of the first occurrence.
+func TestObserveJSONLAppliesDuplicateKeyOverwrite(t *testing.T) {
+	server, _ := observeServer(t, `{"logs":[{"first":1}],"logs":[{"second":2}]}`)
+	out, err := runObserveWith(t, server, "logs", "--jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := strings.TrimSpace(out); line != `{"second":2}` {
+		t.Fatalf("jsonl line = %s, want the last duplicate wrapper to win", line)
+	}
+}
+
+func TestOrderedDecodeKeepsFirstPositionForDuplicateKeys(t *testing.T) {
+	value, err := decodeOrdered([]byte(`{"a":1,"b":2,"a":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := value.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"a":3,"b":2}` {
+		t.Fatalf("encoded = %s, want the last value at the first position", encoded)
+	}
+}
+
+// Malformed input must be reported, not panic.
+func TestOrderedDecodeRejectsMalformedJSON(t *testing.T) {
+	for _, raw := range []string{`{"a":`, `[1,`, `{`, ``} {
+		if _, err := decodeOrdered([]byte(raw)); err == nil {
+			t.Fatalf("expected %q to fail", raw)
+		}
 	}
 }
