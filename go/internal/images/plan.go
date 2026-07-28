@@ -54,6 +54,16 @@ type Plan struct {
 //
 // The well-known name wins; otherwise the hostname is matched, so a
 // custom-named config still counts. A disabled provider never does.
+//
+// KNOWN DIVERGENCE, recorded rather than hidden: the oracle iterates
+// Object.entries, so when several custom-named configs point at the same host
+// it picks whichever was declared first. Go decodes providers into a map and
+// that order is gone by the time this runs, so the candidates are sorted to at
+// least be deterministic instead of varying per process. Fixing it properly
+// needs an ordered provider decode across the whole config, which is a
+// convergence-slice change rather than something to widen into this file.
+// Configuring two xAI-hosted providers at once is already ambiguous; the
+// well-known "xai" name resolves it and is the documented way to be explicit.
 func FindXaiProvider(cfg *config.Config) (string, config.ProviderConfig, bool) {
 	if cfg == nil {
 		return "", config.ProviderConfig{}, false
@@ -61,8 +71,6 @@ func FindXaiProvider(cfg *config.Config) (string, config.ProviderConfig, bool) {
 	if provider, found := cfg.Providers["xai"]; found && !provider.Disabled {
 		return "xai", provider, true
 	}
-	// Map iteration is random, so the candidates are sorted to keep the choice
-	// deterministic when several configs point at the same host.
 	for _, name := range sortedProviderNames(cfg) {
 		provider := cfg.Providers[name]
 		if provider.Disabled {
@@ -135,8 +143,12 @@ func PlanImageBridge(cfg *config.Config, hosted HostedImageGeneration, hostedFou
 		Model:        DefaultBridgeModel,
 		ToolNames:    names,
 	}
-	if configured := strings.TrimSpace(cfg.Images.BridgeModel); configured != "" {
-		plan.Model = configured
+	// Present-but-empty wins, because the oracle uses ?? rather than ||: a
+	// configured "" produces an empty model rather than falling back. Trimming
+	// or treating blank as absent would silently substitute a paid default the
+	// operator did not ask for.
+	if cfg.Images.BridgeModel != nil {
+		plan.Model = *cfg.Images.BridgeModel
 	}
 	if size, ok := hosted.OriginalTool["size"].(string); ok {
 		plan.DefaultSize = size
@@ -160,6 +172,12 @@ func PlanImageBridge(cfg *config.Config, hosted HostedImageGeneration, hostedFou
 // A non-positive or non-finite value means UNSET rather than instant, and the
 // floor is raised to 1 so a fractional value cannot collapse to no timeout at
 // all: measured, the oracle turns 0.5 into 1.
+//
+// A NEGATIVE value never reaches here in practice: config validation rejects
+// images.timeoutMs < 0 at load, which the oracle does not do. That check
+// predates this slice and is shared with search and the other sidecars, so
+// changing it belongs in convergence rather than here. The branch is kept
+// because this function is also reachable from a hand-built config.
 func clampImageTimeoutMS(value float64) int {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return 0

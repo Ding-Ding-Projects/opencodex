@@ -188,8 +188,22 @@ func TestPlanImageBridgeCarriesOptions(t *testing.T) {
 		t.Fatalf("fractional timeout = %d, oracle returns 1", fractional.TimeoutMS)
 	}
 
-	custom, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.BridgeModel = "custom-model" }), hostedImage(nil), true, routedElsewhere)
+	customModel := "custom-model"
+	custom, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.BridgeModel = &customModel }), hostedImage(nil), true, routedElsewhere)
 	if custom.Model != "custom-model" {
 		t.Fatalf("model = %q", custom.Model)
+	}
+	// Present-but-empty wins over the default, because the oracle uses ??
+	// rather than ||. Measured: bridgeModel "" yields model "".
+	emptyModel := ""
+	empty, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.BridgeModel = &emptyModel }), hostedImage(nil), true, routedElsewhere)
+	if empty.Model != "" {
+		t.Fatalf("empty model = %q, oracle returns the empty string", empty.Model)
+	}
+	// Whitespace is NOT trimmed either.
+	blankModel := "   "
+	blank, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.BridgeModel = &blankModel }), hostedImage(nil), true, routedElsewhere)
+	if blank.Model != "   " {
+		t.Fatalf("blank model = %q, oracle preserves it verbatim", blank.Model)
 	}
 }

@@ -110,9 +110,12 @@ type ImagesConfig struct {
 	// outright and fail the whole config load, where the oracle simply floors
 	// it: measured, timeoutMs 0.5 becomes 1 and artifactsKeepCount 3.9
 	// becomes 3.
-	TimeoutMS          float64  `json:"timeoutMs,omitempty"`
-	BridgeEnabled      *bool    `json:"bridgeEnabled,omitempty"`
-	BridgeModel        string   `json:"bridgeModel,omitempty"`
+	TimeoutMS     float64 `json:"timeoutMs,omitempty"`
+	BridgeEnabled *bool   `json:"bridgeEnabled,omitempty"`
+	// Pointer so a present-but-empty value is distinguishable from an absent
+	// one: the oracle uses ?? here, so a configured "" really does mean an
+	// empty model rather than the default.
+	BridgeModel        *string  `json:"bridgeModel,omitempty"`
 	MaxRounds          *int     `json:"maxRounds,omitempty"`
 	ArtifactsKeepCount *float64 `json:"artifactsKeepCount,omitempty"`
 }

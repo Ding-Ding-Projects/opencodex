@@ -329,6 +329,9 @@ func parseValidatedRequest(data ResponsesRequest, raw []byte, replayPrefix int) 
 		ReplayPrefixLen: replayPrefix, StructuredOutput: structuredOutput(data.Text),
 		CompactionRequest: compactionRequest, CompactionBoundary: compactionBoundary,
 		WebSearch: hostedWebSearch(data.Tools),
+		// Declared tools AND tool-search specs: a hosted image tool loaded from
+		// a spec arms the bridge exactly as a directly declared one does.
+		ImageGeneration: hostedImageGeneration(data.Tools, loadedToolSpecs),
 	}, nil
 }
 
@@ -693,4 +696,114 @@ func toolSpecWireNames(values []any) []string {
 		}
 	}
 	return result
+}
+
+// hostedImageGeneration scans declared tools and tool-search specs for a hosted
+// image-generation entry.
+//
+// An ordinary function tool never counts on its own: a request that merely
+// names a tool image_gen belongs to somebody else, and hijacking it would break
+// an unrelated integration.
+func hostedImageGeneration(declared []map[string]any, loaded []any) *types.HostedImageTools {
+	entries := make([]any, 0, len(declared)+len(loaded))
+	for _, tool := range declared {
+		entries = append(entries, tool)
+	}
+	entries = append(entries, loaded...)
+	hosted, found := extractHostedImageGeneration(entries)
+	if !found {
+		return nil
+	}
+	return &hosted
+}
+
+// imageGenClientAliases are client-side spellings that CONFLICT with the
+// synthetic tool.
+//
+// Collected only to be stripped or replaced when a hosted entry is present. A
+// request declaring one as an ordinary function, with no hosted image tool, is
+// somebody else's tool and must be left alone.
+var imageGenClientAliases = map[string]struct{}{
+	"imagegen":         {},
+	"generate_image":   {},
+	"generateimage":    {},
+	"image_gen":        {},
+	"image_generation": {},
+}
+
+func isHostedImageTool(tool map[string]any) bool {
+	kind, _ := tool["type"].(string)
+	return kind == "image_generation" || kind == "image_gen"
+}
+
+// extractHostedImageGeneration scans tools for hosted image-generation entries.
+//
+// An ordinary `type:"function"` tool NEVER activates the bridge by name alone.
+func extractHostedImageGeneration(tools []any) (types.HostedImageTools, bool) {
+	hosted := false
+	var original map[string]any
+	for _, entry := range tools {
+		tool, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if isHostedImageTool(tool) {
+			hosted = true
+			if original == nil {
+				original = tool
+			}
+		}
+	}
+	if !hosted {
+		return types.HostedImageTools{}, false
+	}
+
+	names := make([]string, 0, len(tools))
+	seen := map[string]struct{}{}
+	add := func(name string) {
+		if name == "" {
+			return
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	for _, entry := range tools {
+		tool, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if isHostedImageTool(tool) {
+			// An unnamed hosted entry is identified by its type, which is what
+			// the request actually carried.
+			name, _ := tool["name"].(string)
+			if name == "" {
+				name, _ = tool["type"].(string)
+			}
+			add(name)
+			continue
+		}
+		if kind, _ := tool["type"].(string); kind != "function" {
+			continue
+		}
+		// Responses function tools are flat; the nested Chat Completions shape
+		// is accepted too so a mixed client cannot slip an alias past this.
+		name, _ := tool["name"].(string)
+		if name == "" {
+			if nested, ok := tool["function"].(map[string]any); ok {
+				name, _ = nested["name"].(string)
+			}
+		}
+		// Matched case-insensitively but recorded VERBATIM, because the caller
+		// has to strip the exact name the request declared.
+		if _, alias := imageGenClientAliases[strings.ToLower(name)]; alias {
+			add(name)
+		}
+	}
+	if len(names) == 0 {
+		return types.HostedImageTools{}, false
+	}
+	return types.HostedImageTools{ToolNames: names, OriginalTool: original}, true
 }

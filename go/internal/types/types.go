@@ -24,6 +24,20 @@ type NormalizedRequest struct {
 	CompactionBoundary bool                      `json:"-"`
 	ProviderState      ProviderContinuationState `json:"-"`
 	WebSearch          map[string]any            `json:"-"`
+	// ImageGeneration carries the hosted image tool the request declared, so
+	// the bridge can decide whether to arm. Nil means none was declared.
+	ImageGeneration *HostedImageTools `json:"-"`
+}
+
+// HostedImageTools is the hosted image-generation declaration found in a
+// request, kept in types so the parser and the bridge can share it without
+// importing each other.
+type HostedImageTools struct {
+	// ToolNames are every declared name the bridge must drop or replace.
+	ToolNames []string
+	// OriginalTool is the FIRST hosted entry, so its options can be carried
+	// into the synthetic replacement.
+	OriginalTool map[string]any
 }
 
 type RequestContext struct {
