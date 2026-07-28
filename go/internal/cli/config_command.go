@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,16 @@ import (
 )
 
 func runConfig(args []string, streams IO) error {
+	// The oracle's surface is dot-path based. `path` is a Go-only convenience
+	// that predates it and has no TypeScript counterpart, so it stays here;
+	// everything else routes to the parity implementation.
+	if len(args) > 0 && args[0] == "path" {
+		return runConfigLegacy(args, streams)
+	}
+	return runConfigParity(context.Background(), args, streams)
+}
+
+func runConfigLegacy(args []string, streams IO) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: ocx config <path|show|get|set|unset|validate>")
 	}

@@ -126,7 +126,10 @@ func TestConfigSetGetAndRedactedShow(t *testing.T) {
 			t.Fatalf("show leaked %q: %s", secret, out.String())
 		}
 	}
-	if strings.Count(out.String(), "[REDACTED]") != 4 || !strings.Contains(out.String(), `"enabled": true`) || !strings.Contains(out.String(), `"mode": "safe"`) {
+	// The oracle masks with "********" (src/cli/config-command.ts:19), not the
+	// "[REDACTED]" the Go-only legacy path used before `config show` routed
+	// through the parity implementation.
+	if strings.Count(out.String(), `"********"`) != 4 || !strings.Contains(out.String(), `"enabled": true`) || !strings.Contains(out.String(), `"mode": "safe"`) {
 		t.Fatalf("show did not redact secrets: %s", out.String())
 	}
 }

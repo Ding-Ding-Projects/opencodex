@@ -10,7 +10,14 @@ import (
 
 // secretKeyPattern names the fields whose STRING values are masked before a
 // config is printed. Matching is case-insensitive, mirroring the oracle's /i.
-var secretKeyPattern = regexp.MustCompile(`(?i)^(apiKey|key|accessToken|refreshToken|idToken|token|password|clientSecret)$`)
+//
+// `authToken` is a DELIBERATE addition. The oracle's pattern does not cover
+// it, so `ocx config show` there prints the proxy's admission token in clear
+// text; Go has always masked it and an existing test pins that. Printing a
+// live credential is not a behavior worth reproducing for byte parity, so the
+// stricter side wins and the divergence is recorded here rather than silently
+// dropped.
+var secretKeyPattern = regexp.MustCompile(`(?i)^(authToken|apiKey|key|accessToken|refreshToken|idToken|token|password|clientSecret)$`)
 
 // blockedSegments are refused in a dot path. Go has no prototype chain, but
 // accepting these would let a user write keys the TypeScript CLI refuses,
