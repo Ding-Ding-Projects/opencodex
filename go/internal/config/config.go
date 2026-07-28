@@ -104,12 +104,17 @@ type SidecarTimeoutConfig struct {
 // BridgeEnabled defaults to false and is a master switch: the bridge makes
 // PAID upstream image calls, so it is never armed implicitly.
 type ImagesConfig struct {
-	Provider           string `json:"provider,omitempty"`
-	TimeoutMS          int    `json:"timeoutMs,omitempty"`
-	BridgeEnabled      *bool  `json:"bridgeEnabled,omitempty"`
-	BridgeModel        string `json:"bridgeModel,omitempty"`
-	MaxRounds          *int   `json:"maxRounds,omitempty"`
-	ArtifactsKeepCount *int   `json:"artifactsKeepCount,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Numeric fields are float64 because the oracle floors whatever JSON
+	// number it is given. Decoding them as int would REJECT a fractional value
+	// outright and fail the whole config load, where the oracle simply floors
+	// it: measured, timeoutMs 0.5 becomes 1 and artifactsKeepCount 3.9
+	// becomes 3.
+	TimeoutMS          float64  `json:"timeoutMs,omitempty"`
+	BridgeEnabled      *bool    `json:"bridgeEnabled,omitempty"`
+	BridgeModel        string   `json:"bridgeModel,omitempty"`
+	MaxRounds          *int     `json:"maxRounds,omitempty"`
+	ArtifactsKeepCount *float64 `json:"artifactsKeepCount,omitempty"`
 }
 
 type VisionSidecarConfig struct {

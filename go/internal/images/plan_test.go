@@ -170,10 +170,22 @@ func TestPlanImageBridgeCarriesOptions(t *testing.T) {
 		t.Fatalf("negative timeout = %d, oracle leaves it unset", negative.TimeoutMS)
 	}
 
-	keep := 7
+	// Floored rather than rounded, measured against the oracle: 7.9 -> 7.
+	keep := 7.9
 	kept, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.ArtifactsKeepCount = &keep }), hostedImage(nil), true, routedElsewhere)
-	if kept.ArtifactsKeepCount != 7 {
-		t.Fatalf("keep count = %d", kept.ArtifactsKeepCount)
+	if kept.ArtifactsKeepCount != 7 || !kept.HasArtifactsKeepCount {
+		t.Fatalf("keep count = %d (set=%v), oracle floors to 7", kept.ArtifactsKeepCount, kept.HasArtifactsKeepCount)
+	}
+	// A negative value is KEPT: the oracle only requires the number be finite.
+	negativeKeep := -2.0
+	negativeKept, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.ArtifactsKeepCount = &negativeKeep }), hostedImage(nil), true, routedElsewhere)
+	if negativeKept.ArtifactsKeepCount != -2 {
+		t.Fatalf("negative keep = %d, oracle returns -2", negativeKept.ArtifactsKeepCount)
+	}
+	// A fractional timeout floors up to 1 rather than collapsing to unset.
+	fractional, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.TimeoutMS = 0.5 }), hostedImage(nil), true, routedElsewhere)
+	if fractional.TimeoutMS != 1 {
+		t.Fatalf("fractional timeout = %d, oracle returns 1", fractional.TimeoutMS)
 	}
 
 	custom, _ := PlanImageBridge(enabledImages(func(images *config.ImagesConfig) { images.BridgeModel = "custom-model" }), hostedImage(nil), true, routedElsewhere)

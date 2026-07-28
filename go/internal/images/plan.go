@@ -45,6 +45,9 @@ type Plan struct {
 	DefaultQuality     string
 	TimeoutMS          int
 	ArtifactsKeepCount int
+	// HasArtifactsKeepCount separates an explicit 0 from an absent value, since
+	// zero is a real setting.
+	HasArtifactsKeepCount bool
 }
 
 // FindXaiProvider locates a usable xAI provider.
@@ -142,19 +145,30 @@ func PlanImageBridge(cfg *config.Config, hosted HostedImageGeneration, hostedFou
 		plan.DefaultQuality = quality
 	}
 	plan.TimeoutMS = clampImageTimeoutMS(cfg.Images.TimeoutMS)
-	if cfg.Images.ArtifactsKeepCount != nil {
-		plan.ArtifactsKeepCount = *cfg.Images.ArtifactsKeepCount
+	if keep := cfg.Images.ArtifactsKeepCount; keep != nil && !math.IsNaN(*keep) && !math.IsInf(*keep, 0) {
+		// Floored, not rounded, and a negative value is kept: the oracle only
+		// checks that the number is finite.
+		plan.ArtifactsKeepCount = int(math.Floor(*keep))
+		plan.HasArtifactsKeepCount = true
 	}
 	return plan, true
 }
 
-// clampImageTimeoutMS floors to the nearest millisecond and caps at the relay
-// budget. A non-positive value means unset rather than instant.
-func clampImageTimeoutMS(value int) int {
-	if value <= 0 {
+// clampImageTimeoutMS floors to whole milliseconds and caps at the relay
+// budget.
+//
+// A non-positive or non-finite value means UNSET rather than instant, and the
+// floor is raised to 1 so a fractional value cannot collapse to no timeout at
+// all: measured, the oracle turns 0.5 into 1.
+func clampImageTimeoutMS(value float64) int {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return 0
 	}
-	return int(math.Min(float64(value), float64(MaxImageTimeoutMS)))
+	floored := math.Floor(value)
+	if floored < 1 {
+		floored = 1
+	}
+	return int(math.Min(floored, float64(MaxImageTimeoutMS)))
 }
 
 func containsName(names []string, wanted string) bool {
