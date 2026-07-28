@@ -13,15 +13,22 @@ import (
 // SQL row primitives for cleanup reconciliation, ported from
 // src/storage/cleanup.ts.
 //
-// SCOPE: these operate on LIVE scanned rows only. Serializing a SqlRow to
-// satellite-backup.json is deliberately NOT part of this file, and the reason
-// is a real incompatibility rather than a missing feature: Bun writes a
-// Uint8Array as {"0":0,"1":1,...} while Go writes []byte as base64, and a
-// generic decode of the base64 form returns a string that would bind back as
-// TEXT instead of a BLOB. No untagged JSON can tell "AQI=" from text, so a
-// cross-runtime backup needs a tagged codec on BOTH sides. That is a src/**
-// change this unit does not own, and writing a Go-only format would produce
-// backups the TypeScript runtime silently misreads.
+// SCOPE: these operate on LIVE scanned rows only. Backup serialization lives
+// in rowbind.go.
+//
+// An earlier version of this comment concluded that a cross-runtime backup
+// "needs a tagged codec on BOTH sides", which is wrong, and the correction is
+// worth recording because the reasoning is easy to repeat. The premise held —
+// a base64 string really is indistinguishable from text — but the conclusion
+// did not follow, because the format was never the problem.
+//
+// Measured: JSON.parse(JSON.stringify({b: new Uint8Array([0,255,16])})).b is a
+// plain Object, not a Uint8Array. The oracle writes a Uint8Array with
+// JSON.stringify (cleanup.ts:1015) and reads it back with JSON.parse alone
+// (2190); the SqlRow cast is compile-time only. So the TypeScript runtime
+// cannot revive its own BLOB regardless of which format either side picks.
+// That is an upstream defect, and Go reproduces it rather than repairing one
+// half of it.
 
 // SqlRow is one row as the driver scanned it: int64, float64, string, []byte
 // or nil.
