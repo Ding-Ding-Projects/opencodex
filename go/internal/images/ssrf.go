@@ -139,6 +139,12 @@ func classifyImageAddress(ip net.IP) (string, string) {
 	// An IPv4-mapped address is classified as the IPv4 it carries, in either
 	// spelling, so ::ffff:127.0.0.1 cannot reach loopback through the v6 path.
 	if mapped := ip.To4(); mapped != nil {
+		// The WHOLE of 0.0.0.0/8 is unusable as a destination, not just the
+		// unspecified address itself. Go's IsUnspecified only covers 0.0.0.0,
+		// so 0.0.0.1 would otherwise be treated as a public peer.
+		if mapped[0] == 0 {
+			return "unspecified", "unspecified address"
+		}
 		return ocxlib.ClassifyDestinationIP(mapped)
 	}
 	if kind, detail := ocxlib.ClassifyDestinationIP(ip); kind != "public" {

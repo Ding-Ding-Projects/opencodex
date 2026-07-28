@@ -190,3 +190,37 @@ func TestResolvedIPv6IsAllowlistedToo(t *testing.T) {
 		t.Fatalf("mapped metadata err = %v", err)
 	}
 }
+
+// The whole of 0.0.0.0/8 is unusable as a destination, not just 0.0.0.0
+// itself. Go's IsUnspecified covers only the exact address, so 0.0.0.1 would
+// otherwise be treated as a public peer. Measured against the oracle, which
+// refuses the entire block.
+func TestResolvePublicAddressesRefusesTheWholeZeroBlock(t *testing.T) {
+	for _, raw := range []string{"https://0.0.0.0/x", "https://0.0.0.1/x", "https://0.255.255.255/x"} {
+		_, _, err := ResolvePublicAddresses(context.Background(), raw, noLookup(t))
+		if err == nil || err.Error() != "image URL targets unspecified address" {
+			t.Fatalf("%s: err = %v, oracle refuses the whole 0.0.0.0/8 block", raw, err)
+		}
+	}
+	// A resolved answer in that block is refused too.
+	zeroBlock := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("0.0.0.1")}, nil
+	}
+	if _, _, err := ResolvePublicAddresses(context.Background(), "https://images.example/x", zeroBlock); err == nil {
+		t.Fatal("a resolved 0.0.0.0/8 answer was accepted")
+	}
+}
+
+// Userinfo is accepted, matching the oracle for IMAGE urls specifically.
+//
+// The provider-config policy rejects it because an operator writing a base URL
+// with embedded credentials is a misconfiguration; a provider returning an
+// image URL with them is not this layer's decision to override, and diverging
+// here would refuse images the oracle fetches. Pinned so the difference from
+// the config policy is deliberate and visible rather than an oversight.
+func TestResolvePublicAddressesAcceptsUserinfoLikeTheOracle(t *testing.T) {
+	host, pinned, err := ResolvePublicAddresses(context.Background(), "https://user:pass@8.8.8.8/x", noLookup(t))
+	if err != nil || host != "8.8.8.8" || len(pinned) != 1 {
+		t.Fatalf("host = %q pinned = %#v err = %v", host, pinned, err)
+	}
+}
