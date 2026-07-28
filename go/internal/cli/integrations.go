@@ -8,23 +8,32 @@ import (
 	"strings"
 )
 
+// grokUsage is copied verbatim from the oracle's GROK_USAGE. The wording is
+// user-visible output compared byte-for-byte, so paraphrasing it -- listing
+// the `show` alias, or dropping the angle brackets around the verb group --
+// is a parity failure even when the accepted arguments are identical.
 const grokUsage = `Usage:
-  ocx grok [status|show] [--json]
-  ocx grok exclude|include|set <model,model...> [--json]
+  ocx grok [status] [--json]
+  ocx grok <exclude|include|set> <model,model...> [--json]
   ocx grok clear [--json]
   ocx grok apply [--json]`
 
+// claudeConfigUsage is the oracle's CLAUDE_USAGE, which spells the surface
+// `ocx claude config` rather than `ocx integration claude` even though both
+// reach this handler, and writes out the enum values this port had shortened.
 const claudeConfigUsage = `Usage:
-  ocx integration claude [status|show] [--json]
-  ocx integration claude set [--enabled <on|off>] [--auth-mode <mode>]
+  ocx claude config [status] [--json]
+  ocx claude config set [--enabled <on|off>] [--auth-mode <auto|proxy|subscription>]
       [--system-env <on|off>] [--fast-mode <on|off>] [--auto-context <on|off>]
-      [--compact-window <n|default>] [--inject-agents <on|off>]
-      [--small-fast-model <id|->] [--model-map <from=to,...|->]
-      [--blocked-skills <a,b|->] [--web-model <id|->] [--web-backend <name|->]
-      [--vision-model <id|->] [--vision-backend <name|->] [--json]`
+      [--compact-window <tokens|default>] [--inject-agents <on|off>]
+      [--small-fast-model <id|->] [--model-map <from=to,from=to|->]
+      [--blocked-skills <name,name|->] [--web-model <id|->] [--web-backend <openai|anthropic|->]
+      [--vision-model <id|->] [--vision-backend <openai|anthropic|->] [--json]`
 
-const integrationUsage = `Usage:
-  ocx integration <claude|grok> <subcommand>`
+// integrationUsage is a single line for the same reason routeUsage is: the
+// oracle rejects an unknown integration surface in its dispatcher, printing
+// one usage line with no "Error:" prefix and exiting 2.
+const integrationUsage = `Usage: ocx integration <claude|grok> <subcommand>`
 
 func runGrok(ctx context.Context, args []string, streams IO) error {
 	return grokDispatch(ctx, newRuntimeAPI(), args, streams)
@@ -178,7 +187,7 @@ func runIntegration(ctx context.Context, args []string, streams IO) error {
 // handlers directly would still pass if this routing broke.
 func integrationDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	if len(args) == 0 {
-		return usageError(integrationUsage, "integration requires claude or grok")
+		return bareUsageError(integrationUsage)
 	}
 	switch args[0] {
 	case "grok":
@@ -186,7 +195,7 @@ func integrationDispatch(ctx context.Context, api runtimeAPI, args []string, str
 	case "claude":
 		return claudeConfigDispatch(ctx, api, args[1:], streams)
 	}
-	return usageError(integrationUsage, "integration requires claude or grok")
+	return bareUsageError(integrationUsage)
 }
 
 func claudeConfigDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {

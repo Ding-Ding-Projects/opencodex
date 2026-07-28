@@ -20,6 +20,21 @@ func usageError(usage, format string, args ...any) error {
 	return &CLIUsageError{Message: fmt.Sprintf(format, args...), Usage: usage}
 }
 
+// BareUsageError is a usage failure the oracle reports from its dispatcher
+// instead of from runCliAction: `ocx route <not-combo>` and `ocx integration
+// <not-claude-or-grok>` print ONE usage line with no "Error:" prefix and exit
+// 2 (src/cli/index.ts). Routing them through CLIUsageError would add both a
+// prefix line and a multi-line usage block the TypeScript CLI never prints.
+type BareUsageError struct {
+	Usage string
+}
+
+func (e *BareUsageError) Error() string { return e.Usage }
+
+func bareUsageError(usage string) error {
+	return &BareUsageError{Usage: usage}
+}
+
 // secretOptions lists options whose VALUE is a credential. A parse error must
 // never print one, so both `--flag value` and `--flag=value` spellings are
 // masked before any message repeats the arguments back.

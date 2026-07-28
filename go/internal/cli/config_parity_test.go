@@ -640,3 +640,111 @@ func TestConfigStreamModeDegradesWithoutADiagnosticsWarning(t *testing.T) {
 		t.Fatalf("the invalid streamMode must still be dropped: %s", out)
 	}
 }
+
+// syncCodexSubagentDefaults only means something with a usable
+// injectionModel, so the oracle removes an unsatisfiable opt-in and reports
+// why rather than rejecting the file. Rejecting would hide every provider and
+// account behind one unusable toggle; keeping it would claim a sync that
+// cannot happen.
+func TestConfigDisablesUnsatisfiableNativeSubagentSync(t *testing.T) {
+	base := `"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}`
+	for _, testCase := range []struct {
+		name    string
+		extra   string
+		warning string
+	}{
+		{
+			name:    "no injection model",
+			extra:   `"syncCodexSubagentDefaults":true`,
+			warning: "syncCodexSubagentDefaults ignored: a nonblank injectionModel is required",
+		},
+		{
+			name:    "blank injection model",
+			extra:   `"syncCodexSubagentDefaults":true,"injectionModel":"   "`,
+			warning: "syncCodexSubagentDefaults ignored: a nonblank injectionModel is required",
+		},
+		{
+			name:    "wrongly typed injection model",
+			extra:   `"syncCodexSubagentDefaults":true,"injectionModel":123`,
+			warning: "syncCodexSubagentDefaults ignored: injectionModel must be a string",
+		},
+		{
+			name:    "unsupported effort",
+			extra:   `"syncCodexSubagentDefaults":true,"injectionModel":"m","injectionEffort":"turbo"`,
+			warning: "syncCodexSubagentDefaults ignored: injectionEffort must be a supported Codex reasoning effort",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			configHome(t, "{"+base+","+testCase.extra+"}")
+			out, err := runConfigParityWith(t, "", "show", "--source")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var envelope map[string]any
+			if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if envelope["source"] != "file" {
+				t.Fatalf("source = %#v; an unsatisfiable opt-in must not reject the file", envelope["source"])
+			}
+			warnings, _ := envelope["warnings"].([]any)
+			found := false
+			for _, warning := range warnings {
+				if warning == testCase.warning {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("warnings = %#v, want %q", warnings, testCase.warning)
+			}
+			config, _ := envelope["config"].(map[string]any)
+			if _, kept := config["syncCodexSubagentDefaults"]; kept {
+				t.Fatalf("the unusable opt-in must be removed: %s", out)
+			}
+			if providers, _ := config["providers"].(map[string]any); providers["openai"] == nil {
+				t.Fatalf("unrelated settings must survive: %s", out)
+			}
+		})
+	}
+}
+
+// A satisfiable opt-in is left alone.
+func TestConfigKeepsUsableNativeSubagentSync(t *testing.T) {
+	configHome(t, `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}},"syncCodexSubagentDefaults":true,"injectionModel":"m","injectionEffort":"high"}`)
+	out, err := runConfigParityWith(t, "", "show", "--source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if warnings, _ := envelope["warnings"].([]any); len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none for a usable opt-in", warnings)
+	}
+	config, _ := envelope["config"].(map[string]any)
+	if config["syncCodexSubagentDefaults"] != true {
+		t.Fatalf("a usable opt-in must survive: %s", out)
+	}
+}
+
+// The same normalization applies on import, so the persisted file cannot carry
+// an opt-in that show would have disabled.
+func TestConfigImportDisablesUnsatisfiableSync(t *testing.T) {
+	path := configHome(t, `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}}}`)
+	candidate := filepath.Join(t.TempDir(), "candidate.json")
+	body := `{"providers":{"openai":{"adapter":"openai-responses","baseUrl":"https://api.openai.com/v1"}},"syncCodexSubagentDefaults":true}`
+	if err := os.WriteFile(candidate, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfigParityWith(t, "", "import", candidate, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "syncCodexSubagentDefaults") {
+		t.Fatalf("import persisted an opt-in that show would disable: %s", string(written))
+	}
+}

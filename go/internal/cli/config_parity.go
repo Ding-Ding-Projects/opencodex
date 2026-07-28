@@ -68,10 +68,73 @@ func readConfigDiagnostics() (configDiagnostics, error) {
 	// than rejecting, so a single bad optional value must not send an
 	// otherwise-good file to fallback.
 	normalized, warnings, normalizeErr := normalizeConfigCandidate(configDocument(record))
-	if normalizeErr != nil {
-		return fallback(normalizeErr.Error()), nil
+	if normalizeErr == nil {
+		return configDiagnostics{document: normalized, source: "file", warnings: warnings}, nil
 	}
-	return configDiagnostics{document: normalized, source: "file", warnings: warnings}, nil
+	// RETRY over the defaults before giving up, the way readConfigDiagnostics
+	// does. A file that only omits required keys -- or writes `providers` as
+	// an array, which spreads into an empty object -- is repaired by the
+	// merge and still counts as `source: "file"`. Skipping this step sent
+	// such a file to fallback and hid the settings it did carry.
+	//
+	// The REPORTED error stays the FIRST failure: the oracle reports the
+	// original schema error when even the merged form fails.
+	merged, mergedWarnings, mergedErr := normalizeConfigCandidate(mergeConfigDefaults(configDocument(record)))
+	if mergedErr == nil {
+		return configDiagnostics{document: merged, source: "file", warnings: mergedWarnings}, nil
+	}
+	return fallback(normalizeErr.Error()), nil
+}
+
+// mergeConfigDefaults layers the document over the defaults, mirroring the
+// oracle's function of the same name: a shallow spread, plus a second shallow
+// spread for `providers` so a partial provider map keeps the built-in entry.
+//
+// The spread is why a non-object `providers` can survive: JavaScript spreads
+// an array into an object with numeric keys, and `{...defaults.providers,
+// ...[]}` is simply the defaults.
+func mergeConfigDefaults(document configDocument) configDocument {
+	merged := map[string]any(defaultConfigDocument())
+	for key, value := range document {
+		merged[key] = value
+	}
+	defaultProviders, hasDefaults := defaultConfigDocument()["providers"].(map[string]any)
+	if !hasDefaults {
+		return configDocument(merged)
+	}
+	// `raw.providers && typeof raw.providers === "object"` — a number or
+	// string fails the typeof test and a null fails the truthiness test, so
+	// only an object or an array reaches the spread. Merging a number would
+	// silently repair a file the oracle rejects.
+	providers, present := document["providers"]
+	if !present || providers == nil {
+		return configDocument(merged)
+	}
+	_, isObject := providers.(map[string]any)
+	_, isArray := providers.([]any)
+	if !isObject && !isArray {
+		return configDocument(merged)
+	}
+	combined := make(map[string]any, len(defaultProviders))
+	for name, value := range defaultProviders {
+		combined[name] = value
+	}
+	if record, isObject := providers.(map[string]any); isObject {
+		for name, value := range record {
+			combined[name] = value
+		}
+		merged["providers"] = combined
+		return configDocument(merged)
+	}
+	if items, ok := providers.([]any); ok {
+		// Spreading an array yields "0", "1", ... keys.
+		for index, value := range items {
+			combined[fmt.Sprintf("%d", index)] = value
+		}
+		merged["providers"] = combined
+		return configDocument(merged)
+	}
+	return configDocument(merged)
 }
 
 // readConfigDocument is the common case: the effective config and its origin.
@@ -86,44 +149,15 @@ func readConfigDocument() (configDocument, string, error) {
 // validateConfigDocument runs the same validation a write would, without
 // persisting, so `set` and `import` can refuse an invalid candidate.
 func validateConfigDocument(document configDocument) error {
-	// Structural rules the typed decode cannot express. A missing `providers`
-	// unmarshals to a nil map and a dangling `defaultProvider` decodes fine,
-	// so without these an import would write `"providers": null` that the
-	// oracle rejects outright.
-	providersValue, hasProviders := document["providers"]
-	if !hasProviders || providersValue == nil {
-		return usageError("", "schema_invalid: providers: Invalid input: expected record, received undefined")
-	}
-	providers, isObject := providersValue.(map[string]any)
-	if !isObject {
-		return usageError("", "schema_invalid: providers: Invalid input: expected record")
-	}
-	if selected, present := document["defaultProvider"]; present {
-		name, isString := selected.(string)
-		if !isString {
-			return usageError("", "schema_invalid: defaultProvider: expected string")
-		}
-		// No exemption for "openai": the oracle rejects it too when it is
-		// absent from providers.
-		if _, known := providers[name]; !known {
-			return usageError("", "schema_invalid: defaultProvider: defaultProvider must exist in providers")
-		}
-	}
-	encoded, err := json.Marshal(document)
-	if err != nil {
-		return err
-	}
-	// Decode ONTO the defaults, not onto a zero value. The oracle's schema
-	// supplies a hostname when the document omits one, so validating a
-	// zero-valued struct rejected ordinary TypeScript-written configs with
-	// "hostname: must not be blank" -- a config the TS CLI calls valid.
-	candidate := config.FreshInstall()
-	candidate.Providers = nil
-	candidate.Combos = nil
-	if err := json.Unmarshal(encoded, &candidate); err != nil {
+	// The oracle's gate is configSchema, NOT the runtime's admission check.
+	// See config_schema.go: Config.Validate rejects values the schema accepts
+	// (an unsupported injectionEffort, a blank subagentModels entry), so using
+	// it here made `config show` serve defaults for files the TypeScript CLI
+	// reads without complaint.
+	if err := validateConfigSchema(document); err != nil {
 		return usageError("", "%s", err.Error())
 	}
-	return candidate.Validate()
+	return nil
 }
 
 // normalizeConfigDocument validates and returns the document with schema
@@ -151,7 +185,11 @@ func normalizeConfigDocument(document configDocument) (configDocument, error) {
 // TypeScript CLI accepts, and made import save the raw document instead of the
 // defaulted one.
 func normalizeConfigCandidate(document configDocument) (configDocument, []string, error) {
+	malformed := malformedNativeSubagentFields(document)
 	warnings := degradeInvalidFields(document)
+	if reason := normalizeNativeSubagentSync(document, malformed); reason != "" {
+		warnings = append(warnings, "syncCodexSubagentDefaults ignored: "+reason)
+	}
 	normalized, err := normalizeValidatedDocument(document)
 	if err != nil {
 		return nil, warnings, err
@@ -577,4 +615,80 @@ func warningList(warnings []string) []any {
 		out = append(out, warning)
 	}
 	return out
+}
+
+// codexReasoningEfforts is the Codex reasoning ladder, matching
+// src/reasoning-effort.ts.
+var codexReasoningEfforts = map[string]struct{}{
+	"low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {}, "ultra": {},
+}
+
+// normalizeNativeSubagentSync applies the oracle's disable-with-warning rule
+// for syncCodexSubagentDefaults.
+//
+// The opt-in only means anything with a usable injectionModel, so an
+// unsatisfiable one is REMOVED and reported rather than rejecting the file.
+// Rejecting would hide every provider and account the user has configured
+// behind a single unusable toggle; leaving it set would claim a sync that
+// cannot happen.
+//
+// The reason order matches the oracle's, because the first applicable one is
+// the message the user sees.
+func normalizeNativeSubagentSync(document configDocument, malformed map[string]bool) string {
+	enabled, _ := document["syncCodexSubagentDefaults"].(bool)
+	if !enabled {
+		return ""
+	}
+	reason := ""
+	switch {
+	case malformed["injectionModel"]:
+		reason = "injectionModel must be a string"
+	case strings.TrimSpace(stringField(document, "injectionModel")) == "":
+		reason = "a nonblank injectionModel is required"
+	case malformed["injectionEffort"]:
+		reason = "injectionEffort must be a string or omitted"
+	default:
+		if effort, present := document["injectionEffort"]; present && effort != nil {
+			text, isString := effort.(string)
+			if _, known := codexReasoningEfforts[text]; !isString || !known {
+				reason = "injectionEffort must be a supported Codex reasoning effort"
+			}
+		}
+	}
+	if reason == "" {
+		return ""
+	}
+	delete(document, "syncCodexSubagentDefaults")
+	return reason
+}
+
+func stringField(document configDocument, key string) string {
+	text, _ := document[key].(string)
+	return text
+}
+
+// malformedNativeSubagentFields records which native-subagent fields were the
+// wrong TYPE before degradation removed them, because the disable reason
+// distinguishes "wrong type" from "absent".
+func malformedNativeSubagentFields(document configDocument) map[string]bool {
+	malformed := map[string]bool{}
+	for field, expected := range map[string]string{
+		"injectionModel":            "a string",
+		"injectionEffort":           "a string",
+		"syncCodexSubagentDefaults": "a boolean",
+	} {
+		value, present := document[field]
+		if !present || value == nil {
+			continue
+		}
+		switch value.(type) {
+		case string:
+			malformed[field] = expected != "a string"
+		case bool:
+			malformed[field] = expected != "a boolean"
+		default:
+			malformed[field] = true
+		}
+	}
+	return malformed
 }

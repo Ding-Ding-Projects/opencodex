@@ -181,10 +181,58 @@ func Run(ctx context.Context, args []string, streams IO) int {
 		if errors.Is(runErr, errSilentFailure) {
 			return 1
 		}
-		fmt.Fprintln(streams.Err, "Error:", runErr)
-		return 1
+		// A dispatcher-level usage failure is reported the way the oracle's
+		// index.ts reports it, whether or not the command itself is wrapped:
+		// one usage line, no prefix, exit 2.
+		var bare *BareUsageError
+		if errors.As(runErr, &bare) {
+			fmt.Fprintln(streams.Err, bare.Usage)
+			return 2
+		}
+		return reportRuntimeActionError(runErr, streams)
 	}
 	return 0
+}
+
+// reportRuntimeActionError is the oracle's runCliAction catch block
+// (src/cli/runtime-api.ts): the exit code carries WHICH kind of failure
+// happened, so a script can tell "you typed it wrong" from "the proxy said
+// no" without parsing the message.
+//
+// Without this the whole management surface collapsed every failure to exit 1
+// and swallowed the usage text, so `ocx config get missing` and `ocx access
+// bogus` disagreed with the TypeScript CLI on both stream and status.
+//
+// The mapping keys off the ERROR TYPE rather than the command, because the
+// oracle's boundary is not per-command: `ocx claude <args>` forwards to the
+// Claude binary, while `ocx claude config <args>` is a runCliAction handler
+// inside the same case. CLIUsageError/RuntimeAPIError are constructed only on
+// the wrapped paths, so matching them reproduces the boundary exactly, and
+// every other failure keeps the plain exit 1 it already had.
+func reportRuntimeActionError(runErr error, streams IO) int {
+	var usage *CLIUsageError
+	if errors.As(runErr, &usage) {
+		fmt.Fprintln(streams.Err, "Error:", usage.Message)
+		// Usage is optional: the oracle prints it only when the error carries
+		// one, so a bare message stays a bare message.
+		if usage.Usage != "" {
+			fmt.Fprintln(streams.Err, usage.Usage)
+		}
+		return 2
+	}
+	var apiErr *RuntimeAPIError
+	if errors.As(runErr, &apiErr) {
+		fmt.Fprintln(streams.Err, "Error:", apiErr.Message)
+		switch apiErr.Status {
+		case 404:
+			return 4
+		case 409:
+			return 5
+		}
+		return 1
+	}
+	fmt.Fprintln(streams.Err, "Error:", runErr)
+	return 1
 }
 
 func registeredCommandNames(includeAliases bool) []string {

@@ -262,8 +262,10 @@ func comboRemove(ctx context.Context, api runtimeAPI, args []string, streams IO)
 	return printData(streams, result, wantsJSON, []string{fmt.Sprintf("Removed combo %s.", id)})
 }
 
-const routeUsage = `Usage:
-  ocx route combo [subcommand] [options]`
+// routeUsage is the ONE line the oracle prints for a mistyped route surface.
+// src/cli/index.ts handles this case before delegating to the combo handler,
+// so it never reaches runCliAction and never grows a multi-line usage block.
+const routeUsage = `Usage: ocx route combo <subcommand>`
 
 // runRoute is the `ocx route combo ...` wrapper. It accepts nothing else, so a
 // mistyped surface fails loudly instead of silently doing combo work.
@@ -276,7 +278,7 @@ func runRoute(ctx context.Context, args []string, streams IO) error {
 // the oracle compares the literal string "combo".
 func routeDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO) error {
 	if len(args) == 0 || args[0] != "combo" {
-		return usageError(routeUsage, "route requires the combo subcommand")
+		return bareUsageError(routeUsage)
 	}
 	return comboDispatch(ctx, api, args[1:], streams)
 }
