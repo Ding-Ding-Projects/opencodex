@@ -203,9 +203,27 @@ func TestBuiltBinaryRecoversMalformedAndPartialConfig(t *testing.T) {
 	if !strings.Contains(output, `"defaultProvider": "openai"`) {
 		t.Fatalf("malformed fallback output=%s", output)
 	}
+	// `config show` must NOT write a backup. The oracle's backup happens in
+	// loadConfig's repair path, which the config command never enters --
+	// readConfigDiagnostics degrades to defaults in memory and leaves the file
+	// alone. Measured against the TypeScript CLI with the same broken file:
+	//
+	//	config show --json -> 0 backups
+	//	config get port    -> 0 backups
+	//	config validate    -> 0 backups
+	//	status             -> 1 backup
+	//
+	// This assertion predates the config parity work and pinned the Go-only
+	// behavior of routing `config show` through loadConfig.
 	backups, err := filepath.Glob(path + ".invalid-*")
+	if err != nil || len(backups) != 0 {
+		t.Fatalf("config show must not write a backup: backups=%v err=%v", backups, err)
+	}
+	// A command that DOES go through the repair path still writes one.
+	runBuiltOCX(t, binary, environment, "status")
+	backups, err = filepath.Glob(path + ".invalid-*")
 	if err != nil || len(backups) != 1 {
-		t.Fatalf("invalid backups=%v err=%v", backups, err)
+		t.Fatalf("status must write exactly one backup: backups=%v err=%v", backups, err)
 	}
 	partial := `{"port":0,"providers":{"partial":{"adapter":"openai-chat","baseUrl":"https://partial.example/v1","apiKey":"partial-secret","authMode":"key","models":["partial-model"]}}}`
 	if err := os.WriteFile(path, []byte(partial), 0o600); err != nil {
