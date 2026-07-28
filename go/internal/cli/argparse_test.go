@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -119,5 +120,98 @@ func TestCSVValuesTrimsAndDeduplicates(t *testing.T) {
 	want := []string{"a", "b", "c"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("csvValues = %v, want %v", got, want)
+	}
+}
+
+// Ported from the TypeScript oracle by running Number(raw.replace(/[_,]/g,""))
+// plus Number.isInteger in Bun and recording the answers. Go's ParseFloat is a
+// different function: it rejects "", the 0x/0o/0b radix prefixes, and the
+// literal Infinity, so approximating Number() silently changes which values the
+// CLI accepts.
+func TestTakeIntegerOptionMatchesOracleNumberGrammar(t *testing.T) {
+	const rejected = "REJECT"
+	for _, testCase := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: "", want: "0"},
+		{raw: " ", want: "0"},
+		{raw: "0", want: "0"},
+		{raw: "1e3", want: "1000"},
+		{raw: " 1 ", want: "1"},
+		{raw: "-0", want: "0"},
+		{raw: "0x10", want: "16"},
+		{raw: "0b101", want: "5"},
+		{raw: "0o17", want: "15"},
+		{raw: "+5", want: "5"},
+		{raw: "5.", want: "5"},
+		{raw: "1,024", want: "1024"},
+		{raw: "10_000", want: "10000"},
+		{raw: "1e400", want: rejected},
+		{raw: "Infinity", want: rejected},
+		{raw: "-Infinity", want: rejected},
+		{raw: "-0x10", want: rejected},
+		{raw: "--5", want: rejected},
+		{raw: "e3", want: rejected},
+		{raw: ".5", want: rejected},
+		{raw: "abc", want: rejected},
+		{raw: "1.5", want: rejected},
+	} {
+		t.Run(testCase.raw, func(t *testing.T) {
+			args := []string{"--sticky", testCase.raw}
+			value, ok, err := takeIntegerOption(&args, "--sticky", nil)
+			if testCase.want == rejected {
+				if err == nil {
+					t.Fatalf("%q was accepted as %d; the oracle rejects it", testCase.raw, value)
+				}
+				return
+			}
+			if err != nil || !ok {
+				t.Fatalf("%q was rejected (%v); the oracle yields %s", testCase.raw, err, testCase.want)
+			}
+			if got := strconv.Itoa(value); got != testCase.want {
+				t.Fatalf("%q => %s, oracle says %s", testCase.raw, got, testCase.want)
+			}
+		})
+	}
+}
+
+// The minimum bound is applied after conversion, exactly as the oracle does.
+func TestTakeIntegerOptionAppliesMinimumBound(t *testing.T) {
+	minimum := 1
+	args := []string{"--sticky", "0"}
+	if _, _, err := takeIntegerOption(&args, "--sticky", &minimum); err == nil {
+		t.Fatal("0 should fail a minimum of 1")
+	}
+	args = []string{"--sticky", "1e3"}
+	value, ok, err := takeIntegerOption(&args, "--sticky", &minimum)
+	if err != nil || !ok || value != 1000 {
+		t.Fatalf("1e3 => %d, %v, %v", value, ok, err)
+	}
+}
+
+// The consuming parsers must not rewrite a caller's backing array. An in-place
+// shift leaves a sibling slice over the same array observing reordered
+// arguments even though its own length never changed.
+func TestConsumingParsersDoNotCorruptSharedBackingArray(t *testing.T) {
+	original := []string{"--json", "list", "extra"}
+	shared := original[:len(original):len(original)]
+	working := shared
+
+	if !takeFlag(&working, "--json") {
+		t.Fatal("expected --json to be consumed")
+	}
+	if original[0] != "--json" {
+		t.Fatalf("caller's slice was rewritten: original[0] = %q", original[0])
+	}
+
+	options := []string{"--targets", "a/b", "keep"}
+	optionsShared := options[:len(options):len(options)]
+	optionsWorking := optionsShared
+	if _, _, err := takeOption(&optionsWorking, "--targets"); err != nil {
+		t.Fatal(err)
+	}
+	if options[0] != "--targets" || options[1] != "a/b" {
+		t.Fatalf("caller's slice was rewritten: %v", options)
 	}
 }

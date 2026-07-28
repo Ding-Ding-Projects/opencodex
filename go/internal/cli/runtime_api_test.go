@@ -6,7 +6,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf16"
+
+	"github.com/lidge-jun/opencodex-go/internal/config"
 )
+
+// noConfig keeps a test off the real config file on this machine.
+func noConfig() func() (*config.Config, error) {
+	return func() (*config.Config, error) { return &config.Config{}, nil }
+}
 
 // A management failure must surface the API's own words, not a generic status
 // line, or the user has to go read logs to learn what went wrong.
@@ -17,8 +25,8 @@ func TestRuntimeRequestSurfacesServerMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := runtimeAPI{BaseURL: server.URL}
-	_, err := api.request(context.Background(), nil, http.MethodGet, "/api/combos", nil)
+	api := &runtimeAPI{BaseURL: server.URL, loadCfg: noConfig()}
+	_, err := api.request(context.Background(), http.MethodGet, "/api/combos", nil)
 	if err == nil {
 		t.Fatal("expected an error for a 400 response")
 	}
@@ -31,6 +39,122 @@ func TestRuntimeRequestSurfacesServerMessage(t *testing.T) {
 	}
 	if runtimeErr.Status != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", runtimeErr.Status)
+	}
+}
+
+// The proxy answers /api/* with 401 unless the admission credential is present,
+// so a client that forgets it makes every ported command fail against a
+// protected proxy.
+func TestRuntimeRequestSendsManagementCredential(t *testing.T) {
+	var gotKey, gotContentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("X-OpenCodex-API-Key")
+		gotContentType = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	api := &runtimeAPI{
+		BaseURL: server.URL,
+		loadCfg: func() (*config.Config, error) { return &config.Config{AuthToken: "config-token"}, nil },
+	}
+	if _, err := api.request(context.Background(), http.MethodPut, "/api/combos", map[string]any{"id": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "config-token" {
+		t.Fatalf("X-OpenCodex-API-Key = %q, want the configured token", gotKey)
+	}
+	if gotContentType != "application/json" {
+		t.Fatalf("Content-Type = %q", gotContentType)
+	}
+}
+
+// The environment token wins over the configured one, matching the doctor path
+// and the oracle's runningProxyUpdateHeaders.
+func TestRuntimeRequestPrefersEnvironmentToken(t *testing.T) {
+	t.Setenv("OPENCODEX_API_AUTH_TOKEN", "env-token")
+	var gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("X-OpenCodex-API-Key")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	api := &runtimeAPI{
+		BaseURL: server.URL,
+		loadCfg: func() (*config.Config, error) { return &config.Config{AuthToken: "config-token"}, nil },
+	}
+	if _, err := api.request(context.Background(), http.MethodGet, "/api/combos", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "env-token" {
+		t.Fatalf("X-OpenCodex-API-Key = %q, want the environment token", gotKey)
+	}
+}
+
+// A caller-supplied header overrides the default rather than being dropped.
+func TestRuntimeRequestMergesCallerHeadersOverDefaults(t *testing.T) {
+	var gotContentType, gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		gotKey = r.Header.Get("X-OpenCodex-API-Key")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	api := &runtimeAPI{
+		BaseURL: server.URL,
+		Headers: map[string]string{"Content-Type": "text/plain"},
+		loadCfg: func() (*config.Config, error) { return &config.Config{AuthToken: "t"}, nil },
+	}
+	if _, err := api.request(context.Background(), http.MethodGet, "/api/combos", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotContentType != "text/plain" {
+		t.Fatalf("Content-Type = %q, want the caller override", gotContentType)
+	}
+	if gotKey != "t" {
+		t.Fatal("overriding one header must not drop the management credential")
+	}
+}
+
+// Without an explicit BaseURL the client must locate the running proxy itself,
+// or every command has to reimplement discovery.
+func TestRuntimeBaseURLUsesProxyDiscovery(t *testing.T) {
+	api := &runtimeAPI{
+		loadCfg: noConfig(),
+		findProxy: func(context.Context, *config.Config) (string, int, bool) {
+			return "127.0.0.1", 10100, true
+		},
+	}
+	got, err := api.runtimeBaseURL(context.Background(), &config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://127.0.0.1:10100" {
+		t.Fatalf("base URL = %q", got)
+	}
+}
+
+// Without a live proxy the user needs the command that fixes it, not a stack.
+func TestRuntimeBaseURLWithoutLiveProxy(t *testing.T) {
+	api := &runtimeAPI{
+		loadCfg:   noConfig(),
+		findProxy: func(context.Context, *config.Config) (string, int, bool) { return "", 0, false },
+	}
+	_, err := api.runtimeBaseURL(context.Background(), &config.Config{})
+	if err == nil {
+		t.Fatal("expected an error when no proxy is running")
+	}
+	runtimeErr, ok := err.(*RuntimeAPIError)
+	if !ok {
+		t.Fatalf("expected RuntimeAPIError, got %T", err)
+	}
+	if runtimeErr.Message != "Proxy is not running. Start it with: ocx start" {
+		t.Fatalf("message = %q", runtimeErr.Message)
+	}
+	if runtimeErr.Status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", runtimeErr.Status)
 	}
 }
 
@@ -57,29 +181,22 @@ func TestResponseMessagePrecedence(t *testing.T) {
 	}
 }
 
-// A long non-JSON body is truncated rather than dumped whole into the terminal.
-func TestResponseMessageTruncatesLongText(t *testing.T) {
+// The oracle caps with String.slice, which counts UTF-16 units. A byte-based
+// cut would truncate non-ASCII text far earlier and could split a rune.
+func TestResponseMessageTruncatesLikeJavaScript(t *testing.T) {
 	got := responseMessage(strings.Repeat("x", 900), 500)
 	if len(got) != 400 {
-		t.Fatalf("len = %d, want 400", len(got))
+		t.Fatalf("ascii len = %d, want 400", len(got))
 	}
-}
 
-// Without a live proxy the user needs the command that fixes it, not a stack.
-func TestRuntimeBaseURLWithoutLiveProxy(t *testing.T) {
-	_, err := runtimeAPI{}.runtimeBaseURL(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected an error when no proxy is running")
+	got = responseMessage(strings.Repeat("가", 900), 500)
+	if units := len(utf16.Encode([]rune(got))); units != 400 {
+		t.Fatalf("utf16 units = %d, want 400", units)
 	}
-	runtimeErr, ok := err.(*RuntimeAPIError)
-	if !ok {
-		t.Fatalf("expected RuntimeAPIError, got %T", err)
-	}
-	if runtimeErr.Message != "Proxy is not running. Start it with: ocx start" {
-		t.Fatalf("message = %q", runtimeErr.Message)
-	}
-	if runtimeErr.Status != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", runtimeErr.Status)
+	for _, r := range got {
+		if r == '\uFFFD' {
+			t.Fatal("truncation split a rune into invalid UTF-8")
+		}
 	}
 }
 
@@ -90,11 +207,53 @@ func TestRuntimeRequestKeepsNonJSONBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := runtimeAPI{BaseURL: server.URL}.request(context.Background(), nil, http.MethodGet, "api/logs", nil)
+	api := &runtimeAPI{BaseURL: server.URL, loadCfg: noConfig()}
+	result, err := api.request(context.Background(), http.MethodGet, "api/logs", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result != "not json" {
 		t.Fatalf("result = %#v, want the raw text", result)
+	}
+}
+
+// Whitespace is content: JSON.parse(" ") throws, so the oracle keeps " ".
+// Only a genuinely empty body decodes to nil.
+func TestDecodeBodyDistinguishesEmptyFromWhitespace(t *testing.T) {
+	if got := decodeBody(nil); got != nil {
+		t.Fatalf("empty body = %#v, want nil", got)
+	}
+	if got := decodeBody([]byte(" ")); got != " " {
+		t.Fatalf("whitespace body = %#v, want a preserved string", got)
+	}
+	if got := decodeBody([]byte(`{"a":1}`)); got == nil {
+		t.Fatal("valid JSON should decode")
+	}
+}
+
+// loadConfig falls through to BackupInvalidConfig, which WRITES a backup file
+// when the config fails to parse. Re-reading per request would litter backups
+// and repeat the warning for a command that issues several calls.
+func TestConfigurationIsResolvedOncePerClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	loads := 0
+	api := &runtimeAPI{
+		BaseURL: server.URL,
+		loadCfg: func() (*config.Config, error) {
+			loads++
+			return &config.Config{AuthToken: "t"}, nil
+		},
+	}
+	for range 3 {
+		if _, err := api.request(context.Background(), http.MethodGet, "/api/combos", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("config was loaded %d times, want exactly 1", loads)
 	}
 }

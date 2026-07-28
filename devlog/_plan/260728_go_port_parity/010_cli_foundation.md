@@ -84,3 +84,14 @@ IN: 위 파일들. OUT: 실제 명령 구현(020 이후), `src/**`.
 
 `cd go && go build ./... && go vet ./...` exit 0, 신규 테스트 PASS,
 `(umask 022; go test ./internal/cli/ -count=1)` PASS.
+
+### 파리티 차분은 이 단계에서 닫히지 않는다
+
+`TestTypeScriptAndGoUnknownCommandContract`는 루트 도움말 **바이트 전체**를 비교하므로
+`combo`/`agent`/`observe`/`access`/`grok`/`system`/`opencode` 줄이 모두 생긴 뒤에야 통과한다.
+즉 이 기준은 wp1의 것이 아니라 **wp5(마지막 CLI 슬라이스)에서 닫히는 집계 기준**이다.
+
+goalplan도 그에 맞게 정정했다: wp1~wp4c는 `c-cli-slice`(슬라이스 자체 테스트가 단독으로
+통과)를 지고, `c-parity-cli`(차분 통과)는 wp5가 진다. 이는 감사 1라운드 B6이 080.1/090.1에서
+지적한 것과 **같은 결함**이며, 같은 방식으로 고쳤다 — 자기 페이즈에서 도달할 수 없는 기준은
+증거를 미루거나 지어내게 만든다.

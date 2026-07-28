@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -25,14 +26,26 @@ func usageError(usage, format string, args ...any) error {
 var secretOptions = []string{"--code"}
 
 // takeFlag removes a boolean flag from args and reports whether it was present.
+//
+// The shortened slice is a fresh allocation rather than an in-place append: an
+// in-place shift rewrites the caller's backing array, so a sibling slice over
+// the same array silently observes reordered arguments even though its own
+// length never changed.
 func takeFlag(args *[]string, flag string) bool {
 	for index, arg := range *args {
 		if arg == flag {
-			*args = append((*args)[:index], (*args)[index+1:]...)
+			*args = removeRange(*args, index, index+1)
 			return true
 		}
 	}
 	return false
+}
+
+// removeRange returns a copy of values without [from, to).
+func removeRange(values []string, from, to int) []string {
+	out := make([]string, 0, len(values)-(to-from))
+	out = append(out, values[:from]...)
+	return append(out, values[to:]...)
 }
 
 // takeOption removes `--flag value` and returns the value.
@@ -49,7 +62,7 @@ func takeOption(args *[]string, flag string) (string, bool, error) {
 			return "", false, usageError("", "%s requires a value", flag)
 		}
 		value := (*args)[index+1]
-		*args = append((*args)[:index], (*args)[index+2:]...)
+		*args = removeRange(*args, index, index+2)
 		return value, true, nil
 	}
 	return "", false, nil
@@ -70,19 +83,80 @@ func takeBooleanOption(args *[]string, flag string) (bool, bool, error) {
 	return false, false, usageError("", "%s must be on or off", flag)
 }
 
+// jsNumber reproduces the ECMAScript Number(string) conversion the oracle
+// relies on. Go's ParseFloat is close but not the same function: it rejects the
+// empty string, the `0x`/`0o`/`0b` radix prefixes, and the literal `Infinity`,
+// while accepting Go-only spellings. Approximating it means the Go CLI silently
+// accepts or rejects values the TypeScript CLI does not.
+func jsNumber(raw string) (float64, bool) {
+	trimmed := strings.Trim(raw, " \t\n\r\v\f\u00a0\ufeff")
+	// Number("") and Number("   ") are both 0, not NaN.
+	if trimmed == "" {
+		return 0, true
+	}
+	sign := 1.0
+	unsigned := trimmed
+	if rest, found := strings.CutPrefix(trimmed, "+"); found {
+		unsigned = rest
+	} else if rest, found := strings.CutPrefix(trimmed, "-"); found {
+		unsigned, sign = rest, -1
+	}
+	if unsigned == "Infinity" {
+		return sign * math.Inf(1), true
+	}
+	// Radix literals are unsigned in ECMAScript: Number("-0x10") is NaN.
+	for prefix, base := range map[string]int{"0x": 16, "0X": 16, "0o": 8, "0O": 8, "0b": 2, "0B": 2} {
+		if digits, found := strings.CutPrefix(unsigned, prefix); found {
+			if sign < 0 || digits == "" {
+				return 0, false
+			}
+			value, err := strconv.ParseUint(digits, base, 64)
+			if err != nil {
+				return 0, false
+			}
+			return float64(value), true
+		}
+	}
+	value, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		// Out of range still yields ±Inf, matching Number("1e400").
+		if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+			return value, true
+		}
+		return 0, false
+	}
+	return value, true
+}
+
 // takeIntegerOption parses an integer option, optionally bounded below.
+//
+// The oracle strips `_` and `,`, runs the result through Number(), then demands
+// Number.isInteger. Infinity therefore fails the integer check rather than
+// saturating, which is why the range guard below rejects rather than clamps: an
+// out-of-range value must not silently become math.MaxInt.
 func takeIntegerOption(args *[]string, flag string, min *int) (int, bool, error) {
 	raw, ok, err := takeOption(args, flag)
 	if err != nil || !ok {
 		return 0, false, err
 	}
-	cleaned := strings.NewReplacer("_", "", ",", "").Replace(raw)
-	value, convErr := strconv.Atoi(cleaned)
-	if convErr != nil || (min != nil && value < *min) {
+	reject := func() (int, bool, error) {
 		if min != nil {
 			return 0, false, usageError("", "%s must be an integer >= %d", flag, *min)
 		}
 		return 0, false, usageError("", "%s must be an integer", flag)
+	}
+	parsed, valid := jsNumber(strings.NewReplacer("_", "", ",", "").Replace(raw))
+	if !valid || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed != math.Trunc(parsed) {
+		return reject()
+	}
+	// Number.isInteger accepts magnitudes beyond int64; converting those is
+	// implementation-defined in Go, so refuse instead of wrapping.
+	if parsed > math.MaxInt64 || parsed < math.MinInt64 {
+		return reject()
+	}
+	value := int(parsed)
+	if min != nil && value < *min {
+		return reject()
 	}
 	return value, true, nil
 }
