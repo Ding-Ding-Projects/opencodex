@@ -111,7 +111,18 @@ func (a *Adapter) BuildRequest(ctx context.Context, req *types.NormalizedRequest
 		httpReq.Header.Set("X-Claude-Code-Session-Id", openaiadapter.ClaudeCodeSessionID(apiKey))
 		httpReq.Header.Set("x-client-request-id", newRequestID())
 	} else {
-		httpReq.Header.Set("x-api-key", apiKey)
+		// apiKeyTransport picks WHICH header carries the key. Exactly one is
+		// ever set: sending both would put the same credential in two places,
+		// and some gateways treat the presence of Authorization as a different
+		// auth scheme entirely.
+		//
+		// The default is x-api-key, which is what Anthropic itself expects;
+		// "bearer" exists for gateways that only read Authorization.
+		if provider.APIKeyTransport == "bearer" {
+			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		} else {
+			httpReq.Header.Set("x-api-key", apiKey)
+		}
 	}
 	for key, value := range a.Headers {
 		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {

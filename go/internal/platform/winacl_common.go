@@ -145,29 +145,60 @@ func executeACLHardening(path, identity string, directory bool, deadline time.Ti
 		}
 		return runner(args, remaining)
 	}
-	if result := run(path, "/inheritance:r"); !result.Success {
-		return result
-	}
-	removeArgs := append([]string{path, "/remove:g"}, broadWindowsSIDs...)
-	if removal := run(removeArgs...); !removal.Success {
-		if removal.TimedOut {
-			return removal
-		}
-		for _, sid := range broadWindowsSIDs {
-			found := run(path, "/findsid", sid)
-			if !found.Success {
-				return found
-			}
-			if strings.Contains(found.Stdout, path) {
-				return removal
-			}
-		}
-	}
+	// STEP ORDER IS THE WHOLE POINT, and it was inverted here.
+	//
+	// `/inheritance:r` removes the inherited ACEs immediately. Running it
+	// first and then failing or timing out on a later step leaves a DACL with
+	// no ACE at all: the user still OWNS the file but can neither read it nor
+	// delete it, and the next run cannot repair it either. Granting the owner
+	// first means every later failure still leaves cleanup access.
+	//
+	// The oracle does grant -> inheritance -> remove for this reason
+	// (src/lib/windows-secret-acl.ts).
+
+	// Step 1: grant the current user full control BEFORE any destructive
+	// change. If this fails, inheritance is untouched and the writer keeps its
+	// inherited access.
 	grant := identity + ":(F)"
 	if directory {
 		grant = identity + ":(OI)(CI)(F)"
 	}
-	return run(path, "/grant:r", grant)
+	if result := run(path, "/grant:r", grant); !result.Success {
+		return result
+	}
+
+	// Step 2: disable inheritance. The explicit owner ACE from step 1 survives
+	// this transition.
+	if result := run(path, "/inheritance:r"); !result.Success {
+		return result
+	}
+
+	// Step 3: remove the broad explicit grants by stable SID rather than by
+	// localized name. A missing ACE can itself produce a non-zero exit, so a
+	// failure is confirmed with /findsid before being accepted as harmless --
+	// swallowing a real one would leave Everyone/Users/Authenticated Users
+	// grants in place while reporting the path as hardened.
+	//
+	// `/remove:g` cannot remove the explicit current-user ACE from step 1.
+	removeArgs := append([]string{path, "/remove:g"}, broadWindowsSIDs...)
+	removal := run(removeArgs...)
+	if removal.Success {
+		return removal
+	}
+	if removal.TimedOut {
+		return removal
+	}
+	for _, sid := range broadWindowsSIDs {
+		found := run(path, "/findsid", sid)
+		if !found.Success {
+			return found
+		}
+		if strings.Contains(found.Stdout, path) {
+			return removal
+		}
+	}
+	// Every broad SID is genuinely absent, so the non-zero exit was harmless.
+	return ACLCommandResult{Success: true}
 }
 
 func describeACLAfterTimeout(path string, deadline time.Time, now func() time.Time, runner ACLRunner) string {

@@ -562,3 +562,63 @@ func TestValidateRejectsInvalidClaudeDesktopProfile(t *testing.T) {
 		t.Fatalf("Validate() error=%v", err)
 	}
 }
+
+// apiKeyTransport is scoped to Anthropic API-key auth on purpose. Outside that
+// there is no second header to choose between, and on an OAuth, forward or
+// local provider the Authorization slot already carries the caller's own
+// credential -- accepting the setting there would either be silently ignored
+// or would overwrite that credential.
+//
+// The check ORDER is user-visible, because only the first failure is reported.
+func TestAPIKeyTransportValidation(t *testing.T) {
+	base := func(adapter, authMode, transport string) Config {
+		cfg := FreshInstall()
+		cfg.Providers = map[string]ProviderConfig{
+			"p": {Adapter: adapter, BaseURL: "https://api.anthropic.com", AuthMode: authMode, APIKeyTransport: transport},
+		}
+		cfg.DefaultProvider = "p"
+		return cfg
+	}
+	for _, test := range []struct {
+		name    string
+		adapter string
+		mode    string
+		value   string
+		wantErr string
+	}{
+		{name: "omitted", adapter: "anthropic", mode: "key", value: "", wantErr: ""},
+		{name: "x-api-key", adapter: "anthropic", mode: "key", value: "x-api-key", wantErr: ""},
+		{name: "bearer", adapter: "anthropic", mode: "key", value: "bearer", wantErr: ""},
+		{name: "unknown value", adapter: "anthropic", mode: "key", value: "basic",
+			wantErr: `apiKeyTransport must be "x-api-key" or "bearer"`},
+		{name: "wrong adapter", adapter: "openai-chat", mode: "key", value: "bearer",
+			wantErr: "apiKeyTransport is supported only by the anthropic adapter"},
+		{name: "oauth", adapter: "anthropic", mode: "oauth", value: "bearer",
+			wantErr: "apiKeyTransport requires Anthropic API-key authentication"},
+		{name: "forward", adapter: "anthropic", mode: "forward", value: "bearer",
+			wantErr: "apiKeyTransport requires Anthropic API-key authentication"},
+		{name: "local", adapter: "anthropic", mode: "local", value: "bearer",
+			wantErr: "apiKeyTransport requires Anthropic API-key authentication"},
+		// The value is checked BEFORE the adapter, so a config wrong in both
+		// ways reports the value first, as the oracle does.
+		{name: "wrong value on the wrong adapter", adapter: "openai-chat", mode: "key", value: "basic",
+			wantErr: `apiKeyTransport must be "x-api-key" or "bearer"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := base(test.adapter, test.mode, test.value)
+			err := cfg.Validate()
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate() = nil, want %q", test.wantErr)
+			}
+			if !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Validate() = %q, want it to mention %q", err.Error(), test.wantErr)
+			}
+		})
+	}
+}

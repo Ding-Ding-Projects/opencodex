@@ -164,6 +164,7 @@ type ProviderConfig struct {
 	Models                          []string                                       `json:"models,omitempty"`
 	Headers                         map[string]string                              `json:"headers,omitempty"`
 	AuthMode                        string                                         `json:"authMode,omitempty"`
+	APIKeyTransport                 string                                         `json:"apiKeyTransport,omitempty"`
 	CodexAccountMode                string                                         `json:"codexAccountMode,omitempty"`
 	GoogleMode                      string                                         `json:"googleMode,omitempty"`
 	Project                         string                                         `json:"project,omitempty"`
@@ -708,6 +709,15 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(provider.Adapter) == "" {
 			return &ConfigError{Field: "providers." + name + ".adapter", Message: "must not be blank"}
 		}
+		// apiKeyTransport chooses which header carries an Anthropic API key.
+		// It is scoped narrowly on purpose: outside Anthropic key auth there
+		// is no second header to choose between, and on an OAuth, forward or
+		// local provider the Authorization slot already carries the caller's
+		// own credential -- letting the setting through there would either be
+		// silently ignored or would overwrite that credential.
+		if err := apiKeyTransportConfigError(name, provider); err != nil {
+			return err
+		}
 		parsed, err := url.ParseRequestURI(strings.TrimSpace(provider.BaseURL))
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return &ConfigError{Field: "providers." + name + ".baseUrl", Message: "must be an http(s) URL"}
@@ -1001,6 +1011,29 @@ func ValidateModelAdapters(providerName string, provider ProviderConfig) error {
 				Message: "cannot be overridden: the upstream only speaks one wire for this model",
 			}
 		}
+	}
+	return nil
+}
+
+// apiKeyTransportConfigError mirrors apiKeyTransportConfigError in
+// src/config.ts, including the order of its three checks: the value, then the
+// adapter, then the auth mode. The order is user-visible, because only the
+// first failing message is reported.
+func apiKeyTransportConfigError(name string, provider ProviderConfig) error {
+	transport := provider.APIKeyTransport
+	if transport == "" {
+		return nil
+	}
+	field := "providers." + name + ".apiKeyTransport"
+	if transport != "x-api-key" && transport != "bearer" {
+		return &ConfigError{Field: field, Message: `apiKeyTransport must be "x-api-key" or "bearer"`}
+	}
+	if provider.Adapter != "anthropic" {
+		return &ConfigError{Field: field, Message: "apiKeyTransport is supported only by the anthropic adapter"}
+	}
+	switch provider.AuthMode {
+	case "oauth", "forward", "local":
+		return &ConfigError{Field: field, Message: "apiKeyTransport requires Anthropic API-key authentication"}
 	}
 	return nil
 }
