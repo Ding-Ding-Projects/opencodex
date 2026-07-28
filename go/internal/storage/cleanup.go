@@ -255,6 +255,11 @@ func digestOf(input string) string {
 
 // CleanupPreview is what a caller sees before anything is removed.
 type CleanupPreview struct {
+	// CodexHome identifies WHICH home this preview describes. A digest is only
+	// meaningful against the home it was computed from, and the oracle carries
+	// the same field for that reason. It is stripped before the preview
+	// reaches the wire.
+	CodexHome  string
 	Percent    int
 	Count      int
 	Bytes      int64
@@ -262,19 +267,159 @@ type CleanupPreview struct {
 	Candidates []ArchivedCandidate
 }
 
+// FilterCandidatesExcludingPendingRestore drops candidates whose files overlap
+// an in-progress restore.
+func FilterCandidatesExcludingPendingRestore(
+	candidates []ArchivedCandidate,
+	codexHome string,
+) ([]ArchivedCandidate, error) {
+	pendingDestRels, err := CollectRestorePendingAcceptedDestRels(codexHome)
+	if err != nil {
+		return nil, err
+	}
+	if len(pendingDestRels) == 0 {
+		return candidates, nil
+	}
+	safe := make([]ArchivedCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if CandidateOverlapsPendingRestore(candidate, pendingDestRels) {
+			continue
+		}
+		safe = append(safe, candidate)
+	}
+	return safe, nil
+}
+
+// SelectOldestPercentSkippingPendingRestore is percent selection that steps
+// over in-flight restore destinations WITHOUT spending the percent budget on
+// them.
+//
+// The target count comes from the FULL candidate list, then skipped entries
+// are backfilled with the next oldest safe candidate. Filtering first and then
+// taking a percentage would quietly shrink the cleanup every time a restore is
+// in progress.
+func SelectOldestPercentSkippingPendingRestore(
+	candidates []ArchivedCandidate,
+	percent float64,
+	codexHome string,
+) ([]ArchivedCandidate, error) {
+	target := PercentSelectionTargetCount(len(candidates), percent)
+	if target == 0 {
+		// The oracle returns here BEFORE reading `.trash`, so an unreadable
+		// trash directory must not turn a zero-target preview into a failure.
+		return []ArchivedCandidate{}, nil
+	}
+	pendingDestRels, err := CollectRestorePendingAcceptedDestRels(codexHome)
+	if err != nil {
+		return nil, err
+	}
+	selected := make([]ArchivedCandidate, 0, target)
+	for _, candidate := range candidates {
+		if CandidateOverlapsPendingRestore(candidate, pendingDestRels) {
+			continue
+		}
+		selected = append(selected, candidate)
+		if len(selected) >= target {
+			break
+		}
+	}
+	// Exhausting the safe candidates before reaching the target is normal, not
+	// an error: the remainder is protected, not missing.
+	return selected, nil
+}
+
+// SelectReduceToBytesSkippingPendingRestore picks oldest safe candidates until
+// the archived total would fall to reduceToBytes.
+//
+// Skipped pending-restore destinations do not count toward the bytes freed, so
+// a protected candidate cannot make the selection stop early and leave the
+// target unmet.
+func SelectReduceToBytesSkippingPendingRestore(
+	candidates []ArchivedCandidate,
+	reduceToBytes float64,
+	codexHome string,
+) ([]ArchivedCandidate, error) {
+	// Number.isFinite rejects NaN and both infinities. A Go caller can pass
+	// those directly even though JSON input cannot carry them.
+	if math.IsNaN(reduceToBytes) || math.IsInf(reduceToBytes, 0) || reduceToBytes < 0 {
+		return []ArchivedCandidate{}, nil
+	}
+	total := float64(0)
+	for _, candidate := range candidates {
+		total += float64(candidate.Bytes)
+	}
+	if total <= reduceToBytes {
+		return []ArchivedCandidate{}, nil
+	}
+	// Both early returns above precede the oracle's `.trash` read.
+	need := total - reduceToBytes
+	pendingDestRels, err := CollectRestorePendingAcceptedDestRels(codexHome)
+	if err != nil {
+		return nil, err
+	}
+	selected := make([]ArchivedCandidate, 0, len(candidates))
+	freed := float64(0)
+	for _, candidate := range candidates {
+		if CandidateOverlapsPendingRestore(candidate, pendingDestRels) {
+			continue
+		}
+		selected = append(selected, candidate)
+		freed += float64(candidate.Bytes)
+		if freed >= need {
+			break
+		}
+	}
+	return selected, nil
+}
+
 // PreviewArchivedCleanup describes what a percentage would remove.
-func PreviewArchivedCleanup(codexHome string, percent float64) CleanupPreview {
+//
+// The selection skips in-flight restore destinations. Offering them would
+// bind the digest to files a restore is actively placing, so the later apply
+// could not tell an overlap apart from ordinary drift.
+func PreviewArchivedCleanup(codexHome string, percent float64) (CleanupPreview, error) {
 	all := ListArchivedCandidates(codexHome)
-	selected := SelectOldestPercent(all, percent)
+	selected, err := SelectOldestPercentSkippingPendingRestore(all, percent, codexHome)
+	if err != nil {
+		return CleanupPreview{}, err
+	}
 	total := int64(0)
 	for _, candidate := range selected {
 		total += candidate.Bytes
 	}
 	return CleanupPreview{
+		CodexHome:  codexHome,
 		Percent:    ClampPercent(percent),
 		Count:      len(selected),
 		Bytes:      total,
 		Digest:     ComputePreviewDigest(selected, percent),
 		Candidates: selected,
+	}, nil
+}
+
+// PreviewExactArchivedCleanup binds a preview to an EXPLICIT candidate list.
+//
+// Percent stays 0 because the set was not derived from one, and the digest is
+// the exact-set digest so an apply can verify this precise list rather than a
+// percentage that might resolve differently later.
+func PreviewExactArchivedCleanup(
+	candidates []ArchivedCandidate,
+	codexHome string,
+) (CleanupPreview, error) {
+	safe, err := FilterCandidatesExcludingPendingRestore(candidates, codexHome)
+	if err != nil {
+		return CleanupPreview{}, err
 	}
+	total := int64(0)
+	for _, candidate := range safe {
+		total += candidate.Bytes
+	}
+	return CleanupPreview{
+		CodexHome:  codexHome,
+		Percent:    0,
+		Count:      len(safe),
+		Bytes:      total,
+		Digest:     ComputeExactPreviewDigest(safe),
+		Candidates: safe,
+	}, nil
 }

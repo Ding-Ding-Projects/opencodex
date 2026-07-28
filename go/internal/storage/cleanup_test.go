@@ -106,14 +106,24 @@ func TestArchivedCandidatesOnAnEmptyHome(t *testing.T) {
 	if got := ListArchivedCandidates(home); len(got) != 0 {
 		t.Fatalf("got %v, want no candidates", got)
 	}
-	preview := PreviewArchivedCleanup(home, 50)
+	preview, err := PreviewArchivedCleanup(home, 50)
+	if err != nil {
+		t.Fatalf("preview on an empty home returned %v, want no error", err)
+	}
 	if preview.Count != 0 || preview.Bytes != 0 {
 		t.Fatalf("preview = %+v, want an empty selection", preview)
+	}
+	if preview.CodexHome != home {
+		t.Fatalf("preview home = %q, want %q", preview.CodexHome, home)
 	}
 	if len(preview.Digest) != 64 {
 		t.Fatalf("digest = %q, want 64 hex characters", preview.Digest)
 	}
-	if preview.Digest != PreviewArchivedCleanup(home, 50).Digest {
+	again, err := PreviewArchivedCleanup(home, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Digest != again.Digest {
 		t.Fatal("the digest of an empty home must be deterministic")
 	}
 }
