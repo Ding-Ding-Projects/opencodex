@@ -246,6 +246,12 @@ func decodeBody(raw []byte) any {
 	if decoder.Decode(&decoded) != nil {
 		return string(raw)
 	}
+	// JSON.parse throws on trailing content, and the oracle then keeps the body
+	// as raw text. Accepting the first value would hide a malformed response and
+	// swap a useful error message for a generic one.
+	if _, err := decoder.Token(); err != io.EOF {
+		return string(raw)
+	}
 	return convertJSONNumbers(decoded)
 }
 
