@@ -139,3 +139,54 @@ func TestRequireHTTPSImageURL(t *testing.T) {
 		}
 	}
 }
+
+// IPv6 is an ALLOWLIST of global unicast, not a blocklist of known-bad ranges.
+//
+// A blocklist admitted NAT64, which wraps an arbitrary IPv4 — loopback
+// included — inside an address that looks unfamiliar rather than unsafe. Every
+// case here was measured against the oracle.
+func TestResolvePublicAddressesUsesAnIPv6Allowlist(t *testing.T) {
+	for _, testCase := range []struct{ url, want string }{
+		// IPv4-mapped, both spellings the oracle handles, must be judged as
+		// the IPv4 they carry.
+		{"https://[::ffff:127.0.0.1]/x", "image URL targets loopback address"},
+		{"https://[::ffff:10.0.0.1]/x", "image URL targets private-network address"},
+		// NAT64 wrapping loopback: refused as non-global.
+		{"https://[64:ff9b::7f00:1]/x", "image URL targets non-global address"},
+		{"https://[fc00::1]/x", "image URL targets private-network address"},
+		{"https://[fe80::1]/x", "image URL targets link-local address"},
+		{"https://[2001:db8::1]/x", "image URL targets documentation address"},
+	} {
+		_, _, err := ResolvePublicAddresses(context.Background(), testCase.url, noLookup(t))
+		if err == nil || err.Error() != testCase.want {
+			t.Fatalf("%s: err = %v, oracle returns %q", testCase.url, err, testCase.want)
+		}
+	}
+
+	// Global unicast is allowed, including 6to4, which the oracle also permits
+	// because it falls inside 2000::/3.
+	for _, allowed := range []string{"https://[2606:4700::1111]/x", "https://[2002:7f00:1::]/x"} {
+		if _, _, err := ResolvePublicAddresses(context.Background(), allowed, noLookup(t)); err != nil {
+			t.Fatalf("%s was refused: %v", allowed, err)
+		}
+	}
+}
+
+// The allowlist applies to RESOLVED addresses too, not only to literals, since
+// that is the path a rebinding answer would take.
+func TestResolvedIPv6IsAllowlistedToo(t *testing.T) {
+	nat64 := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("64:ff9b::7f00:1")}, nil
+	}
+	_, _, err := ResolvePublicAddresses(context.Background(), "https://images.example/x.png", nat64)
+	if err == nil || !strings.Contains(err.Error(), "non-global address") {
+		t.Fatalf("err = %v, want a non-global refusal", err)
+	}
+	mapped := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("::ffff:169.254.169.254")}, nil
+	}
+	if _, _, err := ResolvePublicAddresses(context.Background(), "https://images.example/x.png", mapped); err == nil ||
+		!strings.Contains(err.Error(), "metadata") {
+		t.Fatalf("mapped metadata err = %v", err)
+	}
+}

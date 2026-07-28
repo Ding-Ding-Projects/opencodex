@@ -47,7 +47,7 @@ func ResolvePublicAddresses(ctx context.Context, rawURL string, lookup IPLookup)
 
 	// A hostname that is itself unsafe, such as localhost or a metadata name,
 	// is refused before any resolution happens.
-	if kind, detail := ocxlib.ClassifyDestinationHost(hostname); kind != "public" && kind != "hostname" {
+	if kind, detail := classifyImageHost(hostname); kind != "public" && kind != "hostname" {
 		return "", nil, fmt.Errorf("image URL targets %s", detail)
 	}
 
@@ -70,7 +70,7 @@ func ResolvePublicAddresses(ctx context.Context, rawURL string, lookup IPLookup)
 		// Classified from the ADDRESS itself rather than from anything the
 		// resolver claimed about it, so a mislabelled family cannot skip the
 		// private-range checks.
-		kind, detail := ocxlib.ClassifyDestinationIP(address)
+		kind, detail := classifyImageAddress(address)
 		if kind != "public" {
 			return "", nil, fmt.Errorf("image URL hostname %s resolves to %s (%s)", hostname, detail, address)
 		}
@@ -118,4 +118,47 @@ func RequireHTTPSImageURL(rawURL string) error {
 		return fmt.Errorf("image URL must use HTTPS, got %s:", parsed.Scheme)
 	}
 	return nil
+}
+
+// classifyImageHost and classifyImageAddress apply the IMAGE destination
+// policy, which is stricter than the provider-config one.
+//
+// The difference is deliberate and load-bearing: provider config is written by
+// the operator, while an image URL comes from a provider response, so IPv6 here
+// is an ALLOWLIST of global unicast rather than a blocklist of known-bad
+// ranges. A blocklist admitted NAT64, which wraps an arbitrary IPv4 — including
+// loopback — inside an address that looks unfamiliar rather than unsafe.
+func classifyImageHost(host string) (string, string) {
+	if ip := net.ParseIP(host); ip != nil {
+		return classifyImageAddress(ip)
+	}
+	return ocxlib.ClassifyDestinationHost(host)
+}
+
+func classifyImageAddress(ip net.IP) (string, string) {
+	// An IPv4-mapped address is classified as the IPv4 it carries, in either
+	// spelling, so ::ffff:127.0.0.1 cannot reach loopback through the v6 path.
+	if mapped := ip.To4(); mapped != nil {
+		return ocxlib.ClassifyDestinationIP(mapped)
+	}
+	if kind, detail := ocxlib.ClassifyDestinationIP(ip); kind != "public" {
+		return kind, detail
+	}
+	// Only global unicast 2000::/3 counts as a public image peer. Everything
+	// else — NAT64, ULA leftovers, unassigned space — is refused rather than
+	// assumed benign.
+	if len(ip) == net.IPv6len {
+		hextet := int(ip[0])<<8 | int(ip[1])
+		if hextet == 0x2001 {
+			second := int(ip[2])<<8 | int(ip[3])
+			if second == 0xdb8 {
+				return "private", "documentation address"
+			}
+		}
+		if hextet >= 0x2000 && hextet <= 0x3fff {
+			return "public", "public IP"
+		}
+		return "private", "non-global address"
+	}
+	return "public", "public IP"
 }
