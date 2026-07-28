@@ -261,6 +261,15 @@ type preservedString struct {
 	raw   string
 }
 
+// MarshalJSON emits the original bytes.
+//
+// Required because a preservedString can sit anywhere a value can, including
+// inside a slice that json.Marshal encodes itself. Without this the struct
+// would serialize as {} and the string would vanish.
+func (p preservedString) MarshalJSON() ([]byte, error) {
+	return []byte(p.raw), nil
+}
+
 // preserveLoneSurrogate returns a plain string when decoding was lossless, and
 // a preservedString carrying the original escape when it was not.
 //
@@ -279,7 +288,26 @@ func preserveLoneSurrogate(text, raw string) any {
 	if strings.ContainsRune(unescapeJSONString(raw), utf8.RuneError) {
 		return text
 	}
-	return preservedString{value: text, raw: raw}
+	// The escape is lowercased, because the oracle normalizes it: measured,
+	// \uD800 comes back as \ud800. Preserving the input's spelling would be
+	// more faithful to the source and less faithful to the oracle.
+	return preservedString{value: text, raw: lowerUnicodeEscapes(raw)}
+}
+
+// lowerUnicodeEscapes lowercases the hex digits of every \uXXXX escape while
+// leaving the rest of the string untouched.
+func lowerUnicodeEscapes(raw string) string {
+	var builder strings.Builder
+	for index := 0; index < len(raw); index++ {
+		if raw[index] == '\\' && index+5 < len(raw) && (raw[index+1] == 'u' || raw[index+1] == 'U') {
+			builder.WriteString(`\u`)
+			builder.WriteString(strings.ToLower(raw[index+2 : index+6]))
+			index += 5
+			continue
+		}
+		builder.WriteByte(raw[index])
+	}
+	return builder.String()
 }
 
 // unescapeJSONString decodes a JSON string literal, tolerating the lone
