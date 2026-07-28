@@ -72,6 +72,14 @@ type ResponsesCoreConfig struct {
 	// leaving it to guess.
 	AnthropicPoolRetryAfter func() (int, bool)
 	PrepareImageRetry       func(*types.NormalizedRequest) error
+	// ImageBridge arms the opt-in image bridge per request. Nil leaves the
+	// feature off, which is the default: it makes PAID upstream calls.
+	ImageBridge    ImageBridgeFactory
+	ImageMaxRounds int
+	// CanonicalOpenAIRoute identifies the canonical ChatGPT backend, which
+	// compacts natively and therefore never routes a compaction turn through
+	// the sidecars.
+	CanonicalOpenAIRoute func(*types.ResolvedModel) bool
 	RequestLogs             *RequestLogStore
 	StreamMode              string
 	ResponseState           *ResponseStateStore
@@ -281,6 +289,15 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 	started := time.Now()
 	logSession := newResponsesLogSession(core.config.RequestLogs, started, parsed.RequestedModel, resolved, core.providerAdapter(resolved))
 	logSession.serviceTier(parsed.Normalized.Options.ServiceTier)
+	bridgeRecord := &types.UsageRecord{
+		RequestID: core.nextRequestID(), ThreadID: authThreadID(request.Header),
+		Provider: resolved.Provider, Model: resolved.Model, StartedAt: started,
+	}
+	// Before forward, not after: the bridge runs its own upstream turns, and
+	// forwarding first would already have spent one the client never sees.
+	if core.runImageBridge(ctx, cancel, w, request.Header, parsed, resolved, pick, logSession, attempt, bridgeRecord) {
+		return
+	}
 	adapter, response, auth, resolved, pick, err := core.forward(ctx, request.Header, parsed.Normalized, resolved, pick, logSession, attempt)
 	if err != nil {
 		status := http.StatusBadGateway

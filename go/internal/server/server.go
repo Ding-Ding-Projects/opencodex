@@ -79,6 +79,10 @@ type Config struct {
 	MemorySample           func() MemorySample
 	ClaudeDebug            *claude.DebugRing
 	SearchLoop             *search.Loop
+	// ImageBridge arms the opt-in image bridge per request. Nil leaves the
+	// feature off, which is the default: it makes PAID upstream calls.
+	ImageBridge    ImageBridgeFactory
+	ImageMaxRounds int
 	OnUsage                func(*types.Usage)
 	InjectionDebug         *ocxlib.DebugLogBuffer
 	ProviderQuotas         management.ProviderQuotaBackend
@@ -270,6 +274,21 @@ func New(config Config) *Server {
 		SubagentEffortCap:   s.config.SubagentEffortCap,
 		ApplyProviderPolicy: applyProviderPolicies,
 		StallTimeout:        s.config.StallTimeoutSec,
+		ImageBridge:         s.config.ImageBridge,
+		ImageMaxRounds:      s.config.ImageMaxRounds,
+		CanonicalOpenAIRoute: func(resolved *types.ResolvedModel) bool {
+			if resolved == nil || s.config.ManagementConfig == nil {
+				return false
+			}
+			result := false
+			s.readManagementConfig(func(cfg *appconfig.Config) {
+				configured := cfg.Providers[resolved.Provider]
+				result = providers.IsCanonicalOpenAiForwardProvider(
+					EffectiveWireAdapter(resolved.Provider, resolved.Model, configured),
+					configured.AuthMode, configured.BaseURL)
+			})
+			return result
+		},
 		ShadowCall:          s.config.ShadowCall,
 		ConsumeQuotaHeaders: func(_ context.Context, accountID string, headers http.Header) {
 			quota.ApplyUpstreamHeaders(accountID, headers)

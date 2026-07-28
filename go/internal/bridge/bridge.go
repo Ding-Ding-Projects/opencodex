@@ -71,6 +71,13 @@ type StreamOptions struct {
 	Record          *types.UsageRecord
 	// OnUsage receives raw adapter usage before strict-client wire normalization.
 	OnUsage func(*types.Usage)
+	// BeforeRecord adjusts the record just before it is written, for callers
+	// whose route identity can change while the turn runs.
+	BeforeRecord func(*types.UsageRecord)
+	// OnFirstEvent fires once response.created has been written, so a caller
+	// can hold back work that must not start before the client sees the
+	// stream open.
+	OnFirstEvent func()
 }
 
 // ConvertOptions supplies callbacks for buffered bridge conversion.
@@ -108,6 +115,9 @@ func StreamWithOptions(ctx context.Context, w io.Writer, model string, events <-
 	m := newMachineWithUsage(model, options.OnUsage)
 	if err := writeSSE(w, m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})); err != nil {
 		return err
+	}
+	if options.OnFirstEvent != nil {
+		options.OnFirstEvent()
 	}
 	stallTimeout := resolveStallTimeout(options)
 	stallCh := make(chan uint64, 1)
@@ -193,6 +203,12 @@ func recordStreamUsage(ctx context.Context, m *machine, options StreamOptions) {
 		record.Status = types.OutcomeProviderError
 	default:
 		record.Status = types.OutcomeProviderError
+	}
+	// Last, so the callback sees the FINAL usage, duration and status. A
+	// caller rebinding route identity after a mid-turn failover needs to be
+	// able to inspect what it is correcting.
+	if options.BeforeRecord != nil {
+		options.BeforeRecord(&record)
 	}
 	_ = options.Recorder.Record(context.WithoutCancel(ctx), &record)
 }
