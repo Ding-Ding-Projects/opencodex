@@ -99,6 +99,14 @@ func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID s
 				useCodexRouter = true
 				return
 			}
+			if provider == "anthropic" {
+				// Re-read the opt-in on every resolution. The resolver is built
+				// once at startup, so a closure over the boot-time config would
+				// keep serving the old answer after a live config change and
+				// make enabling the pool look like it did nothing until
+				// restart.
+				a.resolver.SetAnthropicPoolConfig(config.NormalizeAnthropicPool(live.AnthropicAccountPool))
+			}
 			a.resolver.SetProvider(provider, authConfig, nil)
 		}
 	})

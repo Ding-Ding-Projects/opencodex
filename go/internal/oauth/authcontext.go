@@ -24,12 +24,29 @@ type AuthResolver struct {
 	// than another AccountPool because the two select on different contracts:
 	// this one is session-keyed and strategy-driven, and its own config decides
 	// whether it participates at all.
-	Anthropic       *AnthropicPool
-	AnthropicConfig func() config.NormalizedAnthropicPool
+	Anthropic *AnthropicPool
 
 	mu         sync.RWMutex
 	configs    map[string]ProviderAuthConfig
 	refreshers map[string]RefreshFunc
+	// anthropicPool is re-set per request by the live-config path, so it is
+	// guarded rather than exported: an unsynchronized func field would race the
+	// request that is reading it.
+	anthropicPool    config.NormalizedAnthropicPool
+	anthropicPoolSet bool
+}
+
+// SetAnthropicPoolConfig publishes the opt-in settings for later resolutions.
+func (r *AuthResolver) SetAnthropicPoolConfig(pool config.NormalizedAnthropicPool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.anthropicPool, r.anthropicPoolSet = pool, true
+}
+
+func (r *AuthResolver) anthropicPoolConfig() (config.NormalizedAnthropicPool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.anthropicPool, r.anthropicPoolSet
 }
 
 func NewAuthResolver(store *CredentialStore, configs map[string]ProviderAuthConfig, refreshers map[string]RefreshFunc) *AuthResolver {
@@ -113,8 +130,8 @@ func (r *AuthResolver) selectAccount(ctx context.Context, provider, threadID str
 	// Anthropic routes through its own pool when the opt-in is on. Checked
 	// before usePool because that flag belongs to the Codex pool and is never
 	// set for this provider.
-	if provider == anthropicPoolProvider && r.Anthropic != nil && r.AnthropicConfig != nil {
-		if pool := r.AnthropicConfig(); pool.Enabled {
+	if provider == anthropicPoolProvider && r.Anthropic != nil {
+		if pool, configured := r.anthropicPoolConfig(); configured && pool.Enabled {
 			return r.selectAnthropicAccount(provider, threadID, pool)
 		}
 	}

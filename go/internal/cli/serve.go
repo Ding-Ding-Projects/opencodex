@@ -320,8 +320,7 @@ func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore, cl
 	// it participates, so a disabled pool costs nothing and an enabled one does
 	// not need a restart to become reachable.
 	resolver.Anthropic = oauth.NewAnthropicPool(store)
-	anthropicPool := config.NormalizeAnthropicPool(cfg.AnthropicAccountPool)
-	resolver.AnthropicConfig = func() config.NormalizedAnthropicPool { return anthropicPool }
+	resolver.SetAnthropicPoolConfig(config.NormalizeAnthropicPool(cfg.AnthropicAccountPool))
 	return resolver, nil
 }
 

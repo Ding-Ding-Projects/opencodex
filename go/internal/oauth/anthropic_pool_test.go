@@ -236,7 +236,7 @@ func TestAuthResolverRoutesAnthropicThroughThePool(t *testing.T) {
 		anthropicPoolProvider: {Mode: AuthModeOAuth},
 	}, nil)
 	resolver.Anthropic = pool
-	resolver.AnthropicConfig = func() config.NormalizedAnthropicPool { return enabled }
+	resolver.SetAnthropicPoolConfig(enabled)
 
 	seen := map[string]struct{}{}
 	for index := 1; index <= 4; index++ {
@@ -253,7 +253,7 @@ func TestAuthResolverRoutesAnthropicThroughThePool(t *testing.T) {
 	// With the opt-in OFF the resolver must fall back to the stored active,
 	// which is what makes enabling the pool a deliberate choice.
 	disabled := poolConfig(false, 80, "round-robin", 1)
-	resolver.AnthropicConfig = func() config.NormalizedAnthropicPool { return disabled }
+	resolver.SetAnthropicPoolConfig(disabled)
 	for index := 0; index < 3; index++ {
 		account, err := resolver.selectAccount(context.Background(), anthropicPoolProvider, "k", false)
 		if err != nil {
