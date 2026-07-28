@@ -91,7 +91,7 @@ func comboDispatch(ctx context.Context, api runtimeAPI, args []string, streams I
 	rest := append([]string{}, args...)
 	action := "list"
 	if len(rest) > 0 {
-		action, rest = strings.ToLower(rest[0]), rest[1:]
+		action, rest = rest[0], rest[1:]
 	}
 	switch action {
 	case "list":
@@ -269,7 +269,7 @@ const routeUsage = `Usage:
 // runRoute is the `ocx route combo ...` wrapper. It accepts nothing else, so a
 // mistyped surface fails loudly instead of silently doing combo work.
 func runRoute(ctx context.Context, args []string, streams IO) error {
-	if len(args) == 0 || strings.ToLower(args[0]) != "combo" {
+	if len(args) == 0 || args[0] != "combo" {
 		return usageError(routeUsage, "route requires the combo subcommand")
 	}
 	return runCombo(ctx, args[1:], streams)

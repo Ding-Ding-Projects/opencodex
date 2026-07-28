@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -48,6 +49,24 @@ func TestSummaryScalarPlaceholders(t *testing.T) {
 	for _, want := range []string{"model: -", "alias: -", "port: 10100"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("lines = %q, want %q", joined, want)
+		}
+	}
+}
+
+// JavaScript switches to exponent form only below 1e-6, and String(-0) is "0".
+// Both boundaries are easy to get wrong and produce visibly odd numbers.
+func TestSummaryNumberBoundaries(t *testing.T) {
+	for _, testCase := range []struct {
+		value float64
+		want  string
+	}{
+		{1e-6, "0.000001"},
+		{1e-7, "1e-7"},
+		{math.Copysign(0, -1), "0"},
+		{-1.5, "-1.5"},
+	} {
+		if got := jsNumberText(testCase.value); got != testCase.want {
+			t.Errorf("jsNumberText(%v) = %q, want %q", testCase.value, got, testCase.want)
 		}
 	}
 }

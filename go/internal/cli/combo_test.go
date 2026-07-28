@@ -179,7 +179,23 @@ func TestComboTreatsLeadingFlagAsTheIdentifier(t *testing.T) {
 	if _, err := runComboWith(t, server, "show", "--json"); err == nil {
 		t.Fatal("expected --json to be consumed as the id and then rejected")
 	}
-	_ = calls
+	// The oracle shifts the id, then GETs before reporting an unknown combo, so
+	// the request must actually have happened.
+	if len(*calls) != 1 || (*calls)[0].method != http.MethodGet || (*calls)[0].path != "/api/combos" {
+		t.Fatalf("calls = %+v, want one GET /api/combos", *calls)
+	}
+}
+
+// Top-level command dispatch is exact-match in the oracle; only inner section
+// actions are lowercased.
+func TestComboDispatchIsCaseSensitive(t *testing.T) {
+	server, calls := comboServer(t, `{"combos":[]}`)
+	if _, err := runComboWith(t, server, "LIST"); err == nil {
+		t.Fatal("expected LIST to be an unknown combo command")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("an unknown command must not reach the network, got %+v", *calls)
+	}
 }
 
 // route accepts only `route combo`; anything else must not silently do combo work.

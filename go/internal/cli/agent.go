@@ -43,7 +43,7 @@ func agentDispatch(ctx context.Context, api runtimeAPI, args []string, streams I
 	rest := append([]string{}, args...)
 	section := "status"
 	if len(rest) > 0 {
-		section, rest = strings.ToLower(rest[0]), rest[1:]
+		section, rest = rest[0], rest[1:]
 	}
 	switch section {
 	case "status":

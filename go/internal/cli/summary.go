@@ -116,11 +116,17 @@ func scalarText(value any) string {
 // jsNumberText formats a number the way JavaScript String(number) does.
 //
 // %f would round 1.23456789 to six decimals and collapse 1e-7 to "0.000000",
-// so the shortest round-trip form is used instead. Go writes exponents as
-// "1e+30" and JavaScript agrees above 1e21, but Go switches to exponent
-// notation far earlier, so the threshold is applied explicitly.
+// so the shortest round-trip form is used instead. The thresholds are explicit
+// because Go and JavaScript disagree about when to switch to exponent form:
+// JavaScript uses fixed notation across 1e-6 <= |value| < 1e21 and exponents
+// outside it, while Go's %g switches much earlier.
 func jsNumberText(value float64) string {
-	if value == math.Trunc(value) && math.Abs(value) < 1e21 {
+	magnitude := math.Abs(value)
+	// String(-0) is "0", not "-0".
+	if magnitude == 0 {
+		return "0"
+	}
+	if magnitude >= 1e-6 && magnitude < 1e21 {
 		return strconv.FormatFloat(value, 'f', -1, 64)
 	}
 	formatted := strconv.FormatFloat(value, 'g', -1, 64)

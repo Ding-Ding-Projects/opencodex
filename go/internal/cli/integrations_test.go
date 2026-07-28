@@ -297,21 +297,51 @@ func TestClaudeConfigAcceptsLargeCompactWindow(t *testing.T) {
 
 // integration must route the valid surfaces, not merely reject invalid ones.
 func TestIntegrationRoutesGrokAndClaudeToTheirRoutes(t *testing.T) {
-	server, calls := grokServer(t, `{"excluded":[]}`)
 	var out bytes.Buffer
-	api := testAPI(server)
-	if err := grokDispatch(context.Background(), api, []string{"status"}, IO{Out: &out}); err != nil {
-		t.Fatal(err)
+	for _, testCase := range []struct {
+		surface string
+		path    string
+		state   string
+	}{
+		{"grok", "/api/grok", `{"excluded":[]}`},
+		{"claude", "/api/claude-code", `{}`},
+	} {
+		server, calls := grokServer(t, testCase.state)
+		dispatch := grokDispatch
+		if testCase.surface == "claude" {
+			dispatch = claudeConfigDispatch
+		}
+		if err := dispatch(context.Background(), testAPI(server), []string{"status"}, IO{Out: &out}); err != nil {
+			t.Fatal(err)
+		}
+		if len(*calls) != 1 || (*calls)[0].method != http.MethodGet || (*calls)[0].path != testCase.path {
+			t.Fatalf("%s status = %+v, want one GET %s", testCase.surface, *calls, testCase.path)
+		}
 	}
-	if (*calls)[0].path != "/api/grok" {
-		t.Fatalf("grok status hit %s", (*calls)[0].path)
-	}
+}
 
-	server, calls = grokServer(t, `{}`)
-	if err := claudeConfigDispatch(context.Background(), testAPI(server), []string{"status"}, IO{Out: &out}); err != nil {
-		t.Fatal(err)
+// A present but non-array `excluded` is a hard failure in the oracle, because
+// new Set(42) throws. It must not be treated as empty and overwritten.
+func TestGrokRefusesNonListState(t *testing.T) {
+	for _, state := range []string{`{"excluded":42}`, `{"excluded":{"a":1}}`, `{"excluded":"a"}`} {
+		server, calls := grokServer(t, state)
+		if _, err := runGrokWith(t, server, "exclude", "c"); err == nil {
+			t.Fatalf("state %s should be rejected", state)
+		}
+		for _, call := range *calls {
+			if call.method == http.MethodPut {
+				t.Fatalf("state %s must not be overwritten", state)
+			}
+		}
 	}
-	if (*calls)[0].path != "/api/claude-code" {
-		t.Fatalf("claude status hit %s", (*calls)[0].path)
+}
+
+// Top-level integration dispatch is exact-match in the oracle.
+func TestIntegrationDispatchIsCaseSensitive(t *testing.T) {
+	var out bytes.Buffer
+	for _, surface := range []string{"Grok", "CLAUDE"} {
+		if err := runIntegration(context.Background(), []string{surface}, IO{Out: &out}); err == nil {
+			t.Fatalf("expected %q to be rejected", surface)
+		}
 	}
 }

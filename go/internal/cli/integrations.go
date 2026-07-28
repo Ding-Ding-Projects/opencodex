@@ -93,7 +93,15 @@ func grokDispatch(ctx context.Context, api runtimeAPI, args []string, streams IO
 		// exclusions just because they were not strings.
 		current := []string{}
 		if record, ok := state.(map[string]any); ok {
-			if list, ok := record["excluded"].([]any); ok {
+			// Only absent or null counts as empty. The oracle builds a Set from
+			// this value, and `new Set(42)` throws, so a present non-array is a
+			// hard failure there and must not become a silent overwrite here.
+			if raw, present := record["excluded"]; present && raw != nil {
+				list, ok := raw.([]any)
+				if !ok {
+					return usageError(grokUsage,
+						"the proxy reported a non-list Grok exclusion state (%v); fix it with `ocx grok set` before a relative edit", raw)
+				}
 				for _, item := range list {
 					model, ok := item.(string)
 					if !ok {
@@ -158,7 +166,7 @@ func runIntegration(ctx context.Context, args []string, streams IO) error {
 	if len(args) == 0 {
 		return usageError(integrationUsage, "integration requires claude or grok")
 	}
-	switch strings.ToLower(args[0]) {
+	switch args[0] {
 	case "grok":
 		return runGrok(ctx, args[1:], streams)
 	case "claude":
