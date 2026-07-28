@@ -208,6 +208,11 @@ func (core *ResponsesCore) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		writeJSONError(w, http.StatusServiceUnavailable, "server_not_configured", "routing integration is not configured")
 		return
 	}
+	// Strip proxy-internal headers at the edge. A client that could set the
+	// shared-cohort marker would suppress its own affinity key and be rerouted
+	// on every turn, and one that could set it for a key others share could do
+	// the same to them.
+	request.Header.Del(types.SharedCohortHeader)
 	parsed, err := parseResponsesRequestWithState(w, request, core.config.BodyLimit, core.config.ResponseState)
 	if err != nil {
 		status := http.StatusBadRequest

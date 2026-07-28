@@ -227,3 +227,32 @@ func (exhaustedAuth) ResolveAuth(context.Context, string, string) (*types.AuthCo
 	return nil, oauth.ErrNoUsableAccount
 }
 func (exhaustedAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
+
+// The cohort marker is proxy-internal. A client that could set it would
+// suppress its own affinity key and be rerouted every turn, and could do the
+// same for a key other conversations share.
+func TestResponsesEndpointStripsASpoofedCohortHeader(t *testing.T) {
+	var seen atomic.Value
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	core := NewResponsesCore(ResponsesCoreConfig{
+		Registry: anthropicRegistry{coreRegistry{endpoint: upstream.URL}},
+		Auth:     &rotatingAuth{},
+		ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, headers http.Header) (types.Adapter, error) {
+			seen.Store(headers.Get(types.SharedCohortHeader))
+			return coreAdapter{endpoint: transport.BaseURL}, nil
+		},
+	})
+
+	request := loopbackRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public","stream":false}`))
+	request.Header.Set(types.SharedCohortHeader, "1")
+	core.ServeHTTP(httptest.NewRecorder(), request)
+
+	if got, _ := seen.Load().(string); got != "" {
+		t.Fatalf("a client-supplied cohort header survived as %q", got)
+	}
+}
