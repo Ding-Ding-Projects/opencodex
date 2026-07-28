@@ -136,6 +136,13 @@ func parseIPv4Number(part string) (uint64, bool) {
 // already refuses a malformed wire-level Host before a handler runs, so the
 // stricter branch is unreachable in production. An ABSENT Host still returns
 // true, which is what local CLI callers send.
+//
+// That single divergence covers every measured difference. A 22-value
+// differential against the oracle agreed on 18 and differed on four --
+// `4294967296`, `127.1.1.1.1`, `127.0.0.256` and `::ffff:7f00:1` -- all of
+// which make `new URL()` THROW, so the oracle fail-opens to true while this
+// returns false. Every difference is in the stricter direction; no host string
+// was found that Go trusts and the oracle does not.
 func IsLoopbackRequestHost(value string) bool {
 	parsed, err := ParseHTTPHost(value)
 	if err != nil {

@@ -224,3 +224,56 @@ func TestLoopbackRequestHostMatchesWHATWGNormalization(t *testing.T) {
 		}
 	}
 }
+
+// The differential that matters for a trust boundary: Go must never be MORE
+// permissive than the oracle about what counts as loopback.
+//
+// Every row is the oracle's measured answer, from
+// `bun -e 'isLoopbackRequestHost(...)'`. Where the two differ, Go is stricter,
+// and the reason is always the same one documented on IsLoopbackRequestHost:
+// these strings make new URL() throw, so the oracle fail-opens to true.
+func TestLoopbackRequestHostIsNeverMorePermissiveThanTheOracle(t *testing.T) {
+	for _, test := range []struct {
+		host     string
+		oracle   bool
+		stricter bool // Go returns false where the oracle fail-opens to true.
+	}{
+		{host: "0", oracle: false},
+		{host: "0.0.0.0", oracle: false},
+		{host: "0.0.0.1", oracle: false},
+		{host: "1.1.1", oracle: false},
+		{host: "4294967295", oracle: false},
+		{host: "0xffffffff", oracle: false},
+		{host: "0b1111111000000000000000000000001", oracle: false},
+		{host: "localhost..", oracle: false},
+		{host: "127.0.0.1..", oracle: false},
+		{host: "[::ffff:127.0.0.1]", oracle: false},
+		{host: "127.0.0.1.", oracle: true},
+		{host: "127.0.0.01", oracle: true},
+		{host: "127.00000001", oracle: true},
+		{host: "0x7f.0.0.1", oracle: true},
+		{host: "0177.0.0.01", oracle: true},
+		{host: "0x7f000001:80", oracle: true},
+		{host: "2130706433.", oracle: true},
+		{host: "LOCALHOST.", oracle: true},
+		// new URL() throws on these, so the oracle fail-opens.
+		{host: "4294967296", oracle: true, stricter: true},
+		{host: "127.1.1.1.1", oracle: true, stricter: true},
+		{host: "127.0.0.256", oracle: true, stricter: true},
+		{host: "::ffff:7f00:1", oracle: true, stricter: true},
+	} {
+		got := IsLoopbackRequestHost(test.host)
+		want := test.oracle
+		if test.stricter {
+			want = false
+		}
+		if got != want {
+			t.Errorf("IsLoopbackRequestHost(%q) = %v, want %v (oracle says %v)", test.host, got, want, test.oracle)
+		}
+		// The invariant, stated separately from the table: trusting something
+		// the oracle does not trust is a hole, and no row may ever do it.
+		if got && !test.oracle {
+			t.Errorf("IsLoopbackRequestHost(%q) trusts a host the oracle refuses", test.host)
+		}
+	}
+}
