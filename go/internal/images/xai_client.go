@@ -30,9 +30,11 @@ const (
 
 // XaiImageRequest is one generation or edit.
 type XaiImageRequest struct {
-	Prompt  string
-	Model   string
-	N       int
+	Prompt string
+	Model  string
+	// N is a pointer so an explicit 0 survives; the oracle defaults with ??,
+	// not ||, so zero is a real value rather than "unset".
+	N       *int
 	Size    string
 	Quality string
 	// ImageURL switches the call to /images/edits when set.
@@ -74,20 +76,30 @@ var xaiSizePattern = regexp.MustCompile(`^(\d+)x(\d+)$`)
 // equally far from 1:1, which a plain difference would get wrong. An
 // unrecognized size is DROPPED rather than forwarded, because xAI rejects
 // parameters it does not know and the whole call would fail.
+//
+// Degenerate numbers follow the oracle rather than being rejected, because the
+// oracle has no guard against them and the results are reachable: a zero height
+// makes the ratio Infinity or NaN, whose log comparisons are all false, so the
+// FIRST candidate wins and the answer is 1:1. A value too large for an int
+// parses as a float there and lands on 16:9.
 func mapSizeToAspectRatio(size string) string {
 	match := xaiSizePattern.FindStringSubmatch(size)
 	if match == nil {
 		return ""
 	}
-	width, errWidth := strconv.Atoi(match[1])
-	height, errHeight := strconv.Atoi(match[2])
-	if errWidth != nil || errHeight != nil || height == 0 {
+	// Parsed as floats, matching parseInt's behaviour on values beyond int
+	// range: it yields a finite float rather than failing.
+	width, errWidth := strconv.ParseFloat(match[1], 64)
+	height, errHeight := strconv.ParseFloat(match[2], 64)
+	if errWidth != nil || errHeight != nil {
 		return ""
 	}
-	ratio := float64(width) / float64(height)
+	ratio := width / height
 	best, bestDiff := xaiAspectRatios[0].Label, math.Inf(1)
 	for _, candidate := range xaiAspectRatios {
 		diff := math.Abs(math.Log(ratio / candidate.Ratio))
+		// NaN comparisons are all false, so a degenerate ratio leaves the
+		// first candidate in place exactly as the oracle's loop does.
 		if diff < bestDiff {
 			best, bestDiff = candidate.Label, diff
 		}
@@ -133,9 +145,11 @@ func CallXaiImages(
 	if model == "" {
 		model = xaiDefaultModel
 	}
-	count := request.N
-	if count == 0 {
-		count = 1
+	// N is a pointer so an explicit 0 is distinguishable from an absent value:
+	// the oracle uses ?? and therefore sends 0 when 0 was asked for.
+	count := 1
+	if request.N != nil {
+		count = *request.N
 	}
 	body := map[string]any{"model": model, "prompt": request.Prompt, "n": count}
 	if ratio := mapSizeToAspectRatio(request.Size); ratio != "" {

@@ -203,3 +203,53 @@ func TestCallXaiImagesTreatsMissingDataAsEmpty(t *testing.T) {
 		t.Fatalf("images = %#v, err = %v", images, err)
 	}
 }
+
+// Degenerate sizes follow the oracle rather than being rejected. The oracle has
+// no guard against them and the results are reachable: a zero height makes the
+// ratio Infinity or NaN, whose comparisons are all false, so the FIRST
+// candidate stays and the answer is 1:1.
+func TestMapSizeToAspectRatioMatchesTheOracleOnDegenerateInput(t *testing.T) {
+	for _, testCase := range []struct{ size, want string }{
+		{"0x0", "1:1"},
+		{"100x0", "1:1"},
+		{"0x100", "1:1"},
+		// Leading zeros parse as decimal on both sides.
+		{"007x007", "1:1"},
+		{"00100x00100", "1:1"},
+		// Beyond int range: parseInt yields a finite float rather than failing,
+		// so this lands on the widest ratio instead of being dropped.
+		{"99999999999999999999x1", "16:9"},
+		// Surrounding whitespace fails the pattern on both sides.
+		{" 100x100", ""},
+		{"100x100 ", ""},
+	} {
+		if got := mapSizeToAspectRatio(testCase.size); got != testCase.want {
+			t.Fatalf("mapSizeToAspectRatio(%q) = %q, oracle returns %q", testCase.size, got, testCase.want)
+		}
+	}
+}
+
+// An explicit n of 0 is sent as 0. The oracle defaults with ?? rather than ||,
+// so zero is a real request rather than an unset field.
+func TestCallXaiImagesSendsAnExplicitZeroCount(t *testing.T) {
+	server, captured := xaiStub(t, `{"data":[]}`, http.StatusOK)
+	zero := 0
+	_, err := CallXaiImages(context.Background(), server.Client(),
+		XaiImageRequest{Prompt: "p", N: &zero}, BridgeAuth{BaseURL: server.URL + "/v1", Token: "t"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := (*captured)[0].Body["n"]; got != float64(0) {
+		t.Fatalf("n = %v, oracle sends an explicit 0", got)
+	}
+
+	// An absent count still defaults to 1.
+	defaulted, capturedDefault := xaiStub(t, `{"data":[]}`, http.StatusOK)
+	if _, err := CallXaiImages(context.Background(), defaulted.Client(),
+		XaiImageRequest{Prompt: "p"}, BridgeAuth{BaseURL: defaulted.URL + "/v1", Token: "t"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*capturedDefault)[0].Body["n"]; got != float64(1) {
+		t.Fatalf("default n = %v, oracle sends 1", got)
+	}
+}
