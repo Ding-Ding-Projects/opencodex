@@ -930,9 +930,18 @@ func validateExtendedConfig(c Config) error {
 			return &ConfigError{Field: field + ".email", Message: "must not be blank"}
 		}
 	}
-	if c.ActiveCodexAccountID != "" && !seenAccounts[c.ActiveCodexAccountID] {
-		return &ConfigError{Field: "activeCodexAccountId", Message: "must name a configured Codex account"}
-	}
+	// activeCodexAccountId is deliberately NOT cross-checked against
+	// codexAccounts. The oracle accepts any value here, including one naming no
+	// configured account, and two real shapes depend on that: the main Codex
+	// login participates under the stable "__main__" alias without ever being
+	// imported into codexAccounts (src/codex/main-account.ts), and an account
+	// removal clears the pointer at runtime rather than at load
+	// (src/codex/account-lifecycle.ts:49).
+	//
+	// Measured against validateConfigCandidate: "__main__", a real account id,
+	// an unknown id and "" are all accepted. Rejecting here made Go quarantine
+	// working configs the TypeScript runtime loads fine -- selection already
+	// handles an unusable pointer.
 	if guardian := c.TokenGuardian; guardian != nil {
 		if guardian.TickSeconds != 0 && guardian.TickSeconds < 60 {
 			return &ConfigError{Field: "tokenGuardian.tickSeconds", Message: "must be at least 60"}

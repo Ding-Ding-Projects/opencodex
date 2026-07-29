@@ -777,3 +777,48 @@ func TestRuntimeLoadKeepsCodexAccountModeOnTheCanonicalProvider(t *testing.T) {
 		})
 	}
 }
+
+// activeCodexAccountId must NOT be cross-checked against codexAccounts.
+//
+// Go used to reject any value that named no configured account, which the
+// oracle accepts. That was not a harmless extra check: it quarantined the
+// user's real config on startup and wrote a config.json.invalid backup, because
+// the main Codex login participates under the stable "__main__" alias and is
+// never imported into codexAccounts (src/codex/main-account.ts).
+//
+// Measured with validateConfigCandidate against the oracle: "__main__", a real
+// account id, an unknown id, and "" are all accepted.
+func TestActiveCodexAccountIDIsNotCrossCheckedAgainstAccounts(t *testing.T) {
+	for name, activeID := range map[string]string{
+		"the stable main-login alias": "__main__",
+		"a configured account":        "chatgpt-1",
+		"an account that is gone":     "definitely-not-an-account",
+		"unset":                       "",
+	} {
+		cfg := FreshInstall()
+		cfg.CodexAccounts = []CodexAccount{{ID: "chatgpt-1", Email: "a@example.com"}}
+		cfg.ActiveCodexAccountID = activeID
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("%s (%q) was rejected: %v", name, activeID, err)
+		}
+	}
+}
+
+// The neighbouring rules that DO exist still hold, so removing the cross-check
+// did not remove account validation altogether.
+func TestCodexAccountIdentityRulesStillApply(t *testing.T) {
+	duplicate := FreshInstall()
+	duplicate.CodexAccounts = []CodexAccount{
+		{ID: "same", Email: "a@example.com"},
+		{ID: "same", Email: "b@example.com"},
+	}
+	if err := duplicate.Validate(); err == nil {
+		t.Fatal("duplicate account ids were accepted")
+	}
+
+	blank := FreshInstall()
+	blank.CodexAccounts = []CodexAccount{{ID: "has-id", Email: "  "}}
+	if err := blank.Validate(); err == nil {
+		t.Fatal("a blank account email was accepted")
+	}
+}
