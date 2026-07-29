@@ -33,6 +33,38 @@ ReadVersionCache  WriteVersionCache  CacheStale  UpgradeVersion  DismissVersion
 | `interactiveGuardOk()` 실패 → 중단 | 서비스/데몬/비TTY는 프롬프트 금지 |
 | `hasStarPromptRun()` 거짓 → 중단 | 최초 실행에는 양보 |
 
+### P 재검증에서 찾은 두 가지 부재 (2026-07-29)
+
+구현 직전 트리를 다시 보고 계획을 두 군데 고쳤다.
+
+**1. `hasStarPromptRun()`에 해당하는 것이 go에 없다.** 오라클은
+`src/cli/star-prompt.ts:17`에서 설정 디렉터리의 마커 파일 존재로 판정한다. go에는 star
+프롬프트 자체가 없으므로 마커도 없다. 이 게이트의 목적은 "설치 첫 실행에 프롬프트 두 개가
+겹치지 않게 양보"인데, go에 겹칠 상대가 없다.
+
+결정: 이 게이트를 **마커 부재로 대체하지 않는다**. go에 star 프롬프트가 없으므로 마커를
+새로 만들면 아무도 쓰지 않는 파일이 생긴다. 대신 오라클의 의도(첫 실행 양보)를 유지하기
+위해 **버전 캐시가 없으면 조용히 반환**하는 기존 동작에 기댄다 — 첫 실행에는 캐시가
+없으므로 자연히 프롬프트가 뜨지 않는다. 이 대체를 D에 기록한다.
+
+**2. 버전 캐시 경로 헬퍼가 go에 없다.** `notify.go`의 함수들은 전부 `path string`을
+인자로 받고, 그 경로를 만들어주는 쪽이 없다(그래서 호출자가 0인 것이기도 하다).
+오라클은 `versionFilePath()`(`notify.ts:29`) = `getConfigDir()/version.json`이다.
+
+go에는 `configDir()`가 `go/internal/cli/serve.go:677`(`runtimePaths`)에서 이미 쓰인다.
+그러므로 경로 조립은 **cli 패키지 쪽**에서 하고 `update` 패키지에는 완성된 경로를
+넘긴다 — 기존 시그니처를 바꾸지 않는 방향이다.
+
+**게이트 최종형** (go):
+
+| 조건 | 판정 근거 |
+| --- | --- |
+| `OCX_SERVICE=1` | `os.Getenv` — `service/winsw.go:85`, `cli/system_restart.go:196`이 쓰는 그 값 |
+| `--service` 플래그 | `runServe`가 이미 파싱해 같은 env를 설정(:61-63) |
+| stdin/stdout이 TTY 아님 | 오라클 `interactiveGuardOk`(`notify.ts:121`)와 동일하게 **양쪽** 확인 |
+| 버전이 개발 빌드 | `cli.Version`이 `0.1.0-dev`(`cli.go:16`) 형태면 중단 |
+| 캐시 없음 | 첫 실행 양보를 겸한다(위 1번) |
+
 표시할 버전은 `getUpgradeVersionForPopup()` (`notify.ts:140`): 캐시가 없거나, 최신이
 현재보다 새롭지 않거나, 사용자가 그 버전을 이미 물렀으면 표시하지 않는다.
 

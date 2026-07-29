@@ -33,6 +33,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/types"
+	"github.com/lidge-jun/opencodex-go/internal/update"
 	"github.com/lidge-jun/opencodex-go/internal/usage"
 	"github.com/lidge-jun/opencodex-go/internal/vision"
 )
@@ -148,6 +149,12 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	liveAuth := &configBackedAuth{config: cfg, persistence: configPersistence, store: credentialStore, resolver: auth, codex: codexRouting, refreshers: refreshers}
 	providerQuotas := newProviderQuotaBackend(cfg, sharedQuotaStore, codexAuthManagement, registry.NewQuotaFetcher(), liveAuth, time.Now, configPersistence)
 	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient, configPersistence)
+	// Interactive-only update prompt. It runs BEFORE port selection and the
+	// net.Listen below, because choosing "Update now" installs globally and
+	// exits: a process that already holds the port would be overwriting its own
+	// binary while listening (oracle: src/cli/index.ts:183 calls this ahead of
+	// chooseListenPort for the same reason).
+	maybePromptForUpdate(streams, *serviceMode)
 	preferredPort := cfg.Port
 	selectedPort := preferredPort
 	if preferredPort > 0 {
@@ -679,6 +686,31 @@ func runtimePaths() (string, string, error) {
 		return "", "", err
 	}
 	return filepath.Join(dir, "ocx.pid"), filepath.Join(dir, "runtime-port"), nil
+}
+
+// maybePromptForUpdate assembles what the update package cannot resolve on its
+// own -- the config-dir cache path, the terminal check, and the service marker
+// -- and then hands off. Any failure here is silent by design: a start must
+// never fail because an update check could not run.
+func maybePromptForUpdate(streams IO, serviceFlag bool) {
+	dir, err := configDir()
+	if err != nil {
+		return
+	}
+	stdin, _ := streams.In.(*os.File)
+	stdout, _ := streams.Out.(*os.File)
+	update.MaybeShowUpdatePrompt(update.PromptDeps{
+		In:        streams.In,
+		Out:       streams.Out,
+		CachePath: filepath.Join(dir, "version.json"),
+		Current:   Version,
+		// Both ends must be a terminal, and a service run never prompts even if
+		// its supervisor attached one.
+		Interactive: update.TerminalInteractive(stdin, stdout),
+		Service:     serviceFlag || os.Getenv("OCX_SERVICE") == "1",
+		Installer:   update.DetectInstaller(""),
+		Now:         time.Now,
+	})
 }
 
 func writeRuntimeFiles(port int) error {
