@@ -126,7 +126,7 @@ func TestApplyGrokFenceThreadsConfiguredExclusions(t *testing.T) {
 		if r.URL.Path != "/api/models" {
 			t.Fatalf("catalog path = %s", r.URL.Path)
 		}
-		_, _ = io.WriteString(w, `{"models":[{"id":"gpt-5.5","provider":"openai","contextWindow":272000},{"id":"gpt-5.4","provider":"openai","contextWindow":1000000}]}`)
+		_, _ = io.WriteString(w, `[{"id":"gpt-5.5","namespaced":"gpt-5.5","provider":"openai","native":true,"contextWindow":272000},{"id":"gpt-5.4","namespaced":"gpt-5.4","provider":"openai","native":true,"contextWindow":1000000}]`)
 	}))
 	defer catalog.Close()
 	parsed, err := url.Parse(catalog.URL)

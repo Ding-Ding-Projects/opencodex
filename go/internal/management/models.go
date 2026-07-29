@@ -9,22 +9,109 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/codex"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
+// modelCatalogRow is one row of GET /api/models. The response body IS the array
+// (oracle: src/server/management/model-routes.ts) — an envelope breaks every consumer
+// that assumes it: the GUI dashboard iterates the payload directly, and `ocx opencode`
+// rejects an unexpected shape.
+type modelCatalogRow struct {
+	Provider         string   `json:"provider"`
+	ID               string   `json:"id"`
+	Namespaced       string   `json:"namespaced"`
+	Disabled         bool     `json:"disabled"`
+	Native           bool     `json:"native,omitempty"`
+	Custom           bool     `json:"custom,omitempty"`
+	CustomID         string   `json:"customId,omitempty"`
+	DisplayName      string   `json:"displayName,omitempty"`
+	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
+	InputModalities  []string `json:"inputModalities,omitempty"`
+	ContextWindow    int      `json:"contextWindow,omitempty"`
+	ContextCap       int      `json:"contextCap,omitempty"`
+	ContextCapped    *bool    `json:"contextCapped,omitempty"`
+}
+
+// modelCatalogRows orders rows the way the oracle does: native passthrough rows lead,
+// then the routed catalog, then custom models.
+func (a *API) modelCatalogRows() []modelCatalogRow {
+	entries := []types.ModelEntry{}
+	if a.registry != nil {
+		entries = a.registry.ListModels()
+	}
+	a.mu.RLock()
+	disabled := append([]string(nil), a.config.DisabledModels...)
+	caps := cloneIntMap(a.config.ProviderContextCaps)
+	custom := sortedCustomModels(a.customModels)
+	a.mu.RUnlock()
+
+	isDisabled := func(provider, id, namespaced string) bool {
+		for _, stored := range disabled {
+			if stored == namespaced || registry.SlugEquals(stored, provider, id) {
+				return true
+			}
+		}
+		return false
+	}
+
+	customRows := make([]modelCatalogRow, 0, len(custom))
+	customNamespaced := map[string]bool{}
+	for _, model := range custom {
+		namespaced := registry.RoutedSlug(model.Provider, model.ModelID)
+		customNamespaced[namespaced] = true
+		customRows = append(customRows, modelCatalogRow{
+			Provider: model.Provider, ID: model.ModelID, Namespaced: namespaced,
+			Disabled: isDisabled(model.Provider, model.ModelID, namespaced),
+			Custom:   true, CustomID: model.ID, DisplayName: model.DisplayName,
+			InputModalities: append([]string(nil), model.InputModalities...), ContextWindow: model.ContextWindow,
+		})
+	}
+
+	native := make([]modelCatalogRow, 0, len(entries))
+	routed := make([]modelCatalogRow, 0, len(entries))
+	comboNamespaced := map[string]bool{}
+	for _, entry := range entries {
+		// ListModels already namespaces routed ids (bare for native GPT passthrough).
+		id := strings.TrimPrefix(entry.ID, entry.Provider+"/")
+		row := modelCatalogRow{
+			Provider: entry.Provider, ID: id, Namespaced: entry.ID,
+			Disabled:    isDisabled(entry.Provider, id, entry.ID),
+			DisplayName: entry.DisplayName, ContextWindow: entry.ContextWindow,
+			ReasoningEfforts: append([]string(nil), entry.ReasoningEfforts...),
+		}
+		if entry.Provider == "openai" && !strings.Contains(entry.ID, "/") {
+			row.Native = true
+			native = append(native, row)
+			continue
+		}
+		if entry.Provider == "combo" {
+			comboNamespaced[entry.ID] = true
+		} else if customNamespaced[entry.ID] {
+			// Custom metadata wins when a physical row resolves to the same Codex-facing slug.
+			continue
+		}
+		if cap, ok := caps[entry.Provider]; ok && cap > 0 {
+			capped := entry.ContextWindow > cap
+			row.ContextCap, row.ContextCapped = cap, &capped
+		}
+		routed = append(routed, row)
+	}
+
+	rows := append(native, routed...)
+	for _, row := range customRows {
+		// A combo keeps the precedence it has in routing and /v1/models.
+		if comboNamespaced[row.Namespaced] {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func (a *API) handleModels(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.Path == "/api/models" && r.Method == http.MethodGet {
-		models := []types.ModelEntry{}
-		if a.registry != nil {
-			models = a.registry.ListModels()
-		}
-		a.mu.RLock()
-		custom := make([]CustomModel, 0, len(a.customModels))
-		for _, model := range a.customModels {
-			custom = append(custom, model)
-		}
-		a.mu.RUnlock()
-		writeJSON(w, http.StatusOK, map[string]any{"models": models, "customModels": custom})
+		writeJSON(w, http.StatusOK, a.modelCatalogRows())
 		return true
 	}
 	if r.URL.Path == "/api/disabled-models" && r.Method == http.MethodPut {
@@ -201,7 +288,9 @@ func (a *API) handleSelectedModels(w http.ResponseWriter, r *http.Request) bool 
 		available := map[string][]string{}
 		if a.registry != nil {
 			for _, model := range a.registry.ListModels() {
-				available[model.Provider] = append(available[model.Provider], model.ID)
+				// Bare model ids, not routed slugs: `selectedModels` stores bare ids and the
+				// GUI compares against them (oracle: available[m.provider].push(m.id)).
+				available[model.Provider] = append(available[model.Provider], strings.TrimPrefix(model.ID, model.Provider+"/"))
 			}
 		}
 		for provider := range available {

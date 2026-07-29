@@ -53,7 +53,7 @@ func prepareSyncProductionFixture(t *testing.T, configTOML string) (string, *ato
 	mux.Handle("/healthz", server.NewLiveness("test"))
 	mux.HandleFunc("/api/models", func(w http.ResponseWriter, _ *http.Request) {
 		modelHits.Add(1)
-		_ = json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{{"id": "gpt-5.5", "provider": "openai", "displayName": "GPT-5.5"}}})
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "gpt-5.5", "namespaced": "gpt-5.5", "provider": "openai", "displayName": "GPT-5.5", "native": true}})
 	})
 	upstream := httptest.NewServer(mux)
 	port := upstream.Listener.Addr().(*net.TCPAddr).Port

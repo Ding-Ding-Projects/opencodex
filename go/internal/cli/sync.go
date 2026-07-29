@@ -146,11 +146,24 @@ func fetchRuntimeModels(parent context.Context, cfg config.Config, port int) ([]
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return nil, fmt.Errorf("model catalog request failed: %s: %s", response.Status, body)
 	}
-	var payload struct {
-		Models []types.ModelEntry `json:"models"`
+	// The management response IS the row array; `namespaced` is the routed selector
+	// that ModelEntry.ID carries internally.
+	var rows []struct {
+		Provider         string   `json:"provider"`
+		Namespaced       string   `json:"namespaced"`
+		DisplayName      string   `json:"displayName"`
+		ReasoningEfforts []string `json:"reasoningEfforts"`
+		ContextWindow    int      `json:"contextWindow"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(&rows); err != nil {
 		return nil, err
 	}
-	return payload.Models, nil
+	models := make([]types.ModelEntry, 0, len(rows))
+	for _, row := range rows {
+		models = append(models, types.ModelEntry{
+			ID: row.Namespaced, Provider: row.Provider, DisplayName: row.DisplayName,
+			ReasoningEfforts: row.ReasoningEfforts, ContextWindow: row.ContextWindow,
+		})
+	}
+	return models, nil
 }
