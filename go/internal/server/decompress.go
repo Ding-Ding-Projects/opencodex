@@ -7,11 +7,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 const MaxDecompressedBodyBytes int64 = 256 << 20
 
-// DecompressRequest replaces a gzip or zlib-deflate request body with a bounded decoded stream.
+// DecompressRequest replaces a zstd, gzip or zlib-deflate request body with a bounded decoded
+// stream. zstd is not optional: Codex compresses EVERY /v1/responses body with it once its
+// `enable_request_compression` feature fires (codex-rs client.rs), so rejecting the coding
+// answers the whole data plane with 415 (TS oracle: src/server/request-decompress.ts).
 func DecompressRequest(r *http.Request, maxBytes int64) error {
 	if maxBytes <= 0 {
 		maxBytes = MaxDecompressedBodyBytes
@@ -25,6 +30,13 @@ func DecompressRequest(r *http.Request, maxBytes int64) error {
 	var reader io.ReadCloser
 	var err error
 	switch encoding {
+	case "zstd":
+		// Bound the streaming window as well; limitErrorReader still caps total output.
+		var decoder *zstd.Decoder
+		decoder, err = zstd.NewReader(compressed, zstd.WithDecoderMaxMemory(uint64(maxBytes)))
+		if decoder != nil {
+			reader = decoder.IOReadCloser()
+		}
 	case "gzip", "x-gzip":
 		reader, err = gzip.NewReader(compressed)
 	case "deflate":

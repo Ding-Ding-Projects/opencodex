@@ -6,6 +6,8 @@ import (
 	"compress/zlib"
 	"io"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestDecompressRequest(t *testing.T) {
@@ -14,6 +16,13 @@ func TestDecompressRequest(t *testing.T) {
 		encoding string
 		write    func(*bytes.Buffer) io.WriteCloser
 	}{
+		{"zstd", "zstd", func(b *bytes.Buffer) io.WriteCloser {
+			writer, err := zstd.NewWriter(b)
+			if err != nil {
+				panic(err)
+			}
+			return writer
+		}},
 		{"gzip", "gzip", func(b *bytes.Buffer) io.WriteCloser { return gzip.NewWriter(b) }},
 		{"deflate", "deflate", func(b *bytes.Buffer) io.WriteCloser { return zlib.NewWriter(b) }},
 	} {
