@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,16 +101,13 @@ func FetchProviderModels(ctx context.Context, options ProviderModelFetchOptions)
 	if err != nil || len(body) > maxProviderModelsResponseBytes {
 		return providerFetchFallback(options, configured, DiscoveryFailureInvalidResponse, 0, errors.New("provider models response is invalid"))
 	}
-	var payload struct {
-		Data []ProviderModelsAPIItem `json:"data"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
-	if err := decoder.Decode(&payload); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+	items, ok := providerModelsAPIItemsFromResponse(body)
+	if !ok {
 		return providerFetchFallback(options, configured, DiscoveryFailureInvalidResponse, 0, errors.New("provider models response is invalid"))
 	}
-	live := make([]CatalogModel, 0, len(payload.Data)+len(configured))
-	seen := make(map[string]bool, len(payload.Data))
-	for _, item := range payload.Data {
+	live := make([]CatalogModel, 0, len(items)+len(configured))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
 		item.ID = strings.TrimSpace(item.ID)
 		if item.ID == "" || seen[item.ID] {
 			continue
@@ -131,6 +129,46 @@ func FetchProviderModels(ctx context.Context, options ProviderModelFetchOptions)
 	options.Cache.MarkProviderDiscoveryOK(options.ProviderName)
 	options.Cache.Set(options.ProviderName, live, now)
 	return cloneCatalogModels(live), nil
+}
+
+// providerModelsAPIItemsFromResponse normalizes OpenAI-compatible /models payloads.
+// Supports { "data": [...] } and top-level arrays (Together AI #617).
+// Google's { "models": [...] } is intentionally not accepted here — catalog discovery
+// must not treat a stray models key on openai-chat responses as valid.
+func providerModelsAPIItemsFromResponse(body []byte) ([]ProviderModelsAPIItem, bool) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	switch trimmed[0] {
+	case '[':
+		var items []ProviderModelsAPIItem
+		if err := json.Unmarshal(trimmed, &items); err != nil {
+			return nil, false
+		}
+		return items, true
+	case '{':
+		var payload map[string]json.RawMessage
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		if err := decoder.Decode(&payload); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+			return nil, false
+		}
+		data, ok := payload["data"]
+		if !ok {
+			return nil, false
+		}
+		data = bytes.TrimSpace(data)
+		if len(data) == 0 || data[0] != '[' {
+			return nil, false
+		}
+		var items []ProviderModelsAPIItem
+		if err := json.Unmarshal(data, &items); err != nil {
+			return nil, false
+		}
+		return items, true
+	default:
+		return nil, false
+	}
 }
 
 func configuredCatalogModels(providerName string, provider config.ProviderConfig) []CatalogModel {
