@@ -1,8 +1,11 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/search"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -73,4 +76,44 @@ func TestFailoverOntoTheResponsesWireIsReclassified(t *testing.T) {
 	if hasSamplingParams(t, prepared.normalized.RawBody) {
 		t.Fatalf("failover onto the Responses wire kept params the backend rejects: %s", prepared.normalized.RawBody)
 	}
+}
+
+// A passthrough route already searches server-side, so the oracle never arms the sidecar for
+// one. Running it here would also rebuild the request from Options after the loop clears
+// RawBody, putting the sampling parameters straight back.
+func TestSearchSidecarIsSkippedForPassthroughRoutes(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		passthrough func(*types.ResolvedModel) bool
+		wantHandled bool
+	}{
+		{"passthrough route", func(*types.ResolvedModel) bool { return true }, false},
+		{"routed provider", func(*types.ResolvedModel) bool { return false }, true},
+		{"hook absent", nil, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runner := &recordingTurnRunner{}
+			config := HandlerConfig{
+				PassthroughWire: testCase.passthrough,
+				SearchLoop:      &search.Loop{Runner: runner},
+			}
+			prepared := &preparedRequest{
+				normalized: &types.NormalizedRequest{WebSearch: map[string]any{"type": "web_search"}},
+				resolved:   &types.ResolvedModel{Provider: "openai", Model: "gpt-5.6-sol"},
+			}
+			// `handled` is the gate's own observable: the loop claims the turn only when the
+			// route was allowed to reach it, whatever the loop then decides internally.
+			_, handled, _ := config.runSearch(context.Background(), prepared)
+			if handled != testCase.wantHandled {
+				t.Fatalf("handled=%v, want %v", handled, testCase.wantHandled)
+			}
+		})
+	}
+}
+
+type recordingTurnRunner struct{ runs int }
+
+func (r *recordingTurnRunner) Run(context.Context, *types.NormalizedRequest, types.Adapter) (search.TurnResult, error) {
+	r.runs++
+	return search.TurnResult{}, nil
 }

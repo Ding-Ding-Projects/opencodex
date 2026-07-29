@@ -45,7 +45,12 @@ type HandlerConfig struct {
 	// ResponsesWire reports whether the route's EFFECTIVE wire is openai-responses. It is a
 	// provider-level question, like the oracle's `route.provider.adapter` check: the resolved
 	// adapter instance cannot answer it, because production decorates it (vision, fetch).
-	ResponsesWire             func(*types.ResolvedModel) bool
+	ResponsesWire func(*types.ResolvedModel) bool
+	// PassthroughWire reports whether the route relays a Responses body upstream verbatim
+	// (openai-responses, azure, azure-openai). Deliberately BROADER than ResponsesWire: the
+	// oracle keys the sampling strip on the Responses wire alone but gates the web-search
+	// sidecar on passthrough (src/server/responses/core.ts:1302).
+	PassthroughWire           func(*types.ResolvedModel) bool
 	SupportedReasoningEfforts func(*types.ResolvedModel) []string
 	ConnectTimeout            time.Duration
 	BodyStall                 time.Duration
@@ -61,6 +66,13 @@ type HandlerConfig struct {
 
 func (c HandlerConfig) runSearch(ctx context.Context, prepared *preparedRequest) ([]types.AdapterEvent, bool, error) {
 	if c.SearchLoop == nil || prepared == nil || prepared.normalized == nil || prepared.normalized.WebSearch == nil {
+		return nil, false, nil
+	}
+	// A passthrough route already searches server-side, and the oracle returns from that branch
+	// long before it plans a sidecar search (src/server/responses/core.ts:1302, :1392). Running
+	// the loop here also rebuilds the request from Options after clearing RawBody, which puts
+	// back the sampling parameters the Claude route just removed.
+	if c.PassthroughWire != nil && c.PassthroughWire(prepared.resolved) {
 		return nil, false, nil
 	}
 	loop := *c.SearchLoop
