@@ -78,6 +78,10 @@ type configBackedAuth struct {
 	store       *oauth.CredentialStore
 	resolver    *oauth.AuthResolver
 	codex       *codexRoutingRuntime
+	// Refreshers the resolver was built with. Re-supplied on every live update because
+	// SetProvider drops the provider's refresher when it is handed nil — without this an
+	// expired token can never be refreshed and the request fails as "OAuth login required".
+	refreshers map[string]oauth.RefreshFunc
 }
 
 func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID string) (*types.AuthContext, error) {
@@ -107,7 +111,13 @@ func (a *configBackedAuth) ResolveAuth(ctx context.Context, provider, threadID s
 				// restart.
 				a.resolver.SetAnthropicPoolConfig(config.NormalizeAnthropicPool(live.AnthropicAccountPool))
 			}
-			a.resolver.SetProvider(provider, authConfig, nil)
+			// Live config owns the refresh policy: a provider switched to "disabled"
+			// must stop refreshing without a restart.
+			refresh := a.refreshers[provider]
+			if configured.RefreshPolicy == "disabled" {
+				refresh = nil
+			}
+			a.resolver.SetProvider(provider, authConfig, refresh)
 		}
 	})
 	if configErr != nil {

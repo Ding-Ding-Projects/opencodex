@@ -145,7 +145,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		cfg, configPersistence, credentialStore, sharedQuotaStore,
 		codexAuthManagement.mainToken, refreshers["openai"], providerClient,
 	)
-	liveAuth := &configBackedAuth{config: cfg, persistence: configPersistence, store: credentialStore, resolver: auth, codex: codexRouting}
+	liveAuth := &configBackedAuth{config: cfg, persistence: configPersistence, store: credentialStore, resolver: auth, codex: codexRouting, refreshers: refreshers}
 	providerQuotas := newProviderQuotaBackend(cfg, sharedQuotaStore, codexAuthManagement, registry.NewQuotaFetcher(), liveAuth, time.Now, configPersistence)
 	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient, configPersistence)
 	preferredPort := cfg.Port
