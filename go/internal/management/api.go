@@ -1,6 +1,7 @@
 package management
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -63,6 +64,7 @@ type AdvancedRequestLogSource interface {
 type API struct {
 	mu                  sync.RWMutex
 	claudeSettingsMu    sync.Mutex
+	claudeAgentSyncMu   sync.Mutex
 	config              *config.Config
 	configPath          string
 	configPersistence   *config.LivePersistence
@@ -179,11 +181,22 @@ func (a *API) Register(mux *http.ServeMux) {
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.serializesConfigMutation(r) {
+		// The Claude agent-definition sync reads a config snapshot, and Serialize already
+		// holds that lock for writing. Handlers therefore only REQUEST the sync; it runs
+		// here, once the lock is released and the write it depends on is committed.
+		pending := false
+		r = r.WithContext(context.WithValue(r.Context(), claudeAgentSyncKey{}, &pending))
 		a.configPersistence.Serialize(func() { a.serveHTTP(w, r) })
+		if pending {
+			a.runClaudeAgentSync(r)
+		}
 		return
 	}
 	a.serveHTTP(w, r)
 }
+
+// claudeAgentSyncKey carries the deferred-sync flag for one serialized request.
+type claudeAgentSyncKey struct{}
 
 func (a *API) serializesConfigMutation(r *http.Request) bool {
 	if a.configPersistence == nil || r == nil {

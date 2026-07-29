@@ -44,6 +44,10 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 				writeError(w, http.StatusInternalServerError, "save subagent models failed")
 				return true
 			}
+			// The generated ~/.claude/agents/*.md files ARE the roster: leaving them stale
+			// means the models the user just chose cannot be dispatched, while a removed one
+			// still can (oracle: syncClaudeAgentDefsBestEffort, agent-settings-routes.ts:345).
+			a.syncClaudeAgentDefinitions(r)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "applied": body.Models})
 			return true
 		}
@@ -249,4 +253,32 @@ func cloneAgentSettings(value AgentSettings) AgentSettings {
 		value.GuidanceEnabled = &enabled
 	}
 	return value
+}
+
+// syncClaudeAgentDefinitions regenerates the Claude Code agent files best-effort. The
+// runtime is absent in tests and in servers assembled without it, so the nil check is load
+// bearing rather than defensive.
+func (a *API) syncClaudeAgentDefinitions(r *http.Request) {
+	if a.claudeRuntime == nil {
+		return
+	}
+	// Inside a serialized mutation the config lock is held for writing and the sync would
+	// deadlock on its own snapshot, so defer to ServeHTTP, which runs it after the release.
+	if pending, ok := r.Context().Value(claudeAgentSyncKey{}).(*bool); ok && pending != nil {
+		*pending = true
+		return
+	}
+	a.runClaudeAgentSync(r)
+}
+
+func (a *API) runClaudeAgentSync(r *http.Request) {
+	if a.claudeRuntime == nil {
+		return
+	}
+	// The sync deletes and rewrites a whole directory of files. Two of them interleaving --
+	// which the deferred execution makes possible, since it runs outside the config lock --
+	// can leave a mix of two rosters on disk.
+	a.claudeAgentSyncMu.Lock()
+	defer a.claudeAgentSyncMu.Unlock()
+	_ = a.claudeRuntime.SyncClaudeAgentDefinitions(r.Context())
 }

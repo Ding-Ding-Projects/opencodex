@@ -90,7 +90,9 @@ func (a *API) handleCombos(w http.ResponseWriter, r *http.Request) bool {
 		if a.config.Combos == nil {
 			a.config.Combos = map[string]comboapi.Combo{}
 		}
-		if body.RenameFrom != "" {
+		renamed := body.RenameFrom != ""
+		agentRefsBefore := strings.Join(a.config.SubagentModels, "\x00") + "\x00" + a.config.InjectionModel
+		if renamed {
 			old := a.config.Combos[body.RenameFrom]
 			oldModel := comboPublicModelID(body.RenameFrom, old)
 			delete(a.config.Combos, body.RenameFrom)
@@ -101,6 +103,7 @@ func (a *API) handleCombos(w http.ResponseWriter, r *http.Request) bool {
 				a.config.InjectionModel = newModel
 			}
 		}
+		agentRefsMigrated := renamed && strings.Join(a.config.SubagentModels, "\x00")+"\x00"+a.config.InjectionModel != agentRefsBefore
 		body.Combo.ID = ""
 		a.config.Combos[body.ID] = body.Combo
 		err := a.saveLocked()
@@ -111,6 +114,12 @@ func (a *API) handleCombos(w http.ResponseWriter, r *http.Request) bool {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "save combo failed")
 			return true
+		}
+		if agentRefsMigrated {
+			// Only a rename that actually rewrote an agent-facing reference invalidates the
+			// generated files; the oracle gates on the same migration flag, not on the rename
+			// itself (combo-routes.ts:141-143, :189).
+			a.syncClaudeAgentDefinitions(r)
 		}
 		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "success", value: true}, {name: "id", value: body.ID}, {name: "model", value: comboPublicModelID(body.ID, body.Combo)}, {name: "combo", value: comboDTO(body.Combo)}})
 	case http.MethodDelete:
