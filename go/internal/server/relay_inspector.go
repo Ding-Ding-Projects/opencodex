@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -36,6 +38,11 @@ type SSEInspector struct {
 	completed    map[string]any
 	usage        *types.Usage
 	finished     bool
+	// response.completed sometimes arrives with an empty output while every item
+	// already shipped as response.output_item.done. Keeping them lets the
+	// completed response be rebuilt instead of handed on empty, which reads to a
+	// client as a successful but resultless turn (oracle: src/server/relay.ts:476).
+	completedItemsByIndex map[int]map[string]any
 }
 
 func NewSSEInspector(handlers SSEInspectorHandlers) *SSEInspector {
@@ -103,6 +110,52 @@ func (inspector *SSEInspector) CompletedResponse() map[string]any {
 	return cloneAnyMap(inspector.completed)
 }
 
+// collectCompletedItem keeps a finished output item against its index. The
+// validity checks mirror the oracle (src/server/relay.ts:477): an item must be
+// a typed object at a non-negative integer index, so a malformed event can
+// never contribute a bogus entry to a rebuilt output.
+func (inspector *SSEInspector) collectCompletedItem(event map[string]any) {
+	item, ok := event["item"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, ok := item["type"].(string); !ok {
+		return
+	}
+	raw, ok := event["output_index"].(float64)
+	if !ok || raw < 0 || raw != math.Trunc(raw) {
+		return
+	}
+	if inspector.completedItemsByIndex == nil {
+		inspector.completedItemsByIndex = map[int]map[string]any{}
+	}
+	inspector.completedItemsByIndex[int(raw)] = cloneAnyMap(item)
+}
+
+// rebuildEmptyOutput fills an empty completed output from the items that were
+// already announced. A populated output is returned untouched: this only
+// repairs the case where the turn's result would otherwise be lost.
+func (inspector *SSEInspector) rebuildEmptyOutput(response map[string]any) map[string]any {
+	if len(inspector.completedItemsByIndex) == 0 {
+		return response
+	}
+	if existing, ok := response["output"].([]any); ok && len(existing) > 0 {
+		return response
+	}
+	indexes := make([]int, 0, len(inspector.completedItemsByIndex))
+	for index := range inspector.completedItemsByIndex {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	output := make([]any, 0, len(indexes))
+	for _, index := range indexes {
+		output = append(output, inspector.completedItemsByIndex[index])
+	}
+	rebuilt := cloneAnyMap(response)
+	rebuilt["output"] = output
+	return rebuilt
+}
+
 func (inspector *SSEInspector) inspectPayload(payload string) {
 	if payload == "[DONE]" {
 		return
@@ -121,6 +174,9 @@ func (inspector *SSEInspector) inspectPayload(payload string) {
 			inspector.handlers.OnFirstOutput()
 		}
 	}
+	if eventType == "response.output_item.done" {
+		inspector.collectCompletedItem(event)
+	}
 	response, _ := event["response"].(map[string]any)
 	if usage := usageFromSSEEvent(event, response); usage != nil {
 		value := *usage
@@ -136,6 +192,7 @@ func (inspector *SSEInspector) inspectPayload(payload string) {
 	inspector.terminal = status
 	inspector.terminalHTTP = terminalHTTPStatus(status, event, response)
 	if status == ResponsesCompleted && response != nil {
+		response = inspector.rebuildEmptyOutput(response)
 		inspector.completed = cloneAnyMap(response)
 		if inspector.handlers.OnCompletedResponse != nil {
 			inspector.handlers.OnCompletedResponse(cloneAnyMap(response))
