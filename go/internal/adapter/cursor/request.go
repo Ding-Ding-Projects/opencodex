@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -66,7 +67,7 @@ func BuildAgentRunRequest(req *types.NormalizedRequest) (*BuiltRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	action := ConversationAction{TimeZone: time.Local.String()}
+	action := ConversationAction{TimeZone: runtimeTimeZone()}
 	if lastRole == "tool" || strings.TrimSpace(activeText) == "" {
 		action.Resume = true
 	} else {
@@ -209,4 +210,25 @@ func newID() string {
 	encoded[23] = '-'
 	hex.Encode(encoded[24:36], raw[10:16])
 	return string(encoded[:])
+}
+
+// runtimeTimeZone reports an IANA zone name for the Cursor request env, the way the
+// oracle does with Intl.DateTimeFormat().resolvedOptions().timeZone. `time.Local.String()`
+// answers "Local" whenever Go loads the zone from /etc/localtime without a name, and
+// Cursor rejects that outright: "Invalid time zone specified: Local".
+func runtimeTimeZone() string {
+	if name := strings.TrimPrefix(strings.TrimSpace(os.Getenv("TZ")), ":"); name != "" && name != "Local" {
+		return name
+	}
+	if name := time.Local.String(); name != "" && name != "Local" {
+		return name
+	}
+	if link, err := os.Readlink("/etc/localtime"); err == nil {
+		if index := strings.Index(link, "zoneinfo/"); index >= 0 {
+			if name := strings.Trim(link[index+len("zoneinfo/"):], "/"); name != "" {
+				return name
+			}
+		}
+	}
+	return "UTC"
 }
