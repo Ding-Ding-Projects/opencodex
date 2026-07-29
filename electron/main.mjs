@@ -18,6 +18,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+/**
+ * Repo root in development; `resources/app/` in a packaged build.
+ *
+ * The installer is built with `asar: false` on purpose. The proxy is Bun
+ * reading TypeScript off disk and exec'ing a bundled `bun.exe`, and neither
+ * works from inside an asar archive — you cannot exec a binary in it, and
+ * Bun's own module loader does not know how to read one. Leaving the app
+ * unpacked keeps every path in `bin/ocx.mjs` true as written.
+ */
 const ROOT = join(HERE, "..");
 
 const DEFAULT_PORT = Number(process.env.OPENCODEX_PORT || 10100);
@@ -48,7 +57,8 @@ function appVersion() {
 
 function iconPath() {
   for (const candidate of [
-    join(ROOT, "gui", "public", "favicon.png"),
+    join(ROOT, "gui", "dist", "logo.png"),
+    join(ROOT, "gui", "public", "logo.png"),
     join(ROOT, "assets", "logo-light.png"),
   ]) {
     if (existsSync(candidate)) return candidate;
@@ -78,12 +88,20 @@ async function probeHealth(port) {
 
 function spawnProxy(port) {
   const entry = join(ROOT, "bin", "ocx.mjs");
+  if (!existsSync(entry)) {
+    throw new Error(
+      `The proxy launcher is missing from this build (expected ${entry}). `
+      + "Reinstall opencodex, or report this if a fresh install does the same.",
+    );
+  }
   const child = spawn(process.execPath, [entry, "start", "--port", String(port)], {
     cwd: ROOT,
-    // ELECTRON_RUN_AS_NODE makes the packaged Electron binary behave as plain Node
-    // for the child, so the shim's own runtime detection is not confused by it.
+    // ELECTRON_RUN_AS_NODE makes the packaged Electron binary behave as plain Node,
+    // so `bin/ocx.mjs` runs on it exactly as it does on a system Node install and
+    // the app does not have to ship a second runtime just to host the shim.
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
 
   child.stdout.on("data", chunk => process.stdout.write(`[ocx] ${chunk}`));

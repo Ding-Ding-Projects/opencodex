@@ -1,0 +1,118 @@
+name: Desktop installer
+
+# Builds the opencodex desktop app into an installer you can download and run.
+#
+# One runner per OS by necessity, not preference: the proxy exec's the Bun binary
+# that `bun install` unpacks into node_modules, and that binary is platform-specific.
+# A Windows .exe therefore has to be produced on a Windows runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Which installer to build
+        type: choice
+        default: windows
+        options: [windows, macos, linux, all]
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - name: Pick runners
+        id: pick
+        shell: bash
+        run: |
+          # A tag push builds every installer; a manual run builds what was asked for.
+          choice="${{ github.event_name == 'push' && 'all' || inputs.os }}"
+          case "$choice" in
+            windows) matrix='["windows-latest"]' ;;
+            macos)   matrix='["macos-latest"]' ;;
+            linux)   matrix='["ubuntu-latest"]' ;;
+            *)       matrix='["windows-latest","macos-latest","ubuntu-latest"]' ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: Install proxy dependencies
+        # `bun` is a trustedDependency, so its postinstall downloads the real ~60 MB
+        # runtime binary here. Without that the packaged app has only the placeholder
+        # stub and refuses to start.
+        run: bun install --frozen-lockfile
+
+      - name: Verify the Bun runtime was unpacked
+        shell: bash
+        run: |
+          # bin/ocx.mjs treats anything under 1 MB as the placeholder stub, so check
+          # the same thing here rather than shipping an installer that cannot start.
+          found=""
+          for candidate in node_modules/bun/bin/bun.exe node_modules/bun/bin/bun; do
+            if [ -f "$candidate" ]; then
+              size=$(wc -c < "$candidate")
+              echo "$candidate is $size bytes"
+              [ "$size" -ge 1000000 ] && found="$candidate"
+            fi
+          done
+          if [ -z "$found" ]; then
+            echo "::error::No real Bun binary in node_modules/bun/bin — the postinstall did not run."
+            exit 1
+          fi
+
+      - name: Install dashboard dependencies
+        working-directory: gui
+        run: bun install --frozen-lockfile
+
+      - name: Build the dashboard
+        working-directory: gui
+        run: bun run build
+
+      - name: Build the installer
+        # electron-builder downloads Electron itself from the pinned electronVersion
+        # in electron-builder.yml, so neither it nor electron is a repo dependency.
+        run: npx --yes electron-builder@26.15.3 --publish never
+
+      - name: List what was produced
+        shell: bash
+        run: ls -lh dist-desktop
+
+      - name: Upload installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencodex-desktop-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            dist-desktop/*.exe
+            dist-desktop/*.dmg
+            dist-desktop/*.AppImage
+          if-no-files-found: error
+          retention-days: 14

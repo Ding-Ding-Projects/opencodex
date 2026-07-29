@@ -104,7 +104,42 @@ renders English outside `en`.
   `management-api.ts`. Answers `{ available: false, releases: [] }` when no
   `CHANGELOG.md` is packaged, so the screen can explain itself instead of erroring.
 
-### 8. CI — `.github/workflows/gui-preview.yml`
+### 8. Desktop app + installer
+
+- `electron/main.mjs` — spawns `bin/ocx.mjs start --port 10100` as a child,
+  waits for `/healthz` to answer as `service: "opencodex"`, then loads the
+  dashboard the proxy serves. If a healthy proxy is already listening it
+  *attaches* instead of spawning a competitor, and leaves it running on quit
+  because it did not start it. Tray, start-at-login, native menus, and external
+  links handed to the real browser.
+- `electron/preload.mjs` — exposes `window.opencodexDesktop = { isDesktop, platform }`
+  and nothing else. No Node API is bridged.
+- `electron-builder.yml` — NSIS installer (not one-click: the proxy writes to
+  `~/.opencodex` and rewrites the native Codex config, so the user should see
+  where it goes). Uninstall deliberately leaves `~/.opencodex` alone — it holds
+  providers, accounts and API keys.
+- `.github/workflows/desktop-installer.yml` — `workflow_dispatch` with an OS
+  choice, plus every `v*` tag. Uploads `opencodex-desktop-<os>-<sha>`.
+
+Two decisions worth keeping:
+
+**`asar: false`.** The proxy is Bun reading TypeScript off disk and exec'ing a
+bundled `bun.exe`. Neither survives an asar archive — you cannot exec a binary
+inside one, and Bun's loader cannot read one. Unpacked keeps every path in
+`bin/ocx.mjs` true as written.
+
+**`electron` is not a repo dependency.** electron-builder downloads the runtime
+itself from the pinned `electronVersion`, which keeps a ~100 MB download out of
+every existing CI job that runs `bun install`. Bump the version in
+`electron-builder.yml`, not in `package.json`.
+
+The workflow needs one runner per OS: `bun install` unpacks a platform-specific
+Bun binary, so a Windows `.exe` must be produced on a Windows runner. There is
+an explicit step that fails the build if that binary is still the ~450-byte
+placeholder stub, using the same 1 MB threshold `bin/ocx.mjs` uses — otherwise
+the installer would ship and then refuse to start.
+
+### 9. CI — `.github/workflows/gui-preview.yml`
 
 Typecheck → lint → test → build, then uploads `gui/dist` as an artifact
 (`opencodex-dashboard-<sha>`, 14-day retention) with a `HOW-TO-RUN.txt`
@@ -132,6 +167,14 @@ run is the real signal. Eleven test files reference `App`/routing
 updating against the new shell — the sidebar Claude toggle in particular moved
 out of the nav.
 
+**Also not run:** the desktop installer build. It needs Bun plus a full
+`electron-builder` run and has only been syntax- and schema-checked locally
+(`node --check` on the Electron entry points, YAML parse on all three configs).
+The first `desktop-installer` workflow run is the real signal. The likeliest
+first failure is a missing runtime file in the `files` allowlist in
+`electron-builder.yml` — if the app launches and then reports the proxy exited,
+check that list before anything else.
+
 ---
 
 ## Not landed
@@ -150,12 +193,6 @@ Storage → API → Claude → Grok → Subagents → Startup.
 
 ### Deferred by scope
 
-- **Electron.** `electron/main.mjs` and `preload.mjs` are written — proxy child
-  process with pid-verified `/healthz` handshake, adopt-don't-duplicate when a
-  proxy is already listening, tray, start-at-login, native menus, external links
-  to the real browser. **Not wired up:** no `electron` devDependency, no
-  `electron-builder` config, no npm scripts, never launched. Treat it as a
-  reviewed draft, not working code.
 - **Docker.** Not started.
 - **Codex account switching.** Not started.
 - **Funny-level voice ladder** (levels 1–5). The mechanism is not built. It needs
