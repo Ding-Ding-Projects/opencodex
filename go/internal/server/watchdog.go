@@ -4,6 +4,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 type MemorySample struct {
@@ -55,7 +57,19 @@ func NewMemoryWatchdog(interval time.Duration, capacity int, sample func() Memor
 func runtimeMemorySample() MemorySample {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	return MemorySample{At: time.Now(), RSS: m.Sys, HeapUsed: m.HeapAlloc, HeapTotal: m.HeapSys}
+	return MemorySample{At: time.Now(), RSS: residentMemory(m), HeapUsed: m.HeapAlloc, HeapTotal: m.HeapSys}
+}
+
+// residentMemory prefers what the OS reports as resident. MemStats.Sys is the
+// address space the runtime reserved over its lifetime, so it sits above
+// residency and stays there after the runtime hands pages back — a memory graph
+// drawn from it cannot show memory being released. Sys remains the fallback for
+// platforms without a probe, which is still better than reporting zero.
+func residentMemory(m runtime.MemStats) uint64 {
+	if resident, ok := platform.ResidentSetSize(); ok {
+		return resident
+	}
+	return m.Sys
 }
 func (w *MemoryWatchdog) add(sample MemorySample) {
 	w.mu.Lock()

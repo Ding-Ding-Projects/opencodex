@@ -5,6 +5,8 @@ import (
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 var processStarted = time.Now()
@@ -31,7 +33,13 @@ func (a *API) handleSystem(w http.ResponseWriter, r *http.Request) bool {
 		if a.responseState != nil {
 			responseState = a.responseState()
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"pid": os.Getpid(), "goVersion": runtime.Version(), "platform": runtime.GOOS, "uptimeSeconds": time.Since(processStarted).Seconds(), "rss": stats.Sys, "heapUsed": stats.HeapAlloc, "heapTotal": stats.HeapSys, "goroutines": runtime.NumGoroutine(), "responseState": responseState, "streamMode": mode, "watchdog": watchdog})
+		// MemStats.Sys is reserved address space, not residency, so ask the OS and
+		// keep Sys only for platforms without a probe.
+		rss := stats.Sys
+		if resident, ok := platform.ResidentSetSize(); ok {
+			rss = resident
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"pid": os.Getpid(), "goVersion": runtime.Version(), "platform": runtime.GOOS, "uptimeSeconds": time.Since(processStarted).Seconds(), "rss": rss, "heapUsed": stats.HeapAlloc, "heapTotal": stats.HeapSys, "goroutines": runtime.NumGoroutine(), "responseState": responseState, "streamMode": mode, "watchdog": watchdog})
 		return true
 	}
 	return false
