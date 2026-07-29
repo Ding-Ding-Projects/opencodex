@@ -2,12 +2,12 @@
   "algorithm": "sha256",
   "files": [
     {
-      "path": "assets/index-Czw-jpTU.css",
-      "sha256": "4fb805eead1277f27afb15825881f5bf0c142e08fcad6d87d7b39011de2ccc19"
+      "path": "assets/index-CZIs-ulo.js",
+      "sha256": "84898435589867a774fca262a46dc6155bdef193b2c9eddc6231125768caee21"
     },
     {
-      "path": "assets/index-DHaO2_Q0.js",
-      "sha256": "3834f53bce8c6e4260740e4706519e9a3a0f361a844dbd84408ab9b52b536e35"
+      "path": "assets/index-Czw-jpTU.css",
+      "sha256": "4fb805eead1277f27afb15825881f5bf0c142e08fcad6d87d7b39011de2ccc19"
     },
     {
       "path": "favicon.png",
@@ -19,7 +19,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "ecab1376b3acad9f86aace953d923ed745dea0b4391c70b173e9ea299f5a9ed9"
+      "sha256": "d3972b1c5b5def1d6869440600252a748a9fff70f78b8b2fd54b63afa040512e"
     },
     {
       "path": "logo.png",
