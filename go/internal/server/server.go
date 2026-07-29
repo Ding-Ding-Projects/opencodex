@@ -210,6 +210,28 @@ func New(config Config) *Server {
 			}
 			return EffectiveWireAdapter(model.Provider, model.Model, provider) == "openai-responses"
 		}
+		handlerConfig.PassthroughWire = func(model *types.ResolvedModel) bool {
+			if model == nil {
+				return false
+			}
+			var provider appconfig.ProviderConfig
+			var ok bool
+			if config.ConfigPersistence != nil {
+				config.ConfigPersistence.Read(func(cfg *appconfig.Config) {
+					provider, ok = cfg.Providers[model.Provider]
+				})
+			} else {
+				provider, ok = config.ManagementConfig.Providers[model.Provider]
+			}
+			if !ok {
+				return false
+			}
+			switch EffectiveWireAdapter(model.Provider, model.Model, provider) {
+			case "openai-responses", "azure", "azure-openai":
+				return true
+			}
+			return false
+		}
 	}
 	if config.ChatHandler == nil {
 		config.ChatHandler = chat.NewHandler(handlerConfig)
@@ -479,7 +501,15 @@ func New(config Config) *Server {
 		if grokPort <= 0 && config.ManagementConfig != nil {
 			grokPort = config.ManagementConfig.Port
 		}
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, ConfigPersistence: config.ConfigPersistence, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, CodexRouter: config.CodexRouter, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: config.StorageHome, Version: config.Version, Stop: config.Stop, Restart: config.Restart, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
+		// The management storage routes read this directly, and an unset StorageHome made
+		// GET /api/storage answer 501 "Codex storage home is not configured" on any host
+		// without CODEX_HOME exported -- the default. Two neighbouring call sites already
+		// resolve the same fallback; this one did not.
+		storageHome := strings.TrimSpace(config.StorageHome)
+		if storageHome == "" {
+			storageHome = codex.ResolveCodexHome(codex.HomeOptions{})
+		}
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, ConfigPersistence: config.ConfigPersistence, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, CodexRouter: config.CodexRouter, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: storageHome, Version: config.Version, Stop: config.Stop, Restart: config.Restart, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {
