@@ -37,6 +37,12 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
+      - name: Install proxy dependencies
+        # The dashboard test suite imports from `src/` (src/config.ts pulls in zod),
+        # so a gui-only install leaves those specifiers unresolvable and silently
+        # skips a dozen tests behind an "unhandled error between tests".
+        run: bun install --frozen-lockfile
+
       - name: Install dashboard dependencies
         working-directory: gui
         run: bun install --frozen-lockfile
