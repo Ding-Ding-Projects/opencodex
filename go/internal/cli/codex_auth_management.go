@@ -255,11 +255,24 @@ func (m *cliCodexAuthManagement) DeleteCodexAccount(ctx context.Context, id stri
 	if credentialErr != nil {
 		return credentialErr
 	}
+	// A pool account is a credential row plus a config entry, and a failed refresh
+	// drops the credential while keeping the entry. Deciding existence from the
+	// credential alone rejects exactly the accounts the dashboard tells the user to
+	// remove and re-add, leaving config.json as the only way out.
+	m.mu.Lock()
+	configured := false
+	for _, account := range m.config.CodexAccounts {
+		if account.ID == id {
+			configured = true
+			break
+		}
+	}
+	m.mu.Unlock()
 	removed, err := m.store.RemoveAccount(ctx, "openai", id)
 	if err != nil {
 		return err
 	}
-	if !removed {
+	if !removed && !configured {
 		return &management.BackendError{Status: http.StatusNotFound, Message: "Account not found"}
 	}
 	err = m.persistence.Update(func(live *config.Config) {
