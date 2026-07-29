@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -46,7 +47,11 @@ func FilterVisibleRuntimeModels(models []types.ModelEntry, cfg config.Config) []
 		}
 		modelID := strings.TrimPrefix(model.ID, model.Provider+"/")
 		publicID := model.Provider + "/" + modelID
-		if disabled[model.ID] || disabled[publicID] {
+		// A disabled entry may have been stored in either the raw or the
+		// alias-encoded routed form, so exact-string membership alone silently
+		// keeps offering a model the user switched off (oracle compares with
+		// slugEquals, src/providers/slug-codec.ts:55).
+		if disabled[model.ID] || disabled[publicID] || disabledBySlug(cfg.DisabledModels, model.Provider, modelID) {
 			continue
 		}
 		if len(provider.SelectedModels) > 0 && !slices.Contains(provider.SelectedModels, modelID) {
@@ -55,4 +60,13 @@ func FilterVisibleRuntimeModels(models []types.ModelEntry, cfg config.Config) []
 		visible = append(visible, model)
 	}
 	return visible
+}
+
+func disabledBySlug(stored []string, provider, id string) bool {
+	for _, entry := range stored {
+		if registry.SlugEquals(strings.TrimSpace(entry), provider, id) {
+			return true
+		}
+	}
+	return false
 }

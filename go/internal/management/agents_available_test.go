@@ -3,6 +3,7 @@ package management
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
@@ -51,13 +52,10 @@ func TestAgentPickerRoutesExposeAvailableExcludingDisabled(t *testing.T) {
 	}
 }
 
-// The two routes that already served availableModels() keep their bytes: this
-// unit adds a narrower helper rather than narrowing theirs.
-//
-// It pins two known defects on that older path so a future fix has to change
-// this test deliberately: it offers disabled models, and it double-prefixes an
-// already-namespaced ID into "p/p/hidden". The new picker helper does neither.
-func TestSiblingRoutesStillServeUnfilteredAvailable(t *testing.T) {
+// The sibling routes stay intentionally UNFILTERED -- they answer "what exists"
+// rather than "what may be picked" -- but an id they emit still has to be a
+// real selector. This once produced "p/p/hidden"; it must never come back.
+func TestSiblingRouteAvailableIsUnfilteredButWellFormed(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers["p"] = config.ProviderConfig{Models: []string{"m"}}
 	cfg.DisabledModels = []string{"p/hidden"}
@@ -75,11 +73,41 @@ func TestSiblingRoutesStillServeUnfilteredAvailable(t *testing.T) {
 	}
 	var sawDisabled bool
 	for _, slug := range payload.Available {
-		if slug == "p/p/hidden" {
+		if strings.HasPrefix(slug, "p/p/") {
+			t.Fatalf("double-prefixed selector returned: %v", payload.Available)
+		}
+		if slug == "p/hidden" {
 			sawDisabled = true
 		}
 	}
 	if !sawDisabled {
-		t.Fatalf("sibling route changed shape; this unit must not touch it: %v", payload.Available)
+		t.Fatalf("sibling route should still be unfiltered: %v", payload.Available)
+	}
+}
+
+// A disabled model must disappear whichever way the user's stored entry is
+// written. Matching on one exact spelling meant the GUI kept offering a model
+// the user had switched off, and picking it routed nowhere.
+func TestDisabledMatchingToleratesBothSlugForms(t *testing.T) {
+	for _, stored := range []string{"p/m", "p/hidden"} {
+		t.Run(stored, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Providers["p"] = config.ProviderConfig{Models: []string{"m", "hidden"}}
+			cfg.DisabledModels = []string{stored}
+			api := newParityAPI(t, &cfg, func(options *Options) { options.Registry = catalogRegistry{} })
+
+			response := serveManagement(api, http.MethodGet, "/api/subagent-models", "")
+			var payload struct {
+				Available []string `json:"available"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("payload: %v (%s)", err, response.Body.String())
+			}
+			for _, slug := range payload.Available {
+				if slug == stored {
+					t.Fatalf("disabled %q still offered: %v", stored, payload.Available)
+				}
+			}
+		})
 	}
 }

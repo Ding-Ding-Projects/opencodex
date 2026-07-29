@@ -59,7 +59,10 @@ func (a *API) availableModels() []string {
 	if a.registry != nil {
 		for _, model := range a.registry.ListModels() {
 			slug := model.ID
-			if model.Provider != "" {
+			// An entry whose ID already carries its provider must not be
+			// prefixed again: "p/hidden" became "p/p/hidden", a selector that
+			// matches no model anywhere.
+			if model.Provider != "" && !strings.Contains(model.ID, "/") {
 				slug = model.Provider + "/" + model.ID
 			}
 			if slug != "" && !seen[slug] {
