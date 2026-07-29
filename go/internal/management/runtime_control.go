@@ -11,7 +11,7 @@ import (
 )
 
 type RuntimeControlBackend interface {
-	StartupHealth(context.Context) (map[string]any, error)
+	StartupHealth(context.Context) (any, error)
 	RunStartupAction(context.Context, string) (string, error)
 	WindowsTray(context.Context, string) (map[string]any, error)
 	SyncModels(context.Context) (map[string]any, error)

@@ -146,3 +146,23 @@ func DeriveWindowsDiagnostic(input WindowsDiagnosticInput) Diagnostic {
 func ServiceStartableFromTray(diagnostic Diagnostic) bool {
 	return diagnostic.Startable && !diagnostic.Stale && !diagnostic.Conflict
 }
+
+// DiagnosticFromStatus projects a platform Status onto the diagnostic the startup-health
+// derivation consumes. launchd reports loaded-ness as both enabled and running while systemd
+// distinguishes them, so the platform arm decides those two; what is shared is that a stale
+// install is never viable and that neither backend can conflict with another
+// (oracle: src/service.ts:1584 darwin, :1617 linux).
+func DiagnosticFromStatus(status Status, stale bool) Diagnostic {
+	return Diagnostic{
+		Supported: true,
+		Installed: status.Installed,
+		Enabled:   status.Enabled,
+		Running:   status.Running,
+		Viable:    status.Viable && !stale,
+		Startable: status.Installed && !stale,
+		Stale:     stale,
+		Conflict:  false,
+		Backend:   Backend(status.Backend),
+		Summary:   status.Detail,
+	}
+}

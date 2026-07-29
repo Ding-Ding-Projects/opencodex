@@ -518,3 +518,17 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	}
 	return atomicReplace(tempPath, path)
 }
+
+// GetCodexRoutingKind classifies the routing recorded in a Codex config file. A missing file
+// is native routing -- Codex has simply never been pointed anywhere -- while an unreadable one
+// is unknown, because a config that exists and cannot be read must not be reported as safe.
+func GetCodexRoutingKind(configPath string) CodexRoutingKind {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return RoutingNative
+		}
+		return RoutingUnknown
+	}
+	return ClassifyCodexRouting(string(data))
+}

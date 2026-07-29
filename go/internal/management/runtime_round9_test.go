@@ -17,7 +17,7 @@ type runtimeControlStub struct {
 	restart         bool
 }
 
-func (*runtimeControlStub) StartupHealth(context.Context) (map[string]any, error) {
+func (*runtimeControlStub) StartupHealth(context.Context) (any, error) {
 	return map[string]any{"status": "protected"}, nil
 }
 func (s *runtimeControlStub) RunStartupAction(_ context.Context, action string) (string, error) {

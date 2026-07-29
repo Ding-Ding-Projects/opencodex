@@ -22,7 +22,6 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
-	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/server"
 	"github.com/lidge-jun/opencodex-go/internal/service"
@@ -641,16 +640,19 @@ func TestProductionServeCompositionSuppliesUpdateLifecycleDependencies(t *testin
 func TestRuntimeStartupHealthUsesStaleWhileRevalidateCache(t *testing.T) {
 	cfg := config.FreshInstall()
 	control := newRuntimeControl(&cfg)
-	control.healthCache = platform.NewStartupHealthCache(time.Minute)
+	control.startupHealth = newStartupHealthCache(time.Minute)
 	refreshed := make(chan struct{})
-	control.healthProbe = func(context.Context) (platform.StartupHealthDiagnostics, error) {
+	probes := 0
+	control.startupHealthProbe = func(context.Context) codex.StartupHealth {
+		probes++
 		close(refreshed)
-		return platform.StartupHealthDiagnostics{
-			Service: platform.HealthDiagnostic{State: platform.HealthHealthy}, CheckedAt: time.Now(),
-		}, nil
+		return codex.DeriveStartupHealth(codex.StartupHealthInputs{RoutingKind: codex.RoutingNative})
 	}
+	// The first answer never waits for the probe, so it must be marked stale rather than
+	// claiming a health it has not measured.
 	first, err := control.StartupHealth(context.Background())
-	if err != nil || first["healthy"] != false || first["stale"] != true {
+	health, ok := first.(codex.StartupHealth)
+	if err != nil || !ok || !health.DiagnosticStale {
 		t.Fatalf("initial startup health = %#v err=%v", first, err)
 	}
 	<-refreshed
@@ -660,13 +662,16 @@ func TestRuntimeStartupHealthUsesStaleWhileRevalidateCache(t *testing.T) {
 		if currentErr != nil {
 			t.Fatal(currentErr)
 		}
-		if current["healthy"] == true && current["stale"] == false {
+		if value, valueOK := current.(codex.StartupHealth); valueOK && !value.DiagnosticStale {
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("startup health never refreshed: %#v", current)
 		}
 		runtime.Gosched()
+	}
+	if probes != 1 {
+		t.Fatalf("probe ran %d times, want a single flight", probes)
 	}
 }
 

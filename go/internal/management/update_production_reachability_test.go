@@ -22,7 +22,7 @@ type productionUpdateBackend struct {
 	check   update.CheckResult
 }
 
-func (*productionUpdateBackend) StartupHealth(context.Context) (map[string]any, error) {
+func (*productionUpdateBackend) StartupHealth(context.Context) (any, error) {
 	return nil, nil
 }
 func (*productionUpdateBackend) RunStartupAction(context.Context, string) (string, error) {

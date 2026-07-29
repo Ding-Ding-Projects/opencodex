@@ -406,10 +406,14 @@ type cliRuntimeControl struct {
 	updateRunner  func(context.Context, string) error
 	restartRunner func(context.Context) error
 	healthCache   *platform.StartupHealthCache
-	healthProbe   platform.HealthProbe
-	now           func() time.Time
-	runtimeEntry  func() runtimeCommand
-	startWorker   func(runtimeCommand, updatepkg.Job, string, bool) error
+	startupHealth *startupHealthCache
+	// startupHealthProbe is the collection seam; tests replace it so the derivation can be
+	// exercised without launchctl or systemctl on the box.
+	startupHealthProbe func(context.Context) codex.StartupHealth
+	healthProbe        platform.HealthProbe
+	now                func() time.Time
+	runtimeEntry       func() runtimeCommand
+	startWorker        func(runtimeCommand, updatepkg.Job, string, bool) error
 }
 
 type runtimeTarget struct {
@@ -422,7 +426,7 @@ var _ management.RuntimeControlBackend = (*cliRuntimeControl)(nil)
 func newRuntimeControl(cfg *config.Config, targets ...runtimeTarget) *cliRuntimeControl {
 	dir, _ := configDir()
 	control := &cliRuntimeControl{
-		config: cfg, now: time.Now, healthCache: platform.NewStartupHealthCache(30 * time.Second),
+		config: cfg, now: time.Now, healthCache: platform.NewStartupHealthCache(30 * time.Second), startupHealth: newStartupHealthCache(30 * time.Second),
 		runtimeEntry: processRuntimeCommand, startWorker: startExternalGUIUpdateWorker,
 	}
 	control.healthProbe = control.probeStartupHealth
@@ -623,19 +627,17 @@ type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
 
-func (r *cliRuntimeControl) StartupHealth(ctx context.Context) (map[string]any, error) {
-	pid, port := readRuntime()
-	fallback := platform.StartupHealthDiagnostics{
-		Service:   platform.HealthDiagnostic{State: platform.HealthOffline, Summary: "Proxy health is being refreshed."},
-		Startup:   platform.HealthDiagnostic{State: platform.HealthWarning, Summary: "Startup protection is being refreshed."},
-		CheckedAt: r.now().UTC(), Stale: true,
+func (r *cliRuntimeControl) StartupHealth(ctx context.Context) (any, error) {
+	// The GUI parses `status` and refuses anything else, and the install-service /
+	// install-shim recommendations live on this payload -- a liveness ping cannot carry
+	// either. Serve the derivation the port already had, behind the same
+	// stale-while-revalidate cache the probe used, so a first paint stays cheap.
+	fallback := conservativeStartupHealth(*r.config)
+	probe := r.startupHealthProbe
+	if probe == nil {
+		probe = func(context.Context) codex.StartupHealth { return collectStartupHealth(*r.config) }
 	}
-	diagnostics := r.healthCache.GetStaleWhileRevalidate(ctx, fallback, r.healthProbe)
-	return map[string]any{
-		"healthy": diagnostics.Service.State == platform.HealthHealthy, "pid": pid, "port": port,
-		"codexAutoStart": r.config.CodexAutoStart == nil || *r.config.CodexAutoStart,
-		"stale":          diagnostics.Stale,
-	}, nil
+	return r.startupHealth.get(ctx, fallback, probe), nil
 }
 
 func (r *cliRuntimeControl) probeStartupHealth(ctx context.Context) (platform.StartupHealthDiagnostics, error) {
@@ -664,12 +666,14 @@ func (r *cliRuntimeControl) RunStartupAction(ctx context.Context, action string)
 			return "", err
 		}
 		r.healthCache.Invalidate()
+		r.startupHealth.Invalidate()
 		return "Background service installed.", nil
 	case "install-shim":
 		if err := runCodexShim([]string{"install"}, streams); err != nil {
 			return "", err
 		}
 		r.healthCache.Invalidate()
+		r.startupHealth.Invalidate()
 		return "Codex shim installed.", nil
 	default:
 		return "", fmt.Errorf("unsupported startup action %q", action)
@@ -683,6 +687,7 @@ func (r *cliRuntimeControl) WindowsTray(ctx context.Context, action string) (map
 	}
 	if action != "status" {
 		r.healthCache.Invalidate()
+		r.startupHealth.Invalidate()
 	}
 	result := map[string]any{}
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {

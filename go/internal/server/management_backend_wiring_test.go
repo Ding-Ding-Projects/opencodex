@@ -52,9 +52,11 @@ func (*wiredClaudeRuntime) SyncClaudeAgentDefinitions(context.Context) error { r
 
 type wiredRuntimeControl struct{ health int }
 
-func (b *wiredRuntimeControl) StartupHealth(context.Context) (map[string]any, error) {
+func (b *wiredRuntimeControl) StartupHealth(context.Context) (any, error) {
 	b.health++
-	return map[string]any{"status": "ready"}, nil
+	// The wiring test only proves the route reaches this backend; the shape it returns is the
+	// derived StartupHealth, so assert on a key that shape actually carries.
+	return map[string]any{"routingKind": "native"}, nil
 }
 func (*wiredRuntimeControl) RunStartupAction(context.Context, string) (string, error) {
 	return "ok", nil
@@ -87,7 +89,7 @@ func TestServerProductionCompositionInvokesAllManagementBackends(t *testing.T) {
 		{http.MethodGet, "/api/codex-auth/accounts", "", `"accounts":[]`},
 		{http.MethodGet, "/api/provider-quotas", "", `"generatedAt":7`},
 		{http.MethodPut, "/api/claude-code", `{"enabled":true,"systemEnv":true}`, `"ok":true`},
-		{http.MethodGet, "/api/startup-health", "", `"status":"ready"`},
+		{http.MethodGet, "/api/startup-health", "", `"routingKind"`},
 	}
 	for _, test := range requests {
 		response := serveRequest(proxy.Handler(), test.method, test.path, test.body, headers)

@@ -20,8 +20,22 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	case "GET /api/settings":
 		a.mu.RLock()
-		defer a.mu.RUnlock()
-		writeJSON(w, http.StatusOK, map[string]any{"codexAutoStart": codexAutoStart(a.config.CodexAutoStart), "port": a.config.Port, "hostname": a.config.Host, "streamMode": defaultStreamMode(a.config.StreamMode)})
+		settings := orderedJSONObject{
+			{name: "codexAutoStart", value: codexAutoStart(a.config.CodexAutoStart)},
+			{name: "port", value: a.config.Port},
+			{name: "hostname", value: a.config.Host},
+			{name: "streamMode", value: defaultStreamMode(a.config.StreamMode)},
+		}
+		a.mu.RUnlock()
+		// The dashboard seeds its startup badge from here before the dedicated probe answers,
+		// so omitting it left the badge unseeded and the first paint wrong
+		// (oracle: src/server/management/config-routes.ts:117).
+		if a.runtimeControl != nil {
+			if health, err := a.runtimeControl.StartupHealth(r.Context()); err == nil && health != nil {
+				settings = append(settings, orderedJSONField{name: "startupHealth", value: health})
+			}
+		}
+		writeJSON(w, http.StatusOK, settings)
 		return true
 	case "PUT /api/settings":
 		var body struct {
