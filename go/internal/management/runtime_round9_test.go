@@ -116,3 +116,5 @@ func TestRuntimeControlRoutesValidateWrapAndScrub(t *testing.T) {
 		t.Fatalf("invalid=%d %s", invalid.Code, invalid.Body.String())
 	}
 }
+
+func (*runtimeControlStub) CodexRuntimeReport(context.Context) any { return nil }

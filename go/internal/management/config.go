@@ -34,6 +34,9 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) bool {
 			if health, err := a.runtimeControl.StartupHealth(r.Context()); err == nil && health != nil {
 				settings = append(settings, orderedJSONField{name: "startupHealth", value: health})
 			}
+			if report := a.runtimeControl.CodexRuntimeReport(r.Context()); report != nil {
+				settings = append(settings, orderedJSONField{name: "codexRuntime", value: report})
+			}
 		}
 		writeJSON(w, http.StatusOK, settings)
 		return true

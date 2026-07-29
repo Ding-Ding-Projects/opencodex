@@ -179,3 +179,81 @@ func (cache *startupHealthCache) Invalidate() {
 	cache.populated, cache.inflight, cache.value = false, false, codex.StartupHealth{}
 	cache.generation++
 }
+
+// CodexRuntimeReport is the runtime block the dashboard's Startup page renders: which Codex
+// binary answered, whether a newer one is installed, and whether an old one cost the user
+// reasoning-effort options. Without it those notices are dead strings in every locale.
+func (r *cliRuntimeControl) CodexRuntimeReport(ctx context.Context) any {
+	configDir, _ := configDir()
+	home, _ := os.UserHomeDir()
+	options := codex.ResolveCodexRuntimeOptions{ConfigDir: configDir, HomeDir: home}
+	resolved := codex.ResolveAndPersistCodexRuntime(options)
+	clamp := codex.LoadLastEffortClamp(options)
+	clampActive := codex.EffortClampAppliesToRuntime(clamp, resolved.Runtime)
+
+	warnings := []string{}
+	switch {
+	case resolved.ReplacedConfigured != nil:
+		warnings = append(warnings, "Preferred Codex runtime is unavailable; using "+
+			codex.DisplayCodexRuntimePath(resolved.Runtime.Command, home)+" instead.")
+	case resolved.Runtime.Source == codex.RuntimeSourceFallback && len(resolved.Failures) > 0 && resolved.Runtime.Version == "":
+		warnings = append(warnings, "No validated Codex runtime found; falling back to `codex`.")
+	}
+	newer := ""
+	if resolved.NewerAvailable != nil {
+		newer = " A newer Codex installation is available."
+	}
+	if clampActive {
+		version := "an older binary"
+		if clamp != nil && clamp.RuntimeVersion != "" {
+			version = clamp.RuntimeVersion
+		} else if resolved.Runtime.Version != "" {
+			version = resolved.Runtime.Version
+		}
+		warnings = append(warnings, "Some reasoning effort options were hidden because OpenCodex used Codex "+version+"."+newer)
+	} else if resolved.NewerAvailable != nil {
+		version := resolved.Runtime.Version
+		if version == "" {
+			version = "unknown"
+		}
+		warnings = append(warnings, "OpenCodex is using an older Codex binary ("+version+"). A newer Codex installation is available.")
+	}
+
+	removed := []string{}
+	clampVersion := any(nil)
+	if clampActive && clamp != nil {
+		removed = append(removed, clamp.RemovedEfforts...)
+		if clamp.RuntimeVersion != "" {
+			clampVersion = clamp.RuntimeVersion
+		}
+	}
+	report := map[string]any{
+		"path":    codex.DisplayCodexRuntimePath(resolved.Runtime.Command, home),
+		"version": optionalRuntimeString(resolved.Runtime.Version),
+		"source":  string(resolved.Runtime.Source),
+		"catalogClamp": map[string]any{
+			"active": clampActive, "removedEfforts": removed, "runtimeVersion": clampVersion,
+		},
+		"newerAvailable": nil,
+		"warning":        nil,
+	}
+	if resolved.NewerAvailable != nil {
+		report["newerAvailable"] = map[string]any{
+			"path":    codex.DisplayCodexRuntimePath(resolved.NewerAvailable.Command, home),
+			"version": optionalRuntimeString(resolved.NewerAvailable.Version),
+		}
+	}
+	if len(warnings) > 0 {
+		report["warning"] = strings.Join(warnings, " ")
+	}
+	return report
+}
+
+// optionalRuntimeString keeps an unknown version as null rather than an empty string, which
+// the GUI renders literally.
+func optionalRuntimeString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}

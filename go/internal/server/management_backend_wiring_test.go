@@ -105,3 +105,5 @@ func TestServerProductionCompositionInvokesAllManagementBackends(t *testing.T) {
 func (*wiredCodexAuth) SetCodexAccountPaused(context.Context, string, bool) (management.CodexPauseResult, error) {
 	return management.CodexPauseResult{}, nil
 }
+
+func (*wiredRuntimeControl) CodexRuntimeReport(context.Context) any { return nil }

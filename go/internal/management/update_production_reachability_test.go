@@ -240,3 +240,5 @@ func TestProductionManagementUpdateActivatesLifecyclePolicies(t *testing.T) {
 		}
 	})
 }
+
+func (*productionUpdateBackend) CodexRuntimeReport(context.Context) any { return nil }

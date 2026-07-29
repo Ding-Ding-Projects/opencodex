@@ -12,6 +12,9 @@ import (
 
 type RuntimeControlBackend interface {
 	StartupHealth(context.Context) (any, error)
+	// CodexRuntimeReport describes which Codex binary answered, so the dashboard can warn
+	// about an old one and explain reasoning-effort options it hid.
+	CodexRuntimeReport(context.Context) any
 	RunStartupAction(context.Context, string) (string, error)
 	WindowsTray(context.Context, string) (map[string]any, error)
 	SyncModels(context.Context) (map[string]any, error)
