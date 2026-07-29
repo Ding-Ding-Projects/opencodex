@@ -123,11 +123,8 @@ func TestFallbackLadderOrderingAndHealth(t *testing.T) {
 }
 
 func TestWarningEmissionGroupsEffectiveBypass(t *testing.T) {
-	content := []byte("profile = \"work\"\n[profiles.work]\nmodel_provider = \"opencode_go\"\n[model_providers.opencode_go]\nbase_url = \"http://localhost:4096/v1\"\n")
-	warnings, err := AnalyzeProjectConfig(content, "/repo/.codex/config.toml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	content := "profile = \"work\"\n[profiles.work]\nmodel_provider = \"opencode_go\"\n[model_providers.opencode_go]\nbase_url = \"http://localhost:4096/v1\"\n"
+	warnings := AnalyzeProjectCodexConfig(content, "/repo/.codex/config.toml")
 	if len(warnings) != 1 || warnings[0].Code != IssueProviderTable {
 		t.Fatalf("warnings=%+v", warnings)
 	}

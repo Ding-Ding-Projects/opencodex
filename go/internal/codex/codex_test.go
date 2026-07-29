@@ -234,17 +234,16 @@ model_provider = "anthropic"
 [model_providers.anthropic]
 name = "Anthropic"
 `)
-	warnings, err := CollectProjectConfigWarnings(root, 8)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(warnings) != 1 || warnings[0].Code != IssueProviderTable || warnings[0].Provider != "anthropic" {
+	// The scan walks UP from the working directory, which is how it finds the project the
+	// user is actually inside, and it only reports when global routing is active.
+	options := ProjectDiagnosticsOptions{Cwd: filepath.Join(root, "nested", "repo"), AllowWithoutRouting: true}
+	warnings := CollectProjectCodexConfigWarnings(options)
+	if len(warnings) != 1 || warnings[0].Code != IssueProviderTable || warnings[0].Detail != "anthropic" {
 		t.Fatalf("unexpected warnings: %+v", warnings)
 	}
 	writeTestFile(t, configPath, "model_provider = \"openai\"\n")
-	warnings, err = CollectProjectConfigWarnings(root, 8)
-	if err != nil || len(warnings) != 0 {
-		t.Fatalf("openai should be proxy-compatible: warnings=%+v err=%v", warnings, err)
+	if warnings := CollectProjectCodexConfigWarnings(options); len(warnings) != 0 {
+		t.Fatalf("openai should be proxy-compatible: warnings=%+v", warnings)
 	}
 }
 

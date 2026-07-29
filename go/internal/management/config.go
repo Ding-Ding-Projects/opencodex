@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
 )
 
@@ -55,13 +56,16 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "codexAutoStart": codexAutoStart(a.config.CodexAutoStart), "streamMode": defaultStreamMode(a.config.StreamMode)})
 		return true
 	case "GET /api/diagnostics/project-config":
-		a.mu.RLock()
-		defer a.mu.RUnlock()
-		warnings := []map[string]string{}
-		if err := a.config.Validate(); err != nil {
-			warnings = append(warnings, map[string]string{"code": "INVALID_CONFIG", "message": err.Error()})
+		// This route reports PROJECT Codex configs that route around the proxy -- not ocx
+		// config validation. The dashboard renders `grouped`; warnings carries the raw rows.
+		warnings, grouped := codex.CachedProjectConfigDiagnostics()
+		if warnings == nil {
+			warnings = []codex.ProjectConfigWarning{}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"warnings": warnings})
+		if grouped == nil {
+			grouped = []codex.ProjectConfigWarningGroup{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"warnings": warnings, "grouped": grouped})
 		return true
 	case "GET /api/sidecar-settings":
 		a.mu.RLock()

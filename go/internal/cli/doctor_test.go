@@ -46,8 +46,8 @@ func TestCollectDoctorReportClassifiesChecks(t *testing.T) {
 		Now: func() time.Time { return now }, HTTPClient: client,
 		LookPath:    func(string) (string, error) { return "/bin/echo", nil },
 		ReadRuntime: func() (int, int) { return 0, 0 },
-		CollectWarnings: func(string, int) ([]codex.ProjectConfigWarning, error) {
-			return []codex.ProjectConfigWarning{{Path: filepath.Join(home, ".codex", "config.toml"), Code: codex.IssueRootProvider, Message: "bypasses OpenCodex"}}, nil
+		CollectWarnings: func(codex.ProjectDiagnosticsOptions) []codex.ProjectConfigWarning {
+			return []codex.ProjectConfigWarning{{Path: filepath.Join(home, ".codex", "config.toml"), Code: codex.IssueRootProvider, Message: "bypasses OpenCodex"}}
 		},
 	})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestCollectDoctorReportMarksMalformedConfigFailed(t *testing.T) {
 		})},
 		LookPath:        func(string) (string, error) { return "/bin/echo", nil },
 		ReadRuntime:     func() (int, int) { return 0, 0 },
-		CollectWarnings: func(string, int) ([]codex.ProjectConfigWarning, error) { return nil, nil },
+		CollectWarnings: func(codex.ProjectDiagnosticsOptions) []codex.ProjectConfigWarning { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestDoctorReportsOrcaCodexHomeWithoutLeakingUserPath(t *testing.T) {
 			return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(`{}`)), Header: http.Header{}}, nil
 		})},
 		LookPath: func(string) (string, error) { return "codex.exe", nil }, ReadRuntime: func() (int, int) { return 0, 0 },
-		CollectWarnings: func(string, int) ([]codex.ProjectConfigWarning, error) { return nil, nil },
+		CollectWarnings: func(codex.ProjectDiagnosticsOptions) []codex.ProjectConfigWarning { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestDoctorOAuthHealthIsRedactedObserveOnlyAndActionable(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(`{}`)), Header: http.Header{}}, nil
 		})},
 		LookPath: func(string) (string, error) { return "/bin/echo", nil }, ReadRuntime: func() (int, int) { return 0, 0 },
-		CollectWarnings: func(string, int) ([]codex.ProjectConfigWarning, error) { return nil, nil },
+		CollectWarnings: func(codex.ProjectDiagnosticsOptions) []codex.ProjectConfigWarning { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)

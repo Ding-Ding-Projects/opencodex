@@ -43,7 +43,7 @@ type doctorDeps struct {
 	CommandContext   func(context.Context, string, ...string) *exec.Cmd
 	ReadRuntime      func() (int, int)
 	ReadProcessEnv   func(int) ([]byte, error)
-	CollectWarnings  func(string, int) ([]codex.ProjectConfigWarning, error)
+	CollectWarnings  func(codex.ProjectDiagnosticsOptions) []codex.ProjectConfigWarning
 	ReadFile         func(string) ([]byte, error)
 	Glob             func(string) ([]string, error)
 	Stat             func(string) (os.FileInfo, error)
@@ -84,7 +84,7 @@ func (d doctorDeps) withDefaults() doctorDeps {
 		d.ReadRuntime = readRuntime
 	}
 	if d.CollectWarnings == nil {
-		d.CollectWarnings = codex.CollectProjectConfigWarnings
+		d.CollectWarnings = codex.CollectProjectCodexConfigWarnings
 	}
 	if d.ReadFile == nil {
 		d.ReadFile = os.ReadFile
@@ -329,11 +329,9 @@ func appendWHAMCheck(parent context.Context, report *doctorReport, authPath stri
 }
 
 func appendProjectWarnings(report *doctorReport, deps doctorDeps) {
-	warnings, err := deps.CollectWarnings(deps.WorkingDirectory, 8)
-	if err != nil {
-		report.add(doctorCheck{Name: "project Codex configs", Status: doctorWarn, Detail: err.Error()})
-		return
-	}
+	// The scan walks up from the working directory and adds the projects Codex trusts, and
+	// reports nothing at all when global routing is not active (oracle: doctor.ts:785).
+	warnings := deps.CollectWarnings(codex.ProjectDiagnosticsOptions{Cwd: deps.WorkingDirectory})
 	if len(warnings) == 0 {
 		report.add(doctorCheck{Name: "project Codex configs", Status: doctorPass, Detail: "no project-local provider bypass detected"})
 		return
