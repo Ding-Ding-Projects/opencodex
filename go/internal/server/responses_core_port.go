@@ -798,10 +798,11 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		stateInspector = NewSSEInspector(SSEInspectorHandlers{OnCompletedResponse: remember, OnIncompleteResponse: remember})
 		writer = &sseInspectionWriter{writer: w, inspector: stateInspector}
 	}
+	maps := requestToolBridgeMaps(normalized)
 	err := bridge.StreamWithOptions(ctx, writer, requestedModel, events, bridge.StreamOptions{
 		StallTimeout: ResolveStallTimeout(core.config.StallTimeout),
 		OnCancel:     func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
-		FreeformTools: freeformToolNames(normalized),
+		FreeformTools: maps.Freeform, ToolSearchTools: maps.ToolSearch, ToolNamespaces: maps.Namespaced,
 	})
 	if stateInspector != nil {
 		stateInspector.Finish()
@@ -985,7 +986,10 @@ func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, 
 		}
 		break
 	}
-	_, result := bridge.ConvertWithOptions(requestedModel, events, bridge.ConvertOptions{FreeformTools: freeformToolNames(normalized)})
+	maps := requestToolBridgeMaps(normalized)
+	_, result := bridge.ConvertWithOptions(requestedModel, events, bridge.ConvertOptions{
+		FreeformTools: maps.Freeform, ToolSearchTools: maps.ToolSearch, ToolNamespaces: maps.Namespaced,
+	})
 	for _, event := range events {
 		if event.Type == types.EventError {
 			core.noteSubagentFailure(fallbackAttempt, fallbackFailureMessage(event.StatusCode, event.Error))
@@ -1279,18 +1283,13 @@ func outcomeForHTTP(status int) types.OutcomeStatus {
 	}
 }
 
-// freeformToolNames lists the tools the client declared as custom (freeform) tools, so the
-// bridge relays their calls back as custom_tool_call items. Codex declares apply_patch this
-// way, and its freeform handler aborts the turn when the call comes back as a function_call.
-func freeformToolNames(request *types.NormalizedRequest) []string {
+// requestToolBridgeMaps carries the client's tool declarations to the bridge, so each call
+// relays back in the shape it was declared with: apply_patch as a custom_tool_call (its
+// freeform handler aborts the turn on a function_call), tool_search as a tool_search_call,
+// and an MCP tool with the namespace Codex routes by.
+func requestToolBridgeMaps(request *types.NormalizedRequest) ToolBridgeMaps {
 	if request == nil {
-		return nil
+		return ToolBridgeMaps{}
 	}
-	var names []string
-	for _, tool := range request.Context.Tools {
-		if tool.Freeform && tool.Namespace == "" {
-			names = append(names, tool.Name)
-		}
-	}
-	return names
+	return BuildToolBridgeMaps(request.Context.Tools)
 }

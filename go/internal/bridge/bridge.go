@@ -52,10 +52,24 @@ type machine struct {
 	onUsage           func(*types.Usage)
 	usageReported     bool
 	freeformTools     map[string]struct{}
+	toolSearchTools   map[string]struct{}
+	toolNamespaces    map[string]NamespacedTool
+}
+
+// NamespacedTool restores an MCP tool's identity on the way back to the client: the model
+// only ever sees the flattened "<namespace>__<name>" wire name.
+type NamespacedTool struct {
+	Namespace string
+	Name      string
 }
 
 func (m *machine) isFreeform(name string) bool {
 	_, ok := m.freeformTools[name]
+	return ok
+}
+
+func (m *machine) isToolSearch(name string) bool {
+	_, ok := m.toolSearchTools[name]
 	return ok
 }
 
@@ -73,6 +87,12 @@ type openItem struct {
 	freeform bool
 	// inputEmitted is the freeform input already streamed, so deltas stay incremental.
 	inputEmitted string
+	// toolSearch marks a client-executed tool-discovery call, which relays as a
+	// tool_search_call and carries no argument events.
+	toolSearch bool
+	// namespace is the MCP namespace the wire name was flattened from, restored on the
+	// relayed function_call because Codex routes MCP calls by this field, not by the name.
+	namespace string
 }
 
 // StreamOptions supplies terminal usage recording metadata without coupling the
@@ -95,6 +115,10 @@ type StreamOptions struct {
 	// FreeformTools names the tools the client declared as custom (freeform) tools.
 	// Calls to them relay back as custom_tool_call items.
 	FreeformTools []string
+	// ToolSearchTools names the tools the client declared as tool_search tools.
+	ToolSearchTools []string
+	// ToolNamespaces maps a flattened "<namespace>__<name>" wire name back to its parts.
+	ToolNamespaces map[string]NamespacedTool
 }
 
 // ConvertOptions supplies callbacks for buffered bridge conversion.
@@ -104,6 +128,10 @@ type ConvertOptions struct {
 	// FreeformTools names the tools the client declared as custom (freeform) tools.
 	// Calls to them relay back as custom_tool_call items.
 	FreeformTools []string
+	// ToolSearchTools names the tools the client declared as tool_search tools.
+	ToolSearchTools []string
+	// ToolNamespaces maps a flattened "<namespace>__<name>" wire name back to its parts.
+	ToolNamespaces map[string]NamespacedTool
 }
 
 // Convert consumes adapter events and returns ordered Responses events and the final response.
@@ -114,7 +142,7 @@ func Convert(model string, events []types.AdapterEvent) ([]Event, Response) {
 // ConvertWithOptions consumes buffered adapter events and reports raw terminal usage.
 func ConvertWithOptions(model string, events []types.AdapterEvent, options ConvertOptions) ([]Event, Response) {
 	m := newMachineWithUsage(model, options.OnUsage)
-	m.freeformTools = freeformToolSet(options.FreeformTools)
+	m.freeformTools, m.toolSearchTools, m.toolNamespaces = toolNameSet(options.FreeformTools), toolNameSet(options.ToolSearchTools), options.ToolNamespaces
 	out := []Event{m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})}
 	for _, event := range events {
 		out = append(out, m.accept(event)...)
@@ -134,7 +162,7 @@ func Stream(ctx context.Context, w io.Writer, model string, events <-chan types.
 // usage after the protocol terminal has been emitted.
 func StreamWithOptions(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent, options StreamOptions) error {
 	m := newMachineWithUsage(model, options.OnUsage)
-	m.freeformTools = freeformToolSet(options.FreeformTools)
+	m.freeformTools, m.toolSearchTools, m.toolNamespaces = toolNameSet(options.FreeformTools), toolNameSet(options.ToolSearchTools), options.ToolNamespaces
 	if err := writeSSE(w, m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})); err != nil {
 		return err
 	}
@@ -455,6 +483,10 @@ func (m *machine) closeCurrent() []Event {
 	case "raw_reasoning":
 		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": text}}}
 	case "tool":
+		if item.toolSearch {
+			final = map[string]any{"type": "tool_search_call", "id": item.id, "call_id": item.callID, "execution": "client", "arguments": parseArgumentsObject(text), "status": "completed"}
+			break
+		}
 		if item.freeform {
 			input := freeformInput(text)
 			out = append(out, m.emit("response.custom_tool_call_input.done", map[string]any{"item_id": item.id, "output_index": item.index, "input": input}))
@@ -466,6 +498,9 @@ func (m *machine) closeCurrent() []Event {
 		}
 		out = append(out, m.emit("response.function_call_arguments.done", map[string]any{"item_id": item.id, "output_index": item.index, "arguments": text}))
 		final = map[string]any{"type": "function_call", "id": item.id, "call_id": item.callID, "name": item.name, "arguments": text, "status": "completed"}
+		if item.namespace != "" {
+			final["namespace"] = item.namespace
+		}
 	case "web_search":
 		status := item.status
 		if status == "" || status == "in_progress" {
@@ -609,7 +644,7 @@ func randomID() string {
 	return hex.EncodeToString(b)
 }
 
-func freeformToolSet(names []string) map[string]struct{} {
+func toolNameSet(names []string) map[string]struct{} {
 	if len(names) == 0 {
 		return nil
 	}
@@ -622,36 +657,60 @@ func freeformToolSet(names []string) map[string]struct{} {
 	return out
 }
 
-func (m *machine) newToolItem(callID, name string) *openItem {
-	if m.isFreeform(name) {
-		return &openItem{kind: "tool", id: "ctc_" + randomID(), callID: callID, name: name, index: len(m.response.Output), freeform: true}
+// newToolItem resolves the wire name back to its declared identity before choosing the item
+// shape, in the oracle's order: namespace first, then tool_search, then freeform.
+func (m *machine) newToolItem(callID, wireName string) *openItem {
+	name, namespace := wireName, ""
+	if mapped, ok := m.toolNamespaces[wireName]; ok {
+		name, namespace = mapped.Name, mapped.Namespace
 	}
-	return &openItem{kind: "tool", id: "fc_" + randomID(), callID: callID, name: name, index: len(m.response.Output)}
+	index := len(m.response.Output)
+	switch {
+	case m.isToolSearch(name):
+		return &openItem{kind: "tool", id: "tsc_" + randomID(), callID: callID, name: name, index: index, toolSearch: true}
+	case m.isFreeform(name):
+		return &openItem{kind: "tool", id: "ctc_" + randomID(), callID: callID, name: name, index: index, freeform: true}
+	default:
+		return &openItem{kind: "tool", id: "fc_" + randomID(), callID: callID, name: name, index: index, namespace: namespace}
+	}
 }
 
 func (item *openItem) openToolItem() map[string]any {
+	if item.toolSearch {
+		return map[string]any{"type": "tool_search_call", "id": item.id, "call_id": item.callID, "execution": "client", "arguments": map[string]any{}, "status": "in_progress"}
+	}
 	if item.freeform {
 		return map[string]any{"type": "custom_tool_call", "id": item.id, "call_id": item.callID, "name": item.name, "input": "", "status": "in_progress"}
 	}
-	return map[string]any{"type": "function_call", "id": item.id, "call_id": item.callID, "name": item.name, "arguments": "", "status": "in_progress"}
+	open := map[string]any{"type": "function_call", "id": item.id, "call_id": item.callID, "name": item.name, "arguments": "", "status": "in_progress"}
+	if item.namespace != "" {
+		open["namespace"] = item.namespace
+	}
+	return open
 }
 
 // toolArgumentDelta streams argument progress on the channel the item's wire type uses.
 // A freeform call streams its unwrapped input, which codex-rs shows as a live preview
 // while the completed custom_tool_call item stays authoritative.
 func (m *machine) toolArgumentDelta(chunk string) []Event {
+	if m.current.toolSearch {
+		return nil // the oracle emits no argument events for a tool_search call
+	}
 	if !m.current.freeform {
 		return []Event{m.emit("response.function_call_arguments.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": chunk})}
 	}
-	full := freeformPartialInput(m.current.text.String())
-	if !strings.HasPrefix(full, m.current.inputEmitted) {
-		// The unwrap re-read the buffer differently (an escape completed); resend from scratch.
-		m.current.inputEmitted = ""
-	}
-	delta := strings.TrimPrefix(full, m.current.inputEmitted)
-	if delta == "" {
+	buffer := m.current.text.String()
+	// Hold while the buffer is still an ambiguous prefix of the JSON wrapper, so a partial
+	// `{"in` never reaches the client as if it were tool input.
+	if strings.HasPrefix(freeformWrapPrefix, buffer) {
 		return nil
 	}
+	full := freeformPartialInput(buffer)
+	// Only forward progress is streamed; a re-read that shortens the value never rewinds.
+	if !strings.HasPrefix(full, m.current.inputEmitted) || len(full) <= len(m.current.inputEmitted) {
+		return nil
+	}
+	delta := full[len(m.current.inputEmitted):]
 	m.current.inputEmitted = full
 	return []Event{m.emit("response.custom_tool_call_input.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": delta})}
 }
@@ -713,4 +772,14 @@ func freeformPartialInput(arguments string) string {
 		}
 	}
 	return out.String()
+}
+
+// parseArgumentsObject decodes a tool_search argument buffer, which the oracle relays as a
+// JSON object rather than the raw string a function_call carries.
+func parseArgumentsObject(arguments string) map[string]any {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil || parsed == nil {
+		return map[string]any{}
+	}
+	return parsed
 }
