@@ -123,7 +123,7 @@ func (r *AuthResolver) resolveOAuth(ctx context.Context, provider, threadID stri
 	return &shared.AuthContext{
 		Kind: "oauth", Provider: provider, AccountID: account.ID,
 		Generation: generationNumber(credential), AccessToken: credential.Access,
-		ChatGPTAccountID: credential.AccountID, Headers: headers,
+		ChatGPTAccountID: credential.AccountID, ProjectID: credential.ProjectID, Headers: headers,
 	}, nil
 }
 

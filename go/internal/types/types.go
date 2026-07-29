@@ -189,7 +189,11 @@ type AuthContext struct {
 	AccessToken      string            `json:"-"`
 	APIKey           string            `json:"-"`
 	ChatGPTAccountID string            `json:"chatgptAccountId,omitempty"`
-	Headers          map[string]string `json:"-"`
+	// ProjectID carries the credential's discovered Cloud Code Assist project. Antigravity
+	// needs it in the CCA envelope and the server injects only the bare token, so it has to
+	// travel with the resolved credential (oracle: getOAuthCredentialProjectId).
+	ProjectID string            `json:"-"`
+	Headers   map[string]string `json:"-"`
 	ProbeLeaseID     string            `json:"-"`
 	ThreadID         string            `json:"-"`
 }

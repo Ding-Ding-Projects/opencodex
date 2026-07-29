@@ -638,6 +638,11 @@ func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) serv
 			}
 			adapter := google.NewAdapter(mode, transport, auth)
 			adapter.Project = provider.Project
+			if adapter.Project == "" && auth != nil {
+				// Cloud Code Assist discovers the project during login and stores it on the
+				// credential; without this the antigravity path rejects every request.
+				adapter.Project = auth.ProjectID
+			}
 			adapter.Location = provider.Location
 			bound := bindVertexADC(adapter)
 			return bindAdapterFetch(bound, func(ctx context.Context, request *http.Request) (*http.Response, error) {
