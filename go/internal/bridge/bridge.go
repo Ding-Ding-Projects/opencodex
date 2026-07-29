@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +51,12 @@ type machine struct {
 	pendingWebSources []types.URLCitation
 	onUsage           func(*types.Usage)
 	usageReported     bool
+	freeformTools     map[string]struct{}
+}
+
+func (m *machine) isFreeform(name string) bool {
+	_, ok := m.freeformTools[name]
+	return ok
 }
 
 type openItem struct {
@@ -59,6 +67,12 @@ type openItem struct {
 	status                 string
 	queries                []string
 	sources                []types.URLCitation
+	// freeform marks a call the client declared as a custom tool (apply_patch). It must
+	// go back as a custom_tool_call; Codex's freeform handler rejects a function_call for
+	// such a tool and aborts the turn with no visible error.
+	freeform bool
+	// inputEmitted is the freeform input already streamed, so deltas stay incremental.
+	inputEmitted string
 }
 
 // StreamOptions supplies terminal usage recording metadata without coupling the
@@ -78,12 +92,18 @@ type StreamOptions struct {
 	// can hold back work that must not start before the client sees the
 	// stream open.
 	OnFirstEvent func()
+	// FreeformTools names the tools the client declared as custom (freeform) tools.
+	// Calls to them relay back as custom_tool_call items.
+	FreeformTools []string
 }
 
 // ConvertOptions supplies callbacks for buffered bridge conversion.
 type ConvertOptions struct {
 	// OnUsage receives raw adapter usage before strict-client wire normalization.
 	OnUsage func(*types.Usage)
+	// FreeformTools names the tools the client declared as custom (freeform) tools.
+	// Calls to them relay back as custom_tool_call items.
+	FreeformTools []string
 }
 
 // Convert consumes adapter events and returns ordered Responses events and the final response.
@@ -94,6 +114,7 @@ func Convert(model string, events []types.AdapterEvent) ([]Event, Response) {
 // ConvertWithOptions consumes buffered adapter events and reports raw terminal usage.
 func ConvertWithOptions(model string, events []types.AdapterEvent, options ConvertOptions) ([]Event, Response) {
 	m := newMachineWithUsage(model, options.OnUsage)
+	m.freeformTools = freeformToolSet(options.FreeformTools)
 	out := []Event{m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})}
 	for _, event := range events {
 		out = append(out, m.accept(event)...)
@@ -113,6 +134,7 @@ func Stream(ctx context.Context, w io.Writer, model string, events <-chan types.
 // usage after the protocol terminal has been emitted.
 func StreamWithOptions(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent, options StreamOptions) error {
 	m := newMachineWithUsage(model, options.OnUsage)
+	m.freeformTools = freeformToolSet(options.FreeformTools)
 	if err := writeSSE(w, m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})); err != nil {
 		return err
 	}
@@ -297,13 +319,12 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 		if callID == "" {
 			callID = "call_" + randomID()
 		}
-		m.current = &openItem{kind: "tool", id: "fc_" + randomID(), callID: callID, name: event.Name, index: len(m.response.Output)}
-		item := map[string]any{"type": "function_call", "id": m.current.id, "call_id": callID, "name": event.Name, "arguments": "", "status": "in_progress"}
-		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+		m.current = m.newToolItem(callID, event.Name)
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": m.current.openToolItem()}))
 	case types.EventToolCallDelta:
 		if m.current != nil && m.current.kind == "tool" {
 			m.current.text.WriteString(event.Arguments)
-			out = append(out, m.emit("response.function_call_arguments.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": event.Arguments}))
+			out = append(out, m.toolArgumentDelta(event.Arguments)...)
 		}
 	case types.EventToolCallEnd:
 		out = append(out, m.closeCurrent()...)
@@ -333,13 +354,12 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 		}
 		if m.current == nil || m.current.kind != "tool" || m.current.callID != callID {
 			out = append(out, m.closeCurrent()...)
-			m.current = &openItem{kind: "tool", id: "fc_" + randomID(), callID: callID, name: event.ToolCall.Name, index: len(m.response.Output)}
-			item := map[string]any{"type": "function_call", "id": m.current.id, "call_id": callID, "name": event.ToolCall.Name, "arguments": "", "status": "in_progress"}
-			out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+			m.current = m.newToolItem(callID, event.ToolCall.Name)
+			out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": m.current.openToolItem()}))
 		}
 		chunk := string(event.ToolCall.Arguments)
 		m.current.text.WriteString(chunk)
-		out = append(out, m.emit("response.function_call_arguments.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": chunk}))
+		out = append(out, m.toolArgumentDelta(chunk)...)
 	case types.EventUsage:
 		m.usage = cloneUsage(event.Usage)
 		m.response.Usage = usage(event.Usage)
@@ -435,6 +455,12 @@ func (m *machine) closeCurrent() []Event {
 	case "raw_reasoning":
 		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": text}}}
 	case "tool":
+		if item.freeform {
+			input := freeformInput(text)
+			out = append(out, m.emit("response.custom_tool_call_input.done", map[string]any{"item_id": item.id, "output_index": item.index, "input": input}))
+			final = map[string]any{"type": "custom_tool_call", "id": item.id, "call_id": item.callID, "name": item.name, "input": input, "status": "completed"}
+			break
+		}
 		if text == "" {
 			text = "{}"
 		}
@@ -581,4 +607,110 @@ func randomID() string {
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return hex.EncodeToString(b)
+}
+
+func freeformToolSet(names []string) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name != "" {
+			out[name] = struct{}{}
+		}
+	}
+	return out
+}
+
+func (m *machine) newToolItem(callID, name string) *openItem {
+	if m.isFreeform(name) {
+		return &openItem{kind: "tool", id: "ctc_" + randomID(), callID: callID, name: name, index: len(m.response.Output), freeform: true}
+	}
+	return &openItem{kind: "tool", id: "fc_" + randomID(), callID: callID, name: name, index: len(m.response.Output)}
+}
+
+func (item *openItem) openToolItem() map[string]any {
+	if item.freeform {
+		return map[string]any{"type": "custom_tool_call", "id": item.id, "call_id": item.callID, "name": item.name, "input": "", "status": "in_progress"}
+	}
+	return map[string]any{"type": "function_call", "id": item.id, "call_id": item.callID, "name": item.name, "arguments": "", "status": "in_progress"}
+}
+
+// toolArgumentDelta streams argument progress on the channel the item's wire type uses.
+// A freeform call streams its unwrapped input, which codex-rs shows as a live preview
+// while the completed custom_tool_call item stays authoritative.
+func (m *machine) toolArgumentDelta(chunk string) []Event {
+	if !m.current.freeform {
+		return []Event{m.emit("response.function_call_arguments.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": chunk})}
+	}
+	full := freeformPartialInput(m.current.text.String())
+	if !strings.HasPrefix(full, m.current.inputEmitted) {
+		// The unwrap re-read the buffer differently (an escape completed); resend from scratch.
+		m.current.inputEmitted = ""
+	}
+	delta := strings.TrimPrefix(full, m.current.inputEmitted)
+	if delta == "" {
+		return nil
+	}
+	m.current.inputEmitted = full
+	return []Event{m.emit("response.custom_tool_call_input.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": delta})}
+}
+
+// freeformInput unwraps the `{"input": "..."}` envelope the model is handed for a custom
+// tool, so the client receives the raw tool body it declared the tool with.
+func freeformInput(arguments string) string {
+	var wrapper struct {
+		Input *string `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &wrapper); err == nil && wrapper.Input != nil {
+		return *wrapper.Input
+	}
+	return arguments
+}
+
+const freeformWrapPrefix = `{"input":"`
+
+// freeformPartialInput unwraps a PARTIAL argument buffer, progressively unescaping the
+// compact `{"input":"…` form and streaming anything else raw.
+func freeformPartialInput(arguments string) string {
+	if !strings.HasPrefix(arguments, freeformWrapPrefix) {
+		return arguments
+	}
+	body := []rune(strings.TrimPrefix(arguments, freeformWrapPrefix))
+	var out strings.Builder
+	for index := 0; index < len(body); index++ {
+		char := body[index]
+		if char == '"' {
+			break // unescaped closing quote: the value is complete
+		}
+		if char != '\\' {
+			out.WriteRune(char)
+			continue
+		}
+		if index+1 >= len(body) {
+			break // escape split across chunks: wait for more
+		}
+		index++
+		switch next := body[index]; next {
+		case 'n':
+			out.WriteByte('\n')
+		case 't':
+			out.WriteByte('\t')
+		case 'r':
+			out.WriteByte('\r')
+		case 'u':
+			if index+4 >= len(body) {
+				return out.String() // incomplete \uXXXX: wait for more
+			}
+			value, err := strconv.ParseUint(string(body[index+1:index+5]), 16, 32)
+			if err != nil {
+				return out.String()
+			}
+			out.WriteRune(rune(value))
+			index += 4
+		default:
+			out.WriteRune(next)
+		}
+	}
+	return out.String()
 }

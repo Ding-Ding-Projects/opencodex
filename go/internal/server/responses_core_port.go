@@ -801,6 +801,7 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 	err := bridge.StreamWithOptions(ctx, writer, requestedModel, events, bridge.StreamOptions{
 		StallTimeout: ResolveStallTimeout(core.config.StallTimeout),
 		OnCancel:     func() { cancel(bridge.UpstreamStallError) }, Recorder: core.config.Recorder, Record: record,
+		FreeformTools: freeformToolNames(normalized),
 	})
 	if stateInspector != nil {
 		stateInspector.Finish()
@@ -984,7 +985,7 @@ func (core *ResponsesCore) buffered(ctx context.Context, w http.ResponseWriter, 
 		}
 		break
 	}
-	_, result := bridge.Convert(requestedModel, events)
+	_, result := bridge.ConvertWithOptions(requestedModel, events, bridge.ConvertOptions{FreeformTools: freeformToolNames(normalized)})
 	for _, event := range events {
 		if event.Type == types.EventError {
 			core.noteSubagentFailure(fallbackAttempt, fallbackFailureMessage(event.StatusCode, event.Error))
@@ -1276,4 +1277,20 @@ func outcomeForHTTP(status int) types.OutcomeStatus {
 	default:
 		return types.OutcomeProviderError
 	}
+}
+
+// freeformToolNames lists the tools the client declared as custom (freeform) tools, so the
+// bridge relays their calls back as custom_tool_call items. Codex declares apply_patch this
+// way, and its freeform handler aborts the turn when the call comes back as a function_call.
+func freeformToolNames(request *types.NormalizedRequest) []string {
+	if request == nil {
+		return nil
+	}
+	var names []string
+	for _, tool := range request.Context.Tools {
+		if tool.Freeform && tool.Namespace == "" {
+			names = append(names, tool.Name)
+		}
+	}
+	return names
 }
