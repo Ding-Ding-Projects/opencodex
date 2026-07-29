@@ -87,8 +87,9 @@ Usage:
   ocx codex-shim <sub>        Auto-start proxy when ` + "`codex`" + ` launches (install|status|uninstall|remove)
   ocx tray <sub>              Windows status tray (install|start|stop|status|uninstall)
   ocx ensure                  Ensure the proxy is running and Codex config/cache are current
-  ocx sync                    Fetch models from providers and inject into Codex config
-  ocx sync-cache              Refresh Codex's model cache from the active catalog
+  ocx sync [--restart-codex]  Fetch models from providers and inject into Codex config
+  ocx sync-cache [--restart-codex]
+                              Refresh Codex's model cache from the active catalog
   ocx status                  Check proxy server status
   ocx doctor                  Diagnose environment/network issues (WSL, proxy, ChatGPT reachability)
   ocx debug <scope>           provider/usage/injection/claude on|off|status|reset

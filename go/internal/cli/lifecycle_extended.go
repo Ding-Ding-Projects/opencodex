@@ -127,13 +127,18 @@ func codexHomePath() string {
 }
 
 func runSyncCache(args []string, streams IO) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: ocx sync-cache")
+	restartCodex, err := parseRestartCodexFlag("ocx sync-cache", args)
+	if err != nil {
+		return err
 	}
 	home := codexHomePath()
 	if err := codex.InvalidateCodexModelsCache(filepath.Join(home, "opencodex-catalog.json"), filepath.Join(home, "models_cache.json")); err != nil {
 		return err
 	}
+	// models_cache was rewritten from a readable catalog: same stale-app-server window as sync.
+	codex.AfterCatalogWriteHandleAppServers(codex.AfterCatalogWriteAppServerOptions{
+		Restart: restartCodex, Log: streamLogger(streams),
+	})
 	fmt.Fprintln(streams.Out, "Codex model cache invalidated.")
 	return nil
 }

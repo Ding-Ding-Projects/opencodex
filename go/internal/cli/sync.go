@@ -17,8 +17,9 @@ import (
 )
 
 func runSync(ctx context.Context, args []string, streams IO) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: ocx sync")
+	restartCodex, err := parseRestartCodexFlag("ocx sync", args)
+	if err != nil {
+		return err
 	}
 	cfg, _, err := loadConfig()
 	if err != nil {
@@ -107,8 +108,45 @@ func runSync(ctx context.Context, args []string, streams IO) error {
 	if err := codex.InvalidateCodexModelsCache(catalogPath, filepath.Join(codexHome, "models_cache.json")); err != nil {
 		return err
 	}
+	// The catalog and cache were both rewritten by this point, which is exactly when a
+	// long-lived app-server is still serving the old model list from memory.
+	codex.AfterCatalogWriteHandleAppServers(codex.AfterCatalogWriteAppServerOptions{
+		Restart: restartCodex, Log: streamLogger(streams),
+	})
 	fmt.Fprintf(streams.Out, "Synced %d model(s) to Codex.\n", len(models))
 	return nil
+}
+
+// parseRestartCodexFlag accepts the oracle's only sync flag and rejects anything else, so
+// `ocx sync --restart-codex` stops being a usage error the root help advertises.
+func parseRestartCodexFlag(usage string, args []string) (bool, error) {
+	restart := false
+	for _, arg := range args {
+		if arg == "--restart-codex" {
+			restart = true
+			continue
+		}
+		return false, fmt.Errorf("usage: %s [--restart-codex]", usage)
+	}
+	return restart, nil
+}
+
+// streamLogger adapts the CLI streams to the app-server progress logger: normal progress on
+// stdout, warnings and failures on stderr, matching the oracle's console.log/console.error.
+func streamLogger(streams IO) codex.AppServerLogger { return cliAppServerLogger{streams: streams} }
+
+type cliAppServerLogger struct{ streams IO }
+
+func (l cliAppServerLogger) Log(message string)   { writeLine(l.streams.Out, message) }
+func (l cliAppServerLogger) Error(message string) { writeLine(l.streams.Err, message) }
+
+// writeLine tolerates an unset stream: callers that only capture stdout (or nothing) must not
+// crash the sync just because an app-server warning had nowhere to go.
+func writeLine(writer io.Writer, message string) {
+	if writer == nil {
+		return
+	}
+	fmt.Fprintln(writer, message)
 }
 
 func reportCodexHomeTarget(streams IO, collect func() codex.OrcaCodexHomeDiagnostic) {

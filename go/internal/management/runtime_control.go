@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 )
 
@@ -105,7 +106,7 @@ func (a *API) handleRuntimeControl(w http.ResponseWriter, r *http.Request) bool 
 			return true
 		}
 		result = safeRuntimeValue(result).(map[string]any)
-		result["staleAppServerHint"] = "If Codex App still shows an older model list, restart its long-lived app-server process after sync."
+		result["staleAppServerHint"] = codex.StaleCodexAppServerHint
 		status := 200
 		if ok, exists := result["ok"].(bool); exists && !ok {
 			status = 500
