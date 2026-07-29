@@ -15,7 +15,16 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 			a.mu.RLock()
 			models := append([]string(nil), a.agents.Models...)
 			a.mu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{"chosen": models})
+			if models == nil {
+				models = []string{}
+			}
+			// `available` is what the picker can offer. Without it the GUI selector
+			// renders empty and silently offers nothing (oracle:
+			// agent-settings-routes.ts:335).
+			writeJSON(w, http.StatusOK, orderedJSONObject{
+				{name: "chosen", value: models},
+				{name: "available", value: a.availableModelsExcludingDisabled()},
+			})
 			return true
 		}
 		if r.Method == http.MethodPut {
@@ -56,7 +65,7 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 			a.mu.RLock()
 			settings := a.agents
 			a.mu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{"multiAgentGuidanceEnabled": settings.GuidanceEnabled == nil || *settings.GuidanceEnabled, "model": nullable(settings.InjectionModel), "effort": nullable(settings.InjectionEffort), "prompt": nullable(settings.InjectionPrompt), "efforts": effortList})
+			writeJSON(w, http.StatusOK, map[string]any{"multiAgentGuidanceEnabled": settings.GuidanceEnabled == nil || *settings.GuidanceEnabled, "model": nullable(settings.InjectionModel), "effort": nullable(settings.InjectionEffort), "prompt": nullable(settings.InjectionPrompt), "efforts": effortList, "available": a.availableModelsExcludingDisabled()})
 			return true
 		}
 		if r.Method == http.MethodPut {

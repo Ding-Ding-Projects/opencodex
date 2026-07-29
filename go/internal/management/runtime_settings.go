@@ -71,6 +71,39 @@ func (a *API) availableModels() []string {
 	return result
 }
 
+// availableModelsExcludingDisabled is what a model PICKER may offer: the oracle
+// builds `available` from native slugs plus routed models minus the user's
+// disabled set (agent-settings-routes.ts:331), because offering a disabled model
+// hands the user a choice that will not route.
+//
+// availableModels above deliberately stays unfiltered. Two sibling routes already
+// serve its bytes, and narrowing them here would change responses this unit did
+// not audit; their missing filter is tracked separately.
+func (a *API) availableModelsExcludingDisabled() []string {
+	a.mu.RLock()
+	var cfg config.Config
+	if a.config != nil {
+		cfg = *a.config
+	}
+	a.mu.RUnlock()
+	seen := map[string]bool{}
+	result := []string{}
+	if a.registry == nil {
+		return result
+	}
+	for _, model := range codex.FilterVisibleRuntimeModels(a.registry.ListModels(), cfg) {
+		slug := model.ID
+		if model.Provider != "" && !strings.Contains(model.ID, "/") {
+			slug = model.Provider + "/" + model.ID
+		}
+		if slug != "" && !seen[slug] {
+			seen[slug] = true
+			result = append(result, slug)
+		}
+	}
+	return result
+}
+
 func (a *API) getSubagentFallback(w http.ResponseWriter) {
 	a.mu.RLock()
 	models := append([]string(nil), a.config.SubagentModelFallback...)
