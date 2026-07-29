@@ -399,3 +399,26 @@ func cloneInt(value *int) *int {
 }
 func quotaFloatPointer(value float64) *float64 { return &value }
 func quotaIntPointer(value int) *int           { return &value }
+
+// CodexExhaustedUsagePercent is the point at which an account has nothing left to give.
+const CodexExhaustedUsagePercent = 100
+
+// IsCodexQuotaExhausted reports whether an account's own plan window is spent. Go and Free
+// plans bill monthly only, so reading their weekly figure would call an account exhausted on
+// a number that does not govern it (oracle: src/codex/quota.ts:38).
+func IsCodexQuotaExhausted(quota *StoredAccountQuota, plan string) bool {
+	if quota == nil {
+		return false
+	}
+	values := []*float64{quota.WeeklyPercent, quota.MonthlyPercent}
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "go", "free":
+		values = []*float64{quota.MonthlyPercent}
+	}
+	for _, value := range values {
+		if value != nil && !math.IsInf(*value, 0) && !math.IsNaN(*value) && *value >= CodexExhaustedUsagePercent {
+			return true
+		}
+	}
+	return false
+}

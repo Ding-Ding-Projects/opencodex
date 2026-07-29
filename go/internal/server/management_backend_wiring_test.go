@@ -107,3 +107,7 @@ func (*wiredCodexAuth) SetCodexAccountPaused(context.Context, string, bool) (man
 }
 
 func (*wiredRuntimeControl) CodexRuntimeReport(context.Context) any { return nil }
+
+func (*wiredCodexAuth) PauseExhaustedCodexAccounts(context.Context) (management.CodexPauseExhaustedResult, error) {
+	return management.CodexPauseExhaustedResult{}, nil
+}

@@ -178,6 +178,7 @@ type CodexAuthBackend interface {
 	DeleteCodexAccount(context.Context, string) error
 	SetCodexAccountAlias(context.Context, string, string) (bool, error)
 	SetCodexAccountPaused(context.Context, string, bool) (CodexPauseResult, error)
+	PauseExhaustedCodexAccounts(context.Context) (CodexPauseExhaustedResult, error)
 	CodexResetCredits(context.Context, string) (ResetCredits, error)
 	StartCodexLogin(context.Context, CodexLoginOptions) (CodexLoginStart, error)
 	SubmitCodexLoginCode(context.Context, string, string) error
@@ -192,4 +193,15 @@ type CodexPauseResult struct {
 	Paused               bool   `json:"paused"`
 	ActiveCodexAccountID string `json:"activeCodexAccountId"`
 	AppliesImmediately   bool   `json:"appliesImmediately"`
+}
+
+// CodexPauseExhaustedResult separates what was measured from what was paused: an account whose
+// quota could not be refreshed is reported as unchecked rather than assumed healthy.
+type CodexPauseExhaustedResult struct {
+	PausedAccountIDs     []string `json:"pausedAccountIds"`
+	CheckedAccountCount  int      `json:"checkedAccountCount"`
+	FailedAccountCount   int      `json:"failedAccountCount"`
+	Complete             bool     `json:"complete"`
+	ActiveCodexAccountID string   `json:"activeCodexAccountId"`
+	AppliesImmediately   bool     `json:"appliesImmediately"`
 }

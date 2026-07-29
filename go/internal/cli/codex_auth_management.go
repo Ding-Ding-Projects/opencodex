@@ -697,3 +697,57 @@ func setPaused(ids []string, id string, paused bool) []string {
 	}
 	return out
 }
+
+// PauseExhaustedCodexAccounts refreshes every account's quota and pauses the ones that have
+// nothing left. It reports what it could not check rather than silently treating an
+// unreachable account as healthy: a refresh failure is not evidence of remaining quota
+// (oracle: src/codex/auth-api.ts:582-633).
+func (m *cliCodexAuthManagement) PauseExhaustedCodexAccounts(ctx context.Context) (management.CodexPauseExhaustedResult, error) {
+	accounts, err := m.ListCodexAccounts(ctx, true)
+	if err != nil {
+		return management.CodexPauseExhaustedResult{}, err
+	}
+	result := management.CodexPauseExhaustedResult{PausedAccountIDs: []string{}}
+	exhausted := []string{}
+	for _, account := range accounts {
+		if account.Paused {
+			continue // already out of rotation; re-pausing would inflate the count
+		}
+		quota, hasQuota := m.quota.Get(account.ID)
+		if !hasQuota || !account.HasCredential {
+			result.FailedAccountCount++
+			continue
+		}
+		result.CheckedAccountCount++
+		plan := ""
+		if account.Plan != nil {
+			plan = *account.Plan
+		}
+		if codex.IsCodexQuotaExhausted(&quota, plan) {
+			exhausted = append(exhausted, account.ID)
+		}
+	}
+	// Nothing could be measured, so pausing nothing is not the same as finding nothing.
+	if result.CheckedAccountCount == 0 && result.FailedAccountCount > 0 {
+		return result, &management.BackendError{Status: http.StatusBadGateway, Message: "Failed to refresh any Codex account quota"}
+	}
+	for _, id := range exhausted {
+		paused, pauseErr := m.SetCodexAccountPaused(ctx, id, true)
+		if pauseErr != nil {
+			return management.CodexPauseExhaustedResult{}, pauseErr
+		}
+		result.PausedAccountIDs = append(result.PausedAccountIDs, id)
+		result.ActiveCodexAccountID = paused.ActiveCodexAccountID
+	}
+	if result.ActiveCodexAccountID == "" {
+		m.mu.Lock()
+		result.ActiveCodexAccountID = m.config.ActiveCodexAccountID
+		m.mu.Unlock()
+		if result.ActiveCodexAccountID == "" {
+			result.ActiveCodexAccountID = codex.MainCodexAccountID
+		}
+	}
+	result.Complete = result.FailedAccountCount == 0
+	result.AppliesImmediately = true
+	return result, nil
+}

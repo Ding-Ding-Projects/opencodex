@@ -166,3 +166,15 @@ func (*remainingCodexAuthBackend) SetCodexAccountPaused(context.Context, string,
 func (*failingCodexAuthBackend) SetCodexAccountPaused(context.Context, string, bool) (CodexPauseResult, error) {
 	return CodexPauseResult{}, nil
 }
+
+func (*codexAuthBackendStub) PauseExhaustedCodexAccounts(context.Context) (CodexPauseExhaustedResult, error) {
+	return CodexPauseExhaustedResult{}, nil
+}
+
+func (*remainingCodexAuthBackend) PauseExhaustedCodexAccounts(context.Context) (CodexPauseExhaustedResult, error) {
+	return CodexPauseExhaustedResult{}, nil
+}
+
+func (*failingCodexAuthBackend) PauseExhaustedCodexAccounts(context.Context) (CodexPauseExhaustedResult, error) {
+	return CodexPauseExhaustedResult{}, nil
+}

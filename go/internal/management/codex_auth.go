@@ -90,6 +90,22 @@ func (a *API) handleCodexAuth(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "ok", value: true}})
 	case "PUT /api/codex-auth/accounts/alias":
 		a.putCodexAccountAlias(w, r)
+	case "PUT /api/codex-auth/accounts/pause-exhausted":
+		result, err := a.codexAuth.PauseExhaustedCodexAccounts(r.Context())
+		if err != nil {
+			writeBackendError(w, err, "Bulk pause failed")
+			return true
+		}
+		writeJSON(w, http.StatusOK, orderedJSONObject{
+			{name: "ok", value: true},
+			{name: "pausedAccountIds", value: result.PausedAccountIDs},
+			{name: "pausedCount", value: len(result.PausedAccountIDs)},
+			{name: "checkedAccountCount", value: result.CheckedAccountCount},
+			{name: "failedAccountCount", value: result.FailedAccountCount},
+			{name: "complete", value: result.Complete},
+			{name: "activeCodexAccountId", value: result.ActiveCodexAccountID},
+			{name: "appliesImmediately", value: result.AppliesImmediately},
+		})
 	case "PUT /api/codex-auth/accounts/pause":
 		var body struct {
 			ID     string `json:"id"`
