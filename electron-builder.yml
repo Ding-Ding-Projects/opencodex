@@ -1,0 +1,81 @@
+# electron-builder configuration for the opencodex desktop app.
+#
+# Build:  npx --yes electron-builder@26 --win --publish never
+#
+# `electron` is deliberately NOT a devDependency of this repo. electron-builder
+# downloads the runtime itself when `electronVersion` is pinned here, which keeps
+# a ~100 MB download out of every existing CI job that runs `bun install`.
+# Bump this line to move the desktop app to a newer Electron.
+electronVersion: 43.2.0
+
+appId: com.opencodex.desktop
+productName: opencodex
+copyright: MIT
+
+# The published npm package keeps its own `name` and `main`; overriding them only
+# in the packaged copy means the desktop build needs no changes to package.json.
+extraMetadata:
+  name: opencodex-desktop
+  main: electron/main.mjs
+
+directories:
+  output: dist-desktop
+  buildResources: assets
+
+# asar is off on purpose — see the comment on ROOT in electron/main.mjs. The proxy
+# is Bun reading TypeScript off disk and exec'ing a bundled bun binary; neither
+# survives being packed into an archive.
+asar: false
+
+files:
+  - electron/**
+  - bin/**
+  - src/**
+  - gui/dist/**
+  - package.json
+  # The proxy's runtime dependencies. `bun` carries the ~60 MB runtime binary that
+  # `bin/ocx.mjs` exec's, so it must be present and executable.
+  - node_modules/bun/**
+  - node_modules/@oven/**
+  - node_modules/@bufbuild/**
+  - node_modules/@modelcontextprotocol/**
+  - node_modules/zod/**
+  # Nothing below is needed at runtime and all of it is large.
+  - "!**/*.map"
+  - "!**/*.md"
+  - "!**/test/**"
+  - "!**/tests/**"
+  - "!**/__tests__/**"
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: gui/public/logo.png
+
+nsis:
+  # Not one-click: the proxy writes to ~/.opencodex and rewrites the native Codex
+  # config, so the user should see where it is going and be able to opt out.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: opencodex
+  # Leave ~/.opencodex alone on uninstall: it holds the user's providers, accounts
+  # and API keys, and an uninstall is not consent to delete credentials.
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: gui/public/logo.png
+  category: public.app-category.developer-tools
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  icon: gui/public/logo.png
+  category: Development

@@ -1,12 +1,18 @@
 /* ============================================================================
    opencodex dashboard — design system
-   Infra console in the OpenAI product grammar: white/near-black monochrome
-   base, black (light) / white (dark) primary actions, pill buttons, hairline
-   borders, flat surfaces, monospace for model ids / urls. Light + dark via
-   the native light-dark() function — every token is authored once;
-   `data-theme` (or the OS) picks the side.
+
+   Material 3 Expressive. The palette is derived at runtime from a single seed
+   colour by `theme/m3.ts`, which writes `--m3-*` role tokens plus density,
+   type, shape and elevation tokens onto <html>. The legacy token names in this
+   file are now aliases onto those roles, so screens that have not yet been
+   rewritten against `design/OpenCodex M3.dc.html` still pick up the new palette,
+   density and typography.
+
+   `light-dark()` survives only as the pre-paint fallback inside those aliases.
+   The steady state is whatever the seed and theme resolve to.
    ============================================================================ */
 
+@import "./styles/m3-shell.css";
 @import "./styles/provider-catalog.css";
 @import "./styles/provider-quota.css";
 @import "./styles/provider-workspace-shell.css";
@@ -21,32 +27,43 @@
   /* default: follow the OS; [data-theme] below pins color-scheme so light-dark() obeys it */
   color-scheme: light dark;
 
-  --bg:           light-dark(#ffffff, #212121);
-  --rail:         light-dark(#f9f9f9, #171717);
-  --surface:      light-dark(#ffffff, #262626);
-  --raised:       light-dark(#f4f4f4, #303030);
-  --raised-hover: light-dark(#ececec, #3a3a3a);
-  --border:       light-dark(#e6e6e6, #3d3d3d);
-  --border-soft:  light-dark(#f0f0f0, #333333);
-  --hover:        light-dark(rgba(13, 13, 13, 0.03), rgba(255, 255, 255, 0.03));
+  /* ------------------------------------------------------------------------
+     Every colour token below is now an alias onto an `--m3-*` role token that
+     `theme/m3.ts` writes onto <html> from the seed colour. The class names are
+     unchanged on purpose: the product screens keep rendering while each one is
+     rewritten against the prototype, and they retint with the seed picker
+     immediately instead of staying monochrome until their rewrite lands.
 
-  --text:  light-dark(#0d0d0d, #ececec);
-  --muted: light-dark(#6e6e6e, #a6a6a6);
-  --faint: light-dark(#707070, #9a9a9a);
+     The `light-dark()` fallbacks are what a page sees for the one frame before
+     `applyTokens()` runs; they are never the steady state.
+     ------------------------------------------------------------------------ */
+  --bg:           var(--m3-surface, light-dark(#ffffff, #212121));
+  --rail:         var(--m3-surface-container, light-dark(#f9f9f9, #171717));
+  --surface:      var(--m3-surface-container-low, light-dark(#ffffff, #262626));
+  --raised:       var(--m3-surface-container, light-dark(#f4f4f4, #303030));
+  --raised-hover: var(--m3-surface-container-high, light-dark(#ececec, #3a3a3a));
+  --border:       var(--m3-outline-variant, light-dark(#e6e6e6, #3d3d3d));
+  --border-soft:  var(--m3-outline-variant, light-dark(#f0f0f0, #333333));
+  --hover:        color-mix(in oklab, var(--m3-on-surface, #0d0d0d) 6%, transparent);
 
-  /* monochrome primary: black actions on light, white actions on dark */
-  --accent:       light-dark(#0d0d0d, #ececec);
-  --accent-hover: light-dark(#3d3d3d, #ffffff);
-  --accent-ink:   light-dark(#ffffff, #0d0d0d);
-  --accent-soft:  light-dark(rgba(13, 13, 13, 0.06), rgba(255, 255, 255, 0.09));
-  --accent-ring:  light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.38));
+  --text:  var(--m3-on-surface, light-dark(#0d0d0d, #ececec));
+  --muted: var(--m3-on-surface-variant, light-dark(#6e6e6e, #a6a6a6));
+  --faint: var(--m3-outline, light-dark(#707070, #9a9a9a));
 
-  --green:      light-dark(#0a7d5c, #4ecb9d);
-  --green-soft: light-dark(rgba(16, 163, 127, 0.10), rgba(78, 203, 157, 0.13));
-  --red:        light-dark(#b91c1c, #f87171);
-  --red-soft:   light-dark(rgba(185, 28, 28, 0.09), rgba(248, 113, 113, 0.13));
-  --amber:      light-dark(#9a4a08, #fbbf24);
-  --amber-soft: light-dark(rgba(180, 83, 9, 0.10), rgba(251, 191, 36, 0.13));
+  /* primary actions now carry the seed colour rather than the old monochrome pair */
+  --accent:       var(--m3-primary, light-dark(#0d0d0d, #ececec));
+  --accent-hover: var(--m3-primary, light-dark(#3d3d3d, #ffffff));
+  --accent-ink:   var(--m3-on-primary, light-dark(#ffffff, #0d0d0d));
+  --accent-soft:  var(--m3-primary-container, light-dark(rgba(13, 13, 13, 0.06), rgba(255, 255, 255, 0.09)));
+  --accent-ring:  var(--m3-primary, light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.38)));
+
+  /* status colours stay functional data colours — exempt from the M3 chrome rule */
+  --green:      var(--m3-ok, light-dark(#0a7d5c, #4ecb9d));
+  --green-soft: var(--m3-ok-container, light-dark(rgba(16, 163, 127, 0.10), rgba(78, 203, 157, 0.13)));
+  --red:        var(--m3-error, light-dark(#b91c1c, #f87171));
+  --red-soft:   var(--m3-error-container, light-dark(rgba(185, 28, 28, 0.09), rgba(248, 113, 113, 0.13)));
+  --amber:      var(--m3-warn, light-dark(#9a4a08, #fbbf24));
+  --amber-soft: var(--m3-warn-container, light-dark(rgba(180, 83, 9, 0.10), rgba(251, 191, 36, 0.13)));
 
   /* geometry: 4px base grid, three surface radii, and one pill radius */
   --space-0-5: 2px;
@@ -63,15 +80,16 @@
   --space-16: 64px;
 
   --radius-2xs: 4px;
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: var(--r-m, 12px);
+  --radius-sm: var(--r-s, 8px);
   --radius-xs: 6px;
-  --radius-lg: 16px;
+  --radius-lg: var(--r-l, 16px);
   --radius-round: 50%;
-  --radius-pill: 999px;
+  --radius-pill: var(--r-pill, 999px);
 
   /* typography: product UI first, Korean-safe fallbacks, mono only for machine data */
-  --font-ui: "OpenAI Sans", "Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  /* The Appearance screen's family picker writes --m3-font; this is the fallback chain. */
+  --font-ui: var(--m3-font, "Roboto Flex", "Pretendard Variable", Pretendard, "Noto Sans HK", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif);
   --font-code: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK KR", Menlo, Consolas, monospace;
   --font: var(--font-ui);
   --mono: var(--font-code);
@@ -115,27 +133,32 @@
   --z-popover: 40;
   --z-modal: 50;
 
-  --shadow: 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.5)), 0 10px 28px light-dark(rgba(16, 24, 40, 0.07), rgba(0, 0, 0, 0.30));
-  --shadow-sm: 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.4));
+  --shadow: var(--e3, 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.5)));
+  --shadow-sm: var(--e1, 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.4)));
 
   /* toggle switch */
   --toggle-w: 36px;
   --toggle-h: 20px;
   --toggle-dot: 14px;
-  --toggle-off-bg: light-dark(#d4d4d4, #4a4a4a);
-  --toggle-on-bg: light-dark(#0d0d0d, #4ecb9d);
-  --toggle-dot-color: light-dark(#ffffff, #0d0d0d);
+  --toggle-off-bg: var(--m3-surface-container-highest, light-dark(#d4d4d4, #4a4a4a));
+  --toggle-on-bg: var(--m3-primary, light-dark(#0d0d0d, #4ecb9d));
+  --toggle-dot-color: var(--m3-on-primary, light-dark(#ffffff, #0d0d0d));
 }
 
 /* explicit user choice pins the scheme; "system" removes the attribute and falls back to the OS */
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"]  { color-scheme: dark; }
 
-/* glass material tokens: rail/nav layer only — content cards stay opaque */
+/*
+  The glass rail is legacy chrome that Material 3 replaces with opaque tonal
+  surfaces, so these tokens now resolve to solid surface containers and the blur
+  is a no-op. Kept as aliases rather than deleted because a handful of workspace
+  stylesheets still reference them; they disappear as those screens are rewritten.
+*/
 :root {
-  --glass-rail:  light-dark(rgba(249, 249, 249, 0.66), rgba(23, 23, 23, 0.62));
-  --glass-panel: light-dark(rgba(255, 255, 255, 0.78), rgba(38, 38, 38, 0.82));
-  --glass-blur:  saturate(1.6) blur(22px);
+  --glass-rail:  var(--m3-surface-container, light-dark(#f9f9f9, #171717));
+  --glass-panel: var(--m3-surface-container-low, light-dark(#ffffff, #262626));
+  --glass-blur:  none;
 }
 
 * { box-sizing: border-box; }
@@ -156,20 +179,11 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* single ambient soft-focus wash behind the app (OpenAI organic-blur grammar).
-   One wash per viewport; the glass rail and modals refract it via backdrop-filter. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: -20%;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(42% 38% at 12% 6%,  light-dark(rgba(164, 196, 255, 0.42), rgba(96, 130, 200, 0.16)), transparent 70%),
-    radial-gradient(46% 42% at 88% 18%, light-dark(rgba(168, 226, 197, 0.38), rgba(88, 160, 130, 0.13)), transparent 70%),
-    radial-gradient(40% 36% at 70% 92%, light-dark(rgba(255, 224, 194, 0.30), rgba(180, 140, 100, 0.08)), transparent 72%);
-  filter: blur(70px);
-}
+/*
+  The ambient soft-focus wash is gone with the rest of the legacy chrome: the M3
+  shell paints opaque tonal surfaces edge to edge, so a gradient behind them was
+  never visible and only cost a full-viewport blur on every paint.
+*/
 
 a { color: var(--text); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; }
 a:hover { text-decoration-color: var(--text); }

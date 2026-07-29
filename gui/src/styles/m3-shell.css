@@ -1,0 +1,708 @@
+/* ============================================================================
+   Material 3 Expressive shell — adaptive navigation, top app bar, browser-style
+   tab strip, snackbar host. Ported from `design/OpenCodex M3.dc.html`.
+
+   Every colour here is an `--m3-*` role token written by `theme/m3.ts`; every
+   dimension is a density token. Nothing in this file hard-codes a hex value, so
+   the seed picker and density slider retint the whole shell at once.
+   ============================================================================ */
+
+.m3-app {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: var(--nav-w, 300px) minmax(0, 1fr);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font);
+  font-weight: var(--m3-fw);
+  font-size: var(--t-body-m);
+  line-height: 1.45;
+}
+
+.m3-app--compact { grid-template-columns: minmax(0, 1fr); }
+
+/* ------------------------------------------------------------ navigation -- */
+
+.m3-nav {
+  grid-column: 1;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--el-navRail-pad, 12px) var(--nav-pad, 12px) 16px;
+  background: var(--el-navRail-bg, var(--m3-surface-container));
+  border-right: 1px solid var(--m3-outline-variant);
+  font-family: var(--el-navRail-font, var(--m3-font));
+  color: var(--el-navRail-color, var(--m3-on-surface));
+}
+
+.m3-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 var(--nav-brand-pad, 8px);
+  margin-bottom: 4px;
+}
+.m3-nav-brand img { width: 26px; height: 26px; flex: 0 0 auto; }
+.m3-nav-brand-text { min-width: 0; }
+.m3-nav-brand-name {
+  font-size: var(--t-title-m);
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+}
+.m3-nav-brand-meta {
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+
+.m3-nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--h-nav);
+  padding: 0;
+  border: none;
+  border-radius: var(--r-xl);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-nav-item:hover { background: var(--m3-surface-container-highest); }
+.m3-nav-item.active { color: var(--m3-on-secondary-container); }
+
+/* The active-state pill sits behind the icon, per M3 — not behind the whole row. */
+.m3-nav-pill {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 32px;
+  border-radius: var(--r-pill);
+  transition: background 200ms cubic-bezier(0.2, 0, 0, 1);
+  color: var(--m3-on-surface-variant);
+}
+.m3-nav-item.active .m3-nav-pill {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+.m3-nav-pill svg { width: 22px; height: 22px; }
+
+.m3-nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Rail mode: icon over label, no room for a trailing control. */
+.m3-nav--rail .m3-nav-item {
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  min-height: 64px;
+}
+.m3-nav--rail .m3-nav-label { font-size: var(--t-label-m); }
+
+.m3-nav-divider {
+  height: 1px;
+  margin: var(--sp-2) 8px;
+  background: var(--m3-outline-variant);
+  border: none;
+}
+
+.m3-nav-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--el-navRail-bg, var(--m3-surface-container));
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.m3-nav-foot .m3-nav-item.danger { color: var(--m3-error); }
+.m3-nav-foot .m3-nav-item.danger:hover { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+
+/* Compact: modal drawer over a scrim, plus a persistent bottom bar. */
+.m3-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: color-mix(in oklab, var(--m3-scrim) 40%, transparent);
+}
+.m3-nav--drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 61;
+  width: min(320px, 88vw);
+  border-right: none;
+  border-radius: 0 var(--r-xl) var(--r-xl) 0;
+  box-shadow: var(--e3);
+}
+
+.m3-bottom-nav {
+  flex: 0 0 auto;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: stretch;
+  height: 80px;
+  padding: 12px 8px 16px;
+  background: var(--m3-surface-container);
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.m3-bottom-nav .m3-nav-item {
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+  min-height: 0;
+}
+.m3-bottom-nav .m3-nav-pill { width: 64px; height: 32px; }
+.m3-bottom-nav .m3-nav-label { font-size: var(--t-label-m); }
+
+/* -------------------------------------------------------------- main col -- */
+
+.m3-main-col {
+  grid-column: var(--main-col, 2);
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--m3-surface);
+}
+.m3-app--compact .m3-main-col { grid-column: 1; }
+
+.m3-appbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--h-appbar);
+  padding: 0 var(--el-appBar-pad, 8px) 0 4px;
+  background: var(--el-appBar-bg, var(--m3-surface));
+  color: var(--el-appBar-color, var(--m3-on-surface));
+  font-family: var(--el-appBar-font, var(--m3-font));
+  border-radius: var(--el-appBar-radius, 0);
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-appbar-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-left: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.m3-appbar-title h1 {
+  margin: 0;
+  font-size: var(--t-title-l);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.m3-appbar-status {
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+
+/* 48px icon buttons: M3 states layer + a 44px minimum hit target. */
+.m3-icon-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-icon-btn:hover { background: var(--m3-surface-container-high); }
+.m3-icon-btn[aria-expanded="true"] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-icon-btn svg { width: 22px; height: 22px; }
+
+.m3-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--m3-error);
+  color: var(--m3-on-error);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.m3-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  font-size: var(--t-label-l);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------- tab strip -- */
+
+.m3-tabstrip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: var(--el-tabStrip-pad, 6px) 8px 0;
+  background: var(--el-tabStrip-bg, var(--m3-surface-container-low));
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-tablist {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.m3-tab {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 220px;
+  flex: 1 1 auto;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: transparent;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-tab:hover { background: var(--m3-surface-container); }
+.m3-tab.selected { background: var(--m3-surface); box-shadow: var(--e1); }
+.m3-tab.dragging { opacity: 0.5; }
+.m3-tab.drop-target { outline: 2px solid var(--m3-primary); outline-offset: -2px; }
+
+.m3-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: var(--h-tab);
+  padding: 0 4px 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+  border-radius: var(--r-m) 0 0 0;
+}
+.m3-tab.selected .m3-tab-btn { color: var(--m3-on-surface); font-weight: 500; }
+.m3-tab-btn svg { flex: 0 0 auto; width: 18px; height: 18px; }
+.m3-tab-pin { color: var(--m3-primary); width: 14px !important; height: 14px !important; }
+.m3-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.m3-tab-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  align-self: center;
+  height: 28px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-tab-close:hover { background: var(--m3-surface-container-highest); }
+.m3-tab-close svg { width: 16px; height: 16px; }
+.m3-tab-close[hidden] { display: none; }
+
+.m3-tabstrip-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 10px;
+  margin-bottom: 6px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.m3-tabstrip-btn:hover { background: var(--m3-surface-container-highest); }
+.m3-tabstrip-btn svg { width: 20px; height: 20px; }
+
+/* ---------------------------------------------------------------- menus -- */
+
+.m3-menu {
+  position: absolute;
+  z-index: 70;
+  min-width: 220px;
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+}
+.m3-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: left;
+  cursor: pointer;
+}
+.m3-menu-item:hover { background: var(--m3-surface-container-highest); }
+.m3-menu-item svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+.m3-menu-heading {
+  padding: 8px 12px 4px;
+  font-size: var(--t-label-m);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* ------------------------------------------------------------ page area -- */
+
+.m3-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--m3-surface);
+}
+.m3-page-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--page-pad-y) var(--page-pad-x) 64px;
+  animation: m3-rise 240ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-page-inner--wide { max-width: none; }
+
+@keyframes m3-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes m3-snack {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------------------- snackbars -- */
+
+/*
+  Informational messages are non-modal by contract: they land here, bottom-left,
+  stacked newest-nearest. Only decisions get a blocking dialog.
+*/
+.m3-snack-host {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.m3-snack {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--r-s);
+  background: var(--m3-inverse-surface);
+  color: var(--m3-inverse-on-surface);
+  box-shadow: var(--e3);
+  font-size: var(--t-body-m);
+  animation: m3-snack 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-snack.error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+.m3-snack-text { min-width: 0; flex: 1 1 auto; }
+.m3-snack-title { font-weight: 500; }
+.m3-snack-body { font-size: var(--t-body-s); opacity: 0.85; }
+.m3-snack-action {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-inverse-primary);
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  cursor: pointer;
+}
+.m3-snack.error .m3-snack-action { color: var(--m3-on-error-container); text-decoration: underline; }
+.m3-snack-action:hover { background: color-mix(in oklab, currentColor 12%, transparent); }
+.m3-snack-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.m3-snack-close svg { width: 16px; height: 16px; }
+
+/* --------------------------------------------------------- accessibility -- */
+
+.m3-app :focus-visible {
+  outline: 3px solid var(--m3-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m3-app *, .m3-snack-host * {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* ============================================================================
+   M3 primitives (shell/m3-ui.tsx)
+   ============================================================================ */
+
+.m3-card {
+  padding: var(--el-card-pad, var(--pad-card));
+  margin-bottom: var(--sp-4);
+  border-radius: var(--el-card-radius, var(--r-l));
+  background: var(--el-card-bg, var(--m3-surface-container-low));
+  color: var(--el-card-color, var(--m3-on-surface));
+  font-family: var(--el-card-font, inherit);
+}
+.m3-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.m3-card-headtext { min-width: 0; flex: 1 1 auto; }
+.m3-card-title { margin: 0; font-size: var(--t-title-m); font-weight: 500; }
+.m3-card-sub { margin: 4px 0 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.m3-card-actions { flex: 0 0 auto; display: flex; gap: var(--sp-1); flex-wrap: wrap; }
+
+.m3-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--el-button-size, var(--h-btn));
+  padding: 0 var(--el-button-pad, 24px);
+  border: none;
+  border-radius: var(--el-button-radius, var(--r-pill));
+  font: inherit;
+  font-family: var(--el-button-font, inherit);
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms;
+}
+.m3-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-btn svg { width: 18px; height: 18px; }
+.m3-btn--filled { background: var(--el-button-bg, var(--m3-primary)); color: var(--m3-on-primary); }
+.m3-btn--filled:hover:not(:disabled) { box-shadow: var(--e1); }
+.m3-btn--tonal { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-btn--outlined { background: transparent; color: var(--m3-primary); box-shadow: inset 0 0 0 1px var(--m3-outline); }
+.m3-btn--text { background: transparent; color: var(--m3-primary); padding: 0 12px; }
+.m3-btn--text:hover:not(:disabled) { background: color-mix(in oklab, var(--m3-primary) 10%, transparent); }
+.m3-btn--danger { background: var(--m3-error); color: var(--m3-on-error); }
+
+.m3-segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.m3-segment {
+  min-height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.m3-segment.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); font-weight: 500; }
+
+.m3-field { margin-bottom: var(--sp-3); }
+.m3-field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.m3-field-hint { margin: 6px 0 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+
+.m3-input {
+  width: 100%;
+  min-height: var(--h-btn);
+  padding: 0 16px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container-lowest);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-body-m);
+}
+.m3-input:focus { border-color: var(--m3-primary); }
+.m3-textarea { min-height: 120px; padding: 12px 16px; resize: vertical; font-family: var(--mono); font-size: var(--t-body-s); line-height: 1.5; }
+
+/* 44px tall so the whole control clears the minimum hit target, not just the thumb. */
+.m3-slider-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+.m3-slider-row .m3-field-label { margin: 0; flex: 0 0 auto; min-width: 140px; }
+.m3-slider {
+  flex: 1 1 200px;
+  height: 44px;
+  accent-color: var(--m3-primary);
+  background: transparent;
+  cursor: pointer;
+}
+.m3-slider-value {
+  flex: 0 0 auto;
+  min-width: 48px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+
+.m3-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.m3-chip.selected {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  border-color: transparent;
+  font-weight: 500;
+}
+
+.m3-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--m3-outline);
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container-highest);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.m3-switch.on { background: var(--m3-primary); border-color: var(--m3-primary); }
+.m3-switch:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-switch-thumb {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: var(--m3-outline);
+  transform: translateY(-50%);
+  transition: left 150ms cubic-bezier(0.2, 0, 0, 1), width 150ms, height 150ms, background 150ms;
+}
+.m3-switch.on .m3-switch-thumb { left: 26px; width: 20px; height: 20px; background: var(--m3-on-primary); }
+
+.m3-empty {
+  padding: var(--sp-5);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-low);
+  text-align: center;
+  color: var(--m3-on-surface-variant);
+}
+.m3-empty-title { font-size: var(--t-title-m); color: var(--m3-on-surface); margin-bottom: 6px; }
+.m3-empty-body { font-size: var(--t-body-s); }
+
+.m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.m3-row--split { justify-content: space-between; }
+.m3-grid { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.m3-stack { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* Data tables inherit the per-element editor's vars alongside the role tokens. */
+.m3-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--el-table-font, inherit);
+  font-size: var(--el-table-size, var(--t-body-s));
+  background: var(--el-table-bg, transparent);
+  color: var(--el-table-color, inherit);
+}
+.m3-table th, .m3-table td {
+  height: var(--h-row);
+  padding: 0 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-table th { font-weight: 500; color: var(--m3-on-surface-variant); font-size: var(--t-label-m); }
+.m3-table tbody tr:hover { background: var(--m3-surface-container); }
