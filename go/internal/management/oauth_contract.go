@@ -94,12 +94,15 @@ type CodexAccountQuota struct {
 // upstream account identifiers are not representable, so they cannot leak via
 // management JSON by accident.
 type CodexAuthAccount struct {
-	ID            string             `json:"id"`
-	Alias         string             `json:"alias,omitempty"`
-	Email         string             `json:"email"`
-	Plan          *string            `json:"plan,omitempty"`
-	LogLabel      string             `json:"logLabel,omitempty"`
-	IsMain        bool               `json:"isMain"`
+	ID       string  `json:"id"`
+	Alias    string  `json:"alias,omitempty"`
+	Email    string  `json:"email"`
+	Plan     *string `json:"plan,omitempty"`
+	LogLabel string  `json:"logLabel,omitempty"`
+	IsMain   bool    `json:"isMain"`
+	// Paused sits between isMain and quota because that is where the oracle emits it
+	// (src/codex/auth-api.ts:150).
+	Paused        bool               `json:"paused"`
 	Quota         *CodexAccountQuota `json:"quota"`
 	NeedsReauth   bool               `json:"needsReauth,omitempty"`
 	HasCredential bool               `json:"hasCredential"`
@@ -174,9 +177,19 @@ type CodexAuthBackend interface {
 	ImportCodexAccount(context.Context, CodexAccountImport) error
 	DeleteCodexAccount(context.Context, string) error
 	SetCodexAccountAlias(context.Context, string, string) (bool, error)
+	SetCodexAccountPaused(context.Context, string, bool) (CodexPauseResult, error)
 	CodexResetCredits(context.Context, string) (ResetCredits, error)
 	StartCodexLogin(context.Context, CodexLoginOptions) (CodexLoginStart, error)
 	SubmitCodexLoginCode(context.Context, string, string) error
 	CancelCodexLogin(context.Context, string) (bool, error)
 	CodexLoginStatus(context.Context, string, string, bool) CodexLoginStatus
+}
+
+// CodexPauseResult reports what a pause changed, including the active account the pool fell
+// back to when the paused one was the active one.
+type CodexPauseResult struct {
+	ID                   string `json:"id"`
+	Paused               bool   `json:"paused"`
+	ActiveCodexAccountID string `json:"activeCodexAccountId"`
+	AppliesImmediately   bool   `json:"appliesImmediately"`
 }

@@ -62,7 +62,7 @@ func TestCodexAuthRoutesMatchTSShapesAndNeverExposeCredentials(t *testing.T) {
 	api := newParityAPI(t, &cfg, func(options *Options) { options.CodexAuth = backend })
 
 	accounts := serveManagement(api, http.MethodGet, "/api/codex-auth/accounts?refresh=true", "")
-	if accounts.Code != http.StatusOK || accounts.Body.String() != `{"accounts":[{"id":"acct-1","email":"p***@example.com","isMain":false,"quota":null,"hasCredential":true,"health":{"status":"healthy"},"healthLabel":"Healthy","healthSummary":"codex account-…ct-1: healthy"}]}` || !backend.refresh {
+	if accounts.Code != http.StatusOK || accounts.Body.String() != `{"accounts":[{"id":"acct-1","email":"p***@example.com","isMain":false,"paused":false,"quota":null,"hasCredential":true,"health":{"status":"healthy"},"healthLabel":"Healthy","healthSummary":"codex account-…ct-1: healthy"}]}` || !backend.refresh {
 		t.Fatalf("accounts=%d %s refresh=%v", accounts.Code, accounts.Body.String(), backend.refresh)
 	}
 	alias := serveManagement(api, http.MethodPut, "/api/codex-auth/accounts/alias", `{"id":"acct-1","alias":" Work "}`)
@@ -153,4 +153,16 @@ func TestCodexManualImportIsDisabledByDefault(t *testing.T) {
 	if response.Code != http.StatusForbidden || response.Body.String() != `{"error":"Manual Codex account import is disabled. Use OAuth login to add a pool account.","code":"manual_import_disabled"}` || strings.Contains(response.Body.String(), "secret-") {
 		t.Fatalf("manual import=%d %s", response.Code, response.Body.String())
 	}
+}
+
+func (*codexAuthBackendStub) SetCodexAccountPaused(context.Context, string, bool) (CodexPauseResult, error) {
+	return CodexPauseResult{}, nil
+}
+
+func (*remainingCodexAuthBackend) SetCodexAccountPaused(context.Context, string, bool) (CodexPauseResult, error) {
+	return CodexPauseResult{}, nil
+}
+
+func (*failingCodexAuthBackend) SetCodexAccountPaused(context.Context, string, bool) (CodexPauseResult, error) {
+	return CodexPauseResult{}, nil
 }

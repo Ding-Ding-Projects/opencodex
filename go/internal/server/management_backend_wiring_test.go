@@ -101,3 +101,7 @@ func TestServerProductionCompositionInvokesAllManagementBackends(t *testing.T) {
 		t.Fatalf("backend calls codex=%d quota=%d claude=%d runtime=%d", codexAuth.listed, quota.calls, claudeRuntime.applied, runtimeControl.health)
 	}
 }
+
+func (*wiredCodexAuth) SetCodexAccountPaused(context.Context, string, bool) (management.CodexPauseResult, error) {
+	return management.CodexPauseResult{}, nil
+}

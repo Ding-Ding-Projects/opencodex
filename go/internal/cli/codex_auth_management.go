@@ -146,6 +146,15 @@ func (m *cliCodexAuthManagement) hasQuota(accountID string) bool {
 	return found
 }
 
+func (m *cliCodexAuthManagement) accountPausedLocked(id string) bool {
+	for _, paused := range m.config.PausedCodexAccountIDs {
+		if paused == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *cliCodexAuthManagement) accountProjection(id, alias, email, plan, logLabel string, main, hasCredential, needsReauth bool) management.CodexAuthAccount {
 	var quota *management.CodexAccountQuota
 	if value, ok := m.quota.Get(id); ok {
@@ -155,9 +164,12 @@ func (m *cliCodexAuthManagement) accountProjection(id, alias, email, plan, logLa
 			ResetCredits: value.ResetCredits, UpdatedAt: value.UpdatedAt,
 		}
 	}
+	m.mu.Lock()
+	paused := m.accountPausedLocked(id)
+	m.mu.Unlock()
 	result := management.CodexAuthAccount{
 		ID: id, Alias: alias, Email: email, Plan: optionalString(plan), LogLabel: logLabel,
-		IsMain: main, Quota: quota, NeedsReauth: needsReauth, HasCredential: hasCredential,
+		IsMain: main, Quota: quota, NeedsReauth: needsReauth, HasCredential: hasCredential, Paused: paused,
 	}
 	result.Health = projectOAuthAccountHealth(oauthHealthInput{NeedsReauth: needsReauth, ReauthReason: "refresh_failed", Now: m.now()})
 	result.HealthLabel, result.HealthSummary, result.HealthAction = oauthAccountHealthFields("codex", id, result.Health)
@@ -624,4 +636,64 @@ func optionalString(value string) *string {
 	}
 	copy := value
 	return &copy
+}
+
+// SetCodexAccountPaused excludes an account from pool selection without touching its
+// credential or its health. Pausing is administrative and permanent until a human resumes it,
+// which is why routing checks it ahead of every runtime signal (oracle:
+// src/codex/account-pause.ts, src/codex/auth-api.ts:724).
+func (m *cliCodexAuthManagement) SetCodexAccountPaused(ctx context.Context, id string, paused bool) (management.CodexPauseResult, error) {
+	result := management.CodexPauseResult{ID: id, Paused: paused, AppliesImmediately: true}
+	found := false
+	err := m.persistence.Update(func(live *config.Config) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if id == codex.MainCodexAccountID {
+			found = true
+		}
+		for _, account := range live.CodexAccounts {
+			if account.ID == id && !account.IsMain {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return
+		}
+		live.PausedCodexAccountIDs = setPaused(live.PausedCodexAccountIDs, id, paused)
+		// A paused account must stop being the active one, or the pool would keep serving the
+		// account the user just took out of rotation.
+		if paused && live.ActiveCodexAccountID == id {
+			live.ActiveCodexAccountID = ""
+		}
+		result.ActiveCodexAccountID = live.ActiveCodexAccountID
+		if result.ActiveCodexAccountID == "" {
+			result.ActiveCodexAccountID = codex.MainCodexAccountID
+		}
+	})
+	if err != nil {
+		return management.CodexPauseResult{}, err
+	}
+	if !found {
+		return management.CodexPauseResult{}, &management.BackendError{Status: http.StatusNotFound, Message: "Account not found"}
+	}
+	return result, nil
+}
+
+// setPaused keeps the list a set and drops it entirely when empty, so a config that never
+// paused anything carries no key at all.
+func setPaused(ids []string, id string, paused bool) []string {
+	out := make([]string, 0, len(ids)+1)
+	for _, existing := range ids {
+		if existing != id {
+			out = append(out, existing)
+		}
+	}
+	if paused {
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

@@ -90,6 +90,34 @@ func (a *API) handleCodexAuth(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, orderedJSONObject{{name: "ok", value: true}})
 	case "PUT /api/codex-auth/accounts/alias":
 		a.putCodexAccountAlias(w, r)
+	case "PUT /api/codex-auth/accounts/pause":
+		var body struct {
+			ID     string `json:"id"`
+			Paused *bool  `json:"paused"`
+		}
+		if !decodeJSON(w, r, &body) {
+			return true
+		}
+		if strings.TrimSpace(body.ID) == "" {
+			writeError(w, http.StatusBadRequest, "Invalid account id format")
+			return true
+		}
+		if body.Paused == nil {
+			writeError(w, http.StatusBadRequest, "paused must be a boolean")
+			return true
+		}
+		result, err := a.codexAuth.SetCodexAccountPaused(r.Context(), strings.TrimSpace(body.ID), *body.Paused)
+		if err != nil {
+			writeBackendError(w, err, "Pause update failed")
+			return true
+		}
+		writeJSON(w, http.StatusOK, orderedJSONObject{
+			{name: "ok", value: true},
+			{name: "id", value: result.ID},
+			{name: "paused", value: result.Paused},
+			{name: "activeCodexAccountId", value: result.ActiveCodexAccountID},
+			{name: "appliesImmediately", value: result.AppliesImmediately},
+		})
 	case "GET /api/codex-auth/reset-credits":
 		id := r.URL.Query().Get("accountId")
 		if id == "" {

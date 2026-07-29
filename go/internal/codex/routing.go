@@ -43,6 +43,23 @@ type RoutingConfig struct {
 	// account behind one typo. Strict parsing belongs to management writes.
 	AccountPoolStrategy    string `json:"accountPoolStrategy,omitempty"`
 	AccountPoolStickyLimit *int   `json:"accountPoolStickyLimit,omitempty"`
+
+	// PausedCodexAccountIDs are excluded from selection until a human resumes them. Kept
+	// separate from cooldown: a cooldown expires on its own, a pause never does.
+	PausedCodexAccountIDs []string `json:"pausedCodexAccountIds,omitempty"`
+}
+
+// IsCodexAccountPaused reports the administrative exclusion (oracle: src/codex/account-pause.ts).
+func IsCodexAccountPaused(config *RoutingConfig, accountID string) bool {
+	if config == nil {
+		return false
+	}
+	for _, id := range config.PausedCodexAccountIDs {
+		if id == accountID {
+			return true
+		}
+	}
+	return false
 }
 
 type AccountQuota struct {
@@ -249,6 +266,9 @@ func (r *Router) accountPlanLocked(config *RoutingConfig, accountID string) stri
 }
 
 func (r *Router) selectableLocked(config *RoutingConfig, accountID string, now int64) bool {
+	if IsCodexAccountPaused(config, accountID) {
+		return false // administrative exclusion outranks every runtime signal
+	}
 	return r.cooldownUntilLocked(accountID, now) == 0 && r.softAvoidUntilLocked(accountID, now) == 0 && r.isUsableLocked(config, accountID, now)
 }
 

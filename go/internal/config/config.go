@@ -88,11 +88,15 @@ type Config struct {
 	AnthropicAccountPool *AnthropicAccountPoolConfig `json:"anthropicAccountPool,omitempty"`
 	CodexAccounts        []CodexAccount              `json:"codexAccounts,omitempty"`
 	ActiveCodexAccountID string                      `json:"activeCodexAccountId,omitempty"`
-	TokenGuardian        *TokenGuardianConfig        `json:"tokenGuardian,omitempty"`
-	CORSAllowOrigins     []string                    `json:"corsAllowOrigins,omitempty"`
-	Debug                DebugConfig                 `json:"debug,omitempty"`
-	Log                  LogConfig                   `json:"log,omitempty"`
-	ExtraFields          map[string]json.RawMessage  `json:"-"`
+	// PausedCodexAccountIDs are administratively excluded from pool selection. Pausing is not
+	// a credential or health state: the account stays listed and logged in, it just stops
+	// being chosen (oracle: src/codex/account-pause.ts).
+	PausedCodexAccountIDs []string                   `json:"pausedCodexAccountIds,omitempty"`
+	TokenGuardian         *TokenGuardianConfig       `json:"tokenGuardian,omitempty"`
+	CORSAllowOrigins      []string                   `json:"corsAllowOrigins,omitempty"`
+	Debug                 DebugConfig                `json:"debug,omitempty"`
+	Log                   LogConfig                  `json:"log,omitempty"`
+	ExtraFields           map[string]json.RawMessage `json:"-"`
 }
 
 type SidecarTimeoutConfig struct {
