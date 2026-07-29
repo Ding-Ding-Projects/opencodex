@@ -83,7 +83,12 @@ func (h *MessagesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	internal := *normalized
 	internal.Stream = true
+	// The Anthropic wire carries sampling parameters the Responses wire rejects; the oracle
+	// drops them once the route's effective adapter is known (src/server/claude-messages.ts:588).
+	// Go's Claude path never enters ResponsesCore, so this is the only place that sees both.
 	prepared.normalized = &internal
+	// Same predicate the failover path re-applies per attempt (handler.applyResponsesWireSampling).
+	h.config.applyResponsesWireSampling(prepared, prepared.resolved)
 	h.config.applyReasoningSafety(prepared)
 	record := h.config.newUsageRecord(r.Context(), r.Header, prepared, started, string(translation.Surface))
 	if events, handled, err := h.config.runSearch(r.Context(), prepared); handled {

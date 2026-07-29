@@ -168,7 +168,7 @@ func responsesRequestBodyForProvider(req *types.NormalizedRequest, forward bool,
 	}
 	applyResponsesOptions(body, req.Options)
 	if forward {
-		for _, key := range []string{"max_output_tokens", "temperature", "top_p", "stop", "user", "metadata"} {
+		for _, key := range unsupportedForwardResponsesParams {
 			delete(body, key)
 		}
 	}
@@ -234,6 +234,7 @@ func sanitizeResponsesBodyForRequest(body map[string]any, forward bool, request 
 		delete(body, "previous_response_id")
 		unexpandedMiss := hadPreviousResponse && !request.PreviousExpanded
 		repairOrphanedResponsesInput(body, unexpandedMiss)
+		stripUnsupportedForwardAdapterParams(body)
 	} else {
 		stripConflictingHostedTools(body)
 	}
@@ -783,3 +784,51 @@ func firstString(object map[string]any, keys ...string) string {
 func stringValue(value any) string { text, _ := value.(string); return text }
 func sliceValue(value any) []any   { result, _ := value.([]any); return result }
 func intValue(value any) int       { number, _ := value.(float64); return int(number) }
+
+// unsupportedForwardResponsesParams is the set the synthesized-body path has always dropped
+// for a forward route; it is a superset of the adapter strip below and is kept as-is.
+var unsupportedForwardResponsesParams = []string{"max_output_tokens", "temperature", "top_p", "stop", "user", "metadata"}
+
+// claudeWireSamplingParams are the fields the Anthropic wire adds that the native ChatGPT
+// backend rejects with {"detail":"Unsupported parameter: …"}. internal/claude/inbound.go
+// copies max_tokens into max_output_tokens and carries temperature/top_p/stop/user, so a
+// Claude Code turn on an openai-responses route would 400 on the first one it meets.
+// Unexported: an exported slice is shared mutable state any importer could rewrite.
+var claudeWireSamplingParams = []string{"max_output_tokens", "temperature", "top_p", "stop", "user"}
+
+// stripUnsupportedForwardAdapterParams removes exactly what the oracle's adapter removes for
+// a forward route (src/adapters/openai-responses.ts:495, applied at :928). The sampling
+// params are NOT stripped here: the oracle drops those on the Claude route instead, for any
+// openai-responses provider, so a direct Responses client keeps the parameters it sent.
+func stripUnsupportedForwardAdapterParams(body map[string]any) {
+	delete(body, "max_output_tokens")
+	delete(body, "metadata")
+}
+
+// StripClaudeWireSamplingParams removes the sampling fields from a translated Anthropic body
+// bound for an openai-responses route, mirroring src/server/claude-messages.ts:588. It is
+// keyed on the wire, not on authMode, exactly as the oracle is.
+func StripClaudeWireSamplingParams(raw []byte) []byte {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return raw
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return raw
+	}
+	removed := false
+	for _, key := range claudeWireSamplingParams {
+		if _, present := body[key]; present {
+			delete(body, key)
+			removed = true
+		}
+	}
+	if !removed {
+		return raw
+	}
+	rewritten, err := json.Marshal(body)
+	if err != nil {
+		return raw
+	}
+	return rewritten
+}

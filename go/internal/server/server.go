@@ -192,6 +192,24 @@ func New(config Config) *Server {
 			adapter := EffectiveWireAdapter(model.Provider, model.Model, provider)
 			return providers.SupportsNativeResponsesCompactEndpoint(model.Provider, adapter, provider.BaseURL)
 		}
+		handlerConfig.ResponsesWire = func(model *types.ResolvedModel) bool {
+			if model == nil {
+				return false
+			}
+			var provider appconfig.ProviderConfig
+			var ok bool
+			if config.ConfigPersistence != nil {
+				config.ConfigPersistence.Read(func(cfg *appconfig.Config) {
+					provider, ok = cfg.Providers[model.Provider]
+				})
+			} else {
+				provider, ok = config.ManagementConfig.Providers[model.Provider]
+			}
+			if !ok {
+				return false
+			}
+			return EffectiveWireAdapter(model.Provider, model.Model, provider) == "openai-responses"
+		}
 	}
 	if config.ChatHandler == nil {
 		config.ChatHandler = chat.NewHandler(handlerConfig)

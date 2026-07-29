@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
 	"io"
 	"net/http"
 	"strings"
@@ -30,17 +31,21 @@ type AdapterResolver func(model *types.ResolvedModel, transport *types.Transport
 
 // HandlerConfig supplies the existing routing and transport owners to compatibility handlers.
 type HandlerConfig struct {
-	Registry                  types.Registry
-	Combos                    *combos.Resolver
-	Auth                      types.AuthProvider
-	ResolveAdapter            AdapterResolver
-	Client                    *http.Client
-	BodyLimit                 int64
-	ResponseLimit             int64
-	Compactor                 types.CompactionHandler
-	NativeAnthropic           func(*types.ResolvedModel) bool
-	NativeAnthropicBaseURL    string
-	NativeCompact             func(*types.ResolvedModel) bool
+	Registry               types.Registry
+	Combos                 *combos.Resolver
+	Auth                   types.AuthProvider
+	ResolveAdapter         AdapterResolver
+	Client                 *http.Client
+	BodyLimit              int64
+	ResponseLimit          int64
+	Compactor              types.CompactionHandler
+	NativeAnthropic        func(*types.ResolvedModel) bool
+	NativeAnthropicBaseURL string
+	NativeCompact          func(*types.ResolvedModel) bool
+	// ResponsesWire reports whether the route's EFFECTIVE wire is openai-responses. It is a
+	// provider-level question, like the oracle's `route.provider.adapter` check: the resolved
+	// adapter instance cannot answer it, because production decorates it (vision, fetch).
+	ResponsesWire             func(*types.ResolvedModel) bool
 	SupportedReasoningEfforts func(*types.ResolvedModel) []string
 	ConnectTimeout            time.Duration
 	BodyStall                 time.Duration
@@ -468,6 +473,10 @@ func (c HandlerConfig) advanceComboRequest(ctx context.Context, prepared *prepar
 	}
 	replacement.pick = next
 	*prepared = *replacement
+	// The failover target settles a NEW wire. Recovering onto a native Responses provider
+	// without re-stripping would hit the very failure the combo is recovering from, so the
+	// classification has to run per attempt, not once at the start.
+	c.applyResponsesWireSampling(prepared, next.Resolved)
 	return true
 }
 
@@ -674,4 +683,24 @@ func min64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// applyResponsesWireSampling removes the Anthropic wire's sampling parameters when the settled
+// target speaks the Responses wire. It copies the normalized request before mutating, because
+// the caller still holds the request this attempt was derived from.
+//
+// Known residual: a request that starts on Responses and fails over to another wire stays
+// stripped, since the values are already gone from the body. Sending fewer sampling hints to a
+// provider that accepts them is a smaller error than sending ones that make it reject the turn.
+func (c HandlerConfig) applyResponsesWireSampling(prepared *preparedRequest, resolved *types.ResolvedModel) {
+	if c.ResponsesWire == nil || prepared == nil || prepared.normalized == nil || !c.ResponsesWire(resolved) {
+		return
+	}
+	stripped := openaiadapter.StripClaudeWireSamplingParams(prepared.normalized.RawBody)
+	if len(stripped) == len(prepared.normalized.RawBody) {
+		return
+	}
+	replacement := *prepared.normalized
+	replacement.RawBody = stripped
+	prepared.normalized = &replacement
 }
