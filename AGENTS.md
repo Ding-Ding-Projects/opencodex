@@ -123,3 +123,63 @@ reviewers (Codex, CodeRabbit).
   keep translated locales from contradicting the English source).
 - **Privacy:** `bun run privacy:scan` must stay green; never introduce logging
   of request bodies, API keys, or account identifiers.
+
+## Working notes
+
+Durable, non-secret knowledge worth carrying between sessions. This section is
+deliberately sanitized: no paths outside the repo, no machine-specific setup, no
+credentials, account identifiers, ports in use, or anything read out of
+`~/.opencodex`. If a note cannot be written without one of those, it does not
+belong here.
+
+### Toolchain
+
+- **Bun is required, not optional.** The proxy is Bun-native and the test runner
+  is `bun test` — `vitest` is not a substitute and will fail to import all 79
+  GUI test files. Without Bun on PATH you cannot verify a change; install it
+  before starting rather than pushing unverified work.
+- Two dependency trees, both needed. Root `bun install` covers the proxy;
+  `gui/` has its own `bun install`. GUI tests import from `src/` (for example
+  `src/config.ts`), so a GUI-only install leaves the suite erroring on missing
+  root modules like `zod/v4` — that is a missing install, not a regression.
+- Scripts under `scripts/` run on Bun, but several are useful under plain Node
+  too. Prefer `execFileSync` over Bun's `$` and
+  `dirname(fileURLToPath(import.meta.url))` over `import.meta.dir` when a script
+  has no reason to be Bun-only — `import.meta.dir` is undefined on Node and
+  fails with an opaque `ERR_INVALID_ARG_TYPE`.
+
+### GUI conventions worth knowing before editing
+
+- **Many tests assert on source text, not behaviour.** They read a `.tsx` file
+  and check it contains an exact string. Moving code between files breaks them
+  even when behaviour is identical. When that happens the fix is to retarget the
+  assertion at the new location and keep the original intent — check the test's
+  comment for the invariant it was defending before rewriting it.
+- **The i18n lint rule rejects hardcoded UI strings**, including fragments as
+  small as `"px"` and text inside template literals. Add a key rather than
+  inlining. It also flags plain-word resource keys such as
+  `` `changelog:${apiBase}` ``; prefix them (`ocx-changelog:`).
+- **`react-refresh/only-export-components` is enforced.** A file exporting a
+  component must export nothing else — no constants, no hooks, no types.
+  Providers are therefore split: `X.tsx` holds the component,
+  `X-context.ts` holds the context, types, defaults and the `useX` hook.
+- **`react-hooks/set-state-in-effect` is enforced.** Derive state during render
+  instead of syncing it in an effect.
+- The five translated dictionaries are `Record<ProductKey, string>`, so adding a
+  key to `en.ts` breaks all five builds. Shell/system-screen copy lives in
+  `i18n/m3.ts` with an English fallback for exactly this reason.
+
+### Platform
+
+Windows is the only supported desktop target, and it must never be the lesser
+platform: anything that works on another OS has to work on Windows too. Branch
+on `process.platform` to make Windows work, never to opt it out of a feature.
+See `docs/design-system/m3-port-handoff.md`, "Platform support".
+
+### Design system
+
+The dashboard is mid-migration to Material 3. Colours come from a seed at
+runtime via `gui/src/theme/m3.ts`; the legacy token names in `styles.css` are
+aliases onto `--m3-*` roles. Do not reintroduce literal hex values in component
+styles — they will not retint with the seed picker. Status and chart colours are
+the documented exception: they stay functional data colours.

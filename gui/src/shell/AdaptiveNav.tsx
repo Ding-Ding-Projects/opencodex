@@ -5,10 +5,11 @@
  * real viewport.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { IconMoon, IconPower, IconSun, IconMonitor, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
+import { Switch } from "../ui";
 import { BOTTOM_NAV_PAGES, PAGE_META, PAGE_META_BY_ID, type PageMeta } from "./page-meta";
 import type { Page } from "../app-routing";
 
@@ -17,12 +18,14 @@ interface NavItemProps {
   active: boolean;
   showLabel: boolean;
   onOpen: (page: Page, newTab: boolean) => void;
+  /** Rendered after the label — the Claude row uses it for the connection switch. */
+  trailing?: ReactNode;
 }
 
-function NavItem({ meta, active, showLabel, onOpen }: NavItemProps) {
+function NavItem({ meta, active, showLabel, onOpen, trailing }: NavItemProps) {
   const t = useT();
   const label = t(meta.tkey);
-  return (
+  const button = (
     <button
       type="button"
       className={`m3-nav-item${active ? " active" : ""}`}
@@ -37,6 +40,9 @@ function NavItem({ meta, active, showLabel, onOpen }: NavItemProps) {
       {showLabel && <span className="m3-nav-label">{label}</span>}
     </button>
   );
+  if (!trailing) return button;
+  // The switch is a sibling, never nested — a control inside a button is not operable.
+  return <div className="m3-nav-entry">{button}{trailing}</div>;
 }
 
 interface AdaptiveNavProps {
@@ -49,12 +55,19 @@ interface AdaptiveNavProps {
   /** Compact only: the modal drawer is open. */
   drawerOpen: boolean;
   onCloseDrawer: () => void;
+  /** null until /api/claude-code answers; the switch is withheld until then. */
+  claudeEnabled: boolean | null;
+  claudeTogglePending: boolean;
+  onToggleClaude: () => void;
 }
 
 const THEME_ICON = { light: IconSun, dark: IconMoon, system: IconMonitor } as const;
 
 export default function AdaptiveNav(props: AdaptiveNavProps) {
-  const { activePage, onOpen, version, port, onStop, stopping, drawerOpen, onCloseDrawer } = props;
+  const {
+    activePage, onOpen, version, port, onStop, stopping, drawerOpen, onCloseDrawer,
+    claudeEnabled, claudeTogglePending, onToggleClaude,
+  } = props;
   const { windowClass, prefs, setPrefs } = usePrefs();
   const t = useT();
   const drawerRef = useRef<HTMLElement>(null);
@@ -114,7 +127,21 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
       </div>
 
       {product.map(meta => (
-        <NavItem key={meta.id} meta={meta} active={meta.id === activePage} showLabel={showLabels} onOpen={onOpen} />
+        <NavItem
+          key={meta.id}
+          meta={meta}
+          active={meta.id === activePage}
+          showLabel={showLabels}
+          onOpen={onOpen}
+          trailing={meta.id === "claude" && claudeEnabled !== null ? (
+            <Switch
+              on={claudeEnabled}
+              onClick={onToggleClaude}
+              disabled={claudeTogglePending}
+              label={t("claude.toggleAria")}
+            />
+          ) : undefined}
+        />
       ))}
 
       <hr className="m3-nav-divider" />

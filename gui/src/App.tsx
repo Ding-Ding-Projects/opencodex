@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { useKeyedClientResource } from "./client-resource";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { setClientResourceData, useKeyedClientResource } from "./client-resource";
 import Dashboard from "./pages/Dashboard";
 import Providers from "./pages/Providers";
 import Models from "./pages/Models";
@@ -111,6 +111,41 @@ export default function App() {
     { pollMs: 60_000 },
   );
 
+  // The Claude nav row owns the connection toggle, as it did in the old sidebar.
+  const fetchClaudeEnabled = useCallback(async (signal: AbortSignal) => {
+    const res = await fetch(`${API_BASE}/api/claude-code`, { signal });
+    const d = await readJsonIfOk<{ enabled?: unknown }>(res);
+    return d && typeof d.enabled === "boolean" ? d.enabled : null;
+  }, []);
+
+  const claudePoll = useKeyedClientResource(`app-claude-code:${API_BASE}`, [], fetchClaudeEnabled);
+  const claudeEnabled = claudePoll.data ?? null;
+  // A ref, not state: the guard has to hold within a single click burst, before
+  // React has re-rendered with the pending flag.
+  const claudeToggleInFlight = useRef(false);
+  const [claudeTogglePending, setClaudeTogglePending] = useState(false);
+
+  const toggleClaude = async () => {
+    if (claudeEnabled === null || claudeToggleInFlight.current) return;
+    claudeToggleInFlight.current = true;
+    setClaudeTogglePending(true);
+    const next = !claudeEnabled;
+    setClientResourceData(`app-claude-code:${API_BASE}`, next);
+    try {
+      const res = await fetch(`${API_BASE}/api/claude-code`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) setClientResourceData(`app-claude-code:${API_BASE}`, !next);
+    } catch {
+      setClientResourceData(`app-claude-code:${API_BASE}`, !next);
+    } finally {
+      claudeToggleInFlight.current = false;
+      setClaudeTogglePending(false);
+    }
+  };
+
   const openPage = useCallback((next: Page, newTab: boolean) => {
     tabs.openPage(next, newTab);
     setDrawerRequested(false);
@@ -146,6 +181,9 @@ export default function App() {
         stopping={stopping}
         drawerOpen={drawerOpen}
         onCloseDrawer={() => setDrawerRequested(false)}
+        claudeEnabled={claudeEnabled}
+        claudeTogglePending={claudeTogglePending}
+        onToggleClaude={() => void toggleClaude()}
       />
 
       <div className="m3-main-col">

@@ -27,13 +27,17 @@ test("the Grok page covers loading, absent and error states", async () => {
   expect(page).toContain("common.retry");
 });
 
+// The nav table moved to shell/page-meta.ts with the Material 3 shell, and pages
+// render off the active tab rather than a single `page`. Same invariant, new home.
 test("the Grok page is routable and present in the nav", async () => {
   const routing = await read("../src/app-routing.ts");
   const app = await read("../src/App.tsx");
+  const meta = await read("../src/shell/page-meta.ts");
   expect(routing).toContain('| "grok"');
   expect(routing).toContain('"grok",');
-  expect(app).toContain('{page === "grok" && <Grok apiBase={API_BASE} />}');
-  expect(app).toContain('{ id: "grok", tkey: "nav.grok"');
+  expect(app).toContain('{activePage === "grok" && <Grok apiBase={API_BASE} />}');
+  expect(meta).toContain('grok: "nav.grok"');
+  expect(meta).toContain("grok: IconBolt");
 });
 
 test("every locale carries the Grok keys", async () => {

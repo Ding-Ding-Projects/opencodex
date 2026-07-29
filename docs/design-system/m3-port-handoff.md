@@ -118,8 +118,8 @@ renders English outside `en`.
   `~/.opencodex` and rewrites the native Codex config, so the user should see
   where it goes). Uninstall deliberately leaves `~/.opencodex` alone — it holds
   providers, accounts and API keys.
-- `.github/workflows/desktop-installer.yml` — `workflow_dispatch` with an OS
-  choice, plus every `v*` tag. Uploads `opencodex-desktop-<os>-<sha>`.
+- `.github/workflows/desktop-installer.yml` — `workflow_dispatch`, plus every
+  `v*` tag. Uploads `opencodex-desktop-windows-<sha>`.
 
 Two decisions worth keeping:
 
@@ -133,11 +133,39 @@ itself from the pinned `electronVersion`, which keeps a ~100 MB download out of
 every existing CI job that runs `bun install`. Bump the version in
 `electron-builder.yml`, not in `package.json`.
 
-The workflow needs one runner per OS: `bun install` unpacks a platform-specific
-Bun binary, so a Windows `.exe` must be produced on a Windows runner. There is
-an explicit step that fails the build if that binary is still the ~450-byte
-placeholder stub, using the same 1 MB threshold `bin/ocx.mjs` uses — otherwise
-the installer would ship and then refuse to start.
+The workflow runs on a Windows runner by necessity, not preference: `bun install`
+unpacks a platform-specific Bun binary, so a Windows `.exe` can only be produced
+on Windows. There is an explicit step that fails the build if that binary is
+still the ~450-byte placeholder stub, using the same 1 MB threshold
+`bin/ocx.mjs` uses — otherwise the installer would ship and then refuse to start.
+
+#### Platform support
+
+**Windows is the only supported desktop target.** The macOS (`dmg`) and Linux
+(`AppImage`) targets that were in the first draft have been removed rather than
+left declared-but-unbuilt — a target nobody builds is a promise the project is
+not keeping.
+
+**The rule this creates: Windows is not allowed to be the lesser platform.**
+Anything that works on another operating system has to work on Windows too.
+Concretely, when touching the desktop app or the proxy:
+
+- If a capability exists on macOS or Linux — a service/daemon integration, a
+  tray behaviour, a path convention, a shell integration, an auto-start
+  mechanism — there must be a Windows equivalent before it is considered done.
+  Windows-only gaps are bugs, not platform limitations to document and move on
+  from.
+- Where the platforms genuinely differ (no POSIX signals, `schtasks` needing
+  elevation, locked state DBs, `%APPDATA%` vs `~`), the Windows path gets a real
+  implementation, not a `process.platform !== "win32"` guard that quietly skips
+  the feature.
+- `bin/ocx.mjs` already carries several of these branches — signal forwarding,
+  the tray-update handoff, service reinstall falling back to a detached start
+  when elevation is refused. Follow that pattern: branch to make Windows work,
+  never to opt it out.
+
+If a platform is added back later, that rule does not relax. It exists so the
+desktop app never becomes the place where feature parity quietly erodes.
 
 ### 9. CI — `.github/workflows/gui-preview.yml`
 
@@ -154,25 +182,34 @@ environment for the docs site.
 
 Run locally, all green:
 
-- `npx tsc -b` — clean
-- `npx eslint .` — clean (0 errors, 0 warnings)
-- `npx vite build` — succeeds
+- `bun test tests` (in `gui/`) — **373 pass, 0 fail**
+- `bun x tsc -b` (gui) and `bun x tsc --noEmit` (root) — clean
+- `bun run lint` — clean
+- `bun x vite build` — succeeds
 
-**Not run:** the GUI test suite. It is `bun test tests`, and Bun is not on this
-machine's PATH; `vitest` is not the runner and cannot substitute. The
-`gui-preview` workflow runs it on every push touching `gui/**`, so the first CI
-run is the real signal. Eleven test files reference `App`/routing
-(`app-stop`, `sidebar-codex-auth`, `dashboard-tabs`, `providers-hash-history`,
-`claude-toggle-race`, and the `*-layout` files) and are the most likely to need
-updating against the new shell — the sidebar Claude toggle in particular moved
-out of the nav.
+The first CI run caught six failures, all now fixed:
 
-**Also not run:** the desktop installer build. It needs Bun plus a full
-`electron-builder` run and has only been syntax- and schema-checked locally
-(`node --check` on the Electron entry points, YAML parse on all three configs).
-The first `desktop-installer` workflow run is the real signal. The likeliest
-first failure is a missing runtime file in the `files` allowlist in
-`electron-builder.yml` — if the app launches and then reports the proxy exited,
+| Test | Why it broke | Fix |
+|---|---|---|
+| `sidebar-codex-auth` | asserted on `NAV` in `App.tsx` | retargeted at `shell/page-meta.ts` |
+| `grok-page` (nav) | same | same |
+| `dashboard-tabs` (order) | same | reads `ORDER` in `page-meta.ts` |
+| `dashboard-tabs` (divider) | Q3 said "no divider"; M3 requires one between product and system groups | rewritten to "exactly one divider, between the groups" |
+| `app-stop` | sliced to `const brand`, which no longer exists; asserted `alert()` | new slice bound, asserts the persistent error snackbar |
+| `claude-toggle-race` | rendered `App` bare; it now needs `PrefsProvider` + `NotificationsProvider` | wraps with the same stack `main.tsx` mounts |
+
+That last one exposed a **real regression, not just a stale test**: the shell had
+dropped the Claude connection switch that used to sit on the sidebar's Claude
+row. It is restored — `NavItem` takes a `trailing` slot, the switch renders as a
+sibling of the nav button (never nested, since a control inside a button is not
+operable), and the single-in-flight-PUT guard came back with it.
+
+**Still not run:** the desktop installer build. Bun is now available locally and
+`node_modules/bun/bin/bun.exe` verified at 98 MB — so the installer's central
+assumption holds — but a full `electron-builder` run has not been done. The
+first `desktop-installer` workflow run is the real signal. The likeliest first
+failure is a missing runtime file in the `files` allowlist in
+`electron-builder.yml`: if the app launches and then reports the proxy exited,
 check that list before anything else.
 
 ---

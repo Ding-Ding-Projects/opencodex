@@ -118,9 +118,19 @@ test("rapid Claude toggle clicks issue only one PUT until the first settles", as
   installApiAuthFetch();
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: window.fetch });
 
-  const [{ createRoot }, { LanguageProvider }, { default: App }] = await Promise.all([
+  // App reads appearance tokens and the snackbar host, so it needs the same
+  // provider stack main.tsx mounts — rendering it bare throws from usePrefs.
+  const [
+    { createRoot },
+    { LanguageProvider },
+    { PrefsProvider },
+    { NotificationsProvider },
+    { default: App },
+  ] = await Promise.all([
     import("react-dom/client"),
     import("../src/i18n/provider"),
+    import("../src/theme/prefs"),
+    import("../src/shell/notifications"),
     import("../src/App"),
   ]);
 
@@ -128,7 +138,11 @@ test("rapid Claude toggle clicks issue only one PUT until the first settles", as
     root = createRoot(container);
     root.render(
       <LanguageProvider>
-        <App />
+        <PrefsProvider>
+          <NotificationsProvider>
+            <App />
+          </NotificationsProvider>
+        </PrefsProvider>
       </LanguageProvider>,
     );
   });

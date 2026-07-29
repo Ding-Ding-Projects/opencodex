@@ -47,6 +47,13 @@ files:
   - "!**/tests/**"
   - "!**/__tests__/**"
 
+# Windows is the only supported desktop target. macOS and Linux targets were
+# removed deliberately rather than left half-configured — a target that is
+# declared but never built is a promise the project is not keeping.
+#
+# If a platform is added back later, note that the desktop app must not become
+# the place where features diverge: anything that works on another OS has to work
+# on Windows too. See docs/design-system/m3-port-handoff.md, "Platform support".
 win:
   target:
     - target: nsis
@@ -65,17 +72,3 @@ nsis:
   # Leave ~/.opencodex alone on uninstall: it holds the user's providers, accounts
   # and API keys, and an uninstall is not consent to delete credentials.
   deleteAppDataOnUninstall: false
-
-mac:
-  target:
-    - target: dmg
-      arch: [x64, arm64]
-  icon: gui/public/logo.png
-  category: public.app-category.developer-tools
-
-linux:
-  target:
-    - target: AppImage
-      arch: [x64]
-  icon: gui/public/logo.png
-  category: Development

@@ -1,19 +1,13 @@
 name: Desktop installer
 
-# Builds the opencodex desktop app into an installer you can download and run.
+# Builds the opencodex desktop app into a Windows installer you can download and run.
 #
-# One runner per OS by necessity, not preference: the proxy exec's the Bun binary
-# that `bun install` unpacks into node_modules, and that binary is platform-specific.
-# A Windows .exe therefore has to be produced on a Windows runner.
+# Windows is the only supported desktop target. The job must run on a Windows
+# runner regardless: the proxy exec's the Bun binary that `bun install` unpacks
+# into node_modules, and that binary is platform-specific.
 
 on:
   workflow_dispatch:
-    inputs:
-      os:
-        description: Which installer to build
-        type: choice
-        default: windows
-        options: [windows, macos, linux, all]
   push:
     tags:
       - "v*"
@@ -26,32 +20,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  resolve:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.pick.outputs.matrix }}
-    steps:
-      - name: Pick runners
-        id: pick
-        shell: bash
-        run: |
-          # A tag push builds every installer; a manual run builds what was asked for.
-          choice="${{ github.event_name == 'push' && 'all' || inputs.os }}"
-          case "$choice" in
-            windows) matrix='["windows-latest"]' ;;
-            macos)   matrix='["macos-latest"]' ;;
-            linux)   matrix='["ubuntu-latest"]' ;;
-            *)       matrix='["windows-latest","macos-latest","ubuntu-latest"]' ;;
-          esac
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: resolve
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(needs.resolve.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -66,7 +36,7 @@ jobs:
           node-version: 22
 
       - name: Install proxy dependencies
-        # `bun` is a trustedDependency, so its postinstall downloads the real ~60 MB
+        # `bun` is a trustedDependency, so its postinstall downloads the real ~98 MB
         # runtime binary here. Without that the packaged app has only the placeholder
         # stub and refuses to start.
         run: bun install --frozen-lockfile
@@ -100,7 +70,7 @@ jobs:
       - name: Build the installer
         # electron-builder downloads Electron itself from the pinned electronVersion
         # in electron-builder.yml, so neither it nor electron is a repo dependency.
-        run: npx --yes electron-builder@26.15.3 --publish never
+        run: npx --yes electron-builder@26.15.3 --win --publish never
 
       - name: List what was produced
         shell: bash
@@ -109,10 +79,7 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: opencodex-desktop-${{ matrix.os }}-${{ github.sha }}
-          path: |
-            dist-desktop/*.exe
-            dist-desktop/*.dmg
-            dist-desktop/*.AppImage
+          name: opencodex-desktop-windows-${{ github.sha }}
+          path: dist-desktop/*.exe
           if-no-files-found: error
           retention-days: 14

@@ -706,3 +706,15 @@
 }
 .m3-table th { font-weight: 500; color: var(--m3-on-surface-variant); font-size: var(--t-label-m); }
 .m3-table tbody tr:hover { background: var(--m3-surface-container); }
+
+/* Nav rows that carry a trailing control (the Claude connection switch). */
+.m3-nav-entry {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.m3-nav-entry .m3-nav-item { min-width: 0; }
+.m3-nav-entry > :not(.m3-nav-item) { flex: 0 0 auto; margin-right: 8px; }
+/* In rail mode the row is icon-over-label, so the switch tucks under it. */
+.m3-nav--rail .m3-nav-entry { flex-direction: column; gap: 2px; }
+.m3-nav--rail .m3-nav-entry > :not(.m3-nav-item) { margin: 0 0 4px; }
