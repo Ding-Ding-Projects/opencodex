@@ -15,7 +15,14 @@ export type Page =
   | "codex-auth"
   | "api"
   | "claude"
-  | "grok";
+  | "grok"
+  // System pages introduced by the Material 3 shell.
+  | "appearance"
+  | "language"
+  | "regex"
+  | "changelog"
+  | "history"
+  | "notifications";
 
 export const VALID_PAGES = new Set<Page>([
   "dashboard",
@@ -31,7 +38,36 @@ export const VALID_PAGES = new Set<Page>([
   "api",
   "claude",
   "grok",
+  "appearance",
+  "language",
+  "regex",
+  "changelog",
+  "history",
+  "notifications",
 ]);
+
+/** Product pages sit above the system pages in the nav, separated by a divider. */
+export const PAGE_GROUP: Record<Page, "product" | "system"> = {
+  dashboard: "product",
+  "codex-auth": "product",
+  providers: "product",
+  models: "product",
+  combos: "product",
+  subagents: "product",
+  logs: "product",
+  usage: "product",
+  storage: "product",
+  api: "product",
+  claude: "product",
+  grok: "product",
+  startup: "product",
+  appearance: "system",
+  language: "system",
+  regex: "system",
+  changelog: "system",
+  history: "system",
+  notifications: "system",
+};
 
 export function readPageFromHash(hash?: string): Page {
   const raw = normalizeHashPath(

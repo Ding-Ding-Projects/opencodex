@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
-import { en, type TKey } from "./en";
+import { en, type TKey as ProductKey } from "./en";
+import type { M3Key } from "./m3";
 import { de } from "./de";
 import { ko } from "./ko";
 import { zh } from "./zh";
@@ -7,9 +8,17 @@ import { ru } from "./ru";
 import { ja } from "./ja";
 
 export type Locale = "en" | "de" | "ko" | "zh" | "ru" | "ja";
-export type { TKey };
 
-export const DICTS: Record<Locale, Record<TKey, string>> = { en, de, ko, zh, ru, ja };
+/**
+ * Components address both dictionaries through one key type. The five translated
+ * dicts stay typed on `ProductKey` alone, so a missing product translation is
+ * still a compile error; the M3 shell keys resolve through `m3.ts` with an
+ * English fallback instead.
+ */
+export type TKey = ProductKey | M3Key;
+export type { ProductKey };
+
+export const DICTS: Record<Locale, Record<ProductKey, string>> = { en, de, ko, zh, ru, ja };
 
 export const LOCALES: { code: Locale; name: string; htmlLang: string }[] = [
   { code: "en", name: "English", htmlLang: "en" },

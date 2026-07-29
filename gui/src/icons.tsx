@@ -65,3 +65,18 @@ export const IconGrip = (p: P) => (
 );
 export const IconStar = (p: P) => (<svg {...S(p)}><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>);
 export const IconFilter = (p: P) => (<svg {...S(p)}><path d="M4 5h16l-6 7v5l-4 2v-7L4 5z"/></svg>);
+
+/* --- Material 3 shell additions: nav entries and app-bar affordances --- */
+export const IconPalette = (p: P) => (<svg {...S(p)}><path d="M12 21a9 9 0 1 1 9-9c0 2-1.6 3-3 3h-1.5a2 2 0 0 0-1.4 3.4A1.8 1.8 0 0 1 12 21Z"/><circle cx="7.5" cy="12" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="15" cy="8" r="1"/></svg>);
+export const IconTranslate = (p: P) => (<svg {...S(p)}><path d="M3 5h10M8 3v2M10.5 5c0 4-3 8-7 9"/><path d="M5 12c2 2.5 4.5 4 7 4.5"/><path d="m13 21 4.5-11L22 21M14.8 17.5h5.4"/></svg>);
+export const IconRegex = (p: P) => (<svg {...S(p)}><path d="M17 4v8M13.5 6l7 4M20.5 6l-7 4"/><rect x="3" y="15" width="5" height="5" rx="1.5"/></svg>);
+export const IconChangelog = (p: P) => (<svg {...S(p)}><path d="M5 4h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M14 4v5h5M8 13h7M8 17h5"/></svg>);
+export const IconHistory = (p: P) => (<svg {...S(p)}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3.5 2"/></svg>);
+export const IconBell = (p: P) => (<svg {...S(p)}><path d="M18 8a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>);
+export const IconPin = (p: P) => (<svg {...S(p)}><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6Z"/></svg>);
+export const IconDevices = (p: P) => (<svg {...S(p)}><rect x="2" y="5" width="13" height="9" rx="1.5"/><path d="M5 18h7"/><rect x="16" y="9" width="6" height="11" rx="1.5"/></svg>);
+export const IconBolt = (p: P) => (<svg {...S(p)}><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>);
+export const IconUndo = (p: P) => (<svg {...S(p)}><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg>);
+export const IconCopy = (p: P) => (<svg {...S(p)}><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>);
+export const IconDownload = (p: P) => (<svg {...S(p)}><path d="M12 3v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>);
+export const IconVolume = (p: P) => (<svg {...S(p)}><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg>);

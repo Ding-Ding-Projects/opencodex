@@ -1,0 +1,161 @@
+/**
+ * Adaptive navigation: bottom bar under 600px, icon rail to 1239px, permanent
+ * drawer at 1240px and up. Breakpoints come from the measured window width in
+ * `usePrefs()` rather than media queries, so a preview frame behaves like a
+ * real viewport.
+ */
+
+import { useEffect, useRef } from "react";
+import { IconMoon, IconPower, IconSun, IconMonitor, IconX } from "../icons";
+import { useT } from "../i18n/shared";
+import { usePrefs } from "../theme/prefs-context";
+import { BOTTOM_NAV_PAGES, PAGE_META, PAGE_META_BY_ID, type PageMeta } from "./page-meta";
+import type { Page } from "../app-routing";
+
+interface NavItemProps {
+  meta: PageMeta;
+  active: boolean;
+  showLabel: boolean;
+  onOpen: (page: Page, newTab: boolean) => void;
+}
+
+function NavItem({ meta, active, showLabel, onOpen }: NavItemProps) {
+  const t = useT();
+  const label = t(meta.tkey);
+  return (
+    <button
+      type="button"
+      className={`m3-nav-item${active ? " active" : ""}`}
+      aria-current={active ? "page" : undefined}
+      title={label}
+      data-page={meta.id}
+      // Middle-click and ctrl/cmd-click open in a new tab, like a browser.
+      onClick={e => onOpen(meta.id, e.ctrlKey || e.metaKey)}
+      onAuxClick={e => { if (e.button === 1) { e.preventDefault(); onOpen(meta.id, true); } }}
+    >
+      <span className="m3-nav-pill" aria-hidden="true"><meta.Icon /></span>
+      {showLabel && <span className="m3-nav-label">{label}</span>}
+    </button>
+  );
+}
+
+interface AdaptiveNavProps {
+  activePage: Page;
+  onOpen: (page: Page, newTab: boolean) => void;
+  version: string;
+  port: string | null;
+  onStop: () => void;
+  stopping: boolean;
+  /** Compact only: the modal drawer is open. */
+  drawerOpen: boolean;
+  onCloseDrawer: () => void;
+}
+
+const THEME_ICON = { light: IconSun, dark: IconMoon, system: IconMonitor } as const;
+
+export default function AdaptiveNav(props: AdaptiveNavProps) {
+  const { activePage, onOpen, version, port, onStop, stopping, drawerOpen, onCloseDrawer } = props;
+  const { windowClass, prefs, setPrefs } = usePrefs();
+  const t = useT();
+  const drawerRef = useRef<HTMLElement>(null);
+
+  const compact = windowClass === "compact";
+  const expanded = windowClass === "expanded" || (compact && drawerOpen);
+  const showLabels = expanded;
+
+  // Move focus into the modal drawer on open so keyboard users are not left behind it.
+  useEffect(() => {
+    if (compact && drawerOpen) {
+      const timer = setTimeout(() => drawerRef.current?.focus(), 60);
+      return () => clearTimeout(timer);
+    }
+  }, [compact, drawerOpen]);
+
+  useEffect(() => {
+    if (!(compact && drawerOpen)) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [compact, drawerOpen]);
+
+  const cycleTheme = () => {
+    setPrefs({ theme: prefs.theme === "light" ? "dark" : prefs.theme === "dark" ? "system" : "light" });
+  };
+  const ThemeIcon = THEME_ICON[prefs.theme];
+  const themeLabel = t(prefs.theme === "light" ? "theme.light" : prefs.theme === "dark" ? "theme.dark" : "theme.system");
+
+  const product = PAGE_META.filter(m => m.group === "product");
+  const system = PAGE_META.filter(m => m.group === "system");
+
+  const railClass = `m3-nav${!expanded ? " m3-nav--rail" : ""}${compact && drawerOpen ? " m3-nav--drawer" : ""}`;
+
+  const panel = (
+    <aside
+      id="app-sidebar"
+      className={railClass}
+      ref={drawerRef}
+      tabIndex={compact && drawerOpen ? -1 : undefined}
+      aria-label={t("nav.primaryAria")}
+    >
+      <div className="m3-nav-brand">
+        <img src="/logo.png" alt="" aria-hidden="true" />
+        {showLabels && (
+          <div className="m3-nav-brand-text">
+            <div className="m3-nav-brand-name">opencodex</div>
+            <div className="m3-nav-brand-meta">v{version}{port ? ` · :${port}` : ""}</div>
+          </div>
+        )}
+        {compact && drawerOpen && (
+          <button type="button" className="m3-icon-btn" style={{ marginLeft: "auto" }}
+            onClick={onCloseDrawer} aria-label={t("nav.closeMenu")} title={t("nav.closeMenu")}>
+            <IconX aria-hidden />
+          </button>
+        )}
+      </div>
+
+      {product.map(meta => (
+        <NavItem key={meta.id} meta={meta} active={meta.id === activePage} showLabel={showLabels} onOpen={onOpen} />
+      ))}
+
+      <hr className="m3-nav-divider" />
+
+      {system.map(meta => (
+        <NavItem key={meta.id} meta={meta} active={meta.id === activePage} showLabel={showLabels} onOpen={onOpen} />
+      ))}
+
+      <div className="m3-nav-foot">
+        <button type="button" className="m3-nav-item" onClick={cycleTheme}
+          aria-label={`${t("theme.label")}: ${themeLabel}`} title={`${t("theme.label")}: ${themeLabel}`}>
+          <span className="m3-nav-pill" aria-hidden="true"><ThemeIcon /></span>
+          {showLabels && <span className="m3-nav-label">{themeLabel}</span>}
+        </button>
+        <button type="button" className="m3-nav-item danger" onClick={onStop} disabled={stopping}
+          aria-label={t("dash.stop")} title={t("dash.stop")}>
+          <span className="m3-nav-pill" aria-hidden="true"><IconPower /></span>
+          {showLabels && <span className="m3-nav-label">{stopping ? t("dash.stopping") : t("dash.stop")}</span>}
+        </button>
+      </div>
+    </aside>
+  );
+
+  if (!compact) return panel;
+
+  return (
+    <>
+      {drawerOpen && <div className="m3-drawer-scrim" onClick={onCloseDrawer} aria-hidden="true" />}
+      {drawerOpen && panel}
+    </>
+  );
+}
+
+/** Compact-only bottom navigation bar. Rendered by the shell below the page area. */
+export function BottomNav({ activePage, onOpen }: { activePage: Page; onOpen: (page: Page, newTab: boolean) => void }) {
+  const t = useT();
+  return (
+    <nav className="m3-bottom-nav" aria-label={t("nav.primaryAria")}>
+      {BOTTOM_NAV_PAGES.map(id => (
+        <NavItem key={id} meta={PAGE_META_BY_ID[id]} active={id === activePage} showLabel onOpen={onOpen} />
+      ))}
+    </nav>
+  );
+}

@@ -1,0 +1,104 @@
+name: Dashboard preview build
+
+# Builds the Material 3 dashboard and publishes it as a downloadable artifact so
+# the redesign can be clicked through without a local toolchain.
+#
+# Deliberately NOT a GitHub Pages deploy: `deploy-docs.yml` already owns the
+# Pages environment for the docs site, and a second workflow publishing there
+# would overwrite it.
+
+on:
+  pull_request:
+    paths:
+      - "gui/**"
+      - ".github/workflows/gui-preview.yml"
+  push:
+    branches: [main, dev, preview]
+    paths:
+      - "gui/**"
+      - ".github/workflows/gui-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dashboard dependencies
+        working-directory: gui
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: gui
+        run: bun x tsc -b
+
+      - name: Lint
+        working-directory: gui
+        run: bun run lint
+
+      - name: Test
+        working-directory: gui
+        run: bun test tests
+
+      - name: Build
+        working-directory: gui
+        # Relative asset paths so the artifact works from any directory a
+        # reviewer serves it out of, not just a domain root.
+        run: bun x vite build --base ./
+
+      - name: Add run instructions to the artifact
+        run: |
+          cat > gui/dist/HOW-TO-RUN.txt <<'EOF'
+          opencodex dashboard — preview build
+          ===================================
+
+          The bundle uses ES modules, so opening index.html directly with a
+          file:// URL will not work. Serve the folder over http instead:
+
+              npx --yes serve .
+
+          then open the URL it prints.
+
+          What works without a proxy running
+          ----------------------------------
+          The whole Material 3 shell is client-side: adaptive navigation, the
+          browser-style tab strip, Appearance (theme / seed colour / density /
+          typography / per-element overrides), Language & voice, the Regex
+          builder, Notifications and Version history all work offline.
+
+          What needs a proxy
+          ------------------
+          Dashboard, Providers, Models, Combos, Subagents, Logs, Usage, Storage,
+          API, Claude, Grok, Codex Auth and Changelog read /api/* and /healthz.
+          Start one alongside the preview:
+
+              ocx start --port 10100
+
+          and serve the dashboard from that same origin (the proxy serves its own
+          copy at http://127.0.0.1:10100/), or run the Vite dev server with
+
+              OPENCODEX_PROXY_TARGET=http://127.0.0.1:10100 bun run dev
+
+          from the gui/ directory, which proxies /api and /healthz for you.
+          EOF
+
+      - name: Upload dashboard bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencodex-dashboard-${{ github.sha }}
+          path: gui/dist
+          if-no-files-found: error
+          retention-days: 14
