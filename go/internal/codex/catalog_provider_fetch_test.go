@@ -58,3 +58,46 @@ func TestFetchProviderModelsDegradesAndRecordsFailure(t *testing.T) {
 		t.Fatalf("status = %#v", status)
 	}
 }
+
+func TestFetchProviderModelsAcceptsTogetherTopLevelArray(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"meta/llama"},{"id":"Qwen/Qwen"}]`))
+	}))
+	defer server.Close()
+
+	models, err := FetchProviderModels(context.Background(), ProviderModelFetchOptions{
+		ProviderName: "together",
+		Provider:     config.ProviderConfig{Adapter: "openai-chat", BaseURL: server.URL + "/v1", AllowPrivateNetwork: true},
+		Cache:        NewModelCache(),
+		TTL:          time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "meta/llama" || models[1].ID != "Qwen/Qwen" {
+		t.Fatalf("models = %#v", models)
+	}
+}
+
+func TestProviderModelsAPIItemsFromResponseShapes(t *testing.T) {
+	items, ok := providerModelsAPIItemsFromResponse([]byte(`[{"id":"a"}]`))
+	if !ok || len(items) != 1 || items[0].ID != "a" {
+		t.Fatalf("top-level array: items=%#v ok=%v", items, ok)
+	}
+	items, ok = providerModelsAPIItemsFromResponse([]byte(`{"data":[{"id":"b"}]}`))
+	if !ok || len(items) != 1 || items[0].ID != "b" {
+		t.Fatalf("data wrapper: items=%#v ok=%v", items, ok)
+	}
+	items, ok = providerModelsAPIItemsFromResponse([]byte(`{"data":[]}`))
+	if !ok || items == nil || len(items) != 0 {
+		t.Fatalf("empty data: items=%#v ok=%v", items, ok)
+	}
+	// Google {models} and objects without data must not be accepted for catalog discovery.
+	if _, ok = providerModelsAPIItemsFromResponse([]byte(`{"models":[{"id":"c"}]}`)); ok {
+		t.Fatal("expected {models} to be rejected for catalog discovery")
+	}
+	if _, ok = providerModelsAPIItemsFromResponse([]byte(`{"nope":true}`)); ok {
+		t.Fatal("expected object without data to be rejected")
+	}
+}
