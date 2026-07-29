@@ -36,7 +36,9 @@ func (m *cliOAuthManagement) Providers() []string {
 
 func (m *cliOAuthManagement) Start(_ context.Context, provider string, options management.OAuthLoginOptions) (management.OAuthLoginStart, error) {
 	flowName, storeName := normalizeLoginProvider(provider)
-	flow, err := newLoginFlow(flowName, nil, "")
+	// Adding an account or reauthenticating must not silently reuse the browser session
+	// (oracle: forceLogin: body.addAccount === true || reauth).
+	flow, err := newLoginFlow(flowName, nil, "", options.AddAccount || options.Reauth)
 	if err != nil {
 		return management.OAuthLoginStart{}, err
 	}

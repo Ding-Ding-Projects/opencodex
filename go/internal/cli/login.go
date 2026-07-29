@@ -80,16 +80,25 @@ func (f kiroImportFlow) Login(_ context.Context, onAuth func(oauth.Authorization
 	return credential.OAuthCredentials, nil
 }
 
-func newLoginFlow(provider string, client oauth.HTTPDoer, kiroPath string) (loginFlow, error) {
+// newLoginFlow builds the provider's login flow. forceLogin asks the provider to
+// re-authenticate instead of silently reusing the browser's existing session — the
+// oracle sets it whenever the caller is adding an account or reauthenticating one
+// (src/server/management/oauth-account-routes.ts, src/codex/auth-api.ts), because
+// without it the identity the user is trying to change is the identity they get back.
+func newLoginFlow(provider string, client oauth.HTTPDoer, kiroPath string, forceLogin bool) (loginFlow, error) {
 	switch provider {
 	case "chatgpt":
-		return browserLoginFlow{flow: oauth.NewChatGPTFlow(client)}, nil
+		flow := oauth.NewChatGPTFlow(client)
+		flow.ForceLogin = forceLogin
+		return browserLoginFlow{flow: flow}, nil
 	case "anthropic":
 		return anthropicLoginFlow{browser: browserLoginFlow{flow: oauth.NewAnthropicFlow(client)}}, nil
 	case "xai":
 		return browserLoginFlow{flow: oauth.NewXAIFlow(client)}, nil
 	case "google-antigravity":
-		return browserLoginFlow{flow: oauth.NewAntigravityFlow(client)}, nil
+		flow := oauth.NewAntigravityFlow(client)
+		flow.ForceAccountSelect = forceLogin
+		return browserLoginFlow{flow: flow}, nil
 	case "cursor":
 		return oauth.NewCursorFlow(client), nil
 	case "kimi":
@@ -116,7 +125,7 @@ func runLogin(ctx context.Context, args []string, streams IO) error {
 		return fmt.Errorf("usage: ocx login <provider>\nOAuth providers: %s", strings.Join(publicOAuthProviders, ", "))
 	}
 	flowName, storeName := normalizeLoginProvider(args[0])
-	flow, err := newLoginFlow(flowName, nil, "")
+	flow, err := newLoginFlow(flowName, nil, "", false)
 	if err != nil {
 		return err
 	}

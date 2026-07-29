@@ -24,7 +24,7 @@ func TestNewLoginFlowCoversPublicOAuthProviders(t *testing.T) {
 	}
 	for provider, wantType := range tests {
 		t.Run(provider, func(t *testing.T) {
-			flow, err := newLoginFlow(provider, nil, "")
+			flow, err := newLoginFlow(provider, nil, "", false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -36,7 +36,7 @@ func TestNewLoginFlowCoversPublicOAuthProviders(t *testing.T) {
 }
 
 func TestNewLoginFlowRejectsUnknownProvider(t *testing.T) {
-	if _, err := newLoginFlow("not-a-provider", nil, ""); err == nil {
+	if _, err := newLoginFlow("not-a-provider", nil, "", false); err == nil {
 		t.Fatal("unknown provider was accepted")
 	}
 }

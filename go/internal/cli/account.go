@@ -327,7 +327,7 @@ func accountRefresh(ctx context.Context, store *oauth.CredentialStore, args []st
 		return fmt.Errorf("account %q was not found", accountID)
 	}
 	flowName, _ := normalizeLoginProvider(provider)
-	flow, flowErr := newLoginFlow(flowName, nil, strings.TrimSpace(os.Getenv("KIRO_CREDENTIALS_FILE")))
+	flow, flowErr := newLoginFlow(flowName, nil, strings.TrimSpace(os.Getenv("KIRO_CREDENTIALS_FILE")), false)
 	refreshFlow, refreshable := flow.(refreshableLoginFlow)
 	if flowErr == nil && refreshable && credential.Refresh != "" {
 		result, refreshErr := store.RefreshAccount(ctx, provider, accountID, refreshFlow.Refresh)

@@ -69,7 +69,11 @@ func newCodexAuthManagement(cfg *config.Config, configPath string, store *oauth.
 		mainToken: func() (codex.MainAccountToken, bool) {
 			return codex.ReadMainAccountToken(filepath.Join(codexHome, "auth.json"))
 		},
-		loginFlow: func() (loginFlow, error) { return newLoginFlow("chatgpt", client, "") },
+		// Pool logins always force a fresh browser identity: adding a second account or
+		// reauthenticating one is exactly the case where reusing the existing ChatGPT
+		// session hands back the account the user is trying to change
+		// (oracle: startLoginFlow("chatgpt", { forceLogin: true }), src/codex/auth-api.ts).
+		loginFlow: func() (loginFlow, error) { return newLoginFlow("chatgpt", client, "", true) },
 	}
 	if len(persistence) > 0 {
 		manager.persistence = persistence[0]
