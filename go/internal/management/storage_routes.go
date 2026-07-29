@@ -4,9 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/storage"
 )
+
+// nonNilRestoredPaths keeps an empty result serializing as [] rather than null,
+// which the dashboard iterates directly.
+func nonNilRestoredPaths(paths []string) []string {
+	if paths == nil {
+		return []string{}
+	}
+	return paths
+}
 
 // Storage management routes. The domain layer was ported first and left unreachable: the
 // dashboard's Storage page calls these paths and every one of them answered 404, so a user
@@ -26,6 +36,8 @@ func (a *API) handleStorageRoutes(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, policy)
 	case "PUT /api/storage/cleanup-policy":
 		a.putStorageCleanupPolicy(w, r)
+	case "POST /api/storage/trash/restore":
+		a.restoreTrashEntry(w, r)
 	case "GET /api/storage/cleanup-policy/test-stream", "GET /api/storage/trash/restore/test-stream":
 		// Test-only streaming surfaces. The oracle exposes them for its responsiveness tests;
 		// answering a flat not-found is honest until those tests are ported, and it keeps the
@@ -114,6 +126,108 @@ func (a *API) putStorageCleanupPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // projectCleanupPreview strips the host paths the domain type carries for its own bookkeeping.
+
+// restoreDefaultBusyTimeoutMS matches the oracle's SQLite wait budget for a
+// restore. Long enough that a momentary Codex write does not fail the request,
+// short enough that a genuinely busy database answers instead of hanging.
+const restoreDefaultBusyTimeoutMS = 100
+
+// restoreErrorStatus maps a restore failure to the status the oracle returns
+// (logs-usage-routes.ts:383-393). These are NOT interchangeable: 409 means try
+// again after closing Codex, 404 means the entry is gone, 400 means the id was
+// wrong. Collapsing them to 500 would tell the user to retry something that
+// cannot succeed.
+func restoreErrorStatus(code storage.RestoreErrorCode) int {
+	switch code {
+	case storage.RestoreCodexBusy, storage.RestoreDestExists:
+		return http.StatusConflict
+	case storage.RestoreMissingTrash:
+		return http.StatusNotFound
+	case storage.RestoreInvalidTrash:
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func restoreErrorMessage(code storage.RestoreErrorCode) string {
+	switch code {
+	case storage.RestoreInvalidTrash:
+		return "Trash entry id is missing or invalid."
+	case storage.RestoreMissingTrash:
+		return "Trash entry was not found."
+	case storage.RestoreCodexBusy:
+		return "Codex is using state.sqlite — try again after quitting Codex."
+	case storage.RestoreDestExists:
+		return "Restore destination already exists — remove or rename the archived file and retry."
+	case storage.RestoreFSFailed:
+		return "Filesystem restore failed. Some files may already be restored — check archived_sessions and .trash."
+	case storage.RestoreDBReconcileFailed:
+		return "Could not restore Codex state database rows."
+	default:
+		return "Restore failed."
+	}
+}
+
+// restoreTrashEntry puts a quarantined session back.
+//
+// The mutation slot is taken for the whole restore: a cleanup running at the
+// same time would be moving the very files this is moving back.
+func (a *API) restoreTrashEntry(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.ID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": string(storage.RestoreInvalidTrash), "message": "Trash entry id is required.",
+		})
+		return
+	}
+
+	var result storage.RestoreResult
+	err := storage.Mutations().WithSlot(storage.MutationRestore, storage.Home(a.storageHome), func() error {
+		result = storage.RestoreTrashEntry(strings.TrimSpace(body.ID), a.storageHome, restoreDefaultBusyTimeoutMS, nil)
+		return nil
+	})
+	if err != nil {
+		if storage.IsMutationBusy(err) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   "storage_mutation_busy",
+				"message": "Another storage cleanup or restore is in progress — try again shortly.",
+			})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "restore_failed", "message": restoreErrorMessage(""),
+		})
+		return
+	}
+
+	if !result.OK {
+		code := result.Error
+		if code == "" {
+			code = "restore_failed"
+		}
+		payload := map[string]any{
+			"ok": false, "error": string(code), "message": restoreErrorMessage(code),
+			"count": result.Count, "bytes": result.Bytes, "restoredPaths": nonNilRestoredPaths(result.RestoredPaths),
+		}
+		if result.TrashDir != "" {
+			payload["trashDir"] = result.TrashDir
+		}
+		writeJSON(w, restoreErrorStatus(code), payload)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "trashDir": result.TrashDir, "count": result.Count,
+		"bytes": result.Bytes, "restoredPaths": nonNilRestoredPaths(result.RestoredPaths),
+	})
+}
+
 // codexHome and absPath identify a machine, and count/bytes/digest already bind the full set,
 // so the wire answer names only what the dashboard renders (oracle:
 // src/server/management/logs-usage-routes.ts:257-269). The list is capped at 50 for the same
