@@ -245,7 +245,12 @@ describe("rate-limit reset credits", () => {
       expect(source).not.toContain("isWorkspaceAccount");
       expect(source).not.toContain("Not available for workspace accounts");
       expect(helpers).toContain("if (credits === undefined) return null;");
-      expect(helpers).toContain("className={`badge ${hasCredits ? \"badge-amber\" : \"badge-muted\"} badge-clickable`}");
+      // Supersession (M3 restyle): the legacy `badge badge-amber|badge-muted
+      // badge-clickable` classes became an m3-chip <button> whose tone flips on
+      // hasCredits. The invariant is unchanged: the ticket stays clickable and
+      // visually distinguishes has-credits from none.
+      expect(helpers).toContain('className="m3-chip"');
+      expect(helpers).toContain('chipButtonStyle(hasCredits ? "warn" : "neutral")');
     });
 
     it("keeps clickable ticket badges from overriding visual badge colors", async () => {
@@ -259,15 +264,19 @@ describe("rate-limit reset credits", () => {
 
     it("renders reset tickets beside next-session badges instead of replacing them", async () => {
       const source = await Bun.file("gui/src/components/codex-account-pool-cards.tsx").text();
-      expect(source).toContain("className=\"card-badges\"");
+      // Supersession (M3 restyle): the `.card-badges` wrapper and its styles.css
+      // rules became an inline m3-row chip container. The invariant is the same:
+      // the ticket and the next-session badge render side by side in one
+      // wrapping row, neither replacing the other.
+      expect(source).toContain('<span className="m3-row" style={{ gap: 6 }}>');
       expect(source).toContain("<CodexTicketBadge t={t} account={a} onClick={() => onOpenReset(a)} />");
       // Next-session still renders BESIDE the ticket; health projection also suppresses
       // it for projected reauth/cooldown (not only the legacy needsReauth flag).
       expect(source).toContain("{isNext(a) && !showReauth && !inCooldown && (");
       expect(source).toContain("{t(accountModeState === \"direct\" ? \"codexAuth.poolPrepared\" : \"codexAuth.nextSession\")}");
-      const styles = await Bun.file("gui/src/styles.css").text();
-      expect(styles).toContain(".card-badges { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }");
-      expect(styles).toContain(".card-badges .badge { flex-shrink: 0; }");
+      // The m3-row container wraps and never lets chips shrink into ellipsis.
+      const shell = await Bun.file("gui/src/styles/m3-shell.css").text();
+      expect(shell).toContain(".m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }");
     });
   });
 

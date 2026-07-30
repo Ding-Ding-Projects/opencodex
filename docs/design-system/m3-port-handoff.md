@@ -246,6 +246,22 @@ check that list before anything else.
 
 ## Not landed
 
+### 11. Export + account-change history
+
+- `ocx export <path|-> --yes` — full-state bundle (config, Codex accounts with
+  OAuth credentials, auth record). Refuses without `--yes`; warning on stderr so
+  piping stays clean; mode 600; nothing masked because a masked backup cannot
+  be restored.
+- `src/lib/state-history.ts` — local-only git repo inside `~/.opencodex`,
+  committing config/accounts/auth on account add/remove. **The user has
+  explicitly accepted that secrets live in this local history**; the boundary
+  that remains non-negotiable is local-only (no remote is ever configured,
+  nothing pushes, the generated README in the repo says so). Fully async behind
+  a sequential queue — the first, synchronous version destabilised OAuth flow
+  timing, caught by tests/codex-auth-api.test.ts. On Windows a missing git is
+  auto-installed once via winget (silent); elsewhere it logs and degrades.
+- `ocx export --history` lists snapshots.
+
 ### ~~Stage 2+ — the thirteen product screens~~ DONE
 
 All thirteen landed in `f0c7bb07` as a restyle-in-place: data wiring untouched,

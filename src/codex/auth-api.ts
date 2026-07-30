@@ -1,3 +1,4 @@
+import { recordStateSnapshot } from "../lib/state-history";
 import { loadConfig, saveConfigPreservingClaudeCode } from "../config";
 import { withCodexAccountLogLabel } from "./account-label";
 import {
@@ -680,6 +681,7 @@ export async function handleCodexAuthAPI(
       expiresAt: exp,
       chatgptAccountId: derivedAccountId,
     });
+    void recordStateSnapshot(`account added: ${body.id}`);
     markCodexAccountValidated(body.id, warmup.validatedAt);
     clearAccountNeedsReauth(body.id);
     const accounts = latestConfig.codexAccounts ?? [];
@@ -1128,6 +1130,7 @@ export async function handleCodexAuthAPI(
                 expiresAt: cred.expires,
                 chatgptAccountId: oauthAccountId,
               });
+              void recordStateSnapshot(`account added: ${accountId}`);
               markCodexAccountValidated(accountId, warmup.validatedAt);
               clearAccountNeedsReauth(accountId);
               if (quota) {

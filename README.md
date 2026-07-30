@@ -421,6 +421,29 @@ and every reload asks again. That is deliberate: a browser reached over the netw
 handed a session automatically, and the key is never written somewhere a page script could read
 it back.
 
+### Backups: export everything, and account-change history
+
+```bash
+ocx export backup.json --yes
+```
+
+Writes one JSON bundle (mode 600) holding the full config, every Codex account
+with its OAuth credentials, and the main auth record. **It contains plaintext
+secrets** — the command refuses without `--yes`, prints an unmissable warning on
+stderr (even when piping with `-`), and nothing is masked because a masked
+backup cannot be restored. Store it encrypted; delete it when done.
+
+Separately, every account add/remove commits a snapshot of the state files into
+a **local-only git repository inside `~/.opencodex`** (created automatically; on
+Windows, git itself is auto-installed via winget if missing). Its history
+contains secrets and must never be pushed or synced — the repo is created with
+no remote and a README saying exactly that.
+
+```bash
+ocx export --history                                   # list snapshots
+git -C ~/.opencodex show <hash>:codex-accounts.json    # recover a deleted account
+```
+
 ## Configuration
 
 Config lives at `~/.opencodex/config.json`. If the file cannot be parsed (e.g. truncated or
