@@ -17,6 +17,18 @@ import { removeTempDir } from "./helpers/temp-dir";
  */
 
 describe("state history", () => {
+  /**
+   * These tests shell out to `git` several times each — init, add, commit, log
+   * — and the first also creates the repository. On a cold Windows CI runner
+   * that genuinely takes seconds: the siblings here were already clocking 4.3s
+   * against bun's 5000ms default, and the init case finally crossed it.
+   *
+   * The budget is the honest fix rather than mocking git away: what is being
+   * tested IS that a real repository is created and really commits, and a test
+   * that stubs the subprocess would stop checking the thing that matters.
+   */
+  const GIT_TEST_TIMEOUT_MS = 30_000;
+
   let dir: string;
 
   beforeEach(() => {
@@ -42,7 +54,7 @@ describe("state history", () => {
     const log = listStateHistory(5, dir);
     expect(log.length).toBe(1);
     expect(log[0]).toContain("account added: test");
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   test("runtime noise is ignored — only durable state is ever tracked", async () => {
     writeFileSync(join(dir, "config.json"), "{}\n");
@@ -56,20 +68,20 @@ describe("state history", () => {
     expect(ignore).toContain("!config.json");
     expect(ignore).toContain("!codex-accounts.json");
     expect(ignore).not.toContain("!ocx.pid");
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   test("an unchanged tree does not stack empty commits", async () => {
     writeFileSync(join(dir, "config.json"), "{}\n");
     if (!(await recordStateSnapshot("first", dir))) return;
     expect(await recordStateSnapshot("second, nothing changed", dir)).toBe(false);
     expect(listStateHistory(5, dir).length).toBe(1);
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   test("a newline-bearing reason cannot break the commit message", async () => {
     writeFileSync(join(dir, "config.json"), "{}\n");
     if (!(await recordStateSnapshot("line one\nline two", dir))) return;
     expect(listStateHistory(5, dir)[0]).toContain("line one line two");
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   test("a missing directory is a no-op, never a throw", async () => {
     expect(await recordStateSnapshot("x", join(dir, "does-not-exist"))).toBe(false);
@@ -107,7 +119,7 @@ describe("state history", () => {
     // And the deletion did land — the history is not masking the current state.
     const current = spawnSync("git", ["-C", dir, "show", "HEAD:auth.json"], { encoding: "utf8" });
     expect(JSON.parse(current.stdout)).toEqual({});
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   test("a deletion is never blocked by history: an exhausted budget still returns", async () => {
     writeFileSync(join(dir, "config.json"), "{}\n");
@@ -118,7 +130,7 @@ describe("state history", () => {
     // ...and the snapshot it started still serializes, so the index is not left racing.
     await recordStateSnapshot("after x", dir);
     expect(listStateHistory(5, dir).length).toBeGreaterThanOrEqual(1);
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 });
 
 describe("ocx export", () => {
