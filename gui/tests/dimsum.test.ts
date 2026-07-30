@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DISHES, DRAW_CHANCE, drawDimSum } from "../src/shell/dimsum";
+import { DISHES, DRAW_CHANCE, drawDimSum, photoSrc } from "../src/shell/dimsum";
 
 /**
  * The dim sum contract: one 1% draw per launch, never on first run, never on an
@@ -72,5 +72,20 @@ describe("dim sum draw", () => {
       expect(dish.name.length).toBeGreaterThan(0);
       expect(dish.zh.length).toBeGreaterThan(0);
     }
+  });
+  test("every dish resolves to a bundled, same-origin photo path", () => {
+    // The card renders this first and falls back to the emoji when the file is
+    // absent, so the art drops in with no code change. What must hold now is
+    // that the path is local: a dish photo must never become a network fetch.
+    for (const dish of DISHES) {
+      const src = photoSrc(dish);
+      expect(src).toBe(`dimsum/${dish.id}.webp`);
+      expect(src).not.toContain("//");
+      expect(src.startsWith("http")).toBe(false);
+    }
+  });
+
+  test("dish ids are filename-safe, so a photo can be named after one", () => {
+    for (const dish of DISHES) expect(dish.id).toMatch(/^[a-z0-9-]+$/);
   });
 });

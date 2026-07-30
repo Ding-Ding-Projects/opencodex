@@ -16,9 +16,14 @@ import { LanguageProvider } from "../src/i18n/provider";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 
+/** A local revision can only be noted; only a snapshot can be restored. */
+const localAction = (root: ParentNode) =>
+  [...root.querySelectorAll("button")].find(b => b.textContent?.includes("Note in history"));
+
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
 let testWindow: Window;
+const originalFetch = globalThis.fetch;
 
 const REVISIONS = [
   { id: "r2", scope: "settings", label: "Appearance", summary: "Seed colour changed", at: 1_700_000_100_000 },
@@ -37,10 +42,16 @@ beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.setItem("ocx-m3:revisions", JSON.stringify(REVISIONS));
+  // The screen now also reads the proxy's git history; this file is about the
+  // client log, so the server side answers "nothing recorded" rather than failing.
+  globalThis.fetch = (async () => new Response(JSON.stringify({ snapshots: [], entries: [] }), {
+    status: 200, headers: { "content-type": "application/json" },
+  })) as typeof fetch;
 });
 
 afterEach(() => {
   testWindow.close();
+  globalThis.fetch = originalFetch;
   for (const key of globals) {
     Object.defineProperty(globalThis, key, { configurable: true, value: previousGlobals[key] });
   }
@@ -58,7 +69,7 @@ test("lists every revision and shows the selected one's captured snapshot", asyn
       <PrefsProvider>
         <LanguageProvider>
           <NotificationsProvider>
-            <VersionHistory />
+            <VersionHistory apiBase="http://detail.test" />
           </NotificationsProvider>
         </LanguageProvider>
       </PrefsProvider>,
@@ -77,14 +88,19 @@ test("lists every revision and shows the selected one's captured snapshot", asyn
   expect(container.querySelector("pre")?.textContent).toBe("Seed colour changed");
 
   // No captured `before` means there is nothing to write back.
-  const restore = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Restore"));
+  const restore = localAction(container);
   expect(restore?.disabled).toBe(true);
 
   await act(async () => { listRows[1].click(); });
 
   expect([...container.querySelectorAll(".m3-card-title")].map(n => n.textContent)).toEqual(["groq"]);
-  expect(container.querySelector("pre")?.textContent).toContain("api.groq.com");
-  expect([...container.querySelectorAll("button")].find(b => b.textContent?.includes("Restore"))?.disabled).toBe(false);
+  // A JSON payload is no longer dumped as one blob: it is flattened to path/value
+  // rows, so the thing a restore would write back is actually readable.
+  expect(container.querySelector("pre")).toBeNull();
+  const payload = container.querySelector("dl");
+  expect([...payload!.querySelectorAll("dt")].map(n => n.textContent)).toEqual(["base"]);
+  expect([...payload!.querySelectorAll("dd")].map(n => n.textContent)).toEqual(["https://api.groq.com"]);
+  expect(localAction(container)?.disabled).toBe(false);
 
   await act(async () => { root.unmount(); });
 });
@@ -106,7 +122,7 @@ test("restore is confirmed in a dialog and appends rather than rewinding the log
       <PrefsProvider>
         <LanguageProvider>
           <NotificationsProvider>
-            <VersionHistory />
+            <VersionHistory apiBase="http://restore.test" />
           </NotificationsProvider>
         </LanguageProvider>
       </PrefsProvider>,
@@ -118,7 +134,7 @@ test("restore is confirmed in a dialog and appends rather than rewinding the log
   expect(container.querySelector("dialog")).toBeNull();
 
   await act(async () => {
-    [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Restore"))!.click();
+    localAction(container)!.click();
   });
 
   const dialog = container.querySelector("dialog");
@@ -127,7 +143,7 @@ test("restore is confirmed in a dialog and appends rather than rewinding the log
   expect(dialog?.textContent).toContain("recorded as a new revision");
 
   await act(async () => {
-    [...dialog!.querySelectorAll("button")].find(b => b.textContent === "Restore")!.click();
+    localAction(dialog!)!.click();
   });
 
   const stored = JSON.parse(localStorage.getItem("ocx-m3:revisions") || "[]");

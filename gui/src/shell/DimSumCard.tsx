@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
-import { drawDimSum, type DimSumDish } from "./dimsum";
+import { drawDimSum, photoSrc, type DimSumDish } from "./dimsum";
 
 const AUTO_DISMISS_MS = 12_000;
 
@@ -24,6 +24,39 @@ let launchDraw: DimSumDish | null | undefined;
 function drawOncePerLaunch(enabled: boolean, version: string): DimSumDish | null {
   if (launchDraw === undefined) launchDraw = drawDimSum({ enabled, version });
   return launchDraw;
+}
+
+/**
+ * The dish photo, with the emoji as the fallback.
+ *
+ * A browser cannot be asked synchronously whether a bundled file exists, so the
+ * image is rendered optimistically and `onError` swaps in the stand-in. That
+ * makes the art drop-in: put `har-gow.webp` in `gui/public/dimsum/` and this
+ * starts showing it, with no change here.
+ *
+ * The photo is decorative because the dish is already named in text beside it;
+ * announcing the name twice is noise for a screen reader. The emoji fallback is
+ * hidden for the same reason.
+ */
+export function DishArt({ dish }: { dish: DimSumDish }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return <span aria-hidden="true" style={{ fontSize: 32, lineHeight: 1 }}>{dish.emoji}</span>;
+  }
+  return (
+    <img
+      src={photoSrc(dish)}
+      alt=""
+      aria-hidden="true"
+      width={48}
+      height={48}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+      style={{ width: 48, height: 48, borderRadius: "var(--r-m)", objectFit: "cover", flex: "0 0 auto" }}
+    />
+  );
 }
 
 export default function DimSumCard({ version }: { version: string }) {
@@ -62,8 +95,7 @@ export default function DimSumCard({ version }: { version: string }) {
         animation: "m3-rise 240ms cubic-bezier(0.2, 0, 0, 1)",
       }}
     >
-      {/* Labelled placeholder art — swap for a bundled dish photo before shipping. */}
-      <span aria-hidden="true" style={{ fontSize: 32, lineHeight: 1 }}>{dish.emoji}</span>
+      <DishArt dish={dish} />
       <div style={{ minWidth: 0, flex: "1 1 auto" }}>
         <div style={{ fontWeight: 600, fontSize: "var(--t-title-s)" }}>{t("dimsum.title")}</div>
         <div style={{ fontSize: "var(--t-body-s)" }}>

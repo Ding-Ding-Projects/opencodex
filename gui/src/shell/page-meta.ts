@@ -3,7 +3,7 @@
 import {
   IconActivity, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconDevices, IconGlobe, IconGrid,
   IconHardDrive, IconHistory, IconKey, IconList, IconPalette, IconRefresh, IconRegex, IconServer,
-  IconShuffle, IconSliders, IconSparkle, IconTranslate,
+  IconShuffle, IconSliders, IconSparkle, IconTerminal, IconTranslate,
 } from "../icons";
 import { PAGE_GROUP, type Page } from "../app-routing";
 import type { TKey } from "../i18n/shared";
@@ -36,6 +36,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   history: IconHistory,
   notifications: IconBell,
   network: IconDevices,
+  terminal: IconTerminal,
   settings: IconSliders,
 };
 
@@ -60,6 +61,7 @@ const TKEYS: Record<Page, TKey> = {
   history: "nav.history",
   notifications: "nav.notifications",
   network: "nav.network",
+  terminal: "nav.terminal",
   settings: "nav.settings",
 };
 
@@ -67,7 +69,7 @@ const TKEYS: Record<Page, TKey> = {
 const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
-  "appearance", "language", "regex", "changelog", "history", "notifications", "network", "settings",
+  "appearance", "language", "regex", "changelog", "history", "notifications", "network", "settings", "terminal",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({

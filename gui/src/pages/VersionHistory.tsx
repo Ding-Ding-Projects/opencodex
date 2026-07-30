@@ -1,32 +1,54 @@
 /**
- * Version history — the append-only revision log.
+ * Version history — both change logs on one append-only timeline.
  *
- * A restore is recorded as a *new* revision rather than rewinding the log, so an
- * undo can itself be undone. The confirm dialog says so explicitly; that is the
- * one place a blocking dialog is correct here, because it is a decision.
+ * OpenCodex records what happened in two places, and this screen used to show
+ * only the first:
  *
- * Master/detail rather than a table: a revision's value is the snapshot it would
- * write back, and a table cell cannot show one. The list keeps every revision one
- * click away while the pane shows the captured state and the restore that uses it.
+ *  - the dashboard's own revision log (`shell/revisions.ts`), which captures the
+ *    `before` payload a restore writes back, and
+ *  - the proxy's local git history of the config directory
+ *    (`GET /api/host/history`), one commit per account add or remove.
  *
- * Layout follows the prototype's Version history section: a body-large screen lead,
- * then a bare control row, then the list/detail pair. There is deliberately no card
- * wrapping the controls — the app bar already names the page, so a card titled
- * "Version history" above it was a second copy of the same heading.
+ * A user chasing "when did this break?" needs both, so they are merged newest
+ * first and every row is labelled with the log it came from. `history-model.ts`
+ * owns the merge and the filtering; this file owns the rendering and the two
+ * quite different restore paths.
+ *
+ * Append-only is the invariant that makes the screen safe to experiment in: a
+ * restore is recorded as a NEW entry above the one it came from, never a rewind,
+ * so an undo can itself be undone. That is true of both origins — the server
+ * commits the current state before writing a snapshot back — and both confirm
+ * dialogs say so, because a history panel the user is afraid of is worthless.
+ *
+ * A failed server read is rendered as a failure, never as "no history". Those are
+ * opposite facts and collapsing them would tell someone their machine has never
+ * changed when in truth the dashboard could not ask.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Card, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
+import { Button, Card, Chip, Empty, Field, TextInput } from "../shell/m3-ui";
 import {
   IconFilter, IconGlobe, IconHistory, IconKey, IconRegex, IconSearch,
   IconServer, IconShuffle, IconTag, IconUndo,
 } from "../icons";
 import { useT } from "../i18n/shared";
+import { useKeyedClientResource } from "../client-resource";
+import { readJsonIfOk } from "../fetch-json";
 import { useNotifications } from "../shell/notifications-context";
-import { clearRevisions, readRevisions, recordRevision, type Revision, type RevisionScope } from "../shell/revisions";
+import {
+  clearRevisions, readRevisions, recordRevision, subscribeRevisions,
+  type Revision, type RevisionScope,
+} from "../shell/revisions";
+import {
+  PATTERN_CAP, buildTimeline, filterTimeline, isValidIsoDate, isoDay,
+  type HistoryOrigin, type StateHistoryEntry, type TimelineEntry,
+} from "./history-model";
+import HistoryPayload from "./history-payload";
 import type { TKey } from "../i18n/shared";
 
-const MONO = { fontFamily: "var(--mono)" } as const;
+const MONO: CSSProperties = { fontFamily: "var(--mono)" };
+const SEP = " · ";
 
 const SCOPES: { scope: RevisionScope | "all"; tkey: TKey }[] = [
   { scope: "all", tkey: "history.scopeAll" },
@@ -51,8 +73,25 @@ const SCOPE_ICONS: Record<RevisionScope, typeof IconServer> = {
   settings: IconFilter,
 };
 
+/** Both origins name themselves in the chip and in every row, never by colour alone. */
+const ORIGINS: { origin: HistoryOrigin; tkey: TKey; Icon: typeof IconServer }[] = [
+  { origin: "local", tkey: "history.revisions", Icon: IconHistory },
+  { origin: "server", tkey: "network.historyTitle", Icon: IconServer },
+];
+
+const PRESET_DAYS = [7, 30, 90] as const;
+const PRESET_KEYS: Record<number, TKey> = {
+  7: "changelog.last7",
+  30: "changelog.last30",
+  90: "changelog.last90",
+};
+
 function scopeKey(scope: RevisionScope): TKey {
   return SCOPES.find(s => s.scope === scope)?.tkey ?? "history.scopeAll";
+}
+
+function originKey(origin: HistoryOrigin): TKey {
+  return origin === "server" ? "network.historyTitle" : "history.revisions";
 }
 
 /**
@@ -68,18 +107,17 @@ function Dialog({ titleId, title, closeLabel, onClose, children, actions }: {
   children?: React.ReactNode;
   actions: React.ReactNode;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
+  const [node, setNode] = useState<HTMLDialogElement | null>(null);
 
   useEffect(() => {
-    const dialog = ref.current;
     // Guarded: the modal is only ever mounted while open, and not every DOM
     // implementation the tests run under ships `showModal`.
-    if (dialog && !dialog.open && typeof dialog.showModal === "function") dialog.showModal();
-  }, []);
+    if (node && !node.open && typeof node.showModal === "function") node.showModal();
+  }, [node]);
 
   return (
     <dialog
-      ref={ref}
+      ref={setNode}
       className="modal-overlay"
       aria-labelledby={titleId}
       onCancel={e => { e.preventDefault(); onClose(); }}
@@ -94,67 +132,173 @@ function Dialog({ titleId, title, closeLabel, onClose, children, actions }: {
   );
 }
 
-export default function VersionHistory() {
+type DialogState =
+  | { kind: "restore" }
+  | { kind: "force"; count: number }
+  | { kind: "label" }
+  | { kind: "clear" }
+  | null;
+
+export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE || "" }: { apiBase?: string } = {}) {
   const t = useT();
   const { notify } = useNotifications();
   const [revisions, setRevisions] = useState<Revision[]>(readRevisions);
   const [scope, setScope] = useState<RevisionScope | "all">("all");
+  const [origins, setOrigins] = useState<HistoryOrigin[]>(["local", "server"]);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"restore" | "clear" | "label" | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<DialogState>(null);
   const [labelDraft, setLabelDraft] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  // `recordRevision` fires this event, so a change made on another screen shows up here.
-  useEffect(() => {
-    const refresh = () => setRevisions(readRevisions());
-    window.addEventListener("ocx-revisions", refresh);
-    window.addEventListener("storage", refresh);
-    return () => {
-      window.removeEventListener("ocx-revisions", refresh);
-      window.removeEventListener("storage", refresh);
-    };
-  }, []);
+  // A change made on any other screen has to appear here without a reload.
+  useEffect(() => subscribeRevisions(() => setRevisions(readRevisions())), []);
 
-  const { rows, error } = useMemo(() => {
-    let matcher: (text: string) => boolean;
-    if (!query) matcher = () => true;
-    else if (useRegex) {
+  /**
+   * Shares Network.tsx's resource key on purpose: restoring from either screen
+   * refreshes the other, and the two never show contradictory snapshot lists.
+   *
+   * `null` (not `[]`) is a failed read. Every failure path — transport, non-OK
+   * status, unparseable body — funnels to `null` so the render can tell "could
+   * not ask" apart from "nothing has happened yet".
+   */
+  const history = useKeyedClientResource(
+    `ocx-host-history:${apiBase}`,
+    [],
+    async (signal): Promise<StateHistoryEntry[] | null> => {
       try {
-        const re = new RegExp(query, "i");
-        matcher = text => re.test(text);
-      } catch (e) {
-        return { rows: [] as Revision[], error: e instanceof Error ? e.message : String(e) };
+        const res = await fetch(`${apiBase}/api/host/history`, { signal });
+        const d = await readJsonIfOk<{ entries?: StateHistoryEntry[] }>(res);
+        return d && Array.isArray(d.entries) ? d.entries : null;
+      } catch {
+        return null;
       }
-    } else {
-      const needle = query.toLowerCase();
-      matcher = text => text.toLowerCase().includes(needle);
-    }
-    return {
-      rows: revisions.filter(r => (scope === "all" || r.scope === scope) && matcher(`${r.label} ${r.summary}`)),
-      error: null as string | null,
-    };
-  }, [revisions, scope, query, useRegex]);
+    },
+  );
 
-  // Derived rather than held: filtering away the selected revision must not leave an empty pane.
-  const selected = rows.find(r => r.id === selectedId) ?? rows[0] ?? null;
+  const snapshots = history.data;
+  const serverLoading = snapshots === undefined;
+  const serverFailed = snapshots === null;
+
+  const entries = useMemo(() => buildTimeline(revisions, snapshots), [revisions, snapshots]);
+
+  const fromValid = from === "" || isValidIsoDate(from);
+  const toValid = to === "" || isValidIsoDate(to);
+
+  const { rows, patternError } = useMemo(
+    // An invalid date is reported, not applied — the typed text stays in the field.
+    () => filterTimeline(entries, {
+      scope,
+      origins,
+      from: fromValid ? from : "",
+      to: toValid ? to : "",
+      query,
+      useRegex,
+    }),
+    [entries, scope, origins, from, to, fromValid, toValid, query, useRegex],
+  );
+
+  // Derived rather than held: filtering away the selected entry must not leave an empty pane.
+  const selected: TimelineEntry | null = rows.find(r => r.key === selectedKey) ?? rows[0] ?? null;
 
   const closeDialog = () => setDialog(null);
 
-  const restore = () => {
-    if (!selected) return;
+  const toggleOrigin = (origin: HistoryOrigin) => {
+    setOrigins(current => current.includes(origin) ? current.filter(o => o !== origin) : current.concat(origin));
+  };
+
+  const applyPreset = (days: number) => {
+    const now = new Date();
+    setFrom(isoDay(new Date(now.getTime() - days * 86_400_000)));
+    setTo(isoDay(now));
+  };
+
+  /** Restoring appends rather than rewinds — that is what makes the undo undoable. */
+  const restoreLocal = (entry: TimelineEntry) => {
+    const revision = entry.revision;
+    if (!revision) return;
     closeDialog();
-    // Restoring appends rather than rewinds — that is what makes the undo undoable.
-    const entry = recordRevision({
-      scope: selected.scope,
-      label: selected.label,
-      summary: t("history.restoredFrom", { at: new Date(selected.at).toLocaleString() }),
-      before: selected.before,
+    const next = recordRevision({
+      scope: revision.scope,
+      label: revision.label,
+      summary: t("history.restoredFrom", { at: new Date(revision.at).toLocaleString() }),
+      before: revision.before,
       restored: true,
     });
     setRevisions(readRevisions());
-    setSelectedId(entry.id);
-    notify({ tone: "success", title: t("history.restored"), body: selected.label });
+    setSelectedKey("local:" + next.id);
+    // NOT "Restored". This appends a marker to the local log; it does not replay
+    // `before` to the setting it came from, because the local log holds no route
+    // back to the endpoint that produced it. Claiming a restore here meant a user
+    // could press the button, be told it worked, and still have the new value.
+    // Undoing for real means restoring a snapshot, which is the other origin.
+    notify({
+      tone: "info",
+      title: t("history.localNotedTitle"),
+      body: t("history.localNotedBody"),
+    });
+  };
+
+  /**
+   * Server restore, reusing `/api/host/restore` exactly as Network.tsx does.
+   *
+   * The proxy finishes in-flight requests before rewriting any credential file
+   * and answers 409 with the live turn count rather than cutting sessions off, so
+   * a busy machine asks instead of silently dropping work. The forced retry is a
+   * second decision and gets its own dialog rather than being folded into the
+   * first one's copy.
+   */
+  const restoreServer = async (entry: TimelineEntry, force: boolean): Promise<void> => {
+    const snapshot = entry.snapshot;
+    if (!snapshot) return;
+    closeDialog();
+    setBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/api/host/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commit: snapshot.hash, ...(force ? { force: true } : {}) }),
+      });
+      const body = await res.json().catch(() => null) as {
+        success?: boolean; reason?: string; activeTurnCount?: number;
+        error?: string; message?: string; kept?: string[];
+      } | null;
+
+      if (res.status === 409 && body?.reason === "sessions-in-progress") {
+        setDialog({ kind: "force", count: body.activeTurnCount ?? 0 });
+        return;
+      }
+      if (!res.ok || !body?.success) {
+        notify({ tone: "error", title: t("network.restoreFailed"), body: body?.error ?? body?.message });
+        return;
+      }
+
+      // The server commits the current state before writing the snapshot back, so
+      // the machine's own history stays append-only. Recording it here keeps the
+      // dashboard's log honest about a change the user made from this screen.
+      recordRevision({
+        scope: "settings",
+        label: snapshot.subject,
+        summary: t("history.restoredFrom", { at: new Date(entry.at).toLocaleString() }),
+        restored: true,
+      });
+      setRevisions(readRevisions());
+      notify({
+        tone: "success",
+        title: t("network.restored"),
+        // Files absent from that snapshot are kept, not deleted. Saying so beats
+        // letting the user assume the tree matches the snapshot exactly.
+        body: body.kept?.length ? t("network.restoredKept", { files: body.kept.join(", ") }) : undefined,
+      });
+      history.refresh();
+    } catch {
+      notify({ tone: "error", title: t("network.restoreFailed") });
+    } finally {
+      setBusy(false);
+    }
   };
 
   /**
@@ -164,17 +308,18 @@ export default function VersionHistory() {
    * it restorable and keeps the rename itself undoable.
    */
   const applyLabel = () => {
+    const revision = selected?.revision;
     const next = labelDraft.trim();
-    if (!selected || !next || next === selected.label) { closeDialog(); return; }
+    if (!revision || !next || next === revision.label) { closeDialog(); return; }
     closeDialog();
     const entry = recordRevision({
-      scope: selected.scope,
+      scope: revision.scope,
       label: next,
       summary: t("history.labelUpdated"),
-      before: selected.before,
+      before: revision.before,
     });
     setRevisions(readRevisions());
-    setSelectedId(entry.id);
+    setSelectedKey("local:" + entry.id);
     notify({ tone: "success", title: t("history.labelUpdated"), body: next });
   };
 
@@ -182,8 +327,25 @@ export default function VersionHistory() {
     closeDialog();
     clearRevisions();
     setRevisions([]);
-    setSelectedId(null);
+    setSelectedKey(null);
   };
+
+  const canRestore = !!selected && (selected.origin === "server" ? !busy : !!selected.revision?.before);
+  const restoreLabel = selected?.origin === "server" && selected.snapshot
+    ? selected.snapshot.short + " " + selected.snapshot.subject
+    : selected?.title ?? "";
+
+  /**
+   * Nothing recorded anywhere and nothing matching the filters are different
+   * states, and "changes are recorded as you make them" is only true of the first.
+   * Neither may be shown while the server read is still outstanding or has failed
+   * — that is what would turn an unreachable proxy into a false "no history".
+   */
+  const emptyState = entries.length === 0
+    ? (serverLoading
+      ? <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
+      : <Empty title={t("history.empty")}>{t("history.emptyBody")}</Empty>)
+    : <Empty title={t("modal.noMatch")}>{t("changelog.noResultsBody")}</Empty>;
 
   return (
     <>
@@ -191,16 +353,73 @@ export default function VersionHistory() {
       <p className="m3-page-lead">{t("history.sub")}</p>
 
       <div className="m3-row" style={{ gap: 8, marginBottom: "var(--sp-2)" }}>
-        {SCOPES.map(item => (
-          <Chip key={item.scope} selected={scope === item.scope} onClick={() => setScope(item.scope)}>
+        <div className="m3-row" style={{ gap: 8 }} role="group" aria-label={t("history.colScope")}>
+          {SCOPES.map(item => (
+            <Chip key={item.scope} selected={scope === item.scope} onClick={() => setScope(item.scope)}>
+              {t(item.tkey)}
+            </Chip>
+          ))}
+        </div>
+        {/* Outside the scope group on purpose — it is not a filter. Only the client
+            log can be cleared; the git history belongs to the machine, not to this
+            screen, which is why there is no "clear" for the other origin. */}
+        <Button variant="text" style={{ marginLeft: "auto" }} disabled={!revisions.length} onClick={() => setDialog({ kind: "clear" })}>
+          {t("history.clear")}
+        </Button>
+      </div>
+
+      {/*
+        Origin filters are two independent toggles rather than an all/one/other
+        radio group: each names the log it shows, so unticking one reads as
+        "hide that log" and unticking both is an honest empty result instead of a
+        hidden third state.
+      */}
+      <div className="m3-row" style={{ gap: 8, marginBottom: "var(--sp-2)" }}>
+        {ORIGINS.map(item => (
+          <Chip
+            key={item.origin}
+            selected={origins.includes(item.origin)}
+            onClick={() => toggleOrigin(item.origin)}
+          >
+            <item.Icon width={16} height={16} aria-hidden="true" />
             {t(item.tkey)}
           </Chip>
         ))}
-        {/* Trails the filters rather than sitting inside `role="search"`, which is
-            for the query controls only. */}
-        <Button variant="text" style={{ marginLeft: "auto" }} disabled={!revisions.length} onClick={() => setDialog("clear")}>
-          {t("history.clear")}
-        </Button>
+      </div>
+
+      <div className="m3-row" style={{ gap: "var(--sp-2)", alignItems: "flex-start" }}>
+        <div style={{ flex: "1 1 170px", minWidth: 0 }}>
+          {/* Reserved hint height: the error appearing must not shove the presets down. */}
+          <Field
+            id="history-from"
+            label={t("changelog.from")}
+            hint={<span style={{ display: "block", minHeight: 18, color: "var(--m3-error)" }}>
+              {fromValid ? "" : t("changelog.badDate")}
+            </span>}
+          >
+            <TextInput id="history-from" type="date" value={from} aria-invalid={!fromValid} style={MONO} onChange={e => setFrom(e.target.value)} />
+          </Field>
+        </div>
+        <div style={{ flex: "1 1 170px", minWidth: 0 }}>
+          <Field
+            id="history-to"
+            label={t("changelog.to")}
+            hint={<span style={{ display: "block", minHeight: 18, color: "var(--m3-error)" }}>
+              {toValid ? "" : t("changelog.badDate")}
+            </span>}
+          >
+            <TextInput id="history-to" type="date" value={to} aria-invalid={!toValid} style={MONO} onChange={e => setTo(e.target.value)} />
+          </Field>
+        </div>
+        <div style={{ flex: "2 1 260px", minWidth: 0 }}>
+          <span className="m3-field-label" id="history-presets-label">{t("changelog.presets")}</span>
+          <div className="m3-row" role="group" aria-labelledby="history-presets-label" style={{ gap: 6 }}>
+            {PRESET_DAYS.map(days => (
+              <Chip key={days} onClick={() => applyPreset(days)}>{t(PRESET_KEYS[days])}</Chip>
+            ))}
+            <Chip onClick={() => { setFrom(""); setTo(""); }}>{t("changelog.clearDates")}</Chip>
+          </div>
+        </div>
       </div>
 
       <div className="m3-row" role="search">
@@ -210,7 +429,7 @@ export default function VersionHistory() {
           onChange={e => setQuery(e.target.value)}
           placeholder={t("history.search")}
           aria-label={t("history.search")}
-          aria-invalid={!!error}
+          aria-invalid={!!patternError}
           aria-describedby="history-regex-error"
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
@@ -224,35 +443,52 @@ export default function VersionHistory() {
       </div>
       {/* Reserved height so the error appearing does not shove the list down. */}
       <p id="history-regex-error" role="alert" style={{ minHeight: 20, margin: "4px 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
-        {error ? `${t("regex.invalid")}: ${error}` : ""}
+        {patternError ? t("regex.invalid") + ": " + patternError : ""}
       </p>
+      {useRegex && (
+        <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+          {t("regex.patternCap", { used: String(Math.min(query.trim().length, PATTERN_CAP)), cap: String(PATTERN_CAP) })}
+        </p>
+      )}
 
-      {!selected ? (
-        // Nothing recorded yet and nothing matching the filters are different states,
-        // and the "changes are recorded as you make them" body is only true of the first.
-        revisions.length
-          ? <Empty title={t("modal.noMatch")} />
-          : <Empty title={t("history.empty")}>{t("history.emptyBody")}</Empty>
-      ) : (
+      {/*
+        Sits above the timeline and stays visible even when local revisions render
+        below it: "the git history could not be read" must never be silently
+        swallowed by a list that happens to have client rows in it.
+      */}
+      {serverFailed && (
+        <p role="alert" style={{
+          margin: "0 0 var(--sp-2)", padding: "var(--sp-2) var(--sp-3)", borderRadius: "var(--r-m)",
+          background: "var(--m3-error-container)", color: "var(--m3-on-error-container)",
+          fontSize: "var(--t-body-s)",
+        }}>
+          {t("network.historyFailed")}
+        </p>
+      )}
+
+      {!selected ? emptyState : (
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "var(--sp-3)" }}>
           <ul
-            aria-label={t("history.revisions")}
+            aria-label={t("history.title")}
             style={{
-              flex: "1 1 260px", minWidth: 0, listStyle: "none", margin: 0, padding: 10,
+              flex: "1 1 280px", minWidth: 0, listStyle: "none", margin: 0, padding: 10,
               borderRadius: "var(--r-l)", background: "var(--m3-surface-container-low)",
               border: "1px solid var(--m3-outline-variant)",
+              maxHeight: 560, overflowY: "auto",
             }}
           >
-            {rows.map(revision => {
+            {rows.map(entry => {
               // The log is read back from localStorage unvalidated, so an unknown scope must not blank the pane.
-              const Icon = revision.restored ? IconUndo : SCOPE_ICONS[revision.scope] ?? IconHistory;
-              const on = revision.id === selected.id;
+              const Icon = entry.origin === "server"
+                ? IconServer
+                : entry.restored ? IconUndo : (entry.scope ? SCOPE_ICONS[entry.scope] : undefined) ?? IconHistory;
+              const on = entry.key === selected.key;
               return (
-                <li key={revision.id}>
+                <li key={entry.key}>
                   <button
                     type="button"
                     aria-current={on ? "true" : undefined}
-                    onClick={() => setSelectedId(revision.id)}
+                    onClick={() => setSelectedKey(entry.key)}
                     style={{
                       display: "flex", alignItems: "flex-start", gap: 10, width: "100%", minHeight: 64,
                       padding: "10px 12px", border: "none", borderRadius: "var(--r-m)", cursor: "pointer",
@@ -264,19 +500,19 @@ export default function VersionHistory() {
                     <Icon aria-hidden="true" width={20} height={20} style={{ flex: "0 0 auto", marginTop: 2 }} />
                     <span style={{ minWidth: 0 }}>
                       <span style={{ display: "block", fontSize: "var(--t-body-s)", fontWeight: 500, overflowWrap: "anywhere" }}>
-                        {revision.label}
+                        {entry.title}
                       </span>
-                      {/* Prototype's secondary line is `id · when`; ids are long here, so it
-                          truncates rather than wrapping the row to three lines. */}
+                      {/* Every row names its own log in words — origin is never carried
+                          by the icon alone, which a screen reader cannot see. */}
                       <span
-                        title={revision.id}
+                        title={entry.ref}
                         style={{
                           ...MONO, display: "block", marginTop: 2, fontSize: "var(--t-label-s)",
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                           color: on ? "inherit" : "var(--m3-on-surface-variant)",
                         }}
                       >
-                        {revision.id} · {new Date(revision.at).toLocaleString()}
+                        {t(originKey(entry.origin))}{SEP}{entry.ref}{SEP}{new Date(entry.at).toLocaleString()}
                       </span>
                     </span>
                   </button>
@@ -287,70 +523,118 @@ export default function VersionHistory() {
 
           <Card
             style={{ flex: "3 1 360px", minWidth: 0, marginBottom: 0 }}
-            title={selected.label}
+            title={selected.title}
             subtitle={
               <span style={{ ...MONO, overflowWrap: "anywhere" }}>
-                {selected.id} · {new Date(selected.at).toLocaleString()} · {t(scopeKey(selected.scope))}
+                {t(originKey(selected.origin))}{SEP}{selected.ref}{SEP}{new Date(selected.at).toLocaleString()}
+                {selected.scope ? SEP + t(scopeKey(selected.scope)) : ""}
               </span>
             }
           >
-            <p style={{ margin: 0, fontSize: "var(--t-body-m)" }}>
-              {selected.summary}
-              {selected.restored && (
-                <span style={{ marginLeft: 8, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-s)" }}>
-                  {t("history.restoredTag")}
-                </span>
-              )}
-            </p>
+            {selected.summary && (
+              <p style={{ margin: 0, fontSize: "var(--t-body-m)" }}>
+                {selected.summary}
+                {selected.restored && (
+                  <span style={{ marginLeft: 8, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-s)" }}>
+                    {t("history.restoredTag")}
+                  </span>
+                )}
+              </p>
+            )}
 
             <div style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)", margin: "18px 0 8px" }}>
               {t("history.diff")}
             </div>
-            {/* Without a captured `before` there is nothing to restore, so the summary is all the pane can honestly show. */}
-            <pre style={{
-              ...MONO, margin: 0, padding: "14px 16px", borderRadius: "var(--r-m)",
-              background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface)",
-              fontSize: "var(--t-label-m)", lineHeight: 1.7,
-              overflowX: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere",
-            }}>
-              {selected.before ?? selected.summary}
-            </pre>
+            {/* A revision without a captured `before` has nothing to restore, so the
+                summary is all the pane can honestly show; a git snapshot shows the
+                full commit it would write back. */}
+            <HistoryPayload
+              label={t("history.diff")}
+              raw={
+                selected.snapshot
+                  ? selected.snapshot.hash + "\n" + selected.snapshot.subject
+                  : selected.revision?.before ?? selected.summary
+              }
+            />
 
             <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
-              <Button disabled={!selected.before} onClick={() => setDialog("restore")}>
-                <IconUndo aria-hidden="true" />
-                {t("history.restore")}
-              </Button>
+              {/* A snapshot can be restored; a local revision can only be noted. The
+                  button says which one this is, so the label never promises an undo
+                  the entry cannot perform. */}
               <Button
-                variant="outlined"
-                onClick={() => { setLabelDraft(selected.label); setDialog("label"); }}
+                disabled={!canRestore}
+                title={selected.origin === "server" ? undefined : t("history.localCannotRestore")}
+                onClick={() => setDialog({ kind: "restore" })}
               >
-                <IconTag aria-hidden="true" />
-                {t("history.label")}
+                <IconUndo aria-hidden="true" />
+                {selected.origin === "server" ? t("history.restore") : t("history.localAction")}
               </Button>
+              {selected.revision && (
+                <Button
+                  variant="outlined"
+                  onClick={() => { setLabelDraft(selected.revision!.label); setDialog({ kind: "label" }); }}
+                >
+                  <IconTag aria-hidden="true" />
+                  {t("history.label")}
+                </Button>
+              )}
             </div>
           </Card>
         </div>
       )}
 
-      {dialog === "restore" && selected && (
+      {dialog?.kind === "restore" && selected && (
         <Dialog
           titleId="history-restore-title"
+          title={selected.origin === "server" ? t("history.restore") : t("history.localAction")}
+          closeLabel={t("common.close")}
+          onClose={closeDialog}
+          actions={
+            <>
+              <button type="button" className="m3-btn m3-btn--text" onClick={closeDialog}>{t("common.cancel")}</button>
+              <button
+                type="button"
+                className="m3-btn m3-btn--filled"
+                onClick={() => selected.origin === "server" ? void restoreServer(selected, false) : restoreLocal(selected)}
+              >
+                {selected.origin === "server" ? t("history.restore") : t("history.localAction")}
+              </button>
+            </>
+          }
+        >
+          {/*
+            Both wordings state the append-only guarantee. The server one also has
+            to say that in-flight work finishes first and the proxy restarts,
+            because that restore reaches outside the browser.
+          */}
+          <p className="modal-desc" style={{ whiteSpace: "pre-line" }}>
+            {selected.origin === "server"
+              ? t("network.restoreConfirm", { label: restoreLabel })
+              : t("history.restoreConfirm", { label: restoreLabel })}
+          </p>
+        </Dialog>
+      )}
+
+      {dialog?.kind === "force" && selected && (
+        <Dialog
+          titleId="history-force-title"
           title={t("history.restore")}
           closeLabel={t("common.close")}
           onClose={closeDialog}
           actions={
             <>
               <button type="button" className="m3-btn m3-btn--text" onClick={closeDialog}>{t("common.cancel")}</button>
-              <button type="button" className="m3-btn m3-btn--filled" onClick={restore}>{t("history.restore")}</button>
+              <button type="button" className="m3-btn m3-btn--danger" onClick={() => void restoreServer(selected, true)}>
+                {t("history.restore")}
+              </button>
             </>
           }
         >
-          <p className="modal-desc">{t("history.restoreConfirm", { label: selected.label })}</p>
+          <p className="modal-desc">{t("network.restoreForceConfirm", { count: String(dialog.count) })}</p>
         </Dialog>
       )}
 
-      {dialog === "label" && selected && (
+      {dialog?.kind === "label" && selected?.revision && (
         <Dialog
           titleId="history-label-title"
           title={t("history.label")}
@@ -373,7 +657,7 @@ export default function VersionHistory() {
         </Dialog>
       )}
 
-      {dialog === "clear" && (
+      {dialog?.kind === "clear" && (
         <Dialog
           titleId="history-clear-title"
           title={t("history.clear")}

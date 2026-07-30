@@ -804,12 +804,101 @@ html[data-desktop] .m3-appbar .m3-avatar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Wraps so the installer transcript drops onto its own line instead of
+     squeezing the label and the button into nothing while an install runs. */
+  flex-wrap: wrap;
   gap: var(--sp-2);
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--m3-outline-variant);
   border-radius: var(--r-md, 12px);
   background: var(--m3-surface-container-low);
+}
+/* Embedded terminal. */
+.m3-term-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+.m3-term-warn {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm, 8px);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-s);
+}
+.m3-term-out {
+  margin: 0;
+  padding: var(--sp-2);
+  /* Tall enough to be a terminal, bounded so it cannot push the page. */
+  height: min(52vh, 460px);
+  overflow: auto;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-md, 12px);
+  background: var(--m3-surface-container-lowest, var(--m3-surface-container-low));
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font-mono, ui-monospace, monospace);
+  font-size: var(--t-body-s, 13px);
+  line-height: 1.45;
+  /* Wrap rather than scroll sideways: a long path should not hide the prompt. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.m3-term-out:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+}
+.m3-term-err {
+  color: var(--m3-error);
+}
+.m3-term-in {
+  /* The line you sent, distinguishable from what the process replied. */
+  color: var(--m3-primary);
+  font-weight: 500;
+}
+.m3-term-input {
+  display: flex;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+}
+.m3-term-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-sm, 8px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font-mono, ui-monospace, monospace);
+  font-size: var(--t-body-s, 13px);
+}
+.m3-term-input input:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 1px;
+}
+
+.m3-launch-log {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-launch-log summary {
+  cursor: pointer;
+}
+.m3-launch-log pre {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-1);
+  max-height: 180px;
+  overflow: auto;
+  border-radius: var(--r-sm, 8px);
+  background: var(--m3-surface-container-high);
+  font-family: var(--m3-font-mono, ui-monospace, monospace);
+  /* Installer output is arbitrary width; it scrolls in its own box rather than
+     pushing the card sideways. */
+  white-space: pre;
 }
 .m3-launch-meta {
   min-width: 0;

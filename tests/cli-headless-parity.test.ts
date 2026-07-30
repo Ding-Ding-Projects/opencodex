@@ -86,6 +86,7 @@ describe("headless GUI parity CLI", () => {
       ["/api/subagent", "ocx agent"],
       ["/api/sync", "ocx system sync"],
       ["/api/system", "ocx observe/system"],
+      ["/api/terminal", "ocx terminal"],
       ["/api/update", "ocx system update"],
       ["/api/usage", "ocx observe usage"],
       ["/api/v2", "ocx v2/agent"],

@@ -24,7 +24,8 @@ export type Page =
   | "history"
   | "notifications"
   | "network"
-  | "settings";
+  | "settings"
+  | "terminal";
 
 export const VALID_PAGES = new Set<Page>([
   "dashboard",
@@ -48,6 +49,7 @@ export const VALID_PAGES = new Set<Page>([
   "notifications",
   "network",
   "settings",
+  "terminal",
 ]);
 
 /** Product pages sit above the system pages in the nav, separated by a divider. */
@@ -73,6 +75,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   notifications: "system",
   network: "system",
   settings: "system",
+  terminal: "system",
 };
 
 export function readPageFromHash(hash?: string): Page {

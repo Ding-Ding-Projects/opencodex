@@ -211,6 +211,24 @@ const helpEntries: Record<string, HelpEntry> = {
       "told so instead of getting a legacy console popup.",
     ],
   },
+  terminal: {
+    usage: "ocx terminal [list|run <preset>] [--command \"...\"] [--wait <ms>] [--json]",
+    summary: "Run a command through an opencodex terminal session.",
+    details: [
+      "list                Show every preset (the default).",
+      "run <preset>        Start a session, optionally send one command, print the output, and",
+      "                    close it again.",
+      "",
+      "--command \"...\"     The command to send.",
+      "--wait <ms>         How long to collect output before printing (default 4000, max 120000).",
+      "--json              Machine-readable output.",
+      "",
+      "You are already in a terminal, so this is not trying to be one. It exists for the",
+      "scriptable half of the dashboard's Terminal screen: the session runs where opencodex",
+      "runs. Sessions are piped rather than pseudo-terminals, so a full-screen TUI will not",
+      "render — non-interactive commands work normally.",
+    ],
+  },
   changelog: { usage: "ocx changelog [--from <date>] [--to <date>] [--search <text>] [--regex] [--limit <n>] [--json]", summary: "Show released versions and their changes." },
   system: {
     usage: "ocx system <status|settings|startup|diagnostics|sync|update> ...",
@@ -331,6 +349,7 @@ Usage:
   ocx changelog [opts]        Released versions and their changes
   ocx host <sub>              Expose the proxy to other devices on your network
   ocx launch [target]         Open an agent CLI or desktop app (Codex, Grok, Claude)
+  ocx terminal <sub>          Run a command in an opencodex terminal session (list|run)
   ocx export <path> --yes     Full state backup — config, accounts, auth (secrets included)
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export

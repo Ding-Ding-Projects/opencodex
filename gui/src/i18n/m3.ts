@@ -24,6 +24,7 @@ export const M3_EN = {
   "nav.history": "Version history",
   "nav.notifications": "Notifications",
   "nav.network": "Remote access & backup",
+  "nav.terminal": "Terminal",
   "nav.settings": "Settings",
 
   // ---- settings surface ----
@@ -62,6 +63,10 @@ export const M3_EN = {
   "tabs.listAria": "Open pages",
   "tabs.close": "Close {name}",
   "tabs.overflow": "All tabs",
+  // The overflow menu lists only the tabs that did NOT fit, and its badge counts
+  // only those — so labelling it "All tabs" told the user five tabs were missing
+  // from a list that was never claiming to hold them. Named for what it contains.
+  "tabs.hidden": "Hidden tabs ({count})",
   "tabs.newTab": "New tab",
 
   "appbar.noAccount": "No account signed in",
@@ -200,6 +205,15 @@ export const M3_EN = {
   "network.historyEmpty": "No snapshots yet",
   "network.historyEmptyBody": "Snapshots are recorded automatically when an account or key is added or removed.",
   "network.historyFailed": "Could not read the account-change history",
+
+  // The local revision log records WHAT changed; it does not hold a replay path back
+  // to the setting it came from, so pressing its button never put anything back. It
+  // said "Restored" anyway. These name the action for what it does, and point at the
+  // snapshot restore that genuinely undoes a change.
+  "history.localAction": "Note in history",
+  "history.localNotedTitle": "Noted in the history",
+  "history.localNotedBody": "The local log records what changed — it cannot put the old value back. To undo it, restore a snapshot from below taken before the change.",
+  "history.localCannotRestore": "This entry is a record of a change, not a copy of the state before it. Snapshot entries can be restored.",
   "network.historySearch": "Search snapshots",
   "network.historyNoMatch": "No snapshot matches",
   "network.historyNoMatchBody": "Nothing in the history matches that search. Clear it to see every snapshot again.",
@@ -244,6 +258,34 @@ export const M3_EN = {
   "launch.failed": "Could not open {label}",
   "launch.notInstalled": "Not installed",
   "launch.install": "Get it",
+  "launch.installing": "Installing {label}…",
+  "launch.installed": "{label} installed",
+  "launch.installFailed": "Could not install {label}",
+  "launch.installOpenPage": "Open download page",
+  // Shown instead of an install button when no official package exists for a
+  // target. Saying why keeps it from reading as a broken button.
+  "launch.installManual": "No official package — opens the download page",
+  "launch.installRestart": "Installed. Restart opencodex so it appears on PATH.",
+  "launch.installLog": "Installer output",
+
+  "terminal.title": "Terminal",
+  "terminal.subtitle": "Run commands without leaving opencodex. Sessions start in your home directory.",
+  "terminal.idleTitle": "No session",
+  "terminal.idleBody": "Pick a shell or a CLI above to start one.",
+  "terminal.stop": "Stop",
+  "terminal.send": "Run",
+  "terminal.inputLabel": "Command",
+  "terminal.inputPlaceholder": "Type a command and press Enter",
+  "terminal.exited": "Session has exited",
+  "terminal.transcript": "{label} output",
+  "terminal.startFailed": "Could not start {label}",
+  "terminal.writeFailed": "Could not send that to the session",
+  "terminal.blockedTitle": "Terminal disabled",
+  "terminal.blocked": "The embedded terminal is only available when the proxy is bound to this machine.",
+  // Said before the session starts and again while it runs: this transport pipes
+  // stdio rather than allocating a pseudo-terminal, so a full-screen interface
+  // draws nothing. Non-interactive commands work normally.
+  "terminal.fullScreenWarn": "This CLI's full-screen interface needs a real console and will not draw here. Non-interactive commands (--help, exec, --version) work. Use Launch to open the full experience in a console.",
   "launch.emptyTitle": "Nothing to launch yet",
   "launch.emptyBody": "None of the agent CLIs or desktop apps were found on this machine. Install one and it appears here.",
   "launch.loadFailed": "Could not read the launcher targets",

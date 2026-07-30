@@ -97,6 +97,15 @@ export async function drainAndShutdown(
 ): Promise<void> {
   const s = server ?? _serverRef;
   draining = true;
+
+  // Embedded terminal children are not turns and will not drain — a shell sits
+  // there forever waiting for input. Kill them first so shutdown does not leave
+  // orphaned processes holding the user's home directory open.
+  try {
+    const { killAllSessions } = await import("../lib/terminal-session");
+    killAllSessions();
+  } catch { /* module never loaded: no sessions to kill */ }
+
   const deadline = Date.now() + timeoutMs;
   while (activeTurns.size > 0 && Date.now() < deadline) {
     await Bun.sleep(100);

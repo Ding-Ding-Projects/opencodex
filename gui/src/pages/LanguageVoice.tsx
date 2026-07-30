@@ -24,6 +24,7 @@ import { cancelNarration, configureNarrator, narrate, narratorAvailable } from "
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
 import { DISHES, type DimSumDish } from "../shell/dimsum";
+import { DishArt } from "../shell/DimSumCard";
 
 const MONO = { fontFamily: "var(--mono)" } as const;
 
@@ -334,8 +335,10 @@ export default function LanguageVoice() {
                 color: "var(--m3-on-tertiary-container)",
               }}
             >
-              {/* Labelled placeholder art — swap for a bundled dish photo before shipping. */}
-              <span aria-hidden="true" style={{ fontSize: 32, lineHeight: 1 }}>{preview.emoji}</span>
+              {/* Same art path as the real card, so the preview shows exactly
+                  what a launch would — photo when one is bundled, stand-in when
+                  it is not. */}
+              <DishArt dish={preview} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: "var(--t-title-s)" }}>{t("dimsum.title")}</div>
                 <div style={{ fontSize: "var(--t-body-s)" }}>

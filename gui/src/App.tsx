@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { setClientResourceData, useKeyedClientResource } from "./client-resource";
 import Dashboard from "./pages/Dashboard";
+import Terminal from "./pages/Terminal";
 import Providers from "./pages/Providers";
 import Models from "./pages/Models";
 import Combos from "./pages/Combos";
@@ -87,6 +88,7 @@ function renderPage(page: Page): ReactNode {
     case "notifications": return <NotificationsPage />;
     case "network": return <Network apiBase={API_BASE} />;
     case "settings": return <SettingsPage apiBase={API_BASE} />;
+    case "terminal": return <Terminal apiBase={API_BASE} />;
   }
 }
 

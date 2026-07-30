@@ -664,6 +664,25 @@ const codexAccountNamespacesSchema = z.custom<Record<string, unknown>>(
   }
 }).pipe(z.record(z.string(), z.string()));
 
+const nestedSubagentDepthSchema = z.object({
+  models: z.array(z.string()).optional(),
+  injectionModel: z.string().optional(),
+  injectionEffort: z.string().optional(),
+  effortCap: z.string().optional(),
+}).passthrough();
+
+const nestedSubagentsSchema = z.object({
+  enabled: z.boolean().optional(),
+  maxDepth: z.number().optional(),
+  maxChildrenPerNode: z.number().optional(),
+  maxTotalSpawnsPerSession: z.number().optional(),
+  maxTurnsPerSpawnedAgent: z.number().optional(),
+  unknownDepthAssumption: z.number().optional(),
+  spawnEdgeLookup: z.boolean().optional(),
+  trustTaskSentinel: z.boolean().optional(),
+  depths: z.array(nestedSubagentDepthSchema).optional(),
+}).passthrough();
+
 const configSchema = z.object({
   port: z.number().int().min(0).max(65535).default(10100),
   // A blank hostname degrades to undefined rather than failing the parse. `getDefaultConfig()`
@@ -686,6 +705,13 @@ const configSchema = z.object({
   injectionModel: z.string().optional().catch(undefined),
   injectionEffort: z.string().optional().catch(undefined),
   syncCodexSubagentDefaults: z.boolean().optional().catch(undefined),
+  // Nested sub-agents. `.catch(undefined)` in the same style as injectionEffort above: a
+  // hand-edited typo must disable only this optional feature, never fail the whole parse and
+  // trip the backup-and-defaults repair path that would wipe providers and pool accounts.
+  // Values are ALSO clamped at read time (src/server/nested-subagents.ts nestedSubagentSettings)
+  // — schema validation covers what the dashboard writes, clamping covers what a text editor
+  // writes, and "maxDepth": 99 must become 4 either way.
+  nestedSubagents: nestedSubagentsSchema.optional().catch(undefined),
   codexShimAutoRestore: z.boolean().optional(),
   pausedCodexAccountIds: z.array(z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/)).optional(),
   codexAccountNamespaces: codexAccountNamespacesSchema.optional(),

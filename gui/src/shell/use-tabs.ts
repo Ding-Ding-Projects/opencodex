@@ -10,14 +10,79 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { VALID_PAGES, type Page } from "../app-routing";
 
 const TABS_KEY = "ocx-m3:tabs";
+
+/**
+ * Per-tab appearance override, written by the "Edit tab appearance…" editor and
+ * read by every surface that renders a tab.
+ *
+ * It lives on the tab record rather than in `prefs.elementStyles` because those
+ * are per-*surface* (`--el-tabStrip-*` styles the whole strip); this one has to
+ * survive being rendered somewhere other than the strip — the overflow menu —
+ * which is exactly the customization a plain text menu would throw away.
+ */
+export interface TabStyle {
+  /** Label and icon colour; any CSS colour the infinite picker can produce. */
+  color?: string;
+  /** Tab background. */
+  bg?: string;
+  /** Font family stack. */
+  font?: string;
+  /** Label size in px. */
+  size?: number;
+  /** Label weight, 300–700. */
+  weight?: number;
+  /** Short user-authored badge shown after the label. */
+  badge?: string;
+}
 
 export interface Tab {
   id: string;
   page: Page;
   pinned: boolean;
+  style?: TabStyle;
+}
+
+/** Drop anything that is not a value this style can actually render. */
+function readTabStyle(raw: unknown): TabStyle | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const input = raw as Record<string, unknown>;
+  const style: TabStyle = {};
+  for (const key of ["color", "bg", "font"] as const) {
+    if (typeof input[key] === "string" && input[key]) style[key] = input[key] as string;
+  }
+  if (typeof input.size === "number" && Number.isFinite(input.size)) {
+    style.size = Math.min(24, Math.max(9, input.size));
+  }
+  if (typeof input.weight === "number" && Number.isFinite(input.weight)) {
+    style.weight = Math.min(700, Math.max(300, input.weight));
+  }
+  if (typeof input.badge === "string" && input.badge.trim()) style.badge = input.badge.trim().slice(0, 12);
+  return Object.keys(style).length ? style : undefined;
+}
+
+/**
+ * One tab's appearance, split into the two elements that carry it.
+ *
+ * Both the strip and the overflow menu render through this, so a customized tab
+ * cannot look like one thing in the strip and grey text in the dropdown.
+ * `.m3-tab-btn` sets its own `color`, which would win over an inherited one —
+ * hence the label half is applied to the button rather than the wrapper.
+ */
+export function tabStyleProps(style?: TabStyle): { surface: CSSProperties; label: CSSProperties } {
+  if (!style) return { surface: {}, label: {} };
+  return {
+    surface: style.bg ? { background: style.bg } : {},
+    label: {
+      ...(style.color ? { color: style.color } : {}),
+      ...(style.font ? { fontFamily: style.font } : {}),
+      ...(style.size != null ? { fontSize: `${style.size}px` } : {}),
+      ...(style.weight != null ? { fontWeight: style.weight } : {}),
+    },
+  };
 }
 
 interface StoredTabs {
@@ -39,7 +104,7 @@ function readTabs(initialPage: Page): StoredTabs {
             !!t && typeof t === "object"
             && typeof (t as Tab).id === "string"
             && VALID_PAGES.has((t as Tab).page))
-          .map((t: Tab) => ({ id: t.id, page: t.page, pinned: !!t.pinned }))
+          .map((t: Tab) => ({ id: t.id, page: t.page, pinned: !!t.pinned, style: readTabStyle(t.style) }))
       : [];
     if (tabs.length) {
       const activeTab = tabs.some(t => t.id === raw.activeTab) ? raw.activeTab : tabs[0].id;
@@ -55,6 +120,48 @@ function orderTabs(tabs: Tab[]): Tab[] {
   return tabs.slice().sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
 }
 
+/**
+ * Narrowest a tab may become before the strip stops squeezing and starts
+ * overflowing. `.m3-tab` shrinks to nothing otherwise, so without a floor the
+ * strip degrades into a row of unreadable slivers instead of an overflow menu.
+ */
+export const MIN_TAB_WIDTH = 132;
+/** `.m3-tablist { gap: 4px }`. */
+const TAB_GAP = 4;
+
+export interface TabSplit {
+  /** Tabs the strip renders, in strip order. */
+  visible: Tab[];
+  /** Tabs that do not fit, in strip order. Never contains a pinned tab. */
+  overflow: Tab[];
+}
+
+/**
+ * Which tabs fit in `listWidth` pixels.
+ *
+ * Pinned tabs are never overflowed — staying visible is what pinning means — and
+ * neither is the active tab, so activating an overflowed tab always pulls it
+ * back into the strip. A width of 0 means "not measured yet" (first paint, or a
+ * DOM with no layout) and shows everything rather than guessing.
+ */
+export function splitTabs(tabs: Tab[], activeTab: string, listWidth: number): TabSplit {
+  if (!(listWidth > 0) || tabs.length <= 1) return { visible: tabs, overflow: [] };
+  const capacity = Math.max(1, Math.floor((listWidth + TAB_GAP) / (MIN_TAB_WIDTH + TAB_GAP)));
+  if (tabs.length <= capacity) return { visible: tabs, overflow: [] };
+
+  const keep = new Set(tabs.filter(tab => tab.pinned).map(tab => tab.id));
+  if (tabs.some(tab => tab.id === activeTab)) keep.add(activeTab);
+  let slots = capacity - keep.size;
+  for (const tab of tabs) {
+    if (slots <= 0) break;
+    if (!keep.has(tab.id)) { keep.add(tab.id); slots -= 1; }
+  }
+  return {
+    visible: tabs.filter(tab => keep.has(tab.id)),
+    overflow: tabs.filter(tab => !keep.has(tab.id)),
+  };
+}
+
 export interface TabsApi {
   tabs: Tab[];
   activeTab: string;
@@ -65,6 +172,11 @@ export interface TabsApi {
   closeTab: (id: string) => void;
   togglePin: (id: string) => void;
   moveTab: (fromId: string, toId: string) => void;
+  /**
+   * Merge a per-tab appearance override. The caller records the revision,
+   * because only it can name the change in the user's language.
+   */
+  setTabStyle: (id: string, patch: TabStyle) => void;
   /** Point the active tab at a different page without opening one (hash sync). */
   setActivePage: (page: Page) => void;
 }
@@ -131,6 +243,13 @@ export function useTabs(initialPage: Page, onPageChange: (page: Page) => void): 
     });
   }, []);
 
+  const setTabStyle = useCallback((id: string, patch: TabStyle) => {
+    setState(prev => ({
+      ...prev,
+      tabs: prev.tabs.map(t => (t.id === id ? { ...t, style: readTabStyle({ ...t.style, ...patch }) } : t)),
+    }));
+  }, []);
+
   const setActivePage = useCallback((page: Page) => {
     setState(prev => {
       const current = prev.tabs.find(t => t.id === prev.activeTab);
@@ -155,6 +274,7 @@ export function useTabs(initialPage: Page, onPageChange: (page: Page) => void): 
     closeTab,
     togglePin,
     moveTab,
+    setTabStyle,
     setActivePage,
   };
 }

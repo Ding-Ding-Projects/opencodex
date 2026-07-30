@@ -42,13 +42,22 @@ export function isThreadSpawnRequest(headers: Headers): boolean {
   }
 }
 
-/** The effective ceiling for this turn, or undefined when no configured cap applies. */
-export function effortCapFor(config: OcxConfig, subagent: boolean): string | undefined {
+/**
+ * The effective ceiling for this turn, or undefined when no configured cap applies.
+ *
+ * `depthCap` is the nested-sub-agent per-depth ceiling (src/server/nested-subagents.ts). It is a
+ * third entry in the SAME lowest-wins reduce rather than an override, so a depth row can only
+ * ever TIGHTEN what effortCap/subagentEffortCap already guarantee — the existing enforcement is
+ * extended per depth, never relaxed by it. Omitted (the only way any pre-existing caller calls
+ * it), the resolution is identical to before.
+ */
+export function effortCapFor(config: OcxConfig, subagent: boolean, depthCap?: string): string | undefined {
   const caps: string[] = [];
   if (config.effortCap && isCodexReasoningEffort(config.effortCap)) caps.push(config.effortCap);
   if (subagent && config.subagentEffortCap && isCodexReasoningEffort(config.subagentEffortCap)) {
     caps.push(config.subagentEffortCap);
   }
+  if (depthCap && isCodexReasoningEffort(depthCap)) caps.push(depthCap);
   if (caps.length === 0) return undefined;
   return caps.reduce((low, cap) => (codexEffortRank(cap) < codexEffortRank(low) ? cap : low));
 }
@@ -65,7 +74,10 @@ export function effortCapFor(config: OcxConfig, subagent: boolean): string | und
  *  - a CHILD turn is admitted by its spawned-child markers (isThreadSpawnRequest)
  *    REGARDLESS of tool surface: depth-limited leaves carry no collab tools (surface
  *    null) while children below the spawn-depth limit retain collab tools (spec_plan.rs
- *    leaf guard), so tool sniffing alone would cap siblings inconsistently.
+ *    leaf guard), so tool sniffing alone would cap siblings inconsistently. This is also
+ *    why the nested-sub-agent leaf clamp (src/server/nested-subagents.ts), which strips
+ *    those same tools from a too-deep turn, needs NO change here: the stripped turn keeps
+ *    its spawn markers, so caps keep applying to it. Locked by a regression test.
  *  - a v1-surface MAIN turn (no child markers) never qualifies.
  */
 export function effortCapAppliesTo(
@@ -151,9 +163,10 @@ export function applyEffortCap(
   headers: Headers,
   config: OcxConfig,
   supported?: readonly string[] | undefined,
+  depthCap?: string,
 ): { from: string; to: string; subagent: boolean } | null {
   const subagent = isThreadSpawnRequest(headers);
-  const cap = effortCapFor(config, subagent);
+  const cap = effortCapFor(config, subagent, depthCap);
   if (!cap) return null;
   const resolved = resolveCappedEffort(cap, supported);
   const requested = parsed.options.reasoning;

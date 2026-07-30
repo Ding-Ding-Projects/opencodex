@@ -1,4 +1,4 @@
-import type { TFn } from "../i18n/shared";
+import type { TFn, TKey } from "../i18n/shared";
 import { makeMatcher } from "./models-shared";
 
 /**
@@ -79,6 +79,42 @@ export function claudeSettingsIndex(t: TFn): Record<ClaudeSettingId, string> {
     modelMap: [t("claude.modelMap"), t("claude.modelMapHint"), t("claude.addMapping")].join(" "),
     aliases: [t("claude.aliases"), t("claude.aliasesHint")].join(" "),
   };
+}
+
+/**
+ * The display label for each setting, keyed by id.
+ *
+ * Separate from the searchable text above, which joins a label to its hints and
+ * option names — good for matching, wrong for showing. Kept here, beside
+ * CLAUDE_SETTING_IDS, so a hand-written second list cannot drift out of step with
+ * the first. It already had: the Desktop tab's cross-tab index listed nine of the
+ * fourteen, so five settings were unfindable from that surface and the miss looked
+ * like "no such setting" rather than "look on the other tab".
+ */
+const CLAUDE_SETTING_LABEL_KEYS: Record<ClaudeSettingId, TKey> = {
+  enabled: "claude.enabledLabel",
+  effectiveMode: "claude.effectiveMode.label",
+  authMode: "claude.authMode",
+  fastMode: "claude.fastMode",
+  autoContext: "claude.autoContext",
+  autoCompactWindow: "claude.autoCompactWindow",
+  injectAgents: "claude.injectAgents",
+  systemEnv: "claude.systemEnv",
+  webSearchSidecar: "claude.webSearchSidecar",
+  visionSidecar: "claude.visionSidecar",
+  quickstart: "claude.quickstart",
+  smallFastModel: "claude.smallFastModel",
+  modelMap: "claude.modelMap",
+  aliases: "claude.aliases",
+};
+
+/**
+ * Every Claude Code setting, as {id, label}, derived from the one list of ids.
+ * The Desktop tab uses this for its cross-tab index; adding a setting to
+ * CLAUDE_SETTING_IDS now makes it findable from both surfaces or fails the build.
+ */
+export function claudeSettingLabels(t: TFn): { id: ClaudeSettingId; label: string }[] {
+  return CLAUDE_SETTING_IDS.map(id => ({ id, label: t(CLAUDE_SETTING_LABEL_KEYS[id]) }));
 }
 
 /**

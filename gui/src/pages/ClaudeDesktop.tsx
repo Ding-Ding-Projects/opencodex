@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
-import { IconChevron, IconRegex } from "../icons";
+import { IconChevron, IconRegex, IconSearch } from "../icons";
 import { Notice } from "../ui";
-import { Button, Chip, Empty } from "../shell/m3-ui";
+import { Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { makeMatcher } from "./models-shared";
+import { claudeSettingLabels } from "./claude-settings-search";
 import { useT, type TFn, type TKey } from "../i18n/shared";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import { createBoundedFetch } from "../bounded-fetch";
@@ -139,6 +141,111 @@ const FAMILY_KEYS: Record<Family, TKey> = {
   haiku: "claudeDesktop.family.haiku",
 };
 
+/** M3 paint for this tab's own settings search. Inline, because the shared stylesheets
+ *  are off-limits to a per-screen port. */
+const SETTINGS_HEADING_STYLE = {
+  margin: "var(--sp-4) 0 var(--sp-2)",
+  fontSize: "var(--t-title-m)",
+  fontWeight: 600,
+} as const;
+const SETTINGS_SEARCH_ROW = { gap: 8 } as const;
+const SETTINGS_SEARCH_INPUT = { flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 420 } as const;
+const SETTINGS_HIT_LIST = { display: "grid", gap: 6, marginBottom: "var(--sp-3)" } as const;
+const SETTINGS_HIT_ROW = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "baseline",
+  gap: 10,
+  padding: "10px 12px",
+  borderRadius: "var(--r-s)",
+  background: "var(--m3-surface-container-highest)",
+} as const;
+const SETTINGS_HIT_LABEL = { fontSize: "var(--t-body-m)", fontWeight: 500 } as const;
+const SETTINGS_HIT_DESC = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" } as const;
+const MONO_STYLE = { fontFamily: "var(--mono)" } as const;
+
+/** One hit of this surface's settings search — same row anatomy the Codex pool uses. */
+interface DesktopSettingHit {
+  id: string;
+  label: string;
+  desc: string;
+  /** Everything the query is tested against, including the option labels a user is
+      likelier to remember ("Sonnet") than the control's own name ("Move to"). */
+  haystack: string;
+}
+
+/**
+ * The settings this tab owns, in the order they render. A user who knows a setting's
+ * name types it here instead of scrolling four families looking for the control.
+ */
+function desktopSettingsIndex(t: TFn): DesktopSettingHit[] {
+  const families = FAMILIES.map(family => t(FAMILY_KEYS[family]));
+  const defaultsHaystack = [
+    t("claudeDesktop.defaultBadge"),
+    t("claudeDesktop.chooseDefault"),
+    t("claudeDesktop.temporaryDefault"),
+    ...FAMILIES.map(family => t("claudeDesktop.useAsDefault", { family: t(FAMILY_KEYS[family]) })),
+  ].join(" ");
+  return [
+    {
+      id: "importJson",
+      label: t("claudeDesktop.importJson"),
+      desc: t("claudeDesktop.importExpected"),
+      haystack: [t("claudeDesktop.importJson"), t("claudeDesktop.importExpected"), t("claudeDesktop.importReady")].join(" "),
+    },
+    {
+      id: "exportJson",
+      label: t("claudeDesktop.exportJson"),
+      desc: t("claudeDesktop.exported"),
+      haystack: [t("claudeDesktop.exportJson"), t("claudeDesktop.exported")].join(" "),
+    },
+    {
+      id: "familyDefault",
+      label: t("claudeDesktop.defaultBadge"),
+      desc: t("claudeDesktop.chooseDefault"),
+      haystack: defaultsHaystack,
+    },
+    {
+      id: "moveTo",
+      label: t("claudeDesktop.moveTo"),
+      desc: t("claudeDesktop.assignmentsLabel"),
+      haystack: [t("claudeDesktop.moveTo"), t("claudeDesktop.move"), t("claudeDesktop.assignmentsLabel"), ...families].join(" "),
+    },
+    {
+      id: "alias",
+      label: t("claudeDesktop.alias"),
+      desc: t("claudeDesktop.assignmentsLabel"),
+      haystack: [t("claudeDesktop.alias"), t("claudeDesktop.assignmentsLabel")].join(" "),
+    },
+    {
+      id: "saveApply",
+      label: t("claudeDesktop.saveApply"),
+      desc: t("claudeDesktop.status.notApplied"),
+      haystack: [
+        t("claudeDesktop.saveApply"),
+        t("common.save"),
+        t("claudeDesktop.status.applied"),
+        t("claudeDesktop.status.stale"),
+        t("claudeDesktop.status.notApplied"),
+      ].join(" "),
+    },
+  ];
+}
+
+/**
+ * Settings that live on the sibling Code tab. A miss here still points somewhere, which
+ * is why the row reports a cross-tab hit by name instead of claiming the setting is gone.
+ */
+/**
+ * The Claude Code tab's settings, for this surface's cross-tab search. Derived from
+ * the shared id list rather than hand-listed: the hand-written version held nine of
+ * fourteen, so five settings were unfindable from here and read as "no such setting".
+ */
+function desktopElsewhereIndex(t: TFn): { id: string; label: string; tab: string }[] {
+  const tab = t("claude.tabCode");
+  return claudeSettingLabels(t).map(({ id, label }) => ({ id, label, tab }));
+}
+
 function cloneProfile(profile: DesktopProfile): DesktopProfile {
   return {
     version: 1,
@@ -218,6 +325,11 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // a family's fold is a durable preference, but which single model you were inspecting
   // is not, and restoring five open rows on reload would rebuild the wall this removes.
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
+  // This tab's own settings search, bound to this field alone. It never shares state with
+  // the per-lane model filters below it, so a query here cannot reinterpret what Opus is
+  // filtering — and the Code tab's search cannot reinterpret this one.
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -422,6 +534,28 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
     ? "not-applied"
     : status?.stale ? "stale" : status?.applied ? "applied" : "not-applied";
 
+  // Plain text is the default; `.*` is the explicit opt-in, evaluated locally through the
+  // shared capped ECMAScript matcher (400 pattern chars). An invalid pattern matches
+  // nothing and says so, rather than silently reverting to substring search.
+  const settingsActive = settingsQuery.trim().length > 0;
+  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex);
+  const settingsHits = desktopSettingsIndex(t).filter(row => settingsMatcher.test(row.haystack));
+  // Only claimed once something was typed: an untouched field has matched nothing, here
+  // or on the Code tab.
+  const settingsOtherHits = settingsActive
+    ? desktopElsewhereIndex(t).filter(row => settingsMatcher.test(row.label))
+    : [];
+  const settingsOtherTabs = [...new Set(settingsOtherHits.map(row => row.tab))].join(", ");
+  const settingsNote = settingsMatcher.error
+    ? `${t("regex.invalid")}: ${settingsMatcher.error}`
+    : settingsOtherHits.length > 0
+      ? t("settings.otherTab", { count: settingsOtherHits.length, tabs: settingsOtherTabs })
+      // "Nothing matched" is a different fact from "this tab has no settings", and this
+      // surface always has some — so the no-match wording is the honest one here.
+      : settingsActive && settingsHits.length === 0
+        ? t("settings.noMatch")
+        : "";
+
   return (
     <>
       <div className="page-head claude-desktop-head">
@@ -462,6 +596,58 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
+
+      {/* This tab's own settings search, above the controls it describes: plain text by
+          default, `.*` as an explicit opt-in, and the full builder one click away anchored
+          to this field rather than parked in a menu. A hit that lives on the Code tab is
+          named instead of being reported as "no such setting". */}
+      <h2 style={SETTINGS_HEADING_STYLE}>{t("common.settings")}</h2>
+      <div className="m3-row" role="search" style={SETTINGS_SEARCH_ROW}>
+        <IconSearch width={20} height={20} aria-hidden="true" />
+        <TextInput
+          type="search"
+          value={settingsQuery}
+          onChange={event => setSettingsQuery(event.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={settingsMatcher.error !== null}
+          style={SETTINGS_SEARCH_INPUT}
+        />
+        <Chip
+          selected={settingsRegex}
+          onClick={() => setSettingsRegex(on => !on)}
+          title={t("search.regexHint")}
+          aria-label={t("search.regexHint")}
+        >
+          <code style={MONO_STYLE}>.*</code>
+        </Chip>
+        <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+          <IconRegex width={20} height={20} aria-hidden="true" />
+        </a>
+      </div>
+      <p
+        role={settingsMatcher.error ? "alert" : "status"}
+        style={{
+          minHeight: 20,
+          margin: "4px 0 var(--sp-2)",
+          color: settingsMatcher.error ? "var(--m3-error)" : "var(--m3-on-surface-variant)",
+          fontSize: "var(--t-label-m)",
+        }}
+      >
+        {settingsNote}
+      </p>
+      {/* Hits appear only once something has been typed — an untouched field would
+          otherwise list every setting twice, above the controls that already show them. */}
+      {settingsActive && settingsHits.length > 0 && (
+        <div data-settings-hits="" style={SETTINGS_HIT_LIST}>
+          {settingsHits.map(row => (
+            <div key={row.id} style={SETTINGS_HIT_ROW}>
+              <span style={SETTINGS_HIT_LABEL}>{row.label}</span>
+              <span style={SETTINGS_HIT_DESC}>{row.desc}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="claude-profile-bar" style={PROFILE_BAR_STYLE}>
         <span className={`claude-dirty${dirty ? " active" : ""}`} style={dirty ? WARN_TEXT_STYLE : undefined}>

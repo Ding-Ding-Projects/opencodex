@@ -51,3 +51,22 @@ export function clearRevisions(): void {
     window.dispatchEvent(new CustomEvent("ocx-revisions"));
   } catch { /* ignore */ }
 }
+
+/**
+ * Subscribe to the log.
+ *
+ * `recordRevision` fires `ocx-revisions` in this tab; `storage` covers another
+ * tab writing the same key. Both matter: the Version history screen is usually
+ * open *while* the change is made somewhere else, and a history that only updates
+ * on reload is a history nobody trusts.
+ *
+ * Returns an unsubscribe function, so callers can hand it straight to `useEffect`.
+ */
+export function subscribeRevisions(listener: () => void): () => void {
+  window.addEventListener("ocx-revisions", listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    window.removeEventListener("ocx-revisions", listener);
+    window.removeEventListener("storage", listener);
+  };
+}

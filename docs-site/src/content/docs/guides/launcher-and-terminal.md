@@ -1,0 +1,117 @@
+---
+title: Launcher and terminal
+description: Install and open the agent CLIs and desktop apps from the dashboard, and run commands in the embedded terminal.
+---
+
+The dashboard can install the agent tooling for you and run commands without leaving the app. Two
+surfaces cover it: the **Launch** card on the Dashboard, and the **Terminal** screen.
+
+## The Launch card
+
+The card lists every CLI and desktop app opencodex knows about, and probes the machine to see which
+are actually present. A target that is installed gets an **Open** button; one that is not gets
+**Get it**.
+
+`ocx launch` is the same thing from a shell:
+
+```bash
+ocx launch list
+```
+
+```bash
+ocx launch codex-cli
+```
+
+### Get it installs, it does not just link
+
+Pressing **Get it** runs a real installation and streams the package manager's output into the card,
+so a slow or failing install is visible rather than a spinner. When it finishes the card re-probes
+and the target flips to **Open**.
+
+| Target | How it installs |
+| --- | --- |
+| Codex CLI | winget `OpenAI.Codex`, else npm `@openai/codex` |
+| Claude Code | winget `Anthropic.ClaudeCode`, else npm `@anthropic-ai/claude-code` |
+| Grok CLI | npm `@vibe-kit/grok-cli` |
+| Claude (desktop) | winget `Anthropic.Claude` |
+| ChatGPT (desktop) | **Manual** — opens the download page |
+| Grok (desktop) | **Manual** — opens the download page |
+
+winget leads on Windows because it is present by default and needs no Node.js; npm is the
+cross-platform route and the only route on macOS and Linux. If neither tool is on the machine, the
+button falls back to opening the download page and says why.
+
+:::note
+ChatGPT and Grok desktop have no automatic route on purpose. No official package is published for
+either, and the packages that *do* match those names come from unrelated publishers. opencodex will
+open the vendor's own download page rather than install a community repackage on your behalf.
+:::
+
+If an install succeeds but the program is not yet visible, the card says so and asks you to restart
+opencodex. That is not a failure: installers extend the machine `PATH`, and an already-running
+process keeps the environment it started with.
+
+Nothing about the command line comes from the browser. A request carries a catalog id, which is
+looked up on the server; the package id and every argument are constants in the source.
+
+## The embedded terminal
+
+**Terminal** in the sidebar runs commands inside the app — no console window appears, which is the
+same rule the launcher follows. Sessions start in your home directory. Pick **Shell** for a general
+prompt, or one of the CLIs to run that program directly.
+
+Everything you send is recorded in the transcript alongside the output, so the log reads as a
+conversation rather than a list of answers with no questions, and it survives a page reload.
+
+### What it will and will not run
+
+Sessions are piped, not pseudo-terminals. Non-interactive commands work normally:
+
+```bash
+codex --help
+```
+
+```bash
+codex exec "summarise this repo"
+```
+
+A **full-screen TUI will not draw here** — that needs a real console. The preset says so before you
+start it, and the Launch card opens the full experience in a proper terminal when you want it.
+
+The reason is deliberate: a pseudo-terminal on Windows means ConPTY and a native module. `node-pty`
+needs node-gyp and a rebuild against Electron's ABI, and the maintained prebuilt fork is a beta.
+opencodex ships four runtime dependencies and a working installer, and neither is worth trading for
+a nicer terminal.
+
+### It is off when the proxy is exposed
+
+A terminal is a shell. If the proxy is bound to anything other than loopback — see
+[Remote access](/guides/web-dashboard/) and `ocx host` — every terminal route returns `403` and the
+screen explains why.
+
+The management credential is deliberately *not* treated as sufficient on its own. A leaked dashboard
+token should cost you your provider configuration, not your whole machine.
+
+To override it anyway, set `terminal.allowRemote` in `~/.opencodex/config.json`:
+
+```json
+{
+  "terminal": { "allowRemote": true }
+}
+```
+
+:::caution
+Turning that on means anyone who can reach the dashboard can run commands as you. There is no
+one-click toggle for it for exactly that reason.
+:::
+
+### Limits
+
+| Limit | Value |
+| --- | --- |
+| Concurrent sessions | 12 |
+| Scrollback retained per session | 1500 chunks |
+| Single input write | 8 KB |
+
+Sessions are killed when opencodex shuts down, so a graceful exit never leaves an orphaned shell
+holding your home directory open.

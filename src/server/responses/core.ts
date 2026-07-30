@@ -149,6 +149,13 @@ import { composeSsePayloadRewrites, relaySseWithPayloadRewrite } from "../sse-pa
 import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/catalog";
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
+import {
+  captureAgentLineage,
+  evaluateNestedSubagents,
+  leafDeveloperNote,
+  stripCollabToolsInPlace,
+  type NestedSubagentDecision,
+} from "../nested-subagents";
 import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel } from "./fetch-helpers";
 import { guardTerminalEventStream } from "./terminal-guard";
@@ -660,6 +667,22 @@ function unreadableEncryptedAgentTaskResponse(): Response {
   );
 }
 
+/**
+ * Hard refusal for a nested sub-agent turn that is over a ceiling opencodex can PROVE it is over
+ * (a known depth beyond maxDepth, or a spent session budget). Shaped like
+ * unreadableEncryptedAgentTaskResponse so the client surfaces the code, not a generic 400.
+ * Unknown/inferred depths deliberately never land here — they are clamped instead, because a
+ * wrong refusal breaks a legitimate depth-1 flow while a wrong clamp only removes nesting.
+ */
+function subagentDepthLimitResponse(refuse: { code: string; message: string }): Response {
+  return new Response(
+    JSON.stringify({
+      error: { message: refuse.message, type: "invalid_request_error", code: refuse.code },
+    }),
+    { status: 400, headers: { "Content-Type": "application/json" } },
+  );
+}
+
 type ResponsesAuthResolution =
   | { ok: true; authCtx: CodexAuthContext; headers: Headers }
   | { ok: false; response: Response };
@@ -737,8 +760,10 @@ async function applyFinalRouteRequestNormalization(args: {
   config: OcxConfig;
   req: Request;
   logCtx: RequestLogContext;
+  /** Null whenever nested sub-agents are off — every use below falls back to today's values. */
+  nested?: NestedSubagentDecision | null;
 }): Promise<void> {
-  const { parsed, route, config, req, logCtx } = args;
+  const { parsed, route, config, req, logCtx, nested } = args;
 
   // Apply the routed model id upstream: routing may strip a "<provider>/" namespace.
   if (route.modelId !== parsed.modelId) {
@@ -771,13 +796,25 @@ async function applyFinalRouteRequestNormalization(args: {
   }
 
   {
+    // Depth-scoped delegation guidance. The child row describes the models/effort a child
+    // spawned FROM this turn may use; absent (nesting off, or this turn is a clamped leaf) the
+    // options are exactly the top-level config, i.e. today's behaviour unchanged.
+    const childRow = nested?.childRow;
     const guidance = await multiAgentGuidanceText(parsed, {
       multiAgentGuidanceEnabled: config.multiAgentGuidanceEnabled,
-      injectionModel: config.injectionModel,
-      injectionEffort: config.injectionEffort,
-      subagentModels: config.subagentModels,
+      injectionModel: childRow?.injectionModel ?? config.injectionModel,
+      injectionEffort: childRow?.injectionEffort ?? config.injectionEffort,
+      subagentModels: childRow?.models ?? config.subagentModels,
       subagentModelFallback: config.subagentModelFallback,
       injectionPrompt: config.injectionPrompt,
+      depth: nested && !nested.clamp
+        ? {
+          depth: nested.depth,
+          maxDepth: nested.settings.maxDepth,
+          remainingChildren: nested.remainingChildren,
+          remainingSessionSpawns: nested.remainingSessionSpawns,
+        }
+        : undefined,
     });
     if (guidance) {
       injectDeveloperMessage(parsed, guidance);
@@ -793,7 +830,9 @@ async function applyFinalRouteRequestNormalization(args: {
     const { applyEffortCap, effortCapAppliesTo, supportedLadderFor } = await import("../effort-policy");
     const surface = collabSurface(parsed);
     if (effortCapAppliesTo(surface, req.headers, config, parsed._compactionRequest === true)) {
-      const capped = applyEffortCap(parsed, req.headers, config, supportedLadderFor(route));
+      // nested.effortCap is a THIRD entry in the lowest-wins reduce, so it can only tighten
+      // effortCap/subagentEffortCap — the existing guarantee survives untouched.
+      const capped = applyEffortCap(parsed, req.headers, config, supportedLadderFor(route), nested?.effortCap);
       if (capped) {
         logCtx.requestedEffort = `${capped.from}->${capped.to}`;
         if (isInjectionDebugEnabled()) {
@@ -1082,6 +1121,12 @@ export async function handleResponses(
   body = expandPreviousResponseInput(body);
   const previousResponseInputExpanded = body !== originalBody;
 
+  // Nested sub-agents: capture the agent lineage BEFORE the sanitize pass below, which rewrites
+  // `agent_message` -> `message` and DELETES the author/recipient addresses depth is read from.
+  // captureAgentLineage's first statement is the `nestedSubagents.enabled` gate, so with the
+  // feature off this costs one property read and touches nothing.
+  const nestedLineage = captureAgentLineage(config, (body as { input?: unknown } | undefined)?.input);
+
   // Spawn-message compatibility (both directions): agent_message task payloads ride in
   // encrypted_content slots as plaintext. Rewrite them to input_text on the RAW body BEFORE
   // parsing so every consumer sees the payload: parseRequest (routed/translated providers read
@@ -1124,6 +1169,43 @@ export async function handleResponses(
   logCtx.requestedSpeedLabel = requestLogSpeedLabel(parsed.options.serviceTier);
   logCtx.configuredServiceTier = readConfiguredCodexServiceTier();
   logCtx.configuredSpeedLabel = requestLogSpeedLabel(logCtx.configuredServiceTier);
+
+  // Nested sub-agents: resolve depth, then enforce. Runs BEFORE routing/normalization so a
+  // refused turn never reaches an upstream, and so the leaf clamp has stripped the collab tools
+  // before multiAgentGuidanceText reads the surface.
+  const nested = evaluateNestedSubagents({ config, headers: req.headers, parsed, capture: nestedLineage });
+  if (nested) {
+    (logCtx as unknown as Record<string, unknown>).subagentDepth =
+      nested.certainty === "known" ? String(nested.depth) : "unknown";
+    if (nested.warnUnknown) {
+      // Loud on purpose. The quiet failure mode is: nesting is enabled, every child resolves
+      // unknown, every child is clamped, nesting never happens and nothing says why.
+      console.warn(
+        "[opencodex] nested sub-agents: could not determine this spawn's depth "
+        + `(assuming ${nested.depth}${nested.clamp ? ", and removing its delegation tools" : ""}). `
+        + "Sources tried: thread_spawn_edges, agent addresses, client leaf guard. "
+        + (nested.clamp
+          ? "Nesting will not happen while depth stays unresolved; set nestedSubagents.unknownDepthAssumption to 1 to nest optimistically instead."
+          : "nestedSubagents.unknownDepthAssumption is set below maxDepth, so nesting proceeds on an assumption rather than an observation."),
+      );
+    }
+    if (nested.refuse) return subagentDepthLimitResponse(nested.refuse);
+    if (nested.clamp) {
+      const removed = stripCollabToolsInPlace(parsed);
+      if (removed > 0) injectDeveloperMessage(parsed, leafDeveloperNote(nested));
+      if (isInjectionDebugEnabled()) {
+        injectionDebugLog(
+          `[opencodex] nested sub-agents: depth=${nested.depth} (${nested.certainty}; ${nested.sources.join(", ")}) `
+          + `clamped [${nested.clampReason}], ${removed} collab tool spec(s) stripped`,
+        );
+      }
+    } else if (isInjectionDebugEnabled()) {
+      injectionDebugLog(
+        `[opencodex] nested sub-agents: depth=${nested.depth} (${nested.certainty}; ${nested.sources.join(", ")}) `
+        + `children left=${nested.remainingChildren}, session left=${nested.remainingSessionSpawns}`,
+      );
+    }
+  }
 
   // Shadow call intercept: rewrite Codex's hard-coded helper calls
   // (gpt-5.4-mini on older clients, gpt-5.6-luna on 0.145.0+)
@@ -1207,7 +1289,7 @@ export async function handleResponses(
     return unreadableEncryptedAgentTaskResponse();
   }
 
-  await applyFinalRouteRequestNormalization({ parsed, route, config, req, logCtx });
+  await applyFinalRouteRequestNormalization({ parsed, route, config, req, logCtx, nested });
 
   {
     const finalAuth = await resolveResponsesCodexAuth(req, config, route, options);

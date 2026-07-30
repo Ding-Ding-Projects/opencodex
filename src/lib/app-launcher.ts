@@ -210,6 +210,22 @@ export function resolveLaunchTarget(id: string): { spec: LaunchTargetSpec; path:
   return null;
 }
 
+/**
+ * The catalog's identity only — id, label and kind, with no filesystem probing.
+ *
+ * The installer needs to name a target it is about to install, which by
+ * definition is not on disk yet, so `listLaunchTargets` (which reports
+ * availability) would answer the wrong question.
+ */
+export function launchTargetIds(): { id: string; label: string; kind: LaunchKind }[] {
+  return CATALOG.map(spec => ({ id: spec.id, label: spec.label, kind: spec.kind }));
+}
+
+/** The download page for a target, or null when the id is not in the catalog. */
+export function launchTargetInstallUrl(id: string): string | null {
+  return CATALOG.find(spec => spec.id === id)?.installUrl ?? null;
+}
+
 /** Every target with whether it is actually installed — drives the buttons' enabled state. */
 export function listLaunchTargets(): LaunchTargetStatus[] {
   return CATALOG.map(spec => ({

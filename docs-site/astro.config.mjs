@@ -102,6 +102,7 @@ export default defineConfig({
             { label: "opencode", translations: { ko: "opencode", "zh-CN": "opencode", ru: "opencode", ja: "opencode" }, slug: "guides/opencode" },
             { label: "Sidecars: Web Search & Vision", translations: { ko: "사이드카: 웹 검색 & 비전", "zh-CN": "边车：网络搜索与视觉", ru: "Сайдкары: веб-поиск и зрение", ja: "サイドカー: ウェブ検索 & ビジョン" }, slug: "guides/sidecars" },
             { label: "Web Dashboard", translations: { ko: "웹 대시보드", "zh-CN": "网页控制台", ru: "Веб-дашборд", ja: "ウェブダッシュボード" }, slug: "guides/web-dashboard" },
+            { label: "Launcher & Terminal", translations: { ko: "런처 & 터미널", "zh-CN": "启动器与终端", ru: "Лаунчер и терминал", ja: "ランチャー & ターミナル" }, slug: "guides/launcher-and-terminal" },
             { label: "Docker", translations: { ko: "Docker", "zh-CN": "Docker", ru: "Docker", ja: "Docker" }, slug: "guides/docker" },
             { label: "Sub-agent Surface", translations: { ko: "서브에이전트 서피스", "zh-CN": "子代理界面", ru: "Интерфейс подагентов", ja: "サブエージェントサーフェス" }, slug: "guides/sub-agent-surface" },
           ],

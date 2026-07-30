@@ -165,7 +165,49 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   // actually installed so a button is never offered for something that cannot start.
   if (url.pathname === "/api/launch" && req.method === "GET") {
     const { listLaunchTargets } = await import("../../lib/app-launcher");
-    return jsonResponse({ targets: listLaunchTargets() }, 200, req, config);
+    const { canInstall, hasInstallRoute } = await import("../../lib/app-installer");
+    // `installable` drives whether "Get it" installs or merely opens a page, so the
+    // button can say which of the two it is going to do before it is pressed.
+    const targets = listLaunchTargets().map(target => ({
+      ...target,
+      installable: canInstall(target.id),
+      hasInstallRoute: hasInstallRoute(target.id),
+    }));
+    return jsonResponse({ targets }, 200, req, config);
+  }
+
+  // Automatic installation. The body carries a catalog id and nothing else — the
+  // package id and every command-line argument come from constants in the installer.
+  if (url.pathname === "/api/launch/install" && req.method === "POST") {
+    let body: { id?: unknown };
+    try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) return jsonResponse({ error: "id is required" }, 400, req, config);
+    const { startInstall } = await import("../../lib/app-installer");
+    const { launchTargetInstallUrl } = await import("../../lib/app-launcher");
+    const result = startInstall(id);
+    if (result.ok) return jsonResponse({ ok: true, job: result.job }, 200, req, config);
+    // A target with no automatic route is not an error the user can act on by
+    // retrying, so hand back the page to open instead of only saying "no".
+    return jsonResponse(
+      { ok: false, error: result.error, manual: result.manual === true, installUrl: launchTargetInstallUrl(id) },
+      result.manual ? 200 : 409,
+      req,
+      config,
+    );
+  }
+
+  if (url.pathname === "/api/launch/install" && req.method === "GET") {
+    const { listInstallJobs } = await import("../../lib/app-installer");
+    return jsonResponse({ jobs: listInstallJobs() }, 200, req, config);
+  }
+
+  if (url.pathname.startsWith("/api/launch/install/") && req.method === "GET") {
+    const jobId = decodeURIComponent(url.pathname.slice("/api/launch/install/".length));
+    const { getInstallJob } = await import("../../lib/app-installer");
+    const job = getInstallJob(jobId);
+    if (!job) return jsonResponse({ error: "unknown install job" }, 404, req, config);
+    return jsonResponse({ job }, 200, req, config);
   }
 
   if (url.pathname === "/api/launch" && req.method === "POST") {
@@ -178,6 +220,67 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
     const { launchTarget } = await import("../../lib/app-launcher");
     const outcome = launchTarget(id);
     return jsonResponse(outcome, outcome.ok ? 200 : 409, req, config);
+  }
+
+  // ---- Embedded terminal -------------------------------------------------
+  //
+  // Every route here is refused outright when the proxy is published to other
+  // devices. A terminal is a shell: exposing one on a LAN-reachable dashboard
+  // would turn a leaked management credential into a foothold on the machine,
+  // which is a categorically worse outcome than leaking the provider config.
+  if (url.pathname.startsWith("/api/terminal")) {
+    const { isLoopbackHostname } = await import("../auth-cors");
+    const boundLocally = isLoopbackHostname(config.hostname ?? "127.0.0.1");
+    if (!boundLocally && config.terminal?.allowRemote !== true) {
+      return jsonResponse({
+        error: "The embedded terminal is disabled while the proxy is reachable from other devices. "
+          + "Bind to 127.0.0.1, or set terminal.allowRemote if you accept that anyone who reaches "
+          + "this dashboard gets a shell on this machine.",
+      }, 403, req, config);
+    }
+
+    const terminal = await import("../../lib/terminal-session");
+
+    if (url.pathname === "/api/terminal" && req.method === "GET") {
+      return jsonResponse(
+        { presets: terminal.PRESETS, sessions: terminal.listSessions() },
+        200, req, config,
+      );
+    }
+
+    if (url.pathname === "/api/terminal" && req.method === "POST") {
+      let body: { preset?: unknown };
+      try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
+      const preset = typeof body.preset === "string" ? body.preset.trim() : "";
+      if (!preset) return jsonResponse({ error: "preset is required" }, 400, req, config);
+      const result = terminal.createSession(preset);
+      return jsonResponse(result, result.ok ? 200 : 409, req, config);
+    }
+
+    const inputMatch = url.pathname.match(/^\/api\/terminal\/([^/]+)\/input$/);
+    if (inputMatch && req.method === "POST") {
+      let body: { data?: unknown };
+      try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
+      if (typeof body.data !== "string") return jsonResponse({ error: "data is required" }, 400, req, config);
+      const result = terminal.writeSession(decodeURIComponent(inputMatch[1]), body.data);
+      return jsonResponse(result, result.ok ? 200 : 409, req, config);
+    }
+
+    const sessionMatch = url.pathname.match(/^\/api\/terminal\/([^/]+)$/);
+    if (sessionMatch && req.method === "GET") {
+      const since = Number(url.searchParams.get("since") ?? "0");
+      const read = terminal.readSession(
+        decodeURIComponent(sessionMatch[1]),
+        Number.isFinite(since) && since > 0 ? since : 0,
+      );
+      if (!read) return jsonResponse({ error: "unknown terminal session" }, 404, req, config);
+      return jsonResponse(read, 200, req, config);
+    }
+
+    if (sessionMatch && req.method === "DELETE") {
+      const result = terminal.killSession(decodeURIComponent(sessionMatch[1]));
+      return jsonResponse(result, result.ok ? 200 : 404, req, config);
+    }
   }
 
   if (url.pathname === "/api/host/restore" && req.method === "POST") {

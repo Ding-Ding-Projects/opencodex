@@ -55,10 +55,19 @@ export default function Network({ apiBase }: { apiBase: string }) {
     [],
     // null (not []) so a failed read cannot render as "no snapshots yet" — that
     // would tell the user their account history is empty when it is unread.
+    // A throw here does not stay here. Version history shares this exact store key
+    // so the two screens cannot show different histories, and every open tab stays
+    // mounted — so a rejected fetch on this page surfaces as a failure on that one,
+    // where the contract is that a failed read is reported and never rendered as
+    // "no history". Resolving to null keeps both screens telling the truth.
     async (signal): Promise<StateHistoryEntry[] | null> => {
-      const res = await fetch(`${apiBase}/api/host/history`, { signal });
-      const d = await readJsonIfOk<{ entries?: StateHistoryEntry[] }>(res);
-      return d && Array.isArray(d.entries) ? d.entries : null;
+      try {
+        const res = await fetch(`${apiBase}/api/host/history`, { signal });
+        const d = await readJsonIfOk<{ entries?: StateHistoryEntry[] }>(res);
+        return d && Array.isArray(d.entries) ? d.entries : null;
+      } catch {
+        return null;
+      }
     },
   );
 

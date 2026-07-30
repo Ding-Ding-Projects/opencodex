@@ -163,6 +163,21 @@ export interface MultiAgentGuidanceOptions {
   subagentModels?: string[];
   subagentModelFallback?: string[];
   injectionPrompt?: string;
+  /**
+   * Nested sub-agents (src/server/nested-subagents.ts). Absent — which is how every call site
+   * looked before the feature and how every call still looks with it disabled — leaves the
+   * generated text byte-for-byte identical.
+   *
+   * The roster passed in `subagentModels` is already the DEPTH-SCOPED one: publishing only the
+   * models a child at this level may use means the model cannot even see a rung it is not
+   * permitted to spawn at, which is a far stronger nudge than telling it not to.
+   */
+  depth?: {
+    depth: number;
+    maxDepth: number;
+    remainingChildren: number;
+    remainingSessionSpawns: number;
+  };
 }
 
 
@@ -198,6 +213,7 @@ export async function multiAgentGuidanceText(
     subagentModels,
     subagentModelFallback,
     injectionPrompt,
+    depth,
   } = options;
   const surface = collabSurface(parsed);
   if (surface === null) return null;
@@ -226,11 +242,18 @@ export async function multiAgentGuidanceText(
         .join(", ")}`);
     }
     const fallbackGuidance = subagentFallbackGuidanceText({ subagentModelFallback } as OcxConfig);
-    if (!injectionModel && roster === "" && fallbackGuidance === "") return null;
+    // The depth sentence is a reason to speak even when nothing else resolves: an agent that
+    // knows its remaining budget plans against the ceiling instead of discovering it as an error.
+    const depthGuidance = depth
+      ? ` You are at sub-agent depth ${depth.depth} of a maximum of ${depth.maxDepth};`
+        + ` you may spawn ${depth.remainingChildren} more sub-agent(s)`
+        + ` (${depth.remainingSessionSpawns} left in this session's total budget).`
+      : "";
+    if (!injectionModel && roster === "" && fallbackGuidance === "" && depthGuidance === "") return null;
     if (injectionPrompt) {
-      return `<multi_agent_mode>${applyInjectionPlaceholders(injectionPrompt, injectionModel, injectionEffort, roster, fallbackGuidance)}</multi_agent_mode>`;
+      return `<multi_agent_mode>${applyInjectionPlaceholders(injectionPrompt, injectionModel, injectionEffort, roster, fallbackGuidance, depth)}</multi_agent_mode>`;
     }
-    if (!preferred && roster === "" && fallbackGuidance === "") return null;
+    if (!preferred && roster === "" && fallbackGuidance === "" && depthGuidance === "") return null;
     let text = "When the active spawn_agent tool supports optional \"model\" or \"reasoning_effort\" overrides, "
       + "use only models listed for this collaboration surface. "
       + "When setting either override, set fork_turns to \"none\" "
@@ -242,6 +265,9 @@ export async function multiAgentGuidanceText(
         + " — use it unless the user names another.";
     }
     text += fallbackGuidance;
+    // Depth/budget sits BEFORE the roster so the budget-trim below cannot eat it: the roster is
+    // a convenience, the ceiling is the thing the model must not be surprised by.
+    text += depthGuidance;
     text += roster;
     if (text.length > V2_GUIDANCE_CHAR_BUDGET) {
       // Roster is the only unbounded part — drop it before breaking the budget.
@@ -261,12 +287,28 @@ export async function multiAgentGuidanceText(
 
 export const V2_GUIDANCE_CHAR_BUDGET = 700;
 
-export function applyInjectionPlaceholders(prompt: string, model?: string, effort?: string, roster?: string, fallback?: string): string {
+/**
+ * A user with a custom injectionPrompt replaces the whole built-in body, so without these
+ * placeholders they would silently lose depth awareness the moment they customize the prompt —
+ * the ceiling would still be enforced, but the model would never be told about it.
+ * With nesting off, all three expand to "" and the rendered prompt is unchanged.
+ */
+export function applyInjectionPlaceholders(
+  prompt: string,
+  model?: string,
+  effort?: string,
+  roster?: string,
+  fallback?: string,
+  depth?: { depth: number; maxDepth: number; remainingChildren: number; remainingSessionSpawns: number },
+): string {
   return prompt
     .replaceAll("{{model}}", model ?? "")
     .replaceAll("{{effort}}", effort ?? "")
     .replaceAll("{{roster}}", roster ?? "")
-    .replaceAll("{{fallback}}", fallback ?? "");
+    .replaceAll("{{fallback}}", fallback ?? "")
+    .replaceAll("{{depth}}", depth ? String(depth.depth) : "")
+    .replaceAll("{{maxdepth}}", depth ? String(depth.maxDepth) : "")
+    .replaceAll("{{remaining}}", depth ? String(depth.remainingChildren) : "");
 }
 
 

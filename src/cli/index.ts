@@ -1046,6 +1046,11 @@ switch (command) {
     process.exitCode = await handleLaunchCommand(args.slice(1));
     break;
   }
+  case "terminal": {
+    const { handleTerminalCommand } = await import("./terminal");
+    process.exitCode = await handleTerminalCommand(args.slice(1));
+    break;
+  }
   case "export": {
     const { handleExportCommand } = await import("./export");
     process.exitCode = await handleExportCommand(args.slice(1));

@@ -506,6 +506,73 @@ export interface OcxCustomModel {
   addedAt?: string;
 }
 
+/**
+ * Per-depth delegation policy. Index 0 describes depth 1 (the root agent's own children),
+ * index 1 describes depth 2, and the LAST row extends to every deeper level — so a single
+ * row is a valid "same policy at every depth" configuration.
+ */
+export interface OcxNestedSubagentDepthConfig {
+  /** Models advertised to an agent whose children land at this depth (roster injection). */
+  models?: string[];
+  /** Preferred model advertised for children at this depth. */
+  injectionModel?: string;
+  /** Preferred reasoning_effort advertised for children at this depth. */
+  injectionEffort?: string;
+  /**
+   * Hard reasoning-effort ceiling for turns AT this depth. Folded into the existing
+   * lowest-wins cap reduce (src/server/effort-policy.ts effortCapFor), so it can only
+   * tighten `effortCap`/`subagentEffortCap` — never raise them.
+   */
+  effortCap?: string;
+}
+
+export interface OcxNestedSubagentsConfig {
+  /** Master switch. Anything other than exactly `true` leaves every hook inert. */
+  enabled?: boolean;
+  /**
+   * Deepest nesting level opencodex will let an agent tree GROW to. Root is depth 0, so the
+   * default 2 permits children and grandchildren.
+   *
+   * NAMING GAP, stated plainly: this is not a guarantee that no turn ever runs deeper. The
+   * `spawn_agent` tool belongs to the Codex client, not to opencodex — the proxy cannot cancel
+   * a spawn that already happened. What this number enforces is that a turn resolved at or
+   * beyond it has the collaboration tool set physically removed from its request body, so the
+   * tree stops growing there. A client that hard-codes the tools rather than reading them from
+   * the request can still produce one level more than this says; that child is clamped in turn,
+   * so growth still terminates, one level late.
+   */
+  maxDepth?: number;
+  /** Distinct children a single agent node may spawn before its own turns are clamped. */
+  maxChildrenPerNode?: number;
+  /** Distinct sub-agents a session may spawn in total. The load-bearing bound: it holds with
+   *  ZERO depth resolution, needing only codex-rs's spawn markers. */
+  maxTotalSpawnsPerSession?: number;
+  /**
+   * Turn-count runaway guard, expressed per spawned agent. Turns are always >= agents, so
+   * `maxTotalSpawnsPerSession * this` is a strict OVER-count of the session's real agent
+   * count — it bites only in a genuine loop, never before the agent budget does.
+   */
+  maxTurnsPerSpawnedAgent?: number;
+  /**
+   * Depth assumed when NOTHING resolves. Defaults to `maxDepth` (fail deep: an unresolved
+   * turn is clamped, never granted more nesting). Set it to 1 to opt into the optimistic
+   * reading — that trades a runaway risk for nesting that works when no source resolves.
+   */
+  unknownDepthAssumption?: number;
+  /** Read Codex's own `thread_spawn_edges` table from CODEX_HOME. Default true; irrelevant
+   *  in deployments with no local CODEX_HOME (Docker), where it silently drops out. */
+  spawnEdgeLookup?: boolean;
+  /**
+   * Trust an `[[ocx:d=N]]` marker in a spawn task body. INVENTED CONVENTION: nothing in
+   * codex-rs writes it and no model is obliged to echo it, so it is off by default and may
+   * only RAISE the believed depth, never lower it. Its one real use is a deployment with no
+   * CODEX_HOME and no path-shaped addresses, where it is the only signal left.
+   */
+  trustTaskSentinel?: boolean;
+  /** Per-depth policy rows; index 0 = depth 1, last row extends deeper. */
+  depths?: OcxNestedSubagentDepthConfig[];
+}
+
 export interface OcxConfig {
   port: number;
   providers: Record<string, OcxProviderConfig>;
@@ -572,7 +639,9 @@ export interface OcxConfig {
    * collab surface would have fired; firing gates are unchanged. Placeholders:
    * `{{model}}` -> injectionModel, `{{effort}}` -> injectionEffort, `{{roster}}` ->
    * the resolved sub-agent roster block ("" when nothing resolves), `{{fallback}}` ->
-   * the configured subagent model fallback guidance block ("" when unset).
+   * the configured subagent model fallback guidance block ("" when unset), `{{depth}}` /
+   * `{{maxdepth}}` / `{{remaining}}` -> this turn's nested-sub-agent depth, the configured
+   * ceiling, and the children it may still spawn ("" when nesting is off).
    */
   injectionPrompt?: string;
   /**
@@ -594,6 +663,13 @@ export interface OcxConfig {
    * set, the lower one wins for sub-agents. See src/server/effort-policy.ts.
    */
   subagentEffortCap?: string;
+  /**
+   * Nested sub-agents ("an agent that spawns an agent that spawns an agent").
+   * OFF by default: every entry point returns before touching the request body, so a config
+   * without this block behaves byte-for-byte as it did before the feature existed.
+   * See src/server/nested-subagents.ts for how depth is derived and what is actually enforced.
+   */
+  nestedSubagents?: OcxNestedSubagentsConfig;
   /**
    * Models hidden from Codex. Routed ids are namespaced ("<provider>/<model>") and are excluded
    * from the catalog + /v1/models entirely. BARE ids (no "/") are native GPT passthrough slugs:
@@ -630,6 +706,17 @@ export interface OcxConfig {
   contextCapValue?: number;
   /** Bind hostname. Default "127.0.0.1" (loopback only). Set "0.0.0.0" to expose on all interfaces. */
   hostname?: string;
+  /** Embedded terminal settings. */
+  terminal?: {
+    /**
+     * Allow the embedded terminal while the proxy is bound to a non-loopback
+     * address. Off by default and deliberately not exposed as a one-click
+     * toggle: turning it on means anyone who can reach the dashboard can run
+     * commands as you, which is a strictly larger blast radius than the
+     * provider credentials the rest of the management API guards.
+     */
+    allowRemote?: boolean;
+  };
   /**
    * Outbound HTTP(S) proxy URL for provider requests (e.g. "http://user:pass@proxy:8080", or
    * "${HTTPS_PROXY}"-style env reference). Mirrored into HTTP_PROXY/HTTPS_PROXY at startup when

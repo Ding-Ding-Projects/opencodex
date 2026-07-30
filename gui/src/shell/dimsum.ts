@@ -17,11 +17,26 @@ export interface DimSumDish {
   /** Chinese name shown alongside. */
   zh: string;
   /**
-   * Bundled inline art. These are labelled placeholders by design: the spec
-   * says to drop real bundled dish photos in before shipping, and until then
-   * the placeholder must say what it stands for rather than pretend.
+   * Fallback art, shown when no bundled photo is present for this dish.
+   *
+   * Deliberately a labelled stand-in rather than a pretend photo: the card
+   * renders {@link photoSrc} first and only falls back here if that asset is
+   * absent, so dropping the real images into `gui/public/dimsum/` completes the
+   * feature with no code change.
    */
   emoji: string;
+}
+
+/**
+ * Where a dish's bundled photo lives.
+ *
+ * Served from `gui/public/`, so it is a local file in the build output — never
+ * a network fetch, per the no-third-party rule. Absent files are handled by the
+ * card's error fallback rather than by probing, because a synchronous
+ * "does this asset exist" check does not exist in a browser.
+ */
+export function photoSrc(dish: DimSumDish): string {
+  return `dimsum/${dish.id}.webp`;
 }
 
 export const DISHES: DimSumDish[] = [
