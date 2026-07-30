@@ -83,7 +83,7 @@ export default function ProviderOverview({
           )}
         </dl>
         {onEditSettings && (
-          <button type="button" className="link-btn pws-edit-settings-link" onClick={onEditSettings}>
+          <button type="button" className="m3-btn m3-btn--text pws-btn-sm pws-edit-settings-link" onClick={onEditSettings}>
             {t("pws.editSettings")}
           </button>
         )}
@@ -110,7 +110,7 @@ export default function ProviderOverview({
                 {onReauthenticate && (
                   <button
                     type="button"
-                    className="btn btn-primary btn-sm"
+                    className="m3-btn m3-btn--filled pws-btn-sm"
                     disabled={reauthBusy}
                     onClick={() => onReauthenticate()}
                   >
@@ -118,7 +118,7 @@ export default function ProviderOverview({
                   </button>
                 )}
                 {reauthBusy && onCancelLogin && (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCancelLogin()}>
+                  <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={() => onCancelLogin()}>
                     {t("common.cancel")}
                   </button>
                 )}
@@ -175,7 +175,7 @@ export default function ProviderOverview({
           )}
         </dl>
         {onViewUsage && (
-          <button type="button" className="link-btn pws-view-usage-link" onClick={onViewUsage}>
+          <button type="button" className="m3-btn m3-btn--text pws-btn-sm pws-view-usage-link" onClick={onViewUsage}>
             {t("pws.viewUsage")} →
           </button>
         )}

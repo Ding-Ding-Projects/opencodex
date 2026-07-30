@@ -158,7 +158,7 @@ export default function ProviderDetails({
           {onRemoveProvider && (
             <button
               type="button"
-              className="btn btn-ghost btn-sm btn-icon-only"
+              className="m3-btn m3-btn--text btn-icon-only"
               onClick={() => onRemoveProvider(item.name)}
               aria-label={t("pws.removeConfirmTitle")}
               title={t("pws.removeConfirmTitle")}
@@ -179,7 +179,7 @@ export default function ProviderDetails({
           )}
         </div>
       </div>
-      <div className="pws-detail-tabs" role="tablist">
+      <div className="pws-detail-tabs" role="tablist" aria-label={t("pws.sectionsAria")}>
         {tabs.map((candidate, index) => (
           <button
             key={candidate.id}

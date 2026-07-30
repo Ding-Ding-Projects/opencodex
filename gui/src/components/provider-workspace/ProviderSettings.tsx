@@ -177,12 +177,12 @@ export default function ProviderSettings({
     <div className="pwi-settings-form">
       <label className="pwi-settings-field">
         <span className="pwi-settings-label"><IconLock style={{ width: 12, height: 12 }} /> {t("pws.providerId")}</span>
-        <input className="input" value={item.name} readOnly disabled />
+        <input className="m3-input" value={item.name} readOnly disabled />
       </label>
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("modal.adapter")}</span>
-        {isPreset ? <input className="input" value={adapter} readOnly disabled /> : (
-          <select className="input" value={adapter} onChange={e => setAdapter(e.target.value)}>
+        {isPreset ? <input className="m3-input" value={adapter} readOnly disabled /> : (
+          <select className="m3-input" value={adapter} onChange={e => setAdapter(e.target.value)}>
             {adapterOptions.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         )}
@@ -192,7 +192,7 @@ export default function ProviderSettings({
           <label className="pwi-settings-field">
             <span className="pwi-settings-label">{t("modal.endpoint")}</span>
             <select
-              className="input"
+              className="m3-input"
               value={endpointChoice}
               onChange={e => {
                 const id = e.target.value;
@@ -208,31 +208,31 @@ export default function ProviderSettings({
           {endpointChoice === "custom" && (
             <label className="pwi-settings-field">
               <span className="pwi-settings-label">{t("modal.baseUrl")}</span>
-              <input className="input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder={t("modal.baseUrlPlaceholder")} />
+              <input className="m3-input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder={t("modal.baseUrlPlaceholder")} />
             </label>
           )}
         </>
       ) : (
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{t("modal.baseUrl")}</span>
-          <input className="input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} readOnly={plainBaseUrlLocked} disabled={plainBaseUrlLocked} />
+          <input className="m3-input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} readOnly={plainBaseUrlLocked} disabled={plainBaseUrlLocked} />
         </label>
       )}
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("pws.cell.defaultModel")}</span>
         {modelOptions.length > 0 ? (
-          <select className="input" value={defaultModel} onChange={e => setDefaultModel(e.target.value)}>
+          <select className="m3-input" value={defaultModel} onChange={e => setDefaultModel(e.target.value)}>
             <option value="">{t("pws.defaultModelNone")}</option>
             {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
         ) : (
-          <input className="input" value={defaultModel} onChange={e => setDefaultModel(e.target.value)} placeholder={t("pws.optionalPlaceholder")} />
+          <input className="m3-input" value={defaultModel} onChange={e => setDefaultModel(e.target.value)} placeholder={t("pws.optionalPlaceholder")} />
         )}
       </label>
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("pws.authMode")}</span>
-        {isPreset ? <input className="input" value={authModeLabel(item, t)} readOnly disabled /> : (
-          <select className="input" value={authMode} onChange={e => setAuthMode(e.target.value)}>
+        {isPreset ? <input className="m3-input" value={authModeLabel(item, t)} readOnly disabled /> : (
+          <select className="m3-input" value={authMode} onChange={e => setAuthMode(e.target.value)}>
             <option value="key">{t("modal.badge.apiKey")}</option>
             <option value="forward">{t("pws.auth.chatgptPassthrough")}</option>
             <option value="oauth">{t("modal.badge.oauth")}</option>
@@ -243,7 +243,7 @@ export default function ProviderSettings({
       {supportsApiKeyTransport && (
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{t("modal.apiKeyTransport")}</span>
-          <select className="input" value={apiKeyTransport} onChange={e => setApiKeyTransport(e.target.value as "x-api-key" | "bearer")}>
+          <select className="m3-input" value={apiKeyTransport} onChange={e => setApiKeyTransport(e.target.value as "x-api-key" | "bearer")}>
             <option value="x-api-key">{t("modal.apiKeyTransportNative")}</option>
             <option value="bearer">{t("modal.apiKeyTransportBearer")}</option>
           </select>
@@ -251,7 +251,7 @@ export default function ProviderSettings({
       )}
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("pws.note")}</span>
-        <textarea className="input pwi-settings-textarea" value={note} onChange={e => setNote(e.target.value)} rows={2} />
+        <textarea className="m3-input pwi-settings-textarea" value={note} onChange={e => setNote(e.target.value)} rows={2} />
       </label>
       <label className="pwi-settings-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <input type="checkbox" checked={allowPrivateNetwork} onChange={e => setAllowPrivateNetwork(e.target.checked)} />
@@ -268,8 +268,8 @@ export default function ProviderSettings({
         <div className="pwi-settings-sticky-bar">
           <span className="muted">{t("pws.settingsUnsavedBar")}</span>
           <div className="pwi-settings-sticky-bar-actions">
-            <button type="button" className="btn btn-ghost btn-sm" onClick={discard} disabled={saving}>{t("pws.discardSettings")}</button>
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => void save()} disabled={saving}>{saving ? t("pws.saving") : t("pws.saveSettings")}</button>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={discard} disabled={saving}>{t("pws.discardSettings")}</button>
+            <button type="button" className="m3-btn m3-btn--filled pws-btn-sm" onClick={() => void save()} disabled={saving}>{saving ? t("pws.saving") : t("pws.saveSettings")}</button>
           </div>
         </div>
       )}

@@ -118,14 +118,14 @@ export default function ProviderAuthPanel({
               </span>
               <span className="pwi-auth-actions">
                 {activeReauthAccount && (
-                  <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => void authHandlers.onReauth(item.name, activeReauthAccount.id)}>
+                  <button type="button" className="m3-btn m3-btn--filled pws-btn-sm" disabled={busy} onClick={() => void authHandlers.onReauth(item.name, activeReauthAccount.id)}>
                     {t("pws.reauthenticate")}
                   </button>
                 )}
                 {loggedIn ? (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void authHandlers.onLogout(item.name)}>{t("prov.logout")}</button>
+                  <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={() => void authHandlers.onLogout(item.name)}>{t("prov.logout")}</button>
                 ) : (
-                  <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => void authHandlers.onLogin(item.name, false)}>
+                  <button type="button" className="m3-btn m3-btn--filled pws-btn-sm" disabled={busy} onClick={() => void authHandlers.onLogin(item.name, false)}>
                     {busy ? <span className="pwi-spin-inline" aria-hidden="true" /> : <IconLock style={{ width: 13, height: 13 }} aria-hidden="true" />}
                     {busy ? t("prov.waitingBrowser") : t("prov.login")}
                   </button>
@@ -141,7 +141,7 @@ export default function ProviderAuthPanel({
                     <div className="pwi-device-code-wrap">
                       <span>{t("prov.deviceCode")}</span>
                       <code className="pwi-device-code">{hintForThis.deviceCode}</code>
-                      <button type="button" className="btn btn-primary btn-sm"
+                      <button type="button" className="m3-btn m3-btn--filled pws-btn-sm"
                         onClick={() => deviceCodeCopy.copy(deviceCode, deviceCode)}>
                         <span aria-live="polite">{deviceCodeCopyLabel}</span>
                       </button>
@@ -149,7 +149,7 @@ export default function ProviderAuthPanel({
                   )}
                   <LoginUrlBlock url={hintForThis.url ?? ""} />
                   {authHandlers.onCancelLogin && (
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void authHandlers.onCancelLogin?.(item.name)}>
+                    <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={() => void authHandlers.onCancelLogin?.(item.name)}>
                       {t("common.cancel")}
                     </button>
                   )}
@@ -166,7 +166,7 @@ export default function ProviderAuthPanel({
               <div className="pwi-auth-state pwi-auth-state--error" role="alert">
                 <span>{t("pws.accountsLoadFailed")}</span>
                 {authHandlers.onRetryAccounts && (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void authHandlers.onRetryAccounts?.(item.name)}>
+                  <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={() => void authHandlers.onRetryAccounts?.(item.name)}>
                     {t("pws.retryAccounts")}
                   </button>
                 )}
@@ -214,7 +214,7 @@ export default function ProviderAuthPanel({
                     {showReauth && (
                       <button
                         type="button"
-                        className="btn btn-ghost btn-sm"
+                        className="m3-btn m3-btn--text pws-btn-sm"
                         disabled={busy || Boolean(switchingAccountId)}
                         onClick={() => void authHandlers.onReauth(item.name, account.id)}
                       >
@@ -222,15 +222,15 @@ export default function ProviderAuthPanel({
                       </button>
                     )}
                     {showDoctor && (
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={copyDoctor}>
+                      <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={copyDoctor}>
                         <span aria-live="polite">{doctorCopyButtonLabel(t, doctorCopy.outcomeFor(account.id))}</span>
                       </button>
                     )}
-                    <button type="button" className="btn btn-ghost btn-sm"
+                    <button type="button" className="m3-btn m3-btn--text pws-btn-sm"
                       onClick={() => void authHandlers.onEditAlias(item.name, "oauth", account.id, account.alias)}>
                       {t("prov.editAlias")}
                     </button>
-                    <button type="button" className="btn btn-ghost btn-sm pwi-auth-row-remove"
+                    <button type="button" className="m3-btn m3-btn--text pws-btn-sm pwi-auth-row-remove"
                       aria-label={`${t("common.remove")} — ${label}`}
                       title={`${t("common.remove")} — ${label}`}
                       disabled={Boolean(switchingAccountId)}
@@ -257,7 +257,7 @@ export default function ProviderAuthPanel({
               <div className="pwi-auth-state pwi-auth-state--empty">{t("pws.noAccounts")}</div>
             )}
             {loggedIn && (
-              <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
+              <button type="button" className="m3-btn m3-btn--text pws-btn-sm" style={{ marginTop: 8 }}
                 onClick={() => void authHandlers.onLogin(item.name, true)} disabled={busy || Boolean(switchingAccountId)}>
                 {t("pws.addAccount")}
               </button>
@@ -281,11 +281,11 @@ export default function ProviderAuthPanel({
                       </span>
                       {entry.active && <span className="badge badge-primary">{t("prov.accountActive")}</span>}
                     </button>
-                    <button type="button" className="btn btn-ghost btn-sm"
+                    <button type="button" className="m3-btn m3-btn--text pws-btn-sm"
                       onClick={() => void authHandlers.onEditAlias(item.name, "api-key", entry.id, entry.label)}>
                       {t("prov.editAlias")}
                     </button>
-                    <button type="button" className="btn btn-ghost btn-sm pwi-auth-row-remove"
+                    <button type="button" className="m3-btn m3-btn--text pws-btn-sm pwi-auth-row-remove"
                       aria-label={`${t("common.remove")} — ${entry.label ?? entry.masked}`}
                       title={`${t("common.remove")} — ${entry.label ?? entry.masked}`}
                       onClick={() => void authHandlers.onRemoveApiKey(item.name, entry)}>
@@ -297,15 +297,15 @@ export default function ProviderAuthPanel({
             )}
             {addingKey ? (
               <div className="pwi-auth-add-key">
-                <input className="input" type="password" value={newKey} onChange={e => setNewKey(e.target.value)}
+                <input className="m3-input" type="password" value={newKey} onChange={e => setNewKey(e.target.value)}
                   placeholder={t("modal.apiKeyPlaceholder")} autoComplete="off" disabled={keyBusy} />
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => void submitKey()} disabled={keyBusy || !newKey.trim()}>
+                <button type="button" className="m3-btn m3-btn--filled pws-btn-sm" onClick={() => void submitKey()} disabled={keyBusy || !newKey.trim()}>
                   {keyBusy ? t("pws.saving") : t("pws.addKey")}
                 </button>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAddingKey(false); setNewKey(""); }}>{t("common.cancel")}</button>
+                <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={() => { setAddingKey(false); setNewKey(""); }}>{t("common.cancel")}</button>
               </div>
             ) : (
-              <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
+              <button type="button" className="m3-btn m3-btn--text pws-btn-sm" style={{ marginTop: 8 }}
                 onClick={() => setAddingKey(true)}>{t("pws.addKey")}</button>
             )}
           </>

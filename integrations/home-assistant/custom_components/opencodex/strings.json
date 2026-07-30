@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to opencodex",
+        "description": "On the machine running opencodex, expose it to your network and get a key:\n\n`ocx host enable --new-key --yes`\n\nThen enter that machine's address and the key it printed.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "api_key": "API key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach opencodex at that address. Is the proxy running, and has `ocx host enable` been run on it?",
+      "not_opencodex": "Something answered, but it is not opencodex — check the port.",
+      "invalid_auth": "The API key was rejected. Generate one with `ocx host enable --new-key --yes` or `ocx access key create`."
+    },
+    "abort": {
+      "already_configured": "This proxy is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "requests_7d": { "name": "Requests (7 days)" },
+      "total_tokens_7d": { "name": "Total tokens (7 days)" },
+      "input_tokens_7d": { "name": "Input tokens (7 days)" },
+      "output_tokens_7d": { "name": "Output tokens (7 days)" },
+      "estimated_cost_7d": { "name": "Estimated cost (7 days)" },
+      "weekly_quota_used": { "name": "Weekly quota used" },
+      "monthly_quota_used": { "name": "Monthly quota used" },
+      "weekly_quota_resets": { "name": "Weekly quota resets" },
+      "monthly_quota_resets": { "name": "Monthly quota resets" },
+      "uptime": { "name": "Proxy uptime" }
+    }
+  }
+}

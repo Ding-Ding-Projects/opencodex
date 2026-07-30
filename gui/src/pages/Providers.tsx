@@ -185,7 +185,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
       <div className="page-head">
         <h2>{t("nav.providers")}</h2>
         <div className="row">
-          <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}><IconPlus />{t("prov.add")}</button>
+          <button type="button" className="m3-btn m3-btn--filled" onClick={() => setAdding(true)}><IconPlus />{t("prov.add")}</button>
         </div>
       </div>
       {status && <Notice tone={statusOk ? "ok" : "err"}>{status}</Notice>}

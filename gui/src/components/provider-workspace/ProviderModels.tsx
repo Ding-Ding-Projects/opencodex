@@ -167,7 +167,7 @@ export default function ProviderModels({
         <div className="pws-inline-error" role="status">
           <span>{t("pws.modelsNeedsReauth")}</span>
           {onOpenAccounts && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenAccounts}>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={onOpenAccounts}>
               {t("pws.tab.accounts")}
             </button>
           )}
@@ -182,7 +182,7 @@ export default function ProviderModels({
       <div className="row pws-custom-model-row">
         <input
           id={`pws-custom-model-${item.name}`}
-          className="input"
+          className="m3-input"
           value={customModelId}
           onChange={event => setCustomModelId(event.target.value)}
           onKeyDown={event => { if (event.key === "Enter") void addCustomModel(); }}
@@ -192,7 +192,7 @@ export default function ProviderModels({
         />
         <button
           type="button"
-          className="btn btn-primary btn-sm"
+          className="m3-btn m3-btn--filled pws-btn-sm"
           onClick={() => { void addCustomModel(); }}
           disabled={customSaving || customModelInvalid}
         >
@@ -204,7 +204,7 @@ export default function ProviderModels({
         <p className="pws-inline-error" role="alert">
           {customError}
           {customModelsLoadFailed && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={retryCustomModels} style={{ marginLeft: 8 }}>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={retryCustomModels} style={{ marginLeft: 8 }}>
               {t("common.retry")}
             </button>
           )}
@@ -213,7 +213,7 @@ export default function ProviderModels({
       {!emptyBase && (
         <input
           type="search"
-          className="input pws-model-search"
+          className="m3-input pws-model-search"
           placeholder={t("pws.modelSearchPlaceholder")}
           value={query}
           onChange={e => setQuery(e.target.value)}
@@ -226,7 +226,7 @@ export default function ProviderModels({
         <div role="alert" className="pws-inline-error">
           <span>{t("pws.modelsLoadFailed")}</span>
           {onRetryModels && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onRetryModels}>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={onRetryModels}>
               {t("pws.retry")}
             </button>
           )}

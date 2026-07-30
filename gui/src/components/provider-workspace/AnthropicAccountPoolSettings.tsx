@@ -197,7 +197,7 @@ export default function AnthropicAccountPoolSettings({
           <label className="field" style={{ display: "block", marginTop: 12 }}>
             <span className="field-label">{t("anthropicPool.threshold")}</span>
             <input
-              className="input mono"
+              className="m3-input mono"
               type="number"
               min={0}
               max={100}

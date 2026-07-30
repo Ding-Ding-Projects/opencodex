@@ -318,7 +318,7 @@ export default function ProviderWorkspaceShell({
             <IconSearch className="pws-search-icon" width={14} height={14} aria-hidden="true" />
             <input
               type="search"
-              className="input pws-search-input"
+              className="m3-input pws-search-input"
               placeholder={t("pws.searchPlaceholder")}
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -328,7 +328,7 @@ export default function ProviderWorkspaceShell({
           <div className="pws-filter-wrap" ref={filterWrapRef}>
             <button
               type="button"
-              className={`pws-filter-btn${filterActive || filterOpen ? " pws-filter-btn--active" : ""}`}
+              className={`m3-icon-btn pws-filter-btn${filterActive || filterOpen ? " pws-filter-btn--active" : ""}`}
               onClick={() => setFilterOpen(open => !open)}
               aria-label={t("pws.filterAria")}
               aria-expanded={filterOpen}
@@ -338,7 +338,7 @@ export default function ProviderWorkspaceShell({
               {filterActive && <span className="pws-filter-dot" aria-hidden="true" />}
             </button>
             {filterOpen && (
-              <div id="pws-provider-filters" className="pws-filter-menu" role="group" aria-label={t("pws.providerFiltersAria")}>
+              <div id="pws-provider-filters" className="m3-menu pws-filter-menu" role="group" aria-label={t("pws.providerFiltersAria")}>
                 <div className="pws-filter-title">{t("pws.filters")}</div>
                 <div className="pws-filter-head">{t("pws.filterStatus")}</div>
                 {statusFilterOptions.map(({ key, label, count }) => (
@@ -386,7 +386,7 @@ export default function ProviderWorkspaceShell({
                     <button
                       key={opt.id}
                       type="button"
-                      className={`pws-sort-btn${sortMode === opt.id ? " pws-sort-btn--active" : ""}`}
+                      className={`m3-chip pws-sort-btn${sortMode === opt.id ? " selected" : ""}`}
                       onClick={() => setSortMode(opt.id)}
                       aria-pressed={sortMode === opt.id}
                     >
@@ -395,7 +395,7 @@ export default function ProviderWorkspaceShell({
                   ))}
                 </div>
                 <div className="pws-filter-footer">
-                  <button type="button" className="link-btn" onClick={resetFilters} disabled={!filterActive}>
+                  <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={resetFilters} disabled={!filterActive}>
                     {t("pws.resetAll")}
                   </button>
                 </div>
@@ -504,7 +504,7 @@ export default function ProviderWorkspaceShell({
             <div className="pws-detail-placeholder">
               <h3>{formatProviderDisplayName(selectedItem.name)}</h3>
               <p className="muted">{t("pws.detailComingSoon")}</p>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onSelect(null)}>
+              <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={() => onSelect(null)}>
                 {t("modal.back")}
               </button>
             </div>
@@ -532,17 +532,17 @@ function WorkspaceEmptyState({ onAddProvider }: { onAddProvider: (intent?: AddPr
         <div aria-hidden="true"><IconBoxes style={{ width: 64, height: 64 }} /></div>
         <h2>{t("pws.connectFirst")}</h2>
         <div className="pws-empty-tiles">
-          <button type="button" className="pws-empty-tile" onClick={() => onAddProvider({ tier: "free" })}>
+          <button type="button" className="m3-card pws-empty-tile" onClick={() => onAddProvider({ tier: "free" })}>
             <span aria-hidden="true"><IconGlobe width={18} height={18} /></span>
             <span className="pws-empty-tile-label">{t("pws.empty.browseFree")}</span>
             <span className="pws-empty-tile-desc muted">{t("pws.empty.browseFreeDesc")}</span>
           </button>
-          <button type="button" className="pws-empty-tile" onClick={() => onAddProvider({ tier: "accounts" })}>
+          <button type="button" className="m3-card pws-empty-tile" onClick={() => onAddProvider({ tier: "accounts" })}>
             <span aria-hidden="true"><IconLock width={18} height={18} /></span>
             <span className="pws-empty-tile-label">{t("pws.empty.connectAccount")}</span>
             <span className="pws-empty-tile-desc muted">{t("pws.empty.connectAccountDesc")}</span>
           </button>
-          <button type="button" className="pws-empty-tile" onClick={() => onAddProvider({ custom: true })}>
+          <button type="button" className="m3-card pws-empty-tile" onClick={() => onAddProvider({ custom: true })}>
             <span aria-hidden="true"><IconKey width={18} height={18} /></span>
             <span className="pws-empty-tile-label">{t("pws.empty.addEndpoint")}</span>
             <span className="pws-empty-tile-desc muted">{t("pws.empty.addEndpointDesc")}</span>

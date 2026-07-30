@@ -1,0 +1,12 @@
+{
+  "domain": "opencodex",
+  "name": "opencodex usage meter",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/lidge-jun/opencodex/tree/main/integrations/home-assistant",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/lidge-jun/opencodex/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

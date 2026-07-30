@@ -49,10 +49,15 @@ export function ProviderIcon({ name, adapter, baseUrl, cls }: {
   cls: string;
 }) {
   const src = providerIconSrc(name, { adapter, baseUrl });
+  // M3: providers without a brand mark get a tonal monogram chip rather than a
+  // generic server glyph, so every rail row reads as one list of avatars.
+  const monogram = formatProviderDisplayName(name).trim().charAt(0).toUpperCase();
   return (
-    <span className={cls}>
+    <span className={src ? `${cls} pws-mark` : `${cls} pws-mark pws-mark--monogram`} aria-hidden="true">
       {src ? (
         <img src={src} alt="" aria-hidden="true" />
+      ) : monogram ? (
+        <span className="pws-mark-letter">{monogram}</span>
       ) : (
         <IconServer aria-hidden="true" />
       )}
