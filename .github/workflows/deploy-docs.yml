@@ -26,6 +26,16 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Build with Astro
         uses: withastro/action@e84f40bd8d2caa9e768ec82ad30dd81f0b280853 # v6.1.2
+        # Unset in the repository that owns the opencodex.me custom domain, so the
+        # build keeps emitting root-relative URLs exactly as before. A fork cannot
+        # claim that domain (GitHub verifies it to one account) and publishes at
+        # https://<owner>.github.io/<repo>/ instead — where a root `site` with no
+        # `base` makes every asset and link 404 while the build still reports
+        # success. Setting these two repository variables is what makes a fork's
+        # site work.
+        env:
+          DOCS_SITE_URL: ${{ vars.DOCS_SITE_URL }}
+          DOCS_BASE: ${{ vars.DOCS_BASE }}
         with:
           path: ./docs-site
           node-version: 22

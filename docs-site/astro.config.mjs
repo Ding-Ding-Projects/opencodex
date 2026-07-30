@@ -4,7 +4,17 @@ import starlight from "@astrojs/starlight";
 
 // Canonical GitHub Pages custom domain. The site is served at the domain root,
 // so Starlight must not emit the former /opencodex project-site prefix.
-const SITE_URL = "https://opencodex.me";
+//
+// Overridable, because a fork cannot use it. `opencodex.me` is verified to one
+// GitHub account, and any other repository asking for it is refused with "custom
+// domain is already taken" — so a fork publishes at
+// https://<owner>.github.io/<repo>/ instead. Served under a path prefix, a root
+// `site` with no `base` emits absolute URLs for every asset, stylesheet and link,
+// and the whole site 404s while the build reports success. Set DOCS_SITE_URL and
+// DOCS_BASE (repository variables, wired through the deploy workflow) to publish
+// somewhere else; the defaults keep the canonical domain behaviour unchanged.
+const SITE_URL = process.env.DOCS_SITE_URL?.trim() || "https://opencodex.me";
+const BASE = process.env.DOCS_BASE?.trim() || undefined;
 
 // NOTE: the WebSite / SoftwareApplication JSON-LD deliberately does NOT live here.
 // Google only reads site-name markup from the home page of a site, and a global
@@ -15,6 +25,7 @@ const SITE_URL = "https://opencodex.me";
 
 export default defineConfig({
   site: SITE_URL,
+  ...(BASE ? { base: BASE } : {}),
   trailingSlash: "ignore",
   // lightningcss merges animation-timeline into the `animation` shorthand,
   // which Chrome cannot parse — the scroll-driven animations die silently.
