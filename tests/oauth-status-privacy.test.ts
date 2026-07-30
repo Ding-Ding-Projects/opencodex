@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLoginStatus, getValidAccessToken, UnsupportedOAuthProviderError } from "../src/oauth";
 import { saveCredential } from "../src/oauth/store";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-oauth-status-privacy-test");
 let previousOpencodexHome: string | undefined;
@@ -10,7 +11,7 @@ let previousOpencodexHome: string | undefined;
 describe("OAuth status privacy", () => {
   beforeEach(() => {
     previousOpencodexHome = process.env.OPENCODEX_HOME;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
   });
@@ -18,7 +19,7 @@ describe("OAuth status privacy", () => {
   afterEach(() => {
     if (previousOpencodexHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousOpencodexHome;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
 
   test("getLoginStatus returns a masked provider email", async () => {

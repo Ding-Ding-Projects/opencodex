@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { syncModelsToCodex } from "../src/codex/sync";
 import { MANAGED_AGENTS_TABLE_MARKER, MANAGED_SUBAGENT_DEFAULT_MARKER } from "../src/codex/subagent-defaults";
@@ -33,7 +33,7 @@ function homeDiagnostic(overrides: Partial<OrcaCodexHomeDiagnostic> = {}): OrcaC
 describe("GUI/CLI Codex sync backend", () => {
   beforeEach(() => {
     prevCodexHome = process.env.CODEX_HOME;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_CODEX_HOME, { recursive: true });
     process.env.CODEX_HOME = TEST_CODEX_HOME;
     writeFileSync(join(TEST_CODEX_HOME, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
@@ -42,7 +42,7 @@ describe("GUI/CLI Codex sync backend", () => {
   afterEach(() => {
     if (prevCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = prevCodexHome;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
   test("returns the structured sync result used by POST /api/sync", async () => {
     let injectedPort = 0;
@@ -269,3 +269,4 @@ describe("GUI/CLI Codex sync backend", () => {
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

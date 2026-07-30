@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   clearLoginState,
@@ -39,7 +39,7 @@ function config(): OcxConfig {
 
 beforeEach(() => {
   clearLoginState("xai");
-  rmSync(TEST_DIR, { recursive: true, force: true });
+  removeTempDir(TEST_DIR);
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.OPENCODEX_HOME = TEST_DIR;
 });
@@ -48,7 +48,7 @@ afterEach(() => {
   clearLoginState("xai");
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
-  rmSync(TEST_DIR, { recursive: true, force: true });
+  removeTempDir(TEST_DIR);
 });
 
 async function waitForOAuthDone(provider: string): Promise<ReturnType<typeof getLoginStatus>> {
@@ -535,3 +535,4 @@ describe("legacy ChatGPT OAuth public-surface exclusion", () => {
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

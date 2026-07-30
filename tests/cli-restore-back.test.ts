@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const cliSource = readFileSync(join(import.meta.dir, "..", "src", "cli", "index.ts"), "utf8");
 const helpSource = readFileSync(join(import.meta.dir, "..", "src", "cli", "help.ts"), "utf8");
@@ -63,8 +64,8 @@ describe("ocx restore back", () => {
       expect(`${result.stdout}\n${result.stderr}`).toContain("Codex config injection refused");
       expect(result.stderr).toContain("Codex sync did not complete");
     } finally {
-      rmSync(codexHome, { recursive: true, force: true });
-      rmSync(ocxHome, { recursive: true, force: true });
+      removeTempDir(codexHome);
+      removeTempDir(ocxHome);
     }
   });
 

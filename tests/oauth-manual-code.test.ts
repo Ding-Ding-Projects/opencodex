@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { managementFetch as fetch } from "./helpers/management-auth";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   cancelLoginFlow,
@@ -14,6 +14,7 @@ import { parseCallbackInput } from "../src/oauth/callback-server";
 import { saveConfig } from "../src/config";
 import { startServer } from "../src/server";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-oauth-manual-code-test");
 let previousOpencodexHome: string | undefined;
@@ -54,7 +55,7 @@ describe("parseCallbackInput kinds", () => {
 describe("OAuth manual login code fallback", () => {
   beforeEach(() => {
     previousOpencodexHome = process.env.OPENCODEX_HOME;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
     clearLoginState("xai");
@@ -65,7 +66,7 @@ describe("OAuth manual login code fallback", () => {
     clearLoginState("xai");
     if (previousOpencodexHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousOpencodexHome;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
 
   test("submitManualLoginCode rejects when no login is in progress", () => {

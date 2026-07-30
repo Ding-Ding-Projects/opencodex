@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   saveConfigPreservingClaudeCode,
 } from "../src/config";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * A user hand-edits `config.json` while the proxy runs. `saveConfig` serializes the
@@ -45,7 +46,7 @@ beforeEach(() => {
 afterEach(() => {
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
-  rmSync(home, { recursive: true, force: true });
+  removeTempDir(home);
 });
 
 test("a hand edit made while the service holds memory survives a guarded save", () => {

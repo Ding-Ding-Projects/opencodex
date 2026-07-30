@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -25,9 +25,9 @@ import {
   writeRuntimePort,
   writePid,
 } from "../src/config";
-
 import * as windowsAcl from "../src/lib/windows-secret-acl";
 import { hardenConfigDir, hardenExistingSecret, renameAtomicFile, saveConfig } from "../src/config";
+import { removeTempDir } from "./helpers/temp-dir";
 let testDir = "";
 
 beforeEach(() => {
@@ -37,7 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.OPENCODEX_HOME;
-  if (testDir && existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+  if (testDir && existsSync(testDir)) removeTempDir(testDir);
   testDir = "";
 });
 
@@ -623,7 +623,7 @@ describe("opencodex config defaults", () => {
       expect(getPidPath()).toBe(join(expectedConfigDir, "ocx.pid"));
     } finally {
       process.chdir(oldCwd);
-      rmSync(parent, { recursive: true, force: true });
+      removeTempDir(parent);
     }
   });
 
@@ -720,7 +720,7 @@ describe("opencodex config defaults", () => {
       { adapter: "openai-chat", baseUrl: "https://example.test/v1", headers: { Authorization: "Bearer secret" } },
       { adapter: "openai-chat", baseUrl: "https://example.test/v1", headers: { "X-Custom": "ok\r\nInjected: yes" } },
     ]) {
-      rmSync(testDir, { recursive: true, force: true });
+      removeTempDir(testDir);
       mkdirSync(testDir, { recursive: true });
       writeConfig({
         port: 10100,
@@ -769,7 +769,7 @@ describe("opencodex config defaults", () => {
 
     expect(loadConfig().providerContextCaps).toEqual({ custom: 350_000 });
 
-    rmSync(testDir, { recursive: true, force: true });
+    removeTempDir(testDir);
     mkdirSync(testDir, { recursive: true });
     writeConfig({
       port: 10100,
@@ -976,7 +976,7 @@ describe("opencodex config defaults", () => {
     expect(readConfigDiagnostics().source).toBe("fallback");
     expect(readConfigDiagnostics().error).toContain("providers.custom.defaultMaxOutputTokens");
 
-    rmSync(testDir, { recursive: true, force: true });
+    removeTempDir(testDir);
     mkdirSync(testDir, { recursive: true });
     writeConfig({
       port: 10100,
@@ -1019,7 +1019,7 @@ describe("opencodex config defaults", () => {
       modelOpenRouterRouting: { "anthropic/claude-sonnet-5": { only: ["anthropic"] } },
     });
 
-    rmSync(testDir, { recursive: true, force: true });
+    removeTempDir(testDir);
     mkdirSync(testDir, { recursive: true });
     writeConfig({
       port: 10100,
@@ -1065,7 +1065,7 @@ describe("opencodex config defaults", () => {
 
     expect(loadConfig().contextCapValue).toBe(500_000);
 
-    rmSync(testDir, { recursive: true, force: true });
+    removeTempDir(testDir);
     mkdirSync(testDir, { recursive: true });
     writeConfig({
       port: 10100,

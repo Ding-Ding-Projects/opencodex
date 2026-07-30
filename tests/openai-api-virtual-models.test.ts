@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { managementHeaders } from "./helpers/management-auth";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import { PROVIDER_REGISTRY } from "../src/providers/registry";
 import { saveConfig } from "../src/config";
 import { startServer } from "../src/server";
 import { usageLogPath } from "../src/usage/log";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const moduleOriginalFetch = globalThis.fetch;
 const moduleOriginalHome = process.env.OPENCODEX_HOME;
@@ -346,7 +347,7 @@ describe("OpenAI API compact transport", () => {
       globalThis.fetch = originalFetch;
       await server.stop(true);
       delete process.env.OPENCODEX_HOME;
-      rmSync(home, { recursive: true, force: true });
+      removeTempDir(home);
     }
   }, 20_000);
 });
@@ -497,7 +498,7 @@ describe("OpenAI API Pro transport identities", () => {
       globalThis.fetch = originalFetch;
       await server.stop(true);
       delete process.env.OPENCODEX_HOME;
-      rmSync(home, { recursive: true, force: true });
+      removeTempDir(home);
     }
   }, 20_000);
 });

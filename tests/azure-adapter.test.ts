@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAzureAdapter } from "../src/adapters/azure";
 import { getConfigPath, loadConfig, readConfigDiagnostics } from "../src/config";
 import type { OcxParsedRequest, OcxProviderConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const parsed: OcxParsedRequest = {
   modelId: "gpt-5.5",
@@ -103,7 +104,7 @@ describe("Azure OpenAI adapter hardening", () => {
     } finally {
       if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = previousHome;
-      if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+      if (existsSync(testDir)) removeTempDir(testDir);
     }
   });
 });

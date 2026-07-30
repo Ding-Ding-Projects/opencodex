@@ -1,11 +1,12 @@
 import { afterEach, beforeAll, afterAll, describe, expect, test } from "bun:test";
 import { Buffer } from "node:buffer";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getVertexAccessToken, __resetVertexTokenCache } from "../src/lib/gcp-adc";
 import { createGoogleAdapter } from "../src/adapters/google";
 import type { OcxParsedRequest, OcxProviderConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 let tmp: string;
@@ -50,7 +51,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   globalThis.fetch = realFetch;
-  rmSync(tmp, { recursive: true, force: true });
+  removeTempDir(tmp);
 });
 
 afterEach(() => {

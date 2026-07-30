@@ -22,6 +22,7 @@ import type { OcxConfig } from "../src/types";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-codex-pool-rotation-test");
 let previousOpencodexHome: string | undefined;
@@ -119,7 +120,7 @@ describe("pickRoundRobinAccount", () => {
 describe("accountPoolStrategy new-session routing", () => {
   beforeEach(() => {
     previousOpencodexHome = process.env.OPENCODEX_HOME;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
     previousCodexHome = process.env.CODEX_HOME;
@@ -139,7 +140,7 @@ describe("accountPoolStrategy new-session routing", () => {
     else process.env.OPENCODEX_HOME = previousOpencodexHome;
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousCodexHome;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
 
   test("round-robin strategy rotates unbound new sessions", () => {

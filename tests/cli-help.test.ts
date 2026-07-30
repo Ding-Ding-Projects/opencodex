@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const cliPath = join(repoRoot, "src", "cli", "index.ts");
@@ -75,8 +76,8 @@ describe("CLI subcommand help", () => {
         expect(readFileSync(statePath)).toEqual(stateBefore);
       }
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
-      rmSync(binDir, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
+      removeTempDir(binDir);
     }
   });
 
@@ -131,7 +132,7 @@ describe("CLI subcommand help", () => {
       expect(result.stdout).toContain(join(opencodexHome, "service.log"));
       expect(result.stdout).toContain("Codex autostart shim");
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
     }
   });
 
@@ -160,7 +161,7 @@ describe("CLI subcommand help", () => {
       expect(result.stdout).not.toContain("Plain `codex` now runs natively");
       expect(readFileSync(configPath, "utf8")).toBe(before);
     } finally {
-      rmSync(codexHome, { recursive: true, force: true });
+      removeTempDir(codexHome);
     }
   });
 
@@ -192,8 +193,8 @@ describe("CLI subcommand help", () => {
         expect(readFileSync(markerPath, "utf8")).toBe('{"installed":true}');
       }
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
-      rmSync(codexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
+      removeTempDir(codexHome);
     }
   });
 
@@ -215,7 +216,7 @@ describe("CLI subcommand help", () => {
       expect(result.stderr).toBe("");
       expect(existsSync(statePath)).toBe(false);
     } finally {
-      rmSync(codexHome, { recursive: true, force: true });
+      removeTempDir(codexHome);
     }
   });
 

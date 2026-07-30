@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { OAUTH_PROVIDERS, runLogin } from "../src/oauth";
 import { getAccountCredential, getAccountSet, saveCredential } from "../src/oauth/store";
@@ -32,7 +32,7 @@ function config(): OcxConfig {
 }
 
 beforeEach(() => {
-  rmSync(TEST_DIR, { recursive: true, force: true });
+  removeTempDir(TEST_DIR);
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.OPENCODEX_HOME = TEST_DIR;
 });
@@ -40,7 +40,7 @@ beforeEach(() => {
 afterEach(() => {
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
-  rmSync(TEST_DIR, { recursive: true, force: true });
+  removeTempDir(TEST_DIR);
 });
 
 describe("OAuth account-scoped reauth", () => {
@@ -201,3 +201,4 @@ describe("OAuth account-scoped reauth", () => {
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { injectGrokConfig } from "../src/grok/inject";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * #511 — Grok Build reported 200k for every model.
@@ -33,7 +34,7 @@ describe("Grok orphan adoption (#511)", () => {
   });
 
   afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+    removeTempDir(root);
   });
 
   /** The real shape from a machine that hit #511. */
@@ -330,7 +331,7 @@ describe("Grok orphan adoption — fence boundary (#511 follow-up)", () => {
   });
 
   afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+    removeTempDir(root);
   });
 
   const orphan = (alias: string): string[] => [

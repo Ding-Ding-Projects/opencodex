@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   getAccountCredential,
@@ -15,6 +15,7 @@ import {
   setActiveAccount,
 } from "../src/oauth/store";
 import type { OAuthCredentials } from "../src/oauth/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-oauth-store-multi-test");
 let previousOpencodexHome: string | undefined;
@@ -29,7 +30,7 @@ const cred = (over: Partial<OAuthCredentials> = {}): OAuthCredentials => ({
 describe("multi-account auth store", () => {
   beforeEach(() => {
     previousOpencodexHome = process.env.OPENCODEX_HOME;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
   });
@@ -37,7 +38,7 @@ describe("multi-account auth store", () => {
   afterEach(() => {
     if (previousOpencodexHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousOpencodexHome;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
 
   test("legacy single-credential auth.json normalizes and round-trips without losing login", async () => {

@@ -3,7 +3,7 @@
  * Invalid chain entries must 400 without mutating the previous config.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleManagementAPI } from "../src/server/management-api";
@@ -16,7 +16,7 @@ afterEach(() => {
   if (savedHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = savedHome;
   if (tempHome) {
-    rmSync(tempHome, { recursive: true, force: true });
+    removeTempDir(tempHome);
     tempHome = null;
   }
 });
@@ -90,3 +90,4 @@ describe("/api/subagent-model-fallback atomic validation", () => {
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

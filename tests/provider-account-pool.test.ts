@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPoolRotationState } from "../src/codex/pool-rotation";
@@ -14,6 +14,7 @@ import {
 import { getAccountSet, saveCredential, setActiveAccount } from "../src/oauth/store";
 import { clearAccountQuotaCache } from "../src/providers/quota";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * The generic OAuth pool ("auto account switcher for all providers, like the
@@ -41,7 +42,7 @@ afterEach(() => {
   clearAccountQuotaCache(PROVIDER);
   if (originalHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = originalHome;
-  rmSync(home, { recursive: true, force: true });
+  removeTempDir(home);
 });
 
 function configWithPool(enabled: boolean): OcxConfig {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { nativeModelRows } from "../src/codex/catalog";
 import { loadConfig, saveConfig } from "../src/config";
@@ -12,7 +12,7 @@ let isolatedCodexHome: IsolatedCodexHome | null = null;
 let refreshes = 0;
 
 beforeEach(() => {
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.OPENCODEX_HOME = TEST_DIR;
   isolatedCodexHome = installIsolatedCodexHome("ocx-model-visibility-codex-");
@@ -43,7 +43,7 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousOpencodexHome;
   isolatedCodexHome?.restore();
   isolatedCodexHome = null;
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
 });
 
 async function putWithConfig(body: unknown, config = loadConfig()): Promise<Response> {
@@ -267,3 +267,4 @@ describe("atomic model visibility management", () => {
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

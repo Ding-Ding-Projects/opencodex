@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * Regression: `ocx start` + Ctrl-C must NOT orphan the Bun proxy.
@@ -30,7 +31,7 @@ afterAll(() => {
     try { c.kill("SIGKILL"); } catch { /* already gone */ }
   }
   for (const dir of tmpHomes) {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try { removeTempDir(dir); } catch { /* best-effort */ }
   }
 });
 

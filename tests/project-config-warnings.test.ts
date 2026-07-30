@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   relPath,
   resolveEffectiveProjectModelProvider,
 } from "../src/codex/project-config-warnings";
+import { removeTempDir } from "./helpers/temp-dir";
 
 describe("relPath home containment (devlog 260715_cross_platform_audit/030)", () => {
   let savedUserProfile: string | undefined;
@@ -85,7 +86,7 @@ afterEach(() => {
   if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
   else process.env.CODEX_HOME = previousCodexHome;
   invalidateProjectConfigDiagnosticsCache();
-  rmSync(testDir, { recursive: true, force: true });
+  removeTempDir(testDir);
 });
 
 function writeGlobalRoutingConfig(extra = ""): void {

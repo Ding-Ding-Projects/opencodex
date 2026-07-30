@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OAUTH_PROVIDERS, runLogin } from "../src/oauth";
 import { inspectKiroCliSqlite, loginKiro, readKiroCliSqlite, refreshKiroToken, resolveKiroApiRegion, resolveKiroProfileArn, resolveKiroRegion, settleKiroLoginTransaction } from "../src/oauth/kiro";
+import { removeTempDir } from "./helpers/temp-dir";
 
 // Windows CI cold runners take 5-7s for the real SQLite create/inspect cycles here
 // (same flake class as 810fa115); the default 5s harness timeout is too tight.
@@ -66,7 +67,7 @@ afterEach(() => {
   if (origCliTokenKey === undefined) delete process.env.KIROCLI_TOKEN_KEY;
   else process.env.KIROCLI_TOKEN_KEY = origCliTokenKey;
   globalThis.fetch = origFetch;
-  rmSync(tmp, { recursive: true, force: true });
+  removeTempDir(tmp);
 });
 
 function seedKiroCliDb(

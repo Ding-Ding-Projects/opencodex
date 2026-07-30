@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import { createGoogleAdapter } from "../src/adapters/google";
 import { createKiroAdapter } from "../src/adapters/kiro";
 import { createOpenAIChatAdapter } from "../src/adapters/openai-chat";
 import type { OcxParsedRequest, OcxProviderConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const SYS = CODEX_GPT5_IDENTITY_LINE;
 
@@ -86,7 +87,7 @@ describe("identity neutralization — adapters never leak proxy identity", () =>
     afterEach(() => {
       if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
       if (origRegion === undefined) delete process.env.KIRO_REGION; else process.env.KIRO_REGION = origRegion;
-      rmSync(tmp, { recursive: true, force: true });
+      removeTempDir(tmp);
     });
 
     test("system prefix is neutralized, no proxy mention", async () => {

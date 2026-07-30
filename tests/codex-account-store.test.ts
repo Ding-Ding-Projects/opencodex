@@ -1,7 +1,8 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, rmSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-codex-accounts-test");
 const ACCOUNTS_PATH = join(TEST_DIR, "codex-accounts.json");
@@ -18,13 +19,13 @@ function refreshLockPathForToken(refreshToken: string): string {
 describe("codex-account-store CRUD", () => {
   beforeEach(() => {
     process.env.OPENCODEX_HOME = TEST_DIR;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
   });
 
   afterEach(() => {
     delete process.env.OPENCODEX_HOME;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
 
   test("save and load credential round-trip", async () => {

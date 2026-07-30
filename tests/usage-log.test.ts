@@ -17,6 +17,7 @@ import {
   usageReadCacheStatsForTests,
   usageLogRevisionKey,
 } from "../src/usage/log";
+import { removeTempDir } from "./helpers/temp-dir";
 
 let testDir = "";
 let previousHome: string | undefined;
@@ -31,7 +32,7 @@ beforeEach(() => {
 afterEach(() => {
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
-  if (testDir) rmSync(testDir, { recursive: true, force: true });
+  if (testDir) removeTempDir(testDir);
 });
 
 describe("usage log", () => {

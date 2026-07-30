@@ -8,6 +8,7 @@ import {
   MANAGED_AGENTS_TABLE_MARKER,
   MANAGED_SUBAGENT_DEFAULT_MARKER,
 } from "../src/codex/subagent-defaults";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 
@@ -29,7 +30,7 @@ describe("codex-journal", () => {
   });
 
   afterEach(() => {
-    rmSync(testDir, { recursive: true, force: true });
+    removeTempDir(testDir);
   });
 
   test("writeJournal creates journal file", () => {

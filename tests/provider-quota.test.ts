@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearAccountQuota } from "../src/codex/quota";
@@ -7,6 +7,7 @@ import { saveCodexAccountCredential } from "../src/codex/account-store";
 import { saveCredential } from "../src/oauth/store";
 import { clearProviderQuotaCache, fetchProviderQuotaReports } from "../src/providers/quota";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const originalFetch = globalThis.fetch;
 const previousOpencodexHome = process.env.OPENCODEX_HOME;
@@ -81,8 +82,8 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousOpencodexHome;
   if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
   else process.env.CODEX_HOME = previousCodexHome;
-  rmSync(opencodexHome, { recursive: true, force: true });
-  rmSync(codexHome, { recursive: true, force: true });
+  removeTempDir(opencodexHome);
+  removeTempDir(codexHome);
 });
 
 describe("fetchProviderQuotaReports", () => {

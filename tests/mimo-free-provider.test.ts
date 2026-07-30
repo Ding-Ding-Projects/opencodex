@@ -12,6 +12,7 @@ import {
   createMimoFreeAdapter,
 } from "../src/adapters/mimo-free";
 import type { OcxParsedRequest, OcxProviderConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 function minimalRequest(model = "mimo-auto"): OcxParsedRequest {
   return {
@@ -114,7 +115,7 @@ describe("mimo-free client id", () => {
       if (prevHome === undefined) delete process.env["OPENCODEX_HOME"];
       else process.env["OPENCODEX_HOME"] = prevHome;
       resetMimoClientIdCache();
-      rmSync(home, { recursive: true, force: true });
+      removeTempDir(home);
     }
   });
 
@@ -134,8 +135,8 @@ describe("mimo-free client id", () => {
       if (prevHome === undefined) delete process.env["OPENCODEX_HOME"];
       else process.env["OPENCODEX_HOME"] = prevHome;
       resetMimoClientIdCache();
-      rmSync(homeA, { recursive: true, force: true });
-      rmSync(homeB, { recursive: true, force: true });
+      removeTempDir(homeA);
+      removeTempDir(homeB);
     }
   });
 });

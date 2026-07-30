@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProviderOutboundDependencies } from "../src/lib/provider-outbound";
 import { PROXY_ENV_KEYS } from "../src/lib/proxy-env";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const proxyKeys = PROXY_ENV_KEYS.flatMap(key => [key, key.toLowerCase()]);
 const originalProxyEnv = Object.fromEntries(proxyKeys.map(key => [key, process.env[key]]));
@@ -204,7 +205,7 @@ describe("provider outbound GET transport", () => {
       expect(result.providerRequests).toEqual(["/v1/models", "/v1/models", "/v1/models"]);
       expect(stderr).toContain("cannot be pinned locally");
     } finally {
-      rmSync(childHome, { recursive: true, force: true });
+      removeTempDir(childHome);
     }
   }, 15_000);
 });

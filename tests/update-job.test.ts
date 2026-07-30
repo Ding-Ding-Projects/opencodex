@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +18,7 @@ import {
   type UpdateJobState,
 } from "../src/update/job";
 import { checkUpdatePackageIntegrity, updateCommand, updateCommandStr } from "../src/update/index";
+import { removeTempDir } from "./helpers/temp-dir";
 
 type SpawnResult = { status: number | null; stdout: string };
 function fakeSpawn(result: SpawnResult): typeof import("node:child_process").spawnSync {
@@ -36,7 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   if (prevHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = prevHome;
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDir(dir);
 });
 
 describe("GUI update check", () => {

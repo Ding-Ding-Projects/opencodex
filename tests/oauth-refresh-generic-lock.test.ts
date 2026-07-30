@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../src/oauth";
 import type { OAuthCredentials } from "../src/oauth/types";
 import { getAccountCredential, getAccountSet, saveCredential } from "../src/oauth/store";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const origHome = process.env.HOME;
 const origOcxHome = process.env.OPENCODEX_HOME;
@@ -28,7 +29,7 @@ afterEach(() => {
   else process.env.HOME = origHome;
   if (origOcxHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = origOcxHome;
-  rmSync(tmp, { recursive: true, force: true });
+  removeTempDir(tmp);
 });
 
 async function seedExpiredKimi(): Promise<string> {

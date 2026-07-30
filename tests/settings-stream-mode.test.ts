@@ -7,7 +7,7 @@
  * settable alone via PUT (legacy codexAutoStart-only PUTs keep working).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfigPath, loadConfig, saveConfig } from "../src/config";
@@ -59,7 +59,7 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousHome;
   if (TEST_DIR && existsSync(TEST_DIR)) {
     try {
-      rmSync(TEST_DIR, { recursive: true, force: true });
+      removeTempDir(TEST_DIR);
     } catch {
       /* Windows may briefly lock while a background startup-health probe exits */
     }
@@ -217,3 +217,4 @@ describe("config.json schema resilience", () => {
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

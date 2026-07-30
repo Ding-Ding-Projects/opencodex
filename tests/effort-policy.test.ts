@@ -4,7 +4,7 @@
  * and the /api/effort-caps management roundtrip.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyEffortCap, effortCapAppliesTo, effortCapFor, isThreadSpawnRequest, resolveCappedEffort, supportedLadderFor } from "../src/server/effort-policy";
@@ -25,8 +25,8 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = savedHome;
   if (savedCodexHome === undefined) delete process.env.CODEX_HOME;
   else process.env.CODEX_HOME = savedCodexHome;
-  if (tempHome) { rmSync(tempHome, { recursive: true, force: true }); tempHome = null; }
-  if (tempCodexHome) { rmSync(tempCodexHome, { recursive: true, force: true }); tempCodexHome = null; }
+  if (tempHome) { removeTempDir(tempHome); tempHome = null; }
+  if (tempCodexHome) { removeTempDir(tempCodexHome); tempCodexHome = null; }
 });
 
 function makeConfig(overrides: Partial<OcxConfig> = {}): OcxConfig {
@@ -468,3 +468,4 @@ describe("/api/effort-caps", () => {
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createKiroAdapter, isRetryableKiroStreamCatchError } from "../src/adapters/kiro";
@@ -13,6 +13,7 @@ import { resetKiroThrottleStateForTests } from "../src/adapters/kiro-retry";
 import { encodeMessage } from "../src/lib/eventstream-decoder";
 import { estimateTokens } from "../src/lib/token-estimate";
 import type { OcxParsedRequest, OcxProviderConfig, OcxUsage } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const enc = new TextEncoder();
 const origHome = process.env.HOME;
@@ -45,7 +46,7 @@ afterEach(() => {
   if (origCredsFile === undefined) delete process.env.KIRO_CREDS_FILE; else process.env.KIRO_CREDS_FILE = origCredsFile;
   if (origCredentialsFile === undefined) delete process.env.KIRO_CREDENTIALS_FILE; else process.env.KIRO_CREDENTIALS_FILE = origCredentialsFile;
   if (origDebugFrames === undefined) delete process.env.OCX_DEBUG_FRAMES; else process.env.OCX_DEBUG_FRAMES = origDebugFrames;
-  rmSync(tmp, { recursive: true, force: true });
+  removeTempDir(tmp);
 });
 
 const provider = { adapter: "kiro", baseUrl: "https://runtime.us-east-1.kiro.dev", authMode: "oauth", apiKey: "tok-123" } as unknown as OcxProviderConfig;

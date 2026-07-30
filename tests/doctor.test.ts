@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -18,6 +18,7 @@ import {
   type ServiceMemoryData,
 } from "../src/cli/doctor";
 import { collectOrcaCodexHomeDiagnostic } from "../src/codex/home";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-doctor-test");
 const TEST_CODEX_HOME = join(TEST_DIR, "codex");
@@ -35,7 +36,7 @@ describe("doctor", () => {
     prevHttpsProxy = process.env.HTTPS_PROXY;
     prevLowerHttpsProxy = process.env.https_proxy;
     prevProxyRef = process.env.OCX_TEST_PROXY_REF;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_CODEX_HOME, { recursive: true });
     mkdirSync(TEST_OPENCODEX_HOME, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_OPENCODEX_HOME;
@@ -56,7 +57,7 @@ describe("doctor", () => {
     else process.env.https_proxy = prevLowerHttpsProxy;
     if (prevProxyRef === undefined) delete process.env.OCX_TEST_PROXY_REF;
     else process.env.OCX_TEST_PROXY_REF = prevProxyRef;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
 
   test("path report flips auth.json/config.json from absent to present", () => {

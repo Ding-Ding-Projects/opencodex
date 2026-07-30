@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { upsertOAuthProvider } from "../src/oauth";
@@ -11,6 +11,7 @@ import {
 } from "../src/providers/api-keys";
 import { routeModel } from "../src/router";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * Regression: `upsertOAuthProvider` used to overwrite the provider entry with the bare preset
@@ -204,7 +205,7 @@ describe("upsertOAuthProvider credential preservation", () => {
     } finally {
       if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = previousHome;
-      rmSync(testHome, { recursive: true, force: true });
+      removeTempDir(testHome);
     }
   });
 
@@ -293,7 +294,7 @@ describe("upsertOAuthProvider credential preservation", () => {
     } finally {
       if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = previousHome;
-      rmSync(testHome, { recursive: true, force: true });
+      removeTempDir(testHome);
     }
   });
 

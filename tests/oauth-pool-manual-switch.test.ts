@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { managementFetch as fetch } from "./helpers/management-auth";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
@@ -18,6 +18,7 @@ import {
   pickRoundRobinAccount,
   POOL_KEY_ANTHROPIC,
 } from "../src/codex/pool-rotation";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * Picking an account in the dashboard is an operator override, so it has to beat the
@@ -102,7 +103,7 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousHome;
   isolatedCodexHome?.restore();
   isolatedCodexHome = null;
-  if (testDir) rmSync(testDir, { recursive: true, force: true });
+  if (testDir) removeTempDir(testDir);
 });
 
 describe("manual account switch resets pool routing", () => {

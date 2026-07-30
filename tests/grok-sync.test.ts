@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { injectGrokConfig } from "../src/grok/inject";
@@ -7,6 +7,7 @@ import { syncGrokConfig } from "../src/grok/sync";
 import { nativeOpenAiContextWindow, visibleNativeSlugs } from "../src/codex/catalog";
 import type { CatalogModel } from "../src/codex/catalog";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const baseConfig = { port: 10100, defaultProvider: "openai", providers: {} } as unknown as OcxConfig;
 
@@ -36,7 +37,7 @@ describe("syncGrokConfig", () => {
       expect(content).toContain("context_window = 500000");
       expect(content).toContain('base_url = "http://127.0.0.1:10190/v1"');
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeTempDir(root);
     }
   });
 
@@ -76,7 +77,7 @@ describe("syncGrokConfig", () => {
       });
       expect(windowBySlug).toEqual(expectedBySlug);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeTempDir(root);
     }
   });
 
@@ -101,7 +102,7 @@ describe("syncGrokConfig", () => {
       expect(readFileSync(join(grokHome, "config.toml"), "utf8"))
         .toContain('base_url = "http://[::1]:10100/v1"');
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeTempDir(root);
     }
   });
 
@@ -117,7 +118,7 @@ describe("syncGrokConfig", () => {
       expect(result.message).toContain("proxy down");
       expect(() => readFileSync(join(grokHome, "config.toml"), "utf8")).toThrow();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeTempDir(root);
     }
   });
 
@@ -138,7 +139,7 @@ describe("syncGrokConfig", () => {
       expect(content).not.toContain("[model.ocx-p-old]");
       expect(content).toContain("[model.ocx-p-new]");
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeTempDir(root);
     }
   });
 });

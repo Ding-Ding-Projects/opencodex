@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { managementFetch as fetch } from "./helpers/management-auth";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
@@ -9,6 +9,7 @@ import { startServer } from "../src/server";
 import { clearRequestLogsForTests } from "../src/server/request-log";
 import type { OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const SUBSCRIPTION_MESSAGE =
   "this model requires a subscription, upgrade for access: https://ollama.com/upgrade";
@@ -31,7 +32,7 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousHome;
   isolatedCodexHome?.restore();
   isolatedCodexHome = null;
-  if (testDir) rmSync(testDir, { recursive: true, force: true });
+  if (testDir) removeTempDir(testDir);
 });
 
 function config(baseUrl: string): OcxConfig {

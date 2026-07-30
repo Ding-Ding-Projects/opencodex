@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config";
 import { reconcileOAuthProviders } from "../src/oauth";
 import { getCredential, saveCredential } from "../src/oauth/store";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const originalHome = process.env.OPENCODEX_HOME;
 const homes: string[] = [];
@@ -13,7 +14,7 @@ const homes: string[] = [];
 afterEach(() => {
   if (originalHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = originalHome;
-  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  for (const home of homes.splice(0)) removeTempDir(home);
 });
 
 describe("OAuth provider reconciliation", () => {

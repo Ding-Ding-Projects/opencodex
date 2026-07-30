@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CODEX_ACCOUNT_LOG_LABEL_RE } from "../src/codex/account-label";
 import {
@@ -37,6 +37,7 @@ import {
   reconcileMainCodexAccountRuntimeState,
   resetMainCodexAccountIdentityTrackingForTests,
 } from "../src/codex/account-lifecycle";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-codex-auth-api-test");
 const TEST_CODEX_HOME = join(TEST_DIR, "codex");
@@ -197,7 +198,7 @@ beforeEach(() => {
   previousCodexHome = process.env.CODEX_HOME;
   previousManualImportEnv = process.env[MANUAL_IMPORT_ENV];
   previousFetch = globalThis.fetch;
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   mkdirSync(TEST_CODEX_HOME, { recursive: true });
   process.env.OPENCODEX_HOME = TEST_DIR;
   process.env.CODEX_HOME = TEST_CODEX_HOME;
@@ -231,7 +232,12 @@ afterEach(() => {
   else process.env.CODEX_HOME = previousCodexHome;
   if (previousManualImportEnv === undefined) delete process.env[MANUAL_IMPORT_ENV];
   else process.env[MANUAL_IMPORT_ENV] = previousManualImportEnv;
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  // `force` rather than an existsSync guard: the guard is a TOCTOU race, and losing
+  // it throws ENOENT out of afterEach — which the runner then charges to whichever
+  // test runs next, so the reported failure is never the one that broke. That cost a
+  // CI run to diagnose. `force: true` makes a missing directory a no-op, which is the
+  // only thing this line ever meant.
+  removeTempDir(TEST_DIR);
 });
 
 describe("codex-auth API", () => {

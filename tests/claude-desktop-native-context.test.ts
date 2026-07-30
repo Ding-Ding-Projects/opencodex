@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaudeDesktopState } from "../src/server/management/shared";
 import { nativeOpenAiContextWindow, visibleNativeSlugs } from "../src/codex/catalog";
 import { generateDesktop3pModels } from "../src/claude/desktop-3p";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * D1b: native Desktop models carry their real context window, and the DTO and the
@@ -43,7 +44,7 @@ test("buildClaudeDesktopState gives native rows their real context window", asyn
   } finally {
     if (prev === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
     else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = prev;
-    rmSync(home, { recursive: true, force: true });
+    removeTempDir(home);
   }
 });
 

@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { createImageBudget, guessExtFromMagic, materializeInlineImage } from "../../src/images/artifacts";
 import { getProviderRegistryEntry } from "../../src/providers/registry";
 import { createGoogleAdapter } from "../../src/adapters/google";
 import type { AdapterEvent, OcxProviderConfig } from "../../src/types";
+import { removeTempDir } from "../helpers/temp-dir";
 
 let tempHome: string;
 let artifactsDir: string;
@@ -21,7 +22,7 @@ beforeAll(() => {
 afterAll(() => {
   if (savedHome !== undefined) process.env.OPENCODEX_HOME = savedHome;
   else delete process.env.OPENCODEX_HOME;
-  rmSync(tempHome, { recursive: true, force: true });
+  removeTempDir(tempHome);
 });
 
 // 1x1 red PNG pixel in base64 (real PNG magic bytes: 89 50 4E 47)
@@ -133,7 +134,7 @@ describe("materializeInlineImage", () => {
   });
 
   test("creates the artifacts directory if missing", async () => {
-    rmSync(artifactsDir, { recursive: true, force: true });
+    removeTempDir(artifactsDir);
     expect(existsSync(artifactsDir)).toBe(false);
     const result = await materializeInlineImage(TINY_PNG);
     expect(existsSync(artifactsDir)).toBe(true);
@@ -321,7 +322,7 @@ describe("artifact markdown never leaks OPENCODEX_HOME paths", () => {
   afterAll(() => {
     if (savedHome !== undefined) process.env.OPENCODEX_HOME = savedHome;
     else delete process.env.OPENCODEX_HOME;
-    rmSync(underHome, { recursive: true, force: true });
+    removeTempDir(underHome);
   });
 
   test("streaming: no home/username path segments in markdown", async () => {

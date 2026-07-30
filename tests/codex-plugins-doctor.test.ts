@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { diagnoseCodexBundledPlugins, locateCurrentBundledMarketplace } from "../src/codex/plugins-doctor";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const cliPath = join(repoRoot, "src", "cli", "index.ts");
@@ -47,7 +48,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.suggestedRepair).not.toBeNull();
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -67,8 +68,8 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.suggestedRepair).toBeNull();
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
-      rmSync(marketRoot, { recursive: true, force: true });
+      removeTempDir(dir);
+      removeTempDir(marketRoot);
     }
   });
 
@@ -82,7 +83,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.stale).toBe(false);
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -98,7 +99,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.marketplace.source).not.toContain("alice");
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -116,7 +117,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(chrome?.configured).toBe(false);
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -133,7 +134,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.stale).toBe(true);
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -150,7 +151,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.stale).toBe(true);
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -167,7 +168,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.stale).toBe(true); // must NOT collapse to "ok"
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -185,7 +186,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         }
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -203,7 +204,7 @@ describe("diagnoseCodexBundledPlugins (direct, platform-injected)", () => {
         expect(result.summary.toLowerCase()).toContain("not a usable local source");
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 });
@@ -261,8 +262,8 @@ describe("diagnose path-mismatch (current vs registered)", () => {
         expect(result.suggestedRepair).not.toBeNull();
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
-      rmSync(registered, { recursive: true, force: true });
+      removeTempDir(dir);
+      removeTempDir(registered);
     }
   });
 
@@ -285,8 +286,8 @@ describe("diagnose path-mismatch (current vs registered)", () => {
         expect(result.stale).toBe(false);
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
-      rmSync(shared, { recursive: true, force: true });
+      removeTempDir(dir);
+      removeTempDir(shared);
     }
   });
 });
@@ -317,8 +318,8 @@ describe("ocx status --json codexPlugins (spawned, read-only)", () => {
       expect(parsed.codexPlugins).toBeDefined();
       expect(typeof parsed.codexPlugins?.applicable).toBe("boolean");
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
-      rmSync(codexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
+      removeTempDir(codexHome);
     }
   });
 });

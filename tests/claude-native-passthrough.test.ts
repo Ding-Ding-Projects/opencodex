@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { managementFetch as fetch } from "./helpers/management-auth";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
@@ -24,7 +24,7 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousHome;
   isolatedCodexHome?.restore();
   isolatedCodexHome = null;
-  if (testDir) rmSync(testDir, { recursive: true, force: true });
+  if (testDir) removeTempDir(testDir);
 });
 
 interface Captured { path: string; headers: Headers; body: any }
@@ -261,9 +261,9 @@ test("nativePassthrough:false disables the pierce", async () => {
 });
 
 // --- Generous image pipeline on the native branch (devlog 260714 .../040, P1-P5) ---
-
 import { resetNormalizeStateForTests } from "../src/adapters/anthropic-image-normalize";
 import { sniffImageDimensions } from "../src/adapters/anthropic-image-guard";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const ONE_PX_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";

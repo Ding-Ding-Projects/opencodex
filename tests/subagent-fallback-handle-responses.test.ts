@@ -5,7 +5,7 @@
  * encrypted native-only fallback, native passthrough terminal finalization.
  */
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveCodexAccountCredential } from "../src/codex/account-store";
@@ -31,6 +31,7 @@ import { handleResponses } from "../src/server/responses";
 import type { OcxConfig } from "../src/types";
 import type { RequestLogContext } from "../src/server/request-log";
 import type { ResponsesTerminalStatus } from "../src/bridge";
+import { removeTempDir } from "./helpers/temp-dir";
 
 setDefaultTimeout(30_000);
 
@@ -59,7 +60,7 @@ afterEach(() => {
   clearCodexUpstreamHealth();
   clearAccountQuota();
   resetSubagentModelFallbackStateForTests();
-  rmSync(testDir, { recursive: true, force: true });
+  removeTempDir(testDir);
   if (previousOpencodexHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousOpencodexHome;
   if (previousCodexHome === undefined) delete process.env.CODEX_HOME;

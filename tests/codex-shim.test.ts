@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsS
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, uninstallCodexShim } from "../src/codex/shim";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
 const skipStabilityWait = () => {};
@@ -44,8 +45,8 @@ function withInstalledShim(run: (paths: {
     else process.env.PATH = oldPath;
     if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = oldHome;
-    rmSync(binDir, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
+    removeTempDir(binDir);
+    removeTempDir(home);
   }
 }
 
@@ -356,8 +357,8 @@ describe("Codex autostart shim", () => {
       process.env.PATH = oldPath;
       if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = oldHome;
-      rmSync(dir, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
+      removeTempDir(dir);
+      removeTempDir(home);
     }
   });
 
@@ -478,8 +479,8 @@ describe("Codex autostart shim", () => {
       else process.env.PATH = oldPath;
       if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = oldHome;
-      rmSync(binDir, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
+      removeTempDir(binDir);
+      removeTempDir(home);
     }
   });
 
@@ -500,7 +501,7 @@ describe("Codex autostart shim", () => {
         enabled: () => true,
         stabilitySleep: skipStabilityWait,
         beforeStaleRestoreLockDelete: () => {
-          rmSync(lockPath, { recursive: true });
+          removeTempDir(lockPath);
           mkdirSync(lockPath);
           writeFileSync(successorPath, successor, "utf8");
         },
@@ -663,8 +664,8 @@ describe("Codex autostart shim", () => {
     } finally {
       if (oldHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = oldHome;
-      rmSync(home, { recursive: true, force: true });
-      rmSync(binDir, { recursive: true, force: true });
+      removeTempDir(home);
+      removeTempDir(binDir);
     }
   });
 
@@ -680,7 +681,7 @@ describe("Codex autostart shim", () => {
       if (process.platform !== "win32") {
         mkdirSync(wrappers[0]);
         expect(autoRestoreCodexShim({ enabled: () => true, stabilitySleep: skipStabilityWait }).status).toBe("deferred");
-        rmSync(wrappers[0], { recursive: true });
+        removeTempDir(wrappers[0]);
         symlinkSync(join(dirname(wrappers[0]), "missing-target"), wrappers[0]);
         expect(autoRestoreCodexShim({ enabled: () => true, stabilitySleep: skipStabilityWait }).status).toBe("ineligible");
       }

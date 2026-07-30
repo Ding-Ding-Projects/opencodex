@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   primeCodexPoolQuotas,
@@ -11,6 +11,7 @@ import {
 import { saveCodexAccountCredential } from "../src/codex/account-store";
 import { resolveCodexAccountForThread, clearThreadAccountMap } from "../src/codex/routing";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 // Phase 20 (260630_wsl-account-autoswitch): startup/lazy quota priming.
 
@@ -61,7 +62,7 @@ describe("primeCodexPoolQuotas", () => {
   beforeEach(() => {
     previousOpencodexHome = process.env.OPENCODEX_HOME;
     previousCodexHome = process.env.CODEX_HOME;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_CODEX_HOME, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
     // Isolate the main-account source: TEST_CODEX_HOME has no auth.json, so the
@@ -80,7 +81,7 @@ describe("primeCodexPoolQuotas", () => {
     else process.env.OPENCODEX_HOME = previousOpencodexHome;
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousCodexHome;
-    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
   });
 
   test("prime populates stale/unknown pool accounts", async () => {

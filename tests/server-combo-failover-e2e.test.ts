@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, setDefaultTimeout, test } from "bun:test";
 import { managementFetch as fetch, ManagementRequest as Request } from "./helpers/management-auth";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -38,6 +38,7 @@ const actualRetry = await import("../src/lib/upstream-retry");
 const actualFetchWithTransientRetry = actualRetry.fetchWithTransientRetry;
 const { createCursorAdapter } = await import("../src/adapters/cursor");
 import type { CursorTransportFactory } from "../src/adapters/cursor/transport";
+import { removeTempDir } from "./helpers/temp-dir";
 let customRunTurn: NonNullable<ProviderAdapter["runTurn"]> | undefined;
 let customFetchResponse: NonNullable<ProviderAdapter["fetchResponse"]> | undefined;
 let customTransientResponse: (() => Promise<Response>) | undefined;
@@ -142,7 +143,7 @@ afterEach(async () => {
   else process.env.OPENCODEX_CURSOR_TEST_TOKEN = previousCursorToken;
   isolatedCodexHome?.restore();
   isolatedCodexHome = null;
-  if (testDir) rmSync(testDir, { recursive: true, force: true });
+  if (testDir) removeTempDir(testDir);
   clearComboSelectionState();
   clearComboTargetCooldowns();
   clearCodexUpstreamHealth();

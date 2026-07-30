@@ -25,6 +25,7 @@ import {
   selectOldestPercent,
   type ExecuteCleanupOptions,
 } from "../src/storage/cleanup";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const OLD = new Date("2026-01-01T00:00:00Z");
 const MID = new Date("2026-02-01T00:00:00Z");
@@ -34,7 +35,7 @@ let home = "";
 
 afterEach(() => {
   if (home) {
-    try { rmSync(home, { recursive: true, force: true }); } catch { /* */ }
+    try { removeTempDir(home); } catch { /* */ }
     home = "";
   }
 });

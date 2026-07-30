@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { invalidateCodexModelsCache } from "../src/codex/catalog";
@@ -7,6 +7,7 @@ import { afterCatalogWriteHandleAppServers } from "../src/codex/app-server-proce
 import { refreshCodexModelCatalog } from "../src/codex/refresh";
 import { syncModelsToCodex } from "../src/codex/sync";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const emptyConfig = {
   port: 10100,
@@ -34,8 +35,8 @@ describe("invalidateCodexModelsCache write gate (#476 / #518)", () => {
     else process.env.CODEX_HOME = previousCodexHome;
     if (previousOpenCodexHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousOpenCodexHome;
-    rmSync(codexHome, { recursive: true, force: true });
-    rmSync(opencodexHome, { recursive: true, force: true });
+    removeTempDir(codexHome);
+    removeTempDir(opencodexHome);
   });
 
   test("returns true and writes models_cache when catalog.json is readable", () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -22,6 +22,7 @@ import {
 } from "../src/codex/routing";
 import type { OcxConfig } from "../src/types";
 import { formatOAuthHealthForStatus } from "../src/cli/status-oauth";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const origHome = process.env.HOME;
 const origOcxHome = process.env.OPENCODEX_HOME;
@@ -42,7 +43,7 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = origOcxHome;
   clearCodexUpstreamHealth();
   clearAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID);
-  rmSync(tmp, { recursive: true, force: true });
+  removeTempDir(tmp);
 });
 
 describe("projectOAuthAccountHealth", () => {

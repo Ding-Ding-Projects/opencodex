@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildResponseJSON } from "../src/bridge";
@@ -21,6 +21,7 @@ import {
   getStoredResponseBytesForTests,
 } from "../src/responses/state";
 import { adapterNeedsForcedContinuation, injectDeveloperMessage } from "../src/server/responses";
+import { removeTempDir } from "./helpers/temp-dir";
 
 function feedInspector(
   inspector: ReturnType<typeof createSseInspector>,
@@ -59,7 +60,7 @@ describe("Responses previous_response_id state", () => {
 
   afterEach(() => {
     clearResponseStateForTests();
-    rmSync(home, { recursive: true, force: true });
+    removeTempDir(home);
     if (priorHome === undefined) delete process.env["OPENCODEX_HOME"];
     else process.env["OPENCODEX_HOME"] = priorHome;
   });

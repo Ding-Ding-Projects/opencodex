@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const cliPath = join(repoRoot, "src", "cli", "index.ts");
@@ -52,7 +53,7 @@ describe("ocx models", () => {
       expect(result.stdout).toContain("test-model-3");
       expect(result.stdout).toContain("* =");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -64,7 +65,7 @@ describe("ocx models", () => {
       expect(result.stdout).toContain("test-model-1");
       expect(result.stdout).toContain("test:");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -75,7 +76,7 @@ describe("ocx models", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("not configured");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -91,7 +92,7 @@ describe("ocx models", () => {
       expect(testModels.length).toBe(3);
       expect(testModels[0].isDefault).toBe(true);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -103,7 +104,7 @@ describe("ocx models", () => {
       const parsed = JSON.parse(result.stdout);
       expect(parsed.models.every((m: { provider: string }) => m.provider === "test")).toBe(true);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -154,7 +155,7 @@ describe("ocx models richer metadata", () => {
       expect(modelB.contextWindow).toBe(32000);
       expect(modelB.inputModalities).toEqual(["text"]);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -165,7 +166,7 @@ describe("ocx models richer metadata", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Unknown flag");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 });

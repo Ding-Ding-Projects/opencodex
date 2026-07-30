@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { managementFetch as fetch } from "./helpers/management-auth";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleCodexAuthAPI } from "../src/codex/auth-api";
@@ -8,6 +8,7 @@ import { loadConfig, saveConfig } from "../src/config";
 import { startServer } from "../src/server";
 import type { OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
+import { removeTempDir } from "./helpers/temp-dir";
 
 function makeCodexConfig(overrides: Partial<OcxConfig> = {}): OcxConfig {
   return {
@@ -31,7 +32,7 @@ describe("Codex account pool strategy management API", () => {
   afterEach(() => {
     if (previousOpencodexHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousOpencodexHome;
-    rmSync(TEST_DIR, { recursive: true, force: true });
+    removeTempDir(TEST_DIR);
   });
 
   test("GET /api/codex-auth/active surfaces strategy defaults", async () => {
@@ -175,7 +176,7 @@ describe("Anthropic account pool strategy management API", () => {
     else process.env.OPENCODEX_HOME = previousHome;
     isolatedCodexHome?.restore();
     isolatedCodexHome = null;
-    if (testDir) rmSync(testDir, { recursive: true, force: true });
+    if (testDir) removeTempDir(testDir);
   });
 
   test("GET /api/oauth/accounts/pool surfaces strategy defaults", async () => {
@@ -397,7 +398,7 @@ describe("non-anthropic account pool strategy management API", () => {
     else process.env.OPENCODEX_HOME = previousHome;
     isolatedCodexHome?.restore();
     isolatedCodexHome = null;
-    if (testDir) rmSync(testDir, { recursive: true, force: true });
+    if (testDir) removeTempDir(testDir);
   });
 
   test("GET /api/oauth/accounts/pool reports a default-off pool for xai", async () => {

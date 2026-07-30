@@ -16,6 +16,7 @@ import {
 } from "../src/server/claude-messages";
 import type { OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
+import { removeTempDir } from "./helpers/temp-dir";
 
 let testDir = "";
 let previousHome: string | undefined;
@@ -36,7 +37,7 @@ afterEach(() => {
   isolatedCodexHome?.restore();
   isolatedCodexHome = null;
   globalThis.fetch = originalFetch;
-  if (testDir) rmSync(testDir, { recursive: true, force: true });
+  if (testDir) removeTempDir(testDir);
 });
 
 function mockChatUpstream() {

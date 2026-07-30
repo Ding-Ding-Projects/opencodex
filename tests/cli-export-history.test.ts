@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleExportCommand } from "../src/cli/export";
 import { listStateHistory, recordStateSnapshot, recordStateSnapshotBeforeDelete } from "../src/lib/state-history";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * `ocx export` is a credential dump on purpose, so its guards are the feature:
@@ -22,7 +23,7 @@ describe("state history", () => {
     dir = mkdtempSync(join(tmpdir(), "ocx-hist-"));
   });
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   });
 
   test("first snapshot initialises a local-only repo and commits the state files", async () => {
@@ -148,8 +149,8 @@ describe("ocx export", () => {
     console.error = realError;
     if (realHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = realHome;
-    rmSync(home, { recursive: true, force: true });
-    rmSync(out, { recursive: true, force: true });
+    removeTempDir(home);
+    removeTempDir(out);
   });
 
   test("refuses to write without --yes and names what is at stake", async () => {

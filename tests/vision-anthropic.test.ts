@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as oauthModule from "../src/oauth";
 
 mock.module("../src/oauth", () => ({ ...oauthModule, getValidAccessToken: async () => "anthropic-vision-token" }));
-
 import { CLAUDE_CODE_SYSTEM_INSTRUCTION } from "../src/oauth/anthropic";
 import { parseRequest } from "../src/responses/parser";
 import { handleManagementAPI } from "../src/server/management-api";
@@ -311,7 +310,7 @@ describe("Anthropic vision planning and management config", () => {
     } finally {
       if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = previousHome;
-      rmSync(isolatedHome, { recursive: true, force: true });
+      removeTempDir(isolatedHome);
     }
   });
 
@@ -341,8 +340,9 @@ describe("Anthropic vision planning and management config", () => {
     } finally {
       if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = previousHome;
-      rmSync(isolatedHome, { recursive: true, force: true });
+      removeTempDir(isolatedHome);
     }
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
+import { removeTempDir } from "./helpers/temp-dir";

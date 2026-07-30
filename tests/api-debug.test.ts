@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { managementFetch as fetch } from "./helpers/management-auth";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
@@ -12,6 +12,7 @@ import { startServer } from "../src/server";
 import { appendUsageDebug } from "../src/usage/debug";
 import type { OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
+import { removeTempDir } from "./helpers/temp-dir";
 
 let testDir = "";
 let previousHome: string | undefined;
@@ -57,7 +58,7 @@ afterEach(() => {
   resetDebugLogBufferForTests();
   resetInjectionDebugLogBufferForTests();
   clearDebugSettings();
-  if (testDir) rmSync(testDir, { recursive: true, force: true });
+  if (testDir) removeTempDir(testDir);
 });
 
 describe("management API /api/debug", () => {

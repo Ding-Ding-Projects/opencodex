@@ -10,7 +10,7 @@
  *  - hardenSecretDir mirrors the same contract for directories.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -25,6 +25,7 @@ import {
   type HardenResult,
   type IcaclsResult,
 } from "../src/lib/windows-secret-acl";
+import { removeTempDir } from "./helpers/temp-dir";
 
 let testDir = "";
 
@@ -33,7 +34,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (testDir && existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+  if (testDir && existsSync(testDir)) removeTempDir(testDir);
   testDir = "";
 });
 

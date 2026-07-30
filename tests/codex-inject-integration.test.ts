@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +9,7 @@ import {
   MANAGED_AGENTS_TABLE_MARKER,
   MANAGED_SUBAGENT_DEFAULT_MARKER,
 } from "../src/codex/subagent-defaults";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 
@@ -52,8 +53,8 @@ describe("injectCodexConfig integration (Design B)", () => {
   });
 
   afterEach(() => {
-    rmSync(codexHome, { recursive: true, force: true });
-    rmSync(ocxHome, { recursive: true, force: true });
+    removeTempDir(codexHome);
+    removeTempDir(ocxHome);
   });
 
   test("upgrade path: a legacy-injected config converts to the Design B form in one inject", () => {

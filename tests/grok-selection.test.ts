@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildGrokManagedBlock, injectGrokConfig } from "../src/grok/inject";
@@ -7,6 +7,7 @@ import { syncGrokConfig } from "../src/grok/sync";
 import { nativeOpenAiContextWindow, visibleNativeSlugs } from "../src/codex/catalog";
 import type { CatalogModel } from "../src/codex/catalog";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * Alias-stable exclusion (WP3, audit blocker 3): aliases are allocated over the
@@ -82,7 +83,7 @@ test("excluding everything writes a marker-only fence that strip removes", () =>
     expect(content).toContain(">>> opencodex managed block");
     expect(content).not.toContain("[model.");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    removeTempDir(root);
   }
 });
 
@@ -101,7 +102,7 @@ test("a user-reserved alias still pushes generated aliases past it while exclusi
     // And the survivor's generated alias starts AFTER the reservation, not at -1.
     expect(content).not.toContain("[model.ocx-kimi-k3]\nmodel = \"kimi-k3\"");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    removeTempDir(root);
   }
 });
 
@@ -126,6 +127,6 @@ test("syncGrokConfig with grokExcludedModels omits that model's table end to end
     expect(content).toContain(`context_window = ${nativeOpenAiContextWindow("gpt-5.6-sol")}`);
     expect(visibleNativeSlugs(config).length).toBeGreaterThan(0);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    removeTempDir(root);
   }
 });

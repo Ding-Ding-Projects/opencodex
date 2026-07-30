@@ -1,9 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./helpers/temp-dir";
 
 setDefaultTimeout(30_000);
 
@@ -208,7 +209,7 @@ function runRelease(version: string, scenario: ReleaseScenario = {}) {
   });
 
   const calls = readLoggedCalls(logPath);
-  rmSync(shimDir, { recursive: true, force: true });
+  removeTempDir(shimDir);
   return { calls, result };
 }
 

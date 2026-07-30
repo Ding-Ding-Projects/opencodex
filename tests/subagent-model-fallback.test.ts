@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,6 +21,7 @@ import { saveCodexAccountCredential } from "../src/codex/account-store";
 import { clearAccountNeedsReauth, markAccountNeedsReauth } from "../src/codex/account-runtime-state";
 import { clearAccountQuota, updateAccountQuota } from "../src/codex/quota";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const savedCodexHome = process.env.CODEX_HOME;
 const savedOpencodexHome = process.env.OPENCODEX_HOME;
@@ -94,7 +95,7 @@ afterEach(() => {
   clearAccountNeedsReauth("account-a");
   clearAccountNeedsReauth("account-b");
   clearAccountNeedsReauth("main");
-  rmSync(testDir, { recursive: true, force: true });
+  removeTempDir(testDir);
 });
 
 describe("subagent model fallback chain", () => {

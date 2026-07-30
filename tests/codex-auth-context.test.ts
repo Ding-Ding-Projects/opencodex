@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -35,6 +35,7 @@ import {
   recordCodexUpstreamOutcome,
 } from "../src/codex/routing";
 import type { OcxConfig, OcxProviderConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 let testDir: string;
 let previousOpencodexHome: string | undefined;
@@ -55,7 +56,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(testDir, { recursive: true, force: true });
+  removeTempDir(testDir);
   clearThreadAccountMap();
   clearCodexUpstreamHealth();
   clearAccountNeedsReauth("pool-a");

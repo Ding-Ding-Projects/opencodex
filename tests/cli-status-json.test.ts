@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveStatusPid, selectListenTarget } from "../src/cli/status";
+import { removeTempDir } from "./helpers/temp-dir";
 
 const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const cliPath = join(repoRoot, "src", "cli", "index.ts");
@@ -134,7 +135,7 @@ describe("CLI status JSON", () => {
         expect(serialized).not.toContain(forbidden);
       }
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
     }
   });
 
@@ -191,7 +192,7 @@ describe("CLI status JSON", () => {
       });
     } finally {
       resetCodexRuntimeResolveCacheForTests();
-      rmSync(opencodexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
     }
   });
 
@@ -214,7 +215,7 @@ describe("CLI status JSON", () => {
       expect(result.stderr).toContain("Usage: ocx status [--json]");
       expect(result.stdout).toBe("");
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
     }
   });
 
@@ -237,7 +238,7 @@ describe("CLI status JSON", () => {
       expect(result.stderr).toContain("Usage: ocx status [--json]");
       expect(result.stdout).toBe("");
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
     }
   });
 
@@ -268,7 +269,7 @@ describe("CLI status JSON", () => {
       expect(serialized).not.toContain("sk-status-secret");
       expect(serialized).not.toContain("apiKey");
     } finally {
-      rmSync(opencodexHome, { recursive: true, force: true });
+      removeTempDir(opencodexHome);
     }
   });
 

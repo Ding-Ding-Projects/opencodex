@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describeHost, handleHostCommand, hasDataPlaneCredential } from "../src/cli/host";
 import { verifyAdminTokenAgainstProxy } from "../src/lib/host-control";
 import { getDefaultConfig } from "../src/config";
 import type { OcxConfig } from "../src/types";
+import { removeTempDir } from "./helpers/temp-dir";
 
 /**
  * `ocx host` is the only supported way to expose the proxy beyond loopback, so
@@ -94,7 +95,7 @@ describe("ocx host", () => {
     else process.env.OPENCODEX_HOME = realHome;
     if (realToken === undefined) delete process.env.OPENCODEX_API_AUTH_TOKEN;
     else process.env.OPENCODEX_API_AUTH_TOKEN = realToken;
-    rmSync(home, { recursive: true, force: true });
+    removeTempDir(home);
   });
 
   test("refuses to expose without a data-plane credential", async () => {
