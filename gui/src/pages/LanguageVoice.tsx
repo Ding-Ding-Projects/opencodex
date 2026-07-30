@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m3-ui";
 import { IconRegex, IconSearch, IconSparkle, IconVolume } from "../icons";
 import { LOCALES, useI18n, useT, type Locale, type TFn } from "../i18n/shared";
+import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18n/voice";
 import { usePrefs } from "../theme/prefs-context";
 import { cancelNarration, configureNarrator, narrate, narratorAvailable } from "../shell/narrator";
 import { useNotifications } from "../shell/notifications-context";
@@ -31,29 +32,10 @@ const MONO = { fontFamily: "var(--mono)" } as const;
 /** Funny levels run 1 (fully serious) → 5 (maximum playfulness), per language. */
 const FUNNY_MIN = 1;
 const FUNNY_MAX = 5;
-const FUNNY_DEFAULT = 3;
 const FUNNY_LEVELS = [1, 2, 3, 4, 5];
-const FUNNY_KEY = "ocx-m3:funny";
 
 /** The "show one now" preview clears itself on the same timer as the launch card. */
 const PREVIEW_MS = 12_000;
-
-interface FunnyLevels { en: number; yue: number }
-
-function clampLevel(value: unknown): number {
-  const n = Math.round(Number(value));
-  return n >= FUNNY_MIN && n <= FUNNY_MAX ? n : FUNNY_DEFAULT;
-}
-
-function readFunny(): FunnyLevels {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FUNNY_KEY) || "{}");
-    if (!raw || typeof raw !== "object") return { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT };
-    return { en: clampLevel(raw.en), yue: clampLevel(raw.yue) };
-  } catch {
-    return { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT };
-  }
-}
 
 /**
  * Plain text is the default on every search bar; `.*` is an explicit opt-in.
@@ -80,15 +62,15 @@ function useMatcher(query: string, useRegex: boolean): { test: (s: string) => bo
 /**
  * The disclosure the funny level owes the user: it restyles every message,
  * errors and destructive confirmations included, and never changes the facts.
- * The ladder below renders the same destructive warning at all five levels so
- * that promise is visible rather than merely claimed.
  *
- * Today every rung shows an identical sentence, because the shipping
- * dictionaries hold one string per key rather than a five-entry voice array —
- * which is exactly the invariant this block exists to demonstrate.
+ * The ladder proves it rather than claiming it. It renders the *same* key at
+ * all five levels, so the reader can see the voice change while the facts —
+ * which sessions, that it is permanent, that there is no undo — stay put. Until
+ * the voice overlay existed, every rung printed an identical sentence, which
+ * demonstrated the opposite of what it was there to demonstrate.
  */
-function FunnyLadder({ t, level }: { t: TFn; level: number }) {
-  const warning = t("storage.cleanup.permanentWarn");
+function FunnyLadder({ t, level, lang }: { t: TFn; level: number; lang: VoiceLang }) {
+  const neutral = t("storage.cleanup.permanentWarn");
   return (
     <div style={{ marginTop: "var(--sp-3)" }}>
       <div className="m3-field-label">{t("lang.funnyLadder")}</div>
@@ -106,7 +88,9 @@ function FunnyLadder({ t, level }: { t: TFn; level: number }) {
             <div style={{ fontSize: "var(--t-label-s)", fontWeight: 700, letterSpacing: "0.4px", textTransform: "uppercase", opacity: 0.7 }}>
               {t("lang.funnyLevel", { n })}
             </div>
-            <div style={{ marginTop: 2, fontSize: "var(--t-body-s)" }}>{warning}</div>
+            <div style={{ marginTop: 2, fontSize: "var(--t-body-s)" }} lang={lang === "yue" ? "zh-HK" : "en"}>
+              {voiceFor(lang, "storage.cleanup.permanentWarn", n as FunnyLevel) ?? neutral}
+            </div>
           </div>
         ))}
       </div>
@@ -134,7 +118,9 @@ export default function LanguageVoice() {
   const { prefs, setPrefs } = usePrefs();
   const { notify } = useNotifications();
   const [available] = useState(narratorAvailable);
-  const [funny, setFunny] = useState<FunnyLevels>(readFunny);
+  // The provider owns these: `t()` consults them on every lookup, so a copy
+  // held here would restyle this screen and nothing else.
+  const { funny, setFunny } = useI18n();
   const [preview, setPreview] = useState<DimSumDish | null>(null);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
@@ -143,11 +129,6 @@ export default function LanguageVoice() {
     configureNarrator({ enabled: prefs.narrator, lang: prefs.narratorLang });
     return () => cancelNarration();
   }, [prefs.narrator, prefs.narratorLang]);
-
-  // Persisted like every other preference, so a chosen voice survives a restart.
-  useEffect(() => {
-    try { localStorage.setItem(FUNNY_KEY, JSON.stringify(funny)); } catch { /* quota */ }
-  }, [funny]);
 
   // Non-blocking by contract: the preview never gates anything and clears itself.
   useEffect(() => {
@@ -203,7 +184,7 @@ export default function LanguageVoice() {
                 value={funny.en}
                 min={FUNNY_MIN}
                 max={FUNNY_MAX}
-                onChange={en => setFunny(prev => ({ ...prev, en }))}
+                onChange={en => setFunny({ en: en as FunnyLevel })}
                 label={t("lang.funnyEn")}
                 valueLabel={t("lang.funnyLevel", { n: funny.en })}
               />
@@ -215,14 +196,18 @@ export default function LanguageVoice() {
                 value={funny.yue}
                 min={FUNNY_MIN}
                 max={FUNNY_MAX}
-                onChange={yue => setFunny(prev => ({ ...prev, yue }))}
+                onChange={yue => setFunny({ yue: yue as FunnyLevel })}
                 label={t("lang.funnyYue")}
                 valueLabel={t("lang.funnyLevel", { n: funny.yue })}
               />
               <FunnySample text={permanentWarn} />
             </div>
           </div>
-          <FunnyLadder t={t} level={funny.en} />
+          <FunnyLadder t={t} level={funny.en} lang="en" />
+          <FunnyLadder t={t} level={funny.yue} lang="yue" />
+          <p style={{ marginTop: "var(--sp-2)", fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)" }}>
+            {t("lang.funnyCoverage", { en: voiceCoverage("en"), yue: voiceCoverage("yue") })}
+          </p>
         </Card>
       ),
     },

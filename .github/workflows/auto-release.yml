@@ -84,7 +84,19 @@ jobs:
         run: |
           tag="build-${{ github.run_number }}"
           version=$(node -p "require('./package.json').version")
-          installer=$(ls dist-desktop/*.exe | head -1)
+
+          # Fail before creating anything if electron-builder produced no installer.
+          # `gh release create` publishes the release first and uploads assets after,
+          # so an empty `installer` would leave a real, visible release carrying only
+          # the dashboard zip — which is precisely the "release with no installer"
+          # this pipeline exists to never produce.
+          installer=$(ls dist-desktop/*.exe 2>/dev/null | head -1)
+          if [ -z "$installer" ] || [ ! -s "$installer" ]; then
+            echo "::error::No Windows installer was produced in dist-desktop/ — refusing to publish a release without one."
+            ls -la dist-desktop/ 2>/dev/null || echo "dist-desktop/ does not exist"
+            exit 1
+          fi
+          echo "installer: $installer ($(wc -c < "$installer") bytes)"
           notes="Automated build of ${SHA:0:9} (v${version}), published because Cross-platform CI passed on it.
 
           - **opencodex-setup.exe** — Windows desktop app (proxy + dashboard, tray, start at login)

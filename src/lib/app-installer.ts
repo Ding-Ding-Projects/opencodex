@@ -29,6 +29,7 @@ import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 import { launchTargetIds, resolveLaunchTarget, type LaunchKind } from "./app-launcher.js";
+import { commandInvocation, type SpawnInvocation } from "./win-exec.js";
 
 export type InstallMethod = "winget" | "npm";
 
@@ -150,38 +151,52 @@ export function hasInstallRoute(targetId: string): boolean {
   return !!recipes && recipes.some(r => r.platforms.includes(platformKey()));
 }
 
-function commandFor(recipe: InstallRecipe): { command: string; args: string[] } {
+/**
+ * The invocation for a recipe, routed through the repo's cross-platform launcher.
+ *
+ * `commandInvocation` is not optional decoration here. npm on Windows is a
+ * `.cmd` shim, and Node/Bun refuse a shell-less `.cmd` spawn outright since the
+ * CVE-2024-27980 hardening — `spawn("npm.cmd", …)` fails with EINVAL every
+ * time. Spawning the bare name is no better: it skips PATHEXT resolution and
+ * ENOENTs even when `npm.cmd` is on PATH. So the npm route was dead on the one
+ * platform this app ships an installer for, and dead in a way that surfaced as
+ * a plausible-looking failed install rather than as an obvious bug.
+ *
+ * `win-exec` resolves the target through PATH×PATHEXT and wraps `.cmd`/`.bat`
+ * in `cmd.exe /d /s /c` with verbatim arguments, which is the same approach
+ * cross-spawn uses and what every other spawn site in this repo already does.
+ */
+function commandFor(recipe: InstallRecipe): SpawnInvocation {
   if (recipe.method === "winget") {
-    return {
-      command: "winget",
-      args: [
-        "install", "--id", recipe.pkg, "--source", "winget", "--exact",
-        // Unattended: a package manager that stops on a licence prompt behind a
-        // hidden window would hang forever with nothing on screen to click.
-        "--silent", "--accept-package-agreements", "--accept-source-agreements",
-        "--disable-interactivity",
-      ],
-    };
+    return commandInvocation("winget", [
+      "install", "--id", recipe.pkg, "--source", "winget", "--exact",
+      // Unattended: a package manager that stops on a licence prompt behind a
+      // hidden window would hang forever with nothing on screen to click.
+      "--silent", "--accept-package-agreements", "--accept-source-agreements",
+      "--disable-interactivity",
+    ]);
   }
-  return {
-    command: process.platform === "win32" ? "npm.cmd" : "npm",
-    args: ["install", "--global", recipe.pkg],
-  };
+  return commandInvocation("npm", ["install", "--global", recipe.pkg]);
 }
 
 /**
  * Can the freshly installed program be found?
  *
- * Checks the launcher's own resolution first, then npm's global bin — which a
- * long-running process will not have on its PATH if npm created it during this
- * install.
+ * Only the launcher's own resolution counts. An earlier version fell back to
+ * "does the global npm bin directory exist", which answers a different question
+ * entirely: that directory is present on any machine that ever ran `npm i -g`
+ * anything, and it knows nothing about the package just installed. It reported
+ * `verified` for winget targets npm never touched, and — because npm's Windows
+ * prefix already *is* the bin directory — reported a genuinely successful npm
+ * install as unverified by probing `…\npm\npm`. Wrong in both directions, and
+ * a false `verified` suppresses the one piece of advice that actually helps:
+ * restart, because installers extend the machine PATH and this process kept the
+ * environment it started with.
+ *
+ * Unverified is not failure. It means "installed, but not visible from here".
  */
 function verify(targetId: string): boolean {
-  if (resolveLaunchTarget(targetId) !== null) return true;
-  const prefix = process.env.npm_config_prefix ?? process.env.APPDATA;
-  if (!prefix) return false;
-  const guess = process.platform === "win32" ? join(prefix, "npm") : join(prefix, "bin");
-  return existsSync(guess);
+  return resolveLaunchTarget(targetId) !== null;
 }
 
 function push(job: InstallJob, chunk: string): void {
@@ -256,11 +271,14 @@ export function startInstall(targetId: string): StartInstallResult {
   jobs.set(job.id, job);
   prune();
 
-  const { command, args } = commandFor(recipe);
-  push(job, `$ ${command} ${args.join(" ")}`);
+  const { file, args, options } = commandFor(recipe);
+  // The transcript names the package manager and package, not the cmd.exe
+  // wrapper win-exec may have produced — the wrapper is an implementation
+  // detail and printing it would make a normal install look alarming.
+  push(job, `$ ${recipe.method} ${recipe.pkg}`);
 
   try {
-    const child = spawn(command, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { ...options, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout?.on("data", (d: Buffer) => push(job, d.toString()));
     child.stderr?.on("data", (d: Buffer) => push(job, d.toString()));
     child.on("error", err => {
@@ -279,7 +297,7 @@ export function startInstall(targetId: string): StartInstallResult {
         }
       } else {
         job.state = "failed";
-        job.error = `${command} exited with code ${code}`;
+          job.error = `${recipe.method} exited with code ${code}`;
       }
     });
   } catch (err) {

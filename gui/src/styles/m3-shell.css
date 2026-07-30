@@ -835,6 +835,23 @@ html[data-desktop] .m3-appbar .m3-avatar {
   border: 0;
 }
 
+/* Remote-access QR codes. */
+.m3-qr-row { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.m3-qr { margin: 0; display: grid; gap: 8px; justify-items: center; }
+.m3-qr figcaption {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  max-width: 180px;
+  font-size: var(--t-label-s);
+}
+.m3-qr figcaption code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+  text-align: center;
+  color: var(--m3-on-surface-variant);
+}
+
 /* ------------------------------------------------- mobile remote control --
    Its own surface, not a page in the admin shell. Sized for a thumb: 44px
    minimum targets, safe-area insets for a notch and a home indicator, and a

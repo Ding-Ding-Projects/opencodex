@@ -138,3 +138,14 @@ export function resolveAppHashChange(rawHash: string): AppHashChangeAction {
 
   return { page: nextPage, replaceTo: null };
 }
+
+/**
+ * The hash route for a page, as another device would type it.
+ *
+ * Lives here beside the route table rather than in the component that renders
+ * it: a route is navigation data, not user-facing copy, and the surrounding
+ * pages should not be spelling their own URLs.
+ */
+export function hashRouteFor(page: Page): string {
+  return `#/${page}`;
+}

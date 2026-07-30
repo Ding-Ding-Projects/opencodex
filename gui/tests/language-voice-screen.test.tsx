@@ -128,9 +128,12 @@ test("ships one funny-level slider per language, each 1–5 and persisted", asyn
   await act(async () => { root.unmount(); });
 });
 
-// The ladder is what makes the "voice changes, facts do not" promise checkable:
-// the same destructive warning is shown at all five levels, word for word.
-test("the funny ladder shows the identical destructive warning at every level", async () => {
+// The ladder is what makes the "voice changes, facts do not" promise checkable.
+// It used to print one identical sentence at all five rungs, and this test
+// asserted that — codifying the limitation instead of the promise. The voice
+// overlay now supplies real per-level wording, so the invariant worth pinning is
+// the interesting one: the tone moves, the facts do not.
+test("the funny ladder changes voice across levels while the facts stay put", async () => {
   const { container, root } = await mount();
 
   const heading = [...container.querySelectorAll(".m3-field-label")]
@@ -141,8 +144,19 @@ test("the funny ladder shows the identical destructive warning at every level", 
   expect(rungs).toHaveLength(5);
   expect(rungs.map(r => r.firstElementChild?.textContent))
     .toEqual(["Level 1", "Level 2", "Level 3", "Level 4", "Level 5"]);
-  const warnings = new Set(rungs.map(r => r.lastElementChild?.textContent));
-  expect([...warnings]).toEqual(["Permanent delete cannot be undone."]);
+
+  const texts = rungs.map(r => r.lastElementChild?.textContent ?? "");
+
+  // Voice actually varies: a slider that changes nothing is the defect this
+  // whole overlay exists to remove.
+  expect(new Set(texts).size).toBeGreaterThan(1);
+
+  // ...and every rung still states the two facts that must never be styled
+  // away: what is destroyed, and that it cannot be taken back.
+  for (const text of texts) {
+    expect(text.toLowerCase()).toMatch(/delete|deletes|gone|vaporised/);
+    expect(text.toLowerCase()).toMatch(/undo|cannot be undone|no take-backs|point of no return/);
+  }
 
   await act(async () => { root.unmount(); });
 });

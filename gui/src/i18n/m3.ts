@@ -26,6 +26,14 @@ export const M3_EN = {
   "nav.network": "Remote access & backup",
   "nav.terminal": "Terminal",
   "nav.mobile": "Remote control",
+  "network.mobileTitle": "Open on a phone",
+  "network.mobileHint": "Scan to open the remote control. Paste the API key into its Control tab once — it is stored on that device only.",
+  "network.mobileQrAlt": "QR code for {url}",
+  // Honest coverage. The level styles the copy where voice actually reads —
+  // headings, empty states, confirmations, errors — and every other string keeps
+  // its neutral wording rather than being padded with five near-identical
+  // variants of the word "Save".
+  "lang.funnyCoverage": "The level restyles {en} English and {yue} Cantonese messages today, including errors and destructive warnings. Everything else keeps its neutral wording. The facts never change at any level.",
 
   "mobile.title": "opencodex remote",
   "mobile.chat": "Chat",
@@ -38,6 +46,7 @@ export const M3_EN = {
   "mobile.transcript": "Conversation",
   "mobile.chatHint": "Pick a model above and send a message. It routes through this proxy like any other client, so it is logged and counted the same way.",
   "mobile.emptyReply": "(the model returned nothing)",
+  "mobile.stopped": "(stopped before the reply started)",
   "mobile.sendFailed": "Could not send that message",
   "mobile.noSessions": "No requests yet",
   "mobile.sessionsFailed": "Could not read the session log",

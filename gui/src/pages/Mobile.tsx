@@ -215,13 +215,32 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
         return next;
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Stop is the user's own decision, not a failure. Treating an abort like a
+      // network error threw away everything they had already read, replaced it
+      // with a raw DOMException, and — because errored turns are filtered out of
+      // the history sent upstream — deleted that whole assistant turn from
+      // context, so the next message arrived after two consecutive user turns
+      // and "shorten that" referred to text the model had never seen.
+      const aborted = err instanceof DOMException && err.name === "AbortError";
       setMessages(prev => {
         const next = [...prev];
-        next[next.length - 1] = { role: "assistant", content: message, streaming: false, error: true };
+        const partial = next[next.length - 1]?.content ?? "";
+        if (aborted) {
+          next[next.length - 1] = {
+            role: "assistant",
+            content: partial || t("mobile.stopped"),
+            streaming: false,
+          };
+        } else {
+          const message = err instanceof Error ? err.message : String(err);
+          next[next.length - 1] = { role: "assistant", content: message, streaming: false, error: true };
+        }
         return next;
       });
-      notify({ tone: "error", title: t("mobile.sendFailed"), body: message });
+      if (!aborted) {
+        const message = err instanceof Error ? err.message : String(err);
+        notify({ tone: "error", title: t("mobile.sendFailed"), body: message });
+      }
     } finally {
       abort.current = null;
       setSending(false);

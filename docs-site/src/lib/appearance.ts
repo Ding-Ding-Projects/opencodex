@@ -106,17 +106,36 @@ export function isDark(theme: ThemeMode): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
+/** Starlight's own theme store, written by the header's Auto→Light→Dark button. */
+const STARLIGHT_THEME_KEY = "starlight-theme";
+
+/** Set while we are writing `data-theme` ourselves, so the observer ignores it. */
+let applying = false;
+
 /**
  * Paint an appearance onto the document.
  *
  * `data-theme` is set as well as the tokens because Starlight keys its own
  * component styles off that attribute — writing only the custom properties
  * would leave Starlight's chrome in the other theme.
+ *
+ * Starlight's store is written too, and that is not redundant. The header ships
+ * its own theme button, and `applyTokens` writes every role as an *inline*
+ * style, which outranks the `:root[data-theme=…]` blocks in the stylesheet. So
+ * without this the two controls silently fight: pressing the header's button
+ * flipped the attribute while the inline tokens kept the old colours, leaving a
+ * button labelled "Light" over an entirely dark page. Keeping both stores in
+ * step is what makes them one setting with two front doors.
  */
 export function applyAppearance(appearance: DocsAppearance, root?: HTMLElement): void {
   const el = root ?? document.documentElement;
   const dark = isDark(appearance.theme);
+  applying = true;
   el.setAttribute("data-theme", dark ? "dark" : "light");
+  applying = false;
+  try {
+    localStorage.setItem(STARLIGHT_THEME_KEY, appearance.theme === "system" ? "auto" : appearance.theme);
+  } catch { /* private mode */ }
   applyTokens(el, {
     seed: appearance.seed,
     dark,
@@ -125,4 +144,29 @@ export function applyAppearance(appearance: DocsAppearance, root?: HTMLElement):
     fontScale: appearance.fontScale,
     fontWeight: appearance.fontWeight,
   });
+}
+
+/**
+ * Re-derive the tokens whenever something else changes `data-theme`.
+ *
+ * The other something is Starlight's header button, which flips the attribute
+ * and persists its own key but knows nothing about M3 roles. Watching the
+ * attribute rather than patching Starlight keeps this working if that component
+ * is restyled or replaced.
+ *
+ * Returns a disposer.
+ */
+export function watchExternalThemeChanges(read: () => DocsAppearance): () => void {
+  const el = document.documentElement;
+  const observer = new MutationObserver(() => {
+    if (applying) return;
+    const attr = el.getAttribute("data-theme");
+    if (attr !== "dark" && attr !== "light") return;
+    const current = read();
+    // Only the theme is adopted; seed, density and type stay the visitor's.
+    applyAppearance({ ...current, theme: attr });
+    writeAppearance({ ...current, theme: attr });
+  });
+  observer.observe(el, { attributes: true, attributeFilter: ["data-theme"] });
+  return () => observer.disconnect();
 }

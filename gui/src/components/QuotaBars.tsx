@@ -106,6 +106,13 @@ function bcp47(locale: Locale): string {
       return "ru-RU";
     case "ja":
       return "ja-JP";
+    // Hong Kong Cantonese formats dates and numbers as zh-HK. Bilingual mode
+    // formats as English: a single row cannot carry two number formats, and the
+    // English one is the safer default for a mixed audience.
+    case "yue":
+      return "zh-HK";
+    case "bi":
+      return "en-US";
     default: {
       const _exhaustive: never = locale;
       return _exhaustive;

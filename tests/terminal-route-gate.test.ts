@@ -8,11 +8,25 @@
  * session would be just as good to an attacker.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { handleHostRoutes } from "../src/server/management/host-routes";
+import { setServerRef } from "../src/server/lifecycle";
 import type { ManagementContext } from "../src/server/management/context";
 import type { OcxConfig } from "../src/types";
+
+/**
+ * Pretend the process is listening on `hostname`.
+ *
+ * The gate reads the live listener, not `config.hostname`, so a test that only
+ * set the config would be exercising a field the production code deliberately
+ * ignores — and would have passed against the vulnerable version.
+ */
+function listeningOn(hostname: string | undefined): void {
+  setServerRef(hostname === undefined ? undefined : ({ hostname, port: 10100 } as never));
+}
+
+afterEach(() => setServerRef(undefined));
 
 function ctx(pathname: string, method: string, config: Partial<OcxConfig>): ManagementContext {
   const url = new URL(`http://127.0.0.1:10100${pathname}`);
@@ -39,6 +53,7 @@ const ROUTES: Array<[string, string]> = [
 
 describe("terminal route gate", () => {
   test("every terminal route is refused on an all-interfaces bind", async () => {
+    listeningOn("0.0.0.0");
     for (const [path, method] of ROUTES) {
       const res = await handleHostRoutes(ctx(path, method, { hostname: "0.0.0.0" }));
       expect(res).not.toBeNull();
@@ -47,6 +62,7 @@ describe("terminal route gate", () => {
   });
 
   test("a LAN address is refused too, not just 0.0.0.0", async () => {
+    listeningOn("192.168.1.50");
     const res = await handleHostRoutes(ctx("/api/terminal", "GET", { hostname: "192.168.1.50" }));
     expect(res!.status).toBe(403);
     const body = await res!.json() as { error?: string };
@@ -55,18 +71,37 @@ describe("terminal route gate", () => {
   });
 
   test("loopback is allowed", async () => {
+    listeningOn("127.0.0.1");
     const res = await handleHostRoutes(ctx("/api/terminal", "GET", { hostname: "127.0.0.1" }));
     expect(res!.status).toBe(200);
     const body = await res!.json() as { presets?: unknown[] };
     expect(Array.isArray(body.presets)).toBe(true);
   });
 
-  test("an unset hostname defaults to loopback and is allowed", async () => {
+  test("a listener on loopback is allowed even with no hostname in config", async () => {
+    // The config field is irrelevant to the decision; only the listener counts.
+    listeningOn("127.0.0.1");
     const res = await handleHostRoutes(ctx("/api/terminal", "GET", {}));
     expect(res!.status).toBe(200);
   });
 
+  test("a config edit cannot open the gate while the listener is still exposed", async () => {
+    // The whole point. `PUT /api/host` can rewrite config.hostname at runtime,
+    // but the socket stays bound where Bun.serve put it until a restart. A gate
+    // reading the config would hand out a shell on a LAN-reachable listener.
+    listeningOn("0.0.0.0");
+    const res = await handleHostRoutes(ctx("/api/terminal", "GET", { hostname: "127.0.0.1" }));
+    expect(res!.status).toBe(403);
+  });
+
+  test("no listener yet is treated as exposed, not as safe", async () => {
+    listeningOn(undefined);
+    const res = await handleHostRoutes(ctx("/api/terminal", "GET", { hostname: "127.0.0.1" }));
+    expect(res!.status).toBe(403);
+  });
+
   test("the explicit opt-in re-opens it on an exposed bind", async () => {
+    listeningOn("0.0.0.0");
     const res = await handleHostRoutes(
       ctx("/api/terminal", "GET", { hostname: "0.0.0.0", terminal: { allowRemote: true } }),
     );
@@ -76,6 +111,7 @@ describe("terminal route gate", () => {
   test("allowRemote only counts when it is exactly true", async () => {
     // A truthy-but-not-true value from a hand-edited config must not open the
     // door: this is the one setting where a loose check is a security bug.
+    listeningOn("0.0.0.0");
     for (const value of ["true", 1, {}, [], "yes"] as unknown[]) {
       const res = await handleHostRoutes(
         ctx("/api/terminal", "GET", { hostname: "0.0.0.0", terminal: { allowRemote: value as boolean } }),

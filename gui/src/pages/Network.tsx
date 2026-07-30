@@ -12,6 +12,8 @@ import { readJsonIfOk } from "../fetch-json";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import { useCopyFeedback } from "../components/use-copy-feedback";
+import QrCode from "../components/QrCode";
+import { hashRouteFor } from "../app-routing";
 
 interface HostStatus {
   hostname: string;
@@ -235,6 +237,34 @@ export default function Network({ apiBase }: { apiBase: string }) {
                   {status.urls.map(url => (
                     <code key={url} style={{ fontFamily: "var(--mono)", fontSize: "var(--t-body-s)" }}>{url}</code>
                   ))}
+                </div>
+              </Field>
+            )}
+
+            {/* The point of exposing the proxy is usually a phone, and this page
+                previously answered that with a LAN address and a 40-character key
+                to retype by hand. The QR carries the mobile remote's URL
+                directly. */}
+            {status.urls.length > 0 && (
+              <Field label={t("network.mobileTitle")}>
+                <p style={{ margin: "0 0 var(--sp-2)", fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
+                  {t("network.mobileHint")}
+                </p>
+                <div className="m3-qr-row">
+                  {status.urls.map(url => {
+                    const target = `${url.replace(/\/$/, "")}/${hashRouteFor("mobile")}`;
+                    return (
+                      <figure key={url} className="m3-qr">
+                        <QrCode text={target} label={t("network.mobileQrAlt", { url: target })} />
+                        <figcaption>
+                          <code>{target}</code>
+                          <Button variant="text" onClick={() => copy(target, undefined)}>
+                            {copied ? t("network.copied") : t("network.copy")}
+                          </Button>
+                        </figcaption>
+                      </figure>
+                    );
+                  })}
                 </div>
               </Field>
             )}

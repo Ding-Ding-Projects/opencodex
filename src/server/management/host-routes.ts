@@ -230,7 +230,20 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   // which is a categorically worse outcome than leaking the provider config.
   if (url.pathname.startsWith("/api/terminal")) {
     const { isLoopbackHostname } = await import("../auth-cors");
-    const boundLocally = isLoopbackHostname(config.hostname ?? "127.0.0.1");
+    const { getServerListenHostname } = await import("../lifecycle");
+
+    // The LIVE bind, not `config.hostname`. That field is writable at runtime by
+    // `PUT /api/host` above, while the socket's address is fixed at Bun.serve()
+    // and only a restart changes it. Reading the config would let a caller flip
+    // the stored hostname to 127.0.0.1 and be handed a shell on a listener that
+    // is still answering 0.0.0.0 — the gate would report a closed door while the
+    // door stood open.
+    //
+    // Before the server is up there is no listener to ask. That is "unknown",
+    // and unknown is treated as exposed: refusing a terminal that might have
+    // been safe costs nothing, and the reverse costs the machine.
+    const listening = getServerListenHostname();
+    const boundLocally = listening !== undefined && isLoopbackHostname(listening);
     if (!boundLocally && config.terminal?.allowRemote !== true) {
       return jsonResponse({
         error: "The embedded terminal is disabled while the proxy is reachable from other devices. "

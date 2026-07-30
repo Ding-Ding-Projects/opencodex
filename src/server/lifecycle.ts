@@ -47,6 +47,23 @@ export function getServerListenPort(): number | undefined {
   const port = _serverRef?.port;
   return typeof port === "number" && port > 0 ? port : undefined;
 }
+
+/**
+ * The address this process is *actually* listening on.
+ *
+ * Not `config.hostname`. That field is writable at runtime — `PUT /api/host`
+ * edits it — while the socket's bind address is fixed when `Bun.serve` starts
+ * and only a restart can change it. Anything making a security decision about
+ * reachability has to ask the listener, or a config edit will appear to close a
+ * door that is still open.
+ *
+ * Returns undefined before the server is up, which callers must treat as
+ * "unknown", never as "safe".
+ */
+export function getServerListenHostname(): string | undefined {
+  const hostname = _serverRef?.hostname;
+  return typeof hostname === "string" && hostname ? hostname : undefined;
+}
 /**
  * Mark this process as a recycle (dashboard drain-and-restart). Exit cleanup
  * must keep Codex/Grok/system-env injection so the replacement process inherits

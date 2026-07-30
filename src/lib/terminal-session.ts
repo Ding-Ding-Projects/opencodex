@@ -260,12 +260,52 @@ export function writeSession(id: string, data: string): { ok: boolean; error?: s
   }
 }
 
+/**
+ * How long a session gets to exit politely before it is killed outright.
+ *
+ * A plain `kill()` sends SIGTERM, and an interactive shell sitting on a read is
+ * entitled to ignore it — PowerShell does. So "Stop" appeared to do nothing:
+ * the button reported success, the process stayed alive, and on Windows the
+ * whole tree survived because `kill()` reaches only the shell itself and not the
+ * children it spawned. Both halves are handled below.
+ */
+const KILL_GRACE_MS = 1500;
+
+/**
+ * End a child, escalating if it declines.
+ *
+ * On Windows there are no real signals: `taskkill /T /F` is the only way to take
+ * down the process *tree*, which is what a shell with a running command is. On
+ * POSIX the child is its own process group (`detached` is not set, so the group
+ * is inherited) and SIGKILL to the pid is enough for the shell; a long-running
+ * grandchild is reparented rather than orphaned into the void.
+ */
+function terminate(child: ChildProcess | null): void {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const pid = child.pid;
+  try { child.kill(); } catch { /* already gone */ }
+
+  const timer = setTimeout(() => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    try {
+      if (process.platform === "win32" && pid) {
+        spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
+          .on("error", () => { /* taskkill missing: nothing further to try */ });
+      } else {
+        child.kill("SIGKILL");
+      }
+    } catch { /* already gone */ }
+  }, KILL_GRACE_MS);
+  // Do not hold the event loop open just to escalate a kill.
+  timer.unref?.();
+}
+
 export function killSession(id: string): { ok: boolean; error?: string } {
   const session = sessions.get(id);
   if (!session) return { ok: false, error: "unknown terminal session" };
   if (session.state !== "running") return { ok: true };
   try {
-    session.child?.kill();
+    terminate(session.child);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -276,7 +316,7 @@ export function killSession(id: string): { ok: boolean; error?: string } {
 export function killAllSessions(): void {
   for (const session of sessions.values()) {
     if (session.state === "running") {
-      try { session.child?.kill(); } catch { /* already gone */ }
+      try { terminate(session.child); } catch { /* already gone */ }
     }
   }
 }

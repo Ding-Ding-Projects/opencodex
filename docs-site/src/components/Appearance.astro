@@ -5,10 +5,13 @@
  *
  * Two scripts, deliberately:
  *
- * 1. An `is:inline` head script that paints stored preferences *before* first
- *    paint. Without it every visit flashes the default theme for a frame,
- *    which is worse on a docs site than having no theming at all.
- * 2. The module below, which drives the panel once the page is interactive.
+ * 1. An `is:inline` script that resolves the stored light/dark choice *before*
+ *    first paint. It sets only `data-theme`, which is enough: `m3-tokens.css`
+ *    already carries correct role values for both themes at the default seed,
+ *    so the first frame is right for everyone who has not picked a custom
+ *    accent. Without it every visit flashes the wrong theme for a frame.
+ * 2. The module below, which applies the full token set (seed, density, type)
+ *    and drives the panel once the page is interactive.
  *
  * The panel is a non-modal popover anchored to its button, per the appearance
  * rules — it never blocks reading the page it is restyling, and it returns
@@ -16,6 +19,21 @@
  */
 import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
 ---
+
+{/*
+  Runs before first paint. Deliberately tiny and dependency-free — importing the
+  token engine here would block rendering on a module fetch, which costs more
+  than the flash it prevents. Wrapped in try/catch because a blocked or full
+  localStorage must not stop the page from rendering at all.
+*/}
+<script is:inline>
+  try {
+    var stored = JSON.parse(localStorage.getItem("ocx-docs:appearance") || "null");
+    var mode = stored && stored.theme ? stored.theme : "system";
+    var dark = mode === "dark" || (mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  } catch (e) { /* leave the server-rendered theme in place */ }
+</script>
 
 <div class="m3-appearance">
   <button
@@ -94,6 +112,7 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
     applyAppearance,
     normalizeSeed,
     readAppearance,
+    watchExternalThemeChanges,
     writeAppearance,
     type DocsAppearance,
   } from "../lib/appearance";
@@ -180,6 +199,10 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
         if (current.theme === "system") applyAppearance(current);
       });
     }
+
+    // Starlight's header still owns a theme button. Adopt whatever it sets so
+    // the two controls read as one setting instead of overwriting each other.
+    watchExternalThemeChanges(() => current);
 
     applyAppearance(current);
     sync();
