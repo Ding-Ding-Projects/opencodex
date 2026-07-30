@@ -48,9 +48,16 @@ jobs:
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # The Windows full suite now completes near the old 8-minute ceiling; leave
-    # enough room for the privacy/build smokes instead of cancelling a green run.
-    timeout-minutes: 12
+    # Windows is the binding constraint and has crept past 12 minutes.
+    # Measured on run 30503517934 (5981 tests): install 33s, typecheck 11s,
+    # `bun test` 10m04s, GUI tests 30s, privacy 4s, GUI lint 23s — the suite
+    # alone is ~10 of the 12 minutes, so the job was cancelled two seconds into
+    # the GUI build with every substantive step already green.
+    #
+    # 20 leaves real headroom without hiding a hang: a genuinely stuck run blows
+    # 20 as readily as 12. If this needs raising again, shard the suite instead —
+    # the ceiling is not the problem worth solving a third time.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
