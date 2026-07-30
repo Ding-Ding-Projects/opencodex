@@ -481,6 +481,27 @@ export const M3_EN = {
   "history.revisions": "Revisions",
   "history.label": "Label",
   "history.labelUpdated": "Label updated",
+
+  // ---- design parity (all 19 screens) ----
+  // Copy taken verbatim from design/OpenCodex M3.dc.html and design/ocx-i18n.js.
+  //
+  // Added here rather than en.ts deliberately: the five translated dictionaries are
+  // Record<TKey, string>, so a key added there is a compile error in all five until
+  // somebody translates it. These resolve with an English fallback, which is exactly
+  // what lets a screen be ported before its translations exist.
+  //
+  // settings.* is one shared row that six screens asked for independently — the
+  // per-surface settings search that belongs on every surface where settings live.
+  "changelog.downloaded": "changelog.md downloaded",
+  "notif.noMatch": "No notifications match your search.",
+  "regex.noGroups": "This pattern declares no named capture group.",
+  "appearance.previewFilled": "Filled",
+  "appearance.elResetTarget": "Reset {target}",
+  "appearance.elColourGroup": "Colour",
+  "logs.noMatch": "No requests match your search.",
+  "grok.search": "Search models and aliases…",
+  "grok.noMatch": "No models match your search.",
+  "pws.groupNeedsAttention": "Needs attention ({count})",
 } as const;
 
 export type M3Key = keyof typeof M3_EN;
