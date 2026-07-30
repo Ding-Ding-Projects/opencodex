@@ -30,8 +30,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: service-lifecycle-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-SHA and never cancelled: this validates a commit, and a cancelled run
+  # leaves that commit tested by nothing.
+  group: service-lifecycle-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   linux-systemd:

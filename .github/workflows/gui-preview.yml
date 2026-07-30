@@ -23,8 +23,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: gui-preview-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-SHA and never cancelled — same reason as the other commit-validating
+  # workflows: a cancelled run is not a passing one, it is no run at all.
+  group: gui-preview-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   build:

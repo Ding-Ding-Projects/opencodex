@@ -30,8 +30,11 @@ permissions:
 # Cancels any in-flight scan for the same PR (or branch, on push) the moment a
 # new commit arrives, so only the latest run remains.
 concurrency:
-  group: react-doctor-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Per-SHA on a push, so a follow-up commit does not cancel the run that was
+  # validating the previous one. A PR keeps superseding by number: there the
+  # newest head is the only one that matters.
+  group: react-doctor-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   react-doctor:
