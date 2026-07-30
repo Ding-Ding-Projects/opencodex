@@ -88,7 +88,7 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
     <div class="m3-appearance__row">
       <label class="m3-appearance__label" for="m3-ap-font">Typeface</label>
       <select id="m3-ap-font">
-        {FONT_STACKS.map(font => <option value={font.stack}>{font.label}</option>)}
+        {FONT_STACKS.map(font => <option value={font.id}>{font.label}</option>)}
       </select>
     </div>
 
@@ -140,7 +140,7 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
       }
       (panel.querySelector("#m3-ap-seed") as HTMLInputElement).value = current.seed;
       (panel.querySelector("#m3-ap-density") as HTMLInputElement).value = String(current.density);
-      (panel.querySelector("#m3-ap-font") as HTMLSelectElement).value = current.fontStack;
+      (panel.querySelector("#m3-ap-font") as HTMLSelectElement).value = current.fontId;
       (panel.querySelector("#m3-ap-scale") as HTMLInputElement).value = String(current.fontScale);
       (panel.querySelector("#m3-ap-weight") as HTMLInputElement).value = String(current.fontWeight);
     }
@@ -178,7 +178,7 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
       commit({ density: Number((event.target as HTMLInputElement).value) as DocsAppearance["density"] });
     });
     panel.querySelector("#m3-ap-font")!.addEventListener("change", event => {
-      commit({ fontStack: (event.target as HTMLSelectElement).value });
+      commit({ fontId: (event.target as HTMLSelectElement).value as DocsAppearance["fontId"] });
     });
     panel.querySelector("#m3-ap-scale")!.addEventListener("input", event => {
       commit({ fontScale: Number((event.target as HTMLInputElement).value) });

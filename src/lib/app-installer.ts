@@ -95,6 +95,15 @@ export interface InstallJob {
   endedAt?: number;
 }
 
+/**
+ * After this long a running job is presumed wedged and can be superseded.
+ *
+ * Generous on purpose: a cold winget install of a large desktop app genuinely
+ * takes minutes, and killing a working install to satisfy a timer would be
+ * worse than the stall it guards against.
+ */
+const STALE_JOB_MS = 15 * 60_000;
+
 /** Bounded so a chatty installer cannot grow the process heap without limit. */
 const MAX_LOG_LINES = 400;
 const MAX_JOBS = 40;
@@ -234,8 +243,18 @@ export function startInstall(targetId: string): StartInstallResult {
     return { ok: false, error: `${known.label} is already installed` };
   }
 
+  // A job still running is reported back rather than started twice — but only
+  // while it is plausibly alive. A package manager that wedges (a lock, a
+  // network stall, a prompt behind a hidden window) would otherwise pin the
+  // target as "installing" for the life of the process, with no timeout, no
+  // cancel route and no way for the user to try again.
   const running = [...jobs.values()].find(j => j.targetId === targetId && j.state === "running");
-  if (running) return { ok: true, job: running };
+  if (running) {
+    if (Date.now() - running.startedAt < STALE_JOB_MS) return { ok: true, job: running };
+    running.state = "failed";
+    running.error = `no output for ${Math.round(STALE_JOB_MS / 60000)} minutes — treating as stalled`;
+    running.endedAt = Date.now();
+  }
 
   if (!hasInstallRoute(targetId)) {
     return {

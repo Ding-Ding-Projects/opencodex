@@ -25,24 +25,49 @@ export interface DocsAppearance {
   theme: ThemeMode;
   seed: string;
   density: DensityLevel;
-  fontStack: string;
+  fontId: FontId;
   fontScale: number;
   fontWeight: number;
 }
 
-/** Families offered by name, each with a CJK-safe tail so bilingual copy renders. */
-export const FONT_STACKS: { id: string; label: string; stack: string }[] = [
-  { id: "roboto-flex", label: "Roboto Flex", stack: '"Roboto Flex", "Roboto", "Noto Sans HK", system-ui, sans-serif' },
-  { id: "system", label: "System UI", stack: 'system-ui, -apple-system, "Segoe UI", "Noto Sans HK", sans-serif' },
-  { id: "serif", label: "Serif", stack: 'Georgia, "Times New Roman", "Noto Serif HK", serif' },
-  { id: "mono", label: "Monospace", stack: 'ui-monospace, "SF Mono", "Cascadia Code", Menlo, "Noto Sans HK", monospace' },
+/**
+ * Families offered by name.
+ *
+ * Only faces this site actually ships, or generic families every platform has.
+ * An earlier list offered "Roboto Flex" and "Roboto" — neither is bundled here
+ * (the site ships Geist and Pretendard), so choosing them silently fell back to
+ * whatever the OS happened to have. A picker whose options do not do what they
+ * say is worse than a shorter picker.
+ *
+ * Each stack carries a CJK-safe tail so the Cantonese copy renders.
+ */
+export const FONT_STACKS: { id: FontId; label: string; stack: string }[] = [
+  { id: "geist", label: "Geist", stack: '"Geist Variable", "Pretendard Variable", system-ui, sans-serif' },
+  { id: "system", label: "System UI", stack: 'system-ui, -apple-system, "Segoe UI", sans-serif' },
+  { id: "serif", label: "Serif", stack: 'Georgia, "Times New Roman", serif' },
+  { id: "mono", label: "Monospace", stack: 'ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace' },
 ];
+
+export type FontId = "geist" | "system" | "serif" | "mono";
+
+/**
+ * The stack for an id, falling back to the first offered family.
+ *
+ * Preferences store the *id*, never the CSS value. A stored stack is a string
+ * that goes straight into `style.setProperty`, so persisting one means trusting
+ * whatever is in storage to be a valid font list; storing an id and resolving
+ * it here means a corrupted or hand-edited entry can only ever select one of
+ * four known-good stacks.
+ */
+export function fontStackFor(id: FontId): string {
+  return (FONT_STACKS.find(f => f.id === id) ?? FONT_STACKS[0]).stack;
+}
 
 export const DEFAULT_APPEARANCE: DocsAppearance = {
   theme: "system",
   seed: DEFAULT_SEED,
   density: 4,
-  fontStack: FONT_STACKS[0].stack,
+  fontId: "geist",
   fontScale: 1,
   fontWeight: 400,
 };
@@ -77,7 +102,7 @@ export function readAppearance(storage?: Pick<Storage, "getItem">): DocsAppearan
       theme: row.theme === "light" || row.theme === "dark" ? row.theme : "system",
       seed: normalizeSeed(row.seed) ?? DEFAULT_APPEARANCE.seed,
       density: clampDensity(row.density),
-      fontStack: typeof row.fontStack === "string" && row.fontStack ? row.fontStack : DEFAULT_APPEARANCE.fontStack,
+      fontId: FONT_STACKS.some(f => f.id === row.fontId) ? row.fontId as FontId : DEFAULT_APPEARANCE.fontId,
       // Clamped at read rather than trusted: these land in CSS, and a
       // hand-edited or corrupted entry should not be able to render the site
       // unreadable with no way back to the settings that would fix it.
@@ -140,7 +165,7 @@ export function applyAppearance(appearance: DocsAppearance, root?: HTMLElement):
     seed: appearance.seed,
     dark,
     density: appearance.density,
-    fontStack: appearance.fontStack,
+    fontStack: fontStackFor(appearance.fontId),
     fontScale: appearance.fontScale,
     fontWeight: appearance.fontWeight,
   });

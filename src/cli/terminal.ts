@@ -37,9 +37,17 @@ function flagValue(args: string[], name: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
+/** Flags that consume the next argument. Everything else is boolean. */
+const VALUE_FLAGS = new Set(["--command", "--wait"]);
+
 export async function handleTerminalCommand(args: string[]): Promise<number> {
   const json = args.includes("--json");
-  const positional = args.filter((arg, i) => !arg.startsWith("--") && !args[i - 1]?.startsWith("--"));
+  // Only skip an argument when the flag before it actually takes a value.
+  // Skipping after *any* `--flag` swallowed the subcommand in
+  // `ocx terminal --json run shell`, which then silently listed presets
+  // instead of running anything.
+  const positional = args.filter((arg, i) =>
+    !arg.startsWith("--") && !VALUE_FLAGS.has(args[i - 1] ?? ""));
   const sub = positional[0];
 
   if (args.includes("--help") || args.includes("-h")) {

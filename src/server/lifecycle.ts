@@ -140,6 +140,13 @@ export async function drainAndShutdown(
   while (activeTurns.size > 0 && Date.now() < deadline) {
     await Bun.sleep(100);
   }
+  // Again after the drain. The first sweep runs before it, so anything
+  // registered *during* the drain window — a terminal opened while the server
+  // was still answering — would otherwise never be stopped. Every task is
+  // idempotent, so running twice costs nothing and missing one strands a
+  // process.
+  runShutdownTasks();
+
   if (activeTurns.size > 0) {
     console.warn(`⚠️  Aborting ${activeTurns.size} in-flight turn(s) after ${timeoutMs}ms deadline`);
     for (const ac of activeTurns) {

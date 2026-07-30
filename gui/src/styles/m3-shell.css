@@ -940,6 +940,12 @@ html[data-desktop] .m3-appbar .m3-avatar {
   animation: m3-mob-blink 1s steps(2, start) infinite;
 }
 @keyframes m3-mob-blink { to { visibility: hidden; } }
+/* The shell's reduced-motion block is scoped to `.m3-app`, and the mobile
+   remote deliberately renders outside it — so the caret kept blinking for a
+   user who asked for no motion. */
+@media (prefers-reduced-motion: reduce) {
+  .m3-mob__caret { animation: none; }
+}
 
 .m3-mob__compose {
   display: flex;

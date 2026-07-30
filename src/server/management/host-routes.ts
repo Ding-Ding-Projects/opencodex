@@ -70,6 +70,22 @@ function readJsonIfPresent(path: string): unknown {
   }
 }
 
+/**
+ * Percent-decode a path segment, or null when it is malformed.
+ *
+ * `new URL()` leaves an invalid escape (`/api/launch/install/%`) verbatim in
+ * `pathname`, so `decodeURIComponent` throws a `URIError` — and nothing between
+ * here and `Bun.serve` catches it, so the request that should have produced a
+ * tidy 404 got Bun's generic 500 error page instead.
+ */
+function decodeSegment(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
 export async function handleHostRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config } = ctx;
 
@@ -203,7 +219,8 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   }
 
   if (url.pathname.startsWith("/api/launch/install/") && req.method === "GET") {
-    const jobId = decodeURIComponent(url.pathname.slice("/api/launch/install/".length));
+    const jobId = decodeSegment(url.pathname.slice("/api/launch/install/".length));
+    if (jobId === null) return jsonResponse({ error: "unknown install job" }, 404, req, config);
     const { getInstallJob } = await import("../../lib/app-installer");
     const job = getInstallJob(jobId);
     if (!job) return jsonResponse({ error: "unknown install job" }, 404, req, config);
@@ -275,15 +292,18 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
       let body: { data?: unknown };
       try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
       if (typeof body.data !== "string") return jsonResponse({ error: "data is required" }, 400, req, config);
-      const result = terminal.writeSession(decodeURIComponent(inputMatch[1]), body.data);
+      const sessionId = decodeSegment(inputMatch[1]);
+      if (sessionId === null) return jsonResponse({ error: "unknown terminal session" }, 404, req, config);
+      const result = terminal.writeSession(sessionId, body.data);
       return jsonResponse(result, result.ok ? 200 : 409, req, config);
     }
 
     const sessionMatch = url.pathname.match(/^\/api\/terminal\/([^/]+)$/);
     if (sessionMatch && req.method === "GET") {
       const since = Number(url.searchParams.get("since") ?? "0");
-      const read = terminal.readSession(
-        decodeURIComponent(sessionMatch[1]),
+      const sessionId = decodeSegment(sessionMatch[1]);
+      const read = sessionId === null ? null : terminal.readSession(
+        sessionId,
         Number.isFinite(since) && since > 0 ? since : 0,
       );
       if (!read) return jsonResponse({ error: "unknown terminal session" }, 404, req, config);
@@ -291,7 +311,9 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
     }
 
     if (sessionMatch && req.method === "DELETE") {
-      const result = terminal.killSession(decodeURIComponent(sessionMatch[1]));
+      const killId = decodeSegment(sessionMatch[1]);
+      if (killId === null) return jsonResponse({ error: "unknown terminal session" }, 404, req, config);
+      const result = terminal.killSession(killId);
       return jsonResponse(result, result.ok ? 200 : 404, req, config);
     }
   }

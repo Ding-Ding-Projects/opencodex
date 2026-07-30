@@ -95,7 +95,10 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [logs, setLogs] = useState<LogRow[] | null>(null);
+  // undefined = not read yet, null = the read failed, [] = genuinely empty.
+  // Collapsing the first two showed "could not read the session log" for a
+  // moment on every visit, before anything had been attempted.
+  const [logs, setLogs] = useState<LogRow[] | null | undefined>(undefined);
   const [host, setHost] = useState<HostStatus | null>(null);
 
   const transcript = useRef<HTMLDivElement>(null);
@@ -168,6 +171,11 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
     const el = transcript.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // Leaving the screen mid-reply must stop the request, not keep a stream open
+  // against a component that is gone. A ref, so this runs once on unmount
+  // rather than aborting whenever the controller happens to change.
+  useEffect(() => () => abort.current?.abort(), []);
 
   const send = useCallback(async () => {
     const prompt = draft.trim();
@@ -378,7 +386,9 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
 
         {panel === "sessions" && (
           <div className="m3-mob__list">
-            {logs === null ? (
+            {logs === undefined ? (
+              <p className="m3-mob__hint">{t("common.loading")}</p>
+            ) : logs === null ? (
               <p className="m3-mob__hint">{t("mobile.sessionsFailed")}</p>
             ) : logs.length === 0 ? (
               <p className="m3-mob__hint">{t("mobile.noSessions")}</p>
