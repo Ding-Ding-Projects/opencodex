@@ -3,6 +3,7 @@ import { parseCallbackInput } from "./callback-server";
 import type { OcxConfig, OcxProviderConfig, RefreshPolicy } from "../types";
 import { loadConfig, resolveEnvValue, saveConfig } from "../config";
 import { maskEmail } from "../lib/privacy";
+import { recordStateSnapshot } from "../lib/state-history";
 import { KiroTokenRefreshError, environmentKiroRoutingMetadata, loginKiro, refreshKiroToken, settleKiroLoginTransaction } from "./kiro";
 import { getAccountCredential, getAccountSet, removeAccount, saveAccountCredential, saveCredential, setActiveAccount, getCredential, credentialGeneration, createOAuthRefreshIntentLock, mergeAccountCredential, markAccountNeedsReauthIfGeneration, readOAuthRefreshIntent, writeOAuthRefreshIntent, clearOAuthRefreshIntent } from "./store";
 import { loginXai, refreshXaiToken, XAI_LOCAL_CLI_DETACH_WARNING, XaiTokenRequestError } from "./xai";
@@ -187,6 +188,27 @@ export function getOAuthCredentialApiBaseUrl(provider: string): string | undefin
   return validateCopilotApiBaseUrl(getCredential(provider)?.apiBaseUrl);
 }
 
+/**
+ * Routing metadata for a NAMED account rather than the store's active one.
+ *
+ * Pool traffic authenticates as a chosen account, so everything derived from the
+ * credential has to come from THAT account: reading the active credential instead
+ * pairs one account's bearer with another account's project / API origin, which
+ * upstream rejects (or, worse, silently bills the wrong tenant).
+ * A null accountId means "no account-scoped selection was made" and falls back to
+ * the active credential, preserving the pre-pool behaviour exactly.
+ */
+export function getOAuthAccountProjectId(provider: string, accountId: string | null): string | undefined {
+  if (!accountId) return getOAuthCredentialProjectId(provider);
+  return getAccountCredential(provider, accountId)?.projectId;
+}
+
+/** Account-scoped counterpart of {@link getOAuthCredentialApiBaseUrl}. */
+export function getOAuthAccountApiBaseUrl(provider: string, accountId: string | null): string | undefined {
+  if (!accountId) return getOAuthCredentialApiBaseUrl(provider);
+  return validateCopilotApiBaseUrl(getAccountCredential(provider, accountId)?.apiBaseUrl);
+}
+
 /** Provider ids that support real OAuth login (drives the GUI's "Log in with …" buttons). */
 export function listOAuthProviders(): string[] {
   return Object.keys(OAUTH_PROVIDERS).filter(isPublicOAuthProvider);
@@ -268,6 +290,22 @@ export async function getValidAccessTokenSnapshot(provider: string): Promise<OAu
   const set = getAccountSet(provider);
   if (!set) throw new OAuthLoginRequiredError(provider);
   return resolveAccessSnapshotForAccount(provider, set.activeAccountId);
+}
+
+/**
+ * Snapshot of a stored account WITHOUT refreshing. The account pool needs the full
+ * snapshot (not just a bearer) so per-account routing metadata travels with the token,
+ * but it must not trigger a refresh that could adopt the global CLI credential into a
+ * background slot — so the pool checks expiry itself and calls this for the fresh case.
+ */
+export function storedAccessSnapshot(provider: string, accountId: string): OAuthAccessSnapshot | null {
+  const cred = getAccountCredential(provider, accountId);
+  return cred ? accessSnapshot(provider, accountId, cred) : null;
+}
+
+/** Account-scoped snapshot resolver: refreshes and persists for THAT account only. */
+export async function getAccessSnapshotForAccount(provider: string, accountId: string): Promise<OAuthAccessSnapshot> {
+  return resolveAccessSnapshotForAccount(provider, accountId);
 }
 
 /** Providers whose upstream-401 replay path may force a snapshot refresh. */
@@ -649,6 +687,12 @@ export function upsertOAuthProvider(config: OcxConfig, provider: string): void {
       if (previousModeAllowsKey) next.authMode = "key";
     }
   }
+  // The account pool lives inside the provider entry for every provider except anthropic (whose
+  // pool sits at the top level), so the bare preset above erased it on the *one* login that makes
+  // a pool worth having: adding a second account. The user configured rotation, added account two,
+  // and the login that added it silently turned the pool back off. Same tolerance as
+  // oauthPoolConfig — anything non-object is junk the engine ignores anyway, so drop it here.
+  if (existing?.accountPool && typeof existing.accountPool === "object") next.accountPool = existing.accountPool;
   config.providers[provider] = next;
 }
 
@@ -752,6 +796,15 @@ export async function runLogin(
       upsertOAuthProvider(latestConfig, provider);
       saveLatestConfig(latestConfig);
     }
+    // A completed login is a deliberate account change (token refreshes are not, and
+    // deliberately do not land here). Snapshotting it means the credential is in the
+    // local history from the moment it exists, so a later deletion always has an
+    // earlier commit to recover from.
+    void recordStateSnapshot(
+      opts?.reauthAccountId
+        ? `account reauthenticated: ${provider}/${opts.reauthAccountId}`
+        : `account added: ${provider}`,
+    );
   } catch (error) {
     const errors: unknown[] = [error];
     if (shouldRollbackKiroAccounts) {

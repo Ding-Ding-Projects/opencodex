@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { setClientResourceData, useKeyedClientResource } from "./client-resource";
 import Dashboard from "./pages/Dashboard";
 import Providers from "./pages/Providers";
@@ -19,6 +19,7 @@ import RegexBuilder from "./pages/RegexBuilder";
 import Changelog from "./pages/Changelog";
 import VersionHistory from "./pages/VersionHistory";
 import NotificationsPage from "./pages/Notifications";
+import Network from "./pages/Network";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useT } from "./i18n/shared";
 import { installApiAuthFetch } from "./api";
@@ -58,6 +59,33 @@ function readHealth(data: unknown): Health {
 
 /** Pages that need the full width; everything else is centred at 1180px. */
 const WIDE_PAGES = new Set<Page>(["combos", "providers", "models", "logs"]);
+
+
+/** One mounted instance per open tab; the switch keeps each page's JSX greppable. */
+function renderPage(page: Page): ReactNode {
+  switch (page) {
+    case "dashboard": return <Dashboard apiBase={API_BASE} />;
+    case "startup": return <Startup apiBase={API_BASE} />;
+    case "providers": return <Providers apiBase={API_BASE} />;
+    case "models": return <Models apiBase={API_BASE} />;
+    case "combos": return <Combos apiBase={API_BASE} />;
+    case "subagents": return <Subagents apiBase={API_BASE} />;
+    case "logs": return <Logs apiBase={API_BASE} />;
+    case "usage": return <Usage apiBase={API_BASE} />;
+    case "storage": return <Storage apiBase={API_BASE} />;
+    case "codex-auth": return <CodexAuth apiBase={API_BASE} />;
+    case "api": return <ApiKeys apiBase={API_BASE} />;
+    case "claude": return <Claude apiBase={API_BASE} />;
+    case "grok": return <Grok apiBase={API_BASE} />;
+    case "appearance": return <Appearance />;
+    case "language": return <LanguageVoice />;
+    case "regex": return <RegexBuilder />;
+    case "changelog": return <Changelog apiBase={API_BASE} />;
+    case "history": return <VersionHistory />;
+    case "notifications": return <NotificationsPage />;
+    case "network": return <Network apiBase={API_BASE} />;
+  }
+}
 
 export default function App() {
   const { page, setPageState, navigateToPage } = useAppRouteState();
@@ -99,27 +127,6 @@ export default function App() {
 
   const health = healthPoll.data;
   const displayedVersion = health?.version ?? __APP_VERSION__;
-
-  // The app-bar chip shows whoever the pool is currently routing through. The
-  // active id and the account list are separate endpoints, and the email the
-  // server returns is already masked — the chip only renders initials from it.
-  const accountPoll = useKeyedClientResource(
-    `app-codex-account:${API_BASE}`,
-    [],
-    async (signal) => {
-      const [activeRes, accountsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/codex-auth/active`, { signal }),
-        fetch(`${API_BASE}/api/codex-auth/accounts`, { signal }),
-      ]);
-      const active = await readJsonIfOk<{ activeCodexAccountId?: unknown }>(activeRes);
-      const list = await readJsonIfOk<{ accounts?: { id?: unknown; email?: unknown }[] }>(accountsRes);
-      const activeId = active?.activeCodexAccountId;
-      if (typeof activeId !== "string" || !Array.isArray(list?.accounts)) return null;
-      const match = list.accounts.find(a => a.id === activeId);
-      return typeof match?.email === "string" && match.email ? match.email : null;
-    },
-    { pollMs: 60_000 },
-  );
 
   // The Claude nav row owns the connection toggle, as it did in the old sidebar.
   const fetchClaudeEnabled = useCallback(async (signal: AbortSignal) => {
@@ -201,7 +208,6 @@ export default function App() {
           apiBase={API_BASE}
           title={title}
           statusLine={statusLine}
-          accountEmail={accountPoll.data ?? null}
           onOpenDrawer={() => setDrawerRequested(true)}
           drawerOpen={drawerOpen}
           onOpen={openPage}
@@ -209,36 +215,31 @@ export default function App() {
         <TabStrip tabs={tabs} />
 
         <main className="m3-page">
-          <div className={`m3-page-inner${WIDE_PAGES.has(activePage) ? " m3-page-inner--wide" : ""}`}>
-            <ErrorBoundary
-              key={activePage}
-              pageName={title}
-              title={t("errorBoundary.title")}
-              message={t("errorBoundary.message")}
-              detailsLabel={t("errorBoundary.details")}
-              reloadLabel={t("errorBoundary.reload")}
+          {/*
+            Keep-alive tabs: every open tab's page stays mounted and hidden
+            rather than being torn down on switch. Remounting heavy pages on
+            every tab change caused visible stutter, and browser-style tabs
+            promise preserved state anyway. Shared client-resource keys mean
+            hidden duplicates share fetches instead of stacking polls.
+          */}
+          {tabs.tabs.map(tab => (
+            <div
+              key={tab.id}
+              className={`m3-page-inner${WIDE_PAGES.has(tab.page) ? " m3-page-inner--wide" : ""}`}
+              hidden={tab.id !== tabs.activeTab}
             >
-              {activePage === "dashboard" && <Dashboard apiBase={API_BASE} />}
-              {activePage === "startup" && <Startup apiBase={API_BASE} />}
-              {activePage === "providers" && <Providers apiBase={API_BASE} />}
-              {activePage === "models" && <Models apiBase={API_BASE} />}
-              {activePage === "combos" && <Combos apiBase={API_BASE} />}
-              {activePage === "subagents" && <Subagents apiBase={API_BASE} />}
-              {activePage === "logs" && <Logs apiBase={API_BASE} />}
-              {activePage === "usage" && <Usage apiBase={API_BASE} />}
-              {activePage === "storage" && <Storage apiBase={API_BASE} />}
-              {activePage === "codex-auth" && <CodexAuth apiBase={API_BASE} />}
-              {activePage === "api" && <ApiKeys apiBase={API_BASE} />}
-              {activePage === "claude" && <Claude apiBase={API_BASE} />}
-              {activePage === "grok" && <Grok apiBase={API_BASE} />}
-              {activePage === "appearance" && <Appearance />}
-              {activePage === "language" && <LanguageVoice />}
-              {activePage === "regex" && <RegexBuilder />}
-              {activePage === "changelog" && <Changelog apiBase={API_BASE} />}
-              {activePage === "history" && <VersionHistory />}
-              {activePage === "notifications" && <NotificationsPage />}
-            </ErrorBoundary>
-          </div>
+              <ErrorBoundary
+                key={`${tab.id}:${tab.page}`}
+                pageName={t(PAGE_META_BY_ID[tab.page].tkey)}
+                title={t("errorBoundary.title")}
+                message={t("errorBoundary.message")}
+                detailsLabel={t("errorBoundary.details")}
+                reloadLabel={t("errorBoundary.reload")}
+              >
+                {renderPage(tab.page)}
+              </ErrorBoundary>
+            </div>
+          ))}
         </main>
 
         {compact && <BottomNav activePage={activePage} onOpen={openPage} />}

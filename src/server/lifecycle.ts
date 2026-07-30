@@ -34,6 +34,30 @@ export function getServerListenPort(): number | undefined {
 export function markRecyclingForExit(): void { recyclingForExit = true; }
 export function isRecyclingForExit(): boolean { return recyclingForExit; }
 
+/**
+ * "Finish and hand off": stop admitting new turns, then wait for the in-flight
+ * ones to end on their own — without stopping the server.
+ *
+ * {@link drainAndShutdown} does the same wait but tears the listener down with
+ * it, which is wrong for an operation that has to keep serving afterwards (a
+ * restore rewrites the state files, then hands the restart over to
+ * system-restart). Splitting the wait out means a restore never rewrites
+ * `auth.json` underneath a request that is still using the credential in it.
+ *
+ * Unlike the shutdown drain, in-flight turns are never aborted: a caller that
+ * runs out of patience is told what is still running and decides for itself.
+ * The caller owns `draining` from here on — clear it if the operation is
+ * abandoned, or leave it set if a shutdown follows.
+ */
+export async function quiesceActiveTurns(timeoutMs: number): Promise<{ drained: boolean; remaining: number }> {
+  draining = true;
+  const deadline = Date.now() + timeoutMs;
+  while (activeTurns.size > 0 && Date.now() < deadline) {
+    await Bun.sleep(100);
+  }
+  return { drained: activeTurns.size === 0, remaining: activeTurns.size };
+}
+
 export function trackStreamLifetime(
   body: ReadableStream<Uint8Array>,
   ac: AbortController,

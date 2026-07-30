@@ -31,5 +31,5 @@ test("Codex Auth is always present in the sidebar, never filtered by view mode",
   // It stays in the nav table with its label and icon, and remains routable for deep links.
   expect(meta).toContain('"codex-auth": IconKey');
   expect(meta).toContain('"codex-auth": "nav.codexAuth"');
-  expect(app).toContain('{activePage === "codex-auth" && <CodexAuth apiBase={API_BASE} />}');
+  expect(app).toContain('case "codex-auth": return <CodexAuth apiBase={API_BASE} />;');
 });

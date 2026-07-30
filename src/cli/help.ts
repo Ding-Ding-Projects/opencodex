@@ -172,7 +172,45 @@ const helpEntries: Record<string, HelpEntry> = {
   grok: { usage: "ocx grok <status|exclude|include|set|clear|apply> ...", summary: "Manage and apply the Grok Build model fence." },
   integration: { usage: "ocx integration <claude|grok> ...", summary: "Manage supported client integrations." },
   export: { usage: "ocx export <path|-> --yes  |  ocx export --history", summary: "Export config + accounts + auth (SECRETS INCLUDED), or list account-change snapshots." },
-  host: { usage: "ocx host <status|enable|disable> [--hostname <addr>] [--new-key] [--yes] [--json]", summary: "Expose the proxy and dashboard to other devices on your network." },
+  host: {
+    // This is the ONLY help text `ocx host --help` can reach: cli/index.ts routes
+    // any help flag into printSubcommandUsage(command) before the command runs.
+    usage: "ocx host <status|enable|disable|token> [--hostname <addr>] [--new-key [name]] [--key <value>] [--yes] [--json]",
+    summary: "Expose the proxy and dashboard to other devices on your network.",
+    details: [
+      "status    Show the bind address, credential state, and the URLs other devices use.",
+      "enable    Bind to the network. Requires --yes and a data-plane credential.",
+      "disable   Return to loopback (this machine only).",
+      "token     Print the ADMIN token the remote dashboard asks for (bare token on stdout).",
+      "          It is checked against the running proxy; a rejected or unverified token is",
+      "          reported on stderr instead of being printed as if it worked.",
+      "",
+      "--hostname <addr>  Bind address for enable (default: 0.0.0.0, all interfaces).",
+      "--new-key [name]   Generate a data-plane API key and print it once.",
+      "--key <value>      Store a user-chosen data-plane key (>= 12 chars, no whitespace).",
+      "                   Custom keys sit in plaintext in config.json — never reuse a password.",
+      "--yes              Confirm that the proxy becomes reachable by other devices.",
+      "--json             Machine-readable output.",
+      "",
+      "Only use this on a network you trust. Anyone who can reach the port and holds the",
+      "key can drive the proxy and every provider account behind it.",
+    ],
+  },
+  launch: {
+    usage: "ocx launch [list|<target>] [--json]",
+    summary: "Open an agent CLI or its desktop app (Codex, Grok, Claude).",
+    details: [
+      "list      Show every target and whether it is installed on this machine (the default).",
+      "<target>  Launch one target by id, e.g. codex-cli, claude-desktop, grok-cli.",
+      "",
+      "--json    Machine-readable output.",
+      "",
+      "Targets are a fixed catalog resolved against PATH and known install locations, so a",
+      "target that is not installed is reported rather than guessed at. No console window is",
+      "ever created: a CLI opens in a real terminal application, and a machine without one is",
+      "told so instead of getting a legacy console popup.",
+    ],
+  },
   changelog: { usage: "ocx changelog [--from <date>] [--to <date>] [--search <text>] [--regex] [--limit <n>] [--json]", summary: "Show released versions and their changes." },
   system: {
     usage: "ocx system <status|settings|startup|diagnostics|sync|update> ...",
@@ -292,6 +330,7 @@ Usage:
   ocx grok <sub>              Grok Build model selection and apply
   ocx changelog [opts]        Released versions and their changes
   ocx host <sub>              Expose the proxy to other devices on your network
+  ocx launch [target]         Open an agent CLI or desktop app (Codex, Grok, Claude)
   ocx export <path> --yes     Full state backup — config, accounts, auth (secrets included)
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export

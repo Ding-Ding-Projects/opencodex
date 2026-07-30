@@ -21,6 +21,13 @@ ocx start
 bun run dev:gui
 ```
 
+On a loopback bind the dashboard authenticates itself: the server issues it a short-lived session,
+so you never paste anything. From **another device** it cannot — expose the proxy with
+[`ocx host enable`](/reference/cli/#ocx-host-statusenabledisabletoken) and the page asks for the
+admin token (`ocx host token`) on every device and every reload, holding it in memory only. That is
+the intended posture, not a missing feature; see
+[Two credentials, on purpose](/reference/configuration/#two-credentials-on-purpose).
+
 ## What you can do
 
 | Area | What it does |
@@ -131,6 +138,9 @@ The GUI is a thin client over the proxy's JSON management API. Useful endpoints 
 | `POST /api/codex-auth/login` · `GET /api/codex-auth/login-status` | Add a pool account through browser login. |
 | `GET /api/logs?tail=50&provider=...&status=5xx` | Read recent request metadata with optional tail, provider, and exact/class status filters. |
 | `GET` / `PUT /api/subagent-models` | Read or set the five featured `spawn_agent` override models. |
+| `GET` / `PUT /api/oauth/accounts/pool?provider=...` | Read or change one OAuth provider's experimental [account pool](/reference/configuration/#providersnameaccountpool-experimental). `409` when a non-Anthropic provider is not in the config, because there is nowhere to store the setting. |
+| `GET` / `PUT /api/host` | Read the bind status and LAN URLs, or expose/unexpose the proxy. A minted data-plane key is returned in that one response and never again. |
+| `GET /api/host/admin-token` · `GET /api/host/export` · `GET /api/host/history` · `POST /api/host/restore` | Reveal the admin token for another device, download the full state bundle (**plaintext secrets**), list account-change snapshots, and restore one. |
 | `POST /api/stop` | Stop the proxy/service, restore native Codex, and exit. |
 
 :::tip

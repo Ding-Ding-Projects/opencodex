@@ -35,7 +35,7 @@ test("the Grok page is routable and present in the nav", async () => {
   const meta = await read("../src/shell/page-meta.ts");
   expect(routing).toContain('| "grok"');
   expect(routing).toContain('"grok",');
-  expect(app).toContain('{activePage === "grok" && <Grok apiBase={API_BASE} />}');
+  expect(app).toContain('case "grok": return <Grok apiBase={API_BASE} />;');
   expect(meta).toContain('grok: "nav.grok"');
   expect(meta).toContain("grok: IconBolt");
 });

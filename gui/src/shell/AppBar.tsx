@@ -8,28 +8,21 @@ import { IconBell, IconMenu, IconPalette } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
 import CostMeter from "./CostMeter";
+import AccountSwitcher from "./AccountSwitcher";
+import WindowControls from "./WindowControls";
 import { usePrefs } from "../theme/prefs-context";
 import type { Page } from "../app-routing";
-
-function initials(email: string | null): string {
-  if (!email) return "–";
-  const name = email.split("@")[0] || email;
-  const parts = name.split(/[._-]+/).filter(Boolean);
-  const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
-  return letters.toUpperCase();
-}
 
 interface AppBarProps {
   apiBase: string;
   title: string;
   statusLine: string;
-  accountEmail: string | null;
   onOpenDrawer: () => void;
   drawerOpen: boolean;
   onOpen: (page: Page, newTab: boolean) => void;
 }
 
-export default function AppBar({ apiBase, title, statusLine, accountEmail, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
+export default function AppBar({ apiBase, title, statusLine, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
   const { history, unreadCount, markAllRead } = useNotifications();
@@ -99,9 +92,11 @@ export default function AppBar({ apiBase, title, statusLine, accountEmail, onOpe
         <IconPalette aria-hidden />
       </button>
 
-      <span className="m3-avatar" title={accountEmail ?? t("appbar.noAccount")} aria-label={accountEmail ?? t("appbar.noAccount")}>
-        {initials(accountEmail)}
-      </span>
+      <AccountSwitcher apiBase={apiBase} />
+
+      {/* Frameless desktop only: the native min/max/close are gone, so the app bar
+          supplies them, plus the graceful Exit. Renders nothing in a browser. */}
+      <WindowControls apiBase={apiBase} />
     </header>
   );
 }

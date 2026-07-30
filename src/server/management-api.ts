@@ -66,6 +66,7 @@ import { handleOauthAccountRoutes } from "./management/oauth-account-routes";
 import { handleComboRoutes } from "./management/combo-routes";
 import { handleSystemRoutes } from "./management/system-routes";
 import { handleChangelogRoutes } from "./management/changelog-routes";
+import { handleHostRoutes } from "./management/host-routes";
 import type { ManagementContext } from "./management/context";
 export type { ManagementApiDeps } from "./management/context";
 import { fetchAllModels } from "./management/shared";
@@ -132,7 +133,8 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleOauthAccountRoutes(ctx))
     ??     (await handleComboRoutes(ctx))
     ??     (await handleSystemRoutes(ctx))
-    ??     (await handleChangelogRoutes(ctx));
+    ??     (await handleChangelogRoutes(ctx))
+    ??     (await handleHostRoutes(ctx));
   if (routed) return routed;
 
   if (url.pathname === "/api/stop" && req.method === "POST") {

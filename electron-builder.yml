@@ -33,13 +33,15 @@ files:
   - src/**
   - gui/dist/**
   - package.json
-  # The proxy's runtime dependencies. `bun` carries the ~60 MB runtime binary that
-  # `bin/ocx.mjs` exec's, so it must be present and executable.
-  - node_modules/bun/**
-  - node_modules/@oven/**
-  - node_modules/@bufbuild/**
-  - node_modules/@modelcontextprotocol/**
-  - node_modules/zod/**
+  # The COMPLETE production node_modules tree, not an allowlist. The first draft
+  # enumerated top-level deps and missed @modelcontextprotocol/sdk's transitive
+  # tree (express, hono, ajv, jose, ~40 packages) — the installed app would have
+  # crashed the moment MCP code loaded. The CI workflows run
+  # `bun install --production` immediately before packaging, so this glob picks
+  # up exactly the runtime tree and nothing dev-only. The target machine needs
+  # NOTHING preinstalled: no Node, no npm, no Bun — Electron's own Node runs
+  # bin/ocx.mjs, and the bundled bun binary runs the proxy.
+  - node_modules/**
   # Nothing below is needed at runtime and all of it is large.
   - "!**/*.map"
   - "!**/*.md"

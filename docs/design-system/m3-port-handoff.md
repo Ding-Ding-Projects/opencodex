@@ -262,6 +262,51 @@ check that list before anything else.
   auto-installed once via winget (silent); elsewhere it logs and degrades.
 - `ocx export --history` lists snapshots.
 
+### 12. Remote access & backup screen + generic OAuth pools + keep-alive tabs
+
+Landed after the 13-screen rewrite, same session. This section is the port's own
+record of *what happened*; it is not where a user or a maintainer should read up
+on these features. The user-facing homes are
+[`reference/configuration.md`](../../docs-site/src/content/docs/reference/configuration.md)
+(the pool keys and the two-credential model),
+[`reference/cli.md`](../../docs-site/src/content/docs/reference/cli.md) (`ocx host`,
+`ocx export`), and [`guides/docker.md`](../../docs-site/src/content/docs/guides/docker.md).
+
+- **Keep-alive tabs**: every open tab's page stays mounted (hidden when
+  inactive) instead of remounting on switch — the remount was visible stutter.
+  `renderPage()` in App.tsx keeps one literal JSX line per page for the
+  source-text tests.
+- **Generic OAuth account pool** (`src/oauth/provider-pool.ts`): the Anthropic
+  pool engine extracted and provider-parameterized; anthropic-routing.ts is a
+  compatibility facade. Any `authMode: "oauth"` provider opts in via
+  `providers[<name>].accountPool` (default OFF). Same 429 cooldown/failover,
+  affinity, quota/RR/fill-first strategies. core.ts's two pool sites are
+  generic; recovery kind `oauth-pool-429` joined the usage log. Documented under
+  [`providers[<name>].accountPool`](../../docs-site/src/content/docs/reference/configuration.md)
+  in the config reference, including that `quota` needs a per-account usage
+  signal only Anthropic has.
+- **App-bar account switcher** (`shell/AccountSwitcher.tsx`): switch the routed
+  Codex account from any page; server refusals surface verbatim.
+- **Remote access & backup screen** (`pages/Network.tsx` + `/api/host*` routes)
+  — the GUI face of `ocx host` / `ocx export`: expose/disable with confirm,
+  one-time key display, admin-token reveal, custom user-chosen keys (12+ chars,
+  plaintext warning), full-state export download, account-change history.
+  Routes share `src/lib/host-control.ts` with the CLI so they cannot drift.
+- **Credential model, correctly documented at last**: management (`/api/*`,
+  dashboard) authenticates with the ADMIN token (`ocx host token`); the
+  data-plane key authenticates model traffic. They are deliberately distinct
+  and the server refuses a credential that plays both roles.
+
+#### Auth roadmap (user-requested three-step authentication)
+
+- **TOTP second factor + dim-sum pairing verification** (pick on the remote
+  device the dish shown on the host machine): planned as an optional step-up on
+  non-loopback management sessions. Task #13.
+- **Passkeys are blocked on TLS**: WebAuthn requires a secure context, and the
+  remote dashboard is plain `http://` on a LAN IP — browsers refuse the API
+  there. `ocx host` needs TLS support first. Do not fake this with a
+  password-manager field pretending to be a passkey.
+
 ### ~~Stage 2+ — the thirteen product screens~~ DONE
 
 All thirteen landed in `f0c7bb07` as a restyle-in-place: data wiring untouched,
@@ -272,15 +317,20 @@ typechecks, lint, build, privacy, parity).
 
 ### Deferred by scope
 
-- **Docker.** Not started.
-- **Codex account switching.** Not started.
+- ~~**Docker.**~~ Landed — `Dockerfile` + `scripts/docker-entrypoint.sh`. Documented for
+  users in [`docs-site/.../guides/docker.md`](../../docs-site/src/content/docs/guides/docker.md),
+  which is where it belongs; this file is not the place to look it up.
+- ~~**Codex account switching.**~~ Landed as the app-bar switcher in item 12 above
+  (`gui/src/shell/AccountSwitcher.tsx`).
 - **Funny-level voice ladder** (levels 1–5). The mechanism is not built. It needs
   array-valued dictionary entries; `M3_OVERRIDES` is the natural place to add
   the shape. Note the rule the prototype demonstrates: facts are identical at
   every level, only voice changes — the destructive warning reads the same at
   level 1 and level 5.
-- **Dim sum surprise.** Not built. Needs bundled dish photos before it can ship
-  at all; the prototype's placeholder is explicitly labelled as such.
+- **Dim sum surprise.** Built (`gui/src/shell/DimSumCard.tsx` + `shell/dimsum.ts`,
+  one draw per launch, off-switch on Appearance) but each dish still renders an
+  emoji placeholder rather than a photo, and `dimsum.ts` says so in the source.
+  Real bundled dish images are the remaining half.
 - **Bundled fonts.** `FONT_CHOICES` names Roboto Flex / Roboto Mono / Noto Sans
   HK, but no font files are bundled — the stacks fall through to system faces
   today. `docs/design-system/foundations.md` forbids CDN fonts, so these must be

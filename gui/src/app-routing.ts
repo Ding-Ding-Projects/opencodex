@@ -22,7 +22,8 @@ export type Page =
   | "regex"
   | "changelog"
   | "history"
-  | "notifications";
+  | "notifications"
+  | "network";
 
 export const VALID_PAGES = new Set<Page>([
   "dashboard",
@@ -44,6 +45,7 @@ export const VALID_PAGES = new Set<Page>([
   "changelog",
   "history",
   "notifications",
+  "network",
 ]);
 
 /** Product pages sit above the system pages in the nav, separated by a divider. */
@@ -67,6 +69,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   changelog: "system",
   history: "system",
   notifications: "system",
+  network: "system",
 };
 
 export function readPageFromHash(hash?: string): Page {

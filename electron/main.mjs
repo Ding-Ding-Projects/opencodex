@@ -11,7 +11,7 @@
  * management-auth session bootstrap works unchanged.
  */
 
-import { app, BrowserWindow, dialog, Menu, nativeImage, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -153,6 +153,40 @@ function stopProxy() {
   setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already gone */ } }, 5000).unref?.();
 }
 
+/* ------------------------------------------------------------ window IPC -- */
+
+/**
+ * The window controls the Material 3 app bar draws, and the app bar's Exit.
+ *
+ * These exist because the window is frameless: with no native title bar and no
+ * Window Controls Overlay, nothing else can minimise, maximise or close it. Each
+ * handler acts on the window the request came from rather than a module-level
+ * reference, so a control can never operate on the wrong window.
+ *
+ * `app:exit` is the deliberate counterpart to closing the window: window-close
+ * hides to the tray, whereas this really quits. The dashboard has already asked
+ * the proxy to finish in-flight work and stop (POST /api/host/exit) before
+ * calling it, so by this point quitting is just closing the shell — and
+ * `will-quit` still runs stopProxy as the backstop for a proxy that did not go
+ * down on its own.
+ */
+function registerWindowIpc() {
+  const windowFor = (event) => BrowserWindow.fromWebContents(event.sender);
+
+  ipcMain.handle("window:minimize", (event) => { windowFor(event)?.minimize(); });
+  ipcMain.handle("window:toggle-maximize", (event) => {
+    const win = windowFor(event);
+    if (!win) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  ipcMain.handle("window:is-maximized", (event) => windowFor(event)?.isMaximized() ?? false);
+  // Close, not quit: the tray keeps the app running, exactly as the native button did.
+  ipcMain.handle("window:close", (event) => { windowFor(event)?.close(); });
+  ipcMain.handle("app:exit", () => { quitting = true; app.quit(); });
+}
+
 /* ----------------------------------------------------------------- window -- */
 
 function createWindow(port) {
@@ -165,13 +199,16 @@ function createWindow(port) {
     show: false,
     backgroundColor: "#101010",
     title: `opencodex v${appVersion()}`,
-    // No native title bar: the dashboard's Material 3 app bar is the chrome.
-    // The Window Controls Overlay keeps native min/max/close floating over it,
-    // and the app bar declares itself draggable (app-region) on the web side.
+    // No native title bar, and on Windows/Linux no native controls either: the
+    // dashboard's Material 3 app bar IS the chrome, minimise/maximise/close
+    // included. The Window Controls Overlay used to float OS-drawn buttons over
+    // the app bar, which meant the one part of the window that could not be
+    // themed was sitting inside the themed surface. The app bar declares its own
+    // drag region (app-region) and drives these through the window IPC below.
+    // macOS keeps its traffic lights: hiding them leaves a Mac window with no
+    // way to close it, and they are a platform convention rather than chrome.
     titleBarStyle: "hidden",
-    ...(process.platform !== "darwin"
-      ? { titleBarOverlay: { color: "#101010", symbolColor: "#e6e6e6", height: 48 } }
-      : {}),
+    ...(process.platform !== "darwin" ? { frame: false } : {}),
     autoHideMenuBar: true,
     ...(icon ? { icon } : {}),
     webPreferences: {
@@ -185,6 +222,16 @@ function createWindow(port) {
 
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.loadURL(`http://${HOST}:${port}/`);
+
+  // The app bar's maximise button draws two different icons, so it has to hear
+  // about state changes it did not initiate — a double-click on the drag region,
+  // a Win+Up, or the OS restoring the window.
+  const sendMaximized = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("window:maximized-changed", mainWindow.isMaximized());
+  };
+  mainWindow.on("maximize", sendMaximized);
+  mainWindow.on("unmaximize", sendMaximized);
 
   // Anything that is not the local dashboard opens in the user's real browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -312,6 +359,7 @@ app.whenReady().then(async () => {
     return;
   }
 
+  registerWindowIpc();
   buildAppMenu();
   buildTray();
   // `--hidden` is what the login item passes, so an auto-start boots to the tray.

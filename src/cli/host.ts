@@ -27,61 +27,38 @@
  * the proxy and every provider account behind it.
  */
 
-import { randomBytes } from "node:crypto";
-import { networkInterfaces } from "node:os";
 import { loadConfig, saveConfig } from "../config";
+import { printSubcommandUsage } from "./help";
 import { isLoopbackHostname } from "../server/auth-cors";
+import {
+  ALL_INTERFACES,
+  addCustomDataPlaneKey,
+  describeHost,
+  hasDataPlaneCredential,
+  lanAddresses,
+  mintDataPlaneKey,
+  verifyAdminTokenAgainstProxy,
+  type AdminTokenVerification,
+  type HostStatus,
+} from "../lib/host-control";
 import type { OcxConfig } from "../types";
 
-const USAGE = "Usage: ocx host <status|enable|disable> [--hostname <addr>] [--new-key [name]] [--yes] [--json]";
+// Re-exported so existing importers (tests/cli-host.test.ts) keep their path.
+export { describeHost, hasDataPlaneCredential, lanAddresses } from "../lib/host-control";
 
-/** Bind addresses that accept connections from other devices. */
-const ALL_INTERFACES = new Set(["0.0.0.0", "::", "[::]"]);
+/**
+ * Short form for the unknown-subcommand error only. The FULL help lives in
+ * `helpEntries.host` (src/cli/help.ts) and nowhere else: cli/index.ts
+ * short-circuits any argv carrying a help flag straight into
+ * `printSubcommandUsage(command)`, so a second help text maintained here could
+ * never be reached by `ocx host --help` and would silently rot. `ocx host` with
+ * no arguments therefore delegates to the same entry rather than duplicating it.
+ */
+const USAGE = "Usage: ocx host <status|enable|disable|token> [--hostname <addr>] [--new-key [name]] [--key <value>] [--yes] [--json]";
 
 function flagValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
-}
-
-/** Non-internal IPv4 addresses this machine answers on. */
-export function lanAddresses(): string[] {
-  const found: string[] = [];
-  for (const entries of Object.values(networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (entry.family === "IPv4" && !entry.internal) found.push(entry.address);
-    }
-  }
-  return found.sort();
-}
-
-export function hasDataPlaneCredential(config: OcxConfig): boolean {
-  if (process.env.OPENCODEX_API_AUTH_TOKEN?.trim()) return true;
-  return (config.apiKeys ?? []).some(entry => !!entry.key.trim());
-}
-
-export interface HostStatus {
-  hostname: string;
-  port: number;
-  /** True when the bind address accepts connections from other devices. */
-  exposed: boolean;
-  /** True when a data-plane credential exists — required for any exposed bind. */
-  credentialConfigured: boolean;
-  /** URLs another device should use. Empty when bound to loopback. */
-  urls: string[];
-}
-
-export function describeHost(config: OcxConfig): HostStatus {
-  const hostname = config.hostname ?? "127.0.0.1";
-  const port = config.port;
-  const exposed = !isLoopbackHostname(hostname);
-  const hosts = ALL_INTERFACES.has(hostname) ? lanAddresses() : exposed ? [hostname] : [];
-  return {
-    hostname,
-    port,
-    exposed,
-    credentialConfigured: hasDataPlaneCredential(config),
-    urls: hosts.map(h => `http://${h}:${port}/`),
-  };
 }
 
 function printStatus(status: HostStatus, json: boolean): void {
@@ -96,9 +73,12 @@ function printStatus(status: HostStatus, json: boolean): void {
     console.log("\nOpen from another device:");
     for (const url of status.urls) console.log(`  ${url}`);
     console.log(
-      "\nThe dashboard will ask for an API key on first load and keeps it in memory\n"
-      + "only, so each device (and each reload) asks again. That is deliberate: a\n"
-      + "browser reached over the network is never handed a session automatically.",
+      "\nThe dashboard and /api/* ask for the ADMIN token (not the data-plane key):\n"
+      + "  ocx host token\n"
+      + "It is held in browser memory only, so each device (and each reload) asks\n"
+      + "again. That is deliberate: a browser reached over the network is never\n"
+      + "handed a session automatically. The data-plane key from --new-key is what\n"
+      + "API clients (Codex, Claude Code) send with their model requests.",
     );
   } else if (!status.exposed) {
     // Name the flag that will actually succeed: without a credential the plain
@@ -111,29 +91,14 @@ function printStatus(status: HostStatus, json: boolean): void {
   }
 }
 
-function mintKey(config: OcxConfig, name: string): string {
-  const key = `ocx_${randomBytes(32).toString("base64url")}`;
-  config.apiKeys = [
-    ...(config.apiKeys ?? []),
-    { id: randomBytes(8).toString("hex"), name, key, createdAt: new Date().toISOString() },
-  ];
-  return key;
+export interface HostCommandIo {
+  /** Injectable so the stale-token path is testable without a live proxy. */
+  verifyAdminToken?: (token: string) => Promise<AdminTokenVerification>;
 }
 
-export async function handleHostCommand(args: string[]): Promise<number> {
+export async function handleHostCommand(args: string[], io: HostCommandIo = {}): Promise<number> {
   if (args.includes("--help") || args.includes("-h") || args.length === 0) {
-    console.log(
-      `${USAGE}\n\n`
-      + "Expose the proxy and dashboard to other devices on your network.\n\n"
-      + "  status    Show the current bind address and the URLs other devices use.\n"
-      + "  enable    Bind to the network. Requires --yes and a data-plane credential.\n"
-      + "  disable   Return to loopback (this machine only).\n\n"
-      + "  --hostname  Bind address for enable (default: 0.0.0.0, all interfaces).\n"
-      + "  --new-key   Generate an API key and print it once.\n"
-      + "  --yes       Confirm that the proxy becomes reachable by other devices.\n\n"
-      + "Only use this on a network you trust. Anyone who can reach the port and\n"
-      + "holds the key can drive the proxy and every provider account behind it.",
-    );
+    printSubcommandUsage("host");
     return 0;
   }
 
@@ -154,6 +119,59 @@ export async function handleHostCommand(args: string[]): Promise<number> {
     return 0;
   }
 
+  if (action === "token") {
+    // The management (/api/*, dashboard) credential — distinct from the data-plane
+    // key on purpose: the server refuses a credential that plays both roles.
+    const envToken = process.env.OPENCODEX_ADMIN_AUTH_TOKEN?.trim();
+    const { loadAdminTokenFromFile, adminApiTokenFilePath } = await import("../lib/admin-secrets");
+    const token = envToken || loadAdminTokenFromFile();
+    if (!token) {
+      console.error(
+        "ocx host: no admin token exists yet — it is created the first time the proxy starts.\n"
+        + `  Expected at: ${adminApiTokenFilePath()}`,
+      );
+      return 1;
+    }
+    // Where this token came from is NOT where the running proxy got its own.
+    // A proxy started as a service, in a container, or from another shell with
+    // OPENCODEX_ADMIN_AUTH_TOKEN set enforces a secret this process cannot read,
+    // while the on-disk file it never consulted still parses fine — so printing
+    // the file token alone would hand the user a credential the dashboard
+    // rejects, with nothing on screen to explain why. Ask the live proxy.
+    const verify = io.verifyAdminToken ?? verifyAdminTokenAgainstProxy;
+    const verification = await verify(token);
+
+    if (json) {
+      console.log(JSON.stringify({
+        adminToken: token,
+        source: envToken ? "environment" : "file",
+        // null, not false: "the proxy said no" and "nothing answered" are
+        // different facts and a script must be able to tell them apart.
+        verified: verification.state === "unverified" ? null : verification.state === "accepted",
+        verification: verification.state,
+        verificationDetail: verification.state === "unverified" ? verification.reason : verification.endpoint,
+      }, null, 2));
+      return 0;
+    }
+
+    console.error("⚠️  This token grants full management access to the proxy. Treat it like a password.");
+    if (verification.state === "rejected") {
+      console.error(
+        `⚠️  The RUNNING proxy at ${verification.endpoint} REJECTED this token — it will not work.\n`
+        + `  This token came from ${envToken ? "OPENCODEX_ADMIN_AUTH_TOKEN in this shell" : adminApiTokenFilePath()},\n`
+        + "  but the proxy was started with a different OPENCODEX_ADMIN_AUTH_TOKEN (a service,\n"
+        + "  a container, or another shell). Read the token from that environment, or restart\n"
+        + "  the proxy without OPENCODEX_ADMIN_AUTH_TOKEN so it uses the file above.",
+      );
+    } else if (verification.state === "unverified") {
+      console.error(`ℹ️  Not verified against a running proxy (${verification.reason}) — if one is started elsewhere with its own OPENCODEX_ADMIN_AUTH_TOKEN, this token will not work there.`);
+    }
+    // The bare token still goes to stdout in every case: scripts capture it,
+    // and a warning on stderr is the honest way to flag a token that may not fit.
+    console.log(token);
+    return 0;
+  }
+
   if (action !== "enable") {
     console.error(`ocx host: unknown command "${action}".\n${USAGE}`);
     return 2;
@@ -166,11 +184,20 @@ export async function handleHostCommand(args: string[]): Promise<number> {
   }
 
   const wantsKey = args.includes("--new-key");
+  const customValue = flagValue(args, "--key");
   let minted: string | null = null;
-  if (wantsKey) {
+  if (customValue !== undefined) {
+    const result = addCustomDataPlaneKey(config, "custom", customValue ?? "");
+    if ("error" in result) {
+      console.error(`ocx host: ${result.error}
+  Custom keys are stored in plaintext in config.json — never reuse a real password.`);
+      return 2;
+    }
+    minted = result.key;
+  } else if (wantsKey) {
     const nameIndex = args.indexOf("--new-key") + 1;
     const candidate = args[nameIndex];
-    minted = mintKey(config, candidate && !candidate.startsWith("--") ? candidate : "network");
+    minted = mintDataPlaneKey(config, candidate && !candidate.startsWith("--") ? candidate : "network");
   }
 
   // Mirror assertServerAuthConfig: refuse here with an actionable message rather

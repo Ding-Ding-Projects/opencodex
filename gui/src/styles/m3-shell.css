@@ -725,17 +725,132 @@
   Desktop app only (html[data-desktop]): the native title bar is hidden, so the
   app bar doubles as the window chrome. The bar itself is the drag region;
   everything interactive inside it opts back out, or it would stop being
-  clickable. The right padding keeps the account chip clear of the native
-  min/max/close overlay (env() resolves only when the overlay exists).
+  clickable — note this has to cover open menus too, not just buttons, or a
+  dropdown rendered inside the bar becomes a drag handle and cannot be clicked.
+
+  There is no titlebar-area inset to reserve any more: the Window Controls
+  Overlay is gone and .m3-window-controls draws the buttons itself, so the one
+  strip of the window that could not be themed is now themed like everything else.
 */
 html[data-desktop] .m3-appbar {
   app-region: drag;
-  padding-right: max(8px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
+  padding-right: 0;
 }
 html[data-desktop] .m3-appbar button,
+html[data-desktop] .m3-appbar a,
+html[data-desktop] .m3-appbar input,
 html[data-desktop] .m3-appbar [role="dialog"],
+html[data-desktop] .m3-appbar [role="menu"],
+html[data-desktop] .m3-appbar [role="listbox"],
 html[data-desktop] .m3-appbar .m3-avatar {
   app-region: no-drag;
+}
+
+/*
+  Window buttons. Narrower and squarer than the app bar's icon buttons because
+  they are window chrome, and they sit flush to the top-right corner the way the
+  native controls did — a rounded, inset control there reads as a stray toolbar
+  button. Close keeps the platform's red hover so the most destructive-looking
+  control still looks like itself.
+*/
+.m3-window-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  margin-left: 4px;
+}
+.m3-window-controls .m3-win-btn {
+  width: 46px;
+  height: 100%;
+  border-radius: 0;
+}
+.m3-window-controls .m3-win-btn:last-child { border-top-right-radius: inherit; }
+.m3-win-btn--close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.m3-win-btn--close:hover::before { background: none; }
+/* Focus must stay visible against both the surface and the red hover. */
+.m3-win-btn:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: -3px;
+}
+
+/*
+  Launcher grid. auto-fill with a min track rather than a fixed column count, so
+  the row reflows instead of clipping at narrow widths and at 200% display scale —
+  and the label wraps rather than truncating, because "Claude Code" and its
+  bilingual counterpart are different lengths.
+*/
+.m3-launch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-2);
+}
+.m3-launch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-md, 12px);
+  background: var(--m3-surface-container-low);
+}
+.m3-launch-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.m3-launch-label {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.m3-launch-kind {
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+/*
+  Account-change history rows, each with its own restore. The subject wraps rather
+  than forcing the page to scroll sideways — a commit subject like
+  "before account removal: github-copilot/p3f9a12" is longer than the column at
+  narrow widths, and a horizontally scrolling page is a defect, not a layout.
+*/
+.m3-history-list { list-style: none; margin: 0; padding: 0; }
+.m3-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-history-row:last-child { border-bottom: none; }
+.m3-history-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.m3-history-subject {
+  font-family: var(--mono);
+  font-size: var(--t-body-s);
+  overflow-wrap: anywhere;
+}
+.m3-history-at {
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+
+/*
+  A paused account in the switcher is refused by the server, so the row must look
+  refused too. It was styled identically to a selectable row, which made "nothing
+  happened" the only feedback for a click that was never going to work.
+*/
+.m3-menu-item--unavailable {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* App-bar cost meter: tonal chip, always visible, machine number in mono. */
@@ -764,3 +879,8 @@ html[data-desktop] .m3-appbar .m3-avatar {
 .m3-cost-range { font-size: var(--t-label-s); opacity: 0.8; }
 /* Compact width: the range word goes; the number stays. */
 .m3-app--compact .m3-cost-range { display: none; }
+
+/* Avatar-as-button (account switcher): same look, real affordances. */
+button.m3-avatar--btn { border: none; cursor: pointer; transition: box-shadow 150ms; }
+button.m3-avatar--btn:hover:not(:disabled) { box-shadow: var(--e1); }
+button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }

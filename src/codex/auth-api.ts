@@ -1,4 +1,4 @@
-import { recordStateSnapshot } from "../lib/state-history";
+import { recordStateSnapshot, recordStateSnapshotBeforeDelete } from "../lib/state-history";
 import { loadConfig, saveConfigPreservingClaudeCode } from "../config";
 import { withCodexAccountLogLabel } from "./account-label";
 import {
@@ -700,6 +700,11 @@ export async function handleCodexAuthAPI(
     if (!isValidCodexAccountId(id) && !isLegacyPoolAccount) {
       return jsonResponse({ error: "Invalid account id format" }, 400);
     }
+    // Commit the account before it is destroyed. deleteCodexAccount records the
+    // "after" state, but that alone only proves what is gone — the credential has
+    // to be in an earlier commit for the deletion to be undoable, and it is not
+    // for an account that predates this history.
+    await recordStateSnapshotBeforeDelete(`before account removal: ${id}`);
     deleteCodexAccount(runtimeConfig, id);
     saveRuntimeConfig(config, runtimeConfig);
     return jsonResponse({ ok: true });

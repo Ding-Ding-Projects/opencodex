@@ -46,6 +46,7 @@ import { parseRange, parseUsageSurface, summarizeUsage } from "../../usage/summa
 import { stripCodexRuntimeProviderFields } from "../../codex/auth-context";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { getDebugLogEntries } from "../../lib/debug-log-buffer";
+import { recordStateSnapshot, recordStateSnapshotBeforeDelete } from "../../lib/state-history";
 import { getInjectionDebugLogEntries } from "../../lib/injection-debug-log";
 import {
   clearDebugSettings,
@@ -160,7 +161,11 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
   if (url.pathname === "/api/oauth/logout" && req.method === "POST") {
     const provider = (url.searchParams.get("provider") ?? "").trim().toLowerCase();
     if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
+    // Commit the credential before dropping it, so a mistaken logout is recoverable
+    // from the local history rather than being a one-way door.
+    await recordStateSnapshotBeforeDelete(`before logout: ${provider}`);
     await removeCredential(provider);
+    void recordStateSnapshot(`logged out: ${provider}`);
     clearLoginState(provider);
     // Drop cached/last-good quota rows tied to the removed credential.
     const { clearProviderQuotaCache, clearAccountQuotaCache } = await import("../../providers/quota");
@@ -229,25 +234,32 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     if (!body.accountId) return jsonResponse({ error: "missing accountId" }, 400);
     const { setActiveAccount } = await import("../../oauth/store");
     if (!(await setActiveAccount(provider, body.accountId))) return jsonResponse({ error: "account not found" }, 404);
-    if (provider === "anthropic") {
-      const { resetAnthropicRoutingForManualSelection } = await import("../../oauth/anthropic-routing");
-      resetAnthropicRoutingForManualSelection(body.accountId);
-    }
+    // Every pooled provider, not just anthropic: a manual switch has to clear session
+    // affinity and reseed the ring, or bound sessions keep ignoring the operator's choice.
+    const { resetOAuthRoutingForManualSelection } = await import("../../oauth/provider-pool");
+    resetOAuthRoutingForManualSelection(provider, body.accountId);
     const { clearProviderQuotaCache } = await import("../../providers/quota");
     clearProviderQuotaCache();
     return jsonResponse({ ok: true, provider, activeAccountId: body.accountId });
   }
 
-  // Opt-in Anthropic OAuth account pool (#294): enable/threshold/strategy + clear cooldown.
+  // Opt-in OAuth account pool (#294, generalized to every provider): enable/threshold/
+  // strategy + clear cooldown. Anthropic keeps config.anthropicAccountPool as its home;
+  // every other provider stores the identical shape at providers[<name>].accountPool.
   if (url.pathname === "/api/oauth/accounts/pool" && req.method === "GET") {
     const provider = (url.searchParams.get("provider") ?? "").trim().toLowerCase();
-    if (provider !== "anthropic") return jsonResponse({ error: "pool config is only supported for anthropic" }, 400);
-    const pool = config.anthropicAccountPool ?? {};
+    if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
+    const { oauthPoolConfig, effectiveOAuthPoolStrategy } = await import("../../oauth/provider-pool");
+    const pool = oauthPoolConfig(config, provider);
     return jsonResponse({
       provider,
       enabled: pool.enabled === true,
       autoSwitchThreshold: typeof pool.autoSwitchThreshold === "number" ? pool.autoSwitchThreshold : 80,
       strategy: normalizeAccountPoolStrategy(pool.strategy),
+      // What will ACTUALLY run. `quota` needs per-account usage numbers, and a
+      // provider that reports none rotates round-robin instead — echoing only the
+      // configured value would show a strategy the provider cannot honour.
+      effectiveStrategy: effectiveOAuthPoolStrategy(config, provider),
       stickyLimit: normalizeAccountPoolStickyLimit(pool.stickyLimit),
       experimental: true,
     });
@@ -265,13 +277,17 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       stickyLimit?: unknown;
     };
     const provider = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "";
-    if (provider !== "anthropic") return jsonResponse({ error: "pool config is only supported for anthropic" }, 400);
-    let enabled = config.anthropicAccountPool?.enabled === true;
+    if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
+    const { oauthPoolConfig, setOAuthPoolConfig } = await import("../../oauth/provider-pool");
+    // Read the provider's own home (anthropic: top-level; others: providers[<name>].accountPool)
+    // so an unspecified field keeps its persisted value instead of silently resetting.
+    const current = oauthPoolConfig(config, provider);
+    let enabled = current.enabled === true;
     if (body.enabled !== undefined) {
       if (typeof body.enabled !== "boolean") return jsonResponse({ error: "enabled must be a boolean" }, 400);
       enabled = body.enabled;
     }
-    let threshold = config.anthropicAccountPool?.autoSwitchThreshold ?? 80;
+    let threshold = current.autoSwitchThreshold ?? 80;
     if (body.autoSwitchThreshold !== undefined) {
       if (
         typeof body.autoSwitchThreshold !== "number"
@@ -283,7 +299,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       }
       threshold = body.autoSwitchThreshold;
     }
-    let strategy = config.anthropicAccountPool?.strategy;
+    let strategy = current.strategy;
     if (body.strategy !== undefined) {
       const parsed = parseAccountPoolStrategy(body.strategy);
       if (parsed === null) {
@@ -291,7 +307,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       }
       strategy = parsed;
     }
-    let stickyLimit = config.anthropicAccountPool?.stickyLimit;
+    let stickyLimit = current.stickyLimit;
     if (body.stickyLimit !== undefined) {
       const parsed = parseAccountPoolStickyLimit(body.stickyLimit);
       if (parsed === null) {
@@ -299,19 +315,28 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       }
       stickyLimit = parsed;
     }
-    config.anthropicAccountPool = {
-      enabled,
-      autoSwitchThreshold: threshold,
-      ...(strategy !== undefined ? { strategy } : {}),
-      ...(stickyLimit !== undefined ? { stickyLimit } : {}),
-    };
+    try {
+      setOAuthPoolConfig(config, provider, {
+        enabled,
+        autoSwitchThreshold: threshold,
+        ...(strategy !== undefined ? { strategy } : {}),
+        ...(stickyLimit !== undefined ? { stickyLimit } : {}),
+      });
+    } catch {
+      // Non-anthropic pools live under providers[<name>], so a provider absent from
+      // config has nowhere to store one. Report that instead of a 500.
+      return jsonResponse({ error: `provider '${provider}' is not configured` }, 409);
+    }
     saveConfigPreservingClaudeCode(config);
+    const { effectiveOAuthPoolStrategy } = await import("../../oauth/provider-pool");
     return jsonResponse({
       ok: true,
       provider,
       enabled,
       autoSwitchThreshold: threshold,
       strategy: normalizeAccountPoolStrategy(strategy),
+      // Read back from the saved config, so this is what the pool will really do.
+      effectiveStrategy: effectiveOAuthPoolStrategy(config, provider),
       stickyLimit: normalizeAccountPoolStickyLimit(stickyLimit),
       experimental: true,
     });
@@ -320,10 +345,12 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const body = await req.json().catch(() => ({})) as { provider?: unknown; accountId?: unknown };
     const provider = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "";
     const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
-    if (provider !== "anthropic") return jsonResponse({ error: "clear-cooldown is only supported for anthropic" }, 400);
+    // Any pooled provider can strand an account on an over-long Retry-After, so the
+    // operator escape hatch cannot stay anthropic-only.
+    if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
     if (!accountId) return jsonResponse({ error: "missing accountId" }, 400);
-    const { clearAnthropicAccountCooldown } = await import("../../oauth/anthropic-routing");
-    const cleared = clearAnthropicAccountCooldown(accountId);
+    const { clearOAuthAccountCooldown } = await import("../../oauth/provider-pool");
+    const cleared = clearOAuthAccountCooldown(provider, accountId);
     return jsonResponse({ ok: true, cleared });
   }
 
@@ -347,12 +374,16 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
     if (!id) return jsonResponse({ error: "missing id" }, 400);
     const { removeAccount, getAccountSet } = await import("../../oauth/store");
+    // "Before" commit first: the deleted account's credential has to exist in the
+    // history for the deletion to be undoable.
+    await recordStateSnapshotBeforeDelete(`before account removal: ${provider}/${id}`);
     if (!(await removeAccount(provider, id))) return jsonResponse({ error: "account not found" }, 404);
-    if (provider === "anthropic") {
-      const { clearAnthropicAccountCooldown, clearAnthropicSessionAffinityForAccount } = await import("../../oauth/anthropic-routing");
-      clearAnthropicAccountCooldown(id);
-      clearAnthropicSessionAffinityForAccount(id);
-    }
+    void recordStateSnapshot(`account removed: ${provider}/${id}`);
+    // Every pooled provider, not just anthropic: a deleted account must not keep a
+    // cooldown entry or leave sessions pinned to an id the store no longer has.
+    const { clearOAuthAccountCooldown, clearOAuthSessionAffinityForAccount } = await import("../../oauth/provider-pool");
+    clearOAuthAccountCooldown(provider, id);
+    clearOAuthSessionAffinityForAccount(provider, id);
     if (!getAccountSet(provider)) clearLoginState(provider);
     const { clearProviderQuotaCache, clearAccountQuotaCache } = await import("../../providers/quota");
     clearProviderQuotaCache();
@@ -377,6 +408,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const { addProviderApiKey } = await import("../../providers/api-keys");
     const result = addProviderApiKey(config, name, body.key, body.label);
     if ("error" in result) return jsonResponse({ error: result.error }, 400);
+    void recordStateSnapshot(`provider key added: ${name}/${result.id}`);
     const { clearModelCache } = await import("../../codex/model-cache");
     clearModelCache(name);
     const { clearProviderQuotaCache } = await import("../../providers/quota");
@@ -420,7 +452,10 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     if (!name || !isValidProviderName(name) || !hasOwnProvider(config.providers, name)) return jsonResponse({ error: "unknown provider" }, 404);
     if (!id) return jsonResponse({ error: "missing id" }, 400);
     const { removeProviderApiKey } = await import("../../providers/api-keys");
+    // An API key is a credential like any other: commit it before it is destroyed.
+    await recordStateSnapshotBeforeDelete(`before provider key removal: ${name}/${id}`);
     if (!removeProviderApiKey(config, name, id)) return jsonResponse({ error: "key not found" }, 404);
+    void recordStateSnapshot(`provider key removed: ${name}/${id}`);
     const { clearModelCache } = await import("../../codex/model-cache");
     clearModelCache(name);
     const { clearProviderQuotaCache } = await import("../../providers/quota");
@@ -464,8 +499,12 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
   if (url.pathname === "/api/keys" && req.method === "DELETE") {
     const body = await req.json() as { id?: string };
     if (!body.id) return jsonResponse({ error: "id required" }, 400, req, config);
+    // A revoked data-access key locks out whatever was using it, so it gets the
+    // same before/after history as any other credential deletion.
+    await recordStateSnapshotBeforeDelete(`before data key removal: ${body.id}`);
     config.apiKeys = (config.apiKeys ?? []).filter(k => k.id !== body.id);
     saveConfigPreservingClaudeCode(config);
+    void recordStateSnapshot(`data key removed: ${body.id}`);
     return jsonResponse({ success: true }, 200, req, config);
   }
   return null;

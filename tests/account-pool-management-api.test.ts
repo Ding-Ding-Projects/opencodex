@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleCodexAuthAPI } from "../src/codex/auth-api";
-import { saveConfig } from "../src/config";
+import { loadConfig, saveConfig } from "../src/config";
 import { startServer } from "../src/server";
 import type { OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
@@ -348,6 +348,209 @@ describe("Anthropic account pool strategy management API", () => {
         enabled: true,
         strategy: "round-robin",
       });
+    } finally {
+      await server.stop(true);
+    }
+  });
+});
+
+/**
+ * The same endpoint now drives every OAuth provider's pool, and non-anthropic pools live
+ * somewhere else entirely (providers[<name>].accountPool instead of the top-level
+ * anthropicAccountPool). A route that only ever read/wrote the anthropic home would still
+ * answer 200 here while persisting nothing, so these cases follow the value to disk.
+ */
+describe("non-anthropic account pool strategy management API", () => {
+  let testDir = "";
+  let previousHome: string | undefined;
+  let isolatedCodexHome: IsolatedCodexHome | null = null;
+
+  function baseConfig(): OcxConfig {
+    return {
+      port: 0,
+      hostname: "127.0.0.1",
+      defaultProvider: "xai",
+      providers: {
+        xai: { adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "oauth" },
+      },
+    } as OcxConfig;
+  }
+
+  beforeEach(() => {
+    previousHome = process.env.OPENCODEX_HOME;
+    isolatedCodexHome = installIsolatedCodexHome("ocx-pool-mgmt-generic-codex-");
+    testDir = mkdtempSync(join(tmpdir(), "ocx-pool-mgmt-generic-"));
+    process.env.OPENCODEX_HOME = testDir;
+    saveConfig(baseConfig());
+    writeFileSync(join(testDir, "auth.json"), JSON.stringify({
+      xai: {
+        activeAccountId: "aaaa1111",
+        accounts: [
+          { id: "aaaa1111", credential: { access: "t1", refresh: "r1", expires: 9999999999999, email: "a@example.com", accountId: "acct-1" } },
+        ],
+      },
+    }), { mode: 0o600 });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+    else process.env.OPENCODEX_HOME = previousHome;
+    isolatedCodexHome?.restore();
+    isolatedCodexHome = null;
+    if (testDir) rmSync(testDir, { recursive: true, force: true });
+  });
+
+  test("GET /api/oauth/accounts/pool reports a default-off pool for xai", async () => {
+    const server = startServer(0);
+    try {
+      const res = await fetch(new URL("/api/oauth/accounts/pool?provider=xai", server.url));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        provider: "xai",
+        enabled: false,
+        autoSwitchThreshold: 80,
+        strategy: "quota",
+        stickyLimit: 1,
+      });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("PUT enables an xai pool under providers.xai.accountPool; GET and disk agree", async () => {
+    const server = startServer(0);
+    try {
+      const put = await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "xai",
+          enabled: true,
+          autoSwitchThreshold: 65,
+          strategy: "fill-first",
+          stickyLimit: 5,
+        }),
+      });
+      expect(put.status).toBe(200);
+      expect(await put.json()).toMatchObject({
+        ok: true,
+        provider: "xai",
+        enabled: true,
+        autoSwitchThreshold: 65,
+        strategy: "fill-first",
+        stickyLimit: 5,
+      });
+
+      const get = await fetch(new URL("/api/oauth/accounts/pool?provider=xai", server.url));
+      expect(await get.json()).toMatchObject({
+        enabled: true,
+        autoSwitchThreshold: 65,
+        strategy: "fill-first",
+        stickyLimit: 5,
+      });
+
+      // The provider's own config home, not anthropic's, and it survived the save.
+      const persisted = loadConfig();
+      expect(persisted.providers.xai?.accountPool).toEqual({
+        enabled: true,
+        autoSwitchThreshold: 65,
+        strategy: "fill-first",
+        stickyLimit: 5,
+      });
+      expect(persisted.anthropicAccountPool).toBeUndefined();
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("PUT without strategy fields preserves the xai pool's saved strategy", async () => {
+    const server = startServer(0);
+    try {
+      await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "xai",
+          enabled: true,
+          strategy: "round-robin",
+          stickyLimit: 7,
+        }),
+      });
+      const put = await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "xai",
+          autoSwitchThreshold: 40,
+        }),
+      });
+      expect(put.status).toBe(200);
+      const get = await fetch(new URL("/api/oauth/accounts/pool?provider=xai", server.url));
+      expect(await get.json()).toMatchObject({
+        enabled: true,
+        autoSwitchThreshold: 40,
+        strategy: "round-robin",
+        stickyLimit: 7,
+      });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("PUT enabled:false turns the xai pool off without discarding its settings", async () => {
+    const server = startServer(0);
+    try {
+      await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "xai",
+          enabled: true,
+          strategy: "fill-first",
+          stickyLimit: 3,
+        }),
+      });
+      const off = await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "xai", enabled: false }),
+      });
+      expect(off.status).toBe(200);
+      const get = await fetch(new URL("/api/oauth/accounts/pool?provider=xai", server.url));
+      expect(await get.json()).toMatchObject({
+        enabled: false,
+        strategy: "fill-first",
+        stickyLimit: 3,
+      });
+      expect(loadConfig().providers.xai?.accountPool?.enabled).toBe(false);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("PUT for an OAuth provider absent from config reports 409, not 500", async () => {
+    const server = startServer(0);
+    try {
+      const res = await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "kimi", enabled: true }),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: "provider 'kimi' is not configured" });
+      // The rejected write must not have leaked a kimi entry into the saved config.
+      expect(loadConfig().providers.kimi).toBeUndefined();
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("GET for an OAuth provider absent from config reports a default-off pool", async () => {
+    const server = startServer(0);
+    try {
+      const res = await fetch(new URL("/api/oauth/accounts/pool?provider=kimi", server.url));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ provider: "kimi", enabled: false, strategy: "quota" });
     } finally {
       await server.stop(true);
     }

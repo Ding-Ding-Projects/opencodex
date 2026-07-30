@@ -64,7 +64,7 @@ class OpencodexCoordinator(DataUpdateCoordinator[OpencodexData]):
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as response:
                 if response.status == 401:
-                    raise UpdateFailed("API key rejected (401) — regenerate one with: ocx host status")
+                    raise UpdateFailed("token rejected (401) — get the admin token with: ocx host token")
                 response.raise_for_status()
                 return await response.json()
         except UpdateFailed:

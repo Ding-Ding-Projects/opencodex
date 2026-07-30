@@ -30,7 +30,7 @@ differing backup and rewrites known legacy namespaced selected ids to bare ids.
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `port` | `number` | `10100` | Port the proxy listens on. |
-| `hostname?` | `string` | `"127.0.0.1"` | Bind address. Set `"0.0.0.0"` to expose on the LAN (requires `OPENCODEX_API_AUTH_TOKEN`; see [Remote access](#remote-access) below). |
+| `hostname?` | `string` | `"127.0.0.1"` | Bind address. `"0.0.0.0"` exposes it on the LAN and then requires a data-plane credential to start; prefer `ocx host enable` over setting it by hand (see [Remote access](#remote-access) below). |
 | `proxy?` | `string` | — | Outbound HTTP(S) proxy URL or `${ENV_VAR}` reference. Applied to `HTTP_PROXY` / `HTTPS_PROXY` when those env vars are unset; loopback stays in `NO_PROXY`. |
 | `providers` | `Record<string, OcxProviderConfig>` | — | Map of provider name → config. |
 | `openaiProviderTierVersion?` | `2` | set by migration | Marks the single option-aware OpenAI projection as complete. |
@@ -172,6 +172,11 @@ experimental and not battle-tested — enable only if you accept the risk that A
 restrict accounts that look like automated multi-account rotation. Accounts under the same
 organization can share quota; pooling those will not help.
 
+The engine behind this is no longer Anthropic-specific: every OAuth provider can opt into the
+same pool through [`providers[<name>].accountPool`](#providersnameaccountpool-experimental).
+Anthropic keeps this top-level key as its config home so existing configs keep working, and it is
+the only provider that reads it.
+
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `anthropicAccountPool.enabled?` | `boolean` | `false` | When true, sticky session affinity + 429 cooldown failover across eligible Anthropic OAuth accounts. |
@@ -192,6 +197,79 @@ Toggle and warning also appear on **Providers → anthropic → Accounts** in th
 :::caution[Experimental]
 Leave this disabled unless you understand Anthropic account policy risk. Prefer manual
 `ocx account use anthropic <id>` switching when unsure.
+:::
+
+### providers[&lt;name&gt;].accountPool (experimental)
+
+The same pool for **any other OAuth provider**. The Anthropic engine was generalized, so
+`xai`, `kimi`, `kiro`, `google-antigravity`, `cursor`, and `github-copilot` run the identical
+code path — sticky session affinity, 429 cooldown and failover, and the same
+`quota` / `round-robin` / `fill-first` new-session strategies. **Default off for every provider.**
+
+The only difference is where it is stored. Anthropic keeps the top-level
+[`anthropicAccountPool`](#anthropicaccountpool-experimental) and ignores this field; everything
+else nests the identical shape under its provider entry:
+
+```json
+{
+  "providers": {
+    "xai": {
+      "adapter": "openai-chat",
+      "baseUrl": "https://api.x.ai/v1",
+      "authMode": "oauth",
+      "accountPool": {
+        "enabled": true,
+        "autoSwitchThreshold": 80,
+        "strategy": "round-robin",
+        "stickyLimit": 1
+      }
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `accountPool.enabled?` | `boolean` | `false` | When true, sticky session affinity + 429 cooldown failover across this provider's eligible OAuth accounts. |
+| `accountPool.autoSwitchThreshold?` | `number` | `80` | Same meaning as the Anthropic key: for **new** sessions, a **known** cached 5-hour usage at/above this percent picks the lowest-usage eligible account, and `0` disables automatic new-session picking (affinity + active only). Also the `fill-first` drain threshold. |
+| `accountPool.strategy?` | `"quota" \| "round-robin" \| "fill-first"` | `"quota"` | New-session rotation strategy. See the effective-strategy note below — `quota` needs a per-account usage signal that only Anthropic has today. |
+| `accountPool.stickyLimit?` | `number` | `1` | Successful new-session binds retained on one round-robin selection before advancing. Range 1–100; only when the effective strategy is `round-robin`. |
+
+It applies only where there is something to pool:
+
+- The provider must be `authMode: "oauth"`. A key-auth provider uses
+  [`apiKeyPool`](#providers-ocxproviderconfig) instead.
+- The provider must have **more than one** stored account. A provider whose OAuth credential
+  carries no account identity keeps a single slot — a second login replaces it rather than adding
+  a row — so a pool over it has nothing to rotate.
+- The provider entry must already exist in `config.json`. There is no home for the key otherwise,
+  and the management API answers `409 provider '<name>' is not configured` rather than inventing one.
+
+:::note[Effective strategy]
+`quota` ranks accounts by cached per-account usage, and that cache is only populated for providers
+that expose per-account quota — **Anthropic only** at present. For any other provider a configured
+`quota` strategy therefore runs as `round-robin`, because with no usage signal every candidate
+scores the same and the pool would otherwise pin to the active account forever. The one exception
+is `autoSwitchThreshold: 0`, which stays the documented "affinity + active only" opt-out and is
+never silently upgraded to rotation.
+:::
+
+The reliability contract is the one listed for `anthropicAccountPool` above — it is the same
+engine, so cooldowns, `Retry-After` handling, the `needsReauth` exclusion, and the all-cooled
+**429** behave identically. Affinity and cooldown state is process-local *and per provider*: one
+provider's cooldowns never affect another's. A pool failover is recorded in `usage.jsonl` with the
+recovery kind `oauth-pool-429`.
+
+Read or write it without hand-editing the file through
+`GET`/`PUT /api/oauth/accounts/pool?provider=<name>`, or from **Providers → *provider* →
+Accounts** in the dashboard, which shows the same experimental warning as the Anthropic toggle.
+
+:::caution[Experimental and ToS-sensitive]
+Subscription OAuth is not an API product. Rotating several subscription logins through one proxy is
+exactly the pattern providers look for, and no rotation strategy protects you from enforcement —
+Anthropic in particular actively blocks subscription OAuth outside its own clients. Leave this off
+unless you accept that risk, and prefer manual `ocx account use <provider> <id>` switching when
+unsure.
 :::
 
 ### claudeCode (OcxClaudeCodeConfig)
@@ -231,34 +309,60 @@ normally dashboard-managed.
 
 ## Remote access
 
-By default opencodex binds to `127.0.0.1` (loopback only). When `hostname` is set to a non-loopback
-address such as `0.0.0.0`, opencodex enforces token authentication on **both** the management API
-(`/api/*`) and the data-plane (`/v1/responses`).
+By default opencodex binds to `127.0.0.1` (loopback only). Setting `hostname` to a non-loopback
+address such as `0.0.0.0` makes a credential mandatory rather than optional: the proxy refuses to
+start without a data-plane credential, and no browser reached over the network is handed a session
+automatically.
 
-Set the `OPENCODEX_API_AUTH_TOKEN` environment variable before starting:
+Prefer [`ocx host`](/reference/cli/#ocx-host-statusenabledisabletoken) over hand-editing
+`hostname` — it applies the same refusals the server does, so you cannot write a config that fails
+at the next `ocx start`:
 
 ```bash
-export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
-ocx start
+ocx host enable --new-key --yes   # bind to the LAN and mint the data-plane key
+ocx host status                   # bind address, credential state, URLs for other devices
+ocx host token                    # print the ADMIN token the remote dashboard asks for
+ocx host disable                  # back to loopback
 ```
 
-The proxy refuses to start without this variable when binding beyond loopback. If you install a
-background service for LAN access, export the same variable before `ocx service install` so launchd,
-systemd, or Task Scheduler receives it. Clients must include the token in every request via the
-`x-opencodex-api-key` header:
+### Two credentials, on purpose
 
-```
-x-opencodex-api-key: your-secret-token
-```
+The data plane and the management API do **not** share a secret, and the server refuses to start the
+management API at all if one value is configured as both (`management credential conflicts with a
+data-plane credential`, surfaced as `503 management API unavailable`).
 
-An `Authorization: Bearer …` header is also accepted. Dashboard-generated `apiKeys` may be used in
-place of the environment token after startup; all candidates are compared in constant time
-(`timingSafeEqual`) to prevent timing side-channels.
+| | Data-plane key | Admin token |
+| --- | --- | --- |
+| Protects | `/v1/responses`, `/v1/messages`, `/v1/images/*` — model traffic | `/api/*` and the dashboard |
+| Sent by | Codex CLI/App, Claude Code, opencode, your scripts | the dashboard, `curl` against `/api/*` |
+| Where it comes from | `OPENCODEX_API_AUTH_TOKEN`, or an `apiKeys` entry (`ocx host enable --new-key`, `ocx host enable --key <value>`, `ocx access key create`) | `OPENCODEX_ADMIN_AUTH_TOKEN`, else an auto-generated `ocx_admin_…` token in `~/.opencodex/admin-api-token` (mode 600), created the first time the proxy starts |
+| Required when | the bind is non-loopback (`assertServerAuthConfig` refuses to start otherwise) | always, for every `/api/*` request |
+
+Both are sent the same way — `x-opencodex-api-key: <token>`, or `Authorization: Bearer <token>` —
+and every candidate is compared in constant time (`timingSafeEqual`) to prevent timing
+side-channels.
+
+`/api/*` is credential-gated even on a loopback bind. What makes the local dashboard work without
+you pasting anything is a short-lived session that the server issues **only** to a loopback `Host`
+on an allowed origin, and only while the bind is loopback. Expose the proxy and that bootstrap stops
+entirely: every device, and every page reload, asks for the admin token, which the dashboard holds
+in memory only and never writes to storage a page script could read back.
+
+If you install a background service for LAN access, export the tokens before `ocx service install`
+so launchd, systemd, or Task Scheduler receives them. A service (or container) started with its own
+`OPENCODEX_ADMIN_AUTH_TOKEN` enforces a secret the on-disk file does not match — `ocx host token`
+checks its answer against the running proxy and says so on stderr rather than printing a token the
+dashboard will reject.
 
 :::caution[LAN exposure]
 Binding to `0.0.0.0` exposes your proxy — and all configured provider credentials — to the local
-network. Only do this on trusted networks, and always set a strong `OPENCODEX_API_AUTH_TOKEN`.
+network. There is no TLS: both tokens cross the network in cleartext, so only do this on a network
+you trust, and use strong values.
 :::
+
+A container is the same situation with the bind decided for you — see [Docker](/guides/docker/),
+which has to bind `0.0.0.0` to be reachable through a published port and therefore enforces the same
+credential rule.
 
 ### SSH port forwarding
 
@@ -320,6 +424,7 @@ or bind the forward explicitly to loopback (`ssh -L 127.0.0.1:20100:localhost:10
 | `authMode?` | `"key" \| "forward" \| "oauth"` | How to authenticate (default `key`). See [Providers](/guides/providers/#auth-modes). |
 | `codexAccountMode?` | `"pool" \| "direct"` | Only for canonical `openai`; defaults to Pool when omitted. Direct short-circuits pool state. |
 | `refreshPolicy?` | `"proactive" \| "lazy-only" \| "disabled"` | Override this OAuth provider's Token Guardian policy. |
+| `accountPool?` | `{ enabled?, autoSwitchThreshold?, strategy?, stickyLimit? }` | Experimental, default off: multi-account OAuth pooling for this provider. Same shape and engine as [`anthropicAccountPool`](#anthropicaccountpool-experimental), which stays Anthropic's own home — see [providers[&lt;name&gt;].accountPool](#providersnameaccountpool-experimental). |
 | `reasoningEfforts?` | `string[]` | Provider-wide Codex reasoning labels to advertise and send (`low`, `medium`, `high`, `xhigh`, `max`, `ultra`). |
 | `modelReasoningEfforts?` | `Record<string,string[]>` | Model-specific reasoning labels. An empty list hides the effort control for that model. |
 | `modelSupportsReasoningSummaries?` | `Record<string,boolean>` | Model-specific reasoning-summary capability. Set a model to `false` to stop advertising summaries and strip summary-delivery fields before an `openai-responses` request. |

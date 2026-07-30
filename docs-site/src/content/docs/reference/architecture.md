@@ -120,8 +120,11 @@ single non-streaming response object from the same events.
 provider CRUD and key pools, model selection/context caps/v2 controls, catalog sync, diagnostics and
 debug logs, usage and quotas, sidecar settings, updates, generated client API keys, OAuth login/status/
 logout and account selection, Codex account management, and graceful stop. `server/auth-cors.ts`
-requires `OPENCODEX_API_AUTH_TOKEN` for both `/api/*` and `/v1/*` when the proxy binds beyond
-loopback; configured `corsAllowOrigins` entries extend the local-origin allowlist.
+requires a data-plane credential (`OPENCODEX_API_AUTH_TOKEN` or an `apiKeys` entry) for `/v1/*` once
+the proxy binds beyond loopback, and refuses to start without one; `server/management-auth.ts` gates
+`/api/*` on the separate admin token in every bind mode, issuing the dashboard's short-lived session
+only to a loopback `Host` while the bind is still loopback. A value configured as both credentials is
+rejected. Configured `corsAllowOrigins` entries extend the local-origin allowlist.
 
 OAuth implementations live in `oauth/`; access tokens are loaded or refreshed immediately before a
 routed call, while `oauth/token-guardian.ts` can proactively refresh only providers whose policy

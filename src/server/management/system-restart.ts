@@ -170,3 +170,18 @@ export function acceptSystemRestart(io: SystemRestartIo = restartIo): {
     drainTimeoutMs: MEMORY_DRAIN_RESTART_MS,
   };
 }
+
+/**
+ * Restart for a caller that has ALREADY quiesced the server itself — the
+ * one-click restore drains before it touches the state files, so by the time it
+ * wants a restart, `draining` is legitimately true.
+ *
+ * {@link acceptSystemRestart} reads that as "a restart is already in flight" and
+ * returns without scheduling anything, which would leave the proxy drained, the
+ * restored files on disk, and no process coming back to serve them. This entry
+ * point says the quiet part out loud instead of letting a caller discover it.
+ */
+export function acceptSystemRestartAfterExternalDrain(io: SystemRestartIo = restartIo): ReturnType<typeof acceptSystemRestart> {
+  restartAccepted = false;
+  return acceptSystemRestart({ ...io, isDraining: () => false });
+}

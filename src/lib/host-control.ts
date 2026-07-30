@@ -1,0 +1,170 @@
+/**
+ * Shared logic behind `ocx host` (CLI) and `/api/host` (dashboard): one
+ * implementation of the bind/credential rules so the two surfaces cannot
+ * disagree about what "exposed" means or when enabling is allowed.
+ *
+ * The rules themselves live in the server (`assertServerAuthConfig` refuses a
+ * non-loopback bind without a data-plane credential); everything here mirrors
+ * them for *pre-flight* honesty — refusing early with an actionable message
+ * instead of writing a config that kills the next start.
+ */
+
+import { randomBytes } from "node:crypto";
+import { networkInterfaces } from "node:os";
+import { isLoopbackHostname } from "../server/auth-cors";
+import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
+import type { OcxConfig } from "../types";
+
+/** Bind addresses that accept connections from other devices. */
+export const ALL_INTERFACES = new Set(["0.0.0.0", "::", "[::]"]);
+
+/** Non-internal IPv4 addresses this machine answers on. */
+export function lanAddresses(): string[] {
+  const found: string[] = [];
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal) found.push(entry.address);
+    }
+  }
+  return found.sort();
+}
+
+export function hasDataPlaneCredential(config: OcxConfig): boolean {
+  if (process.env.OPENCODEX_API_AUTH_TOKEN?.trim()) return true;
+  return (config.apiKeys ?? []).some(entry => !!entry.key.trim());
+}
+
+export interface HostStatus {
+  hostname: string;
+  port: number;
+  /** True when the bind address accepts connections from other devices. */
+  exposed: boolean;
+  /** True when a data-plane credential exists — required for any exposed bind. */
+  credentialConfigured: boolean;
+  /** URLs another device should use. Empty when bound to loopback. */
+  urls: string[];
+}
+
+export function describeHost(config: OcxConfig): HostStatus {
+  const hostname = config.hostname ?? "127.0.0.1";
+  const port = config.port;
+  const exposed = !isLoopbackHostname(hostname);
+  const hosts = ALL_INTERFACES.has(hostname) ? lanAddresses() : exposed ? [hostname] : [];
+  return {
+    hostname,
+    port,
+    exposed,
+    credentialConfigured: hasDataPlaneCredential(config),
+    urls: hosts.map(h => `http://${h}:${port}/`),
+  };
+}
+
+/**
+ * Mint a data-plane API key onto the config (caller persists). The plaintext
+ * is returned exactly once and must never be logged or echoed by later reads.
+ */
+export function mintDataPlaneKey(config: OcxConfig, name: string): string {
+  const key = `ocx_${randomBytes(32).toString("base64url")}`;
+  config.apiKeys = [
+    ...(config.apiKeys ?? []),
+    { id: randomBytes(8).toString("hex"), name, key, createdAt: new Date().toISOString() },
+  ];
+  return key;
+}
+
+/** Floor for user-chosen keys. Deliberately above "favourite word" territory. */
+export const CUSTOM_KEY_MIN_LENGTH = 12;
+
+/**
+ * Store a USER-CHOSEN key value. Returns an error string instead of storing
+ * when the value is unusable.
+ *
+ * Custom keys exist because typing a memorable token on a phone beats
+ * transcribing 43 characters of base64 — but they are stored in PLAINTEXT in
+ * config.json and ride along in `ocx export`, so every surface that offers
+ * this must say: never reuse a password from anywhere else. Enforced here:
+ * a length floor and no whitespace. Strength beyond that is the user's call,
+ * made after an explicit warning.
+ */
+export function addCustomDataPlaneKey(config: OcxConfig, name: string, value: string): { key: string } | { error: string } {
+  const key = value.trim();
+  if (key.length < CUSTOM_KEY_MIN_LENGTH) {
+    return { error: `custom key must be at least ${CUSTOM_KEY_MIN_LENGTH} characters` };
+  }
+  if (/\s/.test(key)) {
+    return { error: "custom key must not contain whitespace" };
+  }
+  if ((config.apiKeys ?? []).some(entry => entry.key === key)) {
+    return { error: "a key with this exact value already exists" };
+  }
+  config.apiKeys = [
+    ...(config.apiKeys ?? []),
+    { id: randomBytes(8).toString("hex"), name, key, createdAt: new Date().toISOString() },
+  ];
+  return { key };
+}
+
+/**
+ * What the RUNNING proxy thinks of an admin token.
+ *
+ * Reading `OPENCODEX_ADMIN_AUTH_TOKEN` / the token file tells you what a proxy
+ * started *from this shell* would use — not what the live one is enforcing. A
+ * proxy launched as a service, in a container, or from another shell with that
+ * variable set holds a token this process cannot see, and the on-disk file it
+ * ignored still parses perfectly. Printing that file token as if it worked is
+ * the failure mode this type exists to prevent: `rejected` and `unverified`
+ * are distinct because "the server said no" and "nothing answered" must never
+ * be reported with the same confidence.
+ */
+export type AdminTokenVerification =
+  | { state: "accepted"; endpoint: string }
+  | { state: "rejected"; endpoint: string }
+  | { state: "unverified"; reason: string };
+
+export interface AdminTokenProbeIo {
+  findProxyFn?: () => Promise<{ port: number; hostname?: string } | null>;
+  fetchFn?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/**
+ * Ask the live proxy whether it accepts `token`.
+ *
+ * `/api/*` runs `requireManagementAuth` BEFORE route dispatch, so the answer is
+ * the auth verdict regardless of which path is probed; GET /api/host is used
+ * because it is side-effect-free and a 404 from an older build still proves the
+ * credential passed the gate. Only a literal 401 is treated as rejection —
+ * anything else (timeout, 5xx, management API unavailable) is `unverified`,
+ * because guessing "rejected" from a transport hiccup would send a user chasing
+ * a credential problem they do not have.
+ */
+export async function verifyAdminTokenAgainstProxy(
+  token: string,
+  io: AdminTokenProbeIo = {},
+): Promise<AdminTokenVerification> {
+  const findProxyFn = io.findProxyFn ?? findLiveProxy;
+  const fetchFn = io.fetchFn ?? fetch;
+
+  let live: { port: number; hostname?: string } | null;
+  try {
+    live = await findProxyFn();
+  } catch {
+    return { state: "unverified", reason: "the running proxy could not be located" };
+  }
+  if (!live) return { state: "unverified", reason: "no proxy is running on this machine" };
+
+  const endpoint = `http://${probeHostname(live.hostname)}:${live.port}/api/host`;
+  try {
+    const res = await fetchFn(endpoint, {
+      method: "GET",
+      headers: { "x-opencodex-api-key": token },
+      signal: AbortSignal.timeout(io.timeoutMs ?? 2_000),
+    });
+    if (res.status === 401) return { state: "rejected", endpoint };
+    if (res.status === 503) return { state: "unverified", reason: "the running proxy reports its management API is unavailable" };
+    if (res.status >= 500) return { state: "unverified", reason: `the running proxy answered ${res.status}` };
+    return { state: "accepted", endpoint };
+  } catch {
+    return { state: "unverified", reason: "the running proxy did not answer the check" };
+  }
+}

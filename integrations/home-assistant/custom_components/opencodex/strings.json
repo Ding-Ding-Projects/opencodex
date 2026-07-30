@@ -3,18 +3,18 @@
     "step": {
       "user": {
         "title": "Connect to opencodex",
-        "description": "On the machine running opencodex, expose it to your network and get a key:\n\n`ocx host enable --new-key --yes`\n\nThen enter that machine's address and the key it printed.",
+        "description": "On the machine running opencodex, expose it to your network, then print the ADMIN token (the management credential — not the data-plane key):\n\n`ocx host enable --new-key --yes`\n`ocx host token`\n\nEnter that machine's address and the admin token.\n\n⚠️ **The admin token grants full control of the proxy**, including exporting every provider API key and OAuth refresh token in plaintext. Home Assistant stores it unencrypted, and this integration sends it over plain HTTP every 60 seconds. Use it on a trusted LAN only — never over the internet. A scoped read-only token does not exist yet; see the integration README.",
         "data": {
           "host": "Host",
           "port": "Port",
-          "api_key": "API key"
+          "api_key": "Admin token (ocx host token)"
         }
       }
     },
     "error": {
       "cannot_connect": "Could not reach opencodex at that address. Is the proxy running, and has `ocx host enable` been run on it?",
       "not_opencodex": "Something answered, but it is not opencodex — check the port.",
-      "invalid_auth": "The API key was rejected. Generate one with `ocx host enable --new-key --yes` or `ocx access key create`."
+      "invalid_auth": "The token was rejected. The management API needs the ADMIN token — print it with `ocx host token` on the proxy machine."
     },
     "abort": {
       "already_configured": "This proxy is already configured."

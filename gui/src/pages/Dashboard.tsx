@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import { IconAlert } from "../icons";
+import LaunchCard from "../components/LaunchCard";
 import { Trans } from "../i18n/provider";
 import { navigateHash } from "../hash-routing";
 import { DashboardDialogs } from "./dashboard-dialogs";
@@ -77,6 +78,9 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
   return (
     <div className="dashboard-workspace-shell">
       <p className="page-sub dash-subtitle">{t("dash.subtitle")}</p>
+      {/* Above the section tabs on purpose: launching an agent is a one-press action
+          from the landing screen, not something to navigate to. */}
+      <LaunchCard apiBase={apiBase} />
       <div className="dash-tabs" role="tablist" aria-label={t("dash.workspace.sections")}>
         {sections.map(s => (
           <button

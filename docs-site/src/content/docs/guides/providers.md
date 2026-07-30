@@ -108,6 +108,13 @@ active slot; Kiro accounts are keyed by profile ARN. `chatgpt` is always single-
 pool accounts have a separate ledger.
 Tokens stay in `~/.opencodex/auth.json`; `/api/oauth/accounts` returns masked metadata only.
 
+By default every request uses the **active** account only. An experimental, opt-in account pool can
+route across them instead — sticky session affinity, `429` cooldown and failover, and
+quota/round-robin/fill-first selection for new sessions. It is off for every provider until you turn
+it on, and it is ToS-sensitive: see
+[`providers[<name>].accountPool`](/reference/configuration/#providersnameaccountpool-experimental)
+(Anthropic configures the same engine through `anthropicAccountPool`).
+
 ### OAuth reliability
 
 opencodex coordinates token refresh and Codex pool routing so concurrent requests do not race the

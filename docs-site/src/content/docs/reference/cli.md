@@ -414,6 +414,74 @@ Remove the stored OAuth credential for a provider.
 Open the [web dashboard](/guides/web-dashboard/) at `http://localhost:<port>`, auto-starting
 the proxy if it isn't running.
 
+## Remote access & backup
+
+### `ocx host <status|enable|disable|token>`
+
+Expose the proxy and dashboard to other devices on your network — the supported alternative to
+hand-editing `hostname`. Binding beyond loopback already forces a credential onto every `/api/*`
+and data-plane request; this command refuses to write a config the next `ocx start` would reject.
+
+```bash
+ocx host status
+ocx host enable --new-key --yes
+ocx host token
+ocx host disable
+```
+
+| Subcommand | Action |
+| --- | --- |
+| `status` | Bind address, whether other devices can reach it, whether a credential is configured, and the URLs to open. |
+| `enable` | Bind to the network. Requires `--yes` **and** an existing data-plane credential (or `--new-key` / `--key` to create one in the same command). |
+| `disable` | Return `hostname` to `127.0.0.1` (this machine only). |
+| `token` | Print the **admin** token the remote dashboard and `/api/*` ask for. The bare token goes to stdout; warnings go to stderr. |
+
+| Flag | Meaning |
+| --- | --- |
+| `--hostname <addr>` | Bind address for `enable` (default `0.0.0.0`, all interfaces). A loopback address is rejected — use `disable` instead. |
+| `--new-key [name]` | Generate a data-plane API key (default name `network`) and print it **once**. |
+| `--key <value>` | Store a user-chosen data-plane key (at least 12 characters, no whitespace). It sits in plaintext in `config.json`, so never reuse a real password. |
+| `--yes` | Confirm that the proxy becomes reachable by other devices. `enable` refuses without it. |
+| `--json` | Machine-readable output. |
+
+Either way a restart applies the change: `ocx stop && ocx start`.
+
+`ocx host token` prints the credential for the **management** surface, which is deliberately not the
+data-plane key — see [Two credentials, on purpose](/reference/configuration/#two-credentials-on-purpose).
+It resolves `OPENCODEX_ADMIN_AUTH_TOKEN` first, then `~/.opencodex/admin-api-token` (generated the
+first time the proxy starts), then verifies that value against the running proxy. A proxy started
+elsewhere — as a service, in a container, or from another shell with its own
+`OPENCODEX_ADMIN_AUTH_TOKEN` — enforces a secret this command cannot read, so a rejected or
+unverifiable token is reported on stderr instead of being printed as though it worked. With
+`--json`, `verified` is `null` when nothing answered, distinct from `false` when the proxy said no.
+
+:::caution[Trusted networks only]
+`enable` binds to your local network. It does not open a firewall port, forward anything, or expose
+the proxy to the internet — and there is no TLS, so both tokens cross the network in cleartext.
+Anyone who can reach the port and holds the key can drive the proxy and every provider account
+behind it.
+:::
+
+### `ocx export <path|->` &nbsp;·&nbsp; `ocx export --history`
+
+Write one JSON bundle (mode `600`) holding the full config, every Codex account with its OAuth
+credentials, and the main auth record. **It contains plaintext secrets**: the command refuses
+without `--yes`, prints a warning on stderr even when piping to `-`, and masks nothing, because a
+masked backup cannot be restored. Store it encrypted and delete it when you are done.
+
+```bash
+ocx export backup.json --yes
+ocx export --history
+```
+
+`--history` lists the account-change snapshots opencodex commits into a **local-only** git
+repository inside `~/.opencodex` on every account add or remove. That history contains secrets, has
+no remote configured, and must never be pushed:
+
+```bash
+git -C ~/.opencodex show <hash>:codex-accounts.json
+```
+
 ## Background service
 
 ### `ocx service [subcommand]`

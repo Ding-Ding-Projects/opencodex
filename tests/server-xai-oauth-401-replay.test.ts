@@ -45,7 +45,7 @@ function seedOAuth(): void {
   });
 }
 
-function xaiConfig(authMode: "oauth" | "key" = "oauth"): OcxConfig {
+function xaiConfig(authMode: "oauth" | "key" = "oauth", accountPool = false): OcxConfig {
   return {
     port: 0,
     hostname: "127.0.0.1",
@@ -56,6 +56,7 @@ function xaiConfig(authMode: "oauth" | "key" = "oauth"): OcxConfig {
         baseUrl: "https://api.x.ai/v1",
         authMode,
         ...(authMode === "key" ? { apiKey: "xai-api-key" } : {}),
+        ...(accountPool ? { accountPool: { enabled: true } } : {}),
         models: ["grok-4.5"],
       },
     },
@@ -142,6 +143,26 @@ describe("xAI OAuth upstream 401 replay", () => {
       const json = await response.json() as { error?: { message?: string } };
       expect(response.status).toBe(401);
       expect(json.error?.message).toContain("Provider error 401");
+      expect(observed.counts.refresh).toBe(1);
+      expect(observed.chatAuth).toEqual(["Bearer rejected-access", "Bearer fresh-access"]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  // The generic OAuth pool resolves the bearer through its own snapshot path, which is a
+  // second place a 401 could get swallowed as "that account is just unusable". A rejected
+  // token is a refresh signal for a pooled provider exactly as it is for an unpooled one.
+  test("401 still refreshes and replays when the account pool is enabled", async () => {
+    seedOAuth();
+    saveConfig(xaiConfig("oauth", true));
+    const observed = installOAuthFetch([401, 200]);
+    const server = startServer(0);
+    try {
+      const response = await post(server);
+      expect(response.status).toBe(200);
+      const json = await response.json() as { output?: { type: string; content?: { text?: string }[] }[] };
+      expect(json.output?.find(item => item.type === "message")?.content?.[0]?.text).toBe("ok after refresh");
       expect(observed.counts.refresh).toBe(1);
       expect(observed.chatAuth).toEqual(["Bearer rejected-access", "Bearer fresh-access"]);
     } finally {

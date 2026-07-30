@@ -58,6 +58,14 @@ refresh their 5h / weekly / 30d quota in the dashboard, and let new sessions aut
 lowest-usage healthy account. Existing Codex threads stay pinned to the account that started them,
 so long SSH, tmux, or mobile-connected sessions do not jump accounts mid-conversation.
 
+The same auto account switching is available for **every OAuth provider**, not just Codex and
+Claude: sticky session affinity, 429 cooldown with failover to a healthy account, and a choice of
+quota / round-robin / fill-first rotation. Turn it on per provider in the dashboard (each provider's
+accounts panel has its own pool controls) — it is **off by default everywhere**, and experimental,
+because a provider may treat automated multi-account rotation as abuse. One honest caveat the
+dashboard also states: the `quota` strategy needs per-account usage numbers, so for a provider that
+does not report them it rotates round-robin instead of picking the least-used account.
+
 ```
 Codex CLI / App / SDK ──/v1/responses──▶ opencodex ──▶ Any provider
                                               │
@@ -416,10 +424,32 @@ Exposing the proxy makes a credential mandatory rather than optional — every `
 data-plane request must carry one, and the server refuses to start on a non-loopback bind
 without it. `ocx host enable` refuses too, so you cannot write a config that fails at startup.
 
-The dashboard asks for the key on first load and holds it **in memory only**, so every device
-and every reload asks again. That is deliberate: a browser reached over the network is never
-handed a session automatically, and the key is never written somewhere a page script could read
-it back.
+Two credentials exist, on purpose. The **data-plane key** (`--new-key`) is what API clients
+(Codex, Claude Code) send with model requests. The remote **dashboard and `/api/*`** ask for the
+**admin token** instead — print it with `ocx host token`. The browser holds it in memory only, so
+every device and every reload asks again: a browser reached over the network is never handed a
+session automatically, and the token is never written somewhere a page script could read it back.
+
+### Docker
+
+```bash
+docker build -t opencodex .
+docker run -d --name opencodex -p 10100:10100   -e OPENCODEX_API_AUTH_TOKEN=<data-plane-secret>   -e OPENCODEX_ADMIN_AUTH_TOKEN=<admin-secret>   -v opencodex-data:/data opencodex
+```
+
+A container binds `0.0.0.0`, and a non-loopback bind requires a data-plane credential — the
+entrypoint refuses to start without `OPENCODEX_API_AUTH_TOKEN` (same rule as `ocx host`).
+`OPENCODEX_ADMIN_AUTH_TOKEN` is what the dashboard and `/api/*` authenticate with from other
+machines. Omit it and the proxy generates one on first start, into the file `admin-api-token`
+inside the container's config directory — which is the `/data` volume, not `~/.opencodex` on the
+host. `ocx host token` run on the host machine reads the *host's* config directory and will not
+find it, so read it out of the container instead:
+
+```bash
+docker exec opencodex cat /data/admin-api-token
+```
+
+All durable state (config, accounts, account-change history) lives on the volume.
 
 ### Backups: export everything, and account-change history
 
@@ -443,6 +473,42 @@ no remote and a README saying exactly that.
 ocx export --history                                   # list snapshots
 git -C ~/.opencodex show <hash>:codex-accounts.json    # recover a deleted account
 ```
+
+**Every deletion is recorded twice — before and after.** A post-change snapshot
+alone would only record the state with the account already gone, leaving recovery
+to whatever an earlier commit happened to contain; that is not true for an account
+older than this history, which is exactly the account most likely to be deleted by
+mistake. So every path that can destroy a credential — Codex accounts, OAuth
+accounts, provider logout, provider API keys, data-access keys — commits the
+current state first and waits for it, then deletes. The wait is bounded and never
+installs anything, because a bookkeeping repo must not be able to block a deletion.
+
+#### One-click restore
+
+The dashboard's **Remote access & backup** screen lists those snapshots with a
+**Restore** button on each. A restore:
+
+1. finishes the requests still in flight (it never rewrites `auth.json` under a
+   request that is reading it) and, if any outlive the hand-off window, reports the
+   live count and asks rather than cutting sessions off;
+2. commits the current state first, so the restore is **itself** undoable;
+3. writes the state files back from the chosen snapshot;
+4. commits the restore as a **new** revision — the log is append-only and nothing
+   is ever rewound, so an undo can be undone, and that undo undone in turn;
+5. restarts the proxy, because the live in-memory config predates the restore and
+   its next save would write straight over the restored files.
+
+A tracked file that exists today but is absent from the chosen snapshot is **kept,
+not deleted**, and the result says so. Deleting it would be the more literal
+reading of "restore", and it would also silently destroy accounts added since.
+
+#### Exit app
+
+The desktop app's Material 3 app bar has an explicit **Exit** next to the window
+controls. Closing the window hides to the tray and leaves the proxy serving, as it
+always did; Exit is the graceful teardown — it finishes in-flight requests, warns
+with the real count if any are still running, hands Codex and Grok back to their
+own configs, stops the proxy, and only then closes the app.
 
 ## Configuration
 

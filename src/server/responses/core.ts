@@ -32,25 +32,27 @@ import { modelInList, namespacedToolName } from "../../types";
 import type { AdapterEvent, OcxConfig, OcxParsedRequest, OcxProviderConfig, OcxProviderContinuationState, OcxUsage } from "../../types";
 import {
   forceRefreshOAuthAccessSnapshot,
-  getOAuthCredentialApiBaseUrl,
-  getOAuthCredentialProjectId,
+  getOAuthAccountApiBaseUrl,
+  getOAuthAccountProjectId,
   getValidAccessTokenForAccount,
   getValidAccessTokenSnapshot,
   type OAuthAccessSnapshot,
   UnsupportedOAuthProviderError,
 } from "../../oauth";
+// Anthropic routing is a thin facade over the generic pool below; this request path talks to
+// the generic engine directly so every provider takes the identical code path.
 import {
-  ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST,
-  anthropicSessionKeyFromParts,
-  bindAnthropicSessionAffinity,
-  formatAnthropicProviderForLog,
-  getAnthropicPoolAccessToken,
-  getAnthropicPoolRetryAfterSeconds,
-  isAnthropicAccountPoolEnabled,
-  promoteAnthropicActiveAccount,
-  resolveAnthropicAccountForSession,
-  rotateAnthropicAccountOn429,
-} from "../../oauth/anthropic-routing";
+  bindOAuthSessionAffinity,
+  formatOAuthProviderForLog,
+  getOAuthPoolAccessSnapshot,
+  getOAuthPoolRetryAfterSeconds,
+  isOAuthPoolEnabled,
+  OAUTH_POOL_MAX_FAILOVERS_PER_REQUEST,
+  oauthSessionKeyFromParts,
+  promoteOAuthActiveAccount,
+  resolveOAuthAccountForSession,
+  rotateOAuthAccountOn429,
+} from "../../oauth/provider-pool";
 import { buildWebSearchTool, planWebSearch, runWithWebSearch, shouldResolveOpenAiWebSearchSidecar } from "../../web-search";
 import { buildImageTool, buildVideoTool, planImageBridge, planVideoBridge, runWithImageBridge, clampImageMaxRounds, IMAGE_GEN_TOOL_NAME, VIDEO_GEN_TOOL_NAME } from "../../images";
 import { describeImagesInPlace, planVisionSidecar, shouldResolveOpenAiVisionSidecar, stripImagesInPlace } from "../../vision";
@@ -1229,10 +1231,15 @@ export async function handleResponses(
   const isOAuth401ReplayProvider = (route.providerName === "xai" || route.providerName === "github-copilot" || route.providerName === "kiro")
     && route.provider.authMode === "oauth";
   let sentOAuthSnapshot: OAuthAccessSnapshot | undefined;
-  let anthropicPoolAccountId: string | null = null;
-  let anthropicPoolFailovers = 0;
-  const anthropicSessionKey = route.providerName === "anthropic" && route.provider.authMode === "oauth"
-    ? anthropicSessionKeyFromParts({
+  let oauthPoolAccountId: string | null = null;
+  let oauthPoolFailovers = 0;
+  // Generic OAuth account pool (all providers, "like Codex"): anthropic keeps its
+  // config home; everything else opts in via providers[<name>].accountPool.
+  const oauthPoolProvider = route.provider.authMode === "oauth" && isOAuthPoolEnabled(config, route.providerName)
+    ? route.providerName
+    : null;
+  const oauthPoolSessionKey = oauthPoolProvider != null
+    ? oauthSessionKeyFromParts({
       sessionIdHeader: sessionIdHeaderFromRequest(req.headers),
       threadIdHeader: req.headers.get("thread-id"),
       promptCacheKey: typeof parsed.options.promptCacheKey === "string" ? parsed.options.promptCacheKey : null,
@@ -1240,44 +1247,78 @@ export async function handleResponses(
       promptCacheKeyIsSharedCohort: options.promptCacheKeyIsSharedCohort === true,
     })
     : null;
+  /**
+   * Everything that depends on WHICH OAuth account authenticated. Pooled and non-pooled
+   * routes MUST funnel through here: when this wiring lived only in the non-pool branch,
+   * turning a pool on silently dropped Kiro's profileArn/region and Antigravity's project
+   * id (upstream failure), and disabled the 401 refresh-and-replay path. Every later
+   * failover re-applies it too, so a rotated account never inherits its predecessor's
+   * routing metadata.
+   */
+  /**
+   * The project the USER configured, captured before any account routing runs.
+   *
+   * A configured project must keep winning over a discovered one, but a project
+   * derived from account A must not survive a failover to account B — and the old
+   * `!route.provider.project` guard could not tell those apart. After one 429
+   * rotation it saw the project it had just written itself, skipped, and sent B's
+   * bearer with A's project id.
+   */
+  const configuredProject = route.provider.project;
+  const applyOAuthAccountRouting = (resolved: OAuthAccessSnapshot): void => {
+    if (isOAuth401ReplayProvider) sentOAuthSnapshot = resolved;
+    route.provider = { ...route.provider, apiKey: resolved.accessToken };
+    if (route.providerName === "kiro") {
+      // `{}` is intentional: this is an account-scoped request with no stored routing metadata.
+      // Only genuinely accountless adapter calls leave the context undefined and use local/env fallback.
+      parsed._kiroAuthContext = { ...(resolved.kiro ?? {}) };
+    }
+    // Antigravity (cloud-code-assist) needs the discovered Cloud Code Assist project id in the
+    // CCA envelope; the server injects only the bare token, so pull project from the credential
+    // OF THE AUTHENTICATING ACCOUNT. Re-derived on every call, including failovers: sending no
+    // project is recoverable, sending the previous account's is a wrong-tenant request.
+    if (route.provider.googleMode === "cloud-code-assist") {
+      const projectId = configuredProject ?? getOAuthAccountProjectId(route.providerName, resolved.accountId);
+      route.provider = { ...route.provider, project: projectId };
+    }
+    // Copilot's upstream origin is credential-scoped too, and it is resolved into
+    // provider.baseUrl. Re-resolving here (not only on the first pass) is what stops a
+    // rotated account's bearer being posted to the origin of the account it replaced.
+    if (route.providerName === "github-copilot") {
+      route.provider = resolveProviderTransport(
+        route.providerName,
+        route.provider,
+        parsed.options.promptCacheKey,
+        getOAuthAccountApiBaseUrl(route.providerName, resolved.accountId),
+      );
+    }
+  };
   if (route.provider.authMode === "oauth") {
     try {
-      if (route.providerName === "anthropic" && isAnthropicAccountPoolEnabled(config)) {
-        const selection = resolveAnthropicAccountForSession(anthropicSessionKey, config);
+      let resolved: OAuthAccessSnapshot;
+      if (oauthPoolProvider) {
+        const selection = resolveOAuthAccountForSession(oauthPoolProvider, oauthPoolSessionKey, config);
         if (!selection.accountId) {
           if (selection.reason === "all-cooled") {
-            const retryAfterSec = getAnthropicPoolRetryAfterSeconds();
+            const retryAfterSec = getOAuthPoolRetryAfterSeconds(oauthPoolProvider);
             return formatErrorResponse(
               429,
               "rate_limit_error",
-              "All Anthropic OAuth accounts are temporarily rate-limited",
+              `All ${oauthPoolProvider} OAuth accounts are temporarily rate-limited`,
               retryAfterSec !== null ? { retryAfter: String(retryAfterSec) } : undefined,
             );
           }
-          return formatErrorResponse(401, "authentication_error", "No eligible Anthropic OAuth account available");
+          return formatErrorResponse(401, "authentication_error", `No eligible ${oauthPoolProvider} OAuth account available`);
         }
-        const accessToken = await getAnthropicPoolAccessToken(selection.accountId);
-        anthropicPoolAccountId = selection.accountId;
-        bindAnthropicSessionAffinity(anthropicSessionKey, selection.accountId);
-        promoteAnthropicActiveAccount(selection.accountId);
-        route.provider = { ...route.provider, apiKey: accessToken };
-        logCtx.provider = formatAnthropicProviderForLog("anthropic", selection.accountId, config);
+        resolved = await getOAuthPoolAccessSnapshot(oauthPoolProvider, selection.accountId);
+        oauthPoolAccountId = selection.accountId;
+        bindOAuthSessionAffinity(oauthPoolProvider, oauthPoolSessionKey, selection.accountId);
+        promoteOAuthActiveAccount(oauthPoolProvider, selection.accountId);
+        logCtx.provider = formatOAuthProviderForLog(oauthPoolProvider, selection.accountId);
       } else {
-        const resolved = await getValidAccessTokenSnapshot(route.providerName);
-        if (isOAuth401ReplayProvider) sentOAuthSnapshot = resolved;
-        route.provider = { ...route.provider, apiKey: resolved.accessToken };
-        if (route.providerName === "kiro") {
-          // `{}` is intentional: this is an account-scoped request with no stored routing metadata.
-          // Only genuinely accountless adapter calls leave the context undefined and use local/env fallback.
-          parsed._kiroAuthContext = { ...(resolved.kiro ?? {}) };
-        }
-        // Antigravity (cloud-code-assist) needs the discovered Cloud Code Assist project id in the
-        // CCA envelope; the server injects only the bare token, so pull project from the credential.
-        if (route.provider.googleMode === "cloud-code-assist" && !route.provider.project) {
-          const projectId = getOAuthCredentialProjectId(route.providerName);
-          if (projectId) route.provider = { ...route.provider, project: projectId };
-        }
+        resolved = await getValidAccessTokenSnapshot(route.providerName);
       }
+      applyOAuthAccountRouting(resolved);
     } catch (err) {
       if (err instanceof UnsupportedOAuthProviderError) {
         return formatErrorResponse(
@@ -1293,7 +1334,9 @@ export async function handleResponses(
     route.providerName,
     route.provider,
     parsed.options.promptCacheKey,
-    route.providerName === "github-copilot" ? getOAuthCredentialApiBaseUrl(route.providerName) : undefined,
+    // Copilot's upstream origin is credential-scoped: with a pool on, it has to come from the
+    // account whose bearer we are actually sending, not from whichever account is store-active.
+    route.providerName === "github-copilot" ? getOAuthAccountApiBaseUrl(route.providerName, oauthPoolAccountId) : undefined,
   );
   const adapterProvider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider);
   const adapter = resolveAdapter(adapterProvider, config.cacheRetention);
@@ -2165,15 +2208,13 @@ export async function handleResponses(
           cleanupUpstreamAbort();
           return formatErrorResponse(401, "authentication_error", err instanceof Error ? err.message : String(err));
         }
-        sentOAuthSnapshot = refreshed;
-        if (route.providerName === "kiro") {
-          parsed._kiroAuthContext = { ...(refreshed.kiro ?? {}) };
-        }
+        // The forced refresh is account-scoped, so the routing it implies is too.
+        applyOAuthAccountRouting(refreshed);
         const refreshedProvider = resolveProviderTransport(
           route.providerName,
-          { ...route.provider, apiKey: refreshed.accessToken },
+          route.provider,
           parsed.options.promptCacheKey,
-          route.providerName === "github-copilot" ? getOAuthCredentialApiBaseUrl(route.providerName) : undefined,
+          route.providerName === "github-copilot" ? getOAuthAccountApiBaseUrl(route.providerName, refreshed.accountId) : undefined,
         );
         route.provider = refreshedProvider;
         activeAdapter = resolveAdapter(
@@ -2210,35 +2251,38 @@ export async function handleResponses(
         upstreamResponse = result;
       }
 
-      // Opt-in Anthropic OAuth account pool (#294): cool the failed account and retry
+      // Opt-in OAuth account pool (#294, generalized): cool the failed account and retry
       // with another eligible OAuth account (bounded per request). Disabled by default.
       while (
         upstreamResponse.status === 429
-        && anthropicPoolAccountId
-        && isAnthropicAccountPoolEnabled(config)
-        && anthropicPoolFailovers < ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST
+        && oauthPoolAccountId
+        && oauthPoolProvider
+        && oauthPoolFailovers < OAUTH_POOL_MAX_FAILOVERS_PER_REQUEST
       ) {
-        const nextAccountId = rotateAnthropicAccountOn429(
+        const nextAccountId = rotateOAuthAccountOn429(
           config,
-          anthropicPoolAccountId,
+          oauthPoolProvider,
+          oauthPoolAccountId,
           upstreamResponse.headers.get("retry-after"),
-          anthropicSessionKey,
+          oauthPoolSessionKey,
         );
         if (!nextAccountId) break;
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         try {
-          const accessToken = await getAnthropicPoolAccessToken(nextAccountId);
-          anthropicPoolAccountId = nextAccountId;
-          anthropicPoolFailovers += 1;
-          route.provider = { ...route.provider, apiKey: accessToken };
-          promoteAnthropicActiveAccount(nextAccountId);
-          logCtx.provider = formatAnthropicProviderForLog("anthropic", nextAccountId, config);
+          const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId);
+          oauthPoolAccountId = nextAccountId;
+          oauthPoolFailovers += 1;
+          // Re-apply the FULL account wiring, not just the bearer: the failover target has
+          // its own Kiro routing metadata and CCA project id.
+          applyOAuthAccountRouting(snapshot);
+          promoteOAuthActiveAccount(oauthPoolProvider, nextAccountId);
+          logCtx.provider = formatOAuthProviderForLog(oauthPoolProvider, nextAccountId);
           activeAdapter = resolveAdapter(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider),
             config.cacheRetention,
           );
           sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name);
-          const result = await rebuildAndRefetch("anthropic-oauth-429");
+          const result = await rebuildAndRefetch("oauth-pool-429");
           if ("failed" in result) return result.failed;
           upstreamResponse = result;
         } catch {
@@ -2369,27 +2413,31 @@ export async function handleResponses(
           continue;
         }
       }
+      // Same pool failover as the primary loop. This site used the anthropic-hardcoded
+      // helpers while the account id it rotates can now come from ANY provider's pool —
+      // which injected an Anthropic bearer into (say) a pooled xAI continuation.
       if (
         response.status === 429
-        && anthropicPoolAccountId
-        && isAnthropicAccountPoolEnabled(config)
-        && anthropicPoolFailovers < ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST
+        && oauthPoolAccountId
+        && oauthPoolProvider
+        && oauthPoolFailovers < OAUTH_POOL_MAX_FAILOVERS_PER_REQUEST
       ) {
-        const nextAccountId = rotateAnthropicAccountOn429(
+        const nextAccountId = rotateOAuthAccountOn429(
           config,
-          anthropicPoolAccountId,
+          oauthPoolProvider,
+          oauthPoolAccountId,
           response.headers.get("retry-after"),
-          anthropicSessionKey,
+          oauthPoolSessionKey,
         );
         if (nextAccountId) {
           try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
           try {
-            const accessToken = await getAnthropicPoolAccessToken(nextAccountId);
-            anthropicPoolAccountId = nextAccountId;
-            anthropicPoolFailovers += 1;
-            route.provider = { ...route.provider, apiKey: accessToken };
-            promoteAnthropicActiveAccount(nextAccountId);
-            logCtx.provider = formatAnthropicProviderForLog("anthropic", nextAccountId, config);
+            const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId);
+            oauthPoolAccountId = nextAccountId;
+            oauthPoolFailovers += 1;
+            applyOAuthAccountRouting(snapshot);
+            promoteOAuthActiveAccount(oauthPoolProvider, nextAccountId);
+            logCtx.provider = formatOAuthProviderForLog(oauthPoolProvider, nextAccountId);
             activeAdapter = resolveAdapter(
               resolveWireProtocolOverride(route.providerName, route.modelId, route.provider),
               config.cacheRetention,

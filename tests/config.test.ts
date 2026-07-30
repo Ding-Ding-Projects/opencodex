@@ -431,6 +431,28 @@ describe("opencodex config defaults", () => {
     });
   });
 
+  // Every non-anthropic OAuth pool lives at providers[<name>].accountPool and is read
+  // straight off the loaded provider entry on each request. A save/load cycle that dropped
+  // the field would silently switch the pool off again after the next restart.
+  test("providers[<name>].accountPool survives a save/load round-trip", () => {
+    const accountPool = {
+      enabled: true,
+      autoSwitchThreshold: 65,
+      strategy: "fill-first" as const,
+      stickyLimit: 4,
+    };
+    saveConfig({
+      ...getDefaultConfig(),
+      defaultProvider: "xai",
+      providers: {
+        xai: { adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "oauth", accountPool },
+      },
+    });
+
+    expect(loadConfig().providers.xai?.accountPool).toEqual(accountPool);
+    expect(readConfigDiagnostics().error).toBeNull();
+  });
+
   test("accepts OpenAI account mode only on the canonical forward provider", () => {
     for (const codexAccountMode of ["pool", "direct"] as const) {
       writeConfig({

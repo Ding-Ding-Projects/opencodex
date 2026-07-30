@@ -23,6 +23,7 @@ export const M3_EN = {
   "nav.changelog": "Changelog",
   "nav.history": "Version history",
   "nav.notifications": "Notifications",
+  "nav.network": "Remote access & backup",
   "nav.primaryAria": "Primary navigation",
 
   "tabs.listAria": "Open pages",
@@ -31,6 +32,11 @@ export const M3_EN = {
   "tabs.newTab": "New tab",
 
   "appbar.noAccount": "No account signed in",
+
+  // Named exactly, because the two credentials are not interchangeable: the
+  // management API rejects a data-plane key, and a user who pastes one gets a
+  // silent re-prompt loop with no clue which secret is wanted.
+  "auth.adminTokenPrompt": "OpenCodex ADMIN token — print it on the proxy machine with: ocx host token\n\nThis is the management credential. A data-plane API key (the one from `ocx host enable --new-key`, sent by Codex/Claude Code with model requests) will NOT work here — the server rejects data-plane credentials for /api/*.",
 
   "dash.stopFailedTitle": "Could not stop the proxy",
 
@@ -119,6 +125,113 @@ export const M3_EN = {
   "narrator.sample": "The opencodex proxy is running and ready.",
   "narrator.spoke": "Test message sent to the narrator",
   "narrator.unavailable": "This browser does not expose speech synthesis, so the narrator cannot run here.",
+
+  // ---- remote access & backup ----
+  "network.hostTitle": "Network access",
+  "network.hostSub": "Reach this proxy and dashboard from other devices — the same controls as `ocx host`.",
+  "network.exposed": "Reachable from other devices",
+  "network.enableConfirm": "Expose the proxy to your network? Anyone on it who has a key can drive the proxy and every provider account behind it. Only do this on a network you trust. A restart applies the change.",
+  "network.enabled": "Network access enabled",
+  "network.disabled": "Network access disabled",
+  "network.restartHint": "Restart the proxy to apply (ocx stop && ocx start).",
+  "network.changeFailed": "Could not change network access",
+  "network.urls": "Open from another device",
+  "network.keyShownOnce": "Data-plane key — shown once, store it now",
+  "network.adminToken": "Admin token",
+  "network.adminTokenHint": "What the remote dashboard and API ask for. Treat it like a password.",
+  "network.copy": "Copy",
+  "network.copied": "Copied",
+  "network.reveal": "Reveal",
+  "network.hide": "Hide",
+  "network.tokenUnavailable": "No admin token exists yet — it is created when the proxy first starts.",
+  "network.customKeyTitle": "Custom key",
+  "network.customKeyHint": "Choose your own key value (12+ characters, no spaces). It is stored in PLAINTEXT in config.json and included in exports — never reuse a password you use anywhere else.",
+  "network.customKeyPlaceholder": "your-memorable-key-value",
+  "network.customKeyAdd": "Add custom key",
+  "network.customKeyAdded": "Custom key stored",
+  "network.customKeyFailed": "Could not store the custom key",
+  "network.exportTitle": "Export everything",
+  "network.exportSub": "One file: config, Codex accounts with OAuth credentials, and the auth record — the same bundle as `ocx export`.",
+  "network.exportWarning": "⚠️ The export contains PLAINTEXT SECRETS: provider API keys and OAuth access/refresh tokens. Anyone holding the file can use every account in it. Store it encrypted; delete it when done.",
+  "network.exportConfirm": "Download the full state export? It contains every API key and OAuth token in plaintext.",
+  "network.exportButton": "Download export",
+  "network.exported": "Export downloaded",
+  "network.exportedHint": "Store it encrypted. Delete it when the backup or migration is done.",
+  "network.exportFailed": "Export failed",
+  "network.historyTitle": "Account-change history",
+  "network.historySub": "Local-only git snapshots recorded on every account add or remove (`ocx export --history`).",
+  "network.historyEmpty": "No snapshots yet",
+  "network.historyEmptyBody": "Snapshots are recorded automatically when an account or key is added or removed.",
+  "network.historyFailed": "Could not read the account-change history",
+  "network.historySearch": "Search snapshots",
+  "network.historyNoMatch": "No snapshot matches",
+  "network.historyNoMatchBody": "Nothing in the history matches that search. Clear it to see every snapshot again.",
+
+  // One-click restore. The copy names what will happen in unambiguous words — which
+  // files move, that in-flight work finishes first, and that the proxy restarts —
+  // because this is the one control that rewrites credentials on disk.
+  "network.restore": "Restore",
+  "network.restoreAria": "Restore the state from {label}",
+  "network.restoreConfirm": "Restore config, accounts and credentials to this snapshot?\n\n{label}\n\nOpenCodex finishes any request still in flight, writes the files back, then restarts. Your current state is committed to the history first, so this restore can itself be undone.",
+  "network.restoreBusySessions": "{count} request(s) still running",
+  "network.restoreForceConfirm": "{count} request(s) are still running and did not finish in time. Restore anyway? Those requests will be cut off.",
+  "network.restored": "State restored — the proxy is restarting",
+  "network.restoredKept": "Kept (absent from that snapshot): {files}",
+  "network.restoreFailed": "Restore failed",
+
+  // ---- OAuth account pool, for every provider ----
+  // Anthropic keeps its own `anthropicPool.*` copy: its warning names a specific,
+  // known enforcement risk, and flattening that into a generic sentence would lose
+  // the one thing a user needs to read before enabling it there. These keys are the
+  // honest generic version for every other provider.
+  "pool.title": "{provider} account pool (experimental)",
+  "pool.enabledDesc": "On 429, cools the account and fails over. New sessions rotate across the accounts that are not cooling.",
+  "pool.disabledDesc": "Uses only the active {provider} account.",
+  "pool.experimentalWarning": "Experimental. A provider may treat automated multi-account rotation as abuse and restrict the accounts involved, and accounts inside one organization often share a quota — pooling those will not buy you anything. Leave this off unless you understand the risk for this provider.",
+  "pool.needTwoAccounts": "Add at least two {provider} accounts before enabling the pool.",
+  "pool.loadFailed": "{provider} pool settings could not be loaded.",
+  "pool.saveFailed": "{provider} pool settings could not be saved.",
+  // Named because it is the difference between a setting that works and one that
+  // silently does nothing: quota picking needs per-account usage numbers, and only
+  // providers that report them can use it.
+  "pool.noQuotaSignalHelp": "This provider does not report per-account usage, so the quota strategy rotates round-robin over eligible accounts instead of picking the least-used one.",
+
+  // ---- launcher ----
+  "launch.title": "Launch",
+  "launch.sub": "Open the agent CLIs and their desktop apps on this machine.",
+  "launch.cli": "CLI",
+  "launch.desktop": "Desktop app",
+  "launch.open": "Open",
+  "launch.opening": "Opening {label}…",
+  "launch.opened": "{label} opened",
+  "launch.failed": "Could not open {label}",
+  "launch.notInstalled": "Not installed",
+  "launch.install": "Get it",
+  "launch.emptyTitle": "Nothing to launch yet",
+  "launch.emptyBody": "None of the agent CLIs or desktop apps were found on this machine. Install one and it appears here.",
+  "launch.loadFailed": "Could not read the launcher targets",
+
+  // ---- window controls and exit ----
+  "window.minimize": "Minimise",
+  "window.maximize": "Maximise",
+  "window.restoreDown": "Restore down",
+  "window.close": "Close to tray",
+  "window.exit": "Exit app",
+  // Says what it does, at every funny level: finish, stop, close. No ambiguity about
+  // whether the proxy keeps running afterwards — that is the whole point of the button.
+  "window.exitConfirm": "Exit OpenCodex? Any request still in flight is finished first, then the proxy stops and the app closes. Codex and Grok are handed back to their own configs.",
+  "window.exitBusyConfirm": "{count} request(s) are still running and did not finish in time. Exit anyway? Those requests will be cut off.",
+  "window.exiting": "Finishing in-flight work, then closing…",
+  "window.exitFailed": "Could not exit cleanly",
+
+  // ---- app-bar account switcher ----
+  "switcher.title": "Codex accounts",
+  "switcher.aria": "Active account: {email}. Switch account.",
+  "switcher.active": "active",
+  "switcher.paused": "paused",
+  "switcher.weeklyUsed": "{pct}% weekly used",
+  "switcher.switched": "Switched active account",
+  "switcher.failed": "Could not switch account",
 
   // ---- app-bar cost meter ----
   "cost.rangeAll": "lifetime",

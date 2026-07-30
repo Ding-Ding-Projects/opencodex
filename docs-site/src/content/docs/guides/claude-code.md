@@ -34,6 +34,12 @@ Operational contract when enabled:
 
 See [Configuration](/reference/configuration/#anthropicaccountpool-experimental).
 
+This pool is no longer Claude-only: the same engine runs for any OAuth provider that opts in through
+[`providers[<name>].accountPool`](/reference/configuration/#providersnameaccountpool-experimental).
+Anthropic keeps `anthropicAccountPool` as its config home, and it is the only provider with a
+per-account usage signal, so it is also the only one where the `quota` strategy actually ranks
+accounts.
+
 ## Quickstart
 
 ```bash

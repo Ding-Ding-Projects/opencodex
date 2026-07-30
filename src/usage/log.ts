@@ -13,6 +13,8 @@ export type AttemptRecoveryKind =
   | "oauth-401"
   | "key-429"
   | "anthropic-oauth-429"
+  /** Generic OAuth pool failover (all providers); "anthropic-oauth-429" is its historical spelling. */
+  | "oauth-pool-429"
   | "image-413";
 
 export interface PersistedUsageAttempt {
@@ -143,6 +145,7 @@ const ATTEMPT_RECOVERY_KINDS = new Set<AttemptRecoveryKind>([
   "oauth-401",
   "key-429",
   "anthropic-oauth-429",
+  "oauth-pool-429",
   "image-413",
 ]);
 const USAGE_STATUSES = new Set<UsageStatus>([

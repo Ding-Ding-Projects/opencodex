@@ -870,6 +870,24 @@ export interface ResponsesItemIdRepairConfig {
 export interface OcxProviderConfig {
   adapter: string;
   /**
+   * Opt-in OAuth account pool for THIS provider — the same auto account
+   * switcher the Codex pool and `anthropicAccountPool` provide: sticky session
+   * affinity, 429 cooldown + failover, quota / round-robin / fill-first
+   * strategies. Only meaningful for `authMode: "oauth"` providers with more
+   * than one stored account. Anthropic ignores this field and keeps its
+   * original home at the top-level `anthropicAccountPool`.
+   * Experimental — subscription OAuth is ToS-sensitive; see the pool docs.
+   */
+  accountPool?: {
+    enabled?: boolean;
+    /** Usage % threshold for new-session auto-pick. Default 80. 0 = disabled (affinity/active only). */
+    autoSwitchThreshold?: number;
+    /** New-session rotation strategy. Default quota. */
+    strategy?: OcxAccountPoolRotationStrategy;
+    /** Successful new-session binds retained on one round-robin selection. Default 1; range 1..100. */
+    stickyLimit?: number;
+  };
+  /**
    * Per-model wire override, keyed by the upstream native model id (after namespace
    * and combo resolution). A single gateway can front models that speak different
    * wires — Grok needs the Responses API for hosted web_search while a sibling model

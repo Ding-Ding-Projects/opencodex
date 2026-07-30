@@ -331,7 +331,7 @@ function resolveBun() {
   // ~450-byte placeholder stub. Run the bun package's own installer once.
   const installJs = join(bunDir, "install.js");
   if (existsSync(installJs)) {
-    const r = spawnSync(process.execPath, [installJs], { stdio: "inherit" });
+    const r = spawnSync(process.execPath, [installJs], { stdio: "inherit", windowsHide: true });
     if (r.status === 0) bin = findBunBinary(bunDir);
   }
   if (!bin) fail("Bun binary missing after install attempt.");
@@ -361,7 +361,9 @@ const bun = resolveBun();
 // signal delivered only to this launcher (Codex app, IDE terminal, service wrapper,
 // or `kill -INT <launcherPid>`) killed the launcher and ORPHANED the Bun proxy —
 // port left bound, pid/runtime-port files left behind, Codex config not restored.
-const child = spawn(bun, [cliPath, ...process.argv.slice(2)], { stdio: "inherit" });
+// windowsHide: from a windowless parent (the desktop app), a console-subsystem
+// child would otherwise allocate a visible console window on Windows.
+const child = spawn(bun, [cliPath, ...process.argv.slice(2)], { stdio: "inherit", windowsHide: true });
 
 // Windows has no real POSIX signals (no SIGHUP); forwarding is best-effort there.
 const FORWARDED = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];

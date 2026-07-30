@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleExportCommand } from "../src/cli/export";
-import { listStateHistory, recordStateSnapshot } from "../src/lib/state-history";
+import { listStateHistory, recordStateSnapshot, recordStateSnapshotBeforeDelete } from "../src/lib/state-history";
 
 /**
  * `ocx export` is a credential dump on purpose, so its guards are the feature:
@@ -71,6 +72,51 @@ describe("state history", () => {
 
   test("a missing directory is a no-op, never a throw", async () => {
     expect(await recordStateSnapshot("x", join(dir, "does-not-exist"))).toBe(false);
+  });
+
+  /**
+   * The undo guarantee. A post-change snapshot alone records only the state with
+   * the account already gone, so recovery would depend on some earlier commit
+   * happening to contain it — untrue for an account that predates this history,
+   * which is exactly the account a user is most likely to delete by mistake.
+   * The "before" commit is what makes the credential recoverable.
+   */
+  test("a deleted account is recoverable from the commit taken before the deletion", async () => {
+    // State that predates the history entirely: no snapshot has ever run.
+    writeFileSync(join(dir, "config.json"), '{"port":10100}\n');
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({
+      xai: { activeAccountId: "a1", accounts: [{ id: "a1", credential: { refreshToken: "keep-me-rt" } }] },
+    }) + "\n");
+
+    const before = await recordStateSnapshotBeforeDelete("before account removal: xai/a1", dir);
+    if (!before) return; // no git on this machine — feature is a documented no-op
+    // The deletion itself, then its own "after" snapshot.
+    writeFileSync(join(dir, "auth.json"), "{}\n");
+    expect(await recordStateSnapshot("account removed: xai/a1", dir)).toBe(true);
+
+    const log = listStateHistory(5, dir);
+    expect(log.length).toBe(2);
+    expect(log[0]).toContain("account removed: xai/a1");
+    expect(log[1]).toContain("before account removal: xai/a1");
+
+    // The actual recovery a user would perform, and the credential is really there.
+    const recovered = spawnSync("git", ["-C", dir, "show", "HEAD~1:auth.json"], { encoding: "utf8" });
+    expect(recovered.status).toBe(0);
+    expect(JSON.parse(recovered.stdout).xai.accounts[0].credential.refreshToken).toBe("keep-me-rt");
+    // And the deletion did land — the history is not masking the current state.
+    const current = spawnSync("git", ["-C", dir, "show", "HEAD:auth.json"], { encoding: "utf8" });
+    expect(JSON.parse(current.stdout)).toEqual({});
+  });
+
+  test("a deletion is never blocked by history: an exhausted budget still returns", async () => {
+    writeFileSync(join(dir, "config.json"), "{}\n");
+    // A zero budget cannot outrun even a local commit, so this exercises the
+    // give-up path. It must resolve false rather than throw or hang — the
+    // caller's deletion has to proceed either way.
+    expect(await recordStateSnapshotBeforeDelete("before x", dir, 0)).toBe(false);
+    // ...and the snapshot it started still serializes, so the index is not left racing.
+    await recordStateSnapshot("after x", dir);
+    expect(listStateHistory(5, dir).length).toBeGreaterThanOrEqual(1);
   });
 });
 

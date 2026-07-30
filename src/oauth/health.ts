@@ -1,5 +1,5 @@
 import { getCodexAccountHealthSnapshot, type CodexCooldownSource } from "../codex/routing";
-import { getAnthropicAccountHealthSnapshot } from "./anthropic-routing";
+import { getOAuthAccountHealthSnapshot } from "./provider-pool";
 import { isAccountNeedsReauth } from "../codex/account-runtime-state";
 import { getCodexAccountCredential, listCodexAccountIds } from "../codex/account-store";
 import { MAIN_CODEX_ACCOUNT_ID } from "../codex/main-account";
@@ -175,14 +175,15 @@ export function projectStoredOAuthAccountHealth(
   now = Date.now(),
   opts: { observeOnly?: boolean } = {},
 ): OAuthAccountHealth {
-  const anthropicSnap = provider === "anthropic"
-    ? getAnthropicAccountHealthSnapshot(account.id, now)
-    : null;
+  // The pool engine cools accounts for EVERY provider, so read its health per-provider.
+  // Reading through the Anthropic-only accessor left a cooled xai/kimi account rendering as
+  // healthy, giving the operator no clue why traffic had moved to another account.
+  const poolSnap = getOAuthAccountHealthSnapshot(provider, account.id, now);
   return projectOAuthAccountHealth({
     needsReauth: account.needsReauth === true,
     reauthReason: account.needsReauth === true ? "refresh_failed" : undefined,
-    cooldownUntilMs: anthropicSnap?.cooldownUntil,
-    cooldownReason: anthropicSnap?.cooldownSource === "retry-after" ? "rate_limit" : anthropicSnap ? "quota" : undefined,
+    cooldownUntilMs: poolSnap?.cooldownUntil,
+    cooldownReason: poolSnap?.cooldownSource === "retry-after" ? "rate_limit" : poolSnap ? "quota" : undefined,
     warningReason: detectOAuthWarning(provider, account, opts.observeOnly === true, now),
     now,
   });

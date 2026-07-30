@@ -1,9 +1,9 @@
 name: Auto release
 
 # Every commit on main that passes Cross-platform CI becomes an installable
-# GitHub pre-release: the Windows installer plus the dashboard bundle, tagged
+# GitHub release: the Windows installer plus the dashboard bundle, tagged
 # build-<run>. Gating on the CI run (workflow_run, not push) is the point —
-# a red commit never becomes a release, so "latest pre-release" is always a
+# a red commit never becomes a release, so "latest release" is always a
 # working version.
 #
 # These are GitHub releases only. npm publishing stays in release.yml behind
@@ -90,10 +90,9 @@ jobs:
           - **opencodex-setup.exe** — Windows desktop app (proxy + dashboard, tray, start at login)
           - **opencodex-dashboard.zip** — the built dashboard alone; serve it next to a running proxy
 
-          Installable snapshots, not npm releases — the npm package still ships through the audited Release workflow."
+          Installable releases, not npm packages — the npm package still ships through the audited Release workflow."
           gh release create "$tag" \
             --target "$SHA" \
-            --prerelease \
             --title "build ${{ github.run_number }} — v${version} @ ${SHA:0:9}" \
             --notes "$notes" \
             "$installer#opencodex-setup.exe" \
@@ -104,9 +103,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Only build-* prereleases are pruned; versioned releases are never touched.
-          gh release list --limit 100 --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease and (.tagName | startswith("build-"))) | .tagName' \
+          # Only build-* releases are pruned; versioned releases are never touched.
+          gh release list --limit 100 --json tagName \
+            --jq '.[] | select(.tagName | startswith("build-")) | .tagName' \
             | sort -t- -k2 -rn | tail -n +11 \
             | while read -r tag; do
                 echo "pruning $tag"

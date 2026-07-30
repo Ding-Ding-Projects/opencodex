@@ -1,3 +1,6 @@
+import { M3_EN, M3_OVERRIDES } from "./i18n/m3";
+import { detectInitial } from "./i18n/shared";
+
 let installed = false;
 /** Shared 401 refresh gate — concurrent waiters join one prompt / token resolution. */
 let promptInFlight: Promise<string | null> | null = null;
@@ -87,6 +90,16 @@ function withToken(input: RequestInfo | URL, init: RequestInit | undefined, toke
 }
 
 /**
+ * The 401 re-prompt is user-facing copy, so it lives in `i18n/m3.ts` with every other string.
+ * `api.ts` installs its fetch wrapper before React mounts, so it cannot use `useT()`; it resolves
+ * the key here with the same locale-override → English-fallback order `LanguageProvider` uses.
+ */
+function adminTokenPromptMessage(): string {
+  const key = "auth.adminTokenPrompt" as const;
+  return M3_OVERRIDES[detectInitial()]?.[key] ?? M3_EN[key];
+}
+
+/**
  * Resolve a token after a 401. Concurrent callers share one in-flight resolution so a dashboard
  * fan-out does not open one window.prompt per /api request (#647). Re-reads memoryToken before
  * prompting so waiters that wake after another request already stored a token do not re-prompt.
@@ -100,7 +113,7 @@ async function resolveTokenAfter401(failedToken: string | null): Promise<string 
     const current = readToken();
     if (current && current !== failedToken) return current;
 
-    const prompted = window.prompt("OpenCodex API token")?.trim() || null;
+    const prompted = window.prompt(adminTokenPromptMessage())?.trim() || null;
     if (prompted) {
       storeToken(prompted);
       return prompted;

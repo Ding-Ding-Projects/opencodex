@@ -1,7 +1,7 @@
 /** Nav order, icon and label key for every page. Mirrors `PAGES` in the design prototype. */
 
 import {
-  IconActivity, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconGlobe, IconGrid,
+  IconActivity, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconDevices, IconGlobe, IconGrid,
   IconHardDrive, IconHistory, IconKey, IconList, IconPalette, IconRefresh, IconRegex, IconServer,
   IconShuffle, IconSparkle, IconTranslate,
 } from "../icons";
@@ -35,6 +35,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   changelog: IconChangelog,
   history: IconHistory,
   notifications: IconBell,
+  network: IconDevices,
 };
 
 const TKEYS: Record<Page, TKey> = {
@@ -57,13 +58,14 @@ const TKEYS: Record<Page, TKey> = {
   changelog: "nav.changelog",
   history: "nav.history",
   notifications: "nav.notifications",
+  network: "nav.network",
 };
 
 /** Nav order is deliberate: dashboard first, then auth, then the rest of the product. */
 const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
-  "appearance", "language", "regex", "changelog", "history", "notifications",
+  "appearance", "language", "regex", "changelog", "history", "notifications", "network",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({

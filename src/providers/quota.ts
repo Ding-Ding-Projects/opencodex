@@ -292,7 +292,16 @@ export interface ProviderAccountQuota {
   unavailable?: true;
 }
 
-/** Providers whose per-account quota can be probed. Extend as other OAuth APIs are covered. */
+/**
+ * Providers whose per-account quota can be probed. Extend as other OAuth APIs are covered.
+ *
+ * This also gates OAuth pool ROUTING, not just the dashboard bars: the pool's `quota`
+ * strategy ranks accounts by {@link getCachedProviderAccountQuota}, which stays empty for
+ * every provider absent from this list, so it degrades to round-robin there
+ * (oauth/provider-pool.ts effectiveOAuthPoolStrategy). Adding a provider here therefore
+ * switches its default pool behaviour from round-robin to real lowest-usage picks — land
+ * the probe path in the same change, or the pool will rank every account as unknown.
+ */
 export function supportsPerAccountQuota(provider: string): boolean {
   return provider === "anthropic";
 }

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describeHost, handleHostCommand, hasDataPlaneCredential } from "../src/cli/host";
+import { verifyAdminTokenAgainstProxy } from "../src/lib/host-control";
 import { getDefaultConfig } from "../src/config";
 import type { OcxConfig } from "../src/types";
 
@@ -151,5 +152,141 @@ describe("ocx host", () => {
   test("an unknown subcommand is a usage error, not a silent no-op", async () => {
     expect(await handleHostCommand(["expose"])).toBe(2);
     expect(errored.join("\n")).toContain("unknown command");
+  });
+
+  /**
+   * `ocx host token` reads the admin secret from THIS process's environment and
+   * config dir, which is not necessarily where the running proxy got its own.
+   * These pin that a token the live proxy rejects is never printed as if it
+   * worked — the bare token still goes to stdout (scripts capture it) and every
+   * word of doubt goes to stderr.
+   */
+  const FAKE_ADMIN_TOKEN = `ocx_admin_${"A".repeat(43)}`;
+
+  function writeAdminTokenFile(): void {
+    writeFileSync(join(home, "admin-api-token"), `${FAKE_ADMIN_TOKEN}\n`, "utf8");
+  }
+
+  test("token warns loudly on stderr when the running proxy rejects it, and still prints it on stdout", async () => {
+    writeAdminTokenFile();
+    const code = await handleHostCommand(["token"], {
+      verifyAdminToken: async () => ({ state: "rejected", endpoint: "http://127.0.0.1:10100/api/host" }),
+    });
+    expect(code).toBe(0);
+    // stdout stays the bare token: `TOKEN=$(ocx host token)` must keep working.
+    expect(logged.join("\n").trim()).toBe(FAKE_ADMIN_TOKEN);
+    const warning = errored.join("\n");
+    expect(warning).toContain("REJECTED this token");
+    expect(warning).toContain("http://127.0.0.1:10100/api/host");
+    expect(warning).toContain("OPENCODEX_ADMIN_AUTH_TOKEN");
+  });
+
+  test("token says it could not verify rather than implying the proxy accepted it", async () => {
+    writeAdminTokenFile();
+    expect(await handleHostCommand(["token"], {
+      verifyAdminToken: async () => ({ state: "unverified", reason: "no proxy is running on this machine" }),
+    })).toBe(0);
+    expect(logged.join("\n").trim()).toBe(FAKE_ADMIN_TOKEN);
+    const notice = errored.join("\n");
+    expect(notice).toContain("Not verified");
+    expect(notice).toContain("no proxy is running on this machine");
+  });
+
+  test("token --json reports verified=null for unverified and false for rejected", async () => {
+    writeAdminTokenFile();
+    await handleHostCommand(["token", "--json"], {
+      verifyAdminToken: async () => ({ state: "unverified", reason: "no proxy is running on this machine" }),
+    });
+    const unverified = JSON.parse(logged.join("\n"));
+    expect(unverified.adminToken).toBe(FAKE_ADMIN_TOKEN);
+    expect(unverified.verified).toBeNull();
+    expect(unverified.verification).toBe("unverified");
+
+    logged = [];
+    await handleHostCommand(["token", "--json"], {
+      verifyAdminToken: async () => ({ state: "rejected", endpoint: "http://127.0.0.1:10100/api/host" }),
+    });
+    const rejected = JSON.parse(logged.join("\n"));
+    expect(rejected.verified).toBe(false);
+    expect(rejected.verification).toBe("rejected");
+  });
+
+  test("token accepted by the running proxy prints no rejection warning", async () => {
+    writeAdminTokenFile();
+    expect(await handleHostCommand(["token"], {
+      verifyAdminToken: async () => ({ state: "accepted", endpoint: "http://127.0.0.1:10100/api/host" }),
+    })).toBe(0);
+    expect(logged.join("\n").trim()).toBe(FAKE_ADMIN_TOKEN);
+    expect(errored.join("\n")).not.toContain("REJECTED");
+    expect(errored.join("\n")).not.toContain("Not verified");
+  });
+
+  test("token with no stored secret fails instead of printing an empty line", async () => {
+    expect(await handleHostCommand(["token"])).toBe(1);
+    expect(errored.join("\n")).toContain("no admin token exists yet");
+    expect(logged.join("\n").trim()).toBe("");
+  });
+});
+
+/**
+ * The verdict itself: only a literal 401 from the live proxy counts as a
+ * rejection. Treating a timeout or a 500 as "wrong token" would send users
+ * hunting a credential problem they do not have.
+ */
+describe("verifyAdminTokenAgainstProxy", () => {
+  const proxy = async () => ({ port: 10100, hostname: "0.0.0.0" });
+
+  test("401 from the running proxy is a rejection, and names the endpoint probed", async () => {
+    const result = await verifyAdminTokenAgainstProxy("ocx_admin_stale", {
+      findProxyFn: proxy,
+      fetchFn: (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch,
+    });
+    expect(result.state).toBe("rejected");
+    // A wildcard bind is probed on loopback, not on "0.0.0.0".
+    expect(result).toMatchObject({ endpoint: "http://127.0.0.1:10100/api/host" });
+  });
+
+  test("200 means the running proxy accepts it, and the token rides the management header", async () => {
+    let seen: string | null = null;
+    const result = await verifyAdminTokenAgainstProxy("ocx_admin_good", {
+      findProxyFn: proxy,
+      fetchFn: (async (_url: string, init: RequestInit) => {
+        seen = new Headers(init.headers).get("x-opencodex-api-key");
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    expect(result.state).toBe("accepted");
+    expect(seen).toBe("ocx_admin_good");
+  });
+
+  test("404 still proves the credential passed the auth gate (older build, no /api/host)", async () => {
+    const result = await verifyAdminTokenAgainstProxy("ocx_admin_good", {
+      findProxyFn: proxy,
+      fetchFn: (async () => new Response("{}", { status: 404 })) as unknown as typeof fetch,
+    });
+    expect(result.state).toBe("accepted");
+  });
+
+  test("no running proxy, a transport failure, and a 5xx are unverified — never a rejection", async () => {
+    const none = await verifyAdminTokenAgainstProxy("t", { findProxyFn: async () => null });
+    expect(none).toEqual({ state: "unverified", reason: "no proxy is running on this machine" });
+
+    const threw = await verifyAdminTokenAgainstProxy("t", {
+      findProxyFn: proxy,
+      fetchFn: (async () => { throw new Error("ECONNREFUSED"); }) as unknown as typeof fetch,
+    });
+    expect(threw.state).toBe("unverified");
+
+    const unavailable = await verifyAdminTokenAgainstProxy("t", {
+      findProxyFn: proxy,
+      fetchFn: (async () => new Response("{}", { status: 503 })) as unknown as typeof fetch,
+    });
+    expect(unavailable).toMatchObject({ state: "unverified" });
+
+    const broken = await verifyAdminTokenAgainstProxy("t", {
+      findProxyFn: proxy,
+      fetchFn: (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch,
+    });
+    expect(broken).toMatchObject({ state: "unverified" });
   });
 });
