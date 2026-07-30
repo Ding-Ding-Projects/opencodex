@@ -20,6 +20,8 @@ import Changelog from "./pages/Changelog";
 import VersionHistory from "./pages/VersionHistory";
 import NotificationsPage from "./pages/Notifications";
 import Network from "./pages/Network";
+import SettingsPage from "./pages/Settings";
+import OnboardingWizard from "./shell/OnboardingWizard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useT } from "./i18n/shared";
 import { installApiAuthFetch } from "./api";
@@ -84,6 +86,7 @@ function renderPage(page: Page): ReactNode {
     case "history": return <VersionHistory />;
     case "notifications": return <NotificationsPage />;
     case "network": return <Network apiBase={API_BASE} />;
+    case "settings": return <SettingsPage apiBase={API_BASE} />;
   }
 }
 
@@ -247,6 +250,8 @@ export default function App() {
 
       <SnackbarHost />
       <DimSumCard version={displayedVersion} />
+      {/* Decides for itself whether this is a first run; renders nothing otherwise. */}
+      <OnboardingWizard apiBase={API_BASE} />
     </div>
   );
 }

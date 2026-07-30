@@ -22,6 +22,10 @@ export const IconSwapVert = (p: P) => (<svg {...S(p)}><path d="M7 4v16M7 4 4 7.5
 export const IconDataUsage = (p: P) => (<svg {...S(p)}><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9h-9Z"/></svg>);
 export const IconCoin = (p: P) => (<svg {...S(p)}><circle cx="12" cy="12" r="9"/><path d="M14.5 9.2a3 3 0 0 0-5 2.2c0 2.6 5 1.4 5 3.6a3 3 0 0 1-5 1.9M12 7.2v9.6"/></svg>);
 export const IconGauge = (p: P) => (<svg {...S(p)}><path d="M3.5 17a9 9 0 1 1 17 0"/><path d="M12 17l4-5"/></svg>);
+/* Sliders, for the settings surface. Not a cog: a cog reads as "one thing's options",
+   and this page is every adjustable value in the app at once. */
+export const IconSliders = (p: P) => (<svg {...S(p)}><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>);
+
 /* Sweep, for "preview and clean". Deliberately not a bin or an X — cleanup archives
    and prunes on a policy, and a delete glyph would promise something more final. */
 export const IconSweep = (p: P) => (<svg {...S(p)}><path d="M19 4 12 11"/><path d="M14.5 8.5 8 15l-3-3 6.5-6.5Z"/><path d="M8 15c-1.5 1.5-1.5 3-3 4.5h6.5c1.5-1.5 1.5-3 0-4.5"/></svg>);

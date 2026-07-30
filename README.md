@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="opencodex" width="720">
+</p>
+
 <h3 align="center">make codex open!</h3>
 <p align="center"><b>Universal provider proxy for OpenAI Codex, Claude Code, Claude Desktop &amp; Grok Build</b><br>
 Two commands, and every one of them runs any LLM you point it at.</p>
@@ -5,8 +9,9 @@ Two commands, and every one of them runs any LLM you point it at.</p>
 <p align="center">
   <a href="https://x.com/claudeebum"><img src="https://img.shields.io/badge/%40claudeebum-000000?logo=x&logoColor=white" alt="Follow @claudeebum on X"></a>
   <a href="https://www.npmjs.com/package/@bitkyc08/opencodex"><img src="https://img.shields.io/npm/v/@bitkyc08/opencodex?color=cb3837&label=npm&logo=npm" alt="npm version"></a>
-  <a href="https://github.com/lidge-jun/opencodex/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@bitkyc08/opencodex?color=blue" alt="license"></a>
+  <a href="https://github.com/Ding-Ding-Projects/opencodex/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@bitkyc08/opencodex?color=blue" alt="license"></a>
   <img src="https://img.shields.io/node/v/@bitkyc08/opencodex?logo=node.js&label=node" alt="node version">
+  <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
 </p>
 
 ```bash
@@ -21,57 +26,16 @@ ocx start        # proxy + dashboard on localhost:10100
   · <a href="https://ding-ding-projects.github.io/opencodex/reference/configuration/">Configuration</a>
 </p>
 
-<table align="center">
-  <tr>
-    <td width="50%" align="center">
-      <img src="assets/claude-code-models.gif" alt="Claude Code running a routed model through opencodex — the status bar shows gpt-5.6-luna-medium as the active model" width="410"><br>
-      <sub><b>Claude Code, running any model.</b><br>The picker is stock Claude Code. The brain behind it isn't.</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="assets/demo.gif" alt="opencodex demo — running a task in the Codex app on a routed non-OpenAI model" width="410"><br>
-      <sub><b>Codex, running any model.</b><br>Pick a provider and go — same workflow, different brain.</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="assets/claude-desktop-subagent.gif" alt="Claude Desktop answering as Claude Opus 4.8, then dispatching a GPT-5.6 Sol subagent through opencodex" width="410"><br>
-      <sub><b>Claude Desktop, running any model.</b><br>Opus answers, then hands the task to a GPT-5.6 Sol subagent.</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="assets/grok-build-subagent.gif" alt="Grok Build running GPT-5.6 Sol through opencodex and calling a Kimi K3 subagent" width="410"><br>
-      <sub><b>Grok Build, running any model.</b><br>Sol drives the session and calls a Kimi K3 subagent.</sub>
-    </td>
-  </tr>
-</table>
+---
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="readme/README.ko.md">한국어</a> · <a href="readme/README.zh-CN.md">简体中文</a> · <a href="readme/README.ru.md">Русский</a> · <a href="readme/README.ja.md">日本語</a> · 📖 <a href="https://opencodex.me/"><b>Full documentation →</b></a>
-</p>
+## What it is
 
-<p align="center">
-  <img src="assets/architecture.png" alt="opencodex architecture — Codex CLI routes through opencodex proxy to any LLM provider" width="820">
-</p>
+Codex, Claude Code, Claude Desktop and Grok Build each talk to one vendor. opencodex is a local
+proxy that sits in front of them and translates their API into whatever you actually want to run —
+Claude, Gemini, Grok, DeepSeek, Kimi, GLM, Ollama, OpenRouter, Azure, or OpenAI itself. Streaming,
+tool calls, reasoning tokens and images all work, in both directions.
 
-Use Claude, Gemini, Grok, GLM, DeepSeek, Kimi, Qwen, Ollama, or any other LLM with Codex — and with **Claude Code**, **Claude Desktop**, and **Grok Build** — without waiting for anyone to add support.
-
-Subagents cross the boundary too: Claude Desktop can answer as Opus and hand the next step to a
-GPT-5.6 Sol subagent, and Grok Build can drive a session on Sol while calling Kimi K3 — each side
-keeping its own native UI.
-
-opencodex is a lightweight local proxy that translates Codex's Responses API into whatever your provider speaks. Streaming, tool calls, reasoning tokens, images — everything works, in both directions.
-
-It can also manage a **ChatGPT account pool** for Codex auth. Add multiple ChatGPT / Codex accounts,
-refresh their 5h / weekly / 30d quota in the dashboard, and let new sessions auto-route to the
-lowest-usage healthy account. Existing Codex threads stay pinned to the account that started them,
-so long SSH, tmux, or mobile-connected sessions do not jump accounts mid-conversation.
-
-The same auto account switching is available for **every OAuth provider**, not just Codex and
-Claude: sticky session affinity, 429 cooldown with failover to a healthy account, and a choice of
-quota / round-robin / fill-first rotation. Turn it on per provider in the dashboard (each provider's
-accounts panel has its own pool controls) — it is **off by default everywhere**, and experimental,
-because a provider may treat automated multi-account rotation as abuse. One honest caveat the
-dashboard also states: the `quota` strategy needs per-account usage numbers, so for a provider that
-does not report them it rotates round-robin instead of picking the least-used account.
+Your clients keep their own UI. Only the brain behind them changes.
 
 ```
 Codex CLI / App / SDK ──/v1/responses──▶ opencodex ──▶ Any provider
@@ -80,640 +44,256 @@ Codex CLI / App / SDK ──/v1/responses──▶ opencodex ──▶ Any provi
               OpenRouter · Azure · DeepSeek · GLM · …and OpenAI itself
 ```
 
-```mermaid
-flowchart LR
-  codex[Codex session<br/>CLI, App, SSH, mobile] --> proxy[opencodex]
-  proxy --> existing{Existing thread?}
-  existing -->|yes| pinned[Keep the same<br/>ChatGPT account]
-  existing -->|new session| quota[Refresh quota<br/>5h, weekly, 30d]
-  quota --> pick[Pick lowest-usage<br/>healthy account]
-  pick --> upstream[ChatGPT / Codex backend]
-  pinned --> upstream
-  upstream --> outcomes[Quota / auth outcome]
-  outcomes -->|429| cooldown[Cooldown + failover]
-  outcomes -->|401 / 403| reauth[Mark reauth needed]
-  cooldown --> quota
-```
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/claude-code-models.gif" alt="Claude Code with its model picker showing gpt-5.6-luna-medium active, routed through opencodex" width="410"><br>
+      <sub><b>Claude Code, running any model.</b><br>The picker is stock Claude Code. The brain behind it isn't.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/demo.gif" alt="The Codex app running a task on a routed non-OpenAI model through opencodex" width="410"><br>
+      <sub><b>Codex, running any model.</b><br>Pick a provider and go — same workflow, different brain.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/claude-desktop-subagent.gif" alt="Claude Desktop answering as Claude Opus 4.8, then dispatching a GPT-5.6 Sol subagent through opencodex" width="410"><br>
+      <sub><b>Claude Desktop, dispatching subagents.</b><br>Opus answers, and hands work to another vendor's model.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/grok-build-subagent.gif" alt="Grok Build delegating a task to a subagent routed through opencodex" width="410"><br>
+      <sub><b>Grok Build, delegating.</b><br>Same proxy, a fourth client.</sub>
+    </td>
+  </tr>
+</table>
 
-## Contents
+---
 
-Long reference sections are collapsed so this page stays navigable — click one to open it.
+## The dashboard
 
-| | |
-| --- | --- |
-| [Supported platforms](#supported-platforms) · [Quick start](#quick-start) | what it runs on, and getting it running |
-| [Highlights](#highlights) · [Providers &amp; adapters](#providers--adapters) | what it does, and what it talks to |
-| [Add a provider](#add-a-provider) · [Model routing](#model-routing) | pointing it at a model |
-| [OpenAI provider account modes](#openai-provider-account-modes) | account pooling and quota routing |
-| [CLI](#cli) · [Configuration](#configuration) | every command and every setting |
-| [Backups, history and restore](#backups-export-everything-and-account-change-history) | undoing a mistake |
-| [Docker](#docker) · [Using opencodex from other devices](#using-opencodex-from-other-devices) | running it elsewhere |
-| [Documentation](#documentation) · [Development](#development) | the site, and working on it |
-
-## Supported platforms
-
-| OS | Status | Service manager |
-|---|---|---|
-| macOS (arm64 / x64) | Fully supported | launchd |
-| Linux (x64 / arm64) | Fully supported | systemd (user unit) |
-| Windows (x64) | Fully supported | Task Scheduler (hidden) / opt-in native service (`--native`, WinSW) |
-
-Requires [Node](https://nodejs.org) 18+. The Bun runtime is bundled automatically on `npm install` — no separate Bun install needed. All three platforms work natively (no WSL needed on Windows).
-
-## Quick start
-
-```bash
-# Install (bundles the Bun runtime automatically — only Node 18+ required)
-# Prefer a user-owned Node (nvm/fnm) — avoid `sudo npm install -g …`
-npm install -g @bitkyc08/opencodex
-
-# Interactive setup (writes config, injects into Codex, and offers autostart shim install)
-ocx init
-
-# Start the proxy
-ocx start
-
-# If you skipped it during init, install the on-demand autostart shim later
-ocx codex-shim install
-
-# Use Codex normally — it now routes through opencodex
-codex "Write a hello world in Rust"
-```
-
-<details>
-<summary><b>"bundled Bun runtime is missing" / npm blocked Bun install scripts?</b></summary>
-
-<br/>
-
-opencodex bundles the Bun runtime as a dependency and runs it via a Node
-launcher, so you do **not** need to install Bun yourself. If you see a
-"bundled Bun runtime is missing" error, the install skipped lifecycle scripts
-(including npm blocking bun's postinstall under `allowScripts`) or optional
-dependencies. Reinstall without those flags, allowing bun's install script:
-
-```bash
-npm install -g --allow-scripts=bun @bitkyc08/opencodex   # no --ignore-scripts, no --omit=optional
-
-# if the original install used sudo, keep using sudo:
-sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
-```
-
-npm's own warning suggests an abbreviated command without the package name —
-that would reinstall the current directory, so always pass
-`@bitkyc08/opencodex` explicitly.
-
-If you installed with `sudo` into a root-owned prefix, the sudo reinstall above
-unblocks that prefix — but prefer migrating to a user-owned Node (nvm, fnm, or
-a user npm prefix) when you can.
-
-</details>
-
-<details>
-<summary><b>Add a provider</b></summary>
-
-## Add a provider
-
-The fastest way to add a provider is through the web dashboard:
-
-```bash
-ocx gui
-```
-
-This opens the dashboard at `http://localhost:10100`. From there:
-
-1. Click **"Add Provider"**
-2. Pick from **40+ built-in providers** — or enter a custom OpenAI-compatible endpoint
-3. Paste your API key (or log in via OAuth for Anthropic, xAI, and Kimi)
-4. Models are **auto-discovered** from the provider's `/v1/models` endpoint
-
-Your new provider is ready to use immediately. No restart needed.
-
-You can also add providers through `ocx init` (interactive CLI) or by editing `~/.opencodex/config.json` directly.
-
-</details>
-
-<details>
-<summary><b>Model routing</b></summary>
-
-## Model routing
-
-Target any configured provider and model using the `provider/model` syntax:
-
-Providers whose own model ids contain `/` (zenmux, openrouter, nvidia, …) are exposed to
-Codex with inner slashes aliased to `-` (e.g. `zenmux/moonshotai-kimi-k3-free`); the
-proxy transparently routes them back to the native id, and the raw full-slash form keeps
-working too.
-
-```bash
-# Use Claude Opus through Anthropic
-codex -m "anthropic/claude-opus-5" "Explain this stack trace"
-
-# Use Gemini through Google
-codex -m "google/gemini-3-pro" "Write unit tests for auth.ts"
-
-# Use GLM through Ollama Cloud
-codex -m "ollama-cloud/glm-5.2" "Write a SQL migration"
-
-# Use a local model through Ollama
-codex -m "ollama/llama3" "Refactor this function"
-```
-
-When you omit the `provider/` prefix, opencodex routes to the default provider — or auto-matches based on the model name pattern (e.g., `claude-*` routes to Anthropic, `gpt-*` routes to OpenAI).
-
-Combo aliases are exact public model ids and may be bare names or use a custom namespace. If a
-combo alias exactly matches a configured non-OpenAI `provider/model` selector, the combo
-intentionally takes precedence in routing, `/v1/models`, and the Codex catalog. Renaming that
-alias or deleting the combo immediately restores the physical provider selector.
-
-Routed models also appear in the **Codex App** model picker with per-model reasoning effort controls:
-
-Current Codex builds can expose `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` reasoning
-controls when a model advertises them. opencodex keeps `xhigh` and `max` distinct unless a provider
-config explicitly maps one to the other. `ultra` mirrors upstream Codex semantics: it selects
-maximum reasoning plus proactive multi-agent delegation in the client, and is converted to `max`
-before any request reaches a provider. Routed models advertise it only when a provider config opts
-in via `reasoningEfforts`.
-
-GPT-5.6 Sol/Terra/Luna are seeded as rollout-ready catalog entries for the OpenAI API key and
-OpenRouter presets (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`; OpenRouter uses
-`openai/...`). They remain preview-gated by upstream availability; opencodex only prepares the
-routing and catalog metadata for accounts and providers that can serve them.
+`ocx start` serves a Material 3 dashboard on `localhost:10100`. The Windows desktop app is the same
+build in a frameless shell — the app bar *is* the window chrome, minimise/maximise/close included.
 
 <p align="center">
-  <img src="assets/codex-app-picker.png" alt="Codex App showing opencodex routed models with reasoning effort picker" width="480">
+  <img src="assets/shots/dashboard.png" alt="opencodex dashboard showing the Launch card with Codex CLI and Claude Code detected as installed, live status tiles, and the Material 3 app bar with custom window controls" width="900">
 </p>
 
-</details>
+Everything there is live: the cost meter in the app bar, proxy status, provider counts, and the
+**Launch** card — which detects what is actually installed and offers a download link for what is
+not, rather than a button that fails when you press it.
 
-<details>
-<summary><b>OpenAI provider account modes</b></summary>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/providers.png" alt="Providers screen with a searchable rail, a Needs attention group, and counts for ready, needs-attention and disabled providers" width="440"><br>
+      <sub><b>Providers.</b> Grouped by state, searchable, regex opt-in.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/codex-auth.png" alt="Codex Auth screen showing the ChatGPT account pool and its rate-limit windows" width="440"><br>
+      <sub><b>Accounts.</b> The pool, its quota windows, and what routes next.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/models.png" alt="Models screen listing routable models grouped by provider" width="440"><br>
+      <sub><b>Models.</b> Everything routable, grouped by provider.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/usage.png" alt="Usage screen with stat tiles for requests, tokens and estimated cost" width="440"><br>
+      <sub><b>Usage.</b> Tokens, requests and estimated cost over time.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/logs.png" alt="Logs and debug screen with a searchable request log" width="440"><br>
+      <sub><b>Logs &amp; debug.</b> Every request, searchable by id, model or provider.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/storage.png" alt="Storage screen showing session storage buckets and cleanup controls" width="440"><br>
+      <sub><b>Storage.</b> What sessions cost on disk, and how to reclaim it.</sub>
+    </td>
+  </tr>
+</table>
 
-## OpenAI provider account modes
+<p align="center">
+  <img src="assets/shots/regex-builder.png" alt="The dashboard with eight open tabs and an overflow counter in the tab strip" width="900"><br>
+  <sub><b>Browser-style tabs.</b> Open as many screens as you like; the strip counts what overflows.</sub>
+</p>
 
-| Provider ID | Route | Credential | Behavior |
-|---|---|---|---|
-| `openai` | Codex login | Main + added Codex accounts | Pool by default; optional Direct mode |
-| `openai-apikey` | OpenAI API | API key/key pool | No Codex account routing |
-
-- Pool includes the main Codex login and added accounts, with affinity, quota, cooldown, and failover.
-- Direct short-circuits pool state and uses only the current caller/main-login bearer.
-- Fresh installs and configs with no persisted mode default to Pool. Change the mode on the
-  dashboard's **Providers** page; model ids stay bare in either mode.
-- The legacy public provider id `chatgpt` is hidden after migration. The original config is retained
-  once at `~/.opencodex/config.json.pre-openai-tiers-v2.bak`; restore it with
-  `cp ~/.opencodex/config.json.pre-openai-tiers-v2.bak ~/.opencodex/config.json`.
-- Current configs use `openaiProviderTierVersion: 2`. Earlier v1 three-provider configs migrate
-  automatically into the single `openai` row.
-- The API tier includes Pro virtual models (`gpt-5.6-sol-pro`, `gpt-5.6-terra-pro`,
-  `gpt-5.6-luna-pro`). At the wire level, each rewrites to its base model with
-  `reasoning.mode: "pro"`.
-- Its catalog is fixed to eight ids: `gpt-5.5`, `gpt-5.6`, Sol/Terra/Luna, and the three
-  corresponding Pro virtual ids. There is no generic `gpt-5.6-pro` alias.
-- Compact requests keep the selected tier but send the base model without a reasoning object.
-- Official API metadata is 1,050,000 context tokens and 922,000 max input tokens.
-
-Use `gpt-5.6-sol` for the configured `openai` account mode and
-`openai-apikey/gpt-5.6-sol` for the API key. Codex-login and API credentials never fall through to
-one another.
-
-### Pool account behavior
-
-Open **Codex Auth** in the dashboard to add accounts and choose which account should handle the
-next Codex session. opencodex keeps these behaviors:
-
-- **Existing sessions keep affinity.** A thread id is bound to the selected account and reused on
-  later turns, so a long request or a mobile/SSH-attached session keeps using the same account.
-  Pausing an account clears its affinity map: in-flight requests keep captured credentials, but
-  subsequent turns are re-routed and cannot reuse the paused account.
-- **New sessions can auto-route.** When auto-switch is enabled, opencodex compares the hottest known
-  quota window across 5h, weekly, and 30d usage, then picks a lower-usage eligible account for new
-  sessions once the active account crosses the threshold.
-- **Quota lookup is built in.** The dashboard can refresh all account quotas in one click, and the
-  request log labels pool traffic with non-PII account ordinals. **Pause exhausted** refreshes
-  eligible accounts that have credentials and pauses only those whose relevant quota window is
-  freshly confirmed at 100%; accounts without credentials and unknown or failed refreshes stay unchanged.
-- **Failures fail closed.** Token failures mark reauthentication instead of falling back to another
-  credential silently; 429 quota responses put the account in cooldown and can fail over future work
-  to another eligible pool account.
-
-</details>
+---
 
 ## Highlights
 
-- **Use any LLM with Codex.** 5 protocol adapters cover Anthropic Messages, Google Gemini, Azure, OpenAI Responses passthrough, and every OpenAI-compatible Chat Completions endpoint — that's 40+ providers out of the box.
-- **Use any LLM with Claude Code too.** The same daemon serves the Anthropic Messages API (`/v1/messages` + `count_tokens`): `ocx claude` launches Claude Code fully wired, and routed models appear in its native `/model` picker via gateway model discovery (`claude-ocx-<provider>--<model>` aliases, Claude Code 2.1.129+). Configure slots and model maps on the dashboard's Claude page. The Claude page also carries a separate Desktop profile with Opus, Fable, Sonnet, and Haiku families, accessible drag/keyboard controls, and JSON import/export.
-- **Use any LLM with GitHub Copilot App too.** Point Copilot's Model providers at `http://127.0.0.1:10100/v1` — OpenCodex serves OpenAI-compatible `GET /v1/models` and `POST /v1/chat/completions` so routed models sync into the app. See [docs/github-copilot-app.md](docs/github-copilot-app.md).
-- **Pool ChatGPT accounts safely.** Keep existing Codex threads on one account while new sessions
-  can auto-pick a lower-usage account from the pool, with quota refresh and non-PII request labels.
-- **Log in once, skip the API key.** OAuth support for xAI, Anthropic, and Kimi means you can authenticate with your existing account. Tokens auto-refresh. Or forward your `codex login`, paste an API key, or use `${ENV_VAR}` references — your call.
-- **Works everywhere Codex does.** Injects into Codex CLI, TUI, App, and SDK automatically. Routed models show up in Codex's model picker just like native ones.
-- **History-safe injection.** On local installs the proxy points Codex's own built-in `openai` provider at itself via a single `openai_base_url` line — new threads keep their native provider tag, so ongoing chat history is never remapped and an unclean shutdown can't hide it. (Threads re-tagged by older versions are migrated back once on the first start; remote/LAN binds use a dedicated provider entry instead, since they need an API-key header.)
-- **Delegate to the right model.** Feature up to five routed or native models in Codex's subagent picker from the dashboard or config — route complex tasks to a reasoning model, fast tasks to a cheap one. On the v2 multi-agent surface (GPT-5.6 Sol/Terra) the proxy injects compact, schema-agnostic delegation guidance: an eligible preferred sub-agent model and effort (`injectionModel` / `injectionEffort`), the configured intersection of Codex's picker-visible, v2-compatible, priority-sorted first five with available effort ladders, and the `fork_turns` rules that let cross-model `spawn_agent` calls apply their overrides. Known limitation: when a native parent spawns a routed child, the task body can currently arrive backend-encrypted and be lost ([#92](https://github.com/lidge-jun/opencodex/issues/92)) — use the v1 surface for reliable cross-provider delegation. Want your own wording? Set `injectionPrompt` with `{{model}}` / `{{effort}}` / `{{roster}}` placeholders.
-- **Prepare for preview-gated OpenAI rollouts.** GPT-5.6 Sol/Terra/Luna entries preserve the upstream effort ladders. Direct/Multi use the 372k Codex contract; OpenAI API and OpenRouter use 1.05M metadata when upstream access is available.
-- **Give any model superpowers.** Non-OpenAI models get real web search and image understanding via a `gpt-5.4-mini` sidecar over your ChatGPT login.
-- **Generate images natively.** Codex's standalone `image_gen` tool uses `POST /v1/images/generations` for generation and `POST /v1/images/edits` for edits; it is separate from the hosted Responses `image_generation` tool.
-- **See what's happening.** The web dashboard shows providers, OAuth status, model selection, and a live request log, including cached/cache-write token counts when upstream reports them — no more guessing why a request failed.
-- **Runs in the background.** Install as a system service (launchd / systemd / Task Scheduler) and forget about it. On macOS/Linux the proxy starts at login; on Windows the default Task Scheduler backend starts at logon (windowless), or use `ocx service install --native` for a real Windows service that starts at boot.
-- **Clean exit, zero residue.** `ocx stop` (or the dashboard's Stop button) shuts down the proxy, stops the background service if one is installed, and restores Codex to its original configuration. Plain `codex` works exactly as it did before — no leftover config, no orphaned processes.
+<details open>
+<summary><b>Routing and providers</b></summary>
 
-<details>
-<summary><b>Providers & adapters</b></summary>
+<br/>
 
-## Providers & adapters
-
-| Provider | Adapter | Auth |
-|---|---|---|
-| OpenAI (ChatGPT login) | `openai-responses` | forward (no key) |
-| OpenAI (API key) | `openai-responses` | key |
-| Umans AI Coding Plan | `anthropic` | key |
-| Anthropic Claude | `anthropic` | oauth / key |
-| xAI Grok | `openai-chat` | oauth / key |
-| Kimi (Moonshot) | `openai-chat` | oauth / key |
-| Google Gemini | `google` | key |
-| Azure OpenAI | `azure-openai` | key |
-| Cursor (experimental) | `cursor` | dashboard/local config; live transport; unsafe native local exec is opt-in |
-| Ollama Cloud + 17-provider catalog | `openai-chat` | key |
-| Ollama / vLLM / LM Studio (local) | `openai-chat` | key (usually blank) |
-| Any OpenAI-compatible endpoint | `openai-chat` | key |
-
-Plus DeepSeek, Groq, OpenRouter, Together, Fireworks, Cerebras, Mistral, Hugging Face, NVIDIA NIM, MiniMax, Qwen Cloud, Tencent Cloud Coding Plan, SiliconFlow, and more. See the full list with `ocx init` or in the [provider docs](https://opencodex.me/reference/configuration/).
-
-Cursor support is a staged experimental bridge: it appears in `ocx init` and the dashboard Add
-Provider picker as a local config with Cursor's static public model catalog. Live
-HTTP/2 transport is enabled when a Cursor access token is configured. Cursor server-driven native
-read/write/delete/ls/grep/shell/fetch execution is disabled by default because it bypasses Codex's
-approval and sandbox path. Request text such as a Codex `danger-full-access` sandbox marker never
-authorizes native local exec; set `nativeLocalExec: "on"` only for trusted local experiments where
-every data-plane caller is trusted. `nativeLocalExec: "codex-sandbox"` is accepted for backwards
-compatibility but fails closed like `off`; legacy `unsafeAllowNativeLocalExec: true` remains an
-explicit operator opt-in.
-MCP, screen recording, and computer-use are exposed through executor hooks; when no local executor
-is configured, opencodex returns typed no-executor results instead of policy-blocking the request.
-Cursor OAuth and live model discovery are enabled for the experimental Cursor adapter.
+- **Any provider behind any client.** One proxy translates Codex's Responses API, Claude Code's
+  Messages API and Grok Build into whatever the upstream speaks.
+- **Combos** — virtual `combo/<id>` models that fail over or round-robin across several real targets.
+- **Per-model wire overrides**, context caps, and a live model catalogue discovered from each
+  provider rather than hardcoded.
+- **Subagents.** Delegate work to a different model than the one answering.
 
 </details>
 
 <details>
-<summary><b>CLI</b></summary>
+<summary><b>Account pooling — for every OAuth provider</b></summary>
 
-## CLI
+<br/>
 
-```bash
-ocx init                       # interactive setup
-ocx start [--port 10100]       # start the proxy; falls back to a free port if busy
-ocx stop                       # stop + restore native Codex
-ocx restore                    # restore without stopping (alias: ocx eject)
-ocx uninstall                  # remove service/shim/config and restore native Codex
-ocx ensure                     # start if needed + refresh Codex config/cache
-ocx sync                       # refresh models + re-inject into Codex
-ocx codex-shim install         # run `ocx ensure` whenever `codex` is launched
-ocx status                     # is the proxy running?
-ocx login <provider>          # OAuth login (xai, anthropic, kimi, cursor, ...)
-ocx logout <provider>          # remove a stored login
-ocx account <list|current|use> # list/switch accounts & API-key pools (masked; also refresh/auto-switch/remove/add-key)
-ocx gui                        # open the web dashboard
-ocx claude [args...]           # launch Claude Code wired to the proxy (model discovery on)
-ocx claude desktop             # save and apply the Claude Desktop four-family profile
-ocx service [install|start|stop|status|uninstall]   # install/update/start background service
-ocx update [--tag preview]     # update opencodex; preview installs stay on @preview
-```
+Add several accounts to a provider and let opencodex spread work across them: sticky session
+affinity so a long conversation never jumps accounts mid-thread, 429 cooldown with failover to a
+healthy account, and a choice of quota / round-robin / fill-first rotation.
 
-### Claude Desktop profile
+Originally Anthropic-only. The engine is provider-agnostic now, so xai, kimi, kiro, Copilot and
+Antigravity get the same behaviour, configurable per provider in the dashboard.
 
-The dashboard's **Claude → Desktop** view sorts routes into four families: Opus, Fable, Sonnet,
-and Haiku. New routes start in Opus, and the first Opus route is the initial application default.
-Every non-empty family has one default. You can drag a route, or use its visible move control with
-a mouse, touch, or keyboard. **Save and apply** writes the profile to Claude Desktop. JSON export
-and import are available for backup or moving the same setup to another machine.
+**Off by default, everywhere, and experimental.** A provider may treat automated multi-account
+rotation as abuse, and accounts inside one organisation usually share a quota — pooling those buys
+nothing. One caveat the dashboard states rather than hides: the `quota` strategy needs per-account
+usage numbers, so for a provider that does not report them it rotates round-robin instead of picking
+the least-used account.
 
-If Claude Desktop's footer picker does not change the model for an already-running 3P
-conversation, use `/model <id>` in that conversation. OpenCodex routes the model id carried by
-each request; **Logs → requestedModel** shows which id Desktop actually sent.
+</details>
 
-```bash
-ocx claude desktop [apply]                         # save and apply the current profile
-ocx claude desktop show [--json]                   # inspect routes, families, and defaults
-ocx claude desktop move <route> <family> [--default]
-ocx claude desktop default <family> <route|none>
-ocx claude desktop export <path|->                 # use - to write JSON to stdout
-ocx claude desktop import <path> [--apply]         # validate, then save; optionally apply
-```
+<details>
+<summary><b>Nothing you delete is gone</b></summary>
 
-Families are `opus`, `fable`, `sonnet`, and `haiku`. Non-Anthropic routes receive stable
-Claude-shaped aliases with a synthetic 2026 date slot; that date is an internal slot, not the
-model's release date. Real Anthropic Claude routes keep their real model ids. Use `none` only for
-an empty family; a non-empty family always needs a default. The older apply forms
-`ocx claude desktop --static`, `--hybrid`, and `--discovery-only` remain supported.
+<br/>
 
-### Autostart: service vs shim
+Every account, key and credential lives in a **local-only git repository** inside your config
+directory, and every destructive action commits the state *before* it destroys it.
 
-opencodex has two ways to auto-start the proxy:
-
-| | `ocx service` / `ocx service install` | `ocx codex-shim install` |
-|---|---|---|
-| **How** | OS service manager (launchd / systemd / schtasks) | Wraps script launchers for `codex`; real `codex.exe` is left untouched |
-| **When** | Always running after login | On-demand — runs `ocx ensure` when `codex` is launched |
-| **Restart** | Auto-restarts on crash | Starts once per `codex` invocation |
-| **Codex updates** | Unaffected | A completed stable launcher replacement is repaired by the next ordinary `ocx` command |
-| **Remove** | `ocx service uninstall` | `ocx codex-shim uninstall` |
-
-Use the **service** for always-on proxy (recommended for development machines). Use the **shim** for
-lightweight, on-demand proxy startup without a background daemon. Shim autostart is enabled by default
-and can be disabled from the GUI dashboard. If the configured proxy port is already busy, `ocx start`
-automatically picks another free local port and updates Codex to use it.
-
-If an external Codex update overwrites an installed shim, the next ordinary `ocx` command backs up
-the stable new launcher and restores the shim. A launcher that is still changing is left untouched
-and retried later. Repair failures warn without failing the requested command; use
-`ocx codex-shim install` as the manual fallback. Set `codexShimAutoRestore` to `false`, or set
-`OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0` for a process-level opt-out.
-
-### Uninstall
-
-Before removing the npm package, clean up local state:
-
-```bash
-ocx uninstall
-npm uninstall -g @bitkyc08/opencodex
-```
-
-`ocx uninstall` stops the proxy, removes any installed service, removes the Codex shim, restores
-native Codex config/catalog/history, and deletes `~/.opencodex`.
-
-### Using opencodex from other devices
-
-By default the proxy binds to `127.0.0.1` and is reachable only from the machine it runs on.
-`ocx host` exposes it to your local network so a laptop, phone, or another workstation can use
-the same proxy and open the dashboard:
-
-```bash
-ocx host enable --new-key --yes
-```
-
-That binds to all interfaces, generates an API key, prints it once, and lists the URLs other
-devices should open. Check the current state or turn it back off with:
-
-```bash
-ocx host status
-ocx host disable
-```
-
-A restart (`ocx stop && ocx start`) applies the change.
-
-**What this does and does not do.** It binds to your local network. It does not open a firewall
-port, forward anything, or expose the proxy to the internet. Only use it on a network you trust:
-anyone who can reach the port and holds the key can drive the proxy and every provider account
-behind it.
-
-Exposing the proxy makes a credential mandatory rather than optional — every `/api/*` and
-data-plane request must carry one, and the server refuses to start on a non-loopback bind
-without it. `ocx host enable` refuses too, so you cannot write a config that fails at startup.
-
-Two credentials exist, on purpose. The **data-plane key** (`--new-key`) is what API clients
-(Codex, Claude Code) send with model requests. The remote **dashboard and `/api/*`** ask for the
-**admin token** instead — print it with `ocx host token`. The browser holds it in memory only, so
-every device and every reload asks again: a browser reached over the network is never handed a
-session automatically, and the token is never written somewhere a page script could read it back.
-
-### Docker
-
-```bash
-docker build -t opencodex .
-docker run -d --name opencodex -p 10100:10100   -e OPENCODEX_API_AUTH_TOKEN=<data-plane-secret>   -e OPENCODEX_ADMIN_AUTH_TOKEN=<admin-secret>   -v opencodex-data:/data opencodex
-```
-
-A container binds `0.0.0.0`, and a non-loopback bind requires a data-plane credential — the
-entrypoint refuses to start without `OPENCODEX_API_AUTH_TOKEN` (same rule as `ocx host`).
-`OPENCODEX_ADMIN_AUTH_TOKEN` is what the dashboard and `/api/*` authenticate with from other
-machines. Omit it and the proxy generates one on first start, into the file `admin-api-token`
-inside the container's config directory — which is the `/data` volume, not `~/.opencodex` on the
-host. `ocx host token` run on the host machine reads the *host's* config directory and will not
-find it, so read it out of the container instead:
-
-```bash
-docker exec opencodex cat /data/admin-api-token
-```
-
-All durable state (config, accounts, account-change history) lives on the volume.
-
-### Backups: export everything, and account-change history
-
-```bash
-ocx export backup.json --yes
-```
-
-Writes one JSON bundle (mode 600) holding the full config, every Codex account
-with its OAuth credentials, and the main auth record. **It contains plaintext
-secrets** — the command refuses without `--yes`, prints an unmissable warning on
-stderr (even when piping with `-`), and nothing is masked because a masked
-backup cannot be restored. Store it encrypted; delete it when done.
-
-Separately, every account add/remove commits a snapshot of the state files into
-a **local-only git repository inside `~/.opencodex`** (created automatically; on
-Windows, git itself is auto-installed via winget if missing). Its history
-contains secrets and must never be pushed or synced — the repo is created with
-no remote and a README saying exactly that.
+That ordering is the whole point. Recording only the state *after* a delete leaves recovery to
+whatever an earlier commit happened to contain — which is never true for an account older than the
+history itself, i.e. exactly the account you delete by mistake.
 
 ```bash
 ocx export --history                                   # list snapshots
 git -C ~/.opencodex show <hash>:codex-accounts.json    # recover a deleted account
 ```
 
-**Every deletion is recorded twice — before and after.** A post-change snapshot
-alone would only record the state with the account already gone, leaving recovery
-to whatever an earlier commit happened to contain; that is not true for an account
-older than this history, which is exactly the account most likely to be deleted by
-mistake. So every path that can destroy a credential — Codex accounts, OAuth
-accounts, provider logout, provider API keys, data-access keys — commits the
-current state first and waits for it, then deletes. The wait is bounded and never
-installs anything, because a bookkeeping repo must not be able to block a deletion.
+Settings changes are snapshotted too, on the config save path, so "every modification is
+recoverable" is a property of the code rather than something each feature must remember. The repo is
+created with **no remote**, nothing ever pushes it, and a generated `README-HISTORY.md` inside it
+says so — it holds real secrets, on your machine only.
 
-#### One-click restore
-
-The dashboard's **Remote access & backup** screen lists those snapshots with a
-**Restore** button on each. A restore:
-
-1. finishes the requests still in flight (it never rewrites `auth.json` under a
-   request that is reading it) and, if any outlive the hand-off window, reports the
-   live count and asks rather than cutting sessions off;
-2. commits the current state first, so the restore is **itself** undoable;
-3. writes the state files back from the chosen snapshot;
-4. commits the restore as a **new** revision — the log is append-only and nothing
-   is ever rewound, so an undo can be undone, and that undo undone in turn;
-5. restarts the proxy, because the live in-memory config predates the restore and
-   its next save would write straight over the restored files.
-
-A tracked file that exists today but is absent from the chosen snapshot is **kept,
-not deleted**, and the result says so. Deleting it would be the more literal
-reading of "restore", and it would also silently destroy accounts added since.
-
-#### Exit app
-
-The desktop app's Material 3 app bar has an explicit **Exit** next to the window
-controls. Closing the window hides to the tray and leaves the proxy serving, as it
-always did; Exit is the graceful teardown — it finishes in-flight requests, warns
-with the real count if any are still running, hands Codex and Grok back to their
-own configs, stops the proxy, and only then closes the app.
+**One-click restore** in the dashboard finishes in-flight requests first, commits the current state
+so the restore is itself undoable, writes the files back, records the restore as a *new* revision,
+and restarts. Append-only throughout: an undo can be undone, and that undo undone.
 
 </details>
 
 <details>
-<summary><b>Configuration</b></summary>
+<summary><b>Runs where you want it</b></summary>
 
-## Configuration
+<br/>
 
-Config lives at `~/.opencodex/config.json`. If the file cannot be parsed (e.g. truncated or
-manually broken JSON), opencodex backs it up to `config.json.invalid-<timestamp>`, prints a warning,
-and falls back to defaults — so your original file is never silently lost.
+- **Windows desktop app** — frameless, Material 3, with a graceful **Exit** that finishes in-flight
+  requests and warns you with a live count rather than cutting sessions off.
+- **Docker** — `docker build -t opencodex .`, with a supervising entrypoint so the dashboard's
+  restart works inside a container instead of ending it.
+- **Remote access** — `ocx host enable` exposes the proxy to your LAN behind a required credential,
+  with a separate admin token for the dashboard and `/api/*`.
+- **Headless parity** — anything the dashboard can do, the CLI can do. A test enforces it.
 
-Here's a typical multi-provider setup:
+</details>
 
-```json
-{
-  "port": 10100,
-  "defaultProvider": "anthropic",
-  "providers": {
-    "anthropic": {
-      "adapter": "anthropic",
-      "baseUrl": "https://api.anthropic.com",
-      "authMode": "oauth",
-      "defaultModel": "claude-sonnet-4-6"
-    },
-    "ollama-cloud": {
-      "adapter": "openai-chat",
-      "baseUrl": "https://ollama.com/v1",
-      "apiKey": "${OLLAMA_API_KEY}",
-      "defaultModel": "glm-5.2"
-    }
-  }
-}
-```
+<details>
+<summary><b>Made to be lived in</b></summary>
 
-Provider entries can also annotate routed catalog metadata and output defaults. Use `contextWindow`
-for a provider-wide Codex-visible context cap, `modelContextWindows` for model-specific caps, and
-`modelInputModalities` for model-specific catalog input hints such as `["text"]` or
-`["text", "image"]`. For Responses models that reject Codex reasoning-summary delivery fields, set
-`modelSupportsReasoningSummaries.<model-id>` to `false`; this updates the catalog and strips stale
-summary-delivery fields at the adapter boundary. For OpenAI-compatible chat providers whose upstream default response budget is
-too small, set `defaultMaxOutputTokens` or per-model `modelMaxOutputTokens`; explicit
-`max_output_tokens` from the client still wins, and unset configs still omit `max_tokens`. Context
-values cap live `/models` metadata; they never raise a smaller live context window. The bundled
-GPT-5.6 Sol/Terra/Luna fallback metadata uses a 1,050,000-token context window for OpenAI API key
-and OpenRouter catalog entries; it does not bypass upstream preview access. See the configuration
-reference for the full field list.
+<br/>
 
-> **GLM-5.2 1M context via Z.AI:** through the `openai-chat` adapter, both `glm-5.2`
-> and `glm-5.2[1m]` work — opencodex strips the trailing `[1m]` suffix before
-> sending the request, since OpenAI-compatible endpoints reject the bracketed id
-> (Z.AI 400 code 1211). The `[1m]` suffix is a Claude-Code / Anthropic-endpoint
-> convention; to use it natively, point the `anthropic` adapter at Z.AI's coding
-> base (`https://api.z.ai/api/coding/paas/v4`). Set the 1M context window via the
-> model catalog (`modelContextWindows`), not the model name.
+- Material 3 throughout, with a seed colour that retints the whole palette, plus density and
+  typography controls and per-element overrides.
+- **Bundled fonts** — no CDN, no network font fetch, ever.
+- Search everywhere: plain text by default, a `.*` regex opt-in, and a real regex builder behind it.
+- English, playful Hong Kong Cantonese, and a bilingual mode.
+- Non-blocking notifications with a history, so nothing important is a modal you dismissed by reflex.
 
-Local models work too. Point opencodex at any OpenAI-compatible server running on your machine:
+</details>
 
-```json
-{
-  "port": 10100,
-  "defaultProvider": "ollama",
-  "providers": {
-    "ollama": {
-      "adapter": "openai-chat",
-      "baseUrl": "http://localhost:11434/v1",
-      "authMode": "key",
-      "apiKey": "",
-      "defaultModel": "llama3"
-    },
-    "vllm": {
-      "adapter": "openai-chat",
-      "baseUrl": "http://localhost:8000/v1",
-      "authMode": "key",
-      "apiKey": "",
-      "defaultModel": "Qwen/Qwen3-32B"
-    }
-  }
-}
-```
+---
 
-WebSocket transport is off by default. Set `"websockets": true` only if you want Codex to advertise and use the Responses WebSocket path instead of HTTP/SSE.
-
-### Remote access
-
-By default opencodex binds to `127.0.0.1` (loopback) and requires no extra authentication.
-If you set `"hostname": "0.0.0.0"` to expose the proxy on the LAN, opencodex requires a bearer token
-to protect both the management API (`/api/*`) and the data-plane (`/v1/responses`,
-`/v1/images/generations`, and `/v1/images/edits`):
+## Quick start
 
 ```bash
-export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
+npm install -g @bitkyc08/opencodex
 ocx start
 ```
 
-The proxy refuses to start without this variable when binding beyond loopback. If you install a
-background service for LAN access, export the same variable before `ocx service install` so the
-service manager receives it.
-Clients (scripts, remote machines) must include the token in every request:
+Open `http://localhost:10100`, add a provider, and point your client at the proxy. `ocx codex`,
+`ocx claude` and `ocx grok` launch each client already wired to it.
 
-```
-x-opencodex-api-key: your-secret-token
-```
+<details>
+<summary><b>"bundled Bun runtime is missing" / npm blocked Bun's install scripts?</b></summary>
 
-The token is compared in constant time to prevent timing attacks.
+<br/>
 
-opencodex automatically remaps Codex resume history so old OpenAI chats and opencodex-created project
-threads stay visible in Codex App while the proxy is active. opencodex records the original provider/source metadata in
-`~/.opencodex/codex-history-backup.json`. `ocx stop` / `ocx restore` restores backed-up OpenAI rows
-to OpenAI, and ejects any remaining opencodex user threads to OpenAI as well so native Codex does not
-try to resume a thread whose provider no longer exists in `config.toml`.
-
-If you tested an older development build where `syncResumeHistory` already remapped history before
-backup support existed, you can also run the explicit recovery command:
+opencodex bundles the Bun runtime as a dependency and runs it through a Node launcher. If your npm
+config blocks install scripts, that binary is never unpacked. Re-install allowing them:
 
 ```bash
-ocx recover-history --legacy-openai
+npm install -g @bitkyc08/opencodex --foreground-scripts
 ```
 
-See the **[Configuration reference](https://opencodex.me/reference/configuration/)** for every field.
-
 </details>
+
+---
+
+## CLI
+
+| Command | What it does |
+| --- | --- |
+| `ocx start` / `ocx stop` | Run or stop the proxy and dashboard |
+| `ocx provider <sub>` | Add, edit, test and remove providers |
+| `ocx account <sub>` | Accounts, pools and quotas |
+| `ocx models <sub>` | Live and custom models, visibility, context caps |
+| `ocx combo <sub>` | Failover and round-robin routing |
+| `ocx launch [target]` | Open an agent CLI or desktop app |
+| `ocx host <sub>` | Expose the proxy to other devices |
+| `ocx export <path> --yes` | Full state backup — **contains secrets** |
+| `ocx claude` / `ocx codex` / `ocx grok` | Launch a client wired to the proxy |
+
+Full reference: **[CLI documentation](https://ding-ding-projects.github.io/opencodex/reference/cli/)**.
+
+---
 
 ## Documentation
 
-The public docs — install, providers, routing, sidecars, Codex integration, Codex App model picker, and CLI/config reference — are built from [`docs-site/`](./docs-site) and published to **[opencodex.me](https://opencodex.me/)**.
+Everything is on the docs site: **<https://ding-ding-projects.github.io/opencodex/>**
 
-Maintainer source-of-truth notes live under [`structure/`](./structure). Historical investigations remain under [`docs/`](./docs).
-Contributor setup lives in [`CONTRIBUTING.md`](./CONTRIBUTING.md), and security reporting guidance
-lives in [`SECURITY.md`](./SECURITY.md).
+- [Getting started](https://ding-ding-projects.github.io/opencodex/getting-started/)
+- [Providers](https://ding-ding-projects.github.io/opencodex/guides/providers/)
+- [Claude Code](https://ding-ding-projects.github.io/opencodex/guides/claude-code/)
+- [Docker](https://ding-ding-projects.github.io/opencodex/guides/docker/)
+- [Configuration reference](https://ding-ding-projects.github.io/opencodex/reference/configuration/)
+- [Architecture](https://ding-ding-projects.github.io/opencodex/reference/architecture/)
 
-<details>
-<summary><b>Development</b></summary>
+In the repository: [`ROADMAP.md`](./ROADMAP.md) for what is done and what is missing,
+[`HANDOFF.md`](./HANDOFF.md) for work in flight, and [`AGENTS.md`](./AGENTS.md) for the conventions
+this codebase is built to.
+
+---
 
 ## Development
 
-Source development requires the `bun` CLI on your `PATH`. This is separate from the published npm
-package's bundled Bun runtime, which is used only by installed `ocx` commands.
-
 ```bash
-git clone https://github.com/lidge-jun/opencodex.git
-cd opencodex
 bun install
-bun run dev:proxy    # start the proxy API in dev mode
-bun run dev:gui      # start the dashboard dev server in another terminal
-bun x tsc --noEmit   # typecheck
+cd gui && bun install && cd ..
+
+bun run dev          # proxy with the dashboard
+bun run typecheck    # both trees
+bun run test         # full suite
+cd gui && bun run lint
 ```
 
-`bun run dev` remains an alias for `bun run dev:proxy` for compatibility. In a source checkout,
-the proxy API exposes `/healthz`, `/v1/responses`, `POST /v1/images/generations`,
-`POST /v1/images/edits`, and `/api/*`; `GET /` serves the packaged dashboard only after
-`bun run build:gui` has produced `gui/dist`. While hacking on the dashboard, run the frontend separately:
+Bun is required — the proxy is Bun-native and the test runner is `bun test`. The GUI has its own
+dependency tree; installing only one of the two leaves the suite erroring on missing modules.
 
-```bash
-bun run dev:gui
-```
-
-See **[Contributing](./CONTRIBUTING.md)**.
-
-</details>
+---
 
 <details>
 <summary><b>Shared agent instructions (sanitized mirror)</b></summary>
@@ -982,9 +562,18 @@ These are durable user-level defaults. A current explicit request and higher-pri
 
 ## Disclaimer
 
-opencodex is an independent, community-maintained project and is **not affiliated with or endorsed by OpenAI, Anthropic, or any other provider**.
+opencodex is an independent, community-maintained project and is **not affiliated with or endorsed
+by OpenAI, Anthropic, xAI, Google, or any other provider**. It writes a provider table and a model
+catalogue and proxies requests; it does not patch any client binary.
 
-Some providers — notably Anthropic (Claude) — may suspend or restrict accounts that route API traffic through third-party proxies. **Use at your own risk (UAYOR).** Before connecting a provider, review its Terms of Service to confirm that proxy-based access is permitted. The opencodex maintainers are not responsible for any account actions taken by upstream providers.
+Some providers — notably Anthropic (Claude) — may suspend or restrict accounts that route API
+traffic through third-party proxies. **Use at your own risk (UAYOR).** Before connecting a provider,
+review its Terms of Service to confirm that proxy-based access is permitted. The opencodex
+maintainers are not responsible for any account actions taken by upstream providers.
+
+Account pooling spreads load across accounts you already have. **No rotation strategy protects you
+against a provider's terms of service** — subscription OAuth is especially sensitive, every pool is
+off by default, and the dashboard warns before you enable one.
 
 ## License
 

@@ -1235,6 +1235,37 @@ export function saveConfig(config: OcxConfig): void {
   }
   const configPath = getConfigPath();
   atomicWriteFile(configPath, JSON.stringify(config, null, 2) + "\n");
+  noteConfigWritten();
+}
+
+/**
+ * Every settings change lands in the local history, not just account add/remove.
+ *
+ * Hooked here rather than at each call site on purpose: there are dozens of routes
+ * and CLI commands that end in a config write, and "every modification is
+ * recoverable" is a promise you cannot keep by remembering to call something at
+ * each one. Anything that writes config.json is a deliberate change by definition —
+ * the proxy does not rewrite it on a timer, and token refreshes go to auth.json and
+ * codex-accounts.json instead.
+ *
+ * Debounced, because a single user action can save more than once (a route that
+ * mutates then reconciles), and because git refuses empty commits anyway — the
+ * debounce keeps that from becoming a burst of no-op spawns rather than one commit.
+ * Fire-and-forget and best-effort: a history that cannot be written must never fail
+ * the setting the user actually asked for.
+ */
+let configSnapshotTimer: ReturnType<typeof setTimeout> | undefined;
+function noteConfigWritten(): void {
+  if (process.env.OCX_DISABLE_STATE_HISTORY === "1") return;
+  if (configSnapshotTimer) clearTimeout(configSnapshotTimer);
+  configSnapshotTimer = setTimeout(() => {
+    configSnapshotTimer = undefined;
+    void import("./lib/state-history")
+      .then(m => m.recordStateSnapshot("settings changed"))
+      .catch(() => { /* history is best-effort by contract */ });
+  }, 1_500);
+  // Never hold the process open for a bookkeeping commit.
+  configSnapshotTimer.unref?.();
 }
 
 export function websocketsEnabled(config: Pick<OcxConfig, "websockets">): boolean {
