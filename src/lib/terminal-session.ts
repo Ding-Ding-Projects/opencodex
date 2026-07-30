@@ -93,6 +93,24 @@ export const MAX_INPUT_BYTES = 8 * 1024;
 
 const sessions = new Map<string, Session>();
 let seqId = 0;
+let shutdownHookInstalled = false;
+
+/**
+ * Ask the server lifecycle to kill our children on the way down.
+ *
+ * A shell sits waiting for input forever, so terminal children are not turns
+ * and will never drain — without this, a graceful exit leaves orphaned
+ * processes holding the user's home directory open. Imported lazily and
+ * registered on first session so the cost lands only on a process that
+ * actually opened a terminal.
+ */
+function ensureShutdownHook(): void {
+  if (shutdownHookInstalled) return;
+  shutdownHookInstalled = true;
+  void import("../server/lifecycle.js")
+    .then(({ registerShutdownTask }) => registerShutdownTask(killAllSessions))
+    .catch(() => { shutdownHookInstalled = false; });
+}
 
 function view(session: Session): TerminalSessionView {
   const { child: _child, chunks: _chunks, seq: _seq, ...rest } = session;
@@ -146,6 +164,10 @@ export function createSession(presetId: string): CreateResult {
     command = resolved.path;
     args = preset.args;
   }
+
+  // Registered on first use, not at import: a process that never opened a
+  // terminal should not pay for this module during shutdown.
+  ensureShutdownHook();
 
   const session: Session = {
     id: `term-${++seqId}`,

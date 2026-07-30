@@ -29,7 +29,12 @@ export default defineConfig({
   trailingSlash: "ignore",
   // lightningcss merges animation-timeline into the `animation` shorthand,
   // which Chrome cannot parse — the scroll-driven animations die silently.
-  vite: { build: { cssMinify: "esbuild" } },
+  vite: {
+    build: { cssMinify: "esbuild" },
+    // The appearance engine is imported from `gui/`, one level above this
+    // package, so the dev server has to be allowed to serve it.
+    server: { fs: { allow: [".", ".."] } },
+  },
   integrations: [
     starlight({
       title: "opencodex",
@@ -45,7 +50,12 @@ export default defineConfig({
       customCss: [
         "@fontsource-variable/geist",
         "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css",
+        // Order matters. Tokens first, then the retired liquid-glass sheet for
+        // the layout rules still worth keeping, then the M3 skin LAST so it
+        // wins every colour conflict with what it is replacing.
+        "./src/styles/m3-tokens.css",
         "./src/styles/custom.css",
+        "./src/styles/m3.css",
       ],
       components: {
         Header: "./src/components/Header.astro",

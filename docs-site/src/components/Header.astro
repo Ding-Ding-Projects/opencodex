@@ -7,6 +7,7 @@ import { Icon } from '@astrojs/starlight/components';
 import Search from '@astrojs/starlight/components/Search.astro';
 import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
 import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
+import Appearance from './Appearance.astro';
 
 const { locale } = Astro.locals.starlightRoute;
 // Splash pages have no Starlight sidebar/hamburger, so the pill carries its own
@@ -132,6 +133,7 @@ const contributing: NavLink = {
 		<div class="sl-flex social-icons">
 			<SocialIcons />
 		</div>
+		<Appearance />
 		<div class="sl-flex header-preferences">
 			{/*
 				[Decision Log]

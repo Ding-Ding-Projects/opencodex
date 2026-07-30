@@ -17,6 +17,27 @@ let _serverRef: ReturnType<typeof Bun.serve> | undefined;
 
 export function setServerRef(server: ReturnType<typeof Bun.serve> | undefined): void { _serverRef = server; }
 export function setDraining(value: boolean): void { draining = value; }
+/**
+ * Things to stop on the way down that are not turns and will never drain.
+ *
+ * Registered by the subsystem that owns them rather than imported here. An
+ * earlier version reached the other way — shutdown `await import`ed the
+ * terminal module to kill its children — and that quietly pulled the launcher's
+ * PATH probing into the shutdown path of every exit, including the ones that
+ * refuse to exit at all. On a cold Windows runner it turned a 512ms request
+ * into 7.5 seconds. A subsystem that was never used must cost nothing to shut
+ * down, which means shutdown cannot be the one naming it.
+ */
+const shutdownTasks = new Set<() => void>();
+
+export function registerShutdownTask(task: () => void): void { shutdownTasks.add(task); }
+
+function runShutdownTasks(): void {
+  for (const task of shutdownTasks) {
+    try { task(); } catch { /* one bad cleanup must not strand the rest */ }
+  }
+}
+
 export function registerTurn(ac: AbortController): void { activeTurns.add(ac); }
 export function unregisterTurn(ac: AbortController): void { activeTurns.delete(ac); }
 export function isDraining(): boolean { return draining; }
@@ -97,15 +118,7 @@ export async function drainAndShutdown(
 ): Promise<void> {
   const s = server ?? _serverRef;
   draining = true;
-
-  // Embedded terminal children are not turns and will not drain — a shell sits
-  // there forever waiting for input. Kill them first so shutdown does not leave
-  // orphaned processes holding the user's home directory open.
-  try {
-    const { killAllSessions } = await import("../lib/terminal-session");
-    killAllSessions();
-  } catch { /* module never loaded: no sessions to kill */ }
-
+  runShutdownTasks();
   const deadline = Date.now() + timeoutMs;
   while (activeTurns.size > 0 && Date.now() < deadline) {
     await Bun.sleep(100);

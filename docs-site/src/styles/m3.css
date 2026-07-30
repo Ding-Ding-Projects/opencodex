@@ -1,0 +1,524 @@
+/* ============================================================================
+   Material 3 skin for the docs site.
+
+   The previous skin was "liquid glass": a monochrome grammar with translucent
+   chrome, authored independently of the dashboard. Two design systems for one
+   product is one too many, so this file retires it — every colour below
+   resolves to an `--m3-*` role from `m3-tokens.css`, which is generated from
+   the dashboard's own token engine.
+
+   The strategy is deliberately *not* to restyle every Starlight component by
+   hand. Starlight already draws its whole interface from a small set of
+   `--sl-*` variables; remapping those onto M3 roles retints the entire site —
+   sidebar, search modal, code blocks, admonitions, tables, pagination — in one
+   place, and keeps working when Starlight adds a component. Only the pieces
+   whose *shape* is wrong for M3 (radius, elevation, the pill controls) are
+   restyled below.
+
+   Functional data colour is exempt from M3 by the design rules — the frontier
+   board series keep their own palette because there they are data, not chrome.
+   ============================================================================ */
+
+/* ---- Starlight's variables, expressed as M3 roles ------------------------ */
+
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  /* Starlight names greys by lightness: gray-1 is nearest the text colour and
+     gray-6 nearest the background. Mapping them onto the surface-container
+     ladder keeps that ordering in both themes without a second set of values. */
+  --sl-color-white: var(--m3-on-surface);
+  --sl-color-gray-1: var(--m3-on-surface);
+  --sl-color-gray-2: var(--m3-on-surface-variant);
+  --sl-color-gray-3: var(--m3-on-surface-variant);
+  --sl-color-gray-4: var(--m3-outline);
+  --sl-color-gray-5: var(--m3-outline-variant);
+  --sl-color-gray-6: var(--m3-surface-container-high);
+  --sl-color-gray-7: var(--m3-surface-container);
+  --sl-color-black: var(--m3-surface);
+
+  --sl-color-accent-low: var(--m3-primary-container);
+  --sl-color-accent: var(--m3-primary);
+  --sl-color-accent-high: var(--m3-primary);
+  --sl-color-text-accent: var(--m3-primary);
+  --sl-color-text-invert: var(--m3-on-primary);
+
+  --sl-color-bg: var(--m3-surface);
+  --sl-color-bg-nav: var(--m3-surface-container);
+  --sl-color-bg-sidebar: var(--m3-surface-container);
+  --sl-color-bg-inline-code: var(--m3-surface-container-high);
+  --sl-color-inline-code-text: var(--m3-on-surface);
+  --sl-color-hairline-light: var(--m3-outline-variant);
+  --sl-color-hairline: var(--m3-outline-variant);
+  --sl-color-hairline-shade: var(--m3-outline-variant);
+  --sl-color-backdrop-overlay: color-mix(in oklab, var(--m3-scrim) 45%, transparent);
+
+  /* Semantic asides, mapped onto the roles the dashboard already uses for the
+     same meanings, so a warning is the same colour in both surfaces. */
+  --sl-color-blue: var(--m3-primary);
+  --sl-color-blue-low: var(--m3-primary-container);
+  --sl-color-blue-high: var(--m3-on-primary-container);
+  --sl-color-green: var(--m3-ok);
+  --sl-color-green-low: var(--m3-ok-container);
+  --sl-color-green-high: var(--m3-on-ok-container);
+  --sl-color-orange: var(--m3-warn);
+  --sl-color-orange-low: var(--m3-warn-container);
+  --sl-color-orange-high: var(--m3-on-warn-container);
+  --sl-color-red: var(--m3-error);
+  --sl-color-red-low: var(--m3-error-container);
+  --sl-color-red-high: var(--m3-on-error-container);
+  --sl-color-purple: var(--m3-tertiary);
+  --sl-color-purple-low: var(--m3-tertiary-container);
+  --sl-color-purple-high: var(--m3-on-tertiary-container);
+
+  --sl-font: var(--m3-font, "Roboto Flex", "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif);
+  --sl-font-mono: var(--m3-font-mono, ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace);
+
+  --sl-shadow-sm: var(--e1);
+  --sl-shadow-md: var(--e2);
+  --sl-shadow-lg: var(--e3);
+}
+
+/* Starlight sets `color-scheme` from its own theme switch; keep native form
+   controls and scrollbars in step with the M3 surface underneath them. */
+:root[data-theme='dark'] { color-scheme: dark; }
+:root[data-theme='light'] { color-scheme: light; }
+
+/* ---- shape and elevation ------------------------------------------------ */
+
+body {
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font-family: var(--sl-font);
+  font-weight: var(--m3-fw, 400);
+}
+
+/* M3 wants generous, consistent corners. Starlight's defaults are squarer. */
+.card,
+.starlight-aside,
+figure.frame,
+details,
+table {
+  border-radius: var(--r-l, 16px);
+}
+pre.astro-code,
+.expressive-code .frame pre {
+  border-radius: var(--r-m, 12px);
+}
+:where(.sl-markdown-content) :where(code:not(:where(pre *))) {
+  border-radius: var(--r-s, 8px);
+  padding: 0.15em 0.4em;
+}
+
+.starlight-aside {
+  border-inline-start-width: 4px;
+  padding: var(--sp-3, 16px);
+}
+
+/* Search and nav controls read as M3 pills rather than square boxes. */
+site-search button[data-open-modal],
+.sl-flex button[aria-expanded],
+starlight-theme-select select,
+starlight-lang-select select {
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--m3-outline-variant);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-variant);
+}
+
+dialog[aria-label] {
+  border-radius: var(--r-l, 16px);
+  border: 1px solid var(--m3-outline-variant);
+  background: var(--m3-surface-container);
+  box-shadow: var(--e3);
+}
+
+/* The header is a Material top app bar: a container surface with one hairline,
+   no translucency and no blur. */
+header.header {
+  background: var(--m3-surface-container);
+  border-bottom: 1px solid var(--m3-outline-variant);
+  backdrop-filter: none;
+}
+
+/* Links carry the primary role, and get a real focus ring — the previous skin
+   relied on colour alone, which fails a keyboard user on a bright display. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--m3-primary);
+  text-underline-offset: 0.2em;
+}
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+  border-radius: var(--r-s, 8px);
+}
+
+/* Sidebar entries take the M3 active pill instead of a left rule. */
+.sidebar-content a[aria-current='page'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  border-radius: var(--r-pill, 999px);
+  font-weight: 600;
+}
+.sidebar-content a:hover {
+  background: var(--m3-surface-container-highest);
+  border-radius: var(--r-pill, 999px);
+}
+
+/* ---- the ambient wash, retired ------------------------------------------
+
+   The sheet this replaces painted a fixed tri-radial wash in hardcoded RGB —
+   a cool blue, a green and a warm sand. Those values predate the seed picker
+   and cannot follow it, so choosing a purple accent used to leave a blue-green
+   glow behind it. Re-derived from the live roles instead, so the background
+   tracks whatever seed the visitor picked; a flat surface underneath keeps it
+   honest when `color-mix` is unavailable.
+   ------------------------------------------------------------------------- */
+
+html { background-color: var(--m3-surface); }
+
+/* The theme-qualified selectors are not redundant: the sheet being replaced
+   sets this on `:root[data-theme='light'] body::before`, which outspecifies a
+   bare `body::before` no matter which file loads last. Matching its shape is
+   what actually retires the old wash. */
+:root body::before,
+:root[data-theme='light'] body::before,
+:root[data-theme='dark'] body::before {
+  background:
+    radial-gradient(42% 38% at 12% 6%, color-mix(in oklab, var(--m3-primary) 16%, transparent), transparent 70%),
+    radial-gradient(46% 42% at 88% 18%, color-mix(in oklab, var(--m3-tertiary) 13%, transparent), transparent 70%),
+    radial-gradient(40% 36% at 70% 92%, color-mix(in oklab, var(--m3-secondary) 11%, transparent), transparent 72%);
+}
+
+/* Starlight's chrome was glass; M3 surfaces are opaque containers. */
+header.header,
+.sidebar-pane,
+.right-sidebar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.sidebar-pane { background: var(--m3-surface-container); }
+
+/* ---- appearance panel --------------------------------------------------- */
+
+.m3-appearance { position: relative; display: flex; align-items: center; }
+
+.m3-appearance__toggle {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-pill, 999px);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-appearance__toggle[aria-expanded='true'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+
+/* Anchored to its button and non-modal: it restyles the page behind it, so it
+   must never cover the thing the visitor is judging. */
+.m3-appearance__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  z-index: 100;
+  width: min(320px, calc(100vw - 24px));
+  display: grid;
+  gap: var(--sp-3, 16px);
+  padding: var(--sp-3, 16px);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l, 16px);
+  background: var(--m3-surface-container);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+}
+.m3-appearance__panel[hidden] { display: none; }
+
+.m3-appearance__row { display: grid; gap: 8px; }
+.m3-appearance__label {
+  font-size: var(--t-label-m, 12px);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+.m3-appearance__chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.m3-appearance__chips button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-pill, 999px);
+  background: transparent;
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-label-l, 14px);
+  cursor: pointer;
+}
+.m3-appearance__chips button[aria-pressed='true'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  border-color: transparent;
+}
+
+/* Swatches are 28px so the touch target clears the 24px minimum with its ring. */
+.m3-appearance__swatch {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--m3-outline-variant);
+}
+.m3-appearance__swatch[aria-pressed='true'] {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+}
+
+.m3-appearance__panel input[type='color'] {
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s, 8px);
+  background: transparent;
+  cursor: pointer;
+}
+.m3-appearance__panel input[type='range'] { width: 100%; accent-color: var(--m3-primary); }
+.m3-appearance__panel select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s, 8px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font: inherit;
+}
+.m3-appearance__reset {
+  min-height: 36px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-pill, 999px);
+  background: transparent;
+  color: var(--m3-on-surface);
+  font: inherit;
+  cursor: pointer;
+}
+.m3-appearance__reset:hover { background: var(--m3-surface-container-highest); }
+
+/* ---- landing page ------------------------------------------------------- */
+
+.m3-lp {
+  max-width: 1120px;
+  margin-inline: auto;
+  padding: var(--sp-5, 32px) var(--sp-4, 24px) var(--sp-6, 48px);
+}
+
+.m3-lp__hero { text-align: center; padding-block: var(--sp-5, 32px) var(--sp-4, 24px); }
+.m3-lp__eyebrow {
+  margin: 0 0 8px;
+  font-size: var(--t-label-m, 12px);
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--m3-primary);
+}
+.m3-lp__title {
+  margin: 0 0 12px;
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--m3-on-surface);
+  /* Long localized headlines must wrap rather than overflow at narrow widths. */
+  overflow-wrap: break-word;
+}
+.m3-lp__lede {
+  max-width: 62ch;
+  margin: 0 auto;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-body-l, 16px);
+}
+
+.m3-lp__cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2, 12px);
+  margin-block: var(--sp-4, 24px);
+}
+.m3-lp__btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px; /* touch target */
+  padding: 0 24px;
+  border-radius: var(--r-pill, 999px);
+  font-weight: 600;
+  text-decoration: none;
+}
+.m3-lp__btn--filled { background: var(--m3-primary); color: var(--m3-on-primary); }
+.m3-lp__btn--filled:hover { background: color-mix(in oklab, var(--m3-primary) 88%, var(--m3-on-primary)); }
+.m3-lp__btn--outlined { border: 1px solid var(--m3-outline); color: var(--m3-on-surface); }
+.m3-lp__btn--outlined:hover { background: var(--m3-surface-container-high); }
+
+.m3-lp__providers {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.m3-lp__provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-pill, 999px);
+  background: var(--m3-surface-container-low);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-l, 14px);
+}
+
+/* Browser-style strip, same anatomy as the dashboard's. */
+.m3-lp__tablist {
+  display: flex;
+  gap: 4px;
+  /* Overflow scrolls rather than clipping — a tab the visitor cannot reach is
+     a section that does not exist to them. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+  margin-bottom: var(--sp-4, 24px);
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-lp__tab {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 18px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--r-s, 8px) var(--r-s, 8px) 0 0;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l, 14px);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.m3-lp__tab:hover { background: var(--m3-surface-container-high); }
+.m3-lp__tab[aria-selected='true'] {
+  color: var(--m3-primary);
+  border-bottom-color: var(--m3-primary);
+}
+
+.m3-lp__panel { display: grid; gap: var(--sp-4, 24px); }
+.m3-lp__panel[hidden] { display: none; }
+
+.m3-lp__figure { margin: 0; }
+.m3-lp__figure img,
+.m3-lp__shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l, 16px);
+  box-shadow: var(--e1);
+}
+
+.m3-lp__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--sp-3, 16px);
+}
+.m3-lp__card {
+  padding: var(--sp-3, 16px);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l, 16px);
+  background: var(--m3-surface-container-low);
+}
+.m3-lp__card h3 {
+  margin: 0 0 6px;
+  font-size: var(--t-title-m, 16px);
+  color: var(--m3-on-surface);
+}
+.m3-lp__card p { margin: 0; color: var(--m3-on-surface-variant); font-size: var(--t-body-m, 14px); }
+.m3-lp__card--link { display: block; text-decoration: none; }
+.m3-lp__card--link:hover { background: var(--m3-surface-container-high); border-color: var(--m3-outline); }
+
+.m3-lp__featgroup { display: grid; gap: var(--sp-2, 12px); }
+.m3-lp__grouptitle {
+  margin: 0;
+  font-size: var(--t-label-m, 12px);
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+
+.m3-lp__shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--sp-4, 24px); }
+.m3-lp__shot { margin: 0; display: grid; gap: 8px; }
+.m3-lp__shot figcaption { display: grid; gap: 2px; }
+.m3-lp__shot strong { color: var(--m3-on-surface); }
+.m3-lp__shot span { color: var(--m3-on-surface-variant); font-size: var(--t-body-s, 13px); }
+
+.m3-lp__steps { display: grid; gap: var(--sp-2, 12px); margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.m3-lp__steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2, 12px);
+  padding: var(--sp-2, 12px) var(--sp-3, 16px);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-m, 12px);
+  background: var(--m3-surface-container-low);
+}
+.m3-lp__stepnum {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font-size: var(--t-label-m, 12px);
+  font-weight: 700;
+}
+.m3-lp__steps code {
+  display: block;
+  font-family: var(--sl-font-mono);
+  font-size: var(--t-body-s, 13px);
+  color: var(--m3-on-surface);
+  /* A long command scrolls inside its row rather than widening the page. */
+  overflow-x: auto;
+  white-space: pre;
+}
+.m3-lp__stepnote { display: block; margin-top: 2px; color: var(--m3-on-surface-variant); font-size: var(--t-label-l, 14px); }
+.m3-lp__footnote { margin: 0; }
+
+.m3-lp__links { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.m3-lp__links a { color: var(--m3-primary); text-decoration: none; }
+.m3-lp__links a:hover { text-decoration: underline; }
+
+/* Without JavaScript every panel stays visible, so the tab strip is hidden
+   rather than left as five controls that do nothing. */
+@media (scripting: none) {
+  .m3-lp__tablist { display: none; }
+  .m3-lp__panel[hidden] { display: grid; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

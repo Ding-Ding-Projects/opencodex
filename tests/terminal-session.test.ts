@@ -118,3 +118,27 @@ describe("sessions", () => {
     expect(listSessions()).toEqual([]);
   });
 });
+
+describe("shutdown coupling", () => {
+  test("the server lifecycle never names the terminal module", async () => {
+    // Regression guard. Shutdown once reached for this module with a dynamic
+    // import so it could kill terminal children. That pulled the launcher's
+    // PATH probing into the shutdown path of *every* exit — including the ones
+    // that refuse to exit — and turned a 512ms request into 7.5s on a cold
+    // Windows runner. The dependency now runs the other way: a session
+    // registers its own cleanup on first use, so a process that never opened a
+    // terminal pays nothing.
+    const source = await Bun.file(new URL("../src/server/lifecycle.ts", import.meta.url)).text();
+    expect(source).not.toContain("terminal-session");
+  });
+
+  test("creating a session registers a shutdown task", async () => {
+    const lifecycle = await import("../src/server/lifecycle");
+    const created = createSession("shell");
+    expect(created.ok).toBe(true);
+    // The hook is installed through a dynamic import, so let it settle.
+    await settle(200);
+    expect(typeof lifecycle.registerShutdownTask).toBe("function");
+    resetSessions();
+  });
+});
