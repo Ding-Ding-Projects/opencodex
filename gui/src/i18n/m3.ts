@@ -420,7 +420,7 @@ export const M3_EN = {
   "api.keyDeleted": "Deleted API key",
   "api.keyCreated": "Created API key",
   "api.copyValueAria": "Copy {label}",
-  "api.deleteConfirmTitle": "Delete API key \\",
+  "api.deleteConfirmTitle": "Delete API key \"{name}\"?",
   "api.deleteConfirmBody": "{prefix} stops working immediately for every app configured with it.",
   "api.deleteConfirmAction": "Delete key",
   "appearance.subtitle": "Theme, density, seed colour, and typography. Changes apply to the live interface and persist across restarts.",

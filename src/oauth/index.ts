@@ -3,7 +3,6 @@ import { parseCallbackInput } from "./callback-server";
 import type { OcxConfig, OcxProviderConfig, RefreshPolicy } from "../types";
 import { loadConfig, resolveEnvValue, saveConfig } from "../config";
 import { maskEmail } from "../lib/privacy";
-import { recordStateSnapshot } from "../lib/state-history";
 import { KiroTokenRefreshError, environmentKiroRoutingMetadata, loginKiro, refreshKiroToken, settleKiroLoginTransaction } from "./kiro";
 import { getAccountCredential, getAccountSet, removeAccount, saveAccountCredential, saveCredential, setActiveAccount, getCredential, credentialGeneration, createOAuthRefreshIntentLock, mergeAccountCredential, markAccountNeedsReauthIfGeneration, readOAuthRefreshIntent, writeOAuthRefreshIntent, clearOAuthRefreshIntent } from "./store";
 import { loginXai, refreshXaiToken, XAI_LOCAL_CLI_DETACH_WARNING, XaiTokenRequestError } from "./xai";
@@ -796,15 +795,14 @@ export async function runLogin(
       upsertOAuthProvider(latestConfig, provider);
       saveLatestConfig(latestConfig);
     }
-    // A completed login is a deliberate account change (token refreshes are not, and
-    // deliberately do not land here). Snapshotting it means the credential is in the
-    // local history from the moment it exists, so a later deletion always has an
-    // earlier commit to recover from.
-    void recordStateSnapshot(
-      opts?.reauthAccountId
-        ? `account reauthenticated: ${provider}/${opts.reauthAccountId}`
-        : `account added: ${provider}`,
-    );
+    // NOT snapshotted here, deliberately. A completed login is a real account change,
+    // but this is the flow state-history's own header warns about: an earlier version
+    // of that module spawned into this path and destabilised its timing. Undo does not
+    // need it either — every deletion commits the pre-delete state itself
+    // (recordStateSnapshotBeforeDelete), so an account is recoverable whether or not
+    // its creation was ever recorded. Adding git spawns to a login for an audit-trail
+    // nicety trades a fragile hot path for something the delete side already
+    // guarantees.
   } catch (error) {
     const errors: unknown[] = [error];
     if (shouldRollbackKiroAccounts) {
