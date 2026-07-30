@@ -37,6 +37,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   notifications: IconBell,
   network: IconDevices,
   terminal: IconTerminal,
+  mobile: IconDevices,
   settings: IconSliders,
 };
 
@@ -62,6 +63,7 @@ const TKEYS: Record<Page, TKey> = {
   notifications: "nav.notifications",
   network: "nav.network",
   terminal: "nav.terminal",
+  mobile: "nav.mobile",
   settings: "nav.settings",
 };
 
@@ -69,7 +71,7 @@ const TKEYS: Record<Page, TKey> = {
 const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
-  "appearance", "language", "regex", "changelog", "history", "notifications", "network", "settings", "terminal",
+  "appearance", "language", "regex", "changelog", "history", "notifications", "network", "settings", "terminal", "mobile",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({

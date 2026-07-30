@@ -25,7 +25,8 @@ export type Page =
   | "notifications"
   | "network"
   | "settings"
-  | "terminal";
+  | "terminal"
+  | "mobile";
 
 export const VALID_PAGES = new Set<Page>([
   "dashboard",
@@ -50,6 +51,7 @@ export const VALID_PAGES = new Set<Page>([
   "network",
   "settings",
   "terminal",
+  "mobile",
 ]);
 
 /** Product pages sit above the system pages in the nav, separated by a divider. */
@@ -76,6 +78,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   network: "system",
   settings: "system",
   terminal: "system",
+  mobile: "system",
 };
 
 export function readPageFromHash(hash?: string): Page {

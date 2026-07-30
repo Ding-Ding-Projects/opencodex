@@ -115,3 +115,40 @@ one-click toggle for it for exactly that reason.
 
 Sessions are killed when opencodex shuts down, so a graceful exit never leaves an orphaned shell
 holding your home directory open.
+
+## The mobile remote control
+
+`#/mobile` is a separate surface for a phone: full-bleed, a bottom bar, 44px
+targets and safe-area insets, rather than the dashboard squeezed into 390px.
+Three panels:
+
+| Panel | What it does |
+| --- | --- |
+| **Chat** | Send a message to any routed model and watch the reply stream in. |
+| **Sessions** | Recent proxy requests — model, provider, status, duration, tokens. |
+| **Control** | Proxy bind and reachability, plus the API key this device uses. |
+
+It adds **no new server API**. Chat posts to the proxy's own
+`/v1/chat/completions`, the same endpoint every other client uses, so a message
+sent from a phone is routed, logged and counted exactly like one sent from
+Codex. Sessions read `/api/logs`; Control reads `/api/host`. A parallel "mobile
+API" would have been a second path to the same behaviour and a second place for
+it to be wrong.
+
+### Reaching it from a phone
+
+The proxy has to be published to your network first:
+
+```bash
+ocx host enable
+```
+
+That prints the URLs other devices can use and requires a credential — the same
+gate the rest of the exposed surface uses. Open one of those URLs on the phone
+and add `#/mobile`, then paste the key into **Control**. The key is stored on
+that device only.
+
+:::caution
+Publishing the proxy exposes the dashboard too. Only do it on a network you
+trust, and never without the credential.
+:::

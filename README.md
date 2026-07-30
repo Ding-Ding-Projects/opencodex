@@ -83,11 +83,16 @@ Everything there is live: the cost meter in the app bar, proxy status, provider 
 not, rather than a button that fails when you press it.
 
 <p align="center">
+  <img src="assets/shots/mobile.png" alt="The mobile remote control on a phone viewport: an opencodex remote app bar with a model picker, a chat transcript area, a message composer with a Send button, and a bottom bar of Chat, Sessions and Control" width="300"><br>
+  <sub><b>Mobile remote.</b> Chat, live sessions and proxy control, sized for a thumb.</sub>
+</p>
+
+<p align="center">
   <img src="assets/shots/terminal.png" alt="The Terminal screen running a shell session: the command ocx --version shown in the transcript above its output, opencodex 2.7.43, with preset buttons for Shell, Codex CLI, Claude Code and Grok CLI" width="900"><br>
   <sub><b>Embedded terminal.</b> No console window appears. The line you sent is recorded beside the output, so the log reads as a conversation.</sub>
 </p>
 
-There are twenty-two screens. Every screenshot below is a real capture of the build in this
+There are twenty-three screens. Every screenshot below is a real capture of the build in this
 repository — open a section to see the ones you care about.
 
 <details open>
@@ -326,6 +331,9 @@ and restarts. Append-only throughout: an undo can be undone, and that undo undon
   Disabled outright while the proxy is exposed to other devices — a terminal is a shell.
 - A 1-in-100 chance of dim sum at launch. Never on your first run, never after an update, and there
   is a switch.
+- **Mobile remote control.** `#/mobile` is a phone-shaped surface — chat with any routed model,
+  watch live sessions, check the proxy. It adds no new API: chat goes through the proxy's own
+  `/v1/chat/completions`, so a message from your phone is routed and counted like any other client's.
 
 </details>
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { setClientResourceData, useKeyedClientResource } from "./client-resource";
 import Dashboard from "./pages/Dashboard";
 import Terminal from "./pages/Terminal";
+import MobileRemote from "./pages/Mobile";
 import Providers from "./pages/Providers";
 import Models from "./pages/Models";
 import Combos from "./pages/Combos";
@@ -191,6 +192,11 @@ export default function App() {
   const statusLine = health?.port
     ? `v${displayedVersion} · :${health.port}`
     : `v${displayedVersion}`;
+
+  // The remote control is its own product surface, not a page inside the admin
+  // shell: it takes the whole viewport with a bottom bar, because a nav rail and
+  // a tab strip are the wrong furniture for a thumb on a phone.
+  if (page === "mobile") return <MobileRemote apiBase={API_BASE} />;
 
   return (
     <div className={`m3-app${compact ? " m3-app--compact" : ""}`}>
