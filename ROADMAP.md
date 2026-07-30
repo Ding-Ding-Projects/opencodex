@@ -37,10 +37,21 @@ Behaviour documented on [opencodex.me](https://opencodex.me/) and shipped in a t
 | Home Assistant usage-meter integration; auto-release on green CI | `7a6cdd3a` |
 | Estimated API cost meter in the app bar | `34b1dea0` |
 
-## In flight (uncommitted in the working tree on 2026-07-30)
+## Design parity with `design/`
 
-These files exist and typecheck, and the tests named in [`HANDOFF.md`](./HANDOFF.md) pass; they are
-not committed, so nothing about them is released.
+Three waves, one agent per screen, each verified by a second agent that re-read the prototype rather
+than trusting the report. **378 differences closed across all 19 screens**; GUI tests went 383 → 494.
+
+Parity is **not** 100%, and the remainder is listed honestly under Known gaps below rather than
+rounded away. The largest single category is cross-page settings search; the rest are per-screen
+notes recorded in the wave reports. Three of the verifiers caught defects their own implementing
+agent had missed — a history entry written for a change that never happened, an uncapped regex over
+every log line, and a page claiming to bundle fonts it did not have — which is the argument for
+keeping the verify pass rather than trusting a self-report.
+
+## Landed since the last release (committed on 2026-07-30)
+
+Previously listed here as uncommitted; all of it is now on `main`.
 
 | Item | Where |
 | --- | --- |
@@ -105,11 +116,20 @@ Checked in the tree; each of these is genuinely absent, not merely undocumented.
 
 ### Search
 
-- A full regex builder screen exists (`gui/src/pages/RegexBuilder.tsx`), and the Changelog and
-  Notifications searches each offer a plain-text default with a regex opt-in. What is missing is a
-  **search on every settings surface**: no per-surface index over option labels, descriptions, and
-  current values exists anywhere in `gui/src`, and the existing search fields have no anchored
-  builder affordance beside them.
+- A full regex builder screen exists (`gui/src/pages/RegexBuilder.tsx`), every collection search
+  offers a plain-text default with a `.*` regex opt-in, and the **settings-search row now ships on
+  the settings surfaces** (Codex Auth, Providers, Models, Storage, Startup, Claude Code) with a
+  builder shortcut beside it.
+- What remains is **cross-page settings search**. Each surface builds its own local index, so
+  `settings.otherTab` can only name another card on the same screen — not another page. The
+  prototype's `settingsIndex` (`design/ocx-data.js`) is one flat array of `{tab, label, desc, value}`;
+  a shared `useSettingsSearch(sectionId, localEntries)` in `gui/src/shell/` would let each screen
+  contribute its rows and query the whole set. That is the honest remaining half of "a search on
+  every settings surface".
+- The regex-builder hand-off carries a pattern into a search bar but **drops flags**: the receiving
+  rows compile with a fixed `"i"`, matching the prototype, so a pattern built as case-sensitive
+  arrives case-insensitive. Either the builder should stop sending flags a row cannot represent, or
+  the rows need a flags affordance and the copy to label it.
 
 ## Non-goals
 
