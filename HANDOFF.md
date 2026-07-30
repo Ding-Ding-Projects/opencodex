@@ -160,3 +160,65 @@ Nobody has asserted those are green in this session; do not treat their absence 
   round-robin outside Anthropic. That depends on each provider exposing a usage endpoint.
 - A container's admin token lives on the `/data` volume, not `~/.opencodex`, so `ocx host token` on
   the host cannot read it — `docker exec <name> cat /data/admin-api-token` is the documented route.
+
+---
+
+## Material 3 dialog migration — where it stands (`7b8b4b2e`)
+
+**Shipped.** Fourteen files, 22 dialogs, moved onto one shared `Dialog` in
+`gui/src/shell/m3-ui.tsx`. Zero `modal-*` legacy classes remain in any `.tsx`.
+`Banner` and `SelectField` were added alongside it, replacing legacy `Notice`
+(ok/err only — warnings shipped as errors) and a hand-rolled listbox.
+
+`gui/tests/m3-dialog.test.tsx` pins eight invariants. They exist because an
+adversarial review of the migration found three defects that were all gaps in
+the component rather than mistakes in the conversions — no accessible name from
+`title`, no `id` (which orphaned four live `aria-controls` references), and no
+slot for a trailing close button (so the X landed inside the `<h2>` and heading
+navigation announced "Help Close"). A fourth, focus never being restored, was
+caught by the tests: callers render `{open && <Dialog/>}`, and removing an open
+`<dialog>` from the DOM never runs the close algorithm.
+
+### Not done — pick up here
+
+1. **`gui/src/shell/OnboardingWizard.tsx` is still on the legacy overlay.** Its
+   conversion was written and then reverted: `tests/onboarding-wizard.test.tsx`
+   asserts a manual Tab/Shift+Tab trap, and under happy-dom `showModal()` is a
+   stub so the native trap does not exist. Deciding whether that test should
+   keep asserting a manual trap, or trust the platform and drop to a real-browser
+   check, is a judgement call left open rather than guessed at. It was the only
+   file left red, so it was kept out of the commit.
+
+2. **Informational dialogs should become non-blocking notifications.** The rule
+   reserves modals for decisions the user must make before continuing. Triage of
+   the 22:
+   - *Decisions, stay modal*: delete API key, uninstall tray, force restore,
+     clear history, ToS accept, add provider/account/combo.
+   - *Reference the user opened to read*: the Logs request detail and the four
+     dashboard help dialogs. These should pass `modal={false}` — the mode exists
+     and is tested, but they have not been switched over. A self-dismissing toast
+     is the wrong home for a request inspector or help text.
+   - *Outcome reports*: none found still rendering as a dialog, but worth
+     re-checking as screens change.
+
+3. **The rest of the legacy layer.** `gui/src/styles.css` is 85 KB plus three
+   workspace sheets, and `gui/src/ui.tsx` still exports `Switch`, `Notice`,
+   `Select`, `EmptyState`, `Tooltip` to 15 files. Utility classes remain
+   widespread: `muted` (139 uses), `mono` (86), `text-label` (52), `btn`/
+   `btn-ghost` (31), `badge` (15), `input` (14). `Banner`/`SelectField`/`Toggle`/
+   `Empty` are the M3 replacements for four of the five primitives; `Tooltip` has
+   none yet.
+
+4. **Requested, not started**: one README screenshot per feature and per dialog;
+   and an onboarding step that discovers a proxy on the local network, requires a
+   password before connecting, and explains the LAN-exposure tradeoff in the
+   wizard itself.
+
+### CI concurrency changed — read this before debugging a run
+
+Every workflow grouped concurrency by `ref` with `cancel-in-progress: true`, so
+a second push cancelled the run testing the first. Because `Auto release` gates
+on Cross-platform CI's *conclusion*, a cancelled run also silently skipped the
+release — that happened three times in one session. Grouping is now per-SHA with
+`cancel-in-progress: false` in `ci.yml`, `desktop-installer.yml` and
+`auto-release.yml`. Expect more concurrent runs and no cancellations.
