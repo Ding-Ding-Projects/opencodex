@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { act, useState } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 import Storage from "../src/pages/Storage";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -75,7 +76,9 @@ test("an aborted Storage fetch must not clear loading while its replacement is i
     (window as unknown as { __bumpApiBase?: () => void }).__bumpApiBase = () => setApiBase("http://new");
     return (
       <LanguageProvider>
-        <Storage apiBase={apiBase} />
+        <NotificationsProvider>
+          <Storage apiBase={apiBase} />
+        </NotificationsProvider>
       </LanguageProvider>
     );
   }
@@ -189,7 +192,9 @@ test("effect cleanup invalidates generation before abort so loading stays owned 
     (window as unknown as { __bumpApiBase?: () => void }).__bumpApiBase = () => setApiBase("http://new");
     return (
       <LanguageProvider>
-        <Storage apiBase={apiBase} />
+        <NotificationsProvider>
+          <Storage apiBase={apiBase} />
+        </NotificationsProvider>
       </LanguageProvider>
     );
   }

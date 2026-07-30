@@ -77,10 +77,12 @@ const BADGE_BASE = {
 } as const;
 
 const TONAL_BADGE = {
-  ok: { ...BADGE_BASE, background: "var(--green-soft)", color: "var(--green)" },
+  ok: { ...BADGE_BASE, background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
   muted: { ...BADGE_BASE, background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
   neutral: { ...BADGE_BASE, background: "var(--m3-secondary-container)", color: "var(--m3-on-secondary-container)" },
-  primary: { ...BADGE_BASE, background: "var(--m3-primary)", color: "var(--m3-on-primary)" },
+  // Prototype's "accent" badge. A container pair, not primary-on-primary: the Default
+  // badge sits inside a row of tonal chips and a filled one reads as a button.
+  accent: { ...BADGE_BASE, background: "var(--m3-primary-container)", color: "var(--m3-on-primary-container)" },
 } as const;
 
 /** M3 tonal status container; the tone-specific colours are applied per render. */
@@ -88,6 +90,46 @@ const STATUS_BAR_STYLE = {
   borderRadius: "var(--r-l)",
   borderWidth: "1px",
   borderStyle: "solid",
+} as const;
+
+/**
+ * M3 paint for the three surfaces whose rules still live in the legacy `styles.css`
+ * block (glass panel, hairline card, dashed drop zone). The classes stay — they carry
+ * the layout and the tests' contract — and only the colour/shape roles are re-pointed
+ * here, because a per-screen port may not edit the shared stylesheet.
+ */
+const PROFILE_BAR_STYLE = {
+  background: "var(--m3-surface-container)",
+  border: "1px solid var(--m3-outline-variant)",
+  borderRadius: "var(--r-l)",
+  backdropFilter: "none",
+  WebkitBackdropFilter: "none",
+  boxShadow: "none",
+} as const;
+
+const MODEL_CARD_STYLE = {
+  background: "var(--m3-surface-container-lowest)",
+  border: "none",
+  borderRadius: "var(--r-m)",
+  boxShadow: "none",
+} as const;
+
+const LANE_EMPTY_STYLE = {
+  border: "1px dashed var(--m3-outline)",
+  borderRadius: "var(--r-m)",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-m)",
+} as const;
+
+/** "Needs your attention" text. The legacy rules paint these with `--amber`. */
+const WARN_TEXT_STYLE = { color: "var(--m3-warn)" } as const;
+
+const ALIAS_STYLE = {
+  border: "1px solid var(--m3-outline-variant)",
+  borderRadius: "var(--r-s)",
+  background: "var(--m3-surface-container-highest)",
+  color: "var(--m3-on-surface)",
+  fontSize: "var(--t-label-m)",
 } as const;
 
 const FAMILY_KEYS: Record<Family, TKey> = {
@@ -381,7 +423,8 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
     <>
       <div className="page-head claude-desktop-head">
         <div>
-          <h2 className="page-title">{t("claudeDesktop.title")}</h2>
+          {/* Title dropped: the Desktop tab already names this panel, and the prototype's
+              desktop view opens on the toolbar. The lede stays — it carries the port. */}
           <p className="page-sub">{t("claudeDesktop.subtitle", { port: data.port })}</p>
         </div>
         <div className="claude-profile-tools m3-row">
@@ -398,11 +441,14 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
           className={`claude-status-bar ${statusTone}`}
           style={{
             ...STATUS_BAR_STYLE,
-            background: statusTone === "applied" ? "var(--green-soft)" : statusTone === "stale" ? "var(--amber-soft)" : "var(--m3-surface-container)",
-            borderColor: statusTone === "applied" ? "var(--green)" : statusTone === "stale" ? "var(--amber)" : "var(--m3-outline-variant)",
+            background: statusTone === "applied" ? "var(--m3-ok-container)" : statusTone === "stale" ? "var(--m3-warn-container)" : "var(--m3-surface-container)",
+            borderColor: statusTone === "applied" ? "var(--m3-ok)" : statusTone === "stale" ? "var(--m3-warn)" : "var(--m3-outline-variant)",
+            // The container carries the tone, so the label has to take its on-colour with it —
+            // on-surface over a dark ok-container is the contrast failure this avoids.
+            color: statusTone === "applied" ? "var(--m3-on-ok-container)" : statusTone === "stale" ? "var(--m3-on-warn-container)" : "var(--m3-on-surface)",
           }}
         >
-          <span className="claude-status-dot" style={{ background: statusTone === "applied" ? "var(--green)" : statusTone === "stale" ? "var(--amber)" : "var(--m3-outline)" }} />
+          <span className="claude-status-dot" style={{ background: statusTone === "applied" ? "var(--m3-ok)" : statusTone === "stale" ? "var(--m3-warn)" : "var(--m3-outline)" }} />
           {/* Desktop serving another profile outranks content drift: stale config that is
               read still works, a config that is never read does not. */}
           <span>{status.activeProfile === false ? t("claudeDesktop.status.notActiveProfile") : status.stale ? t("claudeDesktop.status.stale") : status.applied ? t("claudeDesktop.status.applied") : t("claudeDesktop.status.notApplied")}</span>
@@ -414,8 +460,10 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
 
-      <div className="claude-profile-bar">
-        <span className={`claude-dirty${dirty ? " active" : ""}`}>{dirty ? t("claudeDesktop.unsaved") : t("claudeDesktop.upToDate")}</span>
+      <div className="claude-profile-bar" style={PROFILE_BAR_STYLE}>
+        <span className={`claude-dirty${dirty ? " active" : ""}`} style={dirty ? WARN_TEXT_STYLE : undefined}>
+          {dirty ? t("claudeDesktop.unsaved") : t("claudeDesktop.upToDate")}
+        </span>
         <div className="claude-save-actions m3-row">
           <Button variant="outlined" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
             {pending === "save" ? t("claudeDesktop.saving") : t("common.save")}
@@ -450,7 +498,9 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
               {/* The button goes INSIDE the heading: a heading is not phrasing content, so
                   nesting it the other way round is invalid. This keeps the family in the
                   a11y tree and gives the toggle its name. */}
-              <h3 id={`claude-lane-${family}`} className="ocx-group-heading">
+              {/* h2, not h3: with the duplicated panel title gone the families are the
+                  panel's top level, and h1 → h3 is a skipped heading level. */}
+              <h2 id={`claude-lane-${family}`} className="ocx-group-heading">
                 <button
                   type="button"
                   className="ocx-group-toggle"
@@ -473,11 +523,11 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       family to check, so it stays readable while folded. */}
                   {familyDefault && <code className="claude-lane-default" title={familyDefault}>{familyDefault}</code>}
                 </button>
-              </h3>
+              </h2>
               {/* Warnings stay outside the fold — never hide state the user must act on. */}
-              {all.length > 0 && profile.defaults[family] === null && <span className="claude-default-needed">{t("claudeDesktop.chooseDefault")}</span>}
+              {all.length > 0 && profile.defaults[family] === null && <span className="claude-default-needed" style={WARN_TEXT_STYLE}>{t("claudeDesktop.chooseDefault")}</span>}
               {familyDefault && familyDefault !== profile.defaults[family] && (
-                <span className="claude-default-needed" title={familyDefault}>{t("claudeDesktop.temporaryDefault")}</span>
+                <span className="claude-default-needed" style={WARN_TEXT_STYLE} title={familyDefault}>{t("claudeDesktop.temporaryDefault")}</span>
               )}
             </header>
 
@@ -502,9 +552,9 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
 
             <div className="claude-lane-models">
               {all.length === 0 ? (
-                <div className="claude-lane-empty">{t("claudeDesktop.laneEmpty")}</div>
+                <div className="claude-lane-empty" style={LANE_EMPTY_STYLE}>{t("claudeDesktop.laneEmpty")}</div>
               ) : lane.noMatch ? (
-                <div className="claude-lane-empty">{t("claudeDesktop.laneNoMatch")}</div>
+                <div className="claude-lane-empty" style={LANE_EMPTY_STYLE}>{t("claudeDesktop.laneNoMatch")}</div>
               ) : lane.shown.map(model => {
                 const assignment = profile.assignments[model.route];
                 const context = formatContextWindow(model.contextWindow, t);
@@ -514,6 +564,7 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                   <article
                     key={model.route}
                     className={`claude-model-card${rowOpen ? " open" : ""}`}
+                    style={MODEL_CARD_STYLE}
                     draggable={model.available}
                     onDragStart={event => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", model.route); }}
                   >
@@ -551,7 +602,7 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       {model.effortSupported === false && <span className="claude-effort-badge off" style={TONAL_BADGE.muted}>{t("claudeDesktop.effort.displayOnly")}</span>}
                       {model.effortSupported === true && <span className="claude-effort-badge on" style={TONAL_BADGE.neutral}>{t("claudeDesktop.effort.supported")}</span>}
                       {profile.defaults[family] === model.route && (
-                        <span className="claude-row-default" style={TONAL_BADGE.primary}>{t("claudeDesktop.defaultBadge")}</span>
+                        <span className="claude-row-default" style={TONAL_BADGE.accent}>{t("claudeDesktop.defaultBadge")}</span>
                       )}
                       <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`} style={model.available ? TONAL_BADGE.ok : TONAL_BADGE.muted}>
                         {model.available ? t("claudeDesktop.available") : t("claudeDesktop.unavailable")}
@@ -561,12 +612,12 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                     {rowOpen && (
                     <div className="claude-model-body" id={`claude-model-body-${model.route}`}>
                     {effectiveDefaults[family] === model.route && profile.defaults[family] !== model.route && (
-                      <span className="claude-effective-default">{t("claudeDesktop.temporaryDefault")}</span>
+                      <span className="claude-effective-default" style={WARN_TEXT_STYLE}>{t("claudeDesktop.temporaryDefault")}</span>
                     )}
 
                     <div className="claude-field">
                       <span>{t("claudeDesktop.alias")}</span>
-                      <code className="claude-alias" title={assignment.alias}>{assignment.alias}</code>
+                      <code className="claude-alias" style={ALIAS_STYLE} title={assignment.alias}>{assignment.alias}</code>
                     </div>
 
                     <label className="claude-default-radio">
@@ -584,7 +635,9 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       <label htmlFor={`move-${model.route}`}>{t("claudeDesktop.moveTo")}</label>
                       <select
                         id={`move-${model.route}`}
-                        className="input"
+                        // m3-input, not the legacy `.input`: the old rule pinned this select to
+                        // 34px, below the 44px minimum hit target.
+                        className="m3-input"
                         value={destination}
                         disabled={!model.available}
                         onChange={event => setDestinations(current => ({ ...current, [model.route]: event.target.value as Family }))}

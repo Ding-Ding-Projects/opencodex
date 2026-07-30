@@ -1,8 +1,7 @@
-import { IconAlert, IconExternal, IconInfo, IconRefresh } from "../icons";
-import { Trans } from "../i18n/provider";
+import { IconDownload, IconInfo, IconRefresh } from "../icons";
 import { Select } from "../ui";
 import { Button, Card, Toggle } from "../shell/m3-ui";
-import { EFFORT_CAP_LEVELS, requireJson, sidecarBackendForModel, updateJobLabel } from "./dashboard-shared";
+import { EFFORT_CAP_LEVELS, requireJson, sidecarBackendForModel } from "./dashboard-shared";
 import type { useDashboardData } from "./use-dashboard-data";
 
 type Dash = ReturnType<typeof useDashboardData>;
@@ -153,62 +152,32 @@ export function DashboardInjectionPanel({ d }: { apiBase: string; d: Dash }) {
 export function DashboardMaintenancePanel({ d }: { d: Dash }) {
   const {
     t, runSync, syncing, updateTriggerRef, openUpdateDialog, updateLoading, updateOpen,
-    syncResult, syncError, updateJob, reconnecting,
   } = d;
 
+  // Sync and update outcomes leave here as snackbars (see `use-dashboard-data`):
+  // a one-shot result that pushed the buttons down the card every time it landed
+  // is exactly the informational message the shell's notification host is for.
   return (
-    <Card
-      title={t("dash.maintenance")}
-      subtitle={t("dash.maintenanceHint")}
-      actions={
-        <>
-          <Button variant="outlined" onClick={runSync} disabled={syncing}>
-            <IconRefresh aria-hidden="true" /> {syncing ? t("dash.syncing") : t("dash.syncModels")}
-          </Button>
-          {/* Raw button: the update dialog's focus-return needs a real DOM ref,
-              which the M3 `Button` helper does not forward. */}
-          <button
-            ref={updateTriggerRef}
-            type="button"
-            className="m3-btn m3-btn--filled"
-            onClick={openUpdateDialog}
-            disabled={updateLoading}
-            aria-haspopup="dialog"
-            aria-controls="dashboard-update-dialog"
-            aria-expanded={updateOpen}
-          >
-            <IconExternal aria-hidden="true" /> {t("dash.checkUpdate")}
-          </button>
-        </>
-      }
-    >
-      {syncResult && (
-        <div className={`notice ${syncResult.nativeSubagentDefaultsWarning ? "notice-warn" : "notice-ok"} maintenance-notice`} role="status">
-          {syncResult.nativeSubagentDefaultsWarning ? <IconAlert /> : <IconRefresh />}
-          <span>
-            {t("dash.syncOk", { count: syncResult.added })}
-            {syncResult.warning ? ` ${syncResult.warning}` : ""}
-            {syncResult.nativeSubagentDefaultsWarning ? ` ${syncResult.nativeSubagentDefaultsWarning}` : ""}
-            {syncResult.staleAppServerHint ? <>{" "}<Trans k="dash.syncStaleHint" cmd="ocx sync --restart-codex" /></> : null}
-          </span>
-        </div>
-      )}
-      {syncError && (
-        <div className="notice notice-err maintenance-notice" role="status">
-          <IconAlert /><span>{t("dash.syncFailed", { error: syncError })}</span>
-        </div>
-      )}
-      {updateJob && (
-        <div className={`notice ${updateJob.status === "failed" ? "notice-err" : "notice-ok"} maintenance-notice`} role="status">
-          {updateJob.status === "failed" ? <IconAlert /> : <IconRefresh />}
-          <span>
-            {updateJobLabel(updateJob.status, t)}
-            {updateJob.latestVersion ? ` ${updateJob.currentVersion} -> ${updateJob.latestVersion}.` : ""}
-            {reconnecting ? ` ${t("dash.updateReconnecting")}` : ""}
-            {updateJob.error ? ` ${updateJob.error}` : ""}
-          </span>
-        </div>
-      )}
+    <Card title={t("dash.maintenance")} subtitle={t("dash.maintenanceHint")}>
+      <div className="m3-row">
+        <Button variant="filled" onClick={runSync} disabled={syncing}>
+          <IconRefresh aria-hidden="true" /> {syncing ? t("dash.syncing") : t("dash.syncModels")}
+        </Button>
+        {/* Raw button: the update dialog's focus-return needs a real DOM ref,
+            which the M3 `Button` helper does not forward. */}
+        <button
+          ref={updateTriggerRef}
+          type="button"
+          className="m3-btn m3-btn--outlined"
+          onClick={openUpdateDialog}
+          disabled={updateLoading}
+          aria-haspopup="dialog"
+          aria-controls="dashboard-update-dialog"
+          aria-expanded={updateOpen}
+        >
+          <IconDownload aria-hidden="true" /> {t("dash.checkUpdate")}
+        </button>
+      </div>
     </Card>
   );
 }

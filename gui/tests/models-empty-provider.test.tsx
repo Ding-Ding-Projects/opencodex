@@ -5,6 +5,8 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
+import SnackbarHost from "../src/shell/SnackbarHost";
 import Models from "../src/pages/Models";
 import { EmptyProviderHint } from "../src/pages/models-provider-hints";
 import type { ProviderDiscoverySummary } from "../src/models-groups";
@@ -149,7 +151,12 @@ test("Models page combines final visibility, atomic actions, discovery status, a
       root = createRoot(container);
       root.render(
         <LanguageProvider>
-          <Models apiBase="http://localhost" />
+          <NotificationsProvider>
+            <Models apiBase="http://localhost" />
+            {/* Action outcomes are snackbars now, so the host has to be in the tree for
+                this test to still see a failed save reported to the user. */}
+            <SnackbarHost />
+          </NotificationsProvider>
         </LanguageProvider>,
       );
     });
@@ -548,7 +555,12 @@ test("a poll that resolves after a forced refresh cannot overwrite newer models"
       root = createRoot(container);
       root.render(
         <LanguageProvider>
-          <Models apiBase="http://localhost" />
+          <NotificationsProvider>
+            <Models apiBase="http://localhost" />
+            {/* Action outcomes are snackbars now, so the host has to be in the tree for
+                this test to still see a failed save reported to the user. */}
+            <SnackbarHost />
+          </NotificationsProvider>
         </LanguageProvider>,
       );
     });

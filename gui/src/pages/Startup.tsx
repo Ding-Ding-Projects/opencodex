@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { IconRefresh } from "../icons";
 import { useI18n } from "../i18n/shared";
+import { copyTextToClipboard } from "../oauth-health-display";
 import { Button, Empty } from "../shell/m3-ui";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 import {
   StartupDetailsSection,
   StartupHeroSection,
@@ -26,16 +29,15 @@ const warnNoticeStyle: CSSProperties = {
 
 export default function Startup({ apiBase }: { apiBase: string }) {
   const { t } = useI18n();
+  const { notify } = useNotifications();
   const [data, setData] = useState<StartupHealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
   const [tray, setTray] = useState<TrayStatusData | null>(null);
   const [trayLoading, setTrayLoading] = useState(true);
   const [trayBusy, setTrayBusy] = useState(false);
   const [trayError, setTrayError] = useState(false);
   const [installBusy, setInstallBusy] = useState<StartupInstallAction | null>(null);
-  const [installResult, setInstallResult] = useState<{ kind: "success" | "error"; action: StartupInstallAction; detail?: string } | null>(null);
   const [codexRuntimeWarning, setCodexRuntimeWarning] = useState<string | null>(null);
   const [codexRuntimeFix, setCodexRuntimeFix] = useState<string | null>(null);
   const loadGenerationRef = useRef(0);
@@ -148,13 +150,13 @@ export default function Startup({ apiBase }: { apiBase: string }) {
   }, [data, refresh]);
 
   const copyCommand = async (command: string) => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(command);
-      window.setTimeout(() => setCopied(current => current === command ? null : current), 1600);
-    } catch {
-      setCopied(null);
-    }
+    // A clipboard write that fails silently reads as a successful copy and the
+    // user pastes the previous buffer into a shell, so the outcome is always
+    // reported — and as a snackbar, since nothing here needs a decision.
+    const ok = await copyTextToClipboard(command);
+    notify(ok
+      ? { tone: "success", title: t("startup.copied"), body: command }
+      : { tone: "error", title: t("regex.copyFailed") });
   };
 
   const runTrayAction = async (action: "install" | "start" | "stop" | "uninstall") => {
@@ -180,8 +182,8 @@ export default function Startup({ apiBase }: { apiBase: string }) {
   };
 
   const runInstallAction = async (action: StartupInstallAction) => {
+    const service = action === "install-service";
     setInstallBusy(action);
-    setInstallResult(null);
     try {
       const res = await fetch(`${apiBase}/api/startup-action`, {
         method: "POST",
@@ -190,12 +192,20 @@ export default function Startup({ apiBase }: { apiBase: string }) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null) as { error?: unknown } | null;
-        throw new Error(typeof body?.error === "string" ? body.error : "installation failed");
+        throw new Error(typeof body?.error === "string" ? body.error : t("startup.installFailed"));
       }
-      setInstallResult({ kind: "success", action });
+      const summary = t(service ? "startup.serviceInstalled" : "startup.shimInstalled");
+      notify({ tone: "success", title: summary, body: t(service ? "startup.serviceHint" : "startup.shimHint") });
+      // Installing restart protection changes a record the user can undo from
+      // Version history, so the change is logged before the refetch redraws it.
+      recordRevision({ scope: "settings", label: t("startup.title"), summary });
       await refresh();
     } catch (error) {
-      setInstallResult({ kind: "error", action, detail: error instanceof Error ? error.message : String(error) });
+      notify({
+        tone: "error",
+        title: t("startup.installFailed"),
+        body: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setInstallBusy(null);
     }
@@ -203,13 +213,10 @@ export default function Startup({ apiBase }: { apiBase: string }) {
 
   return (
     <>
+      {/* No in-page title: the app bar already renders the screen's <h1>, and the
+          prototype's screen opens on the subtitle. */}
       <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-3)", alignItems: "flex-start" }}>
-        <div style={{ minWidth: 0 }}>
-          <h2 style={{ margin: 0, fontSize: "var(--t-headline-s)", fontWeight: 500 }}>{t("startup.title")}</h2>
-          <p style={{ margin: "6px 0 0", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-m)" }}>
-            {t("startup.subtitle")}
-          </p>
-        </div>
+        <p className="m3-card-sub" style={{ margin: 0, maxWidth: "74ch" }}>{t("startup.subtitle")}</p>
         <Button variant="text" onClick={() => void refresh()} disabled={loading}>
           <IconRefresh aria-hidden="true" /> {t("startup.refresh")}
         </Button>
@@ -228,7 +235,7 @@ export default function Startup({ apiBase }: { apiBase: string }) {
               {codexRuntimeFix && (
                 <div className="m3-row" style={{ marginTop: 8, gap: 8 }}>
                   <Button variant="outlined" onClick={() => void copyCommand(codexRuntimeFix)}>
-                    {copied === codexRuntimeFix ? t("startup.copied") : t("startup.copy")}
+                    {t("startup.copy")}
                   </Button>
                   <code style={{ fontFamily: "var(--mono)", fontSize: "var(--t-label-m)", overflowWrap: "anywhere" }}>{codexRuntimeFix}</code>
                 </div>
@@ -240,7 +247,6 @@ export default function Startup({ apiBase }: { apiBase: string }) {
             data={data}
             failed={failed}
             installBusy={installBusy}
-            installResult={installResult}
             onInstall={(action) => { void runInstallAction(action); }}
           />
           {data.platform === "win32" && (
@@ -252,7 +258,7 @@ export default function Startup({ apiBase }: { apiBase: string }) {
               onTrayAction={(action) => { void runTrayAction(action); }}
             />
           )}
-          <StartupRecoverySection data={data} copied={copied} onCopy={(command) => { void copyCommand(command); }} />
+          <StartupRecoverySection data={data} onCopy={(command) => { void copyCommand(command); }} />
         </>
       ) : null}
     </>

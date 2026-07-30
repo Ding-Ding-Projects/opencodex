@@ -148,8 +148,8 @@ export function SmallFastModelSetting({
             margin: "12px 0 0",
             padding: "10px 14px",
             borderRadius: "var(--r-s)",
-            background: "var(--amber-soft)",
-            color: "var(--text)",
+            background: "var(--m3-warn-container)",
+            color: "var(--m3-on-warn-container)",
             fontSize: "var(--t-body-s)",
           }}
         >

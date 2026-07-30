@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Notice, Select, Tooltip } from "../ui";
-import { Button, Chip, Empty, Toggle } from "../shell/m3-ui";
-import { IconChevron, IconInfo, IconShuffle } from "../icons";
+import { Button, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { IconChevron, IconInfo, IconRegex, IconSearch, IconShuffle } from "../icons";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 import { useT } from "../i18n/shared";
 import type { TFn, TKey } from "../i18n/shared";
 import { modelLabel } from "../model-display";
@@ -36,6 +38,7 @@ import {
   writeCollapsedProviders,
   writeCombosOpen,
   discoveryFailureLabel,
+  effortRange,
   type ModelRow,
   type ProviderContextCapsResponse,
   type ShadowCallData,
@@ -45,19 +48,22 @@ import { EmptyProviderHint } from "./models-provider-hints";
 
 export default function Models({ apiBase }: { apiBase: string }) {
   const t: TFn = useT();
+  const { notify } = useNotifications();
   const [models, setModels] = useState<ModelRow[]>([]);
   const [providers, setProviders] = useState<ConfiguredProviderSummary[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [selectedModels, setSelectedModels] = useState<ProviderModelMap | null>(null);
-  const [search, setSearch] = useState<Record<string, string>>({});
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const [limit, setLimit] = useState<Record<string, number>>({});
   const [contextCaps, setContextCaps] = useState<Record<string, number>>({});
   const [contextCapValue, setContextCapValue] = useState(350_000);
   const [customCap, setCustomCap] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsedProviders);
-  const [status, setStatus] = useState("");
-  const [ok, setOk] = useState(false);
+  // A failed reload is a standing page condition, not an event: the 10s poll would otherwise
+  // stack one un-dismissable error snackbar per tick, so it stays an inline banner.
+  const [loadError, setLoadError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -193,10 +199,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
         : (typeof capsData.cap === "number" && Number.isFinite(capsData.cap) && capsData.cap > 0 ? capsData.cap : undefined);
       if (value !== undefined) setContextCapValue(value);
       setContextCaps(capsData.caps ?? {});
+      setLoadError(false);
       return true;
     } catch {
       if (shouldApplyLoadGeneration(generation, loadGenerationRef.current)) {
-        setOk(false); setStatus(t("models.loadFail"));
+        setLoadError(true);
       }
       return false;
     } finally {
@@ -205,7 +212,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         setLoading(false);
       }
     }
-  }, [apiBase, loadShadowCall, loadV2, t]);
+  }, [apiBase, loadShadowCall, loadV2]);
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
@@ -229,6 +236,38 @@ export default function Models({ apiBase }: { apiBase: string }) {
     [models, providers],
   );
 
+  /**
+   * One search across every provider group, plain text by default with `.*` as an
+   * explicit opt-in. The pattern is capped at 400 characters and evaluated locally,
+   * so a pasted novel can never become a catastrophic-backtracking payload.
+   */
+  const { matchesQuery, regexError } = useMemo(() => {
+    const trimmed = query.trim();
+    if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
+    if (useRegex) {
+      try {
+        const re = new RegExp(trimmed.slice(0, 400), "i");
+        return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
+      } catch (e) {
+        return { matchesQuery: () => false, regexError: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    const needle = trimmed.toLowerCase();
+    return {
+      matchesQuery: (text: string) => text.toLowerCase().includes(needle),
+      regexError: null as string | null,
+    };
+  }, [query, useRegex]);
+  const rowMatches = useCallback(
+    (provider: string, row: ModelRow) => matchesQuery(`${row.id} ${row.namespaced} ${provider}`),
+    [matchesQuery],
+  );
+
+  /** Version history entry for a settings change made here — restore needs a named event, not "Updated". */
+  const logRevision = (summary: string) => {
+    recordRevision({ scope: "settings", label: t("nav.models"), summary });
+  };
+
   const effectiveVisibleCount = useMemo(() => {
     if (!selectedModels) return 0;
     return models.filter(model => modelVisible(
@@ -249,7 +288,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
     ++loadGenerationRef.current;
     setBusy(true);
     busyRef.current = true;
-    setStatus("");
     let errorKey: "models.saveFailed" | "models.networkError" | null = null;
     try {
       const response = await putModelVisibility(apiBase, scope, provider, targets, enabled);
@@ -259,11 +297,10 @@ export default function Models({ apiBase }: { apiBase: string }) {
     } finally {
       const refreshed = await load(true);
       if (errorKey) {
-        setOk(false);
-        setStatus(t(errorKey));
+        notify({ tone: "error", title: t(errorKey) });
       } else if (refreshed) {
-        setOk(true);
-        setStatus(t("models.applied"));
+        notify({ tone: "success", title: t("models.applied") });
+        logRevision(`${targets.map(target => (target.native ? target.id : `${provider}/${target.id}`)).join(", ")} — ${enabled ? t("models.tipActive") : t("models.tipDisabled")}`);
       }
       setBusy(false);
       busyRef.current = false;
@@ -273,7 +310,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const toggleProviderCap = async (provider: string) => {
     setBusy(true);
     busyRef.current = true;
-    setStatus("");
     const enabled = contextCaps[provider] !== contextCapValue;
     try {
       const r = await fetch(`${apiBase}/api/provider-context-caps`, {
@@ -284,15 +320,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         const data = await readJsonOrThrow<ProviderContextCapsResponse>(r, t("models.capSaveFailed"));
         setContextCaps(data?.caps ?? {});
-        setOk(true);
-        setStatus(t("models.capApplied"));
+        notify({ tone: "success", title: t("models.capApplied") });
+        logRevision(`${provider} — ${t("models.capValue", { value: fmtK(contextCapValue) })} ${enabled ? t("models.tipActive") : t("models.tipDisabled")}`);
         await load(true);
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.capSaveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.capSaveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setBusy(false);
       busyRef.current = false;
@@ -317,7 +352,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const putCap = async (body: Record<string, unknown>) => {
     setBusy(true);
     busyRef.current = true;
-    setStatus("");
     try {
       const r = await fetch(`${apiBase}/api/provider-context-caps`, {
         method: "PUT",
@@ -328,15 +362,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
         const data = await readJsonOrThrow<ProviderContextCapsResponse>(r, t("models.capSaveFailed"));
         if (typeof data?.value === "number" && Number.isFinite(data.value) && data.value > 0) setContextCapValue(data.value);
         setContextCaps(data?.caps ?? {});
-        setOk(true);
-        setStatus(t("models.capApplied"));
+        notify({ tone: "success", title: t("models.capApplied") });
+        logRevision(`${t("models.contextCapLabel")} ${fmtK(typeof data?.value === "number" ? data.value : contextCapValue)}`);
         await load(true);
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.capSaveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.capSaveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setBusy(false);
       busyRef.current = false;
@@ -357,7 +390,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
 
   const applyCustomCap = () => {
     const value = Number(customCap.replace(/[_,\s]/g, ""));
-    if (!Number.isFinite(value) || value <= 0) { setOk(false); setStatus(t("models.capSaveFailed")); return; }
+    if (!Number.isFinite(value) || value <= 0) { notify({ tone: "error", title: t("models.capSaveFailed") }); return; }
     setShowCustom(false);
     setGlobalCap(value);
   };
@@ -382,6 +415,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
+      logRevision(`${t("models.shadowCallIntercept")} — ${patch.enabled ?? shadowCall.enabled ? t("models.tipActive") : t("models.tipDisabled")}${patch.model !== undefined ? ` ${patch.model}` : ""}`);
     } finally {
       setShadowCallSaving(false);
     }
@@ -393,7 +427,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
     setV2Busy(true);
     v2BusyRef.current = true;
     setV2Note("");
-    setStatus("");
     try {
       const r = await fetch(`${apiBase}/api/v2`, {
         method: "PUT",
@@ -403,15 +436,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         const data = await readJsonOrThrow<V2Status & { warnings?: string[] }>(r, t("models.saveFailed"));
         void loadV2();
-        setOk(true);
-        setStatus(t("models.v2Applied"));
+        notify({ tone: "success", title: t("models.v2Applied") });
+        logRevision(`${t("models.v2Label")} — ${t(`models.v2Mode_${mode}` as TKey)}`);
         setV2Note((data?.warnings ?? []).join(" "));
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.saveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.saveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setV2Busy(false);
       v2BusyRef.current = false;
@@ -423,12 +455,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
     // (setMaxConcurrentThreads no-ops on equal value), so a re-selected current
     // value or a double click can never double-write config.toml.
     if (!v2 || v2BusyRef.current) return;
-    if (!Number.isInteger(value) || value < 1) { setOk(false); setStatus(t("models.v2ThreadsInvalid")); return; }
+    if (!Number.isInteger(value) || value < 1) { notify({ tone: "error", title: t("models.v2ThreadsInvalid") }); return; }
     if (v2.maxConcurrentThreadsPerSession === value) return;
     setV2Busy(true);
     v2BusyRef.current = true;
     setV2Note("");
-    setStatus("");
     try {
       const r = await fetch(`${apiBase}/api/v2`, {
         method: "PUT",
@@ -438,8 +469,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         const data = await readJsonOrThrow<V2Status & { warnings?: string[] }>(r, t("models.saveFailed"));
         if (!data || typeof data.enabled !== "boolean") {
-          setOk(false);
-          setStatus(t("models.saveFailed"));
+          notify({ tone: "error", title: t("models.saveFailed") });
           return;
         }
         setV2({
@@ -448,15 +478,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
           maxConcurrentThreadsPerSession: typeof data.maxConcurrentThreadsPerSession === "number" ? data.maxConcurrentThreadsPerSession : null,
           multiAgentMode: data.multiAgentMode === "v1" || data.multiAgentMode === "v2" ? data.multiAgentMode : "default",
         });
-        setOk(true);
-        setStatus(t("models.v2ThreadsApplied"));
+        notify({ tone: "success", title: t("models.v2ThreadsApplied") });
+        logRevision(`${t("models.v2ThreadsLabel")} — ${value}`);
         setShowThreadsCustom(false);
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.saveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.saveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setV2Busy(false);
       v2BusyRef.current = false;
@@ -508,8 +537,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         await readJsonOrThrow(r, t("models.customSaveFailed"));
         setCustomModalOpen(false);
-        setOk(true);
-        setStatus(t("models.customAdded"));
+        notify({ tone: "success", title: t("models.customAdded"), body: `${provider}/${modelId}` });
+        logRevision(`${t("models.customAdded")} — ${provider}/${modelId}`);
         await load(true);
       } catch (e) {
         setCustomError(e instanceof Error ? e.message : t("models.customSaveFailed"));
@@ -533,8 +562,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         await readJsonOrThrow(r, t("models.customSaveFailed"));
         setCustomModalOpen(false);
-        setOk(true);
-        setStatus(t("models.customUpdated"));
+        notify({ tone: "success", title: t("models.customUpdated"), body: String(patch.modelId ?? id) });
+        logRevision(`${t("models.customUpdated")} — ${String(patch.modelId ?? id)}`);
         await load(true);
       } catch (e) {
         setCustomError(e instanceof Error ? e.message : t("models.customSaveFailed"));
@@ -546,20 +575,18 @@ export default function Models({ apiBase }: { apiBase: string }) {
     }
   };
 
-  const deleteCustomModel = async (id: string) => {
+  const deleteCustomModel = async (id: string, label: string) => {
     try {
       const r = await fetch(`${apiBase}/api/custom-models/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (r.ok) {
-        setOk(true);
-        setStatus(t("models.customDeleted"));
+        notify({ tone: "success", title: t("models.customDeleted"), body: label });
+        logRevision(`${t("models.customDeleted")} — ${label}`);
         await load(true);
       } else {
-        setOk(false);
-        setStatus(t("models.customSaveFailed"));
+        notify({ tone: "error", title: t("models.customSaveFailed") });
       }
     } catch {
-      setOk(false);
-      setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     }
   };
 
@@ -586,8 +613,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
     const capOn = contextCaps[provider] === contextCapValue;
     const isNative = native;
     const discoveryFailure = liveModels && discovery?.status === "failed" ? discovery : undefined;
-    const q = (search[provider] ?? "").trim().toLowerCase();
-    const filtered = q ? rows.filter(m => m.id.toLowerCase().includes(q)) : rows;
+    const filtered = rows.filter(m => rowMatches(provider, m));
     // Display-only: enabled models float to the top of each provider group so they
     // stay findable in long lists. The sort is stable, so the server order is kept
     // inside each partition, and this does not affect the picker order above
@@ -669,15 +695,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
             {rows.length === 0 && (
               <EmptyProviderHint liveModels={liveModels} discovery={discovery} showFailureBadge={false} />
             )}
-            {rows.length > PAGE / 2 && (
-              <input
-                className="m3-input models-search-input"
-                placeholder={t("models.search")}
-                value={search[provider] ?? ""}
-                onChange={e => setSearch(prev => ({ ...prev, [provider]: e.target.value }))}
-                aria-label={t("models.search")}
-              />
-            )}
              {visible.map(m => {
                // The row reflects the same final-visibility answer as the count and the picker.
                const off = !isVisible(m);
@@ -692,9 +709,22 @@ export default function Models({ apiBase }: { apiBase: string }) {
                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoveredModel(null);
                    }}
                  >
-                   <div className="row models-model-row">
+                   {/* Context and modalities read inline, as the design shows them: a hover-only
+                       tooltip hides them from touch and from anyone scanning the list. */}
+                   <div className="row models-model-row" style={{ flexWrap: "wrap" }}>
                      <Toggle on={!off} onChange={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy} label={m.native ? m.id : m.namespaced} />
-                     <code className={`mono text-control models-model-id${off ? " models-model-id--off" : ""}`}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
+                     <code className={`mono text-control models-model-id${off ? " models-model-id--off" : ""}`} style={{ flex: "1 1 220px" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
+                     {(m.contextWindow || m.contextCap) && (
+                       <span className="muted text-label" style={{ whiteSpace: "nowrap" }}>
+                         {t("models.tipContext")} {fmtK(m.contextWindow ?? m.contextCap ?? 0)}
+                       </span>
+                     )}
+                     {m.inputModalities && m.inputModalities.length > 0 && (
+                       <span className="muted text-label" style={{ whiteSpace: "nowrap" }}>{m.inputModalities.join(", ")}</span>
+                     )}
+                     {effortRange(m.reasoningEfforts) && (
+                       <span className="muted mono text-label" style={{ whiteSpace: "nowrap" }}>{effortRange(m.reasoningEfforts)}</span>
+                     )}
                      {m.custom && (
                        <span className="models-tag">
                          {t("models.customBadge")}
@@ -768,7 +798,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                                className="models-btn-danger"
                                onClick={() => {
                                  if (window.confirm(t("models.customDeleteConfirm", { name: m.displayName ?? m.id }))) {
-                                   void deleteCustomModel(m.customId!);
+                                   void deleteCustomModel(m.customId!, m.namespaced);
                                  }
                                  setHoveredModel(null);
                                }}
@@ -794,9 +824,43 @@ export default function Models({ apiBase }: { apiBase: string }) {
      );
   };
 
-  const visibleGroups = selectedProvider
+  const scopedGroups = selectedProvider
     ? groups.filter(group => group.provider === selectedProvider)
     : groups;
+  // A searching user wants hits, not a wall of headers: groups that match nothing drop out,
+  // and every group dropping out is what raises the no-match state below.
+  const searching = query.trim().length > 0;
+  const visibleGroups = searching
+    ? scopedGroups.filter(group => group.rows.some(row => rowMatches(group.provider, row)))
+    : scopedGroups;
+
+  const searchBlock = (
+    <>
+      <div className="m3-row" role="search" style={{ marginBottom: "var(--sp-2)" }}>
+        <IconSearch width={20} height={20} aria-hidden="true" className="muted" />
+        <TextInput
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={t("models.search")}
+          aria-label={t("models.search")}
+          aria-invalid={!!regexError}
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
+        />
+        {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+        <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <a className="models-icon-btn" href="#regex" title={t("nav.regex")} aria-label={t("nav.regex")}>
+          <IconRegex width={20} height={20} aria-hidden="true" />
+        </a>
+      </div>
+      {regexError && (
+        <p role="alert" style={{ color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
+          {t("regex.invalid")}: {regexError}
+        </p>
+      )}
+    </>
+  );
 
   const controlsBlock = (
     <>
@@ -1013,6 +1077,10 @@ export default function Models({ apiBase }: { apiBase: string }) {
     </>
   );
 
+  const noMatchBlock = (
+    <Empty title={t("dash.modelsNoResults")} />
+  );
+
   const modalsBlock = (
     <>
       {v2HelpOpen && (
@@ -1026,7 +1094,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
               {t("models.v2Help")}
             </div>
             <div style={{ marginTop: 12 }}>
-              <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+              <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--m3-primary)" }}>
                 {t("models.v2DocsLink")}
               </a>
             </div>
@@ -1203,7 +1271,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         </div>
       </div>
       <p className="page-sub">{t("models.subtitle")}</p>
-      {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
+      {loadError && <Notice tone="err">{t("models.loadFail")}</Notice>}
       <div className="models-workspace-root">
         <aside className="models-workspace-rail" aria-label={t("nav.models")}>
           <div className="models-workspace-rail-header">
@@ -1246,6 +1314,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
           </div>
         </aside>
         <section className="models-workspace-main" aria-label={t("models.workspace.mainAria")}>
+          {searchBlock}
           {controlsBlock}
           {combosBlock}
           {collapseControls}
@@ -1254,6 +1323,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
             visibleGroups.map(group => renderGroup(group))
           }
           {groups.length === 0 && emptyStateBlock}
+          {groups.length > 0 && visibleGroups.length === 0 && noMatchBlock}
         </section>
       </div>
       {modalsBlock}

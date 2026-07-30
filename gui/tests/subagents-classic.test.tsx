@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import Subagents from "../src/pages/Subagents";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 /**
  * WP1 behavioural contract (010_subagents_single.md).
@@ -69,8 +70,12 @@ async function mount(viewMode?: "classic" | "workspace") {
   await act(async () => {
     root = createRoot(container);
     root.render(
+      // Save/load outcomes are snackbars now, so the page needs the notification
+      // provider the shell mounts — rendering it bare throws from useNotifications.
       <LanguageProvider>
-        <Subagents apiBase="" viewMode={viewMode} />
+        <NotificationsProvider>
+          <Subagents apiBase="" viewMode={viewMode} />
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });

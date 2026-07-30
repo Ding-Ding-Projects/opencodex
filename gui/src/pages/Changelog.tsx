@@ -8,10 +8,12 @@
 
 import { useMemo, useState } from "react";
 import { Button, Card, Chip, Empty, Field, TextInput } from "../shell/m3-ui";
+import { IconRegex, IconSearch } from "../icons";
 import { useKeyedClientResource } from "../client-resource";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import { readJsonIfOk } from "../fetch-json";
+import type { CSSProperties } from "react";
 
 interface Release {
   version: string;
@@ -20,6 +22,11 @@ interface Release {
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Stands in for an open end of the range, so a half-open filter still reads as one. */
+const OPEN_END = "…";
+
+const MONO = { fontFamily: "var(--mono)" } as const;
 
 function isValidDate(value: string): boolean {
   if (!ISO.test(value)) return false;
@@ -33,6 +40,49 @@ const PRESETS = [
   { days: 30, tkey: "changelog.last30" },
   { days: 90, tkey: "changelog.last90" },
 ] as const;
+
+type Tone = "ok" | "warn" | "error" | "neutral";
+
+/** Status palette — a functional data colour, not chrome, so it stays a role pair. */
+const TONE_COLOURS: Record<Tone, { background: string; color: string }> = {
+  ok: { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
+  warn: { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" },
+  error: { background: "var(--m3-error-container)", color: "var(--m3-on-error-container)" },
+  neutral: { background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
+};
+
+const BADGE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  height: 24,
+  padding: "0 10px",
+  borderRadius: "var(--r-pill)",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-s)",
+  fontWeight: 600,
+  letterSpacing: "0.2px",
+  whiteSpace: "nowrap",
+};
+
+/** `fix(gui)!: subject` — the shape `scripts/generate-changelog.ts` writes into CHANGELOG.md. */
+const CONVENTIONAL = /^(?<type>[a-z]+)(?<scope>\([^)]*\))?(?<breaking>!)?:\s*(?<rest>.+)$/;
+
+/**
+ * The packaged changelog carries commit subjects, not the prototype's hand-written
+ * `Added` / `Fixed` / `Security` categories, so the category badge is read off the
+ * conventional-commit type instead of being invented. An entry that carries no
+ * type prefix keeps its full text and simply gets no badge.
+ */
+function categorize(entry: string): { badge: string | null; text: string; tone: Tone } {
+  const m = CONVENTIONAL.exec(entry);
+  if (!m?.groups) return { badge: null, text: entry, tone: "neutral" };
+  const { type, scope, breaking, rest } = m.groups;
+  const tone: Tone = breaking || type === "security" ? "error"
+    : type === "fix" || type === "revert" ? "warn"
+    : type === "feat" ? "ok"
+    : "neutral";
+  return { badge: `${type}${scope ?? ""}${breaking ?? ""}`, text: rest ?? entry, tone };
+}
 
 export default function Changelog({ apiBase }: { apiBase: string }) {
   const t = useT();
@@ -54,9 +104,14 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
 
   const pollData = poll.data;
   const available = pollData?.available ?? true;
+  const releases = useMemo(() => pollData?.releases ?? [], [pollData]);
 
   const fromValid = from === "" || isValidDate(from);
   const toValid = to === "" || isValidDate(to);
+
+  // An invalid date is reported, not applied — the typed text stays in the field.
+  const lo = fromValid ? from : "";
+  const hi = toValid ? to : "";
 
   const { rows, regexError } = useMemo(() => {
     let matcher: (text: string) => boolean;
@@ -73,17 +128,27 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
       matcher = text => text.toLowerCase().includes(needle);
     }
 
-    // An invalid date is reported, not applied — the typed text stays in the field.
-    const lo = fromValid ? from : "";
-    const hi = toValid ? to : "";
-
-    const filtered = (pollData?.releases ?? [])
+    const filtered = releases
       .filter(r => (!lo || (r.date ?? "") >= lo) && (!hi || (r.date ?? "") <= hi))
-      .map(r => ({ ...r, entries: query ? r.entries.filter(matcher) : r.entries }))
-      .filter(r => !query || r.entries.length > 0 || matcher(r.version));
+      // A hit on the version or date keeps the whole release; otherwise the entries
+      // themselves are narrowed, because a real release carries a hundred of them.
+      .map(r => (!query || matcher(`${r.version} ${r.date ?? ""}`)
+        ? r
+        : { ...r, entries: r.entries.filter(matcher) }))
+      .filter(r => !query || r.entries.length > 0);
 
     return { rows: filtered, regexError: null as string | null };
-  }, [pollData, from, to, fromValid, toValid, query, useRegex]);
+  }, [releases, lo, hi, query, useRegex]);
+
+  /** What an export would cover: an open end falls back to the data's own bounds. */
+  const rangeLabel = useMemo(() => {
+    if (!lo && !hi) return t("changelog.exportAll");
+    const dates = releases.map(r => r.date).filter((d): d is string => !!d).sort();
+    return t("changelog.exportRange", {
+      from: lo || dates[0] || OPEN_END,
+      to: hi || dates[dates.length - 1] || OPEN_END,
+    });
+  }, [lo, hi, releases, t]);
 
   const applyPreset = (days: number) => {
     const now = new Date();
@@ -93,15 +158,12 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
   };
 
   const exportMarkdown = async () => {
-    const range = from || to
-      ? t("changelog.exportRange", { from: from || "…", to: to || "…" })
-      : t("changelog.exportAll");
-    const md = [`# ${t("nav.changelog")}`, "", `_${range}_`, ""]
+    const md = [`# ${t("nav.changelog")}`, "", `_${rangeLabel}_`, ""]
       .concat(rows.flatMap(r => [`## ${r.version}${r.date ? ` — ${r.date}` : ""}`, "", ...r.entries.map(e => `- ${e}`), ""]))
       .join("\n");
     try {
       await navigator.clipboard.writeText(md);
-      notify({ tone: "success", title: t("changelog.exported"), body: range });
+      notify({ tone: "success", title: t("changelog.exported"), body: rangeLabel });
     } catch {
       notify({ tone: "error", title: t("regex.copyFailed") });
     }
@@ -109,41 +171,69 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <Card
-        title={t("changelog.filterTitle")}
-        subtitle={t("changelog.filterSub")}
-        actions={<Button variant="outlined" onClick={() => void exportMarkdown()} disabled={!rows.length}>{t("changelog.export")}</Button>}
-      >
-        <div className="m3-grid">
-          <Field id="cl-from" label={t("changelog.from")} hint={fromValid ? undefined : <span style={{ color: "var(--m3-error)" }}>{t("changelog.badDate")}</span>}>
-            <TextInput id="cl-from" type="date" value={from} aria-invalid={!fromValid} onChange={e => setFrom(e.target.value)} />
-          </Field>
-          <Field id="cl-to" label={t("changelog.to")} hint={toValid ? undefined : <span style={{ color: "var(--m3-error)" }}>{t("changelog.badDate")}</span>}>
-            <TextInput id="cl-to" type="date" value={to} aria-invalid={!toValid} onChange={e => setTo(e.target.value)} />
-          </Field>
+      <Card title={t("changelog.filterTitle")} subtitle={t("changelog.filterSub")}>
+        <div className="m3-row" style={{ gap: "var(--sp-2)", alignItems: "flex-start" }}>
+          <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+            {/* Reserved hint height: the error appearing must not shove the presets down. */}
+            <Field
+              id="cl-from"
+              label={t("changelog.from")}
+              hint={<span style={{ display: "block", minHeight: 18, color: "var(--m3-error)" }}>
+                {fromValid ? "" : t("changelog.badDate")}
+              </span>}
+            >
+              <TextInput id="cl-from" type="date" value={from} aria-invalid={!fromValid} style={MONO} onChange={e => setFrom(e.target.value)} />
+            </Field>
+          </div>
+          <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+            <Field
+              id="cl-to"
+              label={t("changelog.to")}
+              hint={<span style={{ display: "block", minHeight: 18, color: "var(--m3-error)" }}>
+                {toValid ? "" : t("changelog.badDate")}
+              </span>}
+            >
+              <TextInput id="cl-to" type="date" value={to} aria-invalid={!toValid} style={MONO} onChange={e => setTo(e.target.value)} />
+            </Field>
+          </div>
+          <div className="m3-row" style={{ flex: "2 1 260px", minWidth: 0, gap: 6 }}>
+            {PRESETS.map(p => (
+              <Chip key={p.days} onClick={() => applyPreset(p.days)}>{t(p.tkey)}</Chip>
+            ))}
+            <Chip onClick={() => { setFrom(""); setTo(""); }}>{t("changelog.clearDates")}</Chip>
+          </div>
         </div>
 
-        <div className="m3-row" style={{ gap: 8 }}>
-          {PRESETS.map(p => (
-            <Chip key={p.days} onClick={() => applyPreset(p.days)}>{t(p.tkey)}</Chip>
-          ))}
-          <Chip onClick={() => { setFrom(""); setTo(""); }}>{t("changelog.clearDates")}</Chip>
-        </div>
-
-        <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
+        <div className="m3-row" role="search">
+          <IconSearch width={20} height={20} aria-hidden="true" />
           <TextInput
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder={t("changelog.search")}
             aria-label={t("changelog.search")}
             aria-invalid={!!regexError}
-            style={{ flex: "1 1 240px", width: "auto" }}
+            aria-describedby="cl-regex-error"
+            style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
           />
+          {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
           <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
-            <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+            <code style={MONO}>.*</code>
           </Chip>
+          <a className="m3-icon-btn" href="#regex" title={t("nav.regex")} aria-label={t("nav.regex")}>
+            <IconRegex width={20} height={20} aria-hidden="true" />
+          </a>
         </div>
-        {regexError && <p role="alert" style={{ color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>{t("regex.invalid")}: {regexError}</p>}
+        {/* Reserved height for the same reason as the date hints above. */}
+        <p id="cl-regex-error" role="alert" style={{ minHeight: 20, margin: "4px 0 0", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
+          {regexError ? `${t("regex.invalid")}: ${regexError}` : ""}
+        </p>
+
+        <div className="m3-row" style={{ gap: 8, marginTop: "var(--sp-2)" }}>
+          <span style={{ ...MONO, flex: "1 1 auto", minWidth: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+            {rangeLabel}
+          </span>
+          <Button variant="outlined" onClick={() => void exportMarkdown()} disabled={!rows.length}>{t("changelog.export")}</Button>
+        </div>
       </Card>
 
       {!available ? (
@@ -152,9 +242,29 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
         <Empty title={t("changelog.noResults")}>{t("changelog.noResultsBody")}</Empty>
       ) : (
         rows.map(release => (
-          <Card key={release.version} title={release.version} subtitle={release.date ?? undefined}>
-            <ul style={{ margin: 0, paddingLeft: "1.2em", display: "flex", flexDirection: "column", gap: 4 }}>
-              {release.entries.map((entry, i) => <li key={i} style={{ fontSize: "var(--t-body-m)" }}>{entry}</li>)}
+          <Card
+            key={release.version}
+            title={
+              <span className="m3-row" style={{ gap: 10, alignItems: "baseline" }}>
+                <span style={MONO}>{release.version}</span>
+                {release.date && (
+                  <span style={{ ...MONO, fontSize: "var(--t-label-m)", fontWeight: 400, color: "var(--m3-on-surface-variant)" }}>
+                    {release.date}
+                  </span>
+                )}
+              </span>
+            }
+          >
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {release.entries.map((entry, i) => {
+                const { badge, text, tone } = categorize(entry);
+                return (
+                  <li key={i} className="m3-row" style={{ gap: 10, alignItems: "baseline", padding: "6px 0" }}>
+                    {badge && <span style={{ ...BADGE, ...TONE_COLOURS[tone] }}>{badge}</span>}
+                    <span style={{ flex: "1 1 260px", minWidth: 0, fontSize: "var(--t-body-s)" }}>{text}</span>
+                  </li>
+                );
+              })}
             </ul>
           </Card>
         ))

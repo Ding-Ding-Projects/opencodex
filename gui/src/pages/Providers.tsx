@@ -7,6 +7,8 @@ import { oauthTosRisk } from "../oauth-tos-risk";
 import { Notice } from "../ui";
 import { IconPlus } from "../icons";
 import { useT } from "../i18n/shared";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 import { formatProviderDisplayName } from "../provider-icons";
 import { useProviderAccountPools } from "../hooks/useProviderAccountPools";
 import { useCodexAccountPool } from "../hooks/useCodexAccountPool";
@@ -20,10 +22,10 @@ import { buildAccountLoginStatus, buildAddModalAccountRows } from "./providers-p
 
 export default function Providers({ apiBase }: { apiBase: string }) {
   const t = useT();
+  const { notify: pushNotice } = useNotifications();
   const [config, setConfig] = useState<ProvidersConfig | null>(null);
   const [adding, setAdding] = useState(false);
-  const [status, setStatus] = useState("");
-  const [statusOk, setStatusOk] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [oauthProviders, setOauthProviders] = useState<string[]>([]);
   const [oauthStatus, setOauthStatus] = useState<Record<string, import("./providers-shared").OAuthStatus>>({});
   // Value is unread: the workspace shell fetches its own quota view. The setter stays
@@ -43,9 +45,11 @@ export default function Providers({ apiBase }: { apiBase: string }) {
   const oauthLoginGenerationRef = useRef<Map<string, number>>(new Map());
 
   const notify = useCallback((msg: string, ok: boolean = true) => {
-    setStatus(msg);
-    setStatusOk(ok);
-  }, []);
+    pushNotice({ tone: ok ? "success" : "error", title: msg });
+    // The one message a snackbar cannot carry: when the config never arrives there is no
+    // page behind the snackbar to go back to, so that failure is also held inline.
+    setLoadError(ok ? "" : msg);
+  }, [pushNotice]);
 
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
   // Providers hash sync is owned by App (passive replaceHash / deliberate navigateHash).
@@ -107,13 +111,20 @@ export default function Providers({ apiBase }: { apiBase: string }) {
 
   const { cancelLoginOAuth, loginOAuth, logoutOAuth } = useProvidersOAuth({
     apiBase, t, aliveRef, oauthLoginGenerationRef, accountSets,
-    setBusy, setStatus, setLoginInfo, setOauthStatus, notify,
+    setBusy, setLoginInfo, setOauthStatus, notify,
     fetchConfig, fetchOauth, fetchAccountSets, fetchProviderQuotas, bumpModelsRefresh,
   });
 
+  // Deleting a provider is server-side and irreversible, so the version-history entry has
+  // to capture the config entry before the DELETE goes out — afterwards there is nothing left to read.
+  const providerSnapshot = useCallback((name: string) => {
+    const entry = config?.providers[name];
+    return entry ? JSON.stringify(entry) : undefined;
+  }, [config]);
+
   const { removeProvider, confirmRemoveProvider, setProviderDisabled, updateProvider } = useProvidersCrud({
     apiBase, t, removeBusyRef, workspaceSelected, setWorkspaceSelected, setRemoveConfirmName,
-    notify, fetchConfig, fetchOauth, fetchProviderQuotas,
+    notify, fetchConfig, fetchOauth, fetchProviderQuotas, providerSnapshot,
   });
 
   const requestLoginOAuth = (provider: string, addAccount = false) => {
@@ -131,8 +142,9 @@ export default function Providers({ apiBase }: { apiBase: string }) {
         <div className="page-head">
           <h2>{t("nav.providers")}</h2>
         </div>
-        {status
-          ? <Notice tone="err">{status}</Notice>
+        <p className="page-sub">{t("prov.subtitle")}</p>
+        {loadError
+          ? <Notice tone="err">{loadError}</Notice>
           : <div className="muted">{t("prov.loadingConfig")}</div>}
       </>
     );
@@ -188,7 +200,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
           <button type="button" className="m3-btn m3-btn--filled" onClick={() => setAdding(true)}><IconPlus />{t("prov.add")}</button>
         </div>
       </div>
-      {status && <Notice tone={statusOk ? "ok" : "err"}>{status}</Notice>}
+      <p className="page-sub">{t("prov.subtitle")}</p>
       <ProviderWorkspaceShell
         onRemoveProvider={removeProvider}
         providers={config.providers as Record<string, WorkspaceProvider>}
@@ -279,7 +291,9 @@ export default function Providers({ apiBase }: { apiBase: string }) {
         onAdded={(name) => {
           setAdding(false);
           setAddIntent(null);
-          notify(t("prov.added", { name, cmd: "ocx sync" }), true);
+          const added = t("prov.added", { name, cmd: "ocx sync" });
+          notify(added, true);
+          recordRevision({ scope: "provider", label: name, summary: added });
           fetchConfig();
           fetchOauth();
           fetchProviderQuotas(true);

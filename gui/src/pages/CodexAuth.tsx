@@ -2,8 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n/shared";
 import { Button } from "../shell/m3-ui";
 import CodexAccountPool from "../components/CodexAccountPool";
+import { chipStyle } from "../components/codex-account-pool-m3";
 import { codexAccountModeState, type CodexAccountModeState } from "../codex-multi-state";
+import { formatProviderDisplayName } from "../provider-icons";
 import { ensureOpenAiProvider, openAiAccountProviderState, OpenAiEnableError } from "../provider-payload";
+import { recordRevision } from "../shell/revisions";
+
+/** Config key of the built-in Codex-login provider this banner recovers. */
+const OPENAI_PROVIDER_ID = "openai";
 
 export type OpenAiAccountBannerState = CodexAccountModeState | "invalid" | null;
 
@@ -40,21 +46,13 @@ export function OpenAiAccountModeBanner({
           )}
         </div>
         <div className="m3-card-actions">
+          {/* Same status-pill vocabulary as the account cards below, so mode and
+              account state cannot read as two different kinds of badge. */}
           {state === "pool" && (
-            <span className="m3-chip selected" style={{ cursor: "default" }}>{t("codexAuth.accountModePool")}</span>
+            <span className="m3-chip" style={chipStyle("primary")}>{t("codexAuth.accountModePool")}</span>
           )}
           {state === "direct" && (
-            <span
-              className="m3-chip"
-              style={{
-                cursor: "default",
-                background: "var(--m3-ok-container)",
-                color: "var(--m3-on-ok-container)",
-                borderColor: "transparent",
-              }}
-            >
-              {t("codexAuth.accountModeDirect")}
-            </span>
+            <span className="m3-chip" style={chipStyle("ok")}>{t("codexAuth.accountModeDirect")}</span>
           )}
           {(state === "absent" || state === "disabled") && (
             <Button variant="filled" disabled={busy} onClick={onEnable}>
@@ -133,6 +131,14 @@ export default function CodexAuth({ apiBase }: { apiBase: string }) {
       // Recovery is gated on the same canonical checks as Providers → Accounts.
       if (bannerState !== "absent" && bannerState !== "disabled") return;
       await ensureOpenAiProvider(apiBase, bannerState);
+      // Enabling writes the provider row that Providers also lists, so the change
+      // has to reach Version history — otherwise a provider can appear from this
+      // screen with no record of who turned it on.
+      recordRevision({
+        scope: "provider",
+        label: formatProviderDisplayName(OPENAI_PROVIDER_ID),
+        summary: t("prov.enabled", { name: formatProviderDisplayName(OPENAI_PROVIDER_ID) }),
+      });
       await loadMode();
     } catch (error) {
       if (error instanceof OpenAiEnableError) {
@@ -151,7 +157,24 @@ export default function CodexAuth({ apiBase }: { apiBase: string }) {
       busy={enableBusy}
       onEnable={() => { void enableOpenAi(); }}
     />
-    {enableError && <div className="notice notice-err" role="alert">{enableError}</div>}
+    {/* `notice notice-err` is the pre-M3 class layer in styles.css: it paints
+        `--m3-error` text on an error-container fill instead of the paired
+        `--m3-on-error-container`. Same surface as the pool's load-error row. */}
+    {enableError && (
+      <div
+        className="m3-row"
+        role="alert"
+        style={{
+          marginBottom: "var(--sp-3)",
+          padding: "var(--sp-2)",
+          borderRadius: "var(--r-m)",
+          background: "var(--m3-error-container)",
+          color: "var(--m3-on-error-container)",
+        }}
+      >
+        {enableError}
+      </div>
+    )}
   </>;
 
   return <CodexAccountPool apiBase={apiBase} accountModeState={accountModeState} banner={banner} />;

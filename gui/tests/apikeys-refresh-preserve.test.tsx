@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 import ApiKeys from "../src/pages/ApiKeys";
 
 const originalFetch = globalThis.fetch;
@@ -95,7 +96,10 @@ test("successful key create keeps last-good keys visible when follow-up refresh 
       root = createRoot(container);
       root.render(
         <LanguageProvider>
-          <ApiKeys apiBase="http://localhost" />
+          {/* The screen's icon-only copy buttons acknowledge through the snackbar host. */}
+          <NotificationsProvider>
+            <ApiKeys apiBase="http://localhost" />
+          </NotificationsProvider>
         </LanguageProvider>,
       );
     });
@@ -170,7 +174,10 @@ test("successful key delete keeps last-good keys visible when follow-up refresh 
       root = createRoot(container);
       root.render(
         <LanguageProvider>
-          <ApiKeys apiBase="http://localhost" />
+          {/* The screen's icon-only copy buttons acknowledge through the snackbar host. */}
+          <NotificationsProvider>
+            <ApiKeys apiBase="http://localhost" />
+          </NotificationsProvider>
         </LanguageProvider>,
       );
     });

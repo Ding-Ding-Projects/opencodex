@@ -64,6 +64,10 @@ export default function Claude({ apiBase }: { apiBase: string }) {
 
   return (
     <section className="claude-page">
+      {/* The lede sits ABOVE the tablist (prototype: CLAUDE section) because it describes
+          both clients — inside the Code panel it read as a claim about Code alone. */}
+      <p className="page-sub" style={{ maxWidth: "74ch", whiteSpace: "pre-line" }}>{t("claude.subtitle")}</p>
+
       <div className="claude-tabs" role="tablist" aria-label={t("claude.tabsLabel")} style={TABLIST_STYLE}>
         <button
           type="button"

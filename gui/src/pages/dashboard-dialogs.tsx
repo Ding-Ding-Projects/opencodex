@@ -1,5 +1,6 @@
 import { IconAlert, IconRefresh, IconX } from "../icons";
-import { EmptyState, Select } from "../ui";
+import { Select } from "../ui";
+import { Empty, Toggle } from "../shell/m3-ui";
 import {
   updateReasonLabel,
   type UpdateChannel,
@@ -7,6 +8,10 @@ import {
 import type { useDashboardData } from "./use-dashboard-data";
 
 type Dash = ReturnType<typeof useDashboardData>;
+
+/** The prototype's dialog trails its actions; `.modal-actions` still stretches
+    the legacy `.btn`, so the alignment travels with the M3 buttons. */
+const DIALOG_ACTIONS = { justifyContent: "flex-end" } as const;
 
 export function DashboardDialogs(d: Dash) {
   const {
@@ -32,13 +37,13 @@ export function DashboardDialogs(d: Dash) {
         <div className="modal-card">
           <div className="modal-head">
             <h3 id="update-title">{t("dash.updateTitle")}</h3>
-            <button type="button" className="btn btn-ghost btn-icon" onClick={closeUpdateDialog} aria-label={t("common.cancel")}>
+            <button type="button" className="m3-icon-btn" onClick={closeUpdateDialog} aria-label={t("common.cancel")}>
               <IconX />
             </button>
           </div>
           <div className="modal-desc">{t("dash.updateDesc")}</div>
           <div className="update-row">
-            <label className="field-label" htmlFor="update-channel">{t("dash.updateChannel")}</label>
+            <label className="m3-field-label" htmlFor="update-channel">{t("dash.updateChannel")}</label>
             <Select
               value={updateChannel}
               options={[{ value: "latest", label: "latest" }, { value: "preview", label: "preview" }]}
@@ -48,7 +53,9 @@ export function DashboardDialogs(d: Dash) {
               portal={false}
             />
           </div>
-          {updateLoading && <EmptyState className="update-empty" icon={<span className="spin" />} title={t("dash.updateChecking")} />}
+          {updateLoading && (
+            <Empty title={t("dash.updateChecking")}><span className="spin" aria-hidden="true" /></Empty>
+          )}
           {updateError && (
             <div className="notice notice-err" role="status"><IconAlert /><span>{updateError}</span></div>
           )}
@@ -63,11 +70,11 @@ export function DashboardDialogs(d: Dash) {
                   <div className="muted text-label">{t("dash.updateLatest")}</div>
                   <div className="mono">{updateCheck.latestVersion ?? "—"}</div>
                 </div>
-                <span className={`badge ${updateCheck.updateAvailable ? "badge-green" : "badge-muted"}`}>
+                <span className={`m3-chip${updateCheck.updateAvailable ? " selected" : ""}`}>
                   {updateCheck.updateAvailable ? t("dash.updateAvailable") : t("dash.updateCurrent")}
                 </span>
               </div>
-              <div className="muted update-command">{t("dash.updateCommand")} <code className="chip">{updateCheck.command}</code></div>
+              <div className="muted update-command">{t("dash.updateCommand")} <code className="m3-chip">{updateCheck.command}</code></div>
               {updateCheck.reason === "source_checkout" && (
                 <div className="notice-warn" role="status"><IconAlert /> {t("dash.updateSource")}</div>
               )}
@@ -76,7 +83,7 @@ export function DashboardDialogs(d: Dash) {
                   <IconAlert /> {t("dash.updateUnavailable")}
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm"
+                    className="m3-btn m3-btn--text"
                     disabled={updateLoading}
                     onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
                     style={{ marginLeft: 12 }}
@@ -92,7 +99,7 @@ export function DashboardDialogs(d: Dash) {
                   </span>
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm"
+                    className="m3-btn m3-btn--text"
                     disabled={updateLoading}
                     onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
                   >
@@ -106,24 +113,20 @@ export function DashboardDialogs(d: Dash) {
                     <div className="font-semibold">{t("dash.updateRestart")}</div>
                     <div className="muted text-label">{t("dash.updateRestartHint")}</div>
                   </div>
-                  <button
-                    type="button"
-                    className={`switch ${updateRestart ? "on" : ""}`}
-                    onClick={() => setUpdateRestart(v => !v)}
-                    aria-label={t("dash.updateRestart")}
-                    aria-pressed={updateRestart}
-                  >
-                    <span className="knob" />
-                  </button>
+                  <Toggle
+                    on={updateRestart}
+                    onChange={next => setUpdateRestart(next)}
+                    label={t("dash.updateRestart")}
+                  />
                 </div>
               )}
             </div>
           )}
-          <div className="modal-actions">
-            <button type="button" className="btn btn-ghost" onClick={closeUpdateDialog}>{t("common.cancel")}</button>
+          <div className="modal-actions" style={DIALOG_ACTIONS}>
+            <button type="button" className="m3-btn m3-btn--text" onClick={closeUpdateDialog}>{t("common.cancel")}</button>
             <button
               type="button"
-              className="btn btn-primary"
+              className="m3-btn m3-btn--filled"
               onClick={runUpdate}
               disabled={!updateCheck?.canUpdate || updateLoading}
             >
@@ -145,18 +148,18 @@ export function DashboardDialogs(d: Dash) {
         <div className="modal-card" onClick={e => e.stopPropagation()}>
           <div className="modal-head">
             <h3 id="multi-agent-help-title">{t("dash.multiAgent")}</h3>
-            <button type="button" className="btn btn-ghost btn-icon" onClick={() => setMaHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
+            <button type="button" className="m3-icon-btn" onClick={() => setMaHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
           </div>
           <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
             {t("models.v2Help")}
           </div>
           <div style={{ marginTop: 12 }}>
-            <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+            <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--m3-primary)" }}>
               {t("models.v2DocsLink")}
             </a>
           </div>
-          <div className="modal-actions">
-            <button type="button" className="btn btn-primary" onClick={() => setMaHelpOpen(false)}>{t("common.ok")}</button>
+          <div className="modal-actions" style={DIALOG_ACTIONS}>
+            <button type="button" className="m3-btn m3-btn--filled" onClick={() => setMaHelpOpen(false)}>{t("common.ok")}</button>
           </div>
         </div>
       </dialog>
@@ -173,13 +176,13 @@ export function DashboardDialogs(d: Dash) {
         <div className="modal-card" onClick={e => e.stopPropagation()}>
           <div className="modal-head">
             <h3 id="effort-cap-help-title">{t("dash.effortCapLabel")}</h3>
-            <button type="button" className="btn btn-ghost btn-icon" onClick={() => setEffortCapHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
+            <button type="button" className="m3-icon-btn" onClick={() => setEffortCapHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
           </div>
           <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
             {t("dash.effortCapHelp")}
           </div>
-          <div className="modal-actions">
-            <button type="button" className="btn btn-primary" onClick={() => setEffortCapHelpOpen(false)}>{t("common.ok")}</button>
+          <div className="modal-actions" style={DIALOG_ACTIONS}>
+            <button type="button" className="m3-btn m3-btn--filled" onClick={() => setEffortCapHelpOpen(false)}>{t("common.ok")}</button>
           </div>
         </div>
       </dialog>
@@ -196,13 +199,13 @@ export function DashboardDialogs(d: Dash) {
         <div className="modal-card" onClick={e => e.stopPropagation()}>
           <div className="modal-head">
             <h3 id="shadow-call-help-title">{t("dash.shadowCallIntercept")}</h3>
-            <button type="button" className="btn btn-ghost btn-icon" onClick={() => setShadowCallHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
+            <button type="button" className="m3-icon-btn" onClick={() => setShadowCallHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
           </div>
           <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
             {t("dash.shadowCallTooltip")}
           </div>
-          <div className="modal-actions">
-            <button type="button" className="btn btn-primary" onClick={() => setShadowCallHelpOpen(false)}>{t("common.ok")}</button>
+          <div className="modal-actions" style={DIALOG_ACTIONS}>
+            <button type="button" className="m3-btn m3-btn--filled" onClick={() => setShadowCallHelpOpen(false)}>{t("common.ok")}</button>
           </div>
         </div>
       </dialog>

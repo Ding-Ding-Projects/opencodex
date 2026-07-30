@@ -126,8 +126,8 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <h2 className="page-title">{t("claude.pageTitle")}</h2>
-      <p className="page-sub">{t("claude.subtitle")}</p>
+      {/* No page title here: the app bar names the screen and the tab names the panel, so
+          a third heading was the same words a third time. The lede moved up to Claude.tsx. */}
       {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
       <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} />
       <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />

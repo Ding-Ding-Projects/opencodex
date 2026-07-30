@@ -39,12 +39,35 @@ export function ClaudeCodeSettingsCard({
   const sidecarKeys = ["webSearchSidecar", "visionSidecar"] as const;
 
   return (
+    <>
+    {/* Two cards, per the prototype's CLAUDE section: what the connection IS (on, which
+        auth, which tier) is one decision; how it behaves once connected is another. */}
     <Card>
       <SettingRow
         title={t("claude.enabledLabel")}
         desc={t("claude.enabledHint")}
         control={<SettingToggle label={t("claude.enabledLabel")} checked={state.enabled} onChange={enabled => onStateChange({ ...state, enabled })} />}
       />
+
+      {state.authModeOrigin && (
+        <SettingRow
+          title={t("claude.effectiveMode.label")}
+          desc={
+            <span style={state.authModeOrigin === "auto-unknown" ? { color: "var(--m3-warn)" } : undefined}>
+              {state.authModeOrigin === "manual"
+                ? t("claude.effectiveMode.manual", {
+                  mode: state.markerMode === "proxy" ? t("claude.authModeProxy") : t("claude.authModeSubscription"),
+                })
+                : state.authModeOrigin === "auto-present"
+                  ? t("claude.effectiveMode.autoPresent", { source: authSourceLabel(state.authFoundBy, t) })
+                  : state.authModeOrigin === "auto-absent"
+                    ? t("claude.effectiveMode.autoAbsent")
+                    : t("claude.effectiveMode.autoUnknown")}
+              {state.admissionKeyActive === true ? ` ${t("claude.effectiveMode.admissionKey")}` : ""}
+            </span>
+          }
+        />
+      )}
 
       {/* Auth mode is a one-of-three choice, so it reads as a pill group rather than a
           dropdown. Auto stays FIRST: it is the way back out of a sticky manual mode. */}
@@ -66,36 +89,11 @@ export function ClaudeCodeSettingsCard({
         }
       />
 
-      {state.authModeOrigin && (
-        <SettingRow
-          title={t("claude.effectiveMode.label")}
-          desc={
-            <span style={state.authModeOrigin === "auto-unknown" ? { color: "var(--amber)" } : undefined}>
-              {state.authModeOrigin === "manual"
-                ? t("claude.effectiveMode.manual", {
-                  mode: state.markerMode === "proxy" ? t("claude.authModeProxy") : t("claude.authModeSubscription"),
-                })
-                : state.authModeOrigin === "auto-present"
-                  ? t("claude.effectiveMode.autoPresent", { source: authSourceLabel(state.authFoundBy, t) })
-                  : state.authModeOrigin === "auto-absent"
-                    ? t("claude.effectiveMode.autoAbsent")
-                    : t("claude.effectiveMode.autoUnknown")}
-              {state.admissionKeyActive === true ? ` ${t("claude.effectiveMode.admissionKey")}` : ""}
-            </span>
-          }
-        />
-      )}
-
-      <AutoConnectSetting
-        supported={state.autoConnectSupported}
-        checked={state.systemEnv}
-        onChange={systemEnv => onStateChange({ ...state, systemEnv })}
-      />
-
       <SettingRow
         title={t("claude.fastMode")}
         desc={t("claude.fastModeDesc")}
         align="flex-start"
+        last
         control={
           <Segmented<"auto" | "on" | "off">
             value={state.fastMode === null ? "auto" : state.fastMode ? "on" : "off"}
@@ -109,7 +107,9 @@ export function ClaudeCodeSettingsCard({
           />
         }
       />
+    </Card>
 
+    <Card>
       <SettingRow
         title={t("claude.autoContext")}
         desc={
@@ -149,6 +149,12 @@ export function ClaudeCodeSettingsCard({
         title={t("claude.injectAgents")}
         desc={t("claude.injectAgentsDesc")}
         control={<SettingToggle label={t("claude.injectAgents")} checked={state.injectAgents} onChange={injectAgents => onStateChange({ ...state, injectAgents })} />}
+      />
+
+      <AutoConnectSetting
+        supported={state.autoConnectSupported}
+        checked={state.systemEnv}
+        onChange={systemEnv => onStateChange({ ...state, systemEnv })}
       />
 
       {sidecarKeys.map((key, index) => {
@@ -203,6 +209,7 @@ export function ClaudeCodeSettingsCard({
         );
       })}
     </Card>
+    </>
   );
 }
 

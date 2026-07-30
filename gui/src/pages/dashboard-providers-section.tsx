@@ -26,14 +26,25 @@ export function DashboardProvidersSection({
               </tr>
             </thead>
             <tbody>
-              {providers.map(p => (
-                <tr key={p.name}>
-                  <td className="font-semibold">{p.name}</td>
-                  <td><span className="m3-chip">{p.adapter}</span></td>
-                  <td className="dash-cell-url">{p.baseUrl}</td>
-                  <td className="muted">{p.defaultModel ?? "—"}</td>
-                </tr>
-              ))}
+              {providers.map(p => {
+                // Status is a functional data colour, so the dot also carries its
+                // own name: colour alone would leave "needs setup" invisible to a
+                // screen reader and to anyone who cannot separate the two hues.
+                const status = t(p.hasApiKey ? "pws.status.ready" : "pws.status.needsSetup");
+                return (
+                  <tr key={p.name}>
+                    <td className="font-semibold">
+                      <span className="m3-row" style={{ gap: 8 }}>
+                        <span className={`dot ${p.hasApiKey ? "dot-green" : "dot-amber"}`} role="img" aria-label={status} />
+                        {p.name}
+                      </span>
+                    </td>
+                    <td><span className="m3-chip">{p.adapter}</span></td>
+                    <td className="dash-cell-url">{p.baseUrl}</td>
+                    <td className="muted">{p.defaultModel ?? "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

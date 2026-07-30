@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useKeyedClientResource } from "../client-resource";
 import { useI18n } from "../i18n/shared";
+import { useNotifications } from "../shell/notifications-context";
 import {
   PROJECT_CONFIG_DIAGNOSTICS_POLL_MS,
   seedStartupHealthFromSettings,
@@ -29,6 +30,7 @@ import {
   type UpdateChannel,
   type UpdateCheckData,
   type UpdateJob,
+  type UpdateJobStatus,
   type UsageSummary30d,
   UPDATE_CHECK_MAX_AUTO_RETRIES,
   UPDATE_CHECK_RETRY_BASE_MS,
@@ -37,11 +39,13 @@ import {
   readDashboardSectionFromHash,
   requireJson,
   sidecarModelOptions,
+  updateJobLabel,
   useModalDialog,
 } from "./dashboard-shared";
 
 export function useDashboardData(apiBase: string) {
   const { locale, t } = useI18n();
+  const { notify } = useNotifications();
   // The hash is the source of truth for the active section (#dashboard, …).
   const [selectedSection, setSelectedSection] = useState<DashboardSection>(readDashboardSectionFromHash);
   const [modelQuery, setModelQuery] = useState("");
@@ -75,8 +79,6 @@ export function useDashboardData(apiBase: string) {
   const [effortCap, setEffortCap] = useState<string>("");
   const [subagentEffortCap, setSubagentEffortCap] = useState<string>("");
   const [effortCapSaving, setEffortCapSaving] = useState(false);
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const [projectConfigWarnings, setProjectConfigWarnings] = useState<ProjectCodexConfigGroup[]>([]);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateChannel, setUpdateChannel] = useState<UpdateChannel>("latest");
@@ -276,6 +278,30 @@ export function useDashboardData(apiBase: string) {
   }, [updatePoll.data]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // One snackbar per real transition. The poll re-delivers the same job every
+  // 1.5s, so without the ref the user would get a new toast every tick.
+  const notifiedUpdateStatusRef = useRef<UpdateJobStatus | null>(null);
+  useEffect(() => {
+    if (!updateJob || notifiedUpdateStatusRef.current === updateJob.status) return;
+    notifiedUpdateStatusRef.current = updateJob.status;
+    notify({
+      tone: updateJob.status === "failed" ? "error" : updateJob.status === "succeeded" ? "success" : "info",
+      title: updateJobLabel(updateJob.status, t),
+      body: [
+        updateJob.latestVersion ? `${updateJob.currentVersion} -> ${updateJob.latestVersion}` : "",
+        updateJob.error ?? "",
+      ].filter(Boolean).join(" ") || undefined,
+    });
+  }, [updateJob, notify, t]);
+
+  const notifiedReconnectingRef = useRef(false);
+  useEffect(() => {
+    if (!reconnecting) { notifiedReconnectingRef.current = false; return; }
+    if (notifiedReconnectingRef.current) return;
+    notifiedReconnectingRef.current = true;
+    notify({ tone: "info", title: t("dash.updateReconnecting") });
+  }, [reconnecting, notify, t]);
+
   const grouped = useMemo(() => {
     const g: Record<string, ModelInfo[]> = {};
     for (const m of models) (g[m.provider] ??= []).push(m);
@@ -416,15 +442,25 @@ export function useDashboardData(apiBase: string) {
   const runSync = async () => {
     if (syncing) return;
     setSyncing(true);
-    setSyncResult(null);
-    setSyncError(null);
     try {
       const res = await fetch(`${apiBase}/api/sync`, { method: "POST" });
       const data = await requireJson<SyncResult & { projectConfigGrouped?: ProjectCodexConfigGroup[] }>(res, "sync failed");
-      setSyncResult(data);
       if (data.projectConfigGrouped) setProjectConfigWarnings(data.projectConfigGrouped);
+      // Every caveat the server returned rides along in the body. A sync that
+      // silently rewrote native Codex subagent defaults must still say so, so
+      // the tone drops to "warn" rather than reporting a clean success.
+      const caveats = [
+        data.warning,
+        data.nativeSubagentDefaultsWarning,
+        data.staleAppServerHint ? t("dash.syncStaleHint", { cmd: "ocx sync --restart-codex" }) : "",
+      ].filter(Boolean).join(" ");
+      notify({
+        tone: data.nativeSubagentDefaultsWarning ? "warn" : "success",
+        title: t("dash.syncOk", { count: data.added }),
+        body: caveats || undefined,
+      });
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : String(err));
+      notify({ tone: "error", title: t("dash.syncFailed", { error: err instanceof Error ? err.message : String(err) }) });
     } finally {
       setSyncing(false);
     }
@@ -524,7 +560,7 @@ export function useDashboardData(apiBase: string) {
     injectionModel, injectionEffort, injectionEfforts, injectionAvailable, injectionSaving,
     multiAgentGuidanceEnabled, syncCodexSubagentDefaults, saveInjection,
     effortCap, subagentEffortCap, effortCapSaving, setEffortCap, setSubagentEffortCap, setEffortCapSaving,
-    syncResult, syncError, projectConfigWarnings,
+    projectConfigWarnings,
     updateOpen, updateChannel, setUpdateRestart, updateRestart, updateLoading,
     updateCheck, updateError, updateJob, reconnecting, error,
     effortCapHelpTriggerRef, updateTriggerRef, maHelpTriggerRef, shadowCallHelpTriggerRef,

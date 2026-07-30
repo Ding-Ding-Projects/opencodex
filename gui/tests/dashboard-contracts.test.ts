@@ -72,9 +72,21 @@ test("injection writes consume the server's model-clear normalization", () => {
   });
 });
 
+/**
+ * Supersession: the Material 3 port moved the sync outcome off the Maintenance
+ * card and onto the shell's snackbar host, because an informational result is a
+ * notification, not a panel that shoves the buttons down the card. The invariant
+ * being defended is unchanged and re-pinned at the new location — a sync that
+ * rewrote native Codex subagent defaults must still say so, and must not be
+ * reported as a clean success.
+ */
 test("Dashboard sync surfaces native subagent default warnings", async () => {
+  const hook = await Bun.file(new URL("../src/pages/use-dashboard-data.ts", import.meta.url)).text();
+  expect(hook).toContain("data.nativeSubagentDefaultsWarning");
+  // The warning rides in the snackbar body and drags the tone off "success".
+  expect(hook).toMatch(/tone: data\.nativeSubagentDefaultsWarning \? "warn" : "success"/);
+  expect(hook).toMatch(/notify\(\{\s*tone: "error", title: t\("dash\.syncFailed"/);
+  // And the Maintenance card no longer keeps a private copy of the result.
   const sections = await Bun.file(new URL("../src/pages/dashboard-overview-sections.tsx", import.meta.url)).text();
-  expect(sections).toContain("syncResult.nativeSubagentDefaultsWarning");
-  expect(sections).toContain('"notice-warn"');
-  expect(sections).toContain("<IconAlert />");
+  expect(sections).not.toContain("syncResult");
 });

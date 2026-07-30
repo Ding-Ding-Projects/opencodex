@@ -11,6 +11,7 @@
 
 import { useMemo, useState } from "react";
 import { Button, Card, Chip, Field, TextArea, TextInput } from "../shell/m3-ui";
+import { IconCopy } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import type { TKey } from "../i18n/shared";
@@ -18,6 +19,9 @@ import type { TKey } from "../i18n/shared";
 const PATTERN_CAP = 400;
 const SAMPLE_CAP = 20_000;
 const MATCH_CAP = 200;
+
+/** Shown when a group participated in no capture, and for a zero-width match. */
+const EMPTY_MARK = "∅";
 
 const FLAGS: { flag: string; tkey: TKey }[] = [
   { flag: "g", tkey: "regex.flagG" },
@@ -28,36 +32,79 @@ const FLAGS: { flag: string; tkey: TKey }[] = [
   { flag: "y", tkey: "regex.flagY" },
 ];
 
-/** Guided palette: insert a construct rather than remembering its syntax. */
-const TOKENS: { insert: string; tkey: TKey }[] = [
+/**
+ * Guided palette: insert a construct rather than remembering its syntax.
+ *
+ * Ordered the way the prototype groups them (literals → classes → anchors →
+ * groups → alternation → quantifiers) so the headings drop in unchanged once
+ * the group keys exist. `tkey` is optional because several constructs have no
+ * description key yet, and a chip labelled with the construct itself is better
+ * than no chip at all.
+ *
+ * Every insert is a *complete* construct: `(?<name>)` and not `(?<name>…)`,
+ * because the ellipsis is a literal character and silently broke the pattern
+ * the moment it was inserted.
+ */
+const TOKENS: { insert: string; tkey?: TKey }[] = [
+  { insert: "abc" },
+  { insert: "\\." },
+  { insert: "\\\\" },
   { insert: "\\d", tkey: "regex.tokDigit" },
   { insert: "\\w", tkey: "regex.tokWord" },
   { insert: "\\s", tkey: "regex.tokSpace" },
   { insert: ".", tkey: "regex.tokAny" },
   { insert: "[a-z]", tkey: "regex.tokClass" },
-  { insert: "+", tkey: "regex.tokPlus" },
-  { insert: "*", tkey: "regex.tokStar" },
-  { insert: "?", tkey: "regex.tokOpt" },
-  { insert: "{1,3}", tkey: "regex.tokRange" },
-  { insert: "(?<name>…)", tkey: "regex.tokNamed" },
-  { insert: "(?:…)", tkey: "regex.tokGroup" },
+  { insert: "[^/]" },
+  { insert: "\\p{Script=Han}" },
   { insert: "^", tkey: "regex.tokStart" },
   { insert: "$", tkey: "regex.tokEnd" },
   { insert: "\\b", tkey: "regex.tokBoundary" },
+  { insert: "()" },
+  { insert: "(?<name>)", tkey: "regex.tokNamed" },
+  { insert: "(?:)", tkey: "regex.tokGroup" },
+  { insert: "(?=)" },
   { insert: "|", tkey: "regex.tokAlt" },
+  { insert: "*", tkey: "regex.tokStar" },
+  { insert: "+", tkey: "regex.tokPlus" },
+  { insert: "?", tkey: "regex.tokOpt" },
+  { insert: "{1,3}", tkey: "regex.tokRange" },
+  { insert: "+?" },
 ];
 
-const PRESETS: { tkey: TKey; pattern: string; flags: string }[] = [
-  { tkey: "regex.presetResponseId", pattern: "resp_(?<id>[0-9a-f]{6,})", flags: "g" },
-  { tkey: "regex.presetStatus", pattern: "\\b(?<status>[45]\\d{2})\\b", flags: "g" },
-  { tkey: "regex.presetModel", pattern: "(?<vendor>[a-z]+)/(?<model>[\\w.\\-]+)", flags: "gi" },
-  { tkey: "regex.presetToken", pattern: "sk-[A-Za-z0-9_\\-]{16,}", flags: "g" },
+/** A preset carries its own sample, or it would be tested against unrelated text. */
+const PRESETS: { tkey: TKey; pattern: string; flags: string; sample: string }[] = [
+  {
+    tkey: "regex.presetResponseId",
+    pattern: "resp_(?<id>[0-9a-f]{6,})",
+    flags: "g",
+    sample: "resp_9fa2c1 200 · resp_9f7q88 429 · resp_9f4b71 502\nresp_beefed 200",
+  },
+  {
+    tkey: "regex.presetStatus",
+    pattern: "\\b(?<status>[45]\\d{2})\\b",
+    flags: "g",
+    sample: "GET /v1/responses 200\nPOST /v1/responses 429\nPOST /v1/messages 502",
+  },
+  {
+    tkey: "regex.presetModel",
+    pattern: "(?<vendor>[a-z]+)/(?<model>[\\w.\\-]+)",
+    flags: "gi",
+    sample: "openrouter/qwen4-max\nz-ai/glm-5\nanthropic/claude-opus-5",
+  },
+  {
+    tkey: "regex.presetToken",
+    pattern: "sk-[A-Za-z0-9_\\-]{16,}",
+    flags: "g",
+    sample: "authorization: Bearer sk-abcdef0123456789ABCDEF\nx-api-key: sk-0000",
+  },
 ];
 
 interface MatchRow {
   index: number;
   text: string;
-  groups: Record<string, string>;
+  /** Positional captures, `undefined` where the group did not participate. */
+  positional: (string | undefined)[];
+  groups: Record<string, string | undefined>;
 }
 
 interface Evaluation {
@@ -84,7 +131,8 @@ function evaluate(pattern: string, flags: string, sample: string): Evaluation {
     rows.push({
       index: match.index,
       text: match[0],
-      groups: { ...(match.groups ?? {}) } as Record<string, string>,
+      positional: match.slice(1),
+      groups: { ...(match.groups ?? {}) } as Record<string, string | undefined>,
     });
     // Zero-width match: advance manually or exec() never moves and this loops forever.
     if (match[0] === "") re.lastIndex += 1;
@@ -94,14 +142,21 @@ function evaluate(pattern: string, flags: string, sample: string): Evaluation {
   return { rows, error: null, truncated };
 }
 
+/** `$1=… name=…` beside a match, so captures are readable without a second table. */
+function groupsLabel(row: MatchRow): string {
+  const parts = row.positional.map((g, i) => `$${i + 1}=${g ?? EMPTY_MARK}`);
+  for (const [name, value] of Object.entries(row.groups)) parts.push(`${name}=${value ?? EMPTY_MARK}`);
+  return parts.join("  ");
+}
+
+const MONO = { fontFamily: "var(--mono)" } as const;
+
 export default function RegexBuilder() {
   const t = useT();
   const { notify } = useNotifications();
-  const [pattern, setPattern] = useState("resp_(?<id>[0-9a-f]{6,})");
-  const [flags, setFlags] = useState("g");
-  const [sample, setSample] = useState(
-    "resp_9fa2c1 200 · resp_9f7q88 429 · resp_9f4b71 502\nresp_beefed 200",
-  );
+  const [pattern, setPattern] = useState(PRESETS[0].pattern);
+  const [flags, setFlags] = useState(PRESETS[0].flags);
+  const [sample, setSample] = useState(PRESETS[0].sample);
 
   const result = useMemo(() => evaluate(pattern, flags, sample), [pattern, flags, sample]);
   const groupNames = useMemo(() => {
@@ -152,111 +207,136 @@ export default function RegexBuilder() {
         </p>
 
         <Field label={t("regex.presets")}>
-          <div className="m3-row" style={{ gap: 8 }}>
+          <div className="m3-row" style={{ gap: 8 }} role="group" aria-label={t("regex.presets")}>
             {PRESETS.map(p => (
-              <Chip key={p.pattern} onClick={() => { setPattern(p.pattern); setFlags(p.flags); }}>
+              <Chip
+                key={p.pattern}
+                selected={pattern === p.pattern}
+                onClick={() => { setPattern(p.pattern); setFlags(p.flags); setSample(p.sample); }}
+              >
                 {t(p.tkey)}
               </Chip>
             ))}
           </div>
         </Field>
+      </Card>
 
-        <Field label={t("regex.palette")}>
-          <div className="m3-row" style={{ gap: 6 }}>
-            {TOKENS.map(tok => (
-              <Chip key={tok.insert} onClick={() => insert(tok.insert)} title={t(tok.tkey)}>
-                <code style={{ fontFamily: "var(--mono)" }}>{tok.insert}</code>
+      <Card title={t("regex.palette")}>
+        <div className="m3-row" style={{ gap: 6 }} role="group" aria-label={t("regex.palette")}>
+          {TOKENS.map(tok => (
+            <Chip key={tok.insert} onClick={() => insert(tok.insert)} title={tok.tkey ? t(tok.tkey) : undefined}>
+              <code style={MONO}>{tok.insert}</code>
+            </Chip>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <Field
+          id="ocx-rx-pattern"
+          label={t("regex.pattern")}
+          hint={t("regex.patternCap", { used: String(pattern.length), cap: String(PATTERN_CAP) })}
+        >
+          {/* The `/…/flags` delimiters make the literal the user is building readable at a glance. */}
+          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+            <span aria-hidden="true" style={{ ...MONO, fontSize: "var(--t-title-m)", color: "var(--m3-on-surface-variant)" }}>/</span>
+            <TextInput
+              id="ocx-rx-pattern"
+              value={pattern}
+              spellCheck={false}
+              aria-invalid={!!result.error}
+              aria-describedby="ocx-rx-error"
+              onChange={e => setPattern(e.target.value.slice(0, PATTERN_CAP))}
+              style={{ ...MONO, flex: "1 1 auto", minWidth: 0, width: "auto" }}
+            />
+            <span aria-hidden="true" style={{ ...MONO, fontSize: "var(--t-title-m)", color: "var(--m3-on-surface-variant)" }}>/{flags}</span>
+          </div>
+        </Field>
+
+        {/* Reserved height: the error appearing must not shove the flags row down. */}
+        <p
+          id="ocx-rx-error"
+          role="alert"
+          style={{ minHeight: 22, margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}
+        >
+          {result.error ? `${t("regex.invalid")}: ${result.error}` : ""}
+        </p>
+
+        <Field label={t("regex.flags")}>
+          <div className="m3-row" style={{ gap: 6 }} role="group" aria-label={t("regex.flags")}>
+            {FLAGS.map(f => (
+              <Chip key={f.flag} selected={flags.includes(f.flag)} onClick={() => toggleFlag(f.flag)} title={t(f.tkey)}>
+                <code style={MONO}>{f.flag}</code>
               </Chip>
             ))}
           </div>
         </Field>
 
         <Field
-          id="ocx-rx-pattern"
-          label={t("regex.pattern")}
-          hint={t("regex.patternCap", { used: String(pattern.length), cap: String(PATTERN_CAP) })}
+          id="ocx-rx-sample"
+          label={t("regex.sample")}
+          hint={t("regex.sampleCap", { used: String(sample.length), cap: String(SAMPLE_CAP) })}
         >
-          <TextInput
-            id="ocx-rx-pattern"
-            value={pattern}
+          <TextArea
+            id="ocx-rx-sample"
+            value={sample}
             spellCheck={false}
-            aria-invalid={!!result.error}
-            onChange={e => setPattern(e.target.value.slice(0, PATTERN_CAP))}
-            style={{ fontFamily: "var(--mono)" }}
+            onChange={e => setSample(e.target.value.slice(0, SAMPLE_CAP))}
           />
         </Field>
 
-        <Field label={t("regex.flags")}>
-          <div className="m3-row" style={{ gap: 6 }}>
-            {FLAGS.map(f => (
-              <Chip key={f.flag} selected={flags.includes(f.flag)} onClick={() => toggleFlag(f.flag)} title={t(f.tkey)}>
-                <code style={{ fontFamily: "var(--mono)" }}>{f.flag}</code>
-              </Chip>
-            ))}
-          </div>
-        </Field>
-
-        {result.error && (
-          <p role="alert" style={{ color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
-            {t("regex.invalid")}: {result.error}
-          </p>
-        )}
-
         <div className="m3-row">
-          <Button variant="tonal" onClick={() => void copy(`/${pattern}/${flags}`, t("regex.copied"))}>
+          <Button onClick={() => void copy(`/${pattern}/${flags}`, t("regex.copied"))}>
+            <IconCopy aria-hidden="true" />
             {t("regex.copy")}
           </Button>
           <Button variant="outlined" onClick={exportMarkdown}>{t("regex.export")}</Button>
         </div>
       </Card>
 
-      <Card
-        title={t("regex.sample")}
-        subtitle={t("regex.sampleCap", { used: String(sample.length), cap: String(SAMPLE_CAP) })}
-      >
-        <TextArea
-          value={sample}
-          spellCheck={false}
-          aria-label={t("regex.sample")}
-          onChange={e => setSample(e.target.value.slice(0, SAMPLE_CAP))}
-        />
-      </Card>
-
-      <Card
-        title={t("regex.matches")}
-        subtitle={result.truncated
-          ? t("regex.matchTruncated", { cap: String(MATCH_CAP) })
-          : t("regex.matchCountValue", { count: String(result.rows.length) })}
-      >
-        {result.rows.length === 0 ? (
-          <p style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>{t("regex.noMatches")}</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="m3-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>{t("regex.colIndex")}</th>
-                  <th>{t("regex.colMatch")}</th>
-                  {groupNames.map(name => <th key={name}>{name}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, i) => (
-                  <tr key={`${row.index}-${i}`}>
-                    <td>{i + 1}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{row.index}</td>
-                    <td><code style={{ fontFamily: "var(--mono)" }}>{row.text || "∅"}</code></td>
-                    {groupNames.map(name => (
-                      <td key={name}><code style={{ fontFamily: "var(--mono)" }}>{row.groups[name] ?? ""}</code></td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <div className="m3-grid">
+        <Card
+          title={t("regex.matches")}
+          subtitle={result.truncated
+            ? t("regex.matchTruncated", { cap: String(MATCH_CAP) })
+            : t("regex.matchCountValue", { count: String(result.rows.length) })}
+        >
+          {result.rows.length === 0 ? (
+            <p style={{ margin: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+              {pattern && !result.error ? t("regex.noMatches") : ""}
+            </p>
+          ) : (
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {result.rows.map((row, i) => (
+                <li
+                  key={`${row.index}-${i}`}
+                  className="m3-row"
+                  style={{ gap: 10, alignItems: "baseline", padding: "8px 0", borderBottom: "1px solid var(--m3-outline-variant)" }}
+                >
+                  <span style={{ ...MONO, fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", fontVariantNumeric: "tabular-nums" }}>
+                    @{row.index}
+                  </span>
+                  <mark
+                    style={{
+                      ...MONO,
+                      padding: "1px 6px",
+                      borderRadius: "var(--r-s, 8px)",
+                      background: "var(--m3-primary-container)",
+                      color: "var(--m3-on-primary-container)",
+                      fontSize: "var(--t-label-m)",
+                    }}
+                  >
+                    {row.text || EMPTY_MARK}
+                  </mark>
+                  <span style={{ ...MONO, fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", minWidth: 0, overflowWrap: "anywhere" }}>
+                    {groupsLabel(row)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
     </>
   );
 }

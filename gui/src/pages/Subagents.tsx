@@ -1,28 +1,51 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readJsonOrThrow } from "../fetch-json";
-import { Notice } from "../ui";
 import { Button, Card, Empty, TextInput } from "../shell/m3-ui";
-import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconSearch, IconBot, IconInfo } from "../icons";
+import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconPlus, IconSearch, IconInfo } from "../icons";
 import { useT } from "../i18n/shared";
 import { Trans } from "../i18n/provider";
 import { modelLabel } from "../model-display";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 
-/** Bordered list surface shared by the featured slots and the candidate list (M3 table anatomy). */
-const LIST_SURFACE: React.CSSProperties = {
-  borderRadius: "var(--r-l)",
+/**
+ * The featured slots are table anatomy, so they honour the per-element
+ * appearance editor's `table` target the same way `.m3-table` does — without
+ * these vars the editor silently does nothing on this screen.
+ */
+const TABLE_SURFACE: React.CSSProperties = {
+  borderRadius: "var(--el-table-radius, var(--r-l))",
   border: "1px solid var(--m3-outline-variant)",
-  background: "var(--m3-surface-container-lowest)",
+  background: "var(--el-table-bg, var(--m3-surface-container-lowest))",
+  fontFamily: "var(--el-table-font, inherit)",
+  color: "var(--el-table-color, var(--m3-on-surface))",
   overflow: "hidden",
 };
 
-const ROW: React.CSSProperties = {
+const TABLE_ROW: React.CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
   alignItems: "center",
   gap: 10,
   minHeight: "var(--h-row, 56px)",
-  padding: "8px 16px",
+  padding: "var(--el-table-pad, 10px 16px)",
   borderTop: "1px solid var(--m3-outline-variant)",
+};
+
+/** Candidates are tappable list items, not table rows: pill-ish radius, no dividers. */
+const CANDIDATE_ROW: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 10,
+  width: "100%",
+  minHeight: "var(--h-row, 56px)",
+  padding: "0 14px",
+  border: "none",
+  borderRadius: "var(--r-m)",
+  font: "inherit",
+  fontSize: "var(--t-body-m)",
+  textAlign: "left",
 };
 
 /** 44px round icon button — meets the minimum hit target without a bespoke class. */
@@ -38,13 +61,32 @@ const ICON_BTN: React.CSSProperties = {
   cursor: "pointer",
 };
 
+const PROVIDER_LABEL: React.CSSProperties = {
+  flex: "0 0 auto",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-m)",
+};
+
+const SLUG: React.CSSProperties = {
+  flex: "1 1 200px",
+  minWidth: 0,
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-l)",
+  overflowWrap: "anywhere",
+};
+
+/** Routed catalog slugs are `provider/id`; a bare slug is an OpenAI passthrough model. */
+function providerPrefix(slug: string): string | null {
+  const slash = slug.indexOf("/");
+  return slash > 0 ? slug.slice(0, slash) : null;
+}
+
 export default function Subagents({ apiBase }: { apiBase: string }) {
   const t = useT();
+  const { notify } = useNotifications();
   const [available, setAvailable] = useState<string[]>([]);
   const [chosen, setChosen] = useState<string[]>([]);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-  const [ok, setOk] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   /** Sync guard: state-only `busy` can miss clicks before the disabled re-render commits. */
@@ -62,12 +104,11 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       setAvailable(avail);
       setChosen((r.chosen ?? []).filter((m: string) => availSet.has(m)));
     } catch {
-      setOk(false);
-      setStatus(t("sub.loadFail"));
+      notify({ tone: "error", title: t("sub.loadFail") });
     } finally {
       setLoading(false);
     }
-  }, [apiBase, t]);
+  }, [apiBase, notify, t]);
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
@@ -77,7 +118,6 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
 
   const toggle = (m: string) => {
     if (busy) return;
-    setStatus("");
     setChosen(prev => prev.includes(m) ? prev.filter(x => x !== m) : (prev.length >= 5 ? prev : [...prev, m]));
   };
   const move = (i: number, dir: -1 | 1) => {
@@ -95,7 +135,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
     if (busy || saveInFlight.current) return;
     saveInFlight.current = true;
     setBusy(true);
-    setStatus("");
+    const before = chosen;
     try {
       const r = await fetch(`${apiBase}/api/subagent-models`, {
         method: "PUT",
@@ -104,11 +144,16 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       });
       const d = await readJsonOrThrow<{ applied?: string[] }>(r, t("sub.saveFailed"));
       if (d?.applied) setChosen(d.applied);
-      setOk(true);
-      setStatus(t("sub.saved", { n: d?.applied?.length ?? 0, cmd: "ocx sync" }));
+      const saved = t("sub.saved", { n: d?.applied?.length ?? 0, cmd: "ocx sync" });
+      // The featured five are a user-visible record, so an accidental save stays recoverable.
+      recordRevision({ scope: "settings", label: t("nav.subagents"), summary: saved, before: JSON.stringify(before) });
+      notify({ tone: "success", title: saved });
     } catch (error) {
-      setOk(false);
-      setStatus(error instanceof Error && error.message ? error.message : t("sub.networkError"));
+      notify({
+        tone: "error",
+        title: t("sub.saveFailed"),
+        body: error instanceof Error && error.message ? error.message : t("sub.networkError"),
+      });
     } finally {
       saveInFlight.current = false;
       setBusy(false);
@@ -128,8 +173,6 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
         <Trans k="sub.subtitle" cmd="spawn_agent" />
       </p>
 
-      {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
-
       <Card
         title={t("sub.featured")}
         subtitle={<span>{chosen.length}/5</span>}
@@ -146,9 +189,9 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
         {chosen.length === 0 ? (
           <Empty title={t("sub.noneSelected")} />
         ) : (
-          <div style={LIST_SURFACE}>
+          <div style={TABLE_SURFACE}>
             {chosen.map((m, i) => (
-              <div key={m} style={{ ...ROW, borderTop: i === 0 ? "none" : ROW.borderTop }}>
+              <div key={m} style={{ ...TABLE_ROW, borderTop: i === 0 ? "none" : TABLE_ROW.borderTop }}>
                 <span
                   aria-hidden="true"
                   style={{
@@ -166,9 +209,8 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
                 >
                   {i + 1}
                 </span>
-                <code style={{ flex: "1 1 200px", minWidth: 0, fontFamily: "var(--mono)", fontSize: "var(--t-label-l)", color: "var(--m3-on-surface)", overflowWrap: "anywhere" }}>
-                  {modelLabel(m)}
-                </code>
+                <code style={SLUG}>{modelLabel(m)}</code>
+                <span style={PROVIDER_LABEL}>{providerPrefix(m) ?? t("models.nativeGroupLabel")}</span>
                 <div style={{ display: "flex", gap: 2 }}>
                   <button type="button" style={ICON_BTN} onClick={() => move(i, -1)} disabled={busy || i === 0} aria-label={t("sub.moveUp", { m })}>
                     <IconArrowUp aria-hidden="true" />
@@ -197,8 +239,19 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
             style={{ flex: 1 }}
           />
         </div>
-        <div style={{ ...LIST_SURFACE, maxHeight: 360, overflowY: "auto" }}>
-          {filtered.map((m, i) => {
+        <div
+          style={{
+            borderRadius: "var(--r-l)",
+            border: "1px solid var(--m3-outline-variant)",
+            background: "var(--m3-surface-container-low)",
+            padding: 10,
+            // The real catalog runs to hundreds of models, so the list scrolls
+            // inside the card rather than pushing the page.
+            maxHeight: 360,
+            overflowY: "auto",
+          }}
+        >
+          {filtered.map(m => {
             const sel = chosenSet.has(m);
             const full = !sel && chosen.length >= 5;
             const blocked = full || busy;
@@ -210,27 +263,18 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
                 disabled={busy || full}
                 aria-pressed={sel}
                 style={{
-                  ...ROW,
-                  borderTop: i === 0 ? "none" : ROW.borderTop,
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: "none",
-                  width: "100%",
-                  textAlign: "left",
-                  font: "inherit",
+                  ...CANDIDATE_ROW,
                   background: sel ? "var(--m3-secondary-container)" : "transparent",
                   color: sel ? "var(--m3-on-secondary-container)" : "var(--m3-on-surface)",
-                  opacity: blocked ? 0.45 : 1,
+                  opacity: blocked ? 0.5 : 1,
                   cursor: blocked ? "not-allowed" : "pointer",
                 }}
               >
-                <span aria-hidden="true" style={{ width: 20, height: 20, flexShrink: 0, color: "var(--m3-primary)", display: "inline-flex" }}>
-                  {sel && <IconCheck style={{ width: 20, height: 20 }} />}
+                <span aria-hidden="true" style={{ flex: "0 0 auto", display: "inline-flex", color: sel ? "currentColor" : "var(--m3-primary)" }}>
+                  {sel ? <IconCheck style={{ width: 20, height: 20 }} /> : <IconPlus style={{ width: 20, height: 20 }} />}
                 </span>
-                <IconBot aria-hidden="true" style={{ width: 16, height: 16, color: "var(--m3-on-surface-variant)", flexShrink: 0 }} />
-                <code style={{ flex: "1 1 auto", minWidth: 0, fontFamily: "var(--mono)", fontSize: "var(--t-label-l)", overflowWrap: "anywhere" }}>
-                  {modelLabel(m)}
-                </code>
+                <code style={SLUG}>{modelLabel(m)}</code>
+                <span style={PROVIDER_LABEL}>{providerPrefix(m) ?? t("models.nativeGroupLabel")}</span>
               </button>
             );
           })}

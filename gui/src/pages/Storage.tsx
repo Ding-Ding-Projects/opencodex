@@ -3,6 +3,8 @@ import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
 import { Button, Chip, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { IconRefresh } from "../icons";
 import { formatBytes } from "../format-bytes";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 
 interface StorageLargestEntry {
   path: string;
@@ -120,25 +122,52 @@ const BAR_TRACK: CSSProperties = {
   width: "100%",
   minWidth: 64,
   height: 8,
-  borderRadius: 999,
+  borderRadius: "var(--r-pill)",
   background: "var(--m3-surface-container-highest)",
   overflow: "hidden",
 };
 const BAR_FILL: CSSProperties = { display: "block", height: "100%", background: "var(--m3-primary)" };
+const STAT_GRID: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+  gap: "var(--sp-2)",
+  marginBottom: "var(--sp-4)",
+};
 /** Tonal stat tile matching the prototype's --h-stat cards. */
 const STAT_TILE: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  justifyContent: "center",
-  gap: 4,
   minHeight: "var(--h-stat)",
   padding: "var(--pad-card)",
   borderRadius: "var(--r-l)",
   background: "var(--m3-surface-container-low)",
   border: "1px solid var(--m3-outline-variant)",
+  minWidth: 0,
 };
 const STAT_LABEL: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" };
-const STAT_VALUE: CSSProperties = { fontSize: "var(--t-title-m)", fontWeight: 500, overflowWrap: "anywhere" };
+const STAT_VALUE: CSSProperties = {
+  marginTop: 6,
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-title-l)",
+  fontWeight: 500,
+  overflowWrap: "anywhere",
+};
+/** Reserved height so a hintless tile still lines up with its neighbours. */
+const STAT_HINT: CSSProperties = {
+  minHeight: 16,
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-s)",
+  fontFamily: "var(--mono)",
+  overflowWrap: "anywhere",
+};
+
+function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div style={STAT_TILE}>
+      <div style={STAT_LABEL}>{label}</div>
+      <div style={STAT_VALUE}>{value}</div>
+      <div style={STAT_HINT}>{hint}</div>
+    </div>
+  );
+}
 
 const localizedCatch = (e: unknown, fallback: string): string => {
   if (!(e instanceof Error)) return fallback;
@@ -164,14 +193,17 @@ function formatDate(ms: number | undefined, locale: Locale): string {
   return ms === undefined ? "—" : new Date(ms).toLocaleDateString(locale);
 }
 
-function BucketsTable({ buckets, locale, t }: { buckets: StorageBucket[]; locale: Locale; t: TFn }) {
-  // Presentation-only share of the largest bucket, so the bars read comparatively.
-  const peak = buckets.reduce((max, bucket) => Math.max(max, bucket.bytes), 0);
+function BucketsTable({ buckets, totalBytes, locale, t }: {
+  buckets: StorageBucket[];
+  totalBytes: number;
+  locale: Locale;
+  t: TFn;
+}) {
   return (
     <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-buckets-title">
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id="storage-buckets-title" className="m3-card-title">{t("storage.section.buckets")}</h3>
+          <h2 id="storage-buckets-title" className="m3-card-title">{t("storage.section.buckets")}</h2>
         </div>
       </header>
       <div style={TABLE_WRAP}>
@@ -189,7 +221,10 @@ function BucketsTable({ buckets, locale, t }: { buckets: StorageBucket[]; locale
           </thead>
           <tbody>
             {buckets.map(bucket => {
-              const share = peak > 0 ? Math.round((bucket.bytes / peak) * 100) : 0;
+              const share = totalBytes > 0 ? Math.round((bucket.bytes / totalBytes) * 100) : 0;
+              // A non-empty bucket that rounds to 0% still gets a visible sliver;
+              // aria keeps the true value so the bar never lies to a screen reader.
+              const width = bucket.bytes > 0 ? Math.max(2, share) : 0;
               return (
                 <tr key={bucket.key}>
                   <td>{bucketLabel(bucket, t)}</td>
@@ -202,7 +237,7 @@ function BucketsTable({ buckets, locale, t }: { buckets: StorageBucket[]; locale
                       aria-label={bucketLabel(bucket, t)}
                       style={BAR_TRACK}
                     >
-                      <span aria-hidden="true" style={{ ...BAR_FILL, width: `${share}%` }} />
+                      <span aria-hidden="true" style={{ ...BAR_FILL, width: `${width}%` }} />
                     </span>
                   </td>
                   <td className="mono" style={NUM_CELL}>{formatBytes(bucket.bytes, locale)}</td>
@@ -223,34 +258,31 @@ function BucketsTable({ buckets, locale, t }: { buckets: StorageBucket[]; locale
 }
 
 function LargestFilesPanel({ buckets, locale, t }: { buckets: StorageBucket[]; locale: Locale; t: TFn }) {
-  const withLargest = buckets.filter(bucket => (bucket.largest?.length ?? 0) > 0);
-  if (withLargest.length === 0) return null;
+  // One flat list across every bucket, biggest first. The scanner's paths are
+  // CODEX_HOME-relative, so they stay unambiguous once the buckets are merged.
+  const files = buckets
+    .flatMap(bucket => bucket.largest ?? [])
+    .toSorted((a, b) => b.bytes - a.bytes);
+  if (files.length === 0) return null;
   return (
     <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-largest-title">
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id="storage-largest-title" className="m3-card-title">{t("storage.section.largest")}</h3>
+          <h2 id="storage-largest-title" className="m3-card-title">{t("storage.section.largest")}</h2>
         </div>
       </header>
-      {withLargest.map(bucket => (
-        <details key={bucket.key} style={CARD_BODY}>
-          <summary style={{ minHeight: 44, display: "flex", alignItems: "center", cursor: "pointer" }}>
-            {bucketLabel(bucket, t)}
-          </summary>
-          <div style={TABLE_WRAP}>
-            <table className="m3-table">
-              <tbody>
-                {bucket.largest!.map(entry => (
-                  <tr key={entry.path}>
-                    <td className="mono" style={{ overflowWrap: "anywhere" }}>{entry.path}</td>
-                    <td className="mono" style={NUM_CELL}>{formatBytes(entry.bytes, locale)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      ))}
+      <div style={TABLE_WRAP}>
+        <table className="m3-table">
+          <tbody>
+            {files.map(entry => (
+              <tr key={entry.path}>
+                <td className="mono" style={{ overflowWrap: "anywhere" }}>{entry.path}</td>
+                <td className="mono" style={NUM_CELL}>{formatBytes(entry.bytes, locale)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -266,20 +298,21 @@ function ArchivedCleanupPanel({
   t: TFn;
   onDone: () => void;
 }) {
+  const { notify } = useNotifications();
   const [percent, setPercent] = useState(25);
   const [preview, setPreview] = useState<CleanupPreview | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [permanent, setPermanent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const busyRef = useRef(false);
 
+  // The permanent switch lives on the card, not in the dialog, so closing the
+  // dialog must not silently flip the mode the user already chose.
   const closeConfirm = useCallback((clearPreview = false) => {
     setConfirmOpen(false);
-    setPermanent(false);
     if (clearPreview) setPreview(null);
   }, []);
 
@@ -327,7 +360,6 @@ function ArchivedCleanupPanel({
   const runPreview = async () => {
     setBusy(true);
     setError(null);
-    setStatus(null);
     try {
       const res = await fetch(`${apiBase}/api/storage/cleanup/preview`, {
         method: "POST",
@@ -378,11 +410,17 @@ function ArchivedCleanupPanel({
         throw new Error(mapCleanupError(json.error, json.message, json.trashDir));
       }
       closeConfirm(true);
-      setStatus(
-        permanent
-          ? t("storage.cleanup.donePermanent", { count: String(json.count), size: formatBytes(json.bytes, locale) })
-          : t("storage.cleanup.doneQuarantine", { count: String(json.count), size: formatBytes(json.bytes, locale) }),
-      );
+      const done = permanent
+        ? t("storage.cleanup.donePermanent", { count: String(json.count), size: formatBytes(json.bytes, locale) })
+        : t("storage.cleanup.doneQuarantine", { count: String(json.count), size: formatBytes(json.bytes, locale) });
+      // Archived sessions are a user-visible record, so the cleanup is listed in
+      // Version history — quarantine is recoverable, permanent delete is not.
+      recordRevision({ scope: "settings", label: t("storage.cleanup.title"), summary: done });
+      notify({
+        tone: "success",
+        title: done,
+        body: permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote"),
+      });
       onDone();
     } catch (e) {
       // Keep the dialog open (except stale_preview) so the failure is visible.
@@ -396,7 +434,7 @@ function ArchivedCleanupPanel({
     <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-cleanup-title">
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id="storage-cleanup-title" className="m3-card-title">{t("storage.cleanup.title")}</h3>
+          <h2 id="storage-cleanup-title" className="m3-card-title">{t("storage.cleanup.title")}</h2>
           <p className="m3-card-sub">{t("storage.cleanup.help")}</p>
         </div>
       </header>
@@ -429,12 +467,29 @@ function ArchivedCleanupPanel({
             {formatPreset(p)}
           </Chip>
         ))}
-        <Button variant="tonal" disabled={busy} onClick={() => void runPreview()}>
+      </div>
+
+      <div className="m3-row m3-row--split" style={{ marginTop: "var(--sp-3)", alignItems: "flex-start" }}>
+        <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+          <div>{t("storage.cleanup.permanent")}</div>
+          <p className="m3-card-sub">{t("storage.cleanup.permanentWarn")}</p>
+        </div>
+        <Toggle
+          on={permanent}
+          disabled={busy}
+          onChange={next => setPermanent(next)}
+          label={t("storage.cleanup.permanent")}
+        />
+      </div>
+
+      {/* Filled, not danger: previewing deletes nothing. The destructive tone
+          belongs on the dialog's confirm, which is where the decision is made. */}
+      <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
+        <Button variant="filled" disabled={busy} onClick={() => void runPreview()}>
           {t("storage.cleanup.preview")}
         </Button>
       </div>
 
-      {status && <p className="m3-card-sub" style={CARD_BODY} role="status">{status}</p>}
       {error && !confirmOpen && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
       {confirmOpen && preview && (
@@ -464,16 +519,7 @@ function ArchivedCleanupPanel({
                 )}
               </ul>
             )}
-            <div className="m3-row m3-row--split" style={{ marginTop: "var(--sp-3)" }}>
-              <span>{t("storage.cleanup.permanent")}</span>
-              <Toggle
-                on={permanent}
-                disabled={busy}
-                onChange={next => setPermanent(next)}
-                label={t("storage.cleanup.permanent")}
-              />
-            </div>
-            <p style={{ marginTop: "var(--sp-1)", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
+            <p style={{ marginTop: "var(--sp-3)", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
               {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
             </p>
             {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
@@ -517,11 +563,11 @@ function QuarantineTrashPanel({
   reloadToken: number;
   onEntriesChange?: (entries: TrashEntry[]) => void;
 }) {
+  const { notify } = useNotifications();
   const [entries, setEntries] = useState<TrashEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmEntry, setConfirmEntry] = useState<TrashEntry | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -623,10 +669,13 @@ function QuarantineTrashPanel({
         throw new Error(mapRestoreError(json.error, json.message));
       }
       closeConfirm();
-      setStatus(t("storage.trash.done", {
+      const done = t("storage.trash.done", {
         count: String(json.count),
         size: formatBytes(json.bytes, locale),
-      }));
+      });
+      // Append-only: the restore is its own revision, so it can itself be undone.
+      recordRevision({ scope: "settings", label: t("storage.trash.title"), summary: done, restored: true });
+      notify({ tone: "success", title: done, body: confirmEntry.id });
       onDone();
     } catch (e) {
       setError(localizedCatch(e, t("storage.trash.restoreFailed")));
@@ -651,12 +700,11 @@ function QuarantineTrashPanel({
     <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-trash-title">
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id="storage-trash-title" className="m3-card-title">{t("storage.trash.title")}</h3>
+          <h2 id="storage-trash-title" className="m3-card-title">{t("storage.trash.title")}</h2>
           <p className="m3-card-sub">{t("storage.trash.help")}</p>
         </div>
       </header>
 
-      {status && <p className="m3-card-sub" style={CARD_BODY} role="status">{status}</p>}
       {error && !confirmEntry && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
       {loading ? (
@@ -668,22 +716,22 @@ function QuarantineTrashPanel({
           <table className="m3-table">
             <thead>
               <tr>
+                <th>{t("storage.trash.col.id")}</th>
                 <th>{t("storage.trash.col.when")}</th>
                 <th style={NUM_CELL}>{t("storage.trash.col.files")}</th>
                 <th style={NUM_CELL}>{t("storage.trash.col.size")}</th>
                 <th>{t("storage.trash.col.mode")}</th>
-                <th>{t("storage.trash.col.id")}</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {entries.map(entry => (
                 <tr key={entry.id}>
+                  <td className="mono" style={{ fontSize: "var(--t-label-m)" }}>{entry.id}</td>
                   <td style={MUTED_CELL}>{formatWhen(entry)}</td>
                   <td style={NUM_CELL}>{entry.fileCount}</td>
                   <td className="mono" style={NUM_CELL}>{formatBytes(entry.bytes, locale)}</td>
                   <td style={MUTED_CELL}>{modeLabel(entry.mode)}</td>
-                  <td className="mono" style={{ fontSize: "var(--t-label-m)" }}>{entry.id}</td>
                   <td>
                     <Button
                       variant="outlined"
@@ -767,11 +815,11 @@ function AutoCleanupPolicyPanel({
   t: TFn;
   onDone: () => void;
 }) {
+  const { notify } = useNotifications();
   const [policy, setPolicy] = useState<CleanupPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<"percent" | "reduce">("percent");
   /** Draft string so blank/invalid percent targets are rejected instead of coerced. */
@@ -863,9 +911,9 @@ function AutoCleanupPolicyPanel({
       return;
     }
     const body = { ...base, ...patch };
+    const previous = policy;
     setSaving(true);
     setError(null);
-    setStatus(null);
     try {
       const res = await fetch(`${apiBase}/api/storage/cleanup-policy`, {
         method: "PUT",
@@ -882,7 +930,15 @@ function AutoCleanupPolicyPanel({
         return;
       }
       setPolicy(policyFieldsFromResponse(json.policy));
-      setStatus(t("storage.policy.saved"));
+      // The policy is a user-visible settings record: keep the value it replaced
+      // so Version history can show what the change was undoing.
+      recordRevision({
+        scope: "settings",
+        label: t("storage.policy.title"),
+        summary: t("storage.policy.saved"),
+        before: previous ? JSON.stringify(previous) : undefined,
+      });
+      notify({ tone: "success", title: t("storage.policy.saved") });
     } catch {
       setError(t("storage.policy.saveFailed"));
     } finally {
@@ -898,7 +954,6 @@ function AutoCleanupPolicyPanel({
 
     setRunning(true);
     setError(null);
-    setStatus(null);
     try {
       const base = buildBody();
       if (!base) {
@@ -1008,27 +1063,27 @@ function AutoCleanupPolicyPanel({
       }
 
       if (outcome.skipped === "disabled") {
-        setStatus(t("storage.policy.skippedDisabled"));
+        notify({ tone: "info", title: t("storage.policy.skippedDisabled") });
       } else if (outcome.skipped === "under_threshold") {
-        setStatus(t("storage.policy.skippedUnder"));
+        notify({ tone: "info", title: t("storage.policy.skippedUnder") });
       } else if (outcome.skipped === "nothing_selected") {
-        setStatus(t("storage.policy.skippedEmpty"));
+        notify({ tone: "info", title: t("storage.policy.skippedEmpty") });
       } else if (outcome.deferred === "codex_busy" || outcome.error === "codex_busy") {
         setError(t("storage.cleanup.err.codex_busy"));
       } else if (!outcome.ok) {
         setError(t("storage.policy.runFailed"));
       } else {
-        setStatus(
-          outcome.mode === "permanent"
-            ? t("storage.policy.donePermanent", {
-              count: String(outcome.removed ?? 0),
-              size: formatBytes(outcome.freedBytes ?? 0, locale),
-            })
-            : t("storage.policy.doneQuarantine", {
-              count: String(outcome.removed ?? 0),
-              size: formatBytes(outcome.freedBytes ?? 0, locale),
-            }),
-        );
+        const done = outcome.mode === "permanent"
+          ? t("storage.policy.donePermanent", {
+            count: String(outcome.removed ?? 0),
+            size: formatBytes(outcome.freedBytes ?? 0, locale),
+          })
+          : t("storage.policy.doneQuarantine", {
+            count: String(outcome.removed ?? 0),
+            size: formatBytes(outcome.freedBytes ?? 0, locale),
+          });
+        recordRevision({ scope: "settings", label: t("storage.policy.title"), summary: done });
+        notify({ tone: "success", title: done });
         onDone();
       }
     } catch (err) {
@@ -1046,7 +1101,7 @@ function AutoCleanupPolicyPanel({
   const policyHead = (
     <header className="m3-card-head">
       <div className="m3-card-headtext">
-        <h3 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h3>
+        <h2 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h2>
       </div>
     </header>
   );
@@ -1073,7 +1128,7 @@ function AutoCleanupPolicyPanel({
     <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-policy-title">
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h3>
+          <h2 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h2>
           <p className="m3-card-sub">{t("storage.policy.help")}</p>
         </div>
       </header>
@@ -1182,23 +1237,18 @@ function AutoCleanupPolicyPanel({
         )}
       </div>
 
-      <div className="m3-grid" style={{ marginTop: "var(--sp-3)" }}>
-        <div style={STAT_TILE}>
-          <div style={STAT_LABEL}>{t("storage.policy.lastRun")}</div>
-          <div style={STAT_VALUE}>{formatWhen(policy.lastRun?.at)}</div>
-          {policy.lastRun && (
-            <div style={STAT_LABEL}>
-              {t("storage.policy.lastRunDetail", {
-                count: String(policy.lastRun.removed),
-                size: formatBytes(policy.lastRun.freedBytes, locale),
-              })}
-            </div>
-          )}
-        </div>
-        <div style={STAT_TILE}>
-          <div style={STAT_LABEL}>{t("storage.policy.nextRun")}</div>
-          <div style={STAT_VALUE}>{formatWhen(policy.nextRun)}</div>
-        </div>
+      <div style={{ ...STAT_GRID, marginTop: "var(--sp-3)", marginBottom: 0 }}>
+        <StatTile
+          label={t("storage.policy.lastRun")}
+          value={formatWhen(policy.lastRun?.at)}
+          hint={policy.lastRun
+            ? t("storage.policy.lastRunDetail", {
+              count: String(policy.lastRun.removed),
+              size: formatBytes(policy.lastRun.freedBytes, locale),
+            })
+            : undefined}
+        />
+        <StatTile label={t("storage.policy.nextRun")} value={formatWhen(policy.nextRun)} />
       </div>
 
       <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
@@ -1209,7 +1259,6 @@ function AutoCleanupPolicyPanel({
           {running ? t("storage.policy.running") : t("storage.policy.runNow")}
         </Button>
       </div>
-      {status && <p className="m3-card-sub" style={{ marginTop: "var(--sp-1)" }} role="status">{status}</p>}
       {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
     </section>
   );
@@ -1266,7 +1315,8 @@ export default function Storage({ apiBase }: { apiBase: string }) {
   const trashHasEntries = trashInfo.apiBase === apiBase && trashInfo.hasEntries;
   const failed = !loading && (!data || data.error !== undefined);
   const empty = !loading && !failed && data!.total.fileCount === 0 && trashSettled && !trashHasEntries;
-  const archivedCount = data?.buckets.find(b => b.key === "archived_sessions")?.fileCount ?? 0;
+  const archived = data?.buckets.find(b => b.key === "archived_sessions");
+  const archivedCount = archived?.fileCount ?? 0;
   const showBody = Boolean(data) && !failed;
   // While storage is empty, keep the trash panel mounted until it reports so we
   // do not flash the empty state over a non-empty quarantine.
@@ -1274,15 +1324,16 @@ export default function Storage({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <div className="m3-row m3-row--split">
-        <h2 id="storage-page-title" style={{ margin: 0, fontSize: "var(--t-title-l)", fontWeight: 600 }}>
-          {t("storage.title")}
-        </h2>
+      {/* No page heading: the app bar already carries the page title, exactly as
+          the prototype's screen sections do. */}
+      <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-4)", alignItems: "flex-start" }}>
+        <p style={{ margin: 0, maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+          {t("storage.subtitle")}
+        </p>
         <Button variant="text" disabled={loading} onClick={() => refreshAll()}>
           <IconRefresh aria-hidden="true" /> {t("storage.refresh")}
         </Button>
       </div>
-      <p className="m3-card-sub" style={{ maxWidth: "74ch", marginTop: "var(--sp-1)" }}>{t("storage.subtitle")}</p>
 
       {loading && !data ? (
         <Empty title={t("storage.loading")} />
@@ -1302,30 +1353,26 @@ export default function Storage({ apiBase }: { apiBase: string }) {
         <>
           {data && data.total.fileCount > 0 && (
             <>
-              <div className="m3-grid" style={{ marginTop: "var(--sp-3)" }}>
-                <div style={STAT_TILE}>
-                  <div style={STAT_LABEL}>{t("storage.card.total")}</div>
-                  <div style={STAT_VALUE}>{formatBytes(data.total.bytes, locale)}</div>
-                </div>
-                <div style={STAT_TILE}>
-                  <div style={STAT_LABEL}>{t("storage.card.files")}</div>
-                  <div style={STAT_VALUE}>{data.total.fileCount.toLocaleString(locale)}</div>
-                </div>
-                <div style={STAT_TILE}>
-                  <div style={STAT_LABEL}>{t("storage.card.home")}</div>
-                  <div className="mono" style={{ ...STAT_VALUE, fontSize: "var(--t-body-m)" }}>{data.codexHome}</div>
-                </div>
+              <div style={STAT_GRID}>
+                <StatTile
+                  label={t("storage.card.total")}
+                  value={formatBytes(data.total.bytes, locale)}
+                  hint={data.codexHome}
+                />
+                <StatTile
+                  label={t("storage.card.files")}
+                  value={data.total.fileCount.toLocaleString(locale)}
+                />
+                <StatTile
+                  label={t("storage.bucket.archived_sessions")}
+                  value={formatBytes(archived?.bytes ?? 0, locale)}
+                  hint={`${t("storage.card.files")} ${archivedCount.toLocaleString(locale)}`}
+                />
               </div>
-              <BucketsTable buckets={data.buckets} locale={locale} t={t} />
+              <BucketsTable buckets={data.buckets} totalBytes={data.total.bytes} locale={locale} t={t} />
               <LargestFilesPanel buckets={data.buckets} locale={locale} t={t} />
             </>
           )}
-          <AutoCleanupPolicyPanel
-            apiBase={apiBase}
-            locale={locale}
-            t={t}
-            onDone={() => refreshAll()}
-          />
           {archivedCount > 0 && (
             <ArchivedCleanupPanel
               apiBase={apiBase}
@@ -1344,6 +1391,12 @@ export default function Storage({ apiBase }: { apiBase: string }) {
               onDone={() => refreshAll()}
             />
           )}
+          <AutoCleanupPolicyPanel
+            apiBase={apiBase}
+            locale={locale}
+            t={t}
+            onDone={() => refreshAll()}
+          />
         </>
       )}
     </>

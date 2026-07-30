@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n, type TFn, type Locale } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
-import { formatEstimatedUsdValue as formatUsdEstimate } from "../intl-formatters";
+import { cachedNumberFormat, formatEstimatedUsdValue as formatUsdEstimate } from "../intl-formatters";
+import { IconSearch } from "../icons";
 import { Notice } from "../ui";
 import { Button, Empty } from "../shell/m3-ui";
 import { modelLabel } from "../model-display";
@@ -84,6 +85,16 @@ interface UsageResponse {
 
 function formatPct(ratio: number): string {
   return `${Math.round(ratio * 100)}%`;
+}
+
+/** Share readout beside each bar — one decimal, so the long tail of small models stays distinguishable. */
+function formatShare(ratio: number): string {
+  return `${(ratio * 100).toFixed(1)}%`;
+}
+
+/** Request counts are grouped (9,148) — a bare six-digit run is unreadable in a stat tile. */
+function formatCount(n: number, locale: Locale): string {
+  return cachedNumberFormat(locale).format(n);
 }
 
 // Stable per-model bar color: hash the provider/model id to a hue so the same model keeps its color
@@ -225,7 +236,39 @@ const BAR_TRACK: React.CSSProperties = {
   background: "var(--m3-surface-container-highest)",
   overflow: "hidden",
 };
-const SEARCH_INPUT: React.CSSProperties = { maxWidth: 420 };
+const SEARCH_INPUT: React.CSSProperties = { flex: "1 1 auto", minWidth: 0, maxWidth: 420 };
+const SHARE_CELL: React.CSSProperties = { display: "flex", alignItems: "center", gap: 12, minWidth: 160 };
+const SHARE_BAR: React.CSSProperties = { ...BAR_TRACK, flex: "1 1 120px" };
+const SHARE_VALUE: React.CSSProperties = {
+  flex: "0 0 56px",
+  textAlign: "right",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+};
+const COVERAGE_ROW: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 12,
+  marginBottom: 12,
+};
+const COVERAGE_LABEL: React.CSSProperties = {
+  flex: "0 0 140px",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-l)",
+};
+const COVERAGE_VALUE: React.CSSProperties = {
+  flex: "0 0 80px",
+  textAlign: "right",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+};
+const COVERAGE_BAR: React.CSSProperties = { ...BAR_TRACK, flex: "1 1 160px", minWidth: 100 };
+const NOTE_TEXT: React.CSSProperties = {
+  margin: "12px 0 0",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-body-s)",
+};
 
 function StatTile({ label, value, hint, title }: { label: string; value: string | number; hint?: ReactNode; title?: string }) {
   return (
@@ -238,7 +281,12 @@ function StatTile({ label, value, hint, title }: { label: string; value: string 
 }
 
 /** Share meter — functional data colour, carries the progressbar contract. */
-function ShareBar({ ratio, label }: { ratio: number; label: string }) {
+function ShareBar({ ratio, label, tone = "var(--m3-primary)", style }: {
+  ratio: number;
+  label: string;
+  tone?: string;
+  style?: React.CSSProperties;
+}) {
   const pct = Math.round(ratio * 100);
   return (
     <span
@@ -247,9 +295,10 @@ function ShareBar({ ratio, label }: { ratio: number; label: string }) {
       aria-valuenow={pct}
       aria-valuemin={0}
       aria-valuemax={100}
-      style={BAR_TRACK}
+      style={style ?? BAR_TRACK}
     >
-      <span style={{ display: "block", width: `${pct}%`, height: "100%", background: "var(--m3-primary)" }} />
+      {/* A 2% floor keeps a non-zero share visible; a hairline fill reads as "none recorded". */}
+      <span style={{ display: "block", width: `${ratio > 0 ? Math.max(2, pct) : 0}%`, height: "100%", background: tone }} />
     </span>
   );
 }
@@ -334,39 +383,26 @@ function UsageSummaryCards({
   const cacheWrites = summary.cacheCreationInputTokens ?? 0;
   const excluded = (summary.unpricedRequests ?? 0) + (summary.unmeteredRequests ?? 0);
   return (
-    <>
-      <div style={STAT_GRID} role="group" aria-label={t("usage.title")}>
-        <StatTile label={t("usage.card.requests")} value={summary.requests} />
-        <StatTile label={t("usage.card.measured")} value={summary.measuredRequests} />
-        <StatTile label={t("usage.card.totalTokens")} value={formatTokens(summary.totalTokens, locale)} />
-        <StatTile
-          label={t("usage.card.cachedTokens")}
-          title={t("usage.card.cachedTokensHint")}
-          value={formatTokens(summary.cacheReadInputTokens ?? summary.cachedInputTokens, locale)}
-          hint={cacheWrites > 0 ? `${t("usage.card.cacheWriteTokens")} ${formatTokens(cacheWrites, locale)}` : undefined}
-        />
-        <StatTile label={t("usage.card.coverage")} value={formatPct(summary.coverageRatio)} />
-        <StatTile label={t("usage.card.activeDays")} value={activeDays} />
-      </div>
+    <div style={STAT_GRID} role="group" aria-label={t("usage.title")}>
+      <StatTile label={t("usage.card.requests")} value={formatCount(summary.requests, locale)} />
+      <StatTile label={t("usage.card.measured")} value={formatCount(summary.measuredRequests, locale)} />
+      <StatTile label={t("usage.card.totalTokens")} value={formatTokens(summary.totalTokens, locale)} />
+      <StatTile
+        label={t("usage.card.cachedTokens")}
+        title={t("usage.card.cachedTokensHint")}
+        value={formatTokens(summary.cacheReadInputTokens ?? summary.cachedInputTokens, locale)}
+        hint={cacheWrites > 0 ? `${formatTokens(cacheWrites, locale)} ${t("usage.card.cacheWriteTokens")}` : undefined}
+      />
+      <StatTile label={t("usage.card.coverage")} value={formatPct(summary.coverageRatio)} />
+      <StatTile label={t("usage.card.activeDays")} value={activeDays} />
       {summary.estimatedCostUsd !== undefined && (
-        <div className="m3-card" role="note">
-          <div className="m3-row" style={{ gap: "var(--sp-2)" }}>
-            <span style={STAT_LABEL}>{t("usage.cost.total")}</span>
-            <span style={{ fontFamily: "var(--mono)", fontSize: "var(--t-title-m)", fontWeight: 500 }}>
-              {formatUsdEstimate(summary.estimatedCostUsd, locale)}
-            </span>
-          </div>
-          <p style={{ margin: "8px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
-            {t("usage.cost.disclaimer")}
-          </p>
-          {excluded > 0 && (
-            <p style={{ margin: "4px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
-              {t("usage.cost.unpricedNote").replace("{count}", String(excluded))}
-            </p>
-          )}
-        </div>
+        <StatTile
+          label={t("usage.cost.total")}
+          value={formatUsdEstimate(summary.estimatedCostUsd, locale)}
+          hint={excluded > 0 ? t("usage.cost.unpricedNote", { count: excluded }) : undefined}
+        />
       )}
-    </>
+    </div>
   );
 }
 
@@ -529,14 +565,17 @@ function UsageModelsTable({
   const sectionLabel = t("usage.section.models");
   const titleId = "usage-models-title";
   const searchInput = (
-    <input
-      className="m3-input"
-      style={SEARCH_INPUT}
-      aria-label={searchLabel}
-      placeholder={searchLabel}
-      value={modelQuery}
-      onChange={event => onModelQuery(event.target.value)}
-    />
+    <div className="m3-row" style={{ gap: 8 }}>
+      <IconSearch aria-hidden="true" />
+      <input
+        className="m3-input"
+        style={SEARCH_INPUT}
+        aria-label={searchLabel}
+        placeholder={searchLabel}
+        value={modelQuery}
+        onChange={event => onModelQuery(event.target.value)}
+      />
+    </div>
   );
   const table = (
     <div className="usage-scroll" style={{ overflowX: "auto" }}>
@@ -556,10 +595,15 @@ function UsageModelsTable({
             <tr key={`${model.provider}/${model.model}`}>
               <td className="mono">{modelLabel(model.model)}</td>
               <td className="muted">{model.provider}</td>
-              <td className="num">{model.requests}</td>
-              <td className="num">{model.measuredRequests}</td>
+              <td className="num">{formatCount(model.requests, locale)}</td>
+              <td className="num">{formatCount(model.measuredRequests, locale)}</td>
               <td className="num mono">{formatTokens(model.totalTokens, locale)}</td>
-              <td><ShareBar ratio={model.shareRatio} label={model.model} /></td>
+              <td>
+                <span style={SHARE_CELL}>
+                  <ShareBar ratio={model.shareRatio} label={model.model} style={SHARE_BAR} />
+                  <span style={SHARE_VALUE}>{formatShare(model.shareRatio)}</span>
+                </span>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -607,10 +651,16 @@ function UsageProvidersTable({
           {providers.map(provider => (
             <tr key={provider.provider}>
               <td className="mono">{provider.provider}</td>
-              <td className="num">{provider.requests}</td>
-              <td className="num">{provider.measuredRequests}</td>
+              <td className="num">{formatCount(provider.requests, locale)}</td>
+              <td className="num">{formatCount(provider.measuredRequests, locale)}</td>
               <td className="num mono">{formatTokens(provider.totalTokens, locale)}</td>
-              <td><ShareBar ratio={provider.shareRatio} label={provider.provider} /></td>
+              <td>
+                <span style={SHARE_CELL}>
+                  {/* Tertiary, so a provider row is never mistaken for the model row above it. */}
+                  <ShareBar ratio={provider.shareRatio} label={provider.provider} tone="var(--m3-tertiary)" style={SHARE_BAR} />
+                  <span style={SHARE_VALUE}>{formatShare(provider.shareRatio)}</span>
+                </span>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -632,25 +682,37 @@ function UsageProvidersTable({
 
 function UsageCoveragePanel({
   summary,
+  locale,
   t,
 }: {
   summary: UsageSummaryTotals;
+  locale: Locale;
   t: TFn;
 }) {
   const sectionLabel = t("usage.section.coverage");
   const titleId = "usage-coverage-title";
+  // Every row is a share of the same denominator, so the bars are comparable down the column.
+  const total = Math.max(1, summary.requests);
+  const rows: { key: string; label: string; value: number; tone: string }[] = [
+    { key: "measured", label: t("usage.coverage.measured"), value: summary.measuredRequests, tone: "var(--m3-primary)" },
+    { key: "reported", label: t("usage.coverage.reported"), value: summary.reportedRequests, tone: "var(--m3-tertiary)" },
+    { key: "estimated", label: t("usage.coverage.estimated"), value: summary.estimatedRequests, tone: "var(--m3-warn)" },
+    { key: "unreported", label: t("logs.tokens.unreported"), value: summary.unreportedRequests, tone: "var(--m3-warn)" },
+    { key: "unsupported", label: t("logs.tokens.unsupported"), value: summary.unsupportedRequests, tone: "var(--m3-warn)" },
+  ];
   const body = (
     <>
-      <div style={{ ...STAT_GRID, marginBottom: 0 }}>
-        <StatTile label={t("usage.coverage.measured")} value={summary.measuredRequests} />
-        <StatTile label={t("usage.coverage.reported")} value={summary.reportedRequests} />
-        <StatTile label={t("usage.coverage.estimated")} value={summary.estimatedRequests} />
-        <StatTile label={t("logs.tokens.unreported")} value={summary.unreportedRequests} />
-        <StatTile label={t("logs.tokens.unsupported")} value={summary.unsupportedRequests} />
-      </div>
-      <p style={{ margin: "12px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
-        {t("usage.coverage.note")}
-      </p>
+      {rows.map(row => (
+        <div key={row.key} style={COVERAGE_ROW}>
+          <span style={COVERAGE_LABEL}>{row.label}</span>
+          <ShareBar ratio={row.value / total} label={row.label} tone={row.tone} style={COVERAGE_BAR} />
+          <span style={COVERAGE_VALUE}>{formatCount(row.value, locale)}</span>
+        </div>
+      ))}
+      <p style={NOTE_TEXT}>{t("usage.coverage.note")}</p>
+      {summary.estimatedCostUsd !== undefined && (
+        <p style={NOTE_TEXT}>{t("usage.cost.disclaimer")}</p>
+      )}
     </>
   );
 
@@ -762,7 +824,7 @@ export default function Usage({ apiBase }: { apiBase: string }) {
           <UsageHeatmapPanel range={range} heatmap={heatmap} weekBars={weekBars} locale={locale} t={t} />
           <UsageModelsTable models={filteredModels} modelQuery={modelQuery} onModelQuery={setModelQuery} locale={locale} t={t} />
           <UsageProvidersTable providers={sortedProviders} locale={locale} t={t} />
-          <UsageCoveragePanel summary={data.summary} t={t} />
+          <UsageCoveragePanel summary={data.summary} locale={locale} t={t} />
         </>
       ) : null}
     </>

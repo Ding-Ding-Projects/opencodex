@@ -7,7 +7,7 @@ import { statusCodeInfo } from "../status-codes";
 import { IconX } from "../icons";
 import { modelLabel } from "../model-display";
 import { Notice } from "../ui";
-import { Button, Empty, Segmented } from "../shell/m3-ui";
+import { Button, Empty, Segmented, Toggle } from "../shell/m3-ui";
 import Debug from "./Debug";
 
 import { M3_TABLIST_STYLE, m3TabStyle } from "./debug-shared";
@@ -100,7 +100,9 @@ interface LogEntry {
   timestamp: number;
   model: string;
   provider: string;
-  surface?: "claude";
+  // Mirrors the server's `PersistedUsageEntry["surface"]`. Codex is the unlabelled
+  // default, so an absent value is a Codex request rather than an unknown one.
+  surface?: "claude" | "claude-desktop" | "grok";
   conversationId?: string;
   requestedEffort?: string;
   effectiveEffort?: string;
@@ -259,11 +261,72 @@ function statusColor(status: number): string {
 }
 
 /**
+ * Status is a tonal badge in the prototype, toned 2xx ok / 3xx-4xx warn / 5xx
+ * error. Status palettes are functional data colours, so the containers are
+ * addressed directly rather than through a chrome class.
+ */
+function statusBadgeStyle(status: number): CSSProperties {
+  const tone = status < 300
+    ? { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" }
+    : status < 500
+      ? { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" }
+      : { background: "var(--m3-error-container)", color: "var(--m3-on-error-container)" };
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    height: 24,
+    padding: "0 10px",
+    borderRadius: "var(--r-pill)",
+    fontFamily: "var(--mono)",
+    fontSize: "var(--t-label-s)",
+    fontWeight: 600,
+    letterSpacing: "0.2px",
+    whiteSpace: "nowrap",
+    ...tone,
+  };
+}
+
+type SurfaceFilter = "all" | "codex" | "claude" | "grok";
+
+/**
+ * Grok used to fall into the Codex bucket because the filter was a two-way
+ * `surface === "claude"` split, which silently hid it behind the wrong chip.
+ * Claude Desktop rides the Claude surface and is grouped with it.
+ */
+function matchesSurfaceFilter(filter: SurfaceFilter, surface: LogEntry["surface"]): boolean {
+  if (filter === "all") return true;
+  if (filter === "claude") return surface === "claude" || surface === "claude-desktop";
+  if (filter === "grok") return surface === "grok";
+  return surface === undefined;
+}
+
+function isClaudeSurface(surface: LogEntry["surface"]): boolean {
+  return surface === "claude" || surface === "claude-desktop";
+}
+
+/**
  * `.m3-table` intentionally carries no numeric-column rule, so the right
  * alignment the legacy `.tbl .num` selector supplied is re-applied inline with
  * role tokens. Cells keep `.num`/`.mono` for the mono face + tabular figures.
  */
 const NUM_CELL: CSSProperties = { textAlign: "right" };
+
+/**
+ * The prototype's Details affordance is a text-button pill, not the underlined
+ * caption link `.log-detail-btn` still describes. styles.css is imported after
+ * m3-shell.css, so the legacy rule outranks `.m3-btn--text` at equal specificity —
+ * the M3 anatomy has to be applied inline to win, and the class stays for its
+ * existing test and styling hooks.
+ */
+const DETAIL_BTN: CSSProperties = {
+  minHeight: "var(--h-btn)",
+  padding: "0 12px",
+  borderRadius: "var(--r-pill)",
+  color: "var(--m3-primary)",
+  fontSize: "var(--t-label-m)",
+  fontWeight: 500,
+  textDecoration: "none",
+};
 
 /** Rounded surface the log table scrolls inside, replacing legacy `.tbl-wrap`. */
 const TABLE_SHELL: CSSProperties = {
@@ -331,7 +394,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [detail, setDetail] = useState<LogEntry | null>(null);
-  const [surfaceFilter, setSurfaceFilter] = useState<"all" | "claude" | "codex">("all");
+  const [surfaceFilter, setSurfaceFilter] = useState<SurfaceFilter>("all");
   const [conversationFilter, setConversationFilter] = useState("");
   const [conversationQueryHash, setConversationQueryHash] = useState<string | undefined>();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -391,8 +454,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   }, [conversationQuery]);
 
   const filteredLogs = logs.filter(log => (
-    (surfaceFilter === "all"
-      || (surfaceFilter === "claude" ? log.surface === "claude" : log.surface !== "claude"))
+    matchesSurfaceFilter(surfaceFilter, log.surface)
     && (!conversationQuery || matchesLogConversationId(log.conversationId, conversationQuery, conversationQueryHash))
   ));
   const conversationTotals = conversationQuery ? summarizeFilteredLogs(filteredLogs) : null;
@@ -413,18 +475,6 @@ export default function Logs({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <div className="m3-row m3-row--split" style={{ marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: "var(--t-headline-s)", fontWeight: 400 }}>{t("nav.logs")}</h2>
-        {tab === "logs" && (
-          <label
-            className="m3-row"
-            style={{ cursor: "pointer", gap: 8, minHeight: 44, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}
-          >
-            <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
-            {t("logs.autoRefresh")}
-          </label>
-        )}
-      </div>
       {/* Pill tablist per the prototype's LOGS section; roving focus still comes
           from logsTabKeyDown so ArrowLeft/Right/Home/End keep working. */}
       <div role="tablist" aria-label={t("nav.logs")} style={{ ...M3_TABLIST_STYLE, marginBottom: 16 }}>
@@ -464,23 +514,12 @@ export default function Logs({ apiBase }: { apiBase: string }) {
 
       {tab === "logs" && (
       <div role="tabpanel" id="logs-panel-logs" aria-labelledby="logs-tab-logs">
-      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)", whiteSpace: "pre-line" }}>
         {t("logs.subtitle")}
       </p>
 
+      {/* One control row per the prototype: search, surface filter, auto-refresh. */}
       <div className="m3-row" style={{ gap: 8, marginBottom: 12 }}>
-        <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>
-          {t("logs.filter.surface.label")}
-        </span>
-        <Segmented
-          value={surfaceFilter}
-          label={t("logs.filter.surface.label")}
-          onChange={setSurfaceFilter}
-          options={(["all", "claude", "codex"] as const).map(surface => ({
-            value: surface,
-            label: t(`logs.filter.surface.${surface}`),
-          }))}
-        />
         <label className="m3-row" style={{ gap: 8, flex: "1 1 300px", minWidth: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>
           {t("logs.filter.conversation.label")}
           <input
@@ -498,6 +537,19 @@ export default function Logs({ apiBase }: { apiBase: string }) {
             {t("logs.filter.conversation.clear")}
           </Button>
         )}
+        <Segmented
+          value={surfaceFilter}
+          label={t("logs.filter.surface.label")}
+          onChange={setSurfaceFilter}
+          options={(["all", "codex", "claude", "grok"] as const).map(surface => ({
+            value: surface,
+            label: t(`logs.filter.surface.${surface}`),
+          }))}
+        />
+        <div className="m3-row" style={{ gap: 8 }}>
+          <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>{t("logs.autoRefresh")}</span>
+          <Toggle on={autoRefresh} onChange={setAutoRefresh} label={t("logs.autoRefresh")} />
+        </div>
       </div>
 
       {conversationTotals && (
@@ -534,27 +586,25 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       ) : filteredLogs.length === 0 ? (
         <Empty title={t("logs.noRequests")} />
       ) : (
-        <>
         <div ref={scrollContainerRef} style={TABLE_SHELL}>
           <table className="m3-table logs-table">
             <thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--m3-surface-container-lowest)" }}>
              <tr>
                <th scope="col">{t("logs.col.time")}</th>
-                <th scope="col" className="num log-col-tokens" style={NUM_CELL}>{t("logs.col.tokens")}</th>
-                <th scope="col" className="num log-col-rate" style={NUM_CELL} title={t("logs.metric.tokPerSecTitle")}>{t("logs.col.tokPerSec")}</th>
-                <th scope="col" className="num log-col-cost" style={NUM_CELL} title={t("logs.metric.estimatedCostTitle")}>{t("logs.col.estimatedCost")}</th>
+               <th scope="col">{t("logs.col.request")}</th>
                <th scope="col" className="log-col-model">{t("logs.col.model")}</th>
-               <th scope="col">{t("logs.col.effort")}</th>
                <th scope="col">{t("logs.col.provider")}</th>
                <th scope="col">{t("logs.col.status")}</th>
-                <th scope="col">{t("logs.col.request")}</th>
-               <th scope="col" className="num" style={NUM_CELL}>{t("logs.col.duration")}</th>
+               <th scope="col" className="log-col-tokens">{t("logs.col.tokens")}</th>
+                <th scope="col" className="num log-col-rate" style={NUM_CELL} title={t("logs.metric.tokPerSecTitle")}>{t("logs.col.tokPerSec")}</th>
+                <th scope="col" className="num log-col-cost" style={NUM_CELL} title={t("logs.metric.estimatedCostTitle")}>{t("logs.col.estimatedCost")}</th>
+               <th scope="col"><span className="sr-only">{t("logs.details")}</span></th>
              </tr>
             </thead>
             <tbody>
               {paddingTop > 0 && (
                 <tr>
-                  <td colSpan={10} style={{ height: paddingTop, padding: 0, border: 0 }} />
+                  <td colSpan={9} style={{ height: paddingTop, padding: 0, border: 0 }} />
                 </tr>
               )}
               {virtualRows.map(virtualRow => {
@@ -567,13 +617,42 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                  ref={rowVirtualizer.measureElement}
                >
                  <td className="muted mono" style={{ whiteSpace: "nowrap" }}>{formatLogTimestamp(log.timestamp, localeTag)}</td>
-                  <td className="num mono log-col-tokens" style={NUM_CELL} title={tokensTitle(log, t)}>
+                  <td className="muted mono"><span className="log-reqid" title={log.requestId}>{log.requestId ?? "-"}</span></td>
+                 <td className="mono log-col-model" title={modelTitle(log)}>
+                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span>{modelLabel(log.resolvedModel ?? log.model)}</span>
+                      {isClaudeSurface(log.surface) && (
+                        <span className="m3-chip selected" style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)" }}>
+                          {t("logs.badge.claude")}
+                        </span>
+                      )}
+                      {speedLabel(log) && (
+                        <span
+                          className="m3-chip"
+                          style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)", background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)", borderColor: "transparent" }}
+                        >
+                          {speedLabel(log)}
+                        </span>
+                      )}
+                    </span>
+                    {/* Effort rides under the model id in the prototype rather than
+                        owning a column; the class still names the reasoning cell. */}
+                    <div className="log-reasoning-cell muted text-caption leading-tight" title={reasoningWire}>
+                      {effortLabel(log)}{reasoningWire ? ` (${reasoningWire})` : ""}
+                    </div>
+                  </td>
+                  <td style={{ color: "var(--m3-on-surface-variant)" }}>{log.provider}</td>
+                  <td>
+                    <span style={statusBadgeStyle(log.status)}>{log.status}</span>
+                 </td>
+                  <td className="mono log-col-tokens" title={tokensTitle(log, t)}>
                     {(() => {
                       const tokenTotal = displayTokenTotal(log);
                       const { read, write } = cacheSplit(log);
+                      const hasCacheDetail = (read !== undefined && read > 0) || (write !== undefined && write > 0);
                       return tokenTotal !== undefined
                         ? (
-                            <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                            <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                               <span>{log.usageStatus === "estimated" ? "~" : ""}{formatTokens(tokenTotal, locale)}</span>
                               {(read !== undefined && read > 0) && (
                                 <span className="muted text-caption leading-tight">
@@ -585,7 +664,9 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                                   w {formatTokens(write, locale)}
                                 </span>
                               )}
-                              {(log.usageStatus === "estimated" && read === undefined && write === undefined) && (
+                              {/* The prototype always carries a cache line, so a row with no
+                                  cache detail says so instead of leaving a silent blank. */}
+                              {!hasCacheDetail && (
                                 <span className="muted text-caption leading-tight">
                                   {t(isCursorUsageProvider(log.provider) ? "logs.tokens.noCacheCursor" : "logs.tokens.noCache")}
                                 </span>
@@ -601,58 +682,28 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                   <td className="num mono log-col-cost" style={NUM_CELL}>
                     {formatEstimatedUsd(log.displayMetrics?.cost, localeTag)}
                   </td>
-                 <td className="mono log-col-model" title={modelTitle(log)}>
-                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span>{modelLabel(log.resolvedModel ?? log.model)}</span>
-                      {log.surface === "claude" && (
-                        <span className="m3-chip selected" style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)" }}>
-                          {t("logs.badge.claude")}
-                        </span>
-                      )}
-                      {speedLabel(log) && (
-                        <span
-                          className="m3-chip"
-                          style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)", background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)", borderColor: "transparent" }}
-                        >
-                          {speedLabel(log)}
-                        </span>
-                      )}
-                    </span>
-                  </td>
-                  <td className="mono log-reasoning-cell" title={reasoningWire}>
-                    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                      <span>{effortLabel(log)}</span>
-                      {reasoningWire && <span className="muted text-caption leading-tight">{reasoningWire}</span>}
-                    </span>
-                  </td>
-                  <td style={{ color: "var(--m3-on-surface-variant)" }}>{log.provider}</td>
                   <td>
-                    <span className="log-status-cell">
-                      <span className="mono font-semibold" style={{ color: statusColor(log.status) }}>{log.status}</span>
-                      <button
-                        type="button"
-                        className="log-detail-btn"
-                        onClick={() => setDetail(log)}
-                        aria-label={`${t("logs.details")}: ${log.requestId ?? log.status}`}
-                      >
-                        {t("logs.details")}
-                      </button>
-                    </span>
-                 </td>
-                  <td className="muted mono"><span className="log-reqid" title={log.requestId}>{log.requestId ?? "-"}</span></td>
-                 <td className="num mono" style={NUM_CELL}>{log.durationMs}ms</td>
+                    <button
+                      type="button"
+                      className="log-detail-btn"
+                      style={DETAIL_BTN}
+                      onClick={() => setDetail(log)}
+                      aria-label={`${t("logs.details")}: ${log.requestId ?? log.status}`}
+                    >
+                      {t("logs.details")}
+                    </button>
+                  </td>
                 </tr>
                 );
               })}
               {paddingBottom > 0 && (
                 <tr>
-                  <td colSpan={10} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+                  <td colSpan={9} style={{ height: paddingBottom, padding: 0, border: 0 }} />
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        </>
       )}
 
       {detail && (

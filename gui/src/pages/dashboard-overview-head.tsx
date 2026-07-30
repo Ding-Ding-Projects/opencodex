@@ -1,4 +1,4 @@
-import { IconAlert, IconInfo } from "../icons";
+import { IconActivity, IconAlert, IconBolt, IconBot, IconHistory, IconInfo, IconServer, IconTicket } from "../icons";
 import { type TKey, useT } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { formatUptime } from "../formatUptime";
@@ -6,10 +6,14 @@ import type { useDashboardData } from "./use-dashboard-data";
 
 type Dash = ReturnType<typeof useDashboardData>;
 
+/** Icons carry no size of their own, so every stat mark states one explicitly. */
+const STAT_ICON = { width: 18, height: 18, "aria-hidden": true } as const;
+
 export function DashboardOverviewHead({
   locale,
   health,
   providers,
+  settings,
   usage30d,
   startupHealth,
   projectConfigWarnings,
@@ -19,7 +23,7 @@ export function DashboardOverviewHead({
   maHelpOpen,
   setMaHelpOpen,
   switchMaMode,
-}: Pick<Dash, "locale" | "health" | "providers" | "usage30d" | "startupHealth" | "projectConfigWarnings" | "maMode" | "maBusy" | "maHelpTriggerRef" | "maHelpOpen" | "setMaHelpOpen" | "switchMaMode">) {
+}: Pick<Dash, "locale" | "health" | "providers" | "settings" | "usage30d" | "startupHealth" | "projectConfigWarnings" | "maMode" | "maBusy" | "maHelpTriggerRef" | "maHelpOpen" | "setMaHelpOpen" | "switchMaMode">) {
   const t = useT();
   const online = health?.status === "ok";
 
@@ -28,7 +32,43 @@ export function DashboardOverviewHead({
       <div className="dash-overview-head">
         <div className="dash-stats">
           <div className="dash-stat-card">
+            <div className="dash-stat-card__label"><IconBolt {...STAT_ICON} />{t("dash.status")}</div>
+            <div className="dash-stat-card__value" style={{ display: "flex", alignItems: "center", gap: 9, color: online ? "var(--m3-ok)" : "var(--m3-error)" }}>
+              <span className={`dot ${online ? "dot-green" : "dot-red"}`} aria-hidden="true" />{online ? t("dash.online") : t("dash.offline")}
+            </div>
+            {/* The port answers "which proxy is this?" — the one fact a second
+                instance listening elsewhere would otherwise hide. */}
+            <div className="dash-stat-card__hint mono">{settings ? `:${settings.port}` : " "}</div>
+          </div>
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label"><IconTicket {...STAT_ICON} />{t("dash.version")}</div>
+            <div className="dash-stat-card__value mono">{health?.version ?? "—"}</div>
+            <div className="dash-stat-card__hint" />
+          </div>
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label"><IconHistory {...STAT_ICON} />{t("dash.uptime")}</div>
+            <div className="dash-stat-card__value mono">{health ? formatUptime(health.uptime, locale) : "—"}</div>
+            <div className="dash-stat-card__hint" />
+          </div>
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label"><IconServer {...STAT_ICON} />{t("dash.providers")}</div>
+            <div className="dash-stat-card__value">{providers.length}</div>
+            <div className="dash-stat-card__hint" />
+          </div>
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label"><IconActivity {...STAT_ICON} />{t("dash.tokens30d")}</div>
+            <div className="dash-stat-card__value mono">{usage30d && usage30d.summary.requests > 0 ? formatTokens(usage30d.summary.totalTokens, locale) : "—"}</div>
+            <div className="dash-stat-card__hint dash-stat-coverage">
+              {usage30d && usage30d.summary.requests > 0
+                ? t("dash.coverage").replace("{pct}", `${Math.round(usage30d.summary.coverageRatio * 100)}%`)
+                : " "}
+            </div>
+          </div>
+          {/* Sub-agent sits last: it is the only stat that is also a control, so
+              it ends the row instead of leading with a widget. */}
+          <div className="dash-stat-card">
             <div className="dash-stat-card__label">
+              <IconBot {...STAT_ICON} />
               {t("dash.multiAgent")}
               <button
                 ref={maHelpTriggerRef}
@@ -55,37 +95,6 @@ export function DashboardOverviewHead({
                   onClick={() => void switchMaMode(mode)}
                 >{t(`models.v2Mode_${mode}` as TKey)}</button>
               ))}
-            </div>
-          </div>
-          <div className="dash-stat-card">
-            <div className="dash-stat-card__label">{t("dash.status")}</div>
-            <div className="dash-stat-card__value" style={{ display: "flex", alignItems: "center", gap: 9, color: online ? "var(--green)" : "var(--red)" }}>
-              <span className={`dot ${online ? "dot-green" : "dot-red"}`} aria-hidden="true" />{online ? t("dash.online") : t("dash.offline")}
-            </div>
-            <div className="dash-stat-card__hint" />
-          </div>
-          <div className="dash-stat-card">
-            <div className="dash-stat-card__label">{t("dash.version")}</div>
-            <div className="dash-stat-card__value mono">{health?.version ?? "—"}</div>
-            <div className="dash-stat-card__hint" />
-          </div>
-          <div className="dash-stat-card">
-            <div className="dash-stat-card__label">{t("dash.uptime")}</div>
-            <div className="dash-stat-card__value mono">{health ? formatUptime(health.uptime, locale) : "—"}</div>
-            <div className="dash-stat-card__hint" />
-          </div>
-          <div className="dash-stat-card">
-            <div className="dash-stat-card__label">{t("dash.providers")}</div>
-            <div className="dash-stat-card__value">{providers.length}</div>
-            <div className="dash-stat-card__hint" />
-          </div>
-          <div className="dash-stat-card">
-            <div className="dash-stat-card__label">{t("dash.tokens30d")}</div>
-            <div className="dash-stat-card__value mono">{usage30d && usage30d.summary.requests > 0 ? formatTokens(usage30d.summary.totalTokens, locale) : "—"}</div>
-            <div className="dash-stat-card__hint dash-stat-coverage">
-              {usage30d && usage30d.summary.requests > 0
-                ? t("dash.coverage").replace("{pct}", `${Math.round(usage30d.summary.coverageRatio * 100)}%`)
-                : "\u00a0"}
             </div>
           </div>
         </div>

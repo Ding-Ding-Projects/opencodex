@@ -34,6 +34,9 @@ const TONE_SURFACE: Record<Tone, CSSProperties> = {
 const heroStyle = (tone: Tone): CSSProperties => ({
   ...TONE_SURFACE[tone],
   display: "flex",
+  // Wraps because the 48px status badge plus the longest bilingual summary
+  // otherwise squeeze the text column past legibility on a phone-width rail.
+  flexWrap: "wrap",
   alignItems: "flex-start",
   gap: "var(--sp-3)",
   padding: "var(--pad-card)",
@@ -180,13 +183,11 @@ export function StartupDetailsSection({
   data,
   failed,
   installBusy,
-  installResult,
   onInstall,
 }: {
   data: StartupHealthData;
   failed: boolean;
   installBusy: StartupInstallAction | null;
-  installResult: { kind: "success" | "error"; action: StartupInstallAction; detail?: string } | null;
   onInstall: (action: StartupInstallAction) => void;
 }) {
   const { t } = useI18n();
@@ -234,13 +235,6 @@ export function StartupDetailsSection({
           )}
         </div>
       </div>
-      {installResult && (
-        <div style={noticeStyle(installResult.kind === "success" ? "ok" : "warn")} role="status" aria-live="polite">
-          {installResult.kind === "success"
-            ? t(installResult.action === "install-service" ? "startup.serviceInstalled" : "startup.shimInstalled")
-            : `${t("startup.installFailed")} ${installResult.detail ?? ""}`}
-        </div>
-      )}
     </Card>
   );
 }
@@ -304,11 +298,9 @@ export function StartupTraySection({
 
 export function StartupRecoverySection({
   data,
-  copied,
   onCopy,
 }: {
   data: StartupHealthData;
-  copied: string | null;
   onCopy: (command: string) => void;
 }) {
   const { t } = useI18n();
@@ -333,7 +325,7 @@ export function StartupRecoverySection({
               <code style={commandCodeStyle}>{entry.command}</code>
             </div>
             <Button variant="outlined" style={{ marginLeft: "auto" }} onClick={() => onCopy(entry.command)}>
-              {copied === entry.command ? t("startup.copied") : t("startup.copy")}
+              {t("startup.copy")}
             </Button>
           </div>
         ))}

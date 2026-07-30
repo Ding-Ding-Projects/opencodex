@@ -1,4 +1,5 @@
-import { IconCheck, IconPlus, IconX } from "../icons";
+import type { CSSProperties } from "react";
+import { IconCheck, IconCopy, IconKey, IconTrash } from "../icons";
 import { useI18n } from "../i18n/shared";
 import { Button, Card, TextInput } from "../shell/m3-ui";
 import type { CopyOutcome } from "../components/use-copy-feedback";
@@ -17,12 +18,42 @@ import {
 /** Monospace value cell shared by the endpoint and key tables. */
 const CODE_CELL = { fontFamily: "var(--mono)", overflowWrap: "anywhere" } as const;
 
+/**
+ * Code block for the reveal-once key and the curl samples. Inline because the
+ * legacy `.api-code` rule is still wired to the pre-M3 token names; every value
+ * here is an `--m3-*` role token so the block re-themes with the rest of the app.
+ */
+const CODE_BLOCK: CSSProperties = {
+  display: "block",
+  margin: 0,
+  padding: "var(--sp-3)",
+  borderRadius: "var(--r-m)",
+  background: "var(--m3-surface-container-highest)",
+  color: "var(--m3-on-surface)",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+  lineHeight: 1.6,
+  overflowX: "auto",
+};
+
+/** Per-model test verdict: M3 metrics, functional status colour from the class. */
+const TEST_NOTE: CSSProperties = { margin: "4px 0 0", fontSize: "var(--t-label-m)" };
+
+/** The auth notes read as body text, not as the legacy list rule's muted labels. */
+const AUTH_NOTE: CSSProperties = {
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-body-s)",
+  lineHeight: 1.7,
+};
+
 export function ApiKeysEndpointsPanel({
   endpoints,
   claudeCodeEnabled,
+  onCopy,
 }: {
   endpoints: ApiEndpointInfo;
   claudeCodeEnabled: boolean;
+  onCopy: (value: string) => void;
 }) {
   const { t } = useI18n();
   const rows: { label: string; value: string }[] = [
@@ -34,13 +65,23 @@ export function ApiKeysEndpointsPanel({
   ];
   return (
     <Card title={t("api.endpointsTitle")} subtitle={t("api.endpointNote")}>
-      <div className="api-endpoints" style={{ overflowX: "auto" }}>
+      <div style={{ overflowX: "auto" }}>
         <table className="m3-table">
           <tbody>
             {rows.map(row => (
               <tr key={row.label}>
                 <th scope="row" style={{ width: 200 }}>{row.label}</th>
                 <td><code style={CODE_CELL}>{row.value}</code></td>
+                <td style={{ width: 48 }}>
+                  <button
+                    type="button"
+                    className="m3-icon-btn"
+                    aria-label={t("api.copy")}
+                    onClick={() => onCopy(row.value)}
+                  >
+                    <IconCopy aria-hidden="true" />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -52,13 +93,18 @@ export function ApiKeysEndpointsPanel({
 
 export function ApiKeysAuthPanel({ claudeCodeEnabled }: { claudeCodeEnabled: boolean }) {
   const { t } = useI18n();
+  const notes = [
+    t("api.authChatCompletions"),
+    t("api.authResponses"),
+    ...(claudeCodeEnabled ? [t("api.authMessages")] : []),
+    t("api.authLoopback"),
+  ];
   return (
     <Card title={t("api.authTitle")} subtitle={t("api.authBaseUrlNote")}>
-      <ul className="api-auth-list">
-        <li>{t("api.authChatCompletions")}</li>
-        <li>{t("api.authResponses")}</li>
-        {claudeCodeEnabled && <li>{t("api.authMessages")}</li>}
-        <li>{t("api.authLoopback")}</li>
+      {/* `display: block` re-states the default: the legacy `.api-auth-list` rule
+          makes this a grid, which blockifies the items and drops the markers. */}
+      <ul className="api-auth-list" style={{ display: "block", margin: 0, paddingLeft: 20 }}>
+        {notes.map(note => <li key={note} style={AUTH_NOTE}>{note}</li>)}
       </ul>
     </Card>
   );
@@ -77,6 +123,7 @@ export function ApiKeysManagePanel({
   onCreate,
   onDismissNewKey,
   onCopyKey,
+  onCopyPrefix,
   onConfirmDelete,
   onCancelDelete,
   onDelete,
@@ -93,6 +140,7 @@ export function ApiKeysManagePanel({
   onCreate: () => void;
   onDismissNewKey: () => void;
   onCopyKey: () => void;
+  onCopyPrefix: (prefix: string) => void;
   onConfirmDelete: (id: string) => void;
   onCancelDelete: () => void;
   onDelete: (id: string) => void;
@@ -112,8 +160,8 @@ export function ApiKeysManagePanel({
             color: "var(--m3-on-primary-container)",
           }}
         >
-          <div className="api-form-row">
-            <code className="api-code" style={{ flex: 1, wordBreak: "break-all" }}>{newKey}</code>
+          <div className="m3-row">
+            <code style={{ ...CODE_BLOCK, flex: "1 1 240px", minWidth: 0, wordBreak: "break-all" }}>{newKey}</code>
             <Button variant="tonal" onClick={onCopyKey}>
               {copyOutcome === "copied"
                 ? <><IconCheck aria-hidden="true" /> {t("api.copied")}</>
@@ -126,7 +174,7 @@ export function ApiKeysManagePanel({
       )}
 
       <Card title={t("api.generateTitle")}>
-        <div className="api-form-row">
+        <div className="m3-row">
           <TextInput
             id="api-key-name"
             type="text"
@@ -137,7 +185,7 @@ export function ApiKeysManagePanel({
             style={{ flex: "1 1 220px", width: "auto" }}
           />
           <Button onClick={onCreate} disabled={creating}>
-            <IconPlus aria-hidden="true" /> {creating ? t("api.generating") : t("api.generate")}
+            <IconKey aria-hidden="true" /> {creating ? t("api.generating") : t("api.generate")}
           </Button>
         </div>
       </Card>
@@ -152,24 +200,37 @@ export function ApiKeysManagePanel({
               <tbody>
                 {keys.map(k => (
                   <tr key={k.id}>
-                    <td>{k.name}</td>
+                    {/* A row header, so the two icon-only buttons below are announced
+                        against the key they act on rather than as three bare "Copy"s. */}
+                    <th scope="row" style={{ color: "var(--m3-on-surface)", fontSize: "var(--t-body-m)" }}>{k.name}</th>
                     <td><code style={CODE_CELL}>{k.prefix}</code></td>
-                    <td>{formatCreatedDate(k.createdAt, localeTag)}</td>
+                    <td style={{ fontFamily: "var(--mono)" }}>{formatCreatedDate(k.createdAt, localeTag)}</td>
                     <td>
                       {confirmDelete === k.id ? (
-                        <span className="api-actions">
+                        <span className="m3-row" style={{ justifyContent: "flex-end" }}>
                           <Button variant="danger" onClick={() => onDelete(k.id)}>{t("api.confirm")}</Button>
                           <Button variant="text" onClick={onCancelDelete}>{t("common.cancel")}</Button>
                         </span>
                       ) : (
-                        <Button
-                          variant="text"
-                          aria-label={t("api.deleteAria")}
-                          style={{ minWidth: 44, color: "var(--m3-error)" }}
-                          onClick={() => onConfirmDelete(k.id)}
-                        >
-                          <IconX aria-hidden="true" />
-                        </Button>
+                        <span className="m3-row" style={{ justifyContent: "flex-end", gap: 0 }}>
+                          <button
+                            type="button"
+                            className="m3-icon-btn"
+                            aria-label={t("api.copy")}
+                            onClick={() => onCopyPrefix(k.prefix)}
+                          >
+                            <IconCopy aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className="m3-icon-btn"
+                            aria-label={t("api.deleteAria")}
+                            style={{ color: "var(--m3-error)" }}
+                            onClick={() => onConfirmDelete(k.id)}
+                          >
+                            <IconTrash aria-hidden="true" />
+                          </button>
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -254,7 +315,7 @@ export function ApiKeysModelsPanel({
                 return (
                   <tr key={modelId}>
                     <td>
-                      <div className="api-model-cell">
+                      <div className="m3-stack">
                         <code style={CODE_CELL}>{modelId}</code>
                         {model.displayName !== model.id && (
                           <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>{model.displayName}</span>
@@ -264,7 +325,7 @@ export function ApiKeysModelsPanel({
                     <td>{sourceLabel(model)}</td>
                     <td>{gatewayInboundProtocols(claudeCodeEnabled).map(protocolLabel).join(", ")}</td>
                     <td>
-                      <div className="api-model-actions">
+                      <div className="m3-row">
                         <Button variant="text" onClick={() => { onCopyModelId(modelId); }}>
                           {copyOutcome === "copied"
                             ? t("api.modelCopied")
@@ -280,11 +341,13 @@ export function ApiKeysModelsPanel({
                           {testState === "testing" ? t("api.testingModel") : t("api.testModel")}
                         </Button>
                       </div>
+                      {/* The `--ok`/`--error` classes keep the functional status colours;
+                          the size comes from the M3 scale, not the legacy label token. */}
                       {testState === "ok" && (
-                        <p className="api-test-note api-test-note--ok">{t("api.testSucceeded")}</p>
+                        <p className="api-test-note api-test-note--ok" style={TEST_NOTE}>{t("api.testSucceeded")}</p>
                       )}
                       {testState === "error" && (
-                        <p className="api-test-note api-test-note--error">{modelTests[modelId]?.detail ?? t("api.testFailed")}</p>
+                        <p className="api-test-note api-test-note--error" style={TEST_NOTE}>{modelTests[modelId]?.detail ?? t("api.testFailed")}</p>
                       )}
                     </td>
                   </tr>
@@ -311,7 +374,7 @@ export function ApiKeysUsagePanel({
   return (
     <>
       <Card title={t("api.usageChatTitle")}>
-        <pre className="api-code">{`curl ${endpoints.chatCompletions} \\
+        <pre style={CODE_BLOCK}>{`curl ${endpoints.chatCompletions} \\
   -H "x-opencodex-api-key: ocx_YOUR_KEY_HERE" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -321,7 +384,7 @@ export function ApiKeysUsagePanel({
       </Card>
 
       <Card title={t("api.usageResponsesTitle")}>
-        <pre className="api-code">{`curl ${endpoints.responses} \\
+        <pre style={CODE_BLOCK}>{`curl ${endpoints.responses} \\
   -H "x-opencodex-api-key: ocx_YOUR_KEY_HERE" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -332,7 +395,7 @@ export function ApiKeysUsagePanel({
 
       {claudeCodeEnabled && (
         <Card title={t("api.usageMessagesTitle")}>
-          <pre className="api-code">{`curl ${endpoints.messages} \\
+          <pre style={CODE_BLOCK}>{`curl ${endpoints.messages} \\
   -H "x-opencodex-api-key: ocx_YOUR_KEY_HERE" \\
   -H "Content-Type: application/json" \\
   -d '{

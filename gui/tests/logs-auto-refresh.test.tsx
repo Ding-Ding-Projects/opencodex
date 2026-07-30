@@ -268,15 +268,15 @@ test("Logs: disabling auto-refresh stops scheduled requests", async () => {
   const afterInitial = urls.filter(u => u.includes("/api/logs")).length;
   expect(afterInitial).toBe(1);
 
-  const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
-  expect(checkbox?.checked).toBe(true);
-  const autoRefreshLabel = checkbox!.closest("label");
-  expect(autoRefreshLabel).not.toBeNull();
+  // Auto-refresh is the prototype's M3 switch, so the state lives on aria-checked
+  // rather than on a checkbox input.
+  const autoRefresh = container.querySelector<HTMLButtonElement>('button[role="switch"]');
+  expect(autoRefresh?.getAttribute("aria-checked")).toBe("true");
   await act(async () => {
-    autoRefreshLabel!.click();
+    autoRefresh!.click();
   });
   await flushMicrotasks();
-  expect(checkbox!.checked).toBe(false);
+  expect(autoRefresh!.getAttribute("aria-checked")).toBe("false");
 
   // Effect re-runs once when autoRefresh flips (non-silent fetch), then must stop polling.
   const afterDisable = urls.filter(u => u.includes("/api/logs")).length;

@@ -37,6 +37,18 @@ export interface ModelRow {
   contextWindow?: number;
   contextCap?: number;
   contextCapped?: boolean;
+  reasoningEfforts?: string[];
+}
+
+/**
+ * Reasoning ladder as the design shows it: `low→xhigh`, or the single rung when
+ * a model only has one. The rungs are API identifiers, so they are not translated.
+ */
+export function effortRange(efforts: string[] | undefined): string {
+  if (!efforts || efforts.length === 0) return "";
+  const first = efforts[0];
+  const last = efforts[efforts.length - 1];
+  return first === last ? first : `${first}→${last}`;
 }
 
 export interface ProviderContextCapsResponse {

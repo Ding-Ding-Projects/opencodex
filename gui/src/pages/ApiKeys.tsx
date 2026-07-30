@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Notice } from "../ui";
 import { useCopyFeedback } from "../components/use-copy-feedback";
+import { copyTextToClipboard } from "../oauth-health-display";
 import { useI18n, LOCALES } from "../i18n/shared";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import {
   classifyExternalModel,
@@ -23,6 +25,16 @@ import {
   ApiKeysUsagePanel,
 } from "./api-keys-panels";
 
+/** The two header names the subtitle names inline, as M3 code chips. */
+const INLINE_CODE = {
+  padding: "1px 6px",
+  borderRadius: "var(--r-s)",
+  background: "var(--m3-surface-container-highest)",
+  color: "var(--m3-on-surface)",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+} as const;
+
 interface KeysResponse {
   keys?: ApiKeyEntry[];
   endpoint?: string;
@@ -40,6 +52,7 @@ interface CreateKeyResponse {
 
 export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
+  const { notify } = useNotifications();
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang;
   const [keys, setKeys] = useState<ApiKeyEntry[]>([]);
   const [endpoints, setEndpoints] = useState<ApiEndpointInfo>(DEFAULT_ENDPOINTS);
@@ -149,10 +162,11 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     setActionError(null);
     try {
       const effectiveName = name ?? newName;
+      const keyLabel = effectiveName || "default";
       const res = await fetch(`${apiBase}/api/keys`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: effectiveName || "default" }),
+        body: JSON.stringify({ name: keyLabel }),
       });
       const data = await readJsonOrThrow<CreateKeyResponse>(res, t("api.createFailed"));
       if (typeof data?.key !== "string" || data.key.length === 0) {
@@ -161,6 +175,8 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       }
       setNewKey(data.key);
       setNewName("");
+      // The secret itself is never recorded — a revision log is not a key store.
+      recordRevision({ scope: "key", label: keyLabel, summary: t("api.newKeyTitle") });
       void fetchKeys();
       return true;
     } catch {
@@ -174,6 +190,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
 
   const handleDelete = async (id: string) => {
     setActionError(null);
+    const deleted = keys.find(k => k.id === id);
     try {
       const res = await fetch(`${apiBase}/api/keys`, {
         method: "DELETE",
@@ -185,6 +202,14 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         return;
       }
       setConfirmDelete(null);
+      // The prefix is the only handle left once the row is gone; keeping it makes
+      // the history entry identifiable without storing the secret.
+      recordRevision({
+        scope: "key",
+        label: deleted?.name ?? id,
+        summary: t("api.deleteAria"),
+        before: deleted ? JSON.stringify({ name: deleted.name, prefix: deleted.prefix }) : undefined,
+      });
       void fetchKeys();
     } catch {
       setActionError(t("api.deleteFailed"));
@@ -197,6 +222,15 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
 
   const copyModelId = (modelId: string) => {
     copy(modelId, modelId);
+  };
+
+  // Icon-only copy buttons have no label to flip, so their acknowledgement is a
+  // snackbar rather than the inline `useCopyFeedback` swap the text buttons use.
+  const copyToClipboard = (value: string) => {
+    void copyTextToClipboard(value).then(ok => {
+      if (ok) notify({ tone: "success", title: t("api.copied"), body: value });
+      else notify({ tone: "error", title: t("prov.linkCopyUnavailable") });
+    });
   };
 
   const sourceLabel = (model: ExternalModelRow): string => {
@@ -247,23 +281,41 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const subtitleParts = t("api.subtitle").split(/\{authHeader\}|\{altHeader\}/);
 
   return (
-    <section className="api-page">
-      <div className="page-head">
-        <h2 className="m3-card-title">{t("api.title")}</h2>
-      </div>
-      <p className="page-sub m3-card-sub" style={{ maxWidth: "74ch", marginBottom: "var(--sp-4)" }}>
+    <>
+      {/* The app bar carries the page title; the screen opens on its subtitle. */}
+      <p style={{
+        margin: "0 0 var(--sp-4)",
+        maxWidth: "74ch",
+        color: "var(--m3-on-surface-variant)",
+        fontSize: "var(--t-body-l)",
+      }}>
         {subtitleParts[0]}
-        <code>Authorization: Bearer ocx_...</code>
+        <code style={INLINE_CODE}>Authorization: Bearer ocx_...</code>
         {subtitleParts[1]}
-        <code>x-opencodex-api-key</code>
+        <code style={INLINE_CODE}>x-opencodex-api-key</code>
         {subtitleParts[2]}
       </p>
 
+      {/* Load and mutation failures stay on the page: a snackbar that auto-hides
+          would leave a stale key list looking authoritative. */}
       {(keysLoadFailed || actionError) && (
-        <Notice tone="err">{actionError ?? t("api.keysLoadFailed")}</Notice>
+        <p role="alert" style={{
+          margin: "0 0 var(--sp-4)",
+          padding: "var(--sp-2) var(--sp-3)",
+          borderRadius: "var(--r-s)",
+          background: "var(--m3-error-container)",
+          color: "var(--m3-on-error-container)",
+          fontSize: "var(--t-body-s)",
+        }}>
+          {actionError ?? t("api.keysLoadFailed")}
+        </p>
       )}
 
-      <ApiKeysEndpointsPanel endpoints={endpoints} claudeCodeEnabled={claudeCodeEnabled} />
+      <ApiKeysEndpointsPanel
+        endpoints={endpoints}
+        claudeCodeEnabled={claudeCodeEnabled}
+        onCopy={copyToClipboard}
+      />
       <ApiKeysAuthPanel claudeCodeEnabled={claudeCodeEnabled} />
       <ApiKeysManagePanel
         keys={keys}
@@ -278,6 +330,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         onCreate={() => { void handleCreate(); }}
         onDismissNewKey={() => setNewKey(null)}
         onCopyKey={copyKey}
+        onCopyPrefix={copyToClipboard}
         onConfirmDelete={setConfirmDelete}
         onCancelDelete={() => setConfirmDelete(null)}
         onDelete={(id) => { void handleDelete(id); }}
@@ -297,6 +350,6 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         protocolLabel={protocolLabel}
       />
       <ApiKeysUsagePanel endpoints={endpoints} claudeCodeEnabled={claudeCodeEnabled} />
-    </section>
+    </>
   );
 }
