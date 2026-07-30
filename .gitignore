@@ -7,6 +7,12 @@ devlog/
 .tmp/
 .opencode/
 
+# Compiled Python bytecode
+# The interpreter regenerates these on every import, so tracking them turned
+# each edit to the Home Assistant integration's .py files into binary churn.
+__pycache__/
+*.pyc
+
 # Local agent/session artifacts
 # These are per-machine agent state (goalplans, ledgers, evidence scratch).
 # They are never part of the product and must not be committed, not even with
