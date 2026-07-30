@@ -9,10 +9,6 @@ import type { useDashboardData } from "./use-dashboard-data";
 
 type Dash = ReturnType<typeof useDashboardData>;
 
-/** The prototype's dialog trails its actions; `.modal-actions` still stretches
-    the legacy `.btn`, so the alignment travels with the M3 buttons. */
-const DIALOG_ACTIONS = { justifyContent: "flex-end" } as const;
-
 export function DashboardDialogs(d: Dash) {
   const {
     t,
@@ -43,7 +39,10 @@ export function DashboardDialogs(d: Dash) {
           </div>
           <div className="modal-desc">{t("dash.updateDesc")}</div>
           <div className="update-row">
-            <label className="m3-field-label" htmlFor="update-channel">{t("dash.updateChannel")}</label>
+            {/* A span, not a <label htmlFor>: `Select` renders a listbox button with its
+                own aria-label, and nothing on this screen has ever carried the id the
+                htmlFor pointed at — a dangling association names nothing. */}
+            <span className="m3-field-label">{t("dash.updateChannel")}</span>
             <Select
               value={updateChannel}
               options={[{ value: "latest", label: "latest" }, { value: "preview", label: "preview" }]}
@@ -57,7 +56,7 @@ export function DashboardDialogs(d: Dash) {
             <Empty title={t("dash.updateChecking")}><span className="spin" aria-hidden="true" /></Empty>
           )}
           {updateError && (
-            <div className="notice notice-err" role="status"><IconAlert /><span>{updateError}</span></div>
+            <div className="dash-notice m3-row" role="status"><IconAlert width={16} height={16} aria-hidden="true" /><span>{updateError}</span></div>
           )}
           {updateCheck && !updateLoading && (
             <div className="update-box">
@@ -76,19 +75,19 @@ export function DashboardDialogs(d: Dash) {
               </div>
               <div className="muted update-command">{t("dash.updateCommand")} <code className="m3-chip">{updateCheck.command}</code></div>
               {updateCheck.reason === "source_checkout" && (
-                <div className="notice-warn" role="status"><IconAlert /> {t("dash.updateSource")}</div>
+                <div className="dash-notice dash-notice--warn m3-row" role="status"><IconAlert width={16} height={16} aria-hidden="true" /><span>{t("dash.updateSource")}</span></div>
               )}
               {updateCheck.reason === "latest_unavailable" && (
-                <div className="notice-warn" role="status">
-                  <IconAlert /> {t("dash.updateUnavailable")}
+                <div className="dash-notice dash-notice--warn m3-row" role="status">
+                  <IconAlert width={16} height={16} aria-hidden="true" />
+                  <span>{t("dash.updateUnavailable")}</span>
                   <button
                     type="button"
                     className="m3-btn m3-btn--text"
                     disabled={updateLoading}
                     onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
-                    style={{ marginLeft: 12 }}
                   >
-                    <IconRefresh /> {t("dash.updateRetry")}
+                    <IconRefresh aria-hidden="true" /> {t("dash.updateRetry")}
                   </button>
                 </div>
               )}
@@ -103,7 +102,7 @@ export function DashboardDialogs(d: Dash) {
                     disabled={updateLoading}
                     onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
                   >
-                    <IconRefresh /> {updateLoading ? t("dash.updateChecking") : t("dash.updateRecheck")}
+                    <IconRefresh aria-hidden="true" /> {updateLoading ? t("dash.updateChecking") : t("dash.updateRecheck")}
                   </button>
                 </div>
               )}
@@ -122,7 +121,7 @@ export function DashboardDialogs(d: Dash) {
               )}
             </div>
           )}
-          <div className="modal-actions" style={DIALOG_ACTIONS}>
+          <div className="modal-actions">
             <button type="button" className="m3-btn m3-btn--text" onClick={closeUpdateDialog}>{t("common.cancel")}</button>
             <button
               type="button"
@@ -158,7 +157,7 @@ export function DashboardDialogs(d: Dash) {
               {t("models.v2DocsLink")}
             </a>
           </div>
-          <div className="modal-actions" style={DIALOG_ACTIONS}>
+          <div className="modal-actions">
             <button type="button" className="m3-btn m3-btn--filled" onClick={() => setMaHelpOpen(false)}>{t("common.ok")}</button>
           </div>
         </div>
@@ -181,7 +180,7 @@ export function DashboardDialogs(d: Dash) {
           <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
             {t("dash.effortCapHelp")}
           </div>
-          <div className="modal-actions" style={DIALOG_ACTIONS}>
+          <div className="modal-actions">
             <button type="button" className="m3-btn m3-btn--filled" onClick={() => setEffortCapHelpOpen(false)}>{t("common.ok")}</button>
           </div>
         </div>
@@ -204,7 +203,7 @@ export function DashboardDialogs(d: Dash) {
           <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
             {t("dash.shadowCallTooltip")}
           </div>
-          <div className="modal-actions" style={DIALOG_ACTIONS}>
+          <div className="modal-actions">
             <button type="button" className="m3-btn m3-btn--filled" onClick={() => setShadowCallHelpOpen(false)}>{t("common.ok")}</button>
           </div>
         </div>

@@ -23,6 +23,10 @@ export function OpenAiAccountModeBanner({
   onEnable: () => void;
 }) {
   const t = useT();
+  // Until the first /api/config read resolves — and after one that failed — there is
+  // no mode to report. Rendering the card anyway left a titled surface with no body,
+  // no status and no action on every mount: a heading that says nothing.
+  if (state === null) return null;
   return (
     <section className="m3-card" style={{ marginBottom: "var(--sp-3)" }}>
       <div className="m3-card-head" style={{ marginBottom: 0, alignItems: "center" }}>
@@ -157,21 +161,13 @@ export default function CodexAuth({ apiBase }: { apiBase: string }) {
       busy={enableBusy}
       onEnable={() => { void enableOpenAi(); }}
     />
-    {/* `notice notice-err` is the pre-M3 class layer in styles.css: it paints
-        `--m3-error` text on an error-container fill instead of the paired
-        `--m3-on-error-container`. Same surface as the pool's load-error row. */}
+    {/* `.dash-notice` is the M3-vocabulary replacement for the pre-M3 `notice
+        notice-err` layer, which painted `--m3-error` text on an error-container
+        fill instead of the paired `--m3-on-error-container`. It carries the same
+        pairing this row used to hand-roll inline, and unlike the inline styles it
+        is reachable from the per-element appearance editor. */}
     {enableError && (
-      <div
-        className="m3-row"
-        role="alert"
-        style={{
-          marginBottom: "var(--sp-3)",
-          padding: "var(--sp-2)",
-          borderRadius: "var(--r-m)",
-          background: "var(--m3-error-container)",
-          color: "var(--m3-on-error-container)",
-        }}
-      >
+      <div className="dash-notice" role="alert" style={{ marginBottom: "var(--sp-3)" }}>
         {enableError}
       </div>
     )}

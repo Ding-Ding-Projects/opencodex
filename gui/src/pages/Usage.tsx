@@ -2,9 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useI18n, type TFn, type Locale } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { cachedNumberFormat, formatEstimatedUsdValue as formatUsdEstimate } from "../intl-formatters";
-import { IconSearch } from "../icons";
+import {
+  IconBolt,
+  IconClock,
+  IconCoin,
+  IconDataUsage,
+  IconGauge,
+  IconRegex,
+  IconSearch,
+  IconSwapVert,
+} from "../icons";
 import { Notice } from "../ui";
-import { Button, Empty } from "../shell/m3-ui";
+import { Button, Chip, Empty } from "../shell/m3-ui";
 import { modelLabel } from "../model-display";
 
 type Range = "all" | "30d" | "7d";
@@ -220,7 +229,15 @@ const STAT_TILE: React.CSSProperties = {
   border: "1px solid var(--m3-outline-variant)",
   background: "var(--m3-surface-container-low)",
 };
-const STAT_LABEL: React.CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" };
+// The prototype's tile label is an icon + text row, so the six tiles are scannable by mark
+// before the eye reaches the words.
+const STAT_LABEL: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-l)",
+};
 const STAT_VALUE: React.CSSProperties = {
   marginTop: 6,
   fontFamily: "var(--mono)",
@@ -264,21 +281,35 @@ const COVERAGE_VALUE: React.CSSProperties = {
   fontSize: "var(--t-label-m)",
 };
 const COVERAGE_BAR: React.CSSProperties = { ...BAR_TRACK, flex: "1 1 160px", minWidth: 100 };
+const REGEX_ERROR_TEXT: React.CSSProperties = {
+  margin: "0 0 12px",
+  color: "var(--m3-error)",
+  fontSize: "var(--t-body-s)",
+};
 const NOTE_TEXT: React.CSSProperties = {
   margin: "12px 0 0",
   color: "var(--m3-on-surface-variant)",
   fontSize: "var(--t-body-s)",
 };
 
-function StatTile({ label, value, hint, title }: { label: string; value: string | number; hint?: ReactNode; title?: string }) {
+function StatTile({ icon, label, value, hint, title }: {
+  icon: ReactNode;
+  label: string;
+  value: string | number;
+  hint?: ReactNode;
+  title?: string;
+}) {
   return (
     <div style={STAT_TILE} title={title}>
-      <div style={STAT_LABEL}>{label}</div>
+      <div style={STAT_LABEL}>{icon}{label}</div>
       <div style={STAT_VALUE}>{value}</div>
+      {/* Reserved even when empty: the prototype keeps every tile the same height. */}
       <div style={STAT_HINT}>{hint}</div>
     </div>
   );
 }
+
+const STAT_ICON = { width: 18, height: 18, "aria-hidden": true } as const;
 
 /** Share meter — functional data colour, carries the progressbar contract. */
 function ShareBar({ ratio, label, tone = "var(--m3-primary)", style }: {
@@ -381,25 +412,50 @@ function UsageSummaryCards({
   t: TFn;
 }) {
   const cacheWrites = summary.cacheCreationInputTokens ?? 0;
-  const excluded = (summary.unpricedRequests ?? 0) + (summary.unmeteredRequests ?? 0);
+  const unpriced = summary.unpricedRequests ?? 0;
+  // Tile order, marks and hints follow the prototype's six usage cards. "Measured" is no longer
+  // its own tile there — it is the requests hint, which keeps the pair of numbers side by side.
   return (
     <div style={STAT_GRID} role="group" aria-label={t("usage.title")}>
-      <StatTile label={t("usage.card.requests")} value={formatCount(summary.requests, locale)} />
-      <StatTile label={t("usage.card.measured")} value={formatCount(summary.measuredRequests, locale)} />
-      <StatTile label={t("usage.card.totalTokens")} value={formatTokens(summary.totalTokens, locale)} />
       <StatTile
+        icon={<IconSwapVert {...STAT_ICON} />}
+        label={t("usage.card.requests")}
+        value={formatCount(summary.requests, locale)}
+        hint={t("usage.card.requestsHint", { count: formatCount(summary.measuredRequests, locale) })}
+      />
+      <StatTile
+        icon={<IconDataUsage {...STAT_ICON} />}
+        label={t("usage.card.totalTokens")}
+        value={formatTokens(summary.totalTokens, locale)}
+        hint={t("usage.card.totalTokensHint", { count: formatCount(summary.reportedRequests, locale) })}
+      />
+      <StatTile
+        icon={<IconBolt {...STAT_ICON} />}
         label={t("usage.card.cachedTokens")}
         title={t("usage.card.cachedTokensHint")}
         value={formatTokens(summary.cacheReadInputTokens ?? summary.cachedInputTokens, locale)}
         hint={cacheWrites > 0 ? `${formatTokens(cacheWrites, locale)} ${t("usage.card.cacheWriteTokens")}` : undefined}
       />
-      <StatTile label={t("usage.card.coverage")} value={formatPct(summary.coverageRatio)} />
-      <StatTile label={t("usage.card.activeDays")} value={activeDays} />
+      <StatTile
+        icon={<IconGauge {...STAT_ICON} />}
+        label={t("usage.card.coverage")}
+        value={formatPct(summary.coverageRatio)}
+        hint={unpriced > 0 ? t("usage.card.coverageHint", { count: formatCount(unpriced, locale) }) : undefined}
+      />
+      <StatTile
+        icon={<IconClock {...STAT_ICON} />}
+        label={t("usage.card.activeDays")}
+        value={activeDays}
+      />
       {summary.estimatedCostUsd !== undefined && (
         <StatTile
-          label={t("usage.cost.total")}
+          icon={<IconCoin {...STAT_ICON} />}
+          label={t("usage.card.estCost")}
+          // The short label is the tile; the long one stays reachable, so nobody reads
+          // "Est. cost" as a bill.
+          title={t("usage.cost.total")}
           value={formatUsdEstimate(summary.estimatedCostUsd, locale)}
-          hint={excluded > 0 ? t("usage.cost.unpricedNote", { count: excluded }) : undefined}
+          hint={t("usage.card.costHint")}
         />
       )}
     </div>
@@ -488,7 +544,7 @@ function UsageHeatmapPanel({
     <section className="m3-card" aria-labelledby={titleId}>
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id={titleId} className="m3-card-title">{t("usage.section.heatmap")}</h3>
+          <h2 id={titleId} className="m3-card-title">{t("usage.section.heatmap")}</h2>
         </div>
       </header>
       {range === "7d" ? (
@@ -552,12 +608,18 @@ function UsageModelsTable({
   models,
   modelQuery,
   onModelQuery,
+  useRegex,
+  onUseRegex,
+  regexError,
   locale,
   t,
 }: {
   models: UsageModel[];
   modelQuery: string;
   onModelQuery: (query: string) => void;
+  useRegex: boolean;
+  onUseRegex: (next: boolean) => void;
+  regexError: string | null;
   locale: Locale;
   t: TFn;
 }) {
@@ -565,16 +627,25 @@ function UsageModelsTable({
   const sectionLabel = t("usage.section.models");
   const titleId = "usage-models-title";
   const searchInput = (
-    <div className="m3-row" style={{ gap: 8 }}>
+    <div className="m3-row" role="search" style={{ gap: 8 }}>
       <IconSearch aria-hidden="true" />
       <input
         className="m3-input"
         style={SEARCH_INPUT}
         aria-label={searchLabel}
         placeholder={searchLabel}
+        aria-invalid={!!regexError}
         value={modelQuery}
         onChange={event => onModelQuery(event.target.value)}
       />
+      {/* Plain text stays the default; `.*` is the explicit opt-in every search bar carries. */}
+      <Chip selected={useRegex} onClick={() => onUseRegex(!useRegex)} title={t("search.regexHint")}>
+        <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+      </Chip>
+      {/* The builder sits beside the field it serves, not behind a menu. */}
+      <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+        <IconRegex width={20} height={20} aria-hidden="true" />
+      </a>
     </div>
   );
   const table = (
@@ -615,11 +686,16 @@ function UsageModelsTable({
     <section className="m3-card" aria-labelledby={titleId}>
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id={titleId} className="m3-card-title">{sectionLabel}</h3>
+          <h2 id={titleId} className="m3-card-title">{sectionLabel}</h2>
         </div>
         <div className="m3-card-actions">{searchInput}</div>
       </header>
-      {table}
+      {regexError ? (
+        <p role="alert" style={REGEX_ERROR_TEXT}>{t("regex.invalid")}: {regexError}</p>
+      ) : null}
+      {/* Only a *search* that matched nothing gets the no-match state; an unfiltered empty list
+          would be a different fact, and the page-level empty state already covers it. */}
+      {models.length === 0 && modelQuery.trim() ? <Empty title={t("models.noMatch")} /> : table}
     </section>
   );
 }
@@ -672,7 +748,7 @@ function UsageProvidersTable({
     <section className="m3-card" aria-labelledby={titleId}>
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id={titleId} className="m3-card-title">{sectionLabel}</h3>
+          <h2 id={titleId} className="m3-card-title">{sectionLabel}</h2>
         </div>
       </header>
       {table}
@@ -693,6 +769,7 @@ function UsageCoveragePanel({
   const titleId = "usage-coverage-title";
   // Every row is a share of the same denominator, so the bars are comparable down the column.
   const total = Math.max(1, summary.requests);
+  const excluded = (summary.unpricedRequests ?? 0) + (summary.unmeteredRequests ?? 0);
   const rows: { key: string; label: string; value: number; tone: string }[] = [
     { key: "measured", label: t("usage.coverage.measured"), value: summary.measuredRequests, tone: "var(--m3-primary)" },
     { key: "reported", label: t("usage.coverage.reported"), value: summary.reportedRequests, tone: "var(--m3-tertiary)" },
@@ -710,6 +787,9 @@ function UsageCoveragePanel({
         </div>
       ))}
       <p style={NOTE_TEXT}>{t("usage.coverage.note")}</p>
+      {/* The coverage tile's hint counts unpriced requests; the exact excluded total (unpriced
+          plus unmetered) belongs here, where the rest of the request accounting lives. */}
+      {excluded > 0 && <p style={NOTE_TEXT}>{t("usage.cost.unpricedNote", { count: excluded })}</p>}
       {summary.estimatedCostUsd !== undefined && (
         <p style={NOTE_TEXT}>{t("usage.cost.disclaimer")}</p>
       )}
@@ -720,7 +800,7 @@ function UsageCoveragePanel({
     <section className="m3-card" aria-labelledby={titleId}>
       <header className="m3-card-head">
         <div className="m3-card-headtext">
-          <h3 id={titleId} className="m3-card-title">{sectionLabel}</h3>
+          <h2 id={titleId} className="m3-card-title">{sectionLabel}</h2>
         </div>
       </header>
       {body}
@@ -736,6 +816,7 @@ export default function Usage({ apiBase }: { apiBase: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modelQuery, setModelQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const loadGenerationRef = useRef(0);
 
   const fetchUsage = useCallback(async (nextRange: Range, nextSurface: UsageSurface, signal: AbortSignal) => {
@@ -777,17 +858,30 @@ export default function Usage({ apiBase }: { apiBase: string }) {
   const heatmap = useMemo(() => buildHeatmap(data?.days ?? []), [data?.days]);
   const weekBars = useMemo(() => lastSevenDays(data?.days ?? []), [data?.days]);
   const activeDays = useMemo(() => (data?.days ?? []).filter(d => d.requests > 0).length, [data?.days]);
-  const filteredModels = useMemo(() => {
-    const q = modelQuery.trim().toLowerCase();
+  // Plain substring by default; the `.*` chip switches the same field to ECMAScript RegExp,
+  // evaluated locally and capped at 400 pattern chars like every other search bar here.
+  const { filteredModels, regexError } = useMemo(() => {
+    const query = modelQuery.trim();
     const models = data?.models ?? [];
     const sorted = models.toSorted((a, b) => b.totalTokens - a.totalTokens);
-    if (!q) return sorted.slice(0, 100);
-    return sorted.filter(m =>
-      m.model.toLowerCase().includes(q) ||
-      m.provider.toLowerCase().includes(q) ||
-      (m.resolvedModel ?? "").toLowerCase().includes(q),
-    ).slice(0, 100);
-  }, [data?.models, modelQuery]);
+    if (!query) return { filteredModels: sorted.slice(0, 100), regexError: null as string | null };
+
+    let matches: (haystack: string) => boolean;
+    if (useRegex) {
+      try {
+        const re = new RegExp(query.slice(0, 400), "i");
+        matches = haystack => re.test(haystack);
+      } catch (cause) {
+        // An in-progress pattern must not blank the screen silently — the row below says why.
+        return { filteredModels: [], regexError: cause instanceof Error ? cause.message : String(cause) };
+      }
+    } else {
+      const needle = query.toLowerCase();
+      matches = haystack => haystack.toLowerCase().includes(needle);
+    }
+    const filtered = sorted.filter(m => matches(`${m.model} ${m.provider} ${m.resolvedModel ?? ""}`));
+    return { filteredModels: filtered.slice(0, 100), regexError: null as string | null };
+  }, [data?.models, modelQuery, useRegex]);
 
   const sortedProviders = useMemo(() =>
     (data?.providers ?? []).toSorted((a, b) => b.totalTokens - a.totalTokens),
@@ -796,9 +890,7 @@ export default function Usage({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
-        {t("usage.subtitle")}
-      </p>
+      <p className="m3-page-lead">{t("usage.subtitle")}</p>
       <div className="m3-row" style={{ marginBottom: "var(--sp-4)" }}>
         <UsageFilters surface={surface} range={range} onSurface={setSurface} onRange={setRange} t={t} />
       </div>
@@ -822,7 +914,16 @@ export default function Usage({ apiBase }: { apiBase: string }) {
         <>
           <UsageSummaryCards summary={data.summary} activeDays={activeDays} locale={locale} t={t} />
           <UsageHeatmapPanel range={range} heatmap={heatmap} weekBars={weekBars} locale={locale} t={t} />
-          <UsageModelsTable models={filteredModels} modelQuery={modelQuery} onModelQuery={setModelQuery} locale={locale} t={t} />
+          <UsageModelsTable
+            models={filteredModels}
+            modelQuery={modelQuery}
+            onModelQuery={setModelQuery}
+            useRegex={useRegex}
+            onUseRegex={setUseRegex}
+            regexError={regexError}
+            locale={locale}
+            t={t}
+          />
           <UsageProvidersTable providers={sortedProviders} locale={locale} t={t} />
           <UsageCoveragePanel summary={data.summary} locale={locale} t={t} />
         </>

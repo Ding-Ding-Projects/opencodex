@@ -1,8 +1,74 @@
 import type { ReactNode } from "react";
 import { Trans } from "../i18n/provider";
 import { useT } from "../i18n/shared";
-import { Card } from "../shell/m3-ui";
+import { IconRegex, IconSearch } from "../icons";
+import { Card, Chip, TextInput } from "../shell/m3-ui";
 import { Select, type SelectOption } from "../ui";
+import type { ClaudeSettingsSearch } from "./claude-settings-search";
+
+/**
+ * The settings-search row the prototype puts at the top of the Claude Code tab, and
+ * that every settings surface owes its user: plain-text search by default, an
+ * explicit `.*` opt-in, and the full builder one click away — anchored to this field
+ * rather than hidden behind a menu. The status line under it reports a cross-tab hit
+ * by name, so a miss here can still say where the setting actually lives.
+ */
+export function ClaudeSettingsSearchRow({
+  query,
+  onQuery,
+  regexOn,
+  onRegex,
+  search,
+}: {
+  query: string;
+  onQuery: (next: string) => void;
+  regexOn: boolean;
+  onRegex: (next: boolean) => void;
+  search: ClaudeSettingsSearch;
+}) {
+  const t = useT();
+  const note = search.error
+    ? `${t("regex.invalid")}: ${search.error}`
+    : search.otherHits > 0
+      ? t("settings.otherTab", { count: search.otherHits, tabs: search.otherTabs.join(", ") })
+      : search.active && search.hits === 0
+        ? t("settings.noMatch")
+        : "";
+  return (
+    <>
+      <div className="m3-row" role="search" style={{ gap: 8, marginBottom: 8 }}>
+        <IconSearch width={20} height={20} aria-hidden="true" />
+        <TextInput
+          type="search"
+          value={query}
+          onChange={e => onQuery(e.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={search.error !== null}
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 420 }}
+        />
+        {/* Plain text stays the default; `.*` is the explicit opt-in every search bar carries. */}
+        <Chip selected={regexOn} onClick={() => onRegex(!regexOn)} title={t("regex.regexMode")} aria-label={t("regex.regexMode")}>
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
+          <IconRegex width={20} height={20} aria-hidden="true" />
+        </a>
+      </div>
+      <p
+        role={search.error ? "alert" : "status"}
+        style={{
+          minHeight: 20,
+          margin: "0 0 16px",
+          color: search.error ? "var(--m3-error)" : "var(--m3-on-surface-variant)",
+          fontSize: "var(--t-label-m)",
+        }}
+      >
+        {note}
+      </p>
+    </>
+  );
+}
 
 /**
  * M3 settings row: label stack on the left, control on the right, hairline rule
@@ -78,10 +144,12 @@ export function AutoConnectSetting({
   supported,
   checked,
   onChange,
+  last = false,
 }: {
   supported: boolean;
   checked: boolean;
   onChange: (value: boolean) => void;
+  last?: boolean;
 }) {
   const t = useT();
   const unsupportedDescriptionId = supported ? undefined : "claude-system-env-unsupported";
@@ -89,6 +157,7 @@ export function AutoConnectSetting({
   return (
     <SettingRow
       title={t("claude.systemEnv")}
+      last={last}
       desc={
         <>
           {supported ? (

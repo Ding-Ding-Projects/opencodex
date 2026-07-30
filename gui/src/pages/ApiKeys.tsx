@@ -63,6 +63,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const [modelTests, setModelTests] = useState<Record<string, { state: ModelTestState; detail?: string }>>({});
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -144,16 +145,37 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     return () => window.clearTimeout(timeout);
   }, [fetchKeys, fetchModels]);
 
-  const filteredModels = useMemo(() => {
-    const query = modelQuery.trim().toLowerCase();
-    if (!query) return models;
-    return models.filter(model => {
-      const id = externalModelId(model).toLowerCase();
-      return id.includes(query)
-        || model.displayName.toLowerCase().includes(query)
-        || model.provider.toLowerCase().includes(query);
-    });
-  }, [modelQuery, models]);
+  /**
+   * Catalog search: plain text by default, `.*` as an explicit opt-in. The
+   * pattern is capped at 400 characters and evaluated locally with no `g` flag,
+   * so a pasted novel can never become a catastrophic-backtracking payload and
+   * no lastIndex state leaks between rows.
+   */
+  const { filteredModels, modelQueryError } = useMemo(() => {
+    const query = modelQuery.trim();
+    if (!query) return { filteredModels: models, modelQueryError: null as string | null };
+    const fields = (model: ExternalModelRow) => [externalModelId(model), model.displayName, model.provider];
+    if (useRegex) {
+      let pattern: RegExp;
+      try {
+        pattern = new RegExp(query.slice(0, 400), "i");
+      } catch (error) {
+        return {
+          filteredModels: [] as ExternalModelRow[],
+          modelQueryError: error instanceof Error ? error.message : String(error),
+        };
+      }
+      return {
+        filteredModels: models.filter(model => fields(model).some(field => pattern.test(field))),
+        modelQueryError: null as string | null,
+      };
+    }
+    const needle = query.toLowerCase();
+    return {
+      filteredModels: models.filter(model => fields(model).some(field => field.toLowerCase().includes(needle))),
+      modelQueryError: null as string | null,
+    };
+  }, [modelQuery, models, useRegex]);
 
   const handleCreate = async (name?: string): Promise<boolean> => {
     if (creatingRef.current) return false;
@@ -176,7 +198,9 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       setNewKey(data.key);
       setNewName("");
       // The secret itself is never recorded — a revision log is not a key store.
-      recordRevision({ scope: "key", label: keyLabel, summary: t("api.newKeyTitle") });
+      // Past tense, because a revision records what happened, not what a card says.
+      recordRevision({ scope: "key", label: keyLabel, summary: t("api.keyCreated") });
+      notify({ tone: "success", title: t("api.keyCreated"), body: keyLabel });
       void fetchKeys();
       return true;
     } catch {
@@ -191,6 +215,9 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const handleDelete = async (id: string) => {
     setActionError(null);
     const deleted = keys.find(k => k.id === id);
+    // Closed either way: the failure banner sits on the page, and a still-open
+    // modal would cover the only sentence explaining why the key is still there.
+    setConfirmDelete(null);
     try {
       const res = await fetch(`${apiBase}/api/keys`, {
         method: "DELETE",
@@ -201,15 +228,16 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         setActionError(t("api.deleteFailed"));
         return;
       }
-      setConfirmDelete(null);
       // The prefix is the only handle left once the row is gone; keeping it makes
       // the history entry identifiable without storing the secret.
       recordRevision({
         scope: "key",
         label: deleted?.name ?? id,
-        summary: t("api.deleteAria"),
+        summary: t("api.keyDeleted"),
         before: deleted ? JSON.stringify({ name: deleted.name, prefix: deleted.prefix }) : undefined,
       });
+      // The row vanishing is not an acknowledgement; the snackbar says what went.
+      notify({ tone: "warn", title: t("api.keyDeleted"), body: deleted?.name ?? id });
       void fetchKeys();
     } catch {
       setActionError(t("api.deleteFailed"));
@@ -283,12 +311,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   return (
     <>
       {/* The app bar carries the page title; the screen opens on its subtitle. */}
-      <p style={{
-        margin: "0 0 var(--sp-4)",
-        maxWidth: "74ch",
-        color: "var(--m3-on-surface-variant)",
-        fontSize: "var(--t-body-l)",
-      }}>
+      <p className="m3-page-lead" style={{ marginBottom: "var(--sp-4)" }}>
         {subtitleParts[0]}
         <code style={INLINE_CODE}>Authorization: Bearer ocx_...</code>
         {subtitleParts[1]}
@@ -299,14 +322,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       {/* Load and mutation failures stay on the page: a snackbar that auto-hides
           would leave a stale key list looking authoritative. */}
       {(keysLoadFailed || actionError) && (
-        <p role="alert" style={{
-          margin: "0 0 var(--sp-4)",
-          padding: "var(--sp-2) var(--sp-3)",
-          borderRadius: "var(--r-s)",
-          background: "var(--m3-error-container)",
-          color: "var(--m3-on-error-container)",
-          fontSize: "var(--t-body-s)",
-        }}>
+        <p className="dash-notice" role="alert" style={{ margin: "0 0 var(--sp-4)" }}>
           {actionError ?? t("api.keysLoadFailed")}
         </p>
       )}
@@ -340,10 +356,13 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         modelsLoading={modelsLoading}
         modelsLoadFailed={modelsLoadFailed}
         modelQuery={modelQuery}
+        modelQueryError={modelQueryError}
+        useRegex={useRegex}
         copyOutcomeFor={copyOutcomeFor}
         modelTests={modelTests}
         claudeCodeEnabled={claudeCodeEnabled}
         onModelQueryChange={setModelQuery}
+        onUseRegexChange={setUseRegex}
         onCopyModelId={copyModelId}
         onTestModel={(model) => { void testModel(model); }}
         sourceLabel={sourceLabel}

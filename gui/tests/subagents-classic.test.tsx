@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { type Root } from "react-dom/client";
 import Subagents from "../src/pages/Subagents";
 import { LanguageProvider } from "../src/i18n/provider";
 import { NotificationsProvider } from "../src/shell/notifications";
@@ -67,6 +67,9 @@ afterEach(async () => {
 });
 
 async function mount(viewMode?: "classic" | "workspace") {
+  // Imported here, not at module scope: react-dom only wires its delegated `input`
+  // listener when the DOM globals already exist, and beforeEach installs them.
+  const { createRoot } = await import("react-dom/client");
   await act(async () => {
     root = createRoot(container);
     root.render(
@@ -89,6 +92,14 @@ function modelRow(id: string): HTMLButtonElement {
     .find((b) => b.hasAttribute("aria-pressed") && (b.textContent ?? "").includes(id));
   if (!row) throw new Error(`model row not found: ${id}`);
   return row as unknown as HTMLButtonElement;
+}
+
+/** React tracks the DOM value, so a bare `input.value = …` reads as "no change". */
+function setInputValue(input: HTMLInputElement, value: string): void {
+  Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!
+    .set!.call(input, value);
+  input.dispatchEvent(new testWindow.Event("input", { bubbles: true }) as unknown as Event);
+  input.dispatchEvent(new testWindow.Event("change", { bubbles: true }) as unknown as Event);
 }
 
 /** Featured slots expose a remove control labelled from sub.removeAria ("Remove {m}"). */
@@ -139,6 +150,69 @@ test("caps featured selections at five", async () => {
   await act(async () => { save!.click(); });
   const put = requests.find((r) => r.init?.method === "PUT");
   expect(JSON.parse(String(put!.init!.body)).models.length).toBe(5);
+});
+
+test("search offers plain text by default, a `.*` opt-in, and a builder shortcut", async () => {
+  available = ["gpt-5", "anthropic/claude-x", "zai/glm-4"];
+  await mount();
+
+  const field = container.querySelector('input[aria-label="Search models (native gpt + routed)…"]') as HTMLInputElement;
+  expect(field).toBeTruthy();
+
+  // The builder affordance sits beside the field, pointing at the regex screen.
+  const builder = Array.from(container.querySelectorAll("a")).find((a) => a.getAttribute("href") === "#regex");
+  expect(builder).toBeTruthy();
+  expect(builder!.getAttribute("aria-label")).toBe("Open regex builder");
+
+  // Plain text is the default: a regex metacharacter matches nothing literally.
+  await act(async () => { setInputValue(field, "^gpt"); });
+  expect(container.textContent).toContain("No models match your search.");
+
+  // Opting in to `.*` makes the same query a pattern.
+  const toggle = Array.from(container.querySelectorAll("button"))
+    .find((b) => b.getAttribute("title") === "Match with a regular expression instead of plain text");
+  expect(toggle).toBeTruthy();
+  await act(async () => { toggle!.click(); });
+  expect(container.textContent).not.toContain("No models match your search.");
+  expect(container.textContent).toContain("gpt-5");
+  expect(container.textContent).not.toContain("claude-x");
+
+  // An invalid pattern is reported, not swallowed, and marks the field.
+  await act(async () => { setInputValue(field, "["); });
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Invalid pattern");
+  expect(field.getAttribute("aria-invalid")).toBe("true");
+});
+
+test("labels a bare slug as the native provider and keeps a routed prefix", async () => {
+  available = ["gpt-5", "anthropic/claude-x"];
+  await mount();
+
+  await act(async () => { modelRow("gpt-5").click(); });
+  await act(async () => { modelRow("anthropic/claude-x").click(); });
+
+  // A bare slug is an OpenAI passthrough model; the routed one keeps its provider prefix.
+  expect(container.textContent).toContain("OpenAI native");
+  expect(container.textContent).toContain("anthropic");
+});
+
+test("a save notifies with a split title/body and records a named revision", async () => {
+  await mount();
+  await act(async () => { modelRow("a-1").click(); });
+
+  const save = Array.from(container.querySelectorAll("button"))
+    .find((b) => b.textContent?.trim() === "Save") as HTMLButtonElement | undefined;
+  await act(async () => { save!.click(); });
+
+  // Title states what happened; body states what to do next — a snackbar, not one long line.
+  const notices = JSON.parse(testWindow.localStorage.getItem("ocx-m3:notifications") ?? "[]");
+  expect(notices[0].title).toBe("Saved 1 models.");
+  expect(notices[0].body).toContain("Start a new Codex session");
+  expect(notices[0].title).not.toContain("Start a new Codex session");
+
+  // Version history needs a named event, not "Updated" — and the pre-save state to restore.
+  const revisions = JSON.parse(testWindow.localStorage.getItem("ocx-m3:revisions") ?? "[]");
+  expect(revisions[0].summary).toBe("Featured subagent models set to a-1");
+  expect(revisions[0].before).toBe(JSON.stringify([]));
 });
 
 test("saves the featured order with PUT and the models payload", async () => {

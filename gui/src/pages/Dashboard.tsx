@@ -23,6 +23,7 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
   const {
     t, error, selectedSection,
     providers, models, modelsLoading, modelQuery, setModelQuery,
+    modelRegex, setModelRegex, modelRegexError,
     filteredGroups, expandedProviders, setExpandedProviders,
   } = d;
 
@@ -47,6 +48,9 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
       modelsLoading={modelsLoading}
       modelQuery={modelQuery}
       setModelQuery={setModelQuery}
+      modelRegex={modelRegex}
+      setModelRegex={setModelRegex}
+      modelRegexError={modelRegexError}
       filteredGroups={filteredGroups}
       expandedProviders={expandedProviders}
       setExpandedProviders={setExpandedProviders}
@@ -77,7 +81,8 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
 
   return (
     <div className="dashboard-workspace-shell">
-      <p className="page-sub dash-subtitle">{t("dash.subtitle")}</p>
+      {/* The prototype leads every screen with body-large copy at a 74ch measure. */}
+      <p className="m3-page-lead dash-subtitle">{t("dash.subtitle")}</p>
       {/* Above the section tabs on purpose: launching an agent is a one-press action
           from the landing screen, not something to navigate to. */}
       <LaunchCard apiBase={apiBase} />

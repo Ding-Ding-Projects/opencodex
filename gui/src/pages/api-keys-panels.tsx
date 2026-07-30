@@ -1,7 +1,7 @@
-import type { CSSProperties } from "react";
-import { IconCheck, IconCopy, IconKey, IconTrash } from "../icons";
+import { useEffect, useRef, type CSSProperties } from "react";
+import { IconAlert, IconCheck, IconCopy, IconKey, IconRegex, IconSearch, IconTrash } from "../icons";
 import { useI18n } from "../i18n/shared";
-import { Button, Card, TextInput } from "../shell/m3-ui";
+import { Button, Card, Chip, TextInput } from "../shell/m3-ui";
 import type { CopyOutcome } from "../components/use-copy-feedback";
 import {
   externalModelId,
@@ -39,6 +39,25 @@ const CODE_BLOCK: CSSProperties = {
 /** Per-model test verdict: M3 metrics, functional status colour from the class. */
 const TEST_NOTE: CSSProperties = { margin: "4px 0 0", fontSize: "var(--t-label-m)" };
 
+/** Prototype's destructive-dialog medallion: 56px error-tone circle, centred. */
+const DIALOG_MEDALLION: CSSProperties = {
+  display: "grid",
+  placeItems: "center",
+  width: 56,
+  height: 56,
+  margin: "0 auto var(--sp-3)",
+  borderRadius: 999,
+  background: "var(--m3-error-container)",
+  color: "var(--m3-on-error-container)",
+};
+
+const DIALOG_TITLE: CSSProperties = {
+  margin: "0 0 var(--sp-2)",
+  textAlign: "center",
+  fontSize: "var(--t-headline-s)",
+  fontWeight: 500,
+};
+
 /** The auth notes read as body text, not as the legacy list rule's muted labels. */
 const AUTH_NOTE: CSSProperties = {
   color: "var(--m3-on-surface-variant)",
@@ -73,10 +92,12 @@ export function ApiKeysEndpointsPanel({
                 <th scope="row" style={{ width: 200 }}>{row.label}</th>
                 <td><code style={CODE_CELL}>{row.value}</code></td>
                 <td style={{ width: 48 }}>
+                  {/* Three identical "Copy" buttons in one table is a screen-reader
+                      dead end; each one names the endpoint it copies. */}
                   <button
                     type="button"
                     className="m3-icon-btn"
-                    aria-label={t("api.copy")}
+                    aria-label={t("api.copyValueAria", { label: row.label })}
                     onClick={() => onCopy(row.value)}
                   >
                     <IconCopy aria-hidden="true" />
@@ -146,6 +167,9 @@ export function ApiKeysManagePanel({
   onDelete: (id: string) => void;
 }) {
   const { t } = useI18n();
+  // Deleting a key is a decision, not an announcement: it gets the blocking
+  // dialog the prototype shows, with the key it kills named in it.
+  const pendingDelete = confirmDelete ? keys.find(k => k.id === confirmDelete) ?? null : null;
 
   return (
     <>
@@ -206,32 +230,25 @@ export function ApiKeysManagePanel({
                     <td><code style={CODE_CELL}>{k.prefix}</code></td>
                     <td style={{ fontFamily: "var(--mono)" }}>{formatCreatedDate(k.createdAt, localeTag)}</td>
                     <td>
-                      {confirmDelete === k.id ? (
-                        <span className="m3-row" style={{ justifyContent: "flex-end" }}>
-                          <Button variant="danger" onClick={() => onDelete(k.id)}>{t("api.confirm")}</Button>
-                          <Button variant="text" onClick={onCancelDelete}>{t("common.cancel")}</Button>
-                        </span>
-                      ) : (
-                        <span className="m3-row" style={{ justifyContent: "flex-end", gap: 0 }}>
-                          <button
-                            type="button"
-                            className="m3-icon-btn"
-                            aria-label={t("api.copy")}
-                            onClick={() => onCopyPrefix(k.prefix)}
-                          >
-                            <IconCopy aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            className="m3-icon-btn"
-                            aria-label={t("api.deleteAria")}
-                            style={{ color: "var(--m3-error)" }}
-                            onClick={() => onConfirmDelete(k.id)}
-                          >
-                            <IconTrash aria-hidden="true" />
-                          </button>
-                        </span>
-                      )}
+                      <span className="m3-row" style={{ justifyContent: "flex-end", gap: 0 }}>
+                        <button
+                          type="button"
+                          className="m3-icon-btn"
+                          aria-label={t("api.copyValueAria", { label: k.name })}
+                          onClick={() => onCopyPrefix(k.prefix)}
+                        >
+                          <IconCopy aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          className="m3-icon-btn"
+                          aria-label={t("api.deleteAria")}
+                          style={{ color: "var(--m3-error)" }}
+                          onClick={() => onConfirmDelete(k.id)}
+                        >
+                          <IconTrash aria-hidden="true" />
+                        </button>
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -242,7 +259,67 @@ export function ApiKeysManagePanel({
           <p className="m3-empty">{keysLoadFailed ? t("api.keysLoadFailed") : t("api.noKeys")}</p>
         )}
       </Card>
+
+      {pendingDelete && (
+        <ApiKeysDeleteDialog
+          entry={pendingDelete}
+          onCancel={onCancelDelete}
+          onConfirm={() => onDelete(pendingDelete.id)}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * Permanent-delete gate. The dialog names the key, states what stops working the
+ * moment it is confirmed, and says plainly that it cannot be undone — the three
+ * facts the funny-level rule keeps fixed at every voice setting.
+ */
+function ApiKeysDeleteDialog({
+  entry,
+  onCancel,
+  onConfirm,
+}: {
+  entry: ApiKeyEntry;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useI18n();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open && typeof dialog.showModal === "function") dialog.showModal();
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="modal-overlay"
+      aria-labelledby="api-key-delete-title"
+      onCancel={event => { event.preventDefault(); onCancel(); }}
+    >
+      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onCancel} />
+      <div className="modal-card" onClick={event => event.stopPropagation()} role="document">
+        {/* The prototype's destructive dialog opens on an error-tone medallion
+            above a centred title, so the stakes read before the sentence does. */}
+        <div style={DIALOG_MEDALLION} aria-hidden="true"><IconTrash width={26} height={26} /></div>
+        <h3 id="api-key-delete-title" style={DIALOG_TITLE}>{t("api.deleteAria")}</h3>
+        {/* The name the user recognises; the body below names the prefix that dies. */}
+        <div className="m3-card" style={{ margin: "var(--sp-2) 0" }}>
+          <strong style={{ minWidth: 0, overflowWrap: "anywhere" }}>{entry.name}</strong>
+        </div>
+        <p className="modal-desc">{t("api.deleteConfirmBody", { prefix: entry.prefix })}</p>
+        <div className="dash-notice m3-row" style={{ marginTop: "var(--sp-2)" }}>
+          <IconAlert width={16} height={16} aria-hidden="true" /> {t("codexAuth.irreversible")}
+        </div>
+        <div className="modal-actions">
+          <Button variant="text" onClick={onCancel}>{t("common.cancel")}</Button>
+          <Button variant="danger" onClick={onConfirm}>{t("api.deleteConfirmAction")}</Button>
+        </div>
+      </div>
+    </dialog>
   );
 }
 
@@ -251,10 +328,13 @@ export function ApiKeysModelsPanel({
   modelsLoading,
   modelsLoadFailed,
   modelQuery,
+  modelQueryError,
+  useRegex,
   copyOutcomeFor,
   modelTests,
   claudeCodeEnabled,
   onModelQueryChange,
+  onUseRegexChange,
   onCopyModelId,
   onTestModel,
   sourceLabel,
@@ -264,10 +344,13 @@ export function ApiKeysModelsPanel({
   modelsLoading: boolean;
   modelsLoadFailed: boolean;
   modelQuery: string;
+  modelQueryError: string | null;
+  useRegex: boolean;
   copyOutcomeFor: (modelId: string) => CopyOutcome | null;
   modelTests: Record<string, { state: ModelTestState; detail?: string }>;
   claudeCodeEnabled: boolean;
   onModelQueryChange: (value: string) => void;
+  onUseRegexChange: (next: boolean) => void;
   onCopyModelId: (modelId: string) => void;
   onTestModel: (model: ExternalModelRow) => void;
   sourceLabel: (model: ExternalModelRow) => string;
@@ -280,16 +363,33 @@ export function ApiKeysModelsPanel({
       subtitle={t("api.modelsSubtitle")}
       actions={<span className="m3-chip" aria-hidden="true">{t("api.modelsCount", { count: filteredModels.length })}</span>}
     >
-      <div className="m3-row" style={{ marginBottom: "var(--sp-3)" }}>
+      <div className="m3-row" role="search">
+        <IconSearch width={20} height={20} aria-hidden="true" />
         <TextInput
           type="search"
           value={modelQuery}
           onChange={event => onModelQueryChange(event.target.value)}
           placeholder={t("api.modelsSearch")}
           aria-label={t("api.modelsSearch")}
-          style={{ flex: "1 1 240px", width: "auto" }}
+          aria-invalid={!!modelQueryError}
+          aria-describedby="api-models-regex-error"
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
+        {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+        <Chip selected={useRegex} onClick={() => onUseRegexChange(!useRegex)} title={t("search.regexHint")}>
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <a className="m3-icon-btn" href="#regex" title={t("nav.regex")} aria-label={t("search.openBuilder")}>
+          <IconRegex width={20} height={20} aria-hidden="true" />
+        </a>
       </div>
+      <p
+        id="api-models-regex-error"
+        role="alert"
+        style={{ minHeight: 20, margin: "4px 0 var(--sp-3)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}
+      >
+        {modelQueryError ? `${t("regex.invalid")}: ${modelQueryError}` : ""}
+      </p>
       {modelsLoading ? (
         <p className="m3-empty">{t("api.modelsLoading")}</p>
       ) : modelsLoadFailed ? (

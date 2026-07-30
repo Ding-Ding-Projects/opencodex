@@ -51,6 +51,42 @@ export function effortRange(efforts: string[] | undefined): string {
   return first === last ? first : `${first}→${last}`;
 }
 
+export interface Matcher {
+  test: (text: string) => boolean;
+  /** Regex compile failure, verbatim from the engine. `null` while the pattern is usable. */
+  error: string | null;
+}
+
+/**
+ * Plain text by default, `.*` only when the caller opted in — the rule every search
+ * bar on this screen follows. The pattern is capped at 400 characters and evaluated
+ * locally (ECMAScript `RegExp`), so a pasted novel can never become a
+ * catastrophic-backtracking payload. An invalid pattern matches nothing rather than
+ * silently falling back to plain text, so the reported error and the result agree.
+ */
+export function makeMatcher(query: string, useRegex: boolean): Matcher {
+  const trimmed = query.trim();
+  if (!trimmed) return { test: () => true, error: null };
+  if (useRegex) {
+    try {
+      const re = new RegExp(trimmed.slice(0, 400), "i");
+      return { test: (text: string) => re.test(text), error: null };
+    } catch (e) {
+      return { test: () => false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  const needle = trimmed.toLowerCase();
+  return { test: (text: string) => text.toLowerCase().includes(needle), error: null };
+}
+
+/**
+ * The settings this screen owns, in render order. The settings search bar filters
+ * against these ids, so a user who knows a setting's name can type it here instead
+ * of scanning the controls block.
+ */
+export const MODELS_SETTING_IDS = ["shadowCall", "subAgent", "threads", "contextCap"] as const;
+export type ModelsSettingId = (typeof MODELS_SETTING_IDS)[number];
+
 export interface ProviderContextCapsResponse {
   cap?: number;
   value?: number;

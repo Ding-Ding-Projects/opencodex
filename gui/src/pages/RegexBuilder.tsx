@@ -7,6 +7,11 @@
  * Safety caps, all enforced below: 400-character pattern, 20 000-character
  * sample, 200 matches, and a forced index advance on a zero-width match so a
  * pattern like `(?:)` cannot spin forever.
+ *
+ * Layout follows the prototype's regex section: a body-large page lead and the
+ * engine line, preset chips, the grouped guided-construction palette, the
+ * pattern/flags/sample card with its safety note, then the matches and capture
+ * groups panels side by side.
  */
 
 import { useMemo, useState } from "react";
@@ -23,6 +28,14 @@ const MATCH_CAP = 200;
 /** Shown when a group participated in no capture, and for a zero-width match. */
 const EMPTY_MARK = "∅";
 
+/**
+ * Where "Use in search" leaves the pattern for the receiving screen. Written on
+ * the way out so the target search bar can adopt the pattern the moment it
+ * learns to read this key; the snackbar carries the pattern in the meantime, so
+ * the hand-off is never silent.
+ */
+const SEARCH_HANDOFF_KEY = "ocx-m3:search-handoff";
+
 const FLAGS: { flag: string; tkey: TKey }[] = [
   { flag: "g", tkey: "regex.flagG" },
   { flag: "i", tkey: "regex.flagI" },
@@ -35,40 +48,68 @@ const FLAGS: { flag: string; tkey: TKey }[] = [
 /**
  * Guided palette: insert a construct rather than remembering its syntax.
  *
- * Ordered the way the prototype groups them (literals → classes → anchors →
- * groups → alternation → quantifiers) so the headings drop in unchanged once
- * the group keys exist. `tkey` is optional because several constructs have no
- * description key yet, and a chip labelled with the construct itself is better
- * than no chip at all.
+ * Grouped exactly the way the prototype groups them — literals → character
+ * classes → anchors → groups → alternation → quantifiers — so each section
+ * carries its own heading and its own `role="group"` label.
  *
  * Every insert is a *complete* construct: `(?<name>)` and not `(?<name>…)`,
  * because the ellipsis is a literal character and silently broke the pattern
  * the moment it was inserted.
  */
-const TOKENS: { insert: string; tkey?: TKey }[] = [
-  { insert: "abc" },
-  { insert: "\\." },
-  { insert: "\\\\" },
-  { insert: "\\d", tkey: "regex.tokDigit" },
-  { insert: "\\w", tkey: "regex.tokWord" },
-  { insert: "\\s", tkey: "regex.tokSpace" },
-  { insert: ".", tkey: "regex.tokAny" },
-  { insert: "[a-z]", tkey: "regex.tokClass" },
-  { insert: "[^/]" },
-  { insert: "\\p{Script=Han}" },
-  { insert: "^", tkey: "regex.tokStart" },
-  { insert: "$", tkey: "regex.tokEnd" },
-  { insert: "\\b", tkey: "regex.tokBoundary" },
-  { insert: "()" },
-  { insert: "(?<name>)", tkey: "regex.tokNamed" },
-  { insert: "(?:)", tkey: "regex.tokGroup" },
-  { insert: "(?=)" },
-  { insert: "|", tkey: "regex.tokAlt" },
-  { insert: "*", tkey: "regex.tokStar" },
-  { insert: "+", tkey: "regex.tokPlus" },
-  { insert: "?", tkey: "regex.tokOpt" },
-  { insert: "{1,3}", tkey: "regex.tokRange" },
-  { insert: "+?" },
+const TOKEN_GROUPS: { tkey: TKey; items: { insert: string; tkey: TKey }[] }[] = [
+  {
+    tkey: "regex.groupLiterals",
+    items: [
+      { insert: "abc", tkey: "regex.tokLiteral" },
+      { insert: "\\.", tkey: "regex.tokEscapedDot" },
+      { insert: "\\\\", tkey: "regex.tokBackslash" },
+    ],
+  },
+  {
+    tkey: "regex.groupClasses",
+    items: [
+      { insert: "\\d", tkey: "regex.tokDigit" },
+      { insert: "\\w", tkey: "regex.tokWord" },
+      { insert: "\\s", tkey: "regex.tokSpace" },
+      // `.` is not in the prototype's class list, but it is the construct users
+      // reach for beside `\d`/`\w`, and it already has its own description key.
+      { insert: ".", tkey: "regex.tokAny" },
+      { insert: "[a-z]", tkey: "regex.tokClass" },
+      { insert: "[^/]", tkey: "regex.tokNegated" },
+      { insert: "\\p{Script=Han}", tkey: "regex.tokUnicodeScript" },
+    ],
+  },
+  {
+    tkey: "regex.groupAnchors",
+    items: [
+      { insert: "^", tkey: "regex.tokStart" },
+      { insert: "$", tkey: "regex.tokEnd" },
+      { insert: "\\b", tkey: "regex.tokBoundary" },
+    ],
+  },
+  {
+    tkey: "regex.groupGroups",
+    items: [
+      { insert: "()", tkey: "regex.tokCapture" },
+      { insert: "(?<name>)", tkey: "regex.tokNamed" },
+      { insert: "(?:)", tkey: "regex.tokGroup" },
+      { insert: "(?=)", tkey: "regex.tokLookahead" },
+    ],
+  },
+  {
+    tkey: "regex.groupAlternation",
+    items: [{ insert: "|", tkey: "regex.tokAlt" }],
+  },
+  {
+    tkey: "regex.groupQuantifiers",
+    items: [
+      { insert: "*", tkey: "regex.tokStar" },
+      { insert: "+", tkey: "regex.tokPlus" },
+      { insert: "?", tkey: "regex.tokOpt" },
+      { insert: "{1,3}", tkey: "regex.tokRange" },
+      { insert: "+?", tkey: "regex.tokLazy" },
+    ],
+  },
 ];
 
 /** A preset carries its own sample, or it would be tested against unrelated text. */
@@ -142,6 +183,35 @@ function evaluate(pattern: string, flags: string, sample: string): Evaluation {
   return { rows, error: null, truncated };
 }
 
+/**
+ * Named capture groups in pattern order, each with the positional number the
+ * engine actually assigns it.
+ *
+ * Counting matters: a named group that follows two unnamed ones is `$3`, not
+ * `$1`, so the panel has to walk the pattern rather than number the names it
+ * finds. Escapes and character classes are skipped — `\(` and `[(]` open no
+ * group — and every `(?…` form except `(?<name>` is non-capturing, including
+ * the `(?<=` / `(?<!` lookbehinds that otherwise read as a named group.
+ */
+function namedGroups(pattern: string): { index: number; name: string }[] {
+  const found: { index: number; name: string }[] = [];
+  let captures = 0;
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "\\") { i += 1; continue; }
+    if (inClass) { if (ch === "]") inClass = false; continue; }
+    if (ch === "[") { inClass = true; continue; }
+    if (ch !== "(") continue;
+    const rest = pattern.slice(i + 1);
+    const named = /^\?<(?![=!])([A-Za-z_$][\w$]*)>/.exec(rest);
+    if (named) { found.push({ index: ++captures, name: named[1] }); continue; }
+    if (rest.startsWith("?")) continue;
+    captures += 1;
+  }
+  return found;
+}
+
 /** `$1=… name=…` beside a match, so captures are readable without a second table. */
 function groupsLabel(row: MatchRow): string {
   const parts = row.positional.map((g, i) => `$${i + 1}=${g ?? EMPTY_MARK}`);
@@ -151,6 +221,28 @@ function groupsLabel(row: MatchRow): string {
 
 const MONO = { fontFamily: "var(--mono)" } as const;
 
+const GROUP_HEAD: React.CSSProperties = {
+  margin: "0 0 6px",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-s)",
+  fontWeight: 700,
+  letterSpacing: "0.4px",
+  textTransform: "uppercase",
+};
+
+const PANEL_ROW: React.CSSProperties = {
+  gap: 10,
+  alignItems: "baseline",
+  padding: "8px 0",
+  borderBottom: "1px solid var(--m3-outline-variant)",
+};
+
+const MUTED_MONO: React.CSSProperties = {
+  ...MONO,
+  fontSize: "var(--t-label-s)",
+  color: "var(--m3-on-surface-variant)",
+};
+
 export default function RegexBuilder() {
   const t = useT();
   const { notify } = useNotifications();
@@ -159,11 +251,17 @@ export default function RegexBuilder() {
   const [sample, setSample] = useState(PRESETS[0].sample);
 
   const result = useMemo(() => evaluate(pattern, flags, sample), [pattern, flags, sample]);
-  const groupNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const row of result.rows) for (const name of Object.keys(row.groups)) names.add(name);
-    return [...names];
-  }, [result.rows]);
+  /**
+   * Read off the pattern, not off the matches: a group that captured nothing is
+   * still a group the user declared, and the panel has to say so.
+   */
+  const captureGroups = useMemo(() => {
+    if (result.error) return [];
+    return namedGroups(pattern).map(g => ({
+      ...g,
+      value: result.rows.find(row => row.groups[g.name] != null)?.groups[g.name],
+    }));
+  }, [pattern, result]);
 
   const toggleFlag = (flag: string) => {
     setFlags(prev => (prev.includes(flag) ? prev.replace(flag, "") : prev + flag));
@@ -183,6 +281,7 @@ export default function RegexBuilder() {
   };
 
   const exportMarkdown = () => {
+    const names = captureGroups.map(g => g.name);
     const lines = [
       `# ${t("regex.title")}`,
       "",
@@ -191,42 +290,70 @@ export default function RegexBuilder() {
       `- ${t("regex.flags")}: \`${flags || "—"}\``,
       `- ${t("regex.matchCount")}: ${result.rows.length}${result.truncated ? "+" : ""}`,
       "",
-      "| # | " + t("regex.colIndex") + " | " + t("regex.colMatch") + (groupNames.length ? " | " + groupNames.join(" | ") : "") + " |",
-      "|---|---|---" + groupNames.map(() => "|---").join("") + "|",
+      "| # | " + t("regex.colIndex") + " | " + t("regex.colMatch") + (names.length ? " | " + names.join(" | ") : "") + " |",
+      "|---|---|---" + names.map(() => "|---").join("") + "|",
       ...result.rows.map((row, i) =>
-        `| ${i + 1} | ${row.index} | \`${row.text}\`` + groupNames.map(n => ` | ${row.groups[n] ?? ""}`).join("") + " |"),
+        `| ${i + 1} | ${row.index} | \`${row.text}\`` + names.map(n => ` | ${row.groups[n] ?? ""}`).join("") + " |"),
     ];
     void copy(lines.join("\n"), t("regex.exported"));
   };
 
+  /**
+   * Hand the finished pattern to the Logs search, the way the prototype does.
+   * The snackbar repeats the pattern so the hand-off is visible even before the
+   * receiving search bar reads the stored record.
+   */
+  const useInLogs = () => {
+    const handoff = { page: "logs", pattern, flags, regex: true };
+    try {
+      sessionStorage.setItem(SEARCH_HANDOFF_KEY, JSON.stringify(handoff));
+    } catch { /* storage refused (private mode): the snackbar still carries it */ }
+    notify({ tone: "info", title: t("regex.useHere"), body: `/${pattern}/${flags}` });
+    window.location.hash = "logs";
+  };
+
   return (
     <>
-      <Card title={t("regex.title")} subtitle={t("regex.sub")}>
-        <p style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
-          {t("regex.engineNote")}
-        </p>
+      <p className="m3-page-lead">{t("regex.sub")}</p>
+      <p style={{ ...MUTED_MONO, margin: "0 0 var(--sp-3)", fontSize: "var(--t-label-m)" }}>
+        {t("regex.engineNote")}
+      </p>
 
-        <Field label={t("regex.presets")}>
-          <div className="m3-row" style={{ gap: 8 }} role="group" aria-label={t("regex.presets")}>
-            {PRESETS.map(p => (
-              <Chip
-                key={p.pattern}
-                selected={pattern === p.pattern}
-                onClick={() => { setPattern(p.pattern); setFlags(p.flags); setSample(p.sample); }}
-              >
-                {t(p.tkey)}
-              </Chip>
-            ))}
-          </div>
-        </Field>
-      </Card>
+      <div
+        className="m3-row"
+        style={{ gap: 8, marginBottom: "var(--sp-3)" }}
+        role="group"
+        aria-label={t("regex.presets")}
+      >
+        {PRESETS.map(p => (
+          <Chip
+            key={p.pattern}
+            selected={pattern === p.pattern}
+            onClick={() => { setPattern(p.pattern); setFlags(p.flags); setSample(p.sample); }}
+          >
+            {t(p.tkey)}
+          </Chip>
+        ))}
+      </div>
 
-      <Card title={t("regex.palette")}>
-        <div className="m3-row" style={{ gap: 6 }} role="group" aria-label={t("regex.palette")}>
-          {TOKENS.map(tok => (
-            <Chip key={tok.insert} onClick={() => insert(tok.insert)} title={tok.tkey ? t(tok.tkey) : undefined}>
-              <code style={MONO}>{tok.insert}</code>
-            </Chip>
+      <Card title={t("regex.build")}>
+        <div role="group" aria-label={t("regex.palette")}>
+          {TOKEN_GROUPS.map(group => (
+            <div key={group.tkey} style={{ marginBottom: 12 }}>
+              <h3 style={GROUP_HEAD}>{t(group.tkey)}</h3>
+              <div className="m3-row" style={{ gap: 6 }} role="group" aria-label={t(group.tkey)}>
+                {/* No `title` on a chip: the description is already visible beside the
+                    construct, so a tooltip would only repeat the label. */}
+                {group.items.map(tok => (
+                  <Chip key={tok.insert} onClick={() => insert(tok.insert)}>
+                    <code style={MONO}>{tok.insert}</code>
+                    <span style={{ fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)" }}>
+                      {t(tok.tkey)}
+                    </span>
+                  </Chip>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </Card>
@@ -281,6 +408,7 @@ export default function RegexBuilder() {
             id="ocx-rx-sample"
             value={sample}
             spellCheck={false}
+            rows={5}
             onChange={e => setSample(e.target.value.slice(0, SAMPLE_CAP))}
           />
         </Field>
@@ -291,7 +419,18 @@ export default function RegexBuilder() {
             {t("regex.copy")}
           </Button>
           <Button variant="outlined" onClick={exportMarkdown}>{t("regex.export")}</Button>
+          <Button variant="outlined" onClick={useInLogs} disabled={!pattern || !!result.error}>
+            {t("regex.useHere")} → {t("nav.logs")}
+          </Button>
         </div>
+
+        <p style={{ margin: "var(--sp-2) 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+          {t("regex.safety", {
+            pattern: String(PATTERN_CAP),
+            sample: String(SAMPLE_CAP),
+            matches: String(MATCH_CAP),
+          })}
+        </p>
       </Card>
 
       <div className="m3-grid">
@@ -308,12 +447,8 @@ export default function RegexBuilder() {
           ) : (
             <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
               {result.rows.map((row, i) => (
-                <li
-                  key={`${row.index}-${i}`}
-                  className="m3-row"
-                  style={{ gap: 10, alignItems: "baseline", padding: "8px 0", borderBottom: "1px solid var(--m3-outline-variant)" }}
-                >
-                  <span style={{ ...MONO, fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", fontVariantNumeric: "tabular-nums" }}>
+                <li key={`${row.index}-${i}`} className="m3-row" style={PANEL_ROW}>
+                  <span style={{ ...MUTED_MONO, fontVariantNumeric: "tabular-nums" }}>
                     @{row.index}
                   </span>
                   <mark
@@ -328,8 +463,29 @@ export default function RegexBuilder() {
                   >
                     {row.text || EMPTY_MARK}
                   </mark>
-                  <span style={{ ...MONO, fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", minWidth: 0, overflowWrap: "anywhere" }}>
+                  <span style={{ ...MUTED_MONO, minWidth: 0, overflowWrap: "anywhere" }}>
                     {groupsLabel(row)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        {/*
+          Empty state: the prototype shows the header alone when the pattern
+          declares no named group, and no key exists for a sentence here — an
+          unrelated string would be worse than the blank the design specifies.
+        */}
+        <Card title={t("regex.groups")}>
+          {captureGroups.length > 0 && (
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {captureGroups.map(group => (
+                <li key={group.name} className="m3-row" style={PANEL_ROW}>
+                  <span style={{ ...MUTED_MONO, fontVariantNumeric: "tabular-nums" }}>${group.index}</span>
+                  <span style={{ ...MONO, fontSize: "var(--t-label-m)", fontWeight: 600 }}>{group.name}</span>
+                  <span style={{ ...MONO, fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)", minWidth: 0, overflowWrap: "anywhere" }}>
+                    {group.value ?? EMPTY_MARK}
                   </span>
                 </li>
               ))}

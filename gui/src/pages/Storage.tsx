@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
 import { Button, Chip, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
-import { IconRefresh } from "../icons";
+import { IconBoxes, IconClock, IconHardDrive, IconList, IconRefresh, IconRegex } from "../icons";
 import { formatBytes } from "../format-bytes";
+import { navigateHash } from "../hash-routing";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
 
@@ -117,6 +118,13 @@ const MUTED_CELL: CSSProperties = { color: "var(--m3-on-surface-variant)" };
 const CARD_BODY: CSSProperties = { marginTop: "var(--sp-2)" };
 const TABLE_WRAP: CSSProperties = { overflowX: "auto", marginTop: "var(--sp-2)" };
 const ERROR_TEXT: CSSProperties = { marginTop: "var(--sp-2)", color: "var(--m3-error)" };
+const ESTIMATE_TEXT: CSSProperties = {
+  margin: 0,
+  marginTop: "var(--sp-2)",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+  color: "var(--m3-on-surface-variant)",
+};
 const BAR_TRACK: CSSProperties = {
   display: "block",
   width: "100%",
@@ -142,7 +150,15 @@ const STAT_TILE: CSSProperties = {
   border: "1px solid var(--m3-outline-variant)",
   minWidth: 0,
 };
-const STAT_LABEL: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" };
+/** Icon + label, exactly as the prototype leads each storage stat card. */
+const STAT_LABEL: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-l)",
+};
+const STAT_ICON: CSSProperties = { flex: "0 0 auto", width: 18, height: 18 };
 const STAT_VALUE: CSSProperties = {
   marginTop: 6,
   fontFamily: "var(--mono)",
@@ -159,12 +175,110 @@ const STAT_HINT: CSSProperties = {
   overflowWrap: "anywhere",
 };
 
-function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function StatTile({ label, value, hint, icon }: {
+  label: string;
+  value: string;
+  hint?: string;
+  icon?: ReactNode;
+}) {
   return (
     <div style={STAT_TILE}>
-      <div style={STAT_LABEL}>{label}</div>
+      <div style={STAT_LABEL}>{icon}{label}</div>
       <div style={STAT_VALUE}>{value}</div>
       <div style={STAT_HINT}>{hint}</div>
+    </div>
+  );
+}
+
+/** One searchable setting on this surface: label, description and current value. */
+interface SettingEntry {
+  id: string;
+  section: string;
+  label: string;
+  desc?: string;
+  value?: string;
+}
+
+const SETTINGS_PATTERN_CAP = 400;
+
+/**
+ * Plain text by default; the regex engine is the browser's own `RegExp`, capped at
+ * 400 characters exactly as the regex builder screen documents. An invalid pattern
+ * matches nothing rather than throwing, and the caller shows the invalid notice.
+ */
+function makeSettingsMatcher(query: string, useRegex: boolean): { test: (text: string) => boolean; invalid: boolean } {
+  if (!query) return { test: () => true, invalid: false };
+  if (useRegex) {
+    try {
+      const re = new RegExp(query.slice(0, SETTINGS_PATTERN_CAP), "i");
+      return { test: text => re.test(text), invalid: false };
+    } catch {
+      return { test: () => false, invalid: true };
+    }
+  }
+  const needle = query.toLowerCase();
+  return { test: text => text.toLowerCase().includes(needle), invalid: false };
+}
+
+function settingText(entry: SettingEntry): string {
+  return [entry.label, entry.desc, entry.value].filter(Boolean).join(" ");
+}
+
+const SEARCH_ROW: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginTop: "var(--sp-3)",
+};
+const SEARCH_INPUT: CSSProperties = { flex: "1 1 auto", minWidth: 0, maxWidth: 420 };
+const SEARCH_NOTE: CSSProperties = {
+  marginTop: "var(--sp-2)",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-m)",
+};
+
+/**
+ * The settings-search row every settings surface carries: plain-text search by
+ * default, an explicit `.*` regex opt-in, and the full builder one click away —
+ * anchored to the field it belongs to rather than hidden behind a menu.
+ */
+function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, t }: {
+  query: string;
+  onQuery: (next: string) => void;
+  regexOn: boolean;
+  onRegex: (next: boolean) => void;
+  invalid: boolean;
+  t: TFn;
+}) {
+  return (
+    <div style={SEARCH_ROW}>
+      <TextInput
+        type="search"
+        value={query}
+        placeholder={t("settings.search")}
+        aria-label={t("settings.search")}
+        aria-invalid={invalid}
+        style={SEARCH_INPUT}
+        onChange={e => onQuery(e.target.value)}
+      />
+      <Chip
+        selected={regexOn}
+        title={t("regex.regexMode")}
+        aria-label={t("regex.regexMode")}
+        style={{ minHeight: 44, fontFamily: "var(--mono)" }}
+        onClick={() => onRegex(!regexOn)}
+      >
+        .*
+      </Chip>
+      <button
+        type="button"
+        className="m3-icon-btn"
+        title={t("settings.openBuilder")}
+        aria-label={t("settings.openBuilder")}
+        onClick={() => navigateHash("regex")}
+      >
+        <IconRegex aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -292,11 +406,15 @@ function ArchivedCleanupPanel({
   locale,
   t,
   onDone,
+  archivedBytes,
+  archivedCount,
 }: {
   apiBase: string;
   locale: Locale;
   t: TFn;
   onDone: () => void;
+  archivedBytes: number;
+  archivedCount: number;
 }) {
   const { notify } = useNotifications();
   const [percent, setPercent] = useState(25);
@@ -456,6 +574,15 @@ function ArchivedCleanupPanel({
         />
         <span className="m3-slider-value">{t("storage.cleanup.percent", { percent: String(percent) })}</span>
       </div>
+      {/* Live estimate straight from the archived bucket the scan reported: what the
+          slider position would take. Approximate by construction — the server's own
+          preview is the authority, which is why the label carries a "~". */}
+      <p style={ESTIMATE_TEXT}>
+        {t("storage.cleanup.estimate", {
+          count: Math.round((archivedCount * percent) / 100).toLocaleString(locale),
+          size: formatBytes(Math.round((archivedBytes * percent) / 100), locale),
+        })}
+      </p>
       <div className="m3-row" style={CARD_BODY}>
         {PRESETS.map(p => (
           <Chip
@@ -486,7 +613,7 @@ function ArchivedCleanupPanel({
           belongs on the dialog's confirm, which is where the decision is made. */}
       <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
         <Button variant="filled" disabled={busy} onClick={() => void runPreview()}>
-          {t("storage.cleanup.preview")}
+          {t("storage.cleanup.previewAndClean")}
         </Button>
       </div>
 
@@ -523,7 +650,7 @@ function ArchivedCleanupPanel({
               {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
             </p>
             {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
-            <div className="m3-row" style={{ marginTop: "var(--sp-3)", justifyContent: "flex-end" }}>
+            <div className="modal-actions">
               <button
                 ref={cancelRef}
                 type="button"
@@ -769,7 +896,7 @@ function QuarantineTrashPanel({
               })}
             </p>
             {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
-            <div className="m3-row" style={{ marginTop: "var(--sp-3)", justifyContent: "flex-end" }}>
+            <div className="modal-actions">
               <button
                 ref={cancelRef}
                 type="button"
@@ -809,13 +936,18 @@ function AutoCleanupPolicyPanel({
   locale,
   t,
   onDone,
+  otherSettings,
 }: {
   apiBase: string;
   locale: Locale;
   t: TFn;
   onDone: () => void;
+  /** Settings that live in the other cards on this screen, so a miss here can say where they are. */
+  otherSettings: SettingEntry[];
 }) {
   const { notify } = useNotifications();
+  const [query, setQuery] = useState("");
+  const [regexOn, setRegexOn] = useState(false);
   const [policy, setPolicy] = useState<CleanupPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1098,6 +1230,70 @@ function AutoCleanupPolicyPanel({
   const formatWhen = (ms: number | undefined) =>
     ms === undefined ? t("storage.policy.never") : new Date(ms).toLocaleString(locale);
 
+  const scheduleLabel = (schedule: CleanupPolicy["schedule"]) => {
+    switch (schedule) {
+      case "startup": return t("storage.policy.schedule.startup");
+      case "daily": return t("storage.policy.schedule.daily");
+      case "weekly": return t("storage.policy.schedule.weekly");
+      default: return t("storage.policy.schedule.manual");
+    }
+  };
+
+  const modeLabel = (mode: CleanupPolicy["mode"]) =>
+    mode === "permanent" ? t("storage.policy.mode.permanent") : t("storage.policy.mode.quarantine");
+
+  const section = t("storage.policy.title");
+  const entries: SettingEntry[] = policy
+    ? [
+      { id: "enabled", section, label: t("storage.policy.enabled"), desc: t("storage.policy.enabledHint") },
+      { id: "threshold", section, label: t("storage.policy.threshold"), value: thresholdGb },
+      {
+        id: "target",
+        section,
+        label: t("storage.policy.target"),
+        desc: `${t("storage.policy.targetPercent")} ${t("storage.policy.targetReduce")}`,
+        value: targetMode === "reduce" ? reduceGb : percent,
+      },
+      { id: "schedule", section, label: t("storage.policy.schedule"), value: scheduleLabel(policy.schedule) },
+      {
+        id: "mode",
+        section,
+        label: t("storage.policy.mode"),
+        desc: t("storage.policy.permanentWarn"),
+        value: modeLabel(policy.mode),
+      },
+      { id: "lastRun", section, label: t("storage.policy.lastRun"), value: formatWhen(policy.lastRun?.at) },
+      { id: "nextRun", section, label: t("storage.policy.nextRun"), value: formatWhen(policy.nextRun) },
+    ]
+    : [];
+
+  const matcher = makeSettingsMatcher(query, regexOn);
+  const hits = new Set(entries.filter(e => matcher.test(settingText(e))).map(e => e.id));
+  const shows = (id: string) => query === "" || hits.has(id);
+  const elsewhere = query === "" ? [] : otherSettings.filter(e => matcher.test(settingText(e)));
+  const elsewhereSections = [...new Set(elsewhere.map(e => e.section))].join(", ");
+
+  const searchRow = (
+    <>
+      <SettingsSearchRow
+        query={query}
+        onQuery={setQuery}
+        regexOn={regexOn}
+        onRegex={setRegexOn}
+        invalid={matcher.invalid}
+        t={t}
+      />
+      {matcher.invalid && <p style={SEARCH_NOTE} role="alert">{t("regex.invalid")}</p>}
+      {/* A hit that is not on this card still deserves a pointer to where it lives. */}
+      {elsewhere.length > 0 && (
+        <p style={SEARCH_NOTE} role="status">
+          {t("settings.otherTab", { count: String(elsewhere.length), tabs: elsewhereSections })}
+        </p>
+      )}
+      {query !== "" && hits.size === 0 && <p style={SEARCH_NOTE} role="status">{t("settings.noMatch")}</p>}
+    </>
+  );
+
   const policyHead = (
     <header className="m3-card-head">
       <div className="m3-card-headtext">
@@ -1133,123 +1329,148 @@ function AutoCleanupPolicyPanel({
         </div>
       </header>
 
-      <div className="m3-row m3-row--split" style={CARD_BODY}>
-        <div>
-          <div>{t("storage.policy.enabled")}</div>
-          <p className="m3-card-sub">{t("storage.policy.enabledHint")}</p>
+      {searchRow}
+
+      {shows("enabled") && (
+        <div className="m3-row m3-row--split" style={CARD_BODY}>
+          <div>
+            <div>{t("storage.policy.enabled")}</div>
+            <p className="m3-card-sub">{t("storage.policy.enabledHint")}</p>
+          </div>
+          <Toggle
+            on={policy.enabled}
+            disabled={saving || running}
+            label={t("storage.policy.enabled")}
+            onChange={enabled => { void savePolicy({ enabled }); }}
+          />
         </div>
-        <Toggle
-          on={policy.enabled}
-          disabled={saving || running}
-          label={t("storage.policy.enabled")}
-          onChange={enabled => { void savePolicy({ enabled }); }}
-        />
-      </div>
+      )}
 
       <div className="m3-stack" style={{ marginTop: "var(--sp-3)", maxWidth: 420 }}>
-        <Field label={t("storage.policy.threshold")} id="storage-policy-threshold">
-          <TextInput
-            id="storage-policy-threshold"
-            type="number"
-            min={0}
-            step={0.1}
-            value={thresholdGb}
-            disabled={saving || running}
-            onChange={e => setThresholdGb(e.target.value)}
-            onBlur={() => void savePolicy()}
-          />
-        </Field>
-
-        <div className="m3-field">
-          <span className="m3-field-label">{t("storage.policy.target")}</span>
-          <Segmented
-            value={targetMode}
-            label={t("storage.policy.target")}
-            onChange={next => { if (!saving && !running) setTargetMode(next); }}
-            options={[
-              { value: "percent", label: t("storage.policy.targetPercent") },
-              { value: "reduce", label: t("storage.policy.targetReduce") },
-            ]}
-          />
-          {targetMode === "percent" && (
+        {shows("threshold") && (
+          <Field label={t("storage.policy.threshold")} id="storage-policy-threshold">
             <TextInput
-              type="number"
-              min={1}
-              max={100}
-              value={percent}
-              disabled={saving || running}
-              aria-label={t("storage.policy.targetPercent")}
-              onChange={e => setPercent(e.target.value)}
-              onBlur={() => void savePolicy()}
-              style={{ marginTop: "var(--sp-1)" }}
-            />
-          )}
-          {targetMode === "reduce" && (
-            <TextInput
+              id="storage-policy-threshold"
               type="number"
               min={0}
               step={0.1}
-              value={reduceGb}
+              value={thresholdGb}
               disabled={saving || running}
-              aria-label={t("storage.policy.targetReduce")}
-              onChange={e => setReduceGb(e.target.value)}
+              onChange={e => setThresholdGb(e.target.value)}
               onBlur={() => void savePolicy()}
-              style={{ marginTop: "var(--sp-1)" }}
             />
-          )}
-        </div>
+          </Field>
+        )}
 
-        <Field label={t("storage.policy.schedule")} id="storage-policy-schedule">
-          <select
-            id="storage-policy-schedule"
-            className="m3-input"
-            value={policy.schedule}
-            disabled={saving || running}
-            onChange={e => {
-              const schedule = e.target.value as CleanupPolicy["schedule"];
-              void savePolicy({ schedule });
-            }}
-          >
-            <option value="manual">{t("storage.policy.schedule.manual")}</option>
-            <option value="startup">{t("storage.policy.schedule.startup")}</option>
-            <option value="daily">{t("storage.policy.schedule.daily")}</option>
-            <option value="weekly">{t("storage.policy.schedule.weekly")}</option>
-          </select>
-        </Field>
+        {shows("target") && (
+          <div className="m3-field">
+            <span className="m3-field-label">{t("storage.policy.target")}</span>
+            <Segmented
+              value={targetMode}
+              label={t("storage.policy.target")}
+              onChange={next => { if (!saving && !running) setTargetMode(next); }}
+              options={[
+                { value: "percent", label: t("storage.policy.targetPercent") },
+                { value: "reduce", label: t("storage.policy.targetReduce") },
+              ]}
+            />
+            {targetMode === "percent" && (
+              <TextInput
+                type="number"
+                min={1}
+                max={100}
+                value={percent}
+                disabled={saving || running}
+                aria-label={t("storage.policy.targetPercent")}
+                onChange={e => setPercent(e.target.value)}
+                onBlur={() => void savePolicy()}
+                style={{ marginTop: "var(--sp-1)" }}
+              />
+            )}
+            {targetMode === "reduce" && (
+              <TextInput
+                type="number"
+                min={0}
+                step={0.1}
+                value={reduceGb}
+                disabled={saving || running}
+                aria-label={t("storage.policy.targetReduce")}
+                onChange={e => setReduceGb(e.target.value)}
+                onBlur={() => void savePolicy()}
+                style={{ marginTop: "var(--sp-1)" }}
+              />
+            )}
+          </div>
+        )}
 
-        <Field label={t("storage.policy.mode")} id="storage-policy-mode">
-          <select
-            id="storage-policy-mode"
-            className="m3-input"
-            value={policy.mode}
-            disabled={saving || running}
-            onChange={e => {
-              const mode = e.target.value as CleanupPolicy["mode"];
-              void savePolicy({ mode });
-            }}
-          >
-            <option value="quarantine">{t("storage.policy.mode.quarantine")}</option>
-            <option value="permanent">{t("storage.policy.mode.permanent")}</option>
-          </select>
-        </Field>
-        {policy.mode === "permanent" && (
-          <p style={{ color: "var(--m3-error)" }} role="status">{t("storage.policy.permanentWarn")}</p>
+        {shows("schedule") && (
+          <Field label={t("storage.policy.schedule")} id="storage-policy-schedule">
+            <select
+              id="storage-policy-schedule"
+              className="m3-input"
+              value={policy.schedule}
+              disabled={saving || running}
+              onChange={e => {
+                const schedule = e.target.value as CleanupPolicy["schedule"];
+                void savePolicy({ schedule });
+              }}
+            >
+              <option value="manual">{t("storage.policy.schedule.manual")}</option>
+              <option value="startup">{t("storage.policy.schedule.startup")}</option>
+              <option value="daily">{t("storage.policy.schedule.daily")}</option>
+              <option value="weekly">{t("storage.policy.schedule.weekly")}</option>
+            </select>
+          </Field>
+        )}
+
+        {shows("mode") && (
+          <>
+            <Field label={t("storage.policy.mode")} id="storage-policy-mode">
+              <select
+                id="storage-policy-mode"
+                className="m3-input"
+                value={policy.mode}
+                disabled={saving || running}
+                onChange={e => {
+                  const mode = e.target.value as CleanupPolicy["mode"];
+                  void savePolicy({ mode });
+                }}
+              >
+                <option value="quarantine">{t("storage.policy.mode.quarantine")}</option>
+                <option value="permanent">{t("storage.policy.mode.permanent")}</option>
+              </select>
+            </Field>
+            {policy.mode === "permanent" && (
+              <p style={{ color: "var(--m3-error)" }} role="status">{t("storage.policy.permanentWarn")}</p>
+            )}
+          </>
         )}
       </div>
 
-      <div style={{ ...STAT_GRID, marginTop: "var(--sp-3)", marginBottom: 0 }}>
-        <StatTile
-          label={t("storage.policy.lastRun")}
-          value={formatWhen(policy.lastRun?.at)}
-          hint={policy.lastRun
-            ? t("storage.policy.lastRunDetail", {
-              count: String(policy.lastRun.removed),
-              size: formatBytes(policy.lastRun.freedBytes, locale),
-            })
-            : undefined}
-        />
-        <StatTile label={t("storage.policy.nextRun")} value={formatWhen(policy.nextRun)} />
-      </div>
+      {(shows("lastRun") || shows("nextRun")) && (
+        <div style={{ ...STAT_GRID, marginTop: "var(--sp-3)", marginBottom: 0 }}>
+          {shows("lastRun") && (
+            <StatTile
+              icon={<IconClock aria-hidden="true" style={STAT_ICON} />}
+              label={t("storage.policy.lastRun")}
+              value={formatWhen(policy.lastRun?.at)}
+              hint={policy.lastRun
+                ? t("storage.policy.lastRunDetail", {
+                  count: String(policy.lastRun.removed),
+                  size: formatBytes(policy.lastRun.freedBytes, locale),
+                })
+                : undefined}
+            />
+          )}
+          {shows("nextRun") && (
+            <StatTile
+              icon={<IconClock aria-hidden="true" style={STAT_ICON} />}
+              label={t("storage.policy.nextRun")}
+              value={formatWhen(policy.nextRun)}
+            />
+          )}
+        </div>
+      )}
 
       <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
         <Button variant="outlined" disabled={saving || running} onClick={() => void savePolicy()}>
@@ -1317,17 +1538,29 @@ export default function Storage({ apiBase }: { apiBase: string }) {
   const empty = !loading && !failed && data!.total.fileCount === 0 && trashSettled && !trashHasEntries;
   const archived = data?.buckets.find(b => b.key === "archived_sessions");
   const archivedCount = archived?.fileCount ?? 0;
+  const archivedBytes = archived?.bytes ?? 0;
   const showBody = Boolean(data) && !failed;
   // While storage is empty, keep the trash panel mounted until it reports so we
   // do not flash the empty state over a non-empty quarantine.
   const showTrashWhileSettling = showBody && (data!.total.fileCount > 0 || !trashSettled || trashHasEntries);
+
+  // The settings that live on the Archived cleanup card, indexed so a settings
+  // search that misses on the policy card can still say where the hit is. Empty
+  // when that card is not rendered — the row must never point at nothing.
+  const cleanupSettings = useMemo<SettingEntry[]>(() => {
+    const section = t("storage.cleanup.title");
+    return [
+      { id: "cleanupPercent", section, label: t("storage.cleanup.slider"), desc: t("storage.cleanup.help") },
+      { id: "cleanupPermanent", section, label: t("storage.cleanup.permanent"), desc: t("storage.cleanup.permanentWarn") },
+    ];
+  }, [t]);
 
   return (
     <>
       {/* No page heading: the app bar already carries the page title, exactly as
           the prototype's screen sections do. */}
       <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-4)", alignItems: "flex-start" }}>
-        <p style={{ margin: 0, maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+        <p className="m3-page-lead" style={{ margin: 0 }}>
           {t("storage.subtitle")}
         </p>
         <Button variant="text" disabled={loading} onClick={() => refreshAll()}>
@@ -1347,6 +1580,7 @@ export default function Storage({ apiBase }: { apiBase: string }) {
             locale={locale}
             t={t}
             onDone={() => refreshAll()}
+            otherSettings={[]}
           />
         </>
       ) : (
@@ -1355,18 +1589,21 @@ export default function Storage({ apiBase }: { apiBase: string }) {
             <>
               <div style={STAT_GRID}>
                 <StatTile
+                  icon={<IconHardDrive aria-hidden="true" style={STAT_ICON} />}
                   label={t("storage.card.total")}
                   value={formatBytes(data.total.bytes, locale)}
                   hint={data.codexHome}
                 />
                 <StatTile
+                  icon={<IconList aria-hidden="true" style={STAT_ICON} />}
                   label={t("storage.card.files")}
                   value={data.total.fileCount.toLocaleString(locale)}
                 />
                 <StatTile
-                  label={t("storage.bucket.archived_sessions")}
-                  value={formatBytes(archived?.bytes ?? 0, locale)}
-                  hint={`${t("storage.card.files")} ${archivedCount.toLocaleString(locale)}`}
+                  icon={<IconBoxes aria-hidden="true" style={STAT_ICON} />}
+                  label={t("storage.card.archived")}
+                  value={formatBytes(archivedBytes, locale)}
+                  hint={t("storage.card.archivedFiles", { count: archivedCount.toLocaleString(locale) })}
                 />
               </div>
               <BucketsTable buckets={data.buckets} totalBytes={data.total.bytes} locale={locale} t={t} />
@@ -1379,6 +1616,8 @@ export default function Storage({ apiBase }: { apiBase: string }) {
               locale={locale}
               t={t}
               onDone={() => refreshAll()}
+              archivedBytes={archivedBytes}
+              archivedCount={archivedCount}
             />
           )}
           {showTrashWhileSettling && (
@@ -1396,6 +1635,7 @@ export default function Storage({ apiBase }: { apiBase: string }) {
             locale={locale}
             t={t}
             onDone={() => refreshAll()}
+            otherSettings={archivedCount > 0 ? cleanupSettings : []}
           />
         </>
       )}

@@ -7,11 +7,12 @@
  * legacy `.badge` + `.startup-hero--*` chrome.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n, type TKey } from "../i18n/shared";
 import { startupRiskDetailKey } from "../startup-health-ui";
-import { IconAlert, IconCheck, IconPower, IconTerminal } from "../icons";
+import { IconAlert, IconCheck, IconDownload, IconPower, IconTerminal, IconX } from "../icons";
 import { Button, Card } from "../shell/m3-ui";
+import { useModalDialog } from "./dashboard-shared";
 import type {
   StartupHealthData,
   StartupInstallAction,
@@ -122,6 +123,19 @@ const commandCodeStyle: CSSProperties = {
 const buttonsRowStyle: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 10, marginTop: "var(--sp-3)" };
 const platformStyle: CSSProperties = { color: "var(--m3-on-surface-variant)", fontFamily: "var(--mono)", fontSize: "var(--t-label-m)" };
 
+/** `<dialog>` defaults fight `.modal-overlay`'s full-bleed scrim, so they are cleared. */
+const dialogStyle = (open: boolean): CSSProperties => ({
+  display: open ? "flex" : "none",
+  border: "none",
+  margin: 0,
+  maxWidth: "none",
+  maxHeight: "none",
+  width: "100%",
+  height: "100%",
+});
+/** `.modal-actions` still stretches legacy buttons; the alignment travels with M3 ones. */
+const dialogActionsStyle: CSSProperties = { justifyContent: "flex-end" };
+
 function StartupStatePill({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
   return <span style={pillStyle(ok ? "ok" : "warn")}>{ok ? yes : no}</span>;
 }
@@ -210,6 +224,7 @@ export function StartupDetailsSection({
           />
           {data.serviceSupported && !data.serviceInstalled && (
             <Button aria-label={`${t("startup.service")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-service")}>
+              <IconDownload aria-hidden="true" />
               {t(installBusy === "install-service" ? "startup.installing" : "startup.install")}
             </Button>
           )}
@@ -230,6 +245,7 @@ export function StartupDetailsSection({
           />
           {!data.shimInstalled && (
             <Button aria-label={`${t("startup.shim")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-shim")}>
+              <IconDownload aria-hidden="true" />
               {t(installBusy === "install-shim" ? "startup.installing" : "startup.install")}
             </Button>
           )}
@@ -253,6 +269,13 @@ export function StartupTraySection({
   onTrayAction: (action: "install" | "start" | "stop" | "uninstall") => void;
 }) {
   const { t } = useI18n();
+  // Removing the tray is a decision, so it stays a blocking dialog — but a
+  // native `window.confirm` cannot be themed, localized past the browser's own
+  // button labels, or told what removal actually costs. This one says it: the
+  // proxy keeps running and restart protection is untouched.
+  const [uninstallOpen, setUninstallOpen] = useState(false);
+  const uninstallTriggerRef = useRef<HTMLButtonElement>(null);
+  const uninstallDialogRef = useModalDialog(uninstallOpen, uninstallTriggerRef);
 
   return (
     <Card
@@ -286,12 +309,49 @@ export function StartupTraySection({
           <Button variant="tonal" disabled={trayBusy} onClick={() => onTrayAction("stop")}>{t("startup.tray.stop")}</Button>
         )}
         {!trayLoading && !trayError && tray && (tray.installed || tray.stale) && (
-          <Button variant="danger" disabled={trayBusy} onClick={() => {
-            if (window.confirm(t("startup.tray.uninstall"))) onTrayAction("uninstall");
-          }}>{t("startup.tray.uninstall")}</Button>
+          <Button
+            variant="danger"
+            disabled={trayBusy}
+            onClick={event => {
+              // Captured here rather than through a `ref` prop: `Button` types its
+              // props as plain button attributes, so focus return needs the element
+              // the click actually came from.
+              uninstallTriggerRef.current = event.currentTarget;
+              setUninstallOpen(true);
+            }}
+          >
+            {t("startup.tray.uninstall")}
+          </Button>
         )}
       </div>
       {(trayError || tray?.stale) && <div style={noticeStyle("warn")} role="alert">{t("startup.tray.error")}</div>}
+
+      <dialog
+        ref={uninstallDialogRef}
+        className="modal-overlay"
+        style={dialogStyle(uninstallOpen)}
+        aria-labelledby="startup-tray-uninstall-title"
+        onCancel={event => { event.preventDefault(); setUninstallOpen(false); }}
+      >
+        <div className="modal-card">
+          <div className="modal-head">
+            <h3 id="startup-tray-uninstall-title">{t("startup.tray.uninstall")}</h3>
+            <button type="button" className="m3-icon-btn" onClick={() => setUninstallOpen(false)} aria-label={t("common.cancel")}>
+              <IconX />
+            </button>
+          </div>
+          <div className="modal-desc">{t("startup.tray.uninstallConfirm")}</div>
+          <div className="modal-actions" style={dialogActionsStyle}>
+            <Button variant="text" onClick={() => setUninstallOpen(false)}>{t("common.cancel")}</Button>
+            <Button
+              variant="danger"
+              onClick={() => { setUninstallOpen(false); onTrayAction("uninstall"); }}
+            >
+              {t("startup.tray.uninstall")}
+            </Button>
+          </div>
+        </div>
+      </dialog>
     </Card>
   );
 }

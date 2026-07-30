@@ -10,6 +10,7 @@ import {
   type SidecarSelectValue,
 } from "./claude-code-sidecar";
 import { AutoConnectSetting, SettingRow, SettingToggle } from "./claude-code-settings";
+import type { ClaudeSettingId } from "./claude-settings-search";
 import type { ClaudeCodeState, MapRow } from "./claude-code-types";
 import { newClientId } from "./claude-code-types";
 import type { TFn, TKey } from "../i18n/shared";
@@ -29,29 +30,45 @@ export function ClaudeCodeSettingsCard({
   state,
   autoCompactOptions,
   onStateChange,
+  match = () => true,
 }: {
   state: ClaudeCodeState;
   autoCompactOptions: { value: string; label: string }[];
   onStateChange: (next: ClaudeCodeState) => void;
+  /** Settings-search predicate; the default keeps the card whole when no search is wired. */
+  match?: (id: ClaudeSettingId) => boolean;
 }) {
   const t = useT();
 
   const sidecarKeys = ["webSearchSidecar", "visionSidecar"] as const;
 
+  // The hairline rule belongs to the LAST VISIBLE row, not the last row that exists:
+  // filtering rows out of a card would otherwise leave it ending on a dangling border.
+  const connectionRows = (["enabled", "effectiveMode", "authMode", "fastMode"] as const)
+    .filter(id => (id !== "effectiveMode" || state.authModeOrigin) && match(id));
+  const behaviourRows = (["autoContext", "autoCompactWindow", "injectAgents", "systemEnv", "webSearchSidecar", "visionSidecar"] as const)
+    .filter(id => (id !== "autoCompactWindow" || state.autoContext) && match(id));
+  const isLast = (rows: readonly ClaudeSettingId[], id: ClaudeSettingId) => rows[rows.length - 1] === id;
+
   return (
     <>
     {/* Two cards, per the prototype's CLAUDE section: what the connection IS (on, which
         auth, which tier) is one decision; how it behaves once connected is another. */}
+    {connectionRows.length > 0 && (
     <Card>
+      {match("enabled") && (
       <SettingRow
         title={t("claude.enabledLabel")}
         desc={t("claude.enabledHint")}
+        last={isLast(connectionRows, "enabled")}
         control={<SettingToggle label={t("claude.enabledLabel")} checked={state.enabled} onChange={enabled => onStateChange({ ...state, enabled })} />}
       />
+      )}
 
-      {state.authModeOrigin && (
+      {state.authModeOrigin && match("effectiveMode") && (
         <SettingRow
           title={t("claude.effectiveMode.label")}
+          last={isLast(connectionRows, "effectiveMode")}
           desc={
             <span style={state.authModeOrigin === "auto-unknown" ? { color: "var(--m3-warn)" } : undefined}>
               {state.authModeOrigin === "manual"
@@ -71,10 +88,12 @@ export function ClaudeCodeSettingsCard({
 
       {/* Auth mode is a one-of-three choice, so it reads as a pill group rather than a
           dropdown. Auto stays FIRST: it is the way back out of a sticky manual mode. */}
+      {match("authMode") && (
       <SettingRow
         title={t("claude.authMode")}
         desc={t("claude.authModeHint")}
         align="flex-start"
+        last={isLast(connectionRows, "authMode")}
         control={
           <Segmented<NonNullable<ClaudeCodeState["authMode"]>>
             value={state.authMode}
@@ -88,12 +107,14 @@ export function ClaudeCodeSettingsCard({
           />
         }
       />
+      )}
 
+      {match("fastMode") && (
       <SettingRow
         title={t("claude.fastMode")}
         desc={t("claude.fastModeDesc")}
         align="flex-start"
-        last
+        last={isLast(connectionRows, "fastMode")}
         control={
           <Segmented<"auto" | "on" | "off">
             value={state.fastMode === null ? "auto" : state.fastMode ? "on" : "off"}
@@ -107,9 +128,13 @@ export function ClaudeCodeSettingsCard({
           />
         }
       />
+      )}
     </Card>
+    )}
 
+    {behaviourRows.length > 0 && (
     <Card>
+      {match("autoContext") && (
       <SettingRow
         title={t("claude.autoContext")}
         desc={
@@ -118,12 +143,15 @@ export function ClaudeCodeSettingsCard({
             {state.maxContextTokens !== null && <span style={{ display: "block", marginTop: "4px" }}>{t("claude.autoContextInert")}</span>}
           </>
         }
+        last={isLast(behaviourRows, "autoContext")}
         control={<SettingToggle label={t("claude.autoContext")} checked={state.autoContext} onChange={autoContext => onStateChange({ ...state, autoContext })} />}
       />
+      )}
 
-      {state.autoContext && (
+      {state.autoContext && match("autoCompactWindow") && (
         <SettingRow
           title={t("claude.autoCompactWindow")}
+          last={isLast(behaviourRows, "autoCompactWindow")}
           desc={
             <>
               {t("claude.autoCompactWindowDesc")}
@@ -145,19 +173,25 @@ export function ClaudeCodeSettingsCard({
         />
       )}
 
+      {match("injectAgents") && (
       <SettingRow
         title={t("claude.injectAgents")}
         desc={t("claude.injectAgentsDesc")}
+        last={isLast(behaviourRows, "injectAgents")}
         control={<SettingToggle label={t("claude.injectAgents")} checked={state.injectAgents} onChange={injectAgents => onStateChange({ ...state, injectAgents })} />}
       />
+      )}
 
+      {match("systemEnv") && (
       <AutoConnectSetting
         supported={state.autoConnectSupported}
         checked={state.systemEnv}
+        last={isLast(behaviourRows, "systemEnv")}
         onChange={systemEnv => onStateChange({ ...state, systemEnv })}
       />
+      )}
 
-      {sidecarKeys.map((key, index) => {
+      {sidecarKeys.filter(key => match(key)).map(key => {
         const override = state[key];
         const titleKey = key === "webSearchSidecar" ? "claude.webSearchSidecar" : "claude.visionSidecar";
         const hintKey = key === "webSearchSidecar" ? "claude.webSearchSidecarHint" : "claude.visionSidecarHint";
@@ -167,7 +201,7 @@ export function ClaudeCodeSettingsCard({
             title={t(titleKey)}
             desc={t(hintKey)}
             align="flex-start"
-            last={index === sidecarKeys.length - 1}
+            last={isLast(behaviourRows, key)}
             control={
               <>
                 <Select
@@ -209,6 +243,7 @@ export function ClaudeCodeSettingsCard({
         );
       })}
     </Card>
+    )}
     </>
   );
 }
@@ -236,21 +271,33 @@ export function ClaudeCodeQuickstartSection({ manualEnv }: { manualEnv: string }
   );
 }
 
+/**
+ * The screen's Save. It commits EVERY setting on this tab, not just the interception
+ * rules, so it lives at page level rather than in one card's header — and, since the
+ * settings search can filter any card away, parking it inside one would let a query
+ * remove the only way to commit the change it just helped the user find.
+ */
+export function ClaudeCodeSaveBar({ onSave }: { onSave: () => void }) {
+  const t = useT();
+  return (
+    <div className="m3-row" style={{ justifyContent: "flex-end", marginBottom: 16 }}>
+      <Button variant="filled" onClick={onSave}>{t("common.save")}</Button>
+    </div>
+  );
+}
+
 export function ClaudeCodeModelMapSection({
   rows,
   onRowsChange,
-  onSave,
 }: {
   rows: MapRow[];
   onRowsChange: (rows: MapRow[]) => void;
-  onSave: () => void;
 }) {
   const t = useT();
   return (
     <Card
       title={<>{t("claude.modelMap")} <span className="count">{rows.length}</span></>}
       subtitle={t("claude.modelMapHint")}
-      actions={<Button variant="filled" onClick={onSave}>{t("common.save")}</Button>}
     >
       <div className="m3-stack">
         {rows.map((row, i) => (

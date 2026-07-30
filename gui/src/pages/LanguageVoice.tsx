@@ -1,6 +1,11 @@
 /**
- * Language & voice — interface language, the speech-synthesis narrator, and the
- * dim sum surprise.
+ * Language & voice — interface language, the per-language funny level, the
+ * speech-synthesis narrator, and the dim sum surprise.
+ *
+ * Order and anatomy follow the prototype's "Language and voice" section: a
+ * body-large page lead, the language-mode card, the two funny-level sliders with
+ * a live sample plus the five-level ladder, the narrator card, then the dim sum
+ * card with its "show one now" control.
  *
  * The narrator is off by default, speaks one utterance at a time, and a new
  * message supersedes a pending one rather than queueing behind it.
@@ -10,13 +15,117 @@
  * governs is bilingual copy, so it belongs beside the language controls.
  */
 
-import { useEffect, useState } from "react";
-import { Button, Card, Chip, Field, Toggle } from "../shell/m3-ui";
-import { IconVolume } from "../icons";
-import { LOCALES, useI18n, useT, type Locale } from "../i18n/shared";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m3-ui";
+import { IconRegex, IconSearch, IconSparkle, IconVolume } from "../icons";
+import { LOCALES, useI18n, useT, type Locale, type TFn } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
 import { cancelNarration, configureNarrator, narrate, narratorAvailable } from "../shell/narrator";
 import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
+import { DISHES, type DimSumDish } from "../shell/dimsum";
+
+const MONO = { fontFamily: "var(--mono)" } as const;
+
+/** Funny levels run 1 (fully serious) → 5 (maximum playfulness), per language. */
+const FUNNY_MIN = 1;
+const FUNNY_MAX = 5;
+const FUNNY_DEFAULT = 3;
+const FUNNY_LEVELS = [1, 2, 3, 4, 5];
+const FUNNY_KEY = "ocx-m3:funny";
+
+/** The "show one now" preview clears itself on the same timer as the launch card. */
+const PREVIEW_MS = 12_000;
+
+interface FunnyLevels { en: number; yue: number }
+
+function clampLevel(value: unknown): number {
+  const n = Math.round(Number(value));
+  return n >= FUNNY_MIN && n <= FUNNY_MAX ? n : FUNNY_DEFAULT;
+}
+
+function readFunny(): FunnyLevels {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FUNNY_KEY) || "{}");
+    if (!raw || typeof raw !== "object") return { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT };
+    return { en: clampLevel(raw.en), yue: clampLevel(raw.yue) };
+  } catch {
+    return { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT };
+  }
+}
+
+/**
+ * Plain text is the default on every search bar; `.*` is an explicit opt-in.
+ * An invalid pattern matches everything rather than blanking the screen, and the
+ * error is reported beside the field instead of discarding what was typed.
+ */
+function useMatcher(query: string, useRegex: boolean): { test: (s: string) => boolean; error: string } {
+  return useMemo(() => {
+    const q = query.trim().slice(0, 400);
+    if (!q) return { test: () => true, error: "" };
+    if (useRegex) {
+      try {
+        const re = new RegExp(q, "i");
+        return { test: (s: string) => re.test(s), error: "" };
+      } catch (err) {
+        return { test: () => true, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+    const needle = q.toLowerCase();
+    return { test: (s: string) => s.toLowerCase().includes(needle), error: "" };
+  }, [query, useRegex]);
+}
+
+/**
+ * The disclosure the funny level owes the user: it restyles every message,
+ * errors and destructive confirmations included, and never changes the facts.
+ * The ladder below renders the same destructive warning at all five levels so
+ * that promise is visible rather than merely claimed.
+ *
+ * Today every rung shows an identical sentence, because the shipping
+ * dictionaries hold one string per key rather than a five-entry voice array —
+ * which is exactly the invariant this block exists to demonstrate.
+ */
+function FunnyLadder({ t, level }: { t: TFn; level: number }) {
+  const warning = t("storage.cleanup.permanentWarn");
+  return (
+    <div style={{ marginTop: "var(--sp-3)" }}>
+      <div className="m3-field-label">{t("lang.funnyLadder")}</div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {FUNNY_LEVELS.map(n => (
+          <div
+            key={n}
+            style={{
+              padding: "10px 12px",
+              borderRadius: "var(--r-m)",
+              background: n === level ? "var(--m3-secondary-container)" : "var(--m3-surface-container-highest)",
+              color: n === level ? "var(--m3-on-secondary-container)" : "var(--m3-on-surface-variant)",
+            }}
+          >
+            <div style={{ fontSize: "var(--t-label-s)", fontWeight: 700, letterSpacing: "0.4px", textTransform: "uppercase", opacity: 0.7 }}>
+              {t("lang.funnyLevel", { n })}
+            </div>
+            <div style={{ marginTop: 2, fontSize: "var(--t-body-s)" }}>{warning}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FunnySample({ text }: { text: string }) {
+  return (
+    <div style={{
+      marginTop: 8,
+      padding: 12,
+      borderRadius: "var(--r-m)",
+      background: "var(--m3-surface-container-highest)",
+      fontSize: "var(--t-body-s)",
+    }}>
+      {text}
+    </div>
+  );
+}
 
 export default function LanguageVoice() {
   const t = useT();
@@ -24,94 +133,262 @@ export default function LanguageVoice() {
   const { prefs, setPrefs } = usePrefs();
   const { notify } = useNotifications();
   const [available] = useState(narratorAvailable);
+  const [funny, setFunny] = useState<FunnyLevels>(readFunny);
+  const [preview, setPreview] = useState<DimSumDish | null>(null);
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
 
   useEffect(() => {
     configureNarrator({ enabled: prefs.narrator, lang: prefs.narratorLang });
     return () => cancelNarration();
   }, [prefs.narrator, prefs.narratorLang]);
 
+  // Persisted like every other preference, so a chosen voice survives a restart.
+  useEffect(() => {
+    try { localStorage.setItem(FUNNY_KEY, JSON.stringify(funny)); } catch { /* quota */ }
+  }, [funny]);
+
+  // Non-blocking by contract: the preview never gates anything and clears itself.
+  useEffect(() => {
+    if (!preview) return;
+    const timer = setTimeout(() => setPreview(null), PREVIEW_MS);
+    return () => clearTimeout(timer);
+  }, [preview]);
+
   const htmlLangFor = (code: string) => LOCALES.find(l => l.code === code)?.htmlLang ?? "en";
+
+  const matcher = useMatcher(query, useRegex);
+  const permanentWarn = t("storage.cleanup.permanentWarn");
+
+  const sections: { id: string; text: string; node: ReactNode }[] = [
+    {
+      id: "mode",
+      text: [t("lang.title"), t("lang.sub"), t("lang.mode"), ...LOCALES.map(l => l.name)].join(" "),
+      node: (
+        <Card key="mode" title={t("lang.title")} subtitle={t("lang.sub")}>
+          <Field label={t("lang.mode")}>
+            <div className="m3-row" style={{ gap: 8 }}>
+              {LOCALES.map(l => (
+                <Chip
+                  key={l.code}
+                  lang={l.htmlLang}
+                  selected={locale === l.code}
+                  onClick={() => {
+                    setLocale(l.code as Locale);
+                    recordRevision({
+                      scope: "settings",
+                      label: t("nav.language"),
+                      summary: t("lang.revisionSummary", { name: l.name }),
+                    });
+                  }}
+                >
+                  {l.name}
+                </Chip>
+              ))}
+            </div>
+          </Field>
+        </Card>
+      ),
+    },
+    {
+      id: "funny",
+      text: [t("lang.funnyEn"), t("lang.funnyYue"), t("lang.funnyLadder"), permanentWarn].join(" "),
+      node: (
+        <Card key="funny">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "var(--sp-3)" }}>
+            <div>
+              <Slider
+                id="ocx-fun-en"
+                value={funny.en}
+                min={FUNNY_MIN}
+                max={FUNNY_MAX}
+                onChange={en => setFunny(prev => ({ ...prev, en }))}
+                label={t("lang.funnyEn")}
+                valueLabel={t("lang.funnyLevel", { n: funny.en })}
+              />
+              <FunnySample text={permanentWarn} />
+            </div>
+            <div lang="yue">
+              <Slider
+                id="ocx-fun-yue"
+                value={funny.yue}
+                min={FUNNY_MIN}
+                max={FUNNY_MAX}
+                onChange={yue => setFunny(prev => ({ ...prev, yue }))}
+                label={t("lang.funnyYue")}
+                valueLabel={t("lang.funnyLevel", { n: funny.yue })}
+              />
+              <FunnySample text={permanentWarn} />
+            </div>
+          </div>
+          <FunnyLadder t={t} level={funny.en} />
+        </Card>
+      ),
+    },
+    {
+      id: "narrator",
+      text: [t("narrator.title"), t("narrator.sub"), t("narrator.enable"), t("narrator.enableHint"), t("narrator.language"), t("narrator.test")].join(" "),
+      node: (
+        <Card
+          key="narrator"
+          title={t("narrator.title")}
+          subtitle={t("narrator.sub")}
+          actions={
+            <Toggle
+              on={prefs.narrator}
+              disabled={!available}
+              label={t("narrator.enable")}
+              onChange={next => {
+                setPrefs({ narrator: next });
+                if (!next) cancelNarration();
+                recordRevision({ scope: "settings", label: t("nav.language"), summary: t("lang.narratorRevision") });
+              }}
+            />
+          }
+        >
+          {!available && (
+            <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
+              {t("narrator.unavailable")}
+            </p>
+          )}
+          <p style={{ margin: "0 0 var(--sp-3)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+            {t("narrator.enableHint")}
+          </p>
+
+          <Field label={t("narrator.language")}>
+            <div className="m3-row" style={{ gap: 8 }}>
+              {LOCALES.map(l => (
+                <Chip
+                  key={l.code}
+                  lang={l.htmlLang}
+                  selected={prefs.narratorLang === htmlLangFor(l.code)}
+                  onClick={() => {
+                    setPrefs({ narratorLang: htmlLangFor(l.code) });
+                    recordRevision({ scope: "settings", label: t("nav.language"), summary: t("lang.narratorRevision") });
+                  }}
+                >
+                  {l.name}
+                </Chip>
+              ))}
+            </div>
+          </Field>
+
+          <Button
+            variant="outlined"
+            disabled={!available}
+            onClick={() => {
+              // The narrator never speaks while it is off — the button says so
+              // instead of silently doing nothing.
+              if (!prefs.narrator) {
+                notify({ tone: "warn", title: t("narrator.offTitle"), body: t("narrator.offBody") });
+                return;
+              }
+              narrate(t("narrator.sample"));
+              notify({ tone: "success", title: t("narrator.spoke"), body: t("narrator.enableHint") });
+            }}
+          >
+            <IconVolume aria-hidden />
+            {t("narrator.test")}
+          </Button>
+        </Card>
+      ),
+    },
+    {
+      id: "dimsum",
+      text: [t("dimsum.toggle"), t("dimsum.toggleHint"), t("dimsum.showNow")].join(" "),
+      node: (
+        <Card
+          key="dimsum"
+          title={t("dimsum.toggle")}
+          subtitle={t("dimsum.toggleHint")}
+          actions={
+            <Toggle
+              on={prefs.dimsum}
+              label={t("dimsum.toggle")}
+              // No revision is recorded here yet: the dictionaries hold no summary
+              // for this switch, and labelling it "Narration settings changed"
+              // would put a false line in an append-only history.
+              onChange={dimsum => setPrefs({ dimsum })}
+            />
+          }
+        >
+          <Button
+            variant="outlined"
+            onClick={() => setPreview(DISHES[Math.floor(Math.random() * DISHES.length)] ?? null)}
+          >
+            <IconSparkle aria-hidden />
+            {t("dimsum.showNow")}
+          </Button>
+
+          {preview && (
+            <div
+              role="status"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                marginTop: "var(--sp-3)",
+                padding: "12px 16px",
+                borderRadius: "var(--r-l)",
+                background: "var(--m3-tertiary-container)",
+                color: "var(--m3-on-tertiary-container)",
+              }}
+            >
+              {/* Labelled placeholder art — swap for a bundled dish photo before shipping. */}
+              <span aria-hidden="true" style={{ fontSize: 32, lineHeight: 1 }}>{preview.emoji}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: "var(--t-title-s)" }}>{t("dimsum.title")}</div>
+                <div style={{ fontSize: "var(--t-body-s)" }}>
+                  <span lang="zh-HK">{preview.zh}</span>
+                  {" · "}
+                  <span role="img" aria-label={preview.name}>{preview.name}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </Card>
+      ),
+    },
+  ];
+
+  const visible = sections.filter(s => matcher.test(s.text));
 
   return (
     <>
-      <Card title={t("lang.title")} subtitle={t("lang.sub")}>
-        <div className="m3-row" style={{ gap: 8 }}>
-          {LOCALES.map(l => (
-            <Chip
-              key={l.code}
-              lang={l.htmlLang}
-              selected={locale === l.code}
-              onClick={() => setLocale(l.code as Locale)}
-            >
-              {l.name}
-            </Chip>
-          ))}
-        </div>
-      </Card>
+      <p className="m3-page-lead">{t("lang.subtitle")}</p>
 
-      <Card
-        title={t("narrator.title")}
-        subtitle={t("narrator.sub")}
-        actions={
-          <Toggle
-            on={prefs.narrator}
-            disabled={!available}
-            label={t("narrator.enable")}
-            onChange={next => {
-              setPrefs({ narrator: next });
-              if (!next) cancelNarration();
-            }}
-          />
-        }
-      >
-        {!available && (
-          <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
-            {t("narrator.unavailable")}
-          </p>
-        )}
-        <p style={{ margin: "0 0 var(--sp-3)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
-          {t("narrator.enableHint")}
+      {/* Every settings surface carries its own search, wired to the regex builder. */}
+      <div className="m3-row" role="search" style={{ marginBottom: "var(--sp-3)" }}>
+        <IconSearch width={20} height={20} aria-hidden="true" />
+        <TextInput
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={!!matcher.error}
+          aria-describedby="lang-regex-error"
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
+        />
+        <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")} aria-label={t("regex.regexMode")}>
+          <code style={MONO}>.*</code>
+        </Chip>
+        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
+          <IconRegex width={20} height={20} aria-hidden="true" />
+        </a>
+      </div>
+      {matcher.error && (
+        <p id="lang-regex-error" role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
+          {`${t("regex.invalid")}: ${matcher.error}`}
         </p>
+      )}
 
-        <Field label={t("narrator.language")}>
-          <div className="m3-row" style={{ gap: 8 }}>
-            {LOCALES.map(l => (
-              <Chip
-                key={l.code}
-                lang={l.htmlLang}
-                selected={prefs.narratorLang === htmlLangFor(l.code)}
-                onClick={() => setPrefs({ narratorLang: htmlLangFor(l.code) })}
-              >
-                {l.name}
-              </Chip>
-            ))}
-          </div>
-        </Field>
+      {visible.map(s => s.node)}
 
-        <Button
-          variant="outlined"
-          disabled={!available || !prefs.narrator}
-          onClick={() => {
-            narrate(t("narrator.sample"));
-            notify({ tone: "success", title: t("narrator.spoke"), body: t("narrator.enableHint") });
-          }}
-        >
-          <IconVolume aria-hidden />
-          {t("narrator.test")}
-        </Button>
-      </Card>
-
-      <Card
-        title={t("dimsum.toggle")}
-        subtitle={t("dimsum.toggleHint")}
-        actions={
-          <Toggle
-            on={prefs.dimsum}
-            label={t("dimsum.toggle")}
-            onChange={dimsum => setPrefs({ dimsum })}
-          />
-        }
-      />
+      {!visible.length && (
+        <p style={{ margin: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-m)" }}>
+          {t("settings.noMatch")}
+        </p>
+      )}
     </>
   );
 }

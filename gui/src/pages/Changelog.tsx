@@ -34,12 +34,18 @@ function isValidDate(value: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
 
-/** Presets are expressed as a "days back from today" offset. */
+/**
+ * Presets are expressed as a "days back from today" offset. "This year" and
+ * "all time" are not offsets — they are calendar-bounded and unbounded — so they
+ * are rendered beside these rather than folded into the same shape.
+ */
 const PRESETS = [
   { days: 7, tkey: "changelog.last7" },
   { days: 30, tkey: "changelog.last30" },
   { days: 90, tkey: "changelog.last90" },
 ] as const;
+
+const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 type Tone = "ok" | "warn" | "error" | "neutral";
 
@@ -152,25 +158,51 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
 
   const applyPreset = (days: number) => {
     const now = new Date();
-    const start = new Date(now.getTime() - days * 86_400_000);
-    setFrom(start.toISOString().slice(0, 10));
-    setTo(now.toISOString().slice(0, 10));
+    setFrom(iso(new Date(now.getTime() - days * 86_400_000)));
+    setTo(iso(now));
   };
 
-  const exportMarkdown = async () => {
-    const md = [`# ${t("nav.changelog")}`, "", `_${rangeLabel}_`, ""]
+  /** The calendar year, not a 365-day window — "this year" means January onwards. */
+  const applyThisYear = () => {
+    const year = new Date().getUTCFullYear();
+    setFrom(`${year}-01-01`);
+    setTo(`${year}-12-31`);
+  };
+
+  /**
+   * Both the clipboard copy and the file export render this, so what the user
+   * pastes and what they download cannot drift. The range is stated in the
+   * document itself, which is the point of the export contract: a file that says
+   * only "changelog" leaves the reader guessing which slice of it they have.
+   */
+  const buildMarkdown = () =>
+    [`# ${t("nav.changelog")}`, "", `_${rangeLabel}_`, ""]
       .concat(rows.flatMap(r => [`## ${r.version}${r.date ? ` — ${r.date}` : ""}`, "", ...r.entries.map(e => `- ${e}`), ""]))
       .join("\n");
+
+  const copyMarkdown = async () => {
     try {
-      await navigator.clipboard.writeText(md);
+      await navigator.clipboard.writeText(buildMarkdown());
       notify({ tone: "success", title: t("changelog.exported"), body: rangeLabel });
     } catch {
       notify({ tone: "error", title: t("regex.copyFailed") });
     }
   };
 
+  const exportMarkdown = () => {
+    const url = URL.createObjectURL(new Blob([buildMarkdown()], { type: "text/markdown" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "changelog.md";
+    link.click();
+    URL.revokeObjectURL(url);
+    notify({ tone: "success", title: t("changelog.export"), body: rangeLabel });
+  };
+
   return (
     <>
+      <p className="m3-page-lead">{t("changelog.subtitle")}</p>
+
       <Card title={t("changelog.filterTitle")} subtitle={t("changelog.filterSub")}>
         <div className="m3-row" style={{ gap: "var(--sp-2)", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 180px", minWidth: 0 }}>
@@ -196,11 +228,17 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
               <TextInput id="cl-to" type="date" value={to} aria-invalid={!toValid} style={MONO} onChange={e => setTo(e.target.value)} />
             </Field>
           </div>
-          <div className="m3-row" style={{ flex: "2 1 260px", minWidth: 0, gap: 6 }}>
-            {PRESETS.map(p => (
-              <Chip key={p.days} onClick={() => applyPreset(p.days)}>{t(p.tkey)}</Chip>
-            ))}
-            <Chip onClick={() => { setFrom(""); setTo(""); }}>{t("changelog.clearDates")}</Chip>
+          {/* The preset group carries its own label, so the chips are not three
+              unexplained pills sitting beside two labelled date fields. */}
+          <div style={{ flex: "2 1 260px", minWidth: 0 }}>
+            <span className="m3-field-label" id="cl-presets-label">{t("changelog.presets")}</span>
+            <div className="m3-row" role="group" aria-labelledby="cl-presets-label" style={{ gap: 6 }}>
+              {PRESETS.map(p => (
+                <Chip key={p.days} onClick={() => applyPreset(p.days)}>{t(p.tkey)}</Chip>
+              ))}
+              <Chip onClick={applyThisYear}>{t("changelog.thisYear")}</Chip>
+              <Chip onClick={() => { setFrom(""); setTo(""); }}>{t("changelog.clearDates")}</Chip>
+            </div>
           </div>
         </div>
 
@@ -216,10 +254,10 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
             style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
           />
           {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
-          <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+          <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")} aria-label={t("regex.regexMode")}>
             <code style={MONO}>.*</code>
           </Chip>
-          <a className="m3-icon-btn" href="#regex" title={t("nav.regex")} aria-label={t("nav.regex")}>
+          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
             <IconRegex width={20} height={20} aria-hidden="true" />
           </a>
         </div>
@@ -232,7 +270,10 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
           <span style={{ ...MONO, flex: "1 1 auto", minWidth: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
             {rangeLabel}
           </span>
-          <Button variant="outlined" onClick={() => void exportMarkdown()} disabled={!rows.length}>{t("changelog.export")}</Button>
+          {/* Copy puts the filtered view on the clipboard; export writes the same
+              Markdown to a file. Both state the range they cover. */}
+          <Button variant="outlined" onClick={() => void copyMarkdown()} disabled={!rows.length}>{t("changelog.copy")}</Button>
+          <Button variant="filled" onClick={exportMarkdown} disabled={!rows.length}>{t("changelog.export")}</Button>
         </div>
       </Card>
 

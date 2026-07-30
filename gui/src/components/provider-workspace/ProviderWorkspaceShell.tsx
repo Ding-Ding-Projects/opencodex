@@ -6,7 +6,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n/shared";
-import { IconFilter, IconSearch, IconBoxes, IconGlobe, IconLock, IconKey, IconTrash } from "../../icons";
+import { IconFilter, IconRegex, IconSearch, IconBoxes, IconGlobe, IconLock, IconKey, IconTrash } from "../../icons";
+import { Chip } from "../../shell/m3-ui";
+import { makeMatcher } from "../../pages/models-shared";
 import {
   applyActiveAccountReauth,
   buildProviderWorkspace,
@@ -16,7 +18,6 @@ import {
   type ProviderSortMode,
   type WorkspaceItem,
   type WorkspaceProvider,
-  type WorkspaceSections,
 } from "../../provider-workspace/catalog";
 import { providerKind } from "../../provider-workspace/kind";
 import { readJsonIfOk, readJsonOrThrow } from "../../fetch-json";
@@ -29,6 +30,22 @@ import ProviderOverviewDashboard from "./ProviderOverviewDashboard";
 import ProviderJsonEditor, { type JsonEditorState } from "./ProviderJsonEditor";
 
 export type AddProviderIntent = { tier?: "accounts" | "free" | "paid"; custom?: boolean };
+
+/**
+ * The rail's four groups, in the prototype's order. `needsAttention` is carved out of
+ * the catalog's `needsSetup` bin: a provider whose CONFIG is complete but whose active
+ * account needs re-authentication is a different problem from one that was never set
+ * up, and burying the first inside the second is what made a broken login invisible.
+ */
+interface RailSections {
+  ready: WorkspaceItem[];
+  needsSetup: WorkspaceItem[];
+  needsAttention: WorkspaceItem[];
+  disabled: WorkspaceItem[];
+}
+
+/** Live-auth failure, not missing configuration — set by `applyActiveAccountReauth`. */
+const needsAttentionItem = (item: WorkspaceItem): boolean => item.activeNeedsReauth === true;
 
 /** Detail-slot data plumbed per selected provider (props-down; no shared hook). */
 export interface DetailSlotData {
@@ -93,7 +110,9 @@ export default function ProviderWorkspaceShell({
 }) {
   const t = useT();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>({ ready: true, needsSetup: true, disabled: true });
+  /** Plain text is the default on every search bar; `.*` is always an explicit opt-in. */
+  const [searchRegex, setSearchRegex] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>({ ready: true, needsSetup: true, needsAttention: true, disabled: true });
   const [pricingFilter, setPricingFilter] = useState<PricingFilter>({ free: true, paid: true });
   const [typeFilter, setTypeFilter] = useState<TypeFilter>({ cloud: true, local: true, selfHosted: true, login: true });
   const [sortMode, setSortMode] = useState<ProviderSortMode>("az");
@@ -237,11 +256,22 @@ export default function ProviderWorkspaceShell({
     return counts;
   }, [allItems]);
 
-  const filteredSections = useMemo((): WorkspaceSections => {
-    const q = search.trim().toLowerCase();
+  /**
+   * The rail search: plain text by default, ECMAScript `RegExp` only when the `.*`
+   * chip is on. `makeMatcher` caps the pattern at 400 characters and evaluates it
+   * locally, and an invalid pattern matches nothing rather than silently falling back
+   * to plain text — so the error shown below the field and the empty rail agree.
+   */
+  const { matchesQuery, searchError } = useMemo(() => {
+    const matcher = makeMatcher(search, searchRegex);
+    return { matchesQuery: matcher.test, searchError: matcher.error };
+  }, [search, searchRegex]);
+
+  const filteredSections = useMemo((): RailSections => {
     const byQueryAndFacets = (items: WorkspaceItem[]) => {
       const filtered = items.filter(p => {
-        if (q && !p.name.toLowerCase().includes(q) && !p.adapter.toLowerCase().includes(q)) return false;
+        // Same haystack the prototype searches: display id, adapter and base URL.
+        if (!matchesQuery(`${p.name} ${p.adapter} ${p.baseUrl}`)) return false;
         const free = isFreeProvider(p);
         if (free && !pricingFilter.free) return false;
         if (!free && !pricingFilter.paid) return false;
@@ -250,21 +280,24 @@ export default function ProviderWorkspaceShell({
       });
       return sortWorkspaceItems(filtered, sortMode);
     };
+    const setupBin = sections.needsSetup.filter(p => !needsAttentionItem(p));
+    const attentionBin = sections.needsSetup.filter(needsAttentionItem);
     return {
       ready: statusFilter.ready ? byQueryAndFacets(sections.ready) : [],
-      needsSetup: statusFilter.needsSetup ? byQueryAndFacets(sections.needsSetup) : [],
+      needsSetup: statusFilter.needsSetup ? byQueryAndFacets(setupBin) : [],
+      needsAttention: statusFilter.needsAttention ? byQueryAndFacets(attentionBin) : [],
       disabled: statusFilter.disabled ? byQueryAndFacets(sections.disabled) : [],
     };
-  }, [sections, search, statusFilter, pricingFilter, typeFilter, sortMode]);
+  }, [sections, matchesQuery, statusFilter, pricingFilter, typeFilter, sortMode]);
 
   const filterActive =
-    !statusFilter.ready || !statusFilter.needsSetup || !statusFilter.disabled
+    !statusFilter.ready || !statusFilter.needsSetup || !statusFilter.needsAttention || !statusFilter.disabled
     || !pricingFilter.free || !pricingFilter.paid
     || !typeFilter.cloud || !typeFilter.local || !typeFilter.selfHosted || !typeFilter.login
     || sortMode !== "az";
 
   const resetFilters = () => {
-    setStatusFilter({ ready: true, needsSetup: true, disabled: true });
+    setStatusFilter({ ready: true, needsSetup: true, needsAttention: true, disabled: true });
     setPricingFilter({ free: true, paid: true });
     setTypeFilter({ cloud: true, local: true, selfHosted: true, login: true });
     setSortMode("az");
@@ -292,14 +325,20 @@ export default function ProviderWorkspaceShell({
     return <WorkspaceEmptyState onAddProvider={onAddProvider} />;
   }
 
+  const attentionTotal = sections.needsSetup.filter(needsAttentionItem).length;
   const statusFilterOptions = [
     { key: "ready" as const, label: t("pws.status.ready"), count: sections.ready.length },
-    { key: "needsSetup" as const, label: t("pws.status.needsSetup"), count: sections.needsSetup.length },
+    { key: "needsSetup" as const, label: t("pws.status.needsSetup"), count: sections.needsSetup.length - attentionTotal },
+    { key: "needsAttention" as const, label: t("pws.status.needsAttention"), count: attentionTotal },
     { key: "disabled" as const, label: t("prov.disabledBadge"), count: sections.disabled.length },
   ];
   const railGroups = [
     { id: "ready", label: t("pws.status.ready"), count: filteredSections.ready.length, ariaLabel: t("pws.groupReady", { count: filteredSections.ready.length }), items: filteredSections.ready },
     { id: "needs-setup", label: t("pws.status.needsSetup"), count: filteredSections.needsSetup.length, ariaLabel: t("pws.groupNeedsSetup", { count: filteredSections.needsSetup.length }), items: filteredSections.needsSetup },
+    // No `pws.groupNeedsAttention` key exists yet, so the count is appended in the same
+    // "Label (n)" shape the other three keys spell out — a screen reader must still hear
+    // how many providers are broken, not just that some are.
+    { id: "needs-attention", label: t("pws.status.needsAttention"), count: filteredSections.needsAttention.length, ariaLabel: `${t("pws.status.needsAttention")} (${filteredSections.needsAttention.length})`, items: filteredSections.needsAttention },
     { id: "disabled", label: t("prov.disabledBadge"), count: filteredSections.disabled.length, ariaLabel: t("pws.groupDisabled", { count: filteredSections.disabled.length }), items: filteredSections.disabled },
   ];
   const visibleRailNames = railGroups.flatMap(group => group.items.map(item => item.name));
@@ -313,8 +352,10 @@ export default function ProviderWorkspaceShell({
     <div className="pws-shell-container">
       <div className="pws-root">
         <aside className="pws-rail" aria-label={t("pws.providerList")}>
-        <div className="pws-search-row">
-          <div className="pws-search-wrap">
+        {/* The rail is 240–280px wide, so the row wraps rather than squeezing the field
+            below legibility: every control stays adjacent to the search bar it belongs to. */}
+        <div className="pws-search-row" style={{ flexWrap: "wrap" }}>
+          <div className="pws-search-wrap" style={{ flexBasis: 160 }}>
             <IconSearch className="pws-search-icon" width={14} height={14} aria-hidden="true" />
             <input
               type="search"
@@ -323,8 +364,22 @@ export default function ProviderWorkspaceShell({
               value={search}
               onChange={e => setSearch(e.target.value)}
               aria-label={t("pws.searchPlaceholder")}
+              aria-invalid={!!searchError}
             />
           </div>
+          {/* Plain text stays the default; `.*` is the explicit opt-in, with the full
+              builder one click away and bound to this field alone. */}
+          <Chip
+            selected={searchRegex}
+            onClick={() => setSearchRegex(v => !v)}
+            title={t("regex.regexMode")}
+            aria-label={t("search.regexHint")}
+          >
+            <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+          </Chip>
+          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+            <IconRegex width={18} height={18} aria-hidden="true" />
+          </a>
           <div className="pws-filter-wrap" ref={filterWrapRef}>
             <button
               type="button"
@@ -402,6 +457,14 @@ export default function ProviderWorkspaceShell({
               </div>
             )}
           </div>
+        </div>
+        {/* The prototype reserves this line under the field so a half-typed pattern does
+            not shunt the whole rail up and down while the user keeps typing. */}
+        <div
+          role="alert"
+          style={{ minHeight: 16, color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}
+        >
+          {searchError ? `${t("regex.invalid")}: ${searchError}` : ""}
         </div>
         <div
           className="pws-rail-list"

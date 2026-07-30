@@ -517,34 +517,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .stat .value { font-size: var(--text-title); font-weight: var(--weight-semibold); letter-spacing: 0; line-height: var(--leading-tight); }
 .stat .value.mono { font-family: var(--font-code); font-size: var(--text-subtitle); }
 
-.startup-health-bar {
-  min-height: var(--control-lg);
-  margin: calc(-1 * var(--space-3)) 0 var(--space-6);
-  padding: 0 var(--space-3);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  color: var(--muted);
-  background: var(--hover);
-  border-block: 1px solid var(--border-soft);
-  text-decoration: none;
-  font-size: var(--text-control);
-  line-height: var(--leading-ui);
-  transition: background var(--motion-fast), color var(--motion-fast);
-}
-.startup-health-bar:hover { background: var(--raised); color: var(--text); }
-.startup-health-bar:active { transform: translateY(1px); }
-.startup-health-bar:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
-.startup-health-bar__summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 .startup-health-slot {
   min-height: var(--control-lg);
-}
-
-.startup-health-bar--pending {
-  pointer-events: none;
-  color: var(--faint);
 }
 
 .dash-stat-coverage {
@@ -561,11 +535,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 .dash-overview-head .stat-row {
   margin-bottom: 0;
-}
-
-.dash-overview-head .startup-health-bar,
-.dash-overview-head .startup-health-bar--pending {
-  margin: var(--space-4) 0 0;
 }
 
 /* ---- dashboard model grid (grouped by provider) ---- */
@@ -1272,7 +1241,6 @@ button.prov-account-row.active { cursor: default; }
   from { opacity: 0; }
   to { opacity: 1; }
 }
-
 
 /* Invisible full-area control for native <dialog> backdrop dismiss (a11y). */
 .modal-backdrop-dismiss {

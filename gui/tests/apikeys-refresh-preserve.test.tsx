@@ -194,8 +194,9 @@ test("successful key delete keeps last-good keys visible when follow-up refresh 
       await new Promise<void>((resolve) => testWindow.setTimeout(resolve, 0));
     });
 
+    // Deleting a key is a decision, so it lands in the blocking confirm dialog.
     const confirmBtn = [...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Confirm");
+      .find((button) => button.textContent === "Delete key");
     expect(confirmBtn).toBeTruthy();
 
     await act(async () => {

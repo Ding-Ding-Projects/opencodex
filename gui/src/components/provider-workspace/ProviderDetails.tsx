@@ -9,7 +9,8 @@ import { formatProviderDisplayName } from "../../provider-icons";
 import { isFreeProvider } from "../../provider-workspace/catalog";
 import { isLocalProvider } from "../../provider-workspace/kind";
 import { providerAuthSurface } from "../../provider-workspace/auth";
-import { ProviderIcon } from "./ProviderRail";
+import { ProviderIcon, statusLabel } from "./ProviderRail";
+import { binProviderStatus } from "../../provider-workspace/catalog";
 import { Switch } from "../../ui";
 import { IconChevron, IconTrash } from "../../icons";
 import ProviderOverview from "./ProviderOverview";
@@ -17,7 +18,7 @@ import ProviderModels from "./ProviderModels";
 import ProviderUsage from "./ProviderUsage";
 import ProviderAuthPanel from "./ProviderAuthPanel";
 import type { CodexAccountPoolController } from "../../hooks/useCodexAccountPool";
-import ProviderSettings from "./ProviderSettings";
+import ProviderSettings, { type OtherTabSetting } from "./ProviderSettings";
 import { UnsavedLeaveDialog } from "./ProviderDialogs";
 import type { ProviderQuotaReportView } from "../../provider-workspace/report";
 import type { AccountLoadState, ProviderModelUsageRow, ProviderUsageTotals, OAuthAccountRow, ApiKeyRow, LoginHint, ProviderAuthHandlers, ProviderUpdatePatch } from "./types";
@@ -93,6 +94,7 @@ export default function ProviderDetails({
     settingsSaveRef.current = save;
   }, []);
   const isDisabled = item.disabled === true;
+  const detailStatus = binProviderStatus(item);
   const free = useMemo(() => isFreeProvider(item), [item]);
   const local = useMemo(() => isLocalProvider(item), [item]);
   const authSurface = useMemo(() => providerAuthSurface(item), [item]);
@@ -103,6 +105,30 @@ export default function ProviderDetails({
     ...(authSurface ? [{ id: "accounts" as const, label: authSurface === "api-keys" ? t("pws.apiKeys") : t("pws.tab.accounts") }] : []),
     { id: "settings", label: t("pws.tab.settings") },
   ], [authSurface, t]);
+
+  /**
+   * Settings that belong to this provider but live on a sibling tab. The Settings
+   * search reports these by tab name instead of answering "no match", so a user who
+   * types "api key" learns the control is on Accounts rather than concluding the app
+   * does not have one.
+   */
+  const otherTabSettings = useMemo((): OtherTabSetting[] => {
+    const rows: OtherTabSetting[] = [];
+    if (authSurface) {
+      rows.push({
+        tab: authSurface === "api-keys" ? t("pws.apiKeys") : t("pws.tab.accounts"),
+        text: [
+          authSurface === "api-keys" ? t("pws.apiKeys") : t("pws.tab.accounts"),
+          t("pws.addAccount"), t("pws.addKey"), t("pws.accountCurrent"), t("pws.reauthenticate"),
+        ].join(" "),
+      });
+    }
+    rows.push({
+      tab: t("pws.tab.models"),
+      text: [t("pws.tab.models"), t("pws.selected"), t("pws.modelSearchPlaceholder"), t("pws.liveModels")].join(" "),
+    });
+    return rows;
+  }, [authSurface, t]);
 
   const switchTab = useCallback((next: Tab) => {
     if (settingsDirty && tab === "settings" && next !== "settings") {
@@ -150,6 +176,15 @@ export default function ProviderDetails({
         <div className="pws-detail-title-wrap">
           <h2 className="pws-detail-title">
             {formatProviderDisplayName(item.name)}
+            {/* The prototype puts the config key beside the display name: it is what
+                `ocx` commands and the JSON editor address the provider by, and two
+                providers can share a display name (openai + chatgpt → ChatGPT). */}
+            <code className="muted text-label">{item.name}</code>
+            <span
+              className={`pwi-rail-badge ${detailStatus === "ready" ? "pws-status-ok" : detailStatus === "disabled" ? "" : "pws-status-warn"}`.trim()}
+            >
+              {statusLabel(item, t)}
+            </span>
             {local && <span className="pwi-rail-badge pwi-rail-badge--local">{t("modal.badge.local")}</span>}
             {!local && free && <span className="pwi-rail-badge pwi-rail-badge--free">{t("modal.badge.free")}</span>}
           </h2>
@@ -226,6 +261,8 @@ export default function ProviderDetails({
             usageTotals={usageTotals}
             quotaReport={quotaReport}
             oauthEmail={oauthEmail}
+            modelCount={availableModels.length}
+            modelsLoading={modelsLoading}
             onEditSettings={() => switchTab("settings")}
             onViewUsage={() => switchTab("usage")}
             onUpdateProvider={onUpdateProvider}
@@ -294,6 +331,7 @@ export default function ProviderDetails({
             onUpdateProvider={onUpdateProvider}
             onDirtyChange={setSettingsDirty}
             onRegisterSave={registerSettingsSave}
+            otherTabSettings={otherTabSettings}
           />
         )}
       </div>

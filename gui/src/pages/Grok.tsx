@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Button, Card, Empty, Toggle } from "../shell/m3-ui";
+import { Button, Card, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { IconRegex, IconSearch } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
 import { useT, type TKey } from "../i18n/shared";
 import { readJsonOrThrow } from "../fetch-json";
-import { grokGroupView, type GrokCandidate } from "./grok-groups";
+import { grokGroupView, grokRowHaystack, type GrokCandidate, type GrokGroupRow } from "./grok-groups";
 
 type TFn = (key: TKey, vars?: Record<string, string | number>) => string;
 
@@ -28,15 +29,20 @@ const GROUPS = [
   { id: "routed", tkey: "grok.groupRouted" as TKey },
 ] as const;
 
-const subtitleStyle: CSSProperties = {
-  margin: "0 0 16px",
-  maxWidth: "74ch",
-  color: "var(--m3-on-surface-variant)",
-  fontSize: "var(--t-body-l)",
-  whiteSpace: "pre-line",
-};
+/** The lead paragraph is the shared `.m3-page-lead`; only the pre-line wrap is local,
+ *  because the funny-level copy for this screen can carry its own line breaks. */
+const leadStyle: CSSProperties = { whiteSpace: "pre-line" };
 
 const headRowStyle: CSSProperties = { gap: 12, marginBottom: "var(--sp-4)" };
+const searchRowStyle: CSSProperties = { marginBottom: "var(--sp-3)" };
+const searchInputStyle: CSSProperties = { flex: "1 1 240px", width: "auto", minWidth: 0 };
+const regexErrorStyle: CSSProperties = { color: "var(--m3-error)", fontSize: "var(--t-body-s)" };
+const monoStyle: CSSProperties = { fontFamily: "var(--mono)" };
+
+/** Pattern cap, mirroring the regex builder: a pasted novel can never become a
+ *  catastrophic-backtracking payload, and evaluation stays local to this page. */
+const PATTERN_CAP = 400;
+
 const spacerStyle: CSSProperties = { flex: "1 1 auto" };
 
 const endpointStyle: CSSProperties = {
@@ -118,6 +124,10 @@ export default function Grok({ apiBase }: { apiBase: string }) {
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [savedExcluded, setSavedExcluded] = useState<Set<string>>(new Set());
   const [pending, setPending] = useState<"save" | "apply" | null>(null);
+  // Settings search over this surface's per-model switches. Plain text is the default;
+  // `.*` is an explicit opt-in, exactly as on every other search bar in the app.
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,6 +169,30 @@ export default function Grok({ apiBase }: { apiBase: string }) {
   const candidates = status?.candidates ?? [];
   const registered = candidates.reduce((count, c) => count + (excluded.has(c.id) ? 0 : 1), 0);
 
+  const { matchesRow, regexError } = useMemo(() => {
+    const trimmed = query.trim();
+    const all = { matchesRow: () => true, regexError: null as string | null };
+    if (!trimmed) return all;
+    if (useRegex) {
+      try {
+        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), "i");
+        return {
+          matchesRow: (row: GrokGroupRow) => re.test(grokRowHaystack(row)),
+          regexError: null as string | null,
+        };
+      } catch (e) {
+        // An invalid pattern matches nothing and says so, rather than silently
+        // falling back to plain text and showing rows the user did not ask for.
+        return { matchesRow: () => false, regexError: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    const needle = trimmed.toLowerCase();
+    return {
+      matchesRow: (row: GrokGroupRow) => grokRowHaystack(row).toLowerCase().includes(needle),
+      regexError: null as string | null,
+    };
+  }, [query, useRegex]);
+
   const toggleModel = (id: string, currentlyExcluded: boolean) => {
     setExcluded(current => {
       const next = new Set(current);
@@ -183,7 +217,7 @@ export default function Grok({ apiBase }: { apiBase: string }) {
       recordRevision({
         scope: "settings",
         label: t("grok.title"),
-        summary: t("grok.enabledCount", { on: registered, total: candidates.length }),
+        summary: t("grok.revisionSummary", { on: registered, total: candidates.length }),
         before: JSON.stringify([...savedExcluded]),
       });
       setSavedExcluded(new Set(excluded));
@@ -234,9 +268,17 @@ export default function Grok({ apiBase }: { apiBase: string }) {
     );
   }
 
+  // Groups are resolved once per render so the no-match state can tell "this surface has
+  // no models" apart from "the search hid all of them".
+  const groupViews = GROUPS.map(group => ({
+    ...group,
+    view: grokGroupView(candidates, aliasById, excluded, group.id, matchesRow),
+  }));
+  const anyVisible = groupViews.some(g => g.view.total > 0);
+
   return (
     <>
-      <p style={subtitleStyle}>{t("grok.subtitle")}</p>
+      <p className="m3-page-lead" style={leadStyle}>{t("grok.subtitle")}</p>
 
       {status && (status.present || candidates.length > 0) && (
         <div className="m3-row" style={headRowStyle}>
@@ -270,17 +312,44 @@ export default function Grok({ apiBase }: { apiBase: string }) {
         <Empty title={t("grok.notConfiguredTitle")}>
           {t("grok.notConfiguredHint")}
           <br />
-          <code style={{ fontFamily: "var(--mono)" }}>{status?.configPath}</code>
+          <code style={monoStyle}>{status?.configPath}</code>
         </Empty>
       )}
 
-      {candidates.length > 0 && GROUPS.map(group => {
-        const view = grokGroupView(candidates, aliasById, excluded, group.id);
+      {candidates.length > 0 && (
+        <>
+          <div className="m3-row" role="search" style={searchRowStyle}>
+            <IconSearch width={20} height={20} aria-hidden="true" className="muted" />
+            <TextInput
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={t("settings.search")}
+              aria-label={t("settings.search")}
+              aria-invalid={!!regexError}
+              style={searchInputStyle}
+            />
+            {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+            <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+              <code style={monoStyle}>.*</code>
+            </Chip>
+            <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
+              <IconRegex width={20} height={20} aria-hidden="true" />
+            </a>
+          </div>
+          {regexError && (
+            <p role="alert" style={regexErrorStyle}>{t("regex.invalid")}: {regexError}</p>
+          )}
+        </>
+      )}
+
+      {candidates.length > 0 && !anyVisible && <Empty title={t("settings.noMatch")} />}
+
+      {candidates.length > 0 && groupViews.map(({ id: groupId, tkey, view }) => {
         if (view.total === 0) return null;
-        const headingId = `grok-group-${group.id}`;
+        const headingId = `grok-group-${groupId}`;
         return (
-          <section key={group.id}>
-            <h2 id={headingId} style={groupHeadingStyle}>{t(group.tkey)}</h2>
+          <section key={groupId}>
+            <h2 id={headingId} style={groupHeadingStyle}>{t(tkey)}</h2>
             <div role="list" aria-labelledby={headingId} style={groupListStyle}>
               {view.rows.map((model, index) => (
                 <div key={model.id} role="listitem" style={modelRowStyle(index === view.rows.length - 1)}>
@@ -290,9 +359,12 @@ export default function Grok({ apiBase }: { apiBase: string }) {
                     disabled={pending !== null}
                     label={t("grok.toggleModel", { id: model.id })}
                   />
-                  <code style={modelIdStyle}>{model.id}</code>
                   {/* The prototype's row has no column headers, so each value carries its
                       own screen-reader name instead of being read as a bare token. */}
+                  <code style={modelIdStyle}>
+                    <span className="sr-only">{t("grok.colModel")}</span>
+                    {model.id}
+                  </code>
                   <code style={modelAliasStyle}>
                     <span className="sr-only">{t("grok.colAlias")}</span>
                     {model.alias ?? "—"}

@@ -173,6 +173,18 @@ export default function Startup({ apiBase }: { apiBase: string }) {
       if (!isTrayStatusData(body.status)) throw new Error("invalid tray action status");
       setTray(body.status);
       setTrayError(false);
+      // Installing or removing the login tray creates and destroys a real record,
+      // so both are logged for Version history — showing and hiding the icon are
+      // runtime state, not a record change, and record nothing.
+      const summary = action === "install"
+        ? t("startup.tray.installedRecorded")
+        : action === "uninstall"
+          ? t("startup.tray.removedRecorded")
+          : null;
+      if (summary) {
+        recordRevision({ scope: "settings", label: t("startup.tray.title"), summary });
+        notify({ tone: "success", title: summary, body: t("startup.tray.notProtection") });
+      }
     } catch {
       setTray(null);
       setTrayError(true);
@@ -216,7 +228,9 @@ export default function Startup({ apiBase }: { apiBase: string }) {
       {/* No in-page title: the app bar already renders the screen's <h1>, and the
           prototype's screen opens on the subtitle. */}
       <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-3)", alignItems: "flex-start" }}>
-        <p className="m3-card-sub" style={{ margin: 0, maxWidth: "74ch" }}>{t("startup.subtitle")}</p>
+        {/* `.m3-page-lead` is the prototype's body-large screen lead. The row below
+            already carries the trailing gap, so the class's own margin is dropped. */}
+        <p className="m3-page-lead" style={{ marginBottom: 0 }}>{t("startup.subtitle")}</p>
         <Button variant="text" onClick={() => void refresh()} disabled={loading}>
           <IconRefresh aria-hidden="true" /> {t("startup.refresh")}
         </Button>

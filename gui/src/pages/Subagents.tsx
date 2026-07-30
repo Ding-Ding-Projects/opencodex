@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readJsonOrThrow } from "../fetch-json";
-import { Button, Card, Empty, TextInput } from "../shell/m3-ui";
-import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconPlus, IconSearch, IconInfo } from "../icons";
+import { Button, Card, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconPlus, IconSearch, IconInfo, IconRegex } from "../icons";
 import { useT } from "../i18n/shared";
 import { Trans } from "../i18n/provider";
 import { modelLabel } from "../model-display";
@@ -61,6 +61,18 @@ const ICON_BTN: React.CSSProperties = {
   cursor: "pointer",
 };
 
+/** The builder shortcut every search bar owes: same 44px target, primary ink, no underline. */
+const BUILDER_LINK: React.CSSProperties = {
+  display: "grid",
+  placeItems: "center",
+  flex: "0 0 auto",
+  width: 44,
+  height: 44,
+  borderRadius: "var(--r-pill)",
+  color: "var(--m3-primary)",
+  textDecoration: "none",
+};
+
 const PROVIDER_LABEL: React.CSSProperties = {
   flex: "0 0 auto",
   color: "var(--m3-on-surface-variant)",
@@ -87,10 +99,18 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   const [available, setAvailable] = useState<string[]>([]);
   const [chosen, setChosen] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+  /** Plain text is the default on every search bar; `.*` is the explicit opt-in. */
+  const [useRegex, setUseRegex] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   /** Sync guard: state-only `busy` can miss clicks before the disabled re-render commits. */
   const saveInFlight = useRef(false);
+  /**
+   * Last state the server actually holds. A revision's `before` must be this, not the
+   * edits being saved — snapshotting the new picks makes "restore" replay the save it
+   * was meant to undo, which is the one failure that makes a history panel unsafe.
+   */
+  const persisted = useRef<string[]>([]);
 
   const chosenSet = useMemo(() => new Set(chosen), [chosen]);
 
@@ -102,7 +122,9 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       const avail: string[] = r.available ?? [];
       const availSet = new Set(avail);
       setAvailable(avail);
-      setChosen((r.chosen ?? []).filter((m: string) => availSet.has(m)));
+      const stored = (r.chosen ?? []).filter((m: string) => availSet.has(m));
+      persisted.current = stored;
+      setChosen(stored);
     } catch {
       notify({ tone: "error", title: t("sub.loadFail") });
     } finally {
@@ -135,7 +157,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
     if (busy || saveInFlight.current) return;
     saveInFlight.current = true;
     setBusy(true);
-    const before = chosen;
+    const before = persisted.current;
     try {
       const r = await fetch(`${apiBase}/api/subagent-models`, {
         method: "PUT",
@@ -143,11 +165,21 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
         body: JSON.stringify({ models: chosen }),
       });
       const d = await readJsonOrThrow<{ applied?: string[] }>(r, t("sub.saveFailed"));
+      const applied = d?.applied ?? chosen;
+      persisted.current = applied;
       if (d?.applied) setChosen(d.applied);
-      const saved = t("sub.saved", { n: d?.applied?.length ?? 0, cmd: "ocx sync" });
+      // The revision panel needs a named event ("set to gpt-5, …"), not "Updated" — and a
+      // save that clears every slot is still an event, so it keeps the counted wording.
+      const summary = applied.length
+        ? t("sub.revisionSaved", { models: applied.join(", ") })
+        : t("sub.savedTitle", { n: 0 });
       // The featured five are a user-visible record, so an accidental save stays recoverable.
-      recordRevision({ scope: "settings", label: t("nav.subagents"), summary: saved, before: JSON.stringify(before) });
-      notify({ tone: "success", title: saved });
+      recordRevision({ scope: "settings", label: t("nav.subagents"), summary, before: JSON.stringify(before) });
+      notify({
+        tone: "success",
+        title: t("sub.savedTitle", { n: applied.length }),
+        body: t("sub.savedBody", { cmd: "ocx sync" }),
+      });
     } catch (error) {
       notify({
         tone: "error",
@@ -160,16 +192,35 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
     }
   };
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return available.filter(m => !q || m.toLowerCase().includes(q));
-  }, [available, query]);
+  const { matchesQuery, regexError } = useMemo(() => {
+    const trimmed = query.trim();
+    if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
+    if (useRegex) {
+      try {
+        // 400-char cap: the regex-builder safety bound applies wherever a pattern is evaluated.
+        const re = new RegExp(trimmed.slice(0, 400), "i");
+        return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
+      } catch (e) {
+        return { matchesQuery: () => false, regexError: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    const needle = trimmed.toLowerCase();
+    return {
+      matchesQuery: (text: string) => text.toLowerCase().includes(needle),
+      regexError: null as string | null,
+    };
+  }, [query, useRegex]);
+
+  const filtered = useMemo(
+    () => available.filter(m => matchesQuery(`${m} ${modelLabel(m)} ${providerPrefix(m) ?? ""}`)),
+    [available, matchesQuery],
+  );
 
   if (loading) return <div className="m3-empty">{t("sub.loading")}</div>;
 
   return (
     <>
-      <p style={{ margin: "0 0 var(--sp-4)", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+      <p className="m3-page-lead">
         <Trans k="sub.subtitle" cmd="spawn_agent" />
       </p>
 
@@ -210,7 +261,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
                   {i + 1}
                 </span>
                 <code style={SLUG}>{modelLabel(m)}</code>
-                <span style={PROVIDER_LABEL}>{providerPrefix(m) ?? t("models.nativeGroupLabel")}</span>
+                <span style={PROVIDER_LABEL}>{providerPrefix(m) ?? t("sub.nativeProvider")}</span>
                 <div style={{ display: "flex", gap: 2 }}>
                   <button type="button" style={ICON_BTN} onClick={() => move(i, -1)} disabled={busy || i === 0} aria-label={t("sub.moveUp", { m })}>
                     <IconArrowUp aria-hidden="true" />
@@ -229,16 +280,29 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       </Card>
 
       <Card title={t("sub.models")} subtitle={<span>{filtered.length}</span>}>
-        <div className="m3-row" style={{ gap: 8, marginBottom: "var(--sp-3)", flexWrap: "nowrap" }}>
+        <div className="m3-row" role="search" style={{ gap: 8, marginBottom: "var(--sp-2)" }}>
           <IconSearch width={16} height={16} aria-hidden="true" style={{ color: "var(--m3-on-surface-variant)", flexShrink: 0 }} />
           <TextInput
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder={t("sub.search")}
             aria-label={t("sub.search")}
-            style={{ flex: 1 }}
+            aria-invalid={!!regexError}
+            style={{ flex: "1 1 200px", width: "auto", minWidth: 0 }}
           />
+          {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+          <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+            <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+          </Chip>
+          <a style={BUILDER_LINK} href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+            <IconRegex width={20} height={20} aria-hidden="true" />
+          </a>
         </div>
+        {regexError && (
+          <p role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
+            {t("regex.invalid")}: {regexError}
+          </p>
+        )}
         <div
           style={{
             borderRadius: "var(--r-l)",
@@ -274,12 +338,14 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
                   {sel ? <IconCheck style={{ width: 20, height: 20 }} /> : <IconPlus style={{ width: 20, height: 20 }} />}
                 </span>
                 <code style={SLUG}>{modelLabel(m)}</code>
-                <span style={PROVIDER_LABEL}>{providerPrefix(m) ?? t("models.nativeGroupLabel")}</span>
+                <span style={PROVIDER_LABEL}>{providerPrefix(m) ?? t("sub.nativeProvider")}</span>
               </button>
             );
           })}
           {filtered.length === 0 && (
-            <Empty title={t("sub.noModels")} />
+            /* An empty catalog and a query that matched nothing are different facts — saying
+               "log into a provider" while 300 models sit behind the filter is simply wrong. */
+            <Empty title={available.length === 0 ? t("sub.noModels") : t("models.noMatch")} />
           )}
         </div>
       </Card>

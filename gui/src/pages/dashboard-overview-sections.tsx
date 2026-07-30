@@ -8,12 +8,29 @@ type Dash = ReturnType<typeof useDashboardData>;
 
 export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Dash }) {
   const {
-    t, maMode, maModeResolved,
+    t, maMode, maModeResolved, logSettingRevision,
     effortCapHelpTriggerRef, effortCapHelpOpen, setEffortCapHelpOpen,
     effortCap, subagentEffortCap, effortCapSaving, setEffortCap, setSubagentEffortCap, setEffortCapSaving,
   } = d;
 
   if (!maModeResolved || maMode === "v1") return null;
+
+  /** Both selects write the same endpoint and both belong in the version history. */
+  const commitEffortCaps = (
+    data: { effortCap?: string | null; subagentEffortCap?: string | null },
+    before: { effortCap: string; subagentEffortCap: string },
+  ) => {
+    const nextCap = data.effortCap ?? "";
+    const nextSubagentCap = data.subagentEffortCap ?? "";
+    setEffortCap(nextCap);
+    setSubagentEffortCap(nextSubagentCap);
+    if (nextCap !== before.effortCap) {
+      logSettingRevision(t("dash.effortCapLabel"), nextCap, JSON.stringify(before));
+    }
+    if (nextSubagentCap !== before.subagentEffortCap) {
+      logSettingRevision(t("dash.subagentEffortCapLabel"), nextSubagentCap, JSON.stringify(before));
+    }
+  };
 
   return (
     <Card>
@@ -41,6 +58,7 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
           ]}
           onChange={async (v) => {
             if (effortCapSaving) return;
+            const before = { effortCap, subagentEffortCap };
             setEffortCapSaving(true);
             try {
               const res = await fetch(`${apiBase}/api/effort-caps`, {
@@ -49,8 +67,7 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
                 body: JSON.stringify({ effortCap: v || null }),
               });
               const data = await requireJson<{ ok: boolean; effortCap?: string | null; subagentEffortCap?: string | null }>(res);
-              setEffortCap(data.effortCap ?? "");
-              setSubagentEffortCap(data.subagentEffortCap ?? "");
+              commitEffortCaps(data, before);
             } catch { /* ignore */ }
             finally { setEffortCapSaving(false); }
           }}
@@ -65,6 +82,7 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
           ]}
           onChange={async (v) => {
             if (effortCapSaving) return;
+            const before = { effortCap, subagentEffortCap };
             setEffortCapSaving(true);
             try {
               const res = await fetch(`${apiBase}/api/effort-caps`, {
@@ -73,8 +91,7 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
                 body: JSON.stringify({ subagentEffortCap: v || null }),
               });
               const data = await requireJson<{ ok: boolean; effortCap?: string | null; subagentEffortCap?: string | null }>(res);
-              setEffortCap(data.effortCap ?? "");
-              setSubagentEffortCap(data.subagentEffortCap ?? "");
+              commitEffortCaps(data, before);
             } catch { /* ignore */ }
             finally { setEffortCapSaving(false); }
           }}
@@ -184,14 +201,16 @@ export function DashboardMaintenancePanel({ d }: { d: Dash }) {
 
 export function DashboardSidecarPanels({ d }: { d: Dash }) {
   const {
-    t, settings, settingsSaving, toggleCodexAutoStart,
+    t, settings, settingsSaving, toggleCodexAutoStart, settingMatches,
     sidecar, sidecarSaving, sidecarModels, models, saveSidecar,
     shadowCall, shadowCallSaving, shadowCallHelpTriggerRef, shadowCallHelpOpen, setShadowCallHelpOpen, saveShadowCall,
   } = d;
+  const showWebSearch = settingMatches("webSearch");
+  const showVision = settingMatches("vision");
 
   return (
     <>
-      <Card>
+      {settingMatches("codexAutoStart") && <Card>
         <div className="dash-toggle-row">
           <div className="dash-toggle-row__copy">
             <div className="font-semibold">{t("dash.codexAutoStart")}</div>
@@ -204,10 +223,10 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
             label={t("dash.codexAutoStart")}
           />
         </div>
-      </Card>
+      </Card>}
 
-      <div className="dash-sidecar-grid">
-        <div className="m3-card dash-sidecar-card">
+      {(showWebSearch || showVision) && <div className="dash-sidecar-grid">
+        {showWebSearch && <div className="m3-card dash-sidecar-card">
           <div className="dash-sidecar-card__row">
             <div className="font-semibold">{t("dash.webSearchSidecar")}</div>
             <Select
@@ -219,9 +238,9 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
             />
           </div>
           <p className="dash-hint">{t("dash.webSearchSidecarHint")}</p>
-        </div>
+        </div>}
 
-        <div className="m3-card dash-sidecar-card">
+        {showVision && <div className="m3-card dash-sidecar-card">
           <div className="dash-sidecar-card__row">
             <div className="font-semibold">{t("dash.visionSidecar")}</div>
             <Select
@@ -233,10 +252,10 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
             />
           </div>
           <p className="dash-hint">{t("dash.visionSidecarHint")}</p>
-        </div>
-      </div>
+        </div>}
+      </div>}
 
-      <Card>
+      {settingMatches("shadowCall") && <Card>
         <div className="dash-toggle-row">
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <span className="font-semibold">{t("dash.shadowCallIntercept")}</span>
@@ -271,7 +290,7 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
             />
           </div>
         </div>
-      </Card>
+      </Card>}
     </>
   );
 }

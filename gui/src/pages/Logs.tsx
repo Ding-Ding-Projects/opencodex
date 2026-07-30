@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, LOCALES, type TFn } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { hashLogConversationQuery, matchesLogConversationId } from "../log-conversation-id";
 import { statusCodeInfo } from "../status-codes";
-import { IconX } from "../icons";
+import { IconRegex, IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
 import { Notice } from "../ui";
-import { Button, Empty, Segmented, Toggle } from "../shell/m3-ui";
+import { Button, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import Debug from "./Debug";
 
 import { M3_TABLIST_STYLE, m3TabStyle } from "./debug-shared";
@@ -305,6 +305,24 @@ function isClaudeSurface(surface: LogEntry["surface"]): boolean {
 }
 
 /**
+ * Haystack for the primary logs search, matching the prototype's matcher
+ * (`id model provider status error`). `resolvedModel` is included because the
+ * table renders it in preference to the requested id, so what the user reads is
+ * what the search finds.
+ */
+function logSearchText(log: LogEntry): string {
+  return [
+    log.requestId,
+    log.model,
+    log.resolvedModel,
+    log.provider,
+    String(log.status),
+    log.errorCode,
+    log.upstreamError,
+  ].filter(Boolean).join(" ");
+}
+
+/**
  * `.m3-table` intentionally carries no numeric-column rule, so the right
  * alignment the legacy `.tbl .num` selector supplied is re-applied inline with
  * role tokens. Cells keep `.num`/`.mono` for the mono face + tabular figures.
@@ -395,6 +413,8 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [detail, setDetail] = useState<LogEntry | null>(null);
   const [surfaceFilter, setSurfaceFilter] = useState<SurfaceFilter>("all");
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const [conversationFilter, setConversationFilter] = useState("");
   const [conversationQueryHash, setConversationQueryHash] = useState<string | undefined>();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -453,8 +473,33 @@ export default function Logs({ apiBase }: { apiBase: string }) {
     return () => { cancelled = true; };
   }, [conversationQuery]);
 
+  // Plain text is the default; `.*` opts the same field into ECMAScript RegExp,
+  // evaluated locally. An invalid pattern matches nothing and says why rather
+  // than silently falling back to a substring search.
+  const { matchesQuery, regexError } = useMemo(() => {
+    const trimmed = query.trim();
+    if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
+    if (useRegex) {
+      try {
+        const re = new RegExp(trimmed, "i");
+        return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
+      } catch (cause) {
+        return {
+          matchesQuery: () => false,
+          regexError: cause instanceof Error ? cause.message : String(cause),
+        };
+      }
+    }
+    const needle = trimmed.toLowerCase();
+    return {
+      matchesQuery: (text: string) => text.toLowerCase().includes(needle),
+      regexError: null as string | null,
+    };
+  }, [query, useRegex]);
+
   const filteredLogs = logs.filter(log => (
     matchesSurfaceFilter(surfaceFilter, log.surface)
+    && matchesQuery(logSearchText(log))
     && (!conversationQuery || matchesLogConversationId(log.conversationId, conversationQuery, conversationQueryHash))
   ));
   const conversationTotals = conversationQuery ? summarizeFilteredLogs(filteredLogs) : null;
@@ -477,7 +522,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
     <>
       {/* Pill tablist per the prototype's LOGS section; roving focus still comes
           from logsTabKeyDown so ArrowLeft/Right/Home/End keep working. */}
-      <div role="tablist" aria-label={t("nav.logs")} style={{ ...M3_TABLIST_STYLE, marginBottom: 16 }}>
+      <div role="tablist" aria-label={t("logs.sectionsAria")} style={{ ...M3_TABLIST_STYLE, marginBottom: 16 }}>
         <button
           type="button"
           role="tab"
@@ -514,11 +559,60 @@ export default function Logs({ apiBase }: { apiBase: string }) {
 
       {tab === "logs" && (
       <div role="tabpanel" id="logs-panel-logs" aria-labelledby="logs-tab-logs">
-      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)", whiteSpace: "pre-line" }}>
+      <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>
         {t("logs.subtitle")}
       </p>
 
-      {/* One control row per the prototype: search, surface filter, auto-refresh. */}
+      {/* One control row per the prototype: search (+ `.*` opt-in and the
+          builder shortcut), surface filter, auto-refresh. */}
+      <div className="m3-row" style={{ gap: 8, marginBottom: 8 }}>
+        <div className="m3-row" role="search" style={{ gap: 6, flex: "1 1 300px", minWidth: 0 }}>
+          <IconSearch width={20} height={20} aria-hidden="true" className="muted" />
+          <TextInput
+            type="search"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={t("logs.search")}
+            aria-label={t("logs.searchAria")}
+            aria-invalid={!!regexError}
+            aria-describedby="logs-regex-error"
+            style={{ flex: "1 1 auto", width: "auto", minWidth: 0 }}
+          />
+          {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+          <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+            <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+          </Chip>
+          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+            <IconRegex width={20} height={20} aria-hidden="true" />
+          </a>
+        </div>
+        {/* Filter chips, not a segmented button: the prototype paints the surface
+            filter with `chipStyle`, and the segmented pills are spent on the
+            Logs/Debug tablist above. The group keeps the accessible name. */}
+        <div className="m3-row" role="group" aria-label={t("logs.filter.surface.label")} style={{ gap: 6 }}>
+          {(["all", "codex", "claude", "grok"] as const).map(surface => (
+            <Chip
+              key={surface}
+              selected={surfaceFilter === surface}
+              onClick={() => setSurfaceFilter(surface)}
+            >
+              {t(`logs.filter.surface.${surface}`)}
+            </Chip>
+          ))}
+        </div>
+        <div className="m3-row" style={{ gap: 8 }}>
+          <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>{t("logs.autoRefresh")}</span>
+          <Toggle on={autoRefresh} onChange={setAutoRefresh} label={t("logs.autoRefresh")} />
+        </div>
+      </div>
+      {/* Height is reserved so an invalid pattern does not reflow the table, as
+          in the prototype's fixed 20px error line. */}
+      <p id="logs-regex-error" role="alert" style={{ minHeight: 20, margin: "0 0 12px", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
+        {regexError ? `${t("regex.invalid")}: ${regexError}` : ""}
+      </p>
+
+      {/* Conversation id is a second, exact-match filter: the ids are hashed, so
+          it cannot ride the substring/regex search above. */}
       <div className="m3-row" style={{ gap: 8, marginBottom: 12 }}>
         <label className="m3-row" style={{ gap: 8, flex: "1 1 300px", minWidth: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>
           {t("logs.filter.conversation.label")}
@@ -537,19 +631,6 @@ export default function Logs({ apiBase }: { apiBase: string }) {
             {t("logs.filter.conversation.clear")}
           </Button>
         )}
-        <Segmented
-          value={surfaceFilter}
-          label={t("logs.filter.surface.label")}
-          onChange={setSurfaceFilter}
-          options={(["all", "codex", "claude", "grok"] as const).map(surface => ({
-            value: surface,
-            label: t(`logs.filter.surface.${surface}`),
-          }))}
-        />
-        <div className="m3-row" style={{ gap: 8 }}>
-          <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>{t("logs.autoRefresh")}</span>
-          <Toggle on={autoRefresh} onChange={setAutoRefresh} label={t("logs.autoRefresh")} />
-        </div>
       </div>
 
       {conversationTotals && (
@@ -650,10 +731,19 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                       const tokenTotal = displayTokenTotal(log);
                       const { read, write } = cacheSplit(log);
                       const hasCacheDetail = (read !== undefined && read > 0) || (write !== undefined && write > 0);
-                      return tokenTotal !== undefined
+                      // The prototype's Tokens column is an input/output split, not a
+                      // single total; the total still lives in the detail dialog. A row
+                      // whose usage never arrived keeps the total it does have.
+                      const primary = log.usage
+                        ? t("logs.tokens.inOut", {
+                          in: formatTokens(log.usage.inputTokens, locale),
+                          out: formatTokens(log.usage.outputTokens, locale),
+                        })
+                        : tokenTotal !== undefined ? formatTokens(tokenTotal, locale) : undefined;
+                      return primary !== undefined
                         ? (
                             <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                              <span>{log.usageStatus === "estimated" ? "~" : ""}{formatTokens(tokenTotal, locale)}</span>
+                              <span style={{ whiteSpace: "nowrap" }}>{log.usageStatus === "estimated" ? "~" : ""}{primary}</span>
                               {(read !== undefined && read > 0) && (
                                 <span className="muted text-caption leading-tight">
                                   c {formatTokens(read, locale)}

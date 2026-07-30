@@ -9,11 +9,13 @@ import {
   ClaudeCodeAliasesSection,
   ClaudeCodeModelMapSection,
   ClaudeCodeQuickstartSection,
+  ClaudeCodeSaveBar,
   ClaudeCodeSettingsCard,
 } from "./claude-code-sections";
 import { serializeSidecarOverride } from "./claude-code-sidecar";
 import { formatCompactWindow, newClientId, type ClaudeCodeState, type MapRow } from "./claude-code-types";
-import { SmallFastModelSetting } from "./claude-code-settings";
+import { ClaudeSettingsSearchRow, SmallFastModelSetting } from "./claude-code-settings";
+import { claudeSettingsSearch } from "./claude-settings-search";
 
 export { AutoConnectSetting, SmallFastModelSetting } from "./claude-code-settings";
 
@@ -26,6 +28,10 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
   const [status, setStatus] = useState("");
   const [ok, setOk] = useState(false);
   const [loading, setLoading] = useState(true);
+  // This tab's own settings search. Bound to this field alone — it never shares state
+  // with another search bar, so two surfaces can hold different queries at once.
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -86,6 +92,11 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
     ];
   }, [state?.autoCompactWindow, t, localeTag]);
 
+  const search = useMemo(
+    () => claudeSettingsSearch(settingsQuery, settingsRegex, t),
+    [settingsQuery, settingsRegex, t],
+  );
+
   const save = async () => {
     if (!state) return;
     setStatus("");
@@ -128,17 +139,28 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
     <>
       {/* No page title here: the app bar names the screen and the tab names the panel, so
           a third heading was the same words a third time. The lede moved up to Claude.tsx. */}
+      {/* Search first, per the prototype: it filters the four cards below it, and reports a
+          hit that lives on the Desktop tab instead of pretending the setting does not exist. */}
+      <ClaudeSettingsSearchRow
+        query={settingsQuery}
+        onQuery={setSettingsQuery}
+        regexOn={settingsRegex}
+        onRegex={setSettingsRegex}
+        search={search}
+      />
+      {/* Always rendered: it commits every setting on this tab, so no query may hide it. */}
+      <ClaudeCodeSaveBar onSave={() => { void save(); }} />
       {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
-      <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} />
-      <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />
-      <SmallFastModelSetting
+      <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} match={search.matches} />
+      {search.matches("quickstart") && <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />}
+      {search.matches("smallFastModel") && <SmallFastModelSetting
         value={state.smallFastModel}
         tierHaikuModel={state.tierModels?.haiku}
         options={modelOptions}
         onChange={smallFastModel => setState({ ...state, smallFastModel })}
-      />
-      <ClaudeCodeModelMapSection rows={rows} onRowsChange={setRows} onSave={() => { void save(); }} />
-      <ClaudeCodeAliasesSection aliases={state.aliases} />
+      />}
+      {search.matches("modelMap") && <ClaudeCodeModelMapSection rows={rows} onRowsChange={setRows} />}
+      {search.matches("aliases") && <ClaudeCodeAliasesSection aliases={state.aliases} />}
     </>
   );
 }

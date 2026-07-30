@@ -1,7 +1,7 @@
 /**
- * Appearance — the prototype's three surfaces, in order: one settings card
- * (theme, seed, density, typography), the per-element editors, then the live
- * preview.
+ * Appearance — the prototype's surfaces, in its order: the page lead, the
+ * settings-search row, one settings card (theme, seed + role swatches, density,
+ * typography), the per-element editors, then the live preview.
  *
  * Everything writes through `usePrefs()`, so the whole shell retints live;
  * nothing here needs a reload or a save button.
@@ -9,6 +9,7 @@
 
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Button, Card, Chip, Segmented, Slider, TextInput } from "../shell/m3-ui";
+import { IconRegex, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
 import { FONT_CHOICES, SEED_SWATCHES, type DensityLevel, type ThemeMode } from "../theme/m3";
@@ -24,11 +25,16 @@ const EL_PAD_DEFAULT = 16;
 
 /**
  * `<input type="color">` refuses a CSS variable, so an override-less swatch has
- * to fall back to a concrete hex. The readout beside it says "inherits theme"
- * so the value is never mistaken for an applied override.
+ * to fall back to a concrete hex. The swatch's tooltip says "inherits theme" so
+ * that fallback is never mistaken for an applied override.
  */
 const COLOR_FALLBACK = "#000000";
 const BG_FALLBACK = "#ffffff";
+
+/** The regex builder's own cap, applied here too so one search cannot outgrow it. */
+const PATTERN_CAP = 400;
+
+const MONO: CSSProperties = { fontFamily: "var(--mono)" };
 
 const COLOR_SWATCH: CSSProperties = {
   width: 56,
@@ -39,6 +45,60 @@ const COLOR_SWATCH: CSSProperties = {
   background: "var(--m3-surface-container-lowest)",
   cursor: "pointer",
 };
+
+/**
+ * The six role chips the prototype prints under the seed picker: one look at
+ * whether the derived palette is legible before it is applied everywhere.
+ * These are the M3 roles themselves, so they are named by role, not by hex.
+ */
+const ROLE_SWATCHES: { tkey: TKey; bg: string; fg: string }[] = [
+  { tkey: "appearance.rolePrimary", bg: "var(--m3-primary)", fg: "var(--m3-on-primary)" },
+  { tkey: "appearance.roleContainer", bg: "var(--m3-primary-container)", fg: "var(--m3-on-primary-container)" },
+  { tkey: "appearance.roleSecondary", bg: "var(--m3-secondary-container)", fg: "var(--m3-on-secondary-container)" },
+  { tkey: "appearance.roleTertiary", bg: "var(--m3-tertiary-container)", fg: "var(--m3-on-tertiary-container)" },
+  { tkey: "appearance.roleError", bg: "var(--m3-error-container)", fg: "var(--m3-on-error-container)" },
+  { tkey: "appearance.roleSurface", bg: "var(--m3-surface-container-highest)", fg: "var(--m3-on-surface-variant)" },
+];
+
+const ROLE_SWATCH_STYLE: CSSProperties = {
+  display: "grid",
+  placeItems: "center",
+  minWidth: 96,
+  height: 56,
+  borderRadius: "var(--r-m)",
+  fontSize: "var(--t-label-m)",
+};
+
+const HIT_ROW: CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: 10,
+  padding: "10px 12px",
+  borderRadius: "var(--r-s)",
+  background: "var(--m3-surface-container-highest)",
+};
+
+interface SettingRow {
+  id: string;
+  label: string;
+  desc: string;
+  value: string;
+}
+
+/** Plain text is the default; regex only when the `.*` chip is pressed. */
+function makeMatcher(query: string, useRegex: boolean): { test: (text: string) => boolean; invalid: boolean } {
+  if (!query) return { test: () => true, invalid: false };
+  if (useRegex) {
+    try {
+      const re = new RegExp(query.slice(0, PATTERN_CAP), "i");
+      return { test: (text: string) => re.test(text), invalid: false };
+    } catch {
+      return { test: () => false, invalid: true };
+    }
+  }
+  const q = query.toLowerCase();
+  return { test: (text: string) => text.toLowerCase().includes(q), invalid: false };
+}
 
 /** Label and hint above the control, the reading order the prototype uses. */
 function Section({ label, hint, hintBelow, children }: {
@@ -61,36 +121,14 @@ function Section({ label, hint, hintBelow, children }: {
   );
 }
 
-function ColorField({ label, value, fallback, inheritLabel, onChange }: {
-  label: string;
-  value?: string;
-  fallback: string;
-  inheritLabel: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <span className="m3-field-label">{label}</span>
-      <div className="m3-row" style={{ gap: 8 }}>
-        <input
-          type="color"
-          value={value ?? fallback}
-          onChange={e => onChange(e.target.value)}
-          aria-label={label}
-          style={COLOR_SWATCH}
-        />
-        <span style={{ fontFamily: "var(--mono)", fontSize: "var(--t-body-s)" }}>{value ?? inheritLabel}</span>
-      </div>
-    </div>
-  );
-}
-
 export default function Appearance() {
   const t = useT();
   const { prefs, setPrefs, setElementStyle, resetElementStyle, resetAppearance } = usePrefs();
   const { notify } = useNotifications();
   const [seedText, setSeedText] = useState(prefs.seed);
   const [target, setTarget] = useState<string>(ELEMENT_TARGETS[0].id);
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
 
   const commitSeed = (value: string) => {
     setSeedText(value);
@@ -99,10 +137,52 @@ export default function Appearance() {
 
   const el = prefs.elementStyles[target] ?? {};
   const targetLabel = t((ELEMENT_TARGETS.find(x => x.id === target) ?? ELEMENT_TARGETS[0]).tkey as TKey);
+  const overrideCount = Object.keys(prefs.elementStyles).length;
+  const fontLabel = (FONT_CHOICES.find(f => f.id === prefs.fontId) ?? FONT_CHOICES[0]).label;
+
+  // The settings index for this surface, carrying each setting's live value so a
+  // search answers "what is it set to" without scrolling to the control.
+  const here: SettingRow[] = [
+    {
+      id: "theme",
+      label: t("appearance.themeTitle"),
+      desc: t("appearance.themeSub"),
+      value: t(prefs.theme === "light" ? "theme.light" : prefs.theme === "dark" ? "theme.dark" : "theme.system"),
+    },
+    { id: "seed", label: t("appearance.seedTitle"), desc: t("appearance.seedSub"), value: prefs.seed },
+    { id: "density", label: t("appearance.densityTitle"), desc: t("appearance.densitySub"), value: String(prefs.density) },
+    { id: "font", label: t("appearance.font"), desc: t("appearance.typeSub"), value: fontLabel },
+    {
+      id: "fontScale",
+      label: t("appearance.fontScale"),
+      desc: t("appearance.typeTitle"),
+      value: `${Math.round(prefs.fontScale * 100)}%`,
+    },
+    { id: "fontWeight", label: t("appearance.fontWeight"), desc: t("appearance.typeTitle"), value: String(prefs.fontWeight) },
+  ];
+
+  /** Settings that live on another surface, so a miss here can still point somewhere. */
+  const elsewhere = [
+    { id: "langMode", label: t("lang.mode"), tab: t("nav.language") },
+    { id: "funnyEn", label: t("lang.funnyEn"), tab: t("nav.language") },
+    { id: "funnyYue", label: t("lang.funnyYue"), tab: t("nav.language") },
+  ];
+
+  const matcher = makeMatcher(query, useRegex);
+  const hits = here.filter(row => matcher.test(`${row.label} ${row.desc} ${row.value}`));
+  // Only claimed once something was actually typed — an untouched field has not
+  // matched anything, here or anywhere else.
+  const otherHits = query ? elsewhere.filter(row => matcher.test(row.label)) : [];
+  const otherTabs = [...new Set(otherHits.map(row => row.tab))].join(", ");
 
   const onResetElement = () => {
     resetElementStyle(target);
-    notify({ tone: "success", title: t("appearance.elReset"), body: targetLabel });
+    notify({ tone: "success", title: t("appearance.elResetDone"), body: targetLabel });
+  };
+
+  const onResetAllElements = () => {
+    for (const id of Object.keys(prefs.elementStyles)) resetElementStyle(id);
+    notify({ tone: "info", title: t("appearance.resetAllDone") });
   };
 
   const onResetAll = () => {
@@ -113,6 +193,48 @@ export default function Appearance() {
 
   return (
     <>
+      <p className="m3-page-lead">{t("appearance.subtitle")}</p>
+
+      <div className="m3-row" role="search">
+        <IconSearch width={20} height={20} aria-hidden="true" />
+        <TextInput
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={matcher.invalid}
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 460 }}
+        />
+        {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+        <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("regex.regexMode")}>
+          <code style={MONO}>.*</code>
+        </Chip>
+        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
+          <IconRegex width={20} height={20} aria-hidden="true" />
+        </a>
+      </div>
+      <p
+        role="status"
+        style={{ minHeight: 20, margin: "4px 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}
+      >
+        {matcher.invalid
+          ? t("regex.invalid")
+          : otherHits.length
+            ? t("settings.otherTab", { count: otherHits.length, tabs: otherTabs })
+            : query && hits.length === 0
+              ? t("settings.noMatch")
+              : ""}
+      </p>
+      <div data-settings-hits="" style={{ display: "grid", gap: 6, marginBottom: "var(--sp-3)" }}>
+        {hits.map(row => (
+          <div key={row.id} style={HIT_ROW}>
+            <span style={{ fontSize: "var(--t-body-m)", fontWeight: 500 }}>{row.label}</span>
+            <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>{row.desc}</span>
+            <span style={{ ...MONO, marginLeft: "auto", fontSize: "var(--t-label-m)" }}>{row.value}</span>
+          </div>
+        ))}
+      </div>
+
       <Card>
         <Section label={t("appearance.themeTitle")} hint={t("appearance.themeSub")}>
           <Segmented<ThemeMode>
@@ -167,6 +289,14 @@ export default function Appearance() {
           {!HEX.test(seedText) && (
             <p className="m3-field-hint" style={{ color: "var(--m3-error)" }}>{t("appearance.seedInvalid")}</p>
           )}
+          {/* The palette the seed just derived, in the roles that carry it. */}
+          <div data-role-swatches="" className="m3-row" style={{ gap: 8, marginTop: "var(--sp-2)" }}>
+            {ROLE_SWATCHES.map(role => (
+              <span key={role.tkey} style={{ ...ROLE_SWATCH_STYLE, background: role.bg, color: role.fg }}>
+                {t(role.tkey)}
+              </span>
+            ))}
+          </div>
         </Section>
 
         <Section hint={t("appearance.densitySub")} hintBelow>
@@ -181,7 +311,7 @@ export default function Appearance() {
           />
         </Section>
 
-        <Section label={t("appearance.fontFamily")} hint={t("appearance.typeSub")}>
+        <Section label={t("appearance.font")} hint={t("appearance.typeSub")}>
           <div className="m3-row" style={{ gap: 8 }}>
             {FONT_CHOICES.map(font => (
               <Chip key={font.id} selected={prefs.fontId === font.id} onClick={() => setPrefs({ fontId: font.id })}>
@@ -226,7 +356,7 @@ export default function Appearance() {
 
         <div className="m3-grid">
           <div>
-            <span className="m3-field-label">{t("appearance.fontFamily")}</span>
+            <span className="m3-field-label">{t("appearance.elFont", { target: targetLabel })}</span>
             <div className="m3-row" style={{ gap: 6 }}>
               {FONT_CHOICES.map(font => (
                 <Chip
@@ -240,21 +370,28 @@ export default function Appearance() {
             </div>
           </div>
 
-          <div className="m3-row" style={{ alignItems: "flex-start", gap: "var(--sp-3)" }}>
-            <ColorField
-              label={t("appearance.elColor")}
-              value={el.color}
-              fallback={COLOR_FALLBACK}
-              inheritLabel={t("appearance.elInherit")}
-              onChange={color => setElementStyle(target, { color })}
+          {/* Text and background sit side by side under one caption, as in the
+              prototype; the tooltip carries whether the swatch is an override. */}
+          <div className="m3-row" style={{ gap: 10 }}>
+            <input
+              type="color"
+              value={el.color ?? COLOR_FALLBACK}
+              onChange={e => setElementStyle(target, { color: e.target.value })}
+              aria-label={t("appearance.elColor")}
+              title={el.color ?? t("appearance.elInherit")}
+              style={COLOR_SWATCH}
             />
-            <ColorField
-              label={t("appearance.elBg")}
-              value={el.bg}
-              fallback={BG_FALLBACK}
-              inheritLabel={t("appearance.elInherit")}
-              onChange={bg => setElementStyle(target, { bg })}
+            <input
+              type="color"
+              value={el.bg ?? BG_FALLBACK}
+              onChange={e => setElementStyle(target, { bg: e.target.value })}
+              aria-label={t("appearance.elBg")}
+              title={el.bg ?? t("appearance.elInherit")}
+              style={COLOR_SWATCH}
             />
+            <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+              {t("appearance.elColorCaption")}
+            </span>
           </div>
 
           <Slider
@@ -281,6 +418,15 @@ export default function Appearance() {
 
         <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
           <Button variant="outlined" onClick={onResetElement}>{t("appearance.elReset")}</Button>
+          <Button
+            variant="text"
+            onClick={onResetAllElements}
+            disabled={overrideCount === 0}
+            style={{ color: "var(--m3-error)" }}
+          >
+            {t("appearance.elResetAll", { count: overrideCount })}
+          </Button>
+          {/* The global reset also returns theme, seed, density and type to defaults. */}
           <Button variant="text" onClick={onResetAll} style={{ color: "var(--m3-error)" }}>
             {t("appearance.reset")}
           </Button>
@@ -288,11 +434,17 @@ export default function Appearance() {
       </Card>
 
       <Card title={t("appearance.previewHeadline")}>
-        <p style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--t-body-m)", color: "var(--m3-on-surface-variant)" }}>
-          {t("appearance.previewBody")}
-        </p>
         {/* Specimens, not controls: the prototype renders these as spans so the
             preview never adds three focusable buttons that do nothing. */}
+        <div style={{ fontSize: "var(--t-headline-s)", fontWeight: 500, marginBottom: 4 }}>
+          {t("appearance.previewHeadlineSample")}
+        </div>
+        <div style={{ fontSize: "var(--t-title-m)", fontWeight: 500, marginBottom: 4 }}>
+          {t("appearance.previewTitleSample")}
+        </div>
+        <p style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--t-body-m)", color: "var(--m3-on-surface-variant)" }}>
+          {t("appearance.previewBodySample")}
+        </p>
         <div className="m3-row" style={{ gap: 8 }}>
           <span className="m3-btn m3-btn--filled">{t("appearance.previewPrimary")}</span>
           <span className="m3-btn m3-btn--tonal">{t("appearance.previewTonal")}</span>

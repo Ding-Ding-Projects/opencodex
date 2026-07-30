@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  buildComboAttention,
   type ComboItem,
   comboModelId,
   comboPublicModelId,
@@ -7,12 +8,14 @@ import {
   intersectComboEfforts,
   validateComboDraft,
 } from "../combo-workspace-data";
-import { IconChevron, IconTrash } from "../icons";
+import { IconAlert, IconChevron, IconRegex, IconSearch, IconTrash } from "../icons";
 import { useT } from "../i18n/shared";
 import { Notice } from "../ui";
 import { Button, Card, Chip, TextInput } from "../shell/m3-ui";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
+import { attentionCopy } from "./combo-workspace-attention";
+import { comboSettingsSearch } from "./combo-workspace-settings-search";
 import { clampedNumberInput } from "./combo-workspace-utils";
 
 type DetailTab = "config" | "about";
@@ -22,6 +25,7 @@ export function DetailPanel({
   isCreate = false,
   otherIds,
   otherAliases,
+  cataloguedComboIds,
   providerMap,
   providers,
   models,
@@ -37,6 +41,8 @@ export function DetailPanel({
   otherIds: string[];
   /** Aliases of all OTHER combos — alias uniqueness validates against these. */
   otherAliases: string[];
+  /** Combo ids the live model catalog advertises — a missing one is flagged here. */
+  cataloguedComboIds?: ReadonlySet<string>;
   providerMap: Readonly<Record<string, { disabled?: boolean }>>;
   providers: ProviderOption[];
   models: ModelOption[];
@@ -52,6 +58,10 @@ export function DetailPanel({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // This tab's own settings search. Bound to this field alone — it never shares state
+  // with the rail's combo search, which looks for a different kind of thing.
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
   const dirty = !draftEquals(draft, baseline);
   const baselineSyncKey = `${baseline.id}:${baseline.alias ?? ""}:${baseline.strategy}:${baseline.stickyLimit}:${baseline.defaultEffort}:${baseline.targets.map((t) => `${t.provider}/${t.model}:${t.weight ?? 1}`).join(",")}`;
   const effortMap = useMemo(() => {
@@ -65,6 +75,27 @@ export function DetailPanel({
     () => intersectComboEfforts(draft.targets, effortMap),
     [draft.targets, effortMap],
   );
+  // The prototype banners the selected combo's own warnings under its title. They were
+  // only reachable from the overview list before, so opening a combo hid the reason you
+  // opened it. Read from the saved baseline, matching what the overview reports.
+  const attention = useMemo(
+    () => (isCreate ? [] : buildComboAttention([baseline], { cataloguedComboIds })),
+    [isCreate, baseline, cataloguedComboIds],
+  );
+  const settingsSearch = useMemo(
+    () => comboSettingsSearch(settingsQuery, settingsRegex, t),
+    [settingsQuery, settingsRegex, t],
+  );
+  const settingsNote = settingsSearch.error
+    ? `${t("regex.invalid")}: ${settingsSearch.error}`
+    : settingsSearch.otherHits > 0
+      ? t("settings.otherTab", {
+        count: settingsSearch.otherHits,
+        tabs: settingsSearch.otherTabs.join(", "),
+      })
+      : settingsSearch.active && settingsSearch.hits === 0
+        ? t("settings.noMatch")
+        : "";
 
   const updateDraft = useCallback((updater: (prev: ComboItem) => ComboItem) => {
     const next = updater(draft);
@@ -77,6 +108,7 @@ export function DetailPanel({
       setDraft(baseline);
       setMsg(null);
       setTab("config");
+      setSettingsQuery("");
       onDirtyChange(false);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -162,6 +194,18 @@ export function DetailPanel({
         </div>
       </div>
 
+      {attention.map((item) => (
+        <div
+          key={item.reason}
+          className="dash-notice dash-notice--warn"
+          role="status"
+          style={{ display: "flex", alignItems: "center", gap: 10 }}
+        >
+          <IconAlert width={18} height={18} aria-hidden="true" style={{ flex: "0 0 auto" }} />
+          <span>{attentionCopy(item.reason, t)}</span>
+        </div>
+      ))}
+
       {msg && <Notice tone={msg.ok ? "ok" : "err"}>{msg.text}</Notice>}
 
       <div className="combos-workspace-tabs" role="tablist" aria-label={t("cws.tabsAria")}>
@@ -176,6 +220,45 @@ export function DetailPanel({
       <div className="combos-workspace-tab-content" role="tabpanel">
         {tab === "config" ? (
           <>
+            {/* Every settings surface carries its own search: plain text by default,
+                an explicit `.*` opt-in, and the full builder anchored beside the
+                field. A miss here still reports the sibling tab that does match. */}
+            <div className="m3-row" role="search" style={{ gap: 8 }}>
+              <IconSearch width={20} height={20} aria-hidden="true" />
+              <TextInput
+                type="search"
+                value={settingsQuery}
+                onChange={(e) => setSettingsQuery(e.target.value)}
+                placeholder={t("settings.search")}
+                aria-label={t("settings.search")}
+                aria-invalid={settingsSearch.error !== null}
+                style={{ flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 420 }}
+              />
+              <Chip
+                selected={settingsRegex}
+                onClick={() => setSettingsRegex((on) => !on)}
+                title={t("regex.regexMode")}
+                aria-label={t("regex.regexMode")}
+              >
+                <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+              </Chip>
+              <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
+                <IconRegex width={20} height={20} aria-hidden="true" />
+              </a>
+            </div>
+            {settingsNote && (
+              <p
+                role={settingsSearch.error ? "alert" : "status"}
+                style={{
+                  margin: 0,
+                  color: settingsSearch.error ? "var(--m3-error)" : "var(--m3-on-surface-variant)",
+                  fontSize: "var(--t-label-m)",
+                }}
+              >
+                {settingsNote}
+              </p>
+            )}
+            {settingsSearch.matches("identity") && (
             <Card title={t("cws.tab.config")}>
               <div className="cwi-form-grid">
                 <div className="cwi-field">
@@ -217,7 +300,9 @@ export function DetailPanel({
                 </div>
               </div>
             </Card>
+            )}
 
+            {settingsSearch.matches("strategy") && (
             <Card title={t("cws.strategy")}>
               <div className="cwi-form-grid">
                 <div className="cwi-field">
@@ -265,7 +350,9 @@ export function DetailPanel({
                 )}
               </div>
             </Card>
+            )}
 
+            {settingsSearch.matches("targets") && (
             <Card
               title={t("cws.targets")}
               subtitle={draft.strategy === "failover" ? t("cws.targets.failoverHint") : t("cws.targets.roundRobinHint")}
@@ -278,6 +365,7 @@ export function DetailPanel({
                 onChange={(targets) => updateDraft((d) => ({ ...d, targets }))}
               />
             </Card>
+            )}
           </>
         ) : (
           <Card title={t("cws.aboutTitle")}>

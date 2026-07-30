@@ -1,8 +1,8 @@
 import { type Dispatch, type SetStateAction } from "react";
-import { IconChevron, IconSearch } from "../icons";
+import { IconChevron, IconRegex, IconSearch } from "../icons";
 import type { TFn } from "../i18n/shared";
-import { Card, Empty } from "../shell/m3-ui";
-import type { ModelInfo } from "./dashboard-shared";
+import { Card, Chip, Empty } from "../shell/m3-ui";
+import { modelMetaLabel, type ModelInfo } from "./dashboard-shared";
 
 export function DashboardModelsSection({
   t,
@@ -10,6 +10,9 @@ export function DashboardModelsSection({
   modelsLoading,
   modelQuery,
   setModelQuery,
+  modelRegex,
+  setModelRegex,
+  modelRegexError,
   filteredGroups,
   expandedProviders,
   setExpandedProviders,
@@ -19,6 +22,9 @@ export function DashboardModelsSection({
   modelsLoading: boolean;
   modelQuery: string;
   setModelQuery: (v: string) => void;
+  modelRegex: boolean;
+  setModelRegex: Dispatch<SetStateAction<boolean>>;
+  modelRegexError: string | null;
   filteredGroups: Array<[string, ModelInfo[]]>;
   expandedProviders: Set<string>;
   setExpandedProviders: Dispatch<SetStateAction<Set<string>>>;
@@ -33,24 +39,39 @@ export function DashboardModelsSection({
         <Empty title={t("dash.noModels")} />
       ) : (
         <>
-          <div className="pws-search-wrap dash-model-search">
-            <IconSearch className="pws-search-icon" width={14} height={14} aria-hidden="true" />
-            <input
-              type="search"
-              className="m3-input pws-search-input"
-              placeholder={t("models.search")}
-              value={modelQuery}
-              onChange={e => setModelQuery(e.target.value)}
-              aria-label={t("models.search")}
-            />
+          <div className="m3-row dash-model-search" role="search">
+            <div className="pws-search-wrap">
+              <IconSearch className="pws-search-icon" width={14} height={14} aria-hidden="true" />
+              <input
+                type="search"
+                className="m3-input pws-search-input"
+                placeholder={t("models.search")}
+                value={modelQuery}
+                onChange={e => setModelQuery(e.target.value)}
+                aria-label={t("models.search")}
+                aria-invalid={!!modelRegexError}
+              />
+            </div>
+            {/* Plain text stays the default; `.*` is an explicit opt-in, and the
+                builder sits beside the field it belongs to. */}
+            <Chip selected={modelRegex} onClick={() => setModelRegex(v => !v)} title={t("search.regexHint")}>
+              <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+            </Chip>
+            <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+              <IconRegex width={18} height={18} aria-hidden="true" />
+            </a>
           </div>
+          {modelRegexError && (
+            <p role="alert" className="dash-hint" style={{ color: "var(--m3-error)" }}>
+              {t("regex.invalid")}: {modelRegexError}
+            </p>
+          )}
           {filteredGroups.length === 0 ? (
             <p className="dash-hint">{t("dash.modelsNoResults")}</p>
           ) : (
             <div className="dash-model-acc">
               {filteredGroups.map(([provider, rows]) => {
-                const q = modelQuery.trim().toLowerCase();
-                const open = q !== "" || expandedProviders.has(provider);
+                const open = modelQuery.trim() !== "" || expandedProviders.has(provider);
                 return (
                   <div key={provider} className="dash-model-group">
                     <button
@@ -66,7 +87,13 @@ export function DashboardModelsSection({
                     {open && (
                       <div className="dash-model-chips">
                         {rows.map(m => (
-                          <code key={`${m.provider}/${m.id}`} className="dash-model-chip">{m.id}</code>
+                          // The prototype prints `provider · ctx · cap` under every model.
+                          // The group heading already names the provider, so the chip
+                          // carries the part the heading does not.
+                          <code key={`${m.provider}/${m.id}`} className="dash-model-chip" title={modelMetaLabel(m, t)}>
+                            {m.id}
+                            <span className="muted">{modelMetaChipSuffix(m, t)}</span>
+                          </code>
                         ))}
                       </div>
                     )}
@@ -79,4 +106,11 @@ export function DashboardModelsSection({
       )}
     </Card>
   );
+}
+
+/** The meta line minus the provider, which the group heading above already states. */
+function modelMetaChipSuffix(model: ModelInfo, t: TFn): string {
+  const full = modelMetaLabel(model, t);
+  const rest = full.slice(model.provider.length);
+  return rest;
 }

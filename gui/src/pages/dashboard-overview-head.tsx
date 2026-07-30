@@ -1,7 +1,9 @@
-import { IconActivity, IconAlert, IconBolt, IconBot, IconHistory, IconInfo, IconServer, IconTicket } from "../icons";
+import { IconAlert, IconBolt, IconBot, IconClock, IconDataUsage, IconInfo, IconLock, IconServer, IconTag } from "../icons";
 import { type TKey, useT } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { formatUptime } from "../formatUptime";
+import { navigateHash } from "../hash-routing";
+import { providersStatHint } from "./dashboard-shared";
 import type { useDashboardData } from "./use-dashboard-data";
 
 type Dash = ReturnType<typeof useDashboardData>;
@@ -41,22 +43,24 @@ export function DashboardOverviewHead({
             <div className="dash-stat-card__hint mono">{settings ? `:${settings.port}` : " "}</div>
           </div>
           <div className="dash-stat-card">
-            <div className="dash-stat-card__label"><IconTicket {...STAT_ICON} />{t("dash.version")}</div>
+            <div className="dash-stat-card__label"><IconTag {...STAT_ICON} />{t("dash.version")}</div>
             <div className="dash-stat-card__value mono">{health?.version ?? "—"}</div>
             <div className="dash-stat-card__hint" />
           </div>
           <div className="dash-stat-card">
-            <div className="dash-stat-card__label"><IconHistory {...STAT_ICON} />{t("dash.uptime")}</div>
+            <div className="dash-stat-card__label"><IconClock {...STAT_ICON} />{t("dash.uptime")}</div>
             <div className="dash-stat-card__value mono">{health ? formatUptime(health.uptime, locale) : "—"}</div>
             <div className="dash-stat-card__hint" />
           </div>
           <div className="dash-stat-card">
             <div className="dash-stat-card__label"><IconServer {...STAT_ICON} />{t("dash.providers")}</div>
             <div className="dash-stat-card__value">{providers.length}</div>
-            <div className="dash-stat-card__hint" />
+            {/* Same `hasApiKey` flag the providers table draws its status dot from, so
+                the split can never disagree with the rows one tab away. */}
+            <div className="dash-stat-card__hint">{providersStatHint(providers, t) || " "}</div>
           </div>
           <div className="dash-stat-card">
-            <div className="dash-stat-card__label"><IconActivity {...STAT_ICON} />{t("dash.tokens30d")}</div>
+            <div className="dash-stat-card__label"><IconDataUsage {...STAT_ICON} />{t("dash.tokens30d")}</div>
             <div className="dash-stat-card__value mono">{usage30d && usage30d.summary.requests > 0 ? formatTokens(usage30d.summary.totalTokens, locale) : "—"}</div>
             <div className="dash-stat-card__hint dash-stat-coverage">
               {usage30d && usage30d.summary.requests > 0
@@ -99,27 +103,43 @@ export function DashboardOverviewHead({
           </div>
         </div>
 
-        <div className="startup-health-slot" aria-live="polite">
-          {startupHealth ? (
-            <a className="startup-health-bar" href="#startup">
-              <span className={`dot ${startupHealth === "error" ? "dot-red" : startupHealth === "at-risk" ? "dot-amber" : "dot-green"}`} aria-hidden="true" />
-              <span className="startup-health-bar__summary">
-                {t(startupHealth === "error"
-                  ? "startup.error"
-                  : startupHealth === "at-risk"
-                    ? "startup.summary.atRisk"
-                    : startupHealth === "protected"
-                      ? "startup.summary.protected"
-                      : "startup.summary.native")}
-              </span>
-            </a>
-          ) : (
-            <div className="startup-health-bar startup-health-bar--pending" aria-hidden="true">
-              <span className="dot dot-amber" />
-              <span className="startup-health-bar__summary">&nbsp;</span>
+      </div>
+
+      {/* The prototype gives startup health a full tonal banner with a real action
+          button, not a hairline strip with a bare link: tertiary when protection is
+          in place, the error container when the probe itself failed. */}
+      <div className="startup-health-slot" aria-live="polite">
+        {startupHealth ? (
+          <div className={`dash-banner${startupHealth === "error" ? "" : " dash-banner--tertiary"}`}>
+            {startupHealth === "protected"
+              ? <IconLock aria-hidden="true" />
+              : startupHealth === "native"
+                ? <IconInfo aria-hidden="true" />
+                : <IconAlert aria-hidden="true" />}
+            <div className="dash-banner__body">
+              {t(startupHealth === "error"
+                ? "startup.error"
+                : startupHealth === "at-risk"
+                  ? "startup.summary.atRisk"
+                  : startupHealth === "protected"
+                    ? "startup.summary.protected"
+                    : "startup.summary.native")}
             </div>
-          )}
-        </div>
+            <button
+              type="button"
+              className="dash-banner__action"
+              onClick={() => navigateHash("startup")}
+            >
+              {t("nav.startup")}
+            </button>
+          </div>
+        ) : (
+          // Same height as the resolved banner (a 40px action inside 16px padding),
+          // so the first probe result does not shove the page down as it lands.
+          <div className="dash-banner dash-banner--tertiary" aria-hidden="true">
+            <div className="dash-banner__body" style={{ minHeight: 40 }}>&nbsp;</div>
+          </div>
+        )}
       </div>
 
       {projectConfigWarnings.length > 0 && (

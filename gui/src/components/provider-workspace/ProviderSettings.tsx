@@ -7,11 +7,13 @@
  * Parent should remount on provider change (`key={item.name}`) so choice-loading
  * state resets cleanly without sync setState-in-effect.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { baseUrlForChoice, matchChoiceId, resolvedBaseUrlForChoice } from "../../base-url-choice";
 import { readJsonIfOk } from "../../fetch-json";
 import { useT } from "../../i18n/shared";
-import { IconLock } from "../../icons";
+import { IconLock, IconRegex, IconSearch } from "../../icons";
+import { Chip, TextInput } from "../../shell/m3-ui";
+import { makeMatcher } from "../../pages/models-shared";
 import { isCatalogProviderId } from "../../provider-icons";
 import type { CatalogPreset } from "../provider-catalog/provider-presets";
 import { authModeLabel } from "./ProviderRail";
@@ -19,11 +21,35 @@ import type { WorkspaceItem, ProviderUpdatePatch } from "./types";
 
 const ADAPTERS = ["openai-responses", "openai-chat", "anthropic", "google", "azure-openai", "cursor"] as const;
 const EMPTY_MODELS: string[] = [];
+const NO_OTHER_TAB_SETTINGS: OtherTabSetting[] = [];
+
+const SEARCH_ROW: CSSProperties = { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" };
+const SEARCH_INPUT: CSSProperties = { flex: "1 1 200px", width: "auto", minWidth: 0 };
+const SEARCH_NOTE: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" };
+const SEARCH_ERROR: CSSProperties = { color: "var(--m3-error)", fontSize: "var(--t-label-m)" };
+
+/** Every control this form owns, addressable by the settings search. */
+type SettingId =
+  | "providerId" | "adapter" | "endpoint" | "baseUrl" | "defaultModel"
+  | "authMode" | "apiKeyTransport" | "note" | "allowPrivateNetwork" | "liveModels";
+
+/**
+ * A settings control that lives on a DIFFERENT tab of this provider's detail view.
+ * A hit here is reported by name rather than silently dropped, so a user who types a
+ * setting's name learns where it actually is instead of seeing "no match".
+ */
+export interface OtherTabSetting {
+  /** The tab's visible label, as the tablist spells it. */
+  tab: string;
+  /** Everything that tab's controls are findable by: labels, descriptions, values. */
+  text: string;
+}
 
 type ChoicesStatus = "idle" | "loading" | "ready" | "error";
 
 export default function ProviderSettings({
   item, availableModels = EMPTY_MODELS, apiBase, onUpdateProvider, onDirtyChange, onRegisterSave,
+  otherTabSettings = NO_OTHER_TAB_SETTINGS,
 }: {
   item: WorkspaceItem;
   availableModels?: string[];
@@ -33,6 +59,8 @@ export default function ProviderSettings({
   onDirtyChange?: (dirty: boolean) => void;
   /** Lets parent dialogs trigger the same save path as the sticky bar. */
   onRegisterSave?: (save: (() => Promise<boolean>) | null) => void;
+  /** Settings on the sibling detail tabs, so a cross-tab hit can be named. */
+  otherTabSettings?: OtherTabSetting[];
 }) {
   const t = useT();
   const initialAuth = String(item.authMode ?? (item.keyOptional ? "local" : "key"));
@@ -49,6 +77,9 @@ export default function ProviderSettings({
   const [baseUrlChoices, setBaseUrlChoices] = useState<CatalogPreset["baseUrlChoices"]>();
   const [choicesStatus, setChoicesStatus] = useState<ChoicesStatus>(apiBase ? "loading" : "idle");
   const [endpointChoice, setEndpointChoice] = useState(() => "custom");
+  const [settingsQuery, setSettingsQuery] = useState("");
+  /** Plain text by default; `.*` is an explicit opt-in, exactly as on the rail search. */
+  const [settingsRegex, setSettingsRegex] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect -- intentional form reset when saved provider fields change */
   useEffect(() => {
@@ -126,6 +157,55 @@ export default function ProviderSettings({
   // On fetch error, keep it editable so allowBaseUrlOverride providers are not trapped.
   const plainBaseUrlLocked = isPreset && choicesStatus !== "error";
 
+  /**
+   * The search index for this surface: each entry carries its label, its description
+   * and its CURRENT value, so typing a remembered base URL finds the field as readily
+   * as typing "Base URL". Entries for controls this provider does not have are omitted,
+   * so the search can never point at a field that is not on screen.
+   */
+  const settingsEntries = useMemo((): { id: SettingId; text: string }[] => {
+    const rows: { id: SettingId; text: string }[] = [
+      { id: "providerId", text: `${t("pws.providerId")} ${item.name}` },
+      { id: "adapter", text: `${t("modal.adapter")} ${adapter}` },
+    ];
+    if (hasEndpointPicker) rows.push({ id: "endpoint", text: `${t("modal.endpoint")} ${endpointChoice} ${baseUrl}` });
+    if (!hasEndpointPicker || endpointChoice === "custom") {
+      rows.push({ id: "baseUrl", text: `${t("modal.baseUrl")} ${baseUrl}` });
+    }
+    rows.push(
+      { id: "defaultModel", text: `${t("pws.cell.defaultModel")} ${t("pws.defaultModelNone")} ${defaultModel}` },
+      { id: "authMode", text: `${t("pws.authMode")} ${authModeLabel(item, t)} ${authMode}` },
+    );
+    if (supportsApiKeyTransport) {
+      rows.push({
+        id: "apiKeyTransport",
+        text: [t("modal.apiKeyTransport"), t("modal.apiKeyTransportNative"), t("modal.apiKeyTransportBearer"), apiKeyTransport].join(" "),
+      });
+    }
+    rows.push(
+      { id: "note", text: `${t("pws.note")} ${note}` },
+      { id: "allowPrivateNetwork", text: t("pws.allowPrivateNetwork") },
+      { id: "liveModels", text: `${t("pws.liveModels")} ${t("pws.liveModelsDesc")}` },
+    );
+    return rows;
+  }, [adapter, apiKeyTransport, authMode, baseUrl, defaultModel, endpointChoice, hasEndpointPicker, item, note, supportsApiKeyTransport, t]);
+
+  const { settingMatches, settingsError, settingsHits, elsewhereTabs } = useMemo(() => {
+    const matcher = makeMatcher(settingsQuery, settingsRegex);
+    const hits = new Set(settingsEntries.filter(entry => matcher.test(entry.text)).map(entry => entry.id));
+    const elsewhere = otherTabSettings.filter(entry => matcher.test(`${entry.tab} ${entry.text}`));
+    return {
+      settingMatches: (id: SettingId) => hits.has(id),
+      settingsError: matcher.error,
+      settingsHits: hits.size,
+      elsewhereTabs: [...new Set(elsewhere.map(entry => entry.tab))],
+    };
+  }, [otherTabSettings, settingsEntries, settingsQuery, settingsRegex]);
+
+  const searching = settingsQuery.trim().length > 0;
+  /** Before a query is typed nothing is filtered — the form is not a search result. */
+  const show = (id: SettingId) => !searching || settingMatches(id);
+
   const save = async (): Promise<boolean> => {
     if (!onUpdateProvider) { setMsg({ ok: false, text: t("pws.updatesUnavailable") }); return false; }
     const nextBaseUrl = hasEndpointPicker
@@ -175,10 +255,49 @@ export default function ProviderSettings({
 
   return (
     <div className="pwi-settings-form">
+      {/* Every settings surface carries its own search, wired to the full builder and
+          bound to this field alone — it never shares state with the rail search. */}
+      <div style={SEARCH_ROW} role="search">
+        <IconSearch width={18} height={18} aria-hidden="true" className="muted" />
+        <TextInput
+          type="search"
+          value={settingsQuery}
+          onChange={e => setSettingsQuery(e.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={!!settingsError}
+          style={SEARCH_INPUT}
+        />
+        <Chip
+          selected={settingsRegex}
+          onClick={() => setSettingsRegex(v => !v)}
+          title={t("regex.regexMode")}
+          aria-label={t("search.regexHint")}
+        >
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
+          <IconRegex width={18} height={18} aria-hidden="true" />
+        </a>
+      </div>
+      {settingsError && (
+        <p role="alert" style={SEARCH_ERROR}>{t("regex.invalid")}: {settingsError}</p>
+      )}
+      {!settingsError && searching && elsewhereTabs.length > 0 && (
+        <p role="status" style={SEARCH_NOTE}>
+          {t("settings.otherTab", { count: elsewhereTabs.length, tabs: elsewhereTabs.join(", ") })}
+        </p>
+      )}
+      {!settingsError && searching && settingsHits === 0 && (
+        <p role="status" style={SEARCH_NOTE}>{t("settings.noMatch")}</p>
+      )}
+      {show("providerId") && (
       <label className="pwi-settings-field">
         <span className="pwi-settings-label"><IconLock style={{ width: 12, height: 12 }} /> {t("pws.providerId")}</span>
         <input className="m3-input" value={item.name} readOnly disabled />
       </label>
+      )}
+      {show("adapter") && (
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("modal.adapter")}</span>
         {isPreset ? <input className="m3-input" value={adapter} readOnly disabled /> : (
@@ -187,8 +306,10 @@ export default function ProviderSettings({
           </select>
         )}
       </label>
+      )}
       {hasEndpointPicker ? (
         <>
+          {show("endpoint") && (
           <label className="pwi-settings-field">
             <span className="pwi-settings-label">{t("modal.endpoint")}</span>
             <select
@@ -205,19 +326,21 @@ export default function ProviderSettings({
               ))}
             </select>
           </label>
-          {endpointChoice === "custom" && (
+          )}
+          {endpointChoice === "custom" && show("baseUrl") && (
             <label className="pwi-settings-field">
               <span className="pwi-settings-label">{t("modal.baseUrl")}</span>
               <input className="m3-input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder={t("modal.baseUrlPlaceholder")} />
             </label>
           )}
         </>
-      ) : (
+      ) : show("baseUrl") && (
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{t("modal.baseUrl")}</span>
           <input className="m3-input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} readOnly={plainBaseUrlLocked} disabled={plainBaseUrlLocked} />
         </label>
       )}
+      {show("defaultModel") && (
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("pws.cell.defaultModel")}</span>
         {modelOptions.length > 0 ? (
@@ -229,6 +352,8 @@ export default function ProviderSettings({
           <input className="m3-input" value={defaultModel} onChange={e => setDefaultModel(e.target.value)} placeholder={t("pws.optionalPlaceholder")} />
         )}
       </label>
+      )}
+      {show("authMode") && (
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("pws.authMode")}</span>
         {isPreset ? <input className="m3-input" value={authModeLabel(item, t)} readOnly disabled /> : (
@@ -240,7 +365,8 @@ export default function ProviderSettings({
           </select>
         )}
       </label>
-      {supportsApiKeyTransport && (
+      )}
+      {supportsApiKeyTransport && show("apiKeyTransport") && (
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{t("modal.apiKeyTransport")}</span>
           <select className="m3-input" value={apiKeyTransport} onChange={e => setApiKeyTransport(e.target.value as "x-api-key" | "bearer")}>
@@ -249,14 +375,19 @@ export default function ProviderSettings({
           </select>
         </label>
       )}
+      {show("note") && (
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("pws.note")}</span>
         <textarea className="m3-input pwi-settings-textarea" value={note} onChange={e => setNote(e.target.value)} rows={2} />
       </label>
+      )}
+      {show("allowPrivateNetwork") && (
       <label className="pwi-settings-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <input type="checkbox" checked={allowPrivateNetwork} onChange={e => setAllowPrivateNetwork(e.target.checked)} />
         <span className="pwi-settings-label">{t("pws.allowPrivateNetwork")}</span>
       </label>
+      )}
+      {show("liveModels") && (
       <label className="pwi-settings-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
         <input type="checkbox" checked={liveModels} onChange={e => setLiveModels(e.target.checked)} />
         <span>
@@ -264,6 +395,7 @@ export default function ProviderSettings({
           <span className="muted text-label" style={{ display: "block", marginTop: 2 }}>{t("pws.liveModelsDesc")}</span>
         </span>
       </label>
+      )}
       {dirty && (
         <div className="pwi-settings-sticky-bar">
           <span className="muted">{t("pws.settingsUnsavedBar")}</span>

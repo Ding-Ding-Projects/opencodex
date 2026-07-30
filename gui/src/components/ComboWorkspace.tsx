@@ -1,14 +1,16 @@
 import { useCallback, useMemo, useState } from "react";
 import {
+  buildComboAttention,
   type ComboItem,
   comboModelId,
   emptyDraft,
   filterCombos,
   groupCombos,
 } from "../combo-workspace-data";
-import { IconChevron, IconPlus, IconSearch, IconShuffle } from "../icons";
+import { IconAlert, IconChevron, IconPlus, IconRegex, IconSearch, IconShuffle } from "../icons";
 import { useT } from "../i18n/shared";
-import { Button, TextInput } from "../shell/m3-ui";
+import { makeMatcher } from "../pages/models-shared";
+import { Button, Chip, TextInput } from "../shell/m3-ui";
 import { AddComboModal } from "./combo-workspace-add-modal";
 import { DetailPanel } from "./combo-workspace-detail-panel";
 import { RemoveComboDialog, UnsavedLeaveDialog } from "./combo-workspace-dialogs";
@@ -37,14 +39,34 @@ export default function ComboWorkspace({
     [providers],
   );
   const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingSelect, setPendingSelect] = useState<string | null | undefined>(undefined);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [localBaseline, setLocalBaseline] = useState<ComboItem | null>(null);
   const firstComboDraft = useMemo(() => emptyDraft(), []);
 
-  const filtered = useMemo(() => filterCombos(combos, query), [combos, query]);
+  // Plain text stays the default and keeps using the shared `filterCombos` predicate;
+  // `.*` is an explicit opt-in evaluated locally through the same capped matcher every
+  // other search bar in the GUI uses, so an invalid pattern matches nothing and says so.
+  const { filtered, regexError } = useMemo(() => {
+    if (!query.trim()) return { filtered: combos, regexError: null as string | null };
+    if (!useRegex) return { filtered: filterCombos(combos, query), regexError: null as string | null };
+    const matcher = makeMatcher(query, true);
+    return {
+      filtered: combos.filter((combo) => matcher.test(
+        [combo.id, combo.model, ...combo.targets.map((target) => `${target.provider}/${target.model}`)].join(" "),
+      )),
+      regexError: matcher.error,
+    };
+  }, [combos, query, useRegex]);
   const sections = useMemo(() => groupCombos(filtered), [filtered]);
+  // Rail rows carry the prototype's warning marker so a misconfigured combo is
+  // visible in the list, not only after you open it.
+  const attentionIds = useMemo(
+    () => new Set(buildComboAttention(combos, { cataloguedComboIds }).map((item) => item.id)),
+    [combos, cataloguedComboIds],
+  );
   const existingComboAliases = useMemo(
     () => combos.flatMap((combo) => combo.alias ? [combo.alias] : []),
     [combos],
@@ -109,7 +131,7 @@ export default function ComboWorkspace({
             <IconPlus aria-hidden="true" /> {t("cws.add")}
           </Button>
         </div>
-        <div className="cwi-search-row">
+        <div className="cwi-search-row" role="search">
           <div className="cwi-search-wrap">
             <IconSearch className="cwi-search-icon" aria-hidden="true" />
             <TextInput
@@ -118,9 +140,22 @@ export default function ComboWorkspace({
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t("cws.searchPlaceholder")}
               aria-label={t("cws.searchPlaceholder")}
+              aria-invalid={!!regexError}
             />
           </div>
+          {/* The builder sits beside the field it belongs to, per the shared rule. */}
+          <Chip selected={useRegex} onClick={() => setUseRegex((on) => !on)} title={t("search.regexHint")}>
+            <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+          </Chip>
+          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+            <IconRegex width={18} height={18} aria-hidden="true" />
+          </a>
         </div>
+        {regexError && (
+          <p role="alert" className="cwi-rail-empty" style={{ color: "var(--m3-error)" }}>
+            {t("regex.invalid")}: {regexError}
+          </p>
+        )}
         <div className="combos-workspace-rail-list">
           {filtered.length === 0 && combos.length > 0 ? (
             <p className="cwi-rail-empty">{t("cws.noSearchResults")}</p>
@@ -150,6 +185,15 @@ export default function ComboWorkspace({
                         </span>
                         <span className="combos-workspace-rail-name">{item.model}</span>
                         <span className="combos-workspace-rail-meta">
+                          {attentionIds.has(item.id) && (
+                            <IconAlert
+                              width={13}
+                              height={13}
+                              role="img"
+                              aria-label={t("cws.attentionTitle")}
+                              style={{ color: "var(--m3-warn)", verticalAlign: -2, marginRight: 4 }}
+                            />
+                          )}
                           {item.targets.length === 1
                             ? t("cws.targetCountOne")
                             : t("cws.targetCount", { count: item.targets.length })}
@@ -172,6 +216,7 @@ export default function ComboWorkspace({
             baseline={baseline}
             otherIds={otherComboIds}
             otherAliases={otherComboAliases}
+            cataloguedComboIds={cataloguedComboIds}
             providerMap={providerMap}
             providers={providers}
             models={models}

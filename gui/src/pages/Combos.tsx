@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ComboWorkspace from "../components/ComboWorkspace";
 import {
   type ComboItem,
   comboModelId,
+  groupCombos,
   parseComboList,
   toPutBody,
 } from "../combo-workspace-data";
@@ -52,6 +53,7 @@ export default function Combos({ apiBase }: { apiBase: string }) {
   const [cataloguedComboIds, setCataloguedComboIds] = useState<ReadonlySet<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const sections = useMemo(() => groupCombos(combos), [combos]);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -225,6 +227,24 @@ export default function Combos({ apiBase }: { apiBase: string }) {
 
   return (
     <div className="combos-workspace-shell">
+      {/* The prototype leads the Combos screen with the blurb and the three-count
+          strip ABOVE the rail/detail split, so both stay visible while a combo is
+          selected. They used to live inside OverviewPanel, which only renders when
+          nothing is selected — hence they vanished the moment you opened a combo. */}
+      <div className="combos-workspace-shell-banner">
+        <p className="m3-page-lead">{t("cws.overviewBlurb")}</p>
+        <div className="cwi-count-strip">
+          <div className="cwi-count-pill">
+            <strong>{combos.length}</strong><span>{t("cws.count.total")}</span>
+          </div>
+          <div className="cwi-count-pill">
+            <strong>{sections.failover.length}</strong><span>{t("cws.count.failover")}</span>
+          </div>
+          <div className="cwi-count-pill">
+            <strong>{sections.roundRobin.length}</strong><span>{t("cws.count.roundRobin")}</span>
+          </div>
+        </div>
+      </div>
       <div className="combos-workspace-shell-body">
         <ComboWorkspace
           combos={combos}

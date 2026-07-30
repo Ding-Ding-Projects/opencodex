@@ -39,6 +39,8 @@ import {
   writeCombosOpen,
   discoveryFailureLabel,
   effortRange,
+  makeMatcher,
+  type ModelsSettingId,
   type ModelRow,
   type ProviderContextCapsResponse,
   type ShadowCallData,
@@ -55,6 +57,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const [selectedModels, setSelectedModels] = useState<ProviderModelMap | null>(null);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
   const [limit, setLimit] = useState<Record<string, number>>({});
   const [contextCaps, setContextCaps] = useState<Record<string, number>>({});
   const [contextCapValue, setContextCapValue] = useState(350_000);
@@ -238,30 +242,65 @@ export default function Models({ apiBase }: { apiBase: string }) {
 
   /**
    * One search across every provider group, plain text by default with `.*` as an
-   * explicit opt-in. The pattern is capped at 400 characters and evaluated locally,
-   * so a pasted novel can never become a catastrophic-backtracking payload.
+   * explicit opt-in — see `makeMatcher` for the 400-character cap and the local
+   * evaluation that keeps a pasted novel from becoming a backtracking payload.
    */
   const { matchesQuery, regexError } = useMemo(() => {
-    const trimmed = query.trim();
-    if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
-    if (useRegex) {
-      try {
-        const re = new RegExp(trimmed.slice(0, 400), "i");
-        return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
-      } catch (e) {
-        return { matchesQuery: () => false, regexError: e instanceof Error ? e.message : String(e) };
-      }
-    }
-    const needle = trimmed.toLowerCase();
-    return {
-      matchesQuery: (text: string) => text.toLowerCase().includes(needle),
-      regexError: null as string | null,
-    };
+    const matcher = makeMatcher(query, useRegex);
+    return { matchesQuery: matcher.test, regexError: matcher.error };
   }, [query, useRegex]);
   const rowMatches = useCallback(
     (provider: string, row: ModelRow) => matchesQuery(`${row.id} ${row.namespaced} ${provider}`),
     [matchesQuery],
   );
+
+  /**
+   * The screen's own settings search, wired to the same builder as the model search.
+   * It indexes the settings this page owns — each entry carries the label, the
+   * description and the current value, so typing a remembered value finds the control
+   * as readily as typing its name.
+   */
+  const settingsEntries = useMemo((): { id: ModelsSettingId; text: string }[] => [
+    {
+      id: "shadowCall",
+      text: `${t("models.shadowCallIntercept")} ${t("models.shadowCallInterceptHint")} ${shadowCall?.model ?? ""}`,
+    },
+    {
+      id: "subAgent",
+      text: [
+        t("models.v2Label"),
+        t("models.v2Mode_v1"),
+        t("models.v2Mode_default"),
+        t("models.v2Mode_v2"),
+        t("models.v2ModeDesc_v1"),
+        t("models.v2ModeDesc_default"),
+        t("models.v2ModeDesc_v2"),
+      ].join(" "),
+    },
+    {
+      id: "threads",
+      text: `${t("models.v2ThreadsLabel")} ${t("models.v2ThreadsDefault")} ${v2?.maxConcurrentThreadsPerSession ?? ""}`,
+    },
+    {
+      id: "contextCap",
+      text: [
+        t("models.contextCapLabel"),
+        t("models.capValue", { value: fmtK(contextCapValue) }),
+        t("models.setAll"),
+        t("models.setAllHint", { value: fmtK(contextCapValue) }),
+      ].join(" "),
+    },
+  ], [contextCapValue, shadowCall?.model, t, v2?.maxConcurrentThreadsPerSession]);
+
+  const { settingMatches, settingsError, settingsHits } = useMemo(() => {
+    const matcher = makeMatcher(settingsQuery, settingsRegex);
+    const hits = new Set(settingsEntries.filter(entry => matcher.test(entry.text)).map(entry => entry.id));
+    return {
+      settingMatches: (id: ModelsSettingId) => hits.has(id),
+      settingsError: matcher.error,
+      settingsHits: hits.size,
+    };
+  }, [settingsEntries, settingsQuery, settingsRegex]);
 
   /** Version history entry for a settings change made here — restore needs a named event, not "Updated". */
   const logRevision = (summary: string) => {
@@ -716,7 +755,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                      <code className={`mono text-control models-model-id${off ? " models-model-id--off" : ""}`} style={{ flex: "1 1 220px" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
                      {(m.contextWindow || m.contextCap) && (
                        <span className="muted text-label" style={{ whiteSpace: "nowrap" }}>
-                         {t("models.tipContext")} {fmtK(m.contextWindow ?? m.contextCap ?? 0)}
+                         {t("models.ctxValue", { value: fmtK(m.contextWindow ?? m.contextCap ?? 0) })}
                        </span>
                      )}
                      {m.inputModalities && m.inputModalities.length > 0 && (
@@ -847,34 +886,77 @@ export default function Models({ apiBase }: { apiBase: string }) {
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
-        <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+        <Chip
+          selected={useRegex}
+          onClick={() => setUseRegex(v => !v)}
+          title={t("regex.regexMode")}
+          aria-label={t("search.regexHint")}
+        >
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
-        <a className="models-icon-btn" href="#regex" title={t("nav.regex")} aria-label={t("nav.regex")}>
+        <a className="models-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
           <IconRegex width={20} height={20} aria-hidden="true" />
         </a>
       </div>
-      {regexError && (
-        <p role="alert" style={{ color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
-          {t("regex.invalid")}: {regexError}
-        </p>
-      )}
+      {/* The design reserves this line whether or not a pattern is broken, so typing an
+          unfinished regex does not shunt the whole provider list up and down. */}
+      <div className="models-search-error" role="alert" style={{ minHeight: 20, color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
+        {regexError ? `${t("regex.invalid")}: ${regexError}` : ""}
+      </div>
+    </>
+  );
+
+  // The settings surface on this screen gets its own search bar and its own builder,
+  // bound to this field alone — it never shares state with the model search above it.
+  const settingsSearchBlock = (
+    <>
+      <div className="m3-row models-settings-search" role="search" style={{ marginBottom: "var(--sp-2)" }}>
+        <IconSearch width={20} height={20} aria-hidden="true" className="muted" />
+        <TextInput
+          value={settingsQuery}
+          onChange={e => setSettingsQuery(e.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={!!settingsError}
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
+        />
+        <Chip
+          selected={settingsRegex}
+          onClick={() => setSettingsRegex(v => !v)}
+          title={t("regex.regexMode")}
+          aria-label={t("search.regexHint")}
+        >
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <a className="models-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
+          <IconRegex width={20} height={20} aria-hidden="true" />
+        </a>
+      </div>
+      {/* One status line, as the prototype has it: the broken pattern wins over the
+          no-match message, because an unusable pattern is why nothing matched. */}
+      <div className="models-settings-status" role="status" style={{ minHeight: 20, marginBottom: "var(--sp-2)", fontSize: "var(--t-label-m)" }}>
+        {settingsError
+          ? <span style={{ color: "var(--m3-error)" }}>{`${t("regex.invalid")}: ${settingsError}`}</span>
+          : (settingsQuery.trim().length > 0 && settingsHits === 0
+            ? <span className="muted">{t("settings.noMatch")}</span>
+            : "")}
+      </div>
     </>
   );
 
   const controlsBlock = (
     <>
       <div className="models-control-top-row">
-        <div className="models-shadow-row row muted text-control">
+        {settingMatches("shadowCall") && <div className="models-shadow-row row muted text-control">
           <span className="models-shadow-label">{t("models.shadowCallIntercept")} <Tooltip content={t("models.shadowCallInterceptHint")} side="top" maxWidth={320}><span style={{ cursor: "help" }} aria-label={t("models.shadowCallInterceptHint")}>ⓘ</span></Tooltip></span>
           <code className="text-caption models-shadow-warning" style={{ opacity: 0.6 }}>{t("models.shadowCallOriginal")}</code>
           <Toggle on={shadowCall?.enabled ?? false} onChange={() => void saveShadowCall({ enabled: !shadowCall?.enabled })} disabled={!shadowCall || shadowCallSaving} label={t("models.shadowCallIntercept")} />
           <div className="models-shadow-model-slot">
             <Select value={shadowCall?.model ?? ""} options={[{ value: "", label: "\u2014" }, ...shadowModelOptions]} onChange={v => { setShadowCall(c => c ? { ...c, model: v } : c); void saveShadowCall({ model: v }); }} disabled={!shadowCall || shadowCallSaving || !shadowCall.enabled} label={t("models.shadowCallIntercept")} />
           </div>
-        </div>
+        </div>}
 
-        {v2 && (
+        {v2 && settingMatches("subAgent") && (
           <div className="models-v2-mode-row row">
             <span className="muted text-control">{t("models.v2Label")}</span>
             <div className="m3-segmented" role="radiogroup" aria-label={t("models.v2Label")}>
@@ -905,7 +987,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         )}
       </div>
 
-      {v2 && (v2.enabled || v2.agentsMaxThreadsConflict || v2Note) && (
+      {v2 && settingMatches("threads") && (v2.enabled || v2.agentsMaxThreadsConflict || v2Note) && (
         <div className="models-v2-detail-row row">
           {v2.enabled && (
             <>
@@ -955,7 +1037,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         </div>
       )}
 
-      <div className="row models-cap-row" role="group" aria-label={t("models.contextCapLabel")}>
+      {settingMatches("contextCap") && <div className="row models-cap-row" role="group" aria-label={t("models.contextCapLabel")}>
         <span className="muted text-control">{t("models.contextCapLabel")}</span>
         {CAP_OPTIONS.map(v => (
           <Chip
@@ -987,7 +1069,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         )}
         <Toggle on={allCapped} onChange={setAll} disabled={busy} label={t("models.setAll")} />
         <span className="muted text-label leading-body">{t("models.setAllHint", { value: fmtK(contextCapValue) })}</span>
-      </div>
+      </div>}
 
       {(() => {
         const customCount = models.filter(m => m.custom).length;
@@ -1077,8 +1159,10 @@ export default function Models({ apiBase }: { apiBase: string }) {
     </>
   );
 
+  // The prototype's search_off state: the search found nothing, which is not the same
+  // as "no routed models" (that empty state lives above and speaks about setup).
   const noMatchBlock = (
-    <Empty title={t("dash.modelsNoResults")} />
+    <Empty title={t("models.noMatch")} />
   );
 
   const modalsBlock = (
@@ -1270,7 +1354,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
           <span className="muted mono text-label">{t("models.active", { active: effectiveVisibleCount, total: models.length })}</span>
         </div>
       </div>
-      <p className="page-sub">{t("models.subtitle")}</p>
+      {/* The prototype leads the screen with body-large copy at a 74ch measure. */}
+      <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>{t("models.subtitle")}</p>
       {loadError && <Notice tone="err">{t("models.loadFail")}</Notice>}
       <div className="models-workspace-root">
         <aside className="models-workspace-rail" aria-label={t("nav.models")}>
@@ -1315,6 +1400,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         </aside>
         <section className="models-workspace-main" aria-label={t("models.workspace.mainAria")}>
           {searchBlock}
+          {settingsSearchBlock}
           {controlsBlock}
           {combosBlock}
           {collapseControls}

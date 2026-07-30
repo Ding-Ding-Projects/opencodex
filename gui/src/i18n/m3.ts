@@ -355,6 +355,14 @@ export const M3_EN = {
   // ---- combos (M3 restyle: pill tablist label) ----
   "cws.tabsAria": "Combo sections",
 
+  // Missed by the first pass because the request was written in prose rather than
+  // as a key/value pair. Both blocked a control that was otherwise built and ready.
+  "codexAuth.subtitle": "ChatGPT accounts available to the proxy, their rate-limit windows, and the account the next request will use.",
+  // The version stat's hint. Deliberately names the channel rather than asserting
+  // freshness: the prototype's "npm latest" reads as "you are up to date", which the
+  // dashboard cannot know until an update check has actually run.
+  "dash.channelHint": "{channel} channel",
+
   // ---- design parity (all 19 screens) ----
   // Copy taken verbatim from design/OpenCodex M3.dc.html and design/ocx-i18n.js.
   //

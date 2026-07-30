@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
-import { IconChevron } from "../icons";
+import { IconChevron, IconRegex } from "../icons";
 import { Notice } from "../ui";
-import { Button, Empty } from "../shell/m3-ui";
+import { Button, Chip, Empty } from "../shell/m3-ui";
 import { useT, type TFn, type TKey } from "../i18n/shared";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import { createBoundedFetch } from "../bounded-fetch";
@@ -207,6 +207,9 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // the effective default, turning a view filter into a data mutation.
   const [laneSearch, setLaneSearch] = useState<Record<string, string>>({});
   const [laneLimit, setLaneLimit] = useState<Record<string, number>>({});
+  // Regex mode is per lane, never shared: each search bar owns its own query, pattern and
+  // mode, so turning `.*` on for Opus cannot silently reinterpret what Sonnet is filtering.
+  const [laneRegex, setLaneRegex] = useState<Record<string, boolean>>({});
   // Collapse is view state too. It is a plain user-owned Set rather than something
   // derived per render: modelsByFamily changes on every move, so deriving would fold a
   // section under the user's cursor the moment they moved the last model out of it.
@@ -483,7 +486,7 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
           // Render-only narrowing: the lane header, effectiveDefaults and every assignment keep
           // reading the full list, so filtering can never change what Claude Desktop resolves.
           const all = modelsByFamily[family];
-          const lane = laneView(all, laneSearch[family] ?? "", laneLimit[family] ?? LANE_PAGE);
+          const lane = laneView(all, laneSearch[family] ?? "", laneLimit[family] ?? LANE_PAGE, laneRegex[family] ?? false);
           const isCollapsed = collapsedFamilies.has(family);
           const familyDefault = effectiveDefaults[family];
           return (
@@ -534,20 +537,41 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
             {!isCollapsed && (
             <div id={`claude-lane-body-${family}`}>
             {lane.showSearch && (
-              <input
-                className="m3-input claude-lane-search"
-                type="search"
-                placeholder={t("models.search")}
-                aria-label={t("models.search")}
-                value={laneSearch[family] ?? ""}
-                onChange={event => {
-                  const next = event.target.value;
-                  setLaneSearch(current => ({ ...current, [family]: next }));
-                  // A new query starts from the first page; otherwise a previously expanded lane
-                  // would hide the very matches the user just searched for.
-                  setLaneLimit(current => ({ ...current, [family]: LANE_PAGE }));
-                }}
-              />
+              // Every search bar carries its own `.*` opt-in and its own builder shortcut,
+              // anchored to this field rather than parked in a menu somewhere else.
+              <div className="m3-row" role="search" style={{ gap: 8 }}>
+                <input
+                  className="m3-input claude-lane-search"
+                  type="search"
+                  placeholder={t("models.search")}
+                  aria-label={t("models.search")}
+                  aria-invalid={lane.regexError !== null}
+                  value={laneSearch[family] ?? ""}
+                  onChange={event => {
+                    const next = event.target.value;
+                    setLaneSearch(current => ({ ...current, [family]: next }));
+                    // A new query starts from the first page; otherwise a previously expanded lane
+                    // would hide the very matches the user just searched for.
+                    setLaneLimit(current => ({ ...current, [family]: LANE_PAGE }));
+                  }}
+                />
+                <Chip
+                  selected={laneRegex[family] ?? false}
+                  title={t("regex.regexMode")}
+                  aria-label={t("regex.regexMode")}
+                  onClick={() => setLaneRegex(current => ({ ...current, [family]: !(current[family] ?? false) }))}
+                >
+                  <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+                </Chip>
+                <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
+                  <IconRegex width={20} height={20} aria-hidden="true" />
+                </a>
+              </div>
+            )}
+            {lane.regexError && (
+              <p role="alert" style={{ margin: "4px 0 0", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
+                {t("regex.invalid")}: {lane.regexError}
+              </p>
             )}
 
             <div className="claude-lane-models">

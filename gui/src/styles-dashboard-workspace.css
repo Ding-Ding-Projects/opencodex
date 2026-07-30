@@ -198,6 +198,45 @@
   color: var(--m3-on-warn-container);
 }
 
+/* Single-line banner body: the 4px is meant to separate a body from a title above
+   it, and offsets the text when the variant carries neither. */
+.dash-banner--tertiary .dash-banner__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 0;
+}
+
+/*
+  Model cards on the dashboard's Models tab. The prototype shows each model as a
+  two-line card — id, then `provider · ctx · capability` — where the port had a
+  `white-space: nowrap` pill that could only ever hold the id.
+*/
+.dash-model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--sp-2);
+}
+.dash-model-card {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-m, 12px);
+  background: var(--m3-surface-container-lowest);
+}
+.dash-model-card__id {
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  /* Model ids are long and unbroken; wrapping beats a horizontally scrolling page. */
+  overflow-wrap: anywhere;
+}
+.dash-model-card__meta {
+  margin-top: 4px;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-m);
+  overflow-wrap: anywhere;
+}
+
 .dash-banner svg {
   flex: 0 0 auto;
   width: 22px;

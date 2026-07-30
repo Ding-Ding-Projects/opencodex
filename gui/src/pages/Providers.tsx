@@ -142,7 +142,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
         <div className="page-head">
           <h2>{t("nav.providers")}</h2>
         </div>
-        <p className="page-sub">{t("prov.subtitle")}</p>
+        <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>{t("prov.subtitle")}</p>
         {loadError
           ? <Notice tone="err">{loadError}</Notice>
           : <div className="muted">{t("prov.loadingConfig")}</div>}
@@ -200,7 +200,9 @@ export default function Providers({ apiBase }: { apiBase: string }) {
           <button type="button" className="m3-btn m3-btn--filled" onClick={() => setAdding(true)}><IconPlus />{t("prov.add")}</button>
         </div>
       </div>
-      <p className="page-sub">{t("prov.subtitle")}</p>
+      {/* The prototype leads the screen with body-large copy at a 74ch measure, and the
+          subtitle carries its own line breaks — `page-sub` collapsed both. */}
+      <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>{t("prov.subtitle")}</p>
       <ProviderWorkspaceShell
         onRemoveProvider={removeProvider}
         providers={config.providers as Record<string, WorkspaceProvider>}

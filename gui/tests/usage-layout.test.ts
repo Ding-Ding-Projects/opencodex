@@ -51,6 +51,40 @@ test("Usage loading and empty states guard the stacked body", async () => {
   expect(src).toContain("data?.summary.requests === 0");
 });
 
+// The prototype leads every usage tile with a mark and a sub-value hint, and folds "Measured"
+// into the requests hint instead of spending a whole tile on it. Pin the six tiles so a future
+// edit cannot quietly drop a mark or a hint back to a bare number.
+test("Usage stat tiles carry the prototype's marks and hints", async () => {
+  const src = await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text();
+
+  for (const mark of ["IconSwapVert", "IconDataUsage", "IconBolt", "IconGauge", "IconClock", "IconCoin"]) {
+    expect(src).toContain(`<${mark} {...STAT_ICON} />`);
+  }
+  for (const hint of ["usage.card.requestsHint", "usage.card.totalTokensHint", "usage.card.coverageHint", "usage.card.costHint"]) {
+    expect(src).toContain(`t("${hint}"`);
+  }
+  // Short label on the tile; the long one stays as its tooltip.
+  expect(src).toContain('t("usage.card.estCost")');
+  expect(src).toContain('t("usage.cost.total")');
+  // "Measured" is the requests hint now, not a tile of its own.
+  expect(src).not.toContain('t("usage.card.measured")');
+});
+
+// Every search bar keeps plain text as the default with an explicit `.*` opt-in and a builder
+// affordance anchored beside the field.
+test("Usage model search offers regex opt-in and the anchored builder", async () => {
+  const src = await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text();
+
+  expect(src).toContain("useRegex");
+  expect(src).toContain('t("search.regexHint")');
+  expect(src).toContain('t("search.openBuilder")');
+  expect(src).toContain('href="#regex"');
+  expect(src).toContain("new RegExp(query.slice(0, 400)");
+  // An invalid in-progress pattern reports itself instead of silently blanking the table.
+  expect(src).toContain('role="alert"');
+  expect(src).toContain('t("regex.invalid")');
+});
+
 test("retired usage workspace i18n keys stay removed from every locale", async () => {
   const locales = ["en", "de", "ja", "ko", "ru", "zh"] as const;
   for (const locale of locales) {

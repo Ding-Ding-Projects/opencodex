@@ -69,9 +69,11 @@ test("lists every revision and shows the selected one's captured snapshot", asyn
   expect(listRows).toHaveLength(2);
   expect(listRows[0].getAttribute("aria-current")).toBe("true");
 
-  // The newest revision leads, and its detail card is the one on screen.
+  // The newest revision leads, and its detail card is the one on screen. The screen
+  // lead is a paragraph, not a card, so the only card title is the selected revision.
   const cardTitles = [...container.querySelectorAll(".m3-card-title")].map(n => n.textContent);
-  expect(cardTitles).toEqual(["Version history", "Appearance"]);
+  expect(cardTitles).toEqual(["Appearance"]);
+  expect(container.querySelector(".m3-page-lead")?.textContent).toContain("Append-only");
   expect(container.querySelector("pre")?.textContent).toBe("Seed colour changed");
 
   // No captured `before` means there is nothing to write back.
@@ -80,9 +82,59 @@ test("lists every revision and shows the selected one's captured snapshot", asyn
 
   await act(async () => { listRows[1].click(); });
 
-  expect([...container.querySelectorAll(".m3-card-title")].map(n => n.textContent)).toEqual(["Version history", "groq"]);
+  expect([...container.querySelectorAll(".m3-card-title")].map(n => n.textContent)).toEqual(["groq"]);
   expect(container.querySelector("pre")?.textContent).toContain("api.groq.com");
   expect([...container.querySelectorAll("button")].find(b => b.textContent?.includes("Restore"))?.disabled).toBe(false);
+
+  await act(async () => { root.unmount(); });
+});
+
+/**
+ * Restoring is a decision, so it is gated by the app's own themed dialog rather
+ * than a native `confirm()` — and confirming must *append*: the revision that was
+ * restored from has to survive, or the undo could not itself be undone.
+ */
+test("restore is confirmed in a dialog and appends rather than rewinding the log", async () => {
+  const { createRoot } = await import("react-dom/client");
+  const container = document.createElement("div");
+  document.body.append(container);
+  let root: Root;
+
+  await act(async () => {
+    root = createRoot(container);
+    root.render(
+      <PrefsProvider>
+        <LanguageProvider>
+          <NotificationsProvider>
+            <VersionHistory />
+          </NotificationsProvider>
+        </LanguageProvider>
+      </PrefsProvider>,
+    );
+  });
+
+  // Select the revision that actually carries a snapshot.
+  await act(async () => { [...container.querySelectorAll("ul li button")][1].click(); });
+  expect(container.querySelector("dialog")).toBeNull();
+
+  await act(async () => {
+    [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Restore"))!.click();
+  });
+
+  const dialog = container.querySelector("dialog");
+  expect(dialog).not.toBeNull();
+  // The wording has to say the restore is recorded rather than replacing history.
+  expect(dialog?.textContent).toContain("recorded as a new revision");
+
+  await act(async () => {
+    [...dialog!.querySelectorAll("button")].find(b => b.textContent === "Restore")!.click();
+  });
+
+  const stored = JSON.parse(localStorage.getItem("ocx-m3:revisions") || "[]");
+  expect(stored).toHaveLength(3);
+  // Newest first, and both originals are untouched underneath it.
+  expect(stored[0].restored).toBe(true);
+  expect(stored.map((r: { id: string }) => r.id).slice(1)).toEqual(["r2", "r1"]);
 
   await act(async () => { root.unmount(); });
 });
