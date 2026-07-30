@@ -13,6 +13,16 @@ export const IconBoxes = (p: P) => (<svg {...S(p)}><path d="M12 2 4 6v6l8 4 8-4V
 export const IconBot = (p: P) => (<svg {...S(p)}><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M8 2h8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>);
 export const IconList = (p: P) => (<svg {...S(p)}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>);
 export const IconMenu = (p: P) => (<svg {...S(p)}><path d="M4 6h16M4 12h16M4 18h16"/></svg>);
+/* Stat-tile marks the prototype leads its usage and dashboard figures with. Named
+   after the Material Symbols glyph each one stands in for, so a future swap to the
+   real icon font is a rename rather than a hunt. */
+export const IconTag = (p: P) => (<svg {...S(p)}><path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>);
+export const IconClock = (p: P) => (<svg {...S(p)}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>);
+export const IconSwapVert = (p: P) => (<svg {...S(p)}><path d="M7 4v16M7 4 4 7.5M7 4l3 3.5"/><path d="M17 20V4m0 16 3-3.5M17 20l-3-3.5"/></svg>);
+export const IconDataUsage = (p: P) => (<svg {...S(p)}><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9h-9Z"/></svg>);
+export const IconCoin = (p: P) => (<svg {...S(p)}><circle cx="12" cy="12" r="9"/><path d="M14.5 9.2a3 3 0 0 0-5 2.2c0 2.6 5 1.4 5 3.6a3 3 0 0 1-5 1.9M12 7.2v9.6"/></svg>);
+export const IconGauge = (p: P) => (<svg {...S(p)}><path d="M3.5 17a9 9 0 1 1 17 0"/><path d="M12 17l4-5"/></svg>);
+
 /* Window controls for the frameless desktop shell. Thinner strokes than the rest of
    the set on purpose: these sit where the OS used to draw its own, and a 2px glyph
    there reads as a toolbar button rather than window chrome. */

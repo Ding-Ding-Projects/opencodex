@@ -64,9 +64,11 @@
   color: var(--m3-on-surface);
 }
 
+/* Primary, not secondary-container: the prototype's active section pill is the
+   filled primary tone, and secondary-container read as merely "hovered" beside it. */
 .dash-tab--active {
-  background: var(--m3-secondary-container);
-  color: var(--m3-on-secondary-container);
+  background: var(--m3-primary);
+  color: var(--m3-on-primary);
 }
 
 /* ── Stat cards ───────────────────────────────────────── */
@@ -146,6 +148,54 @@
   border-radius: var(--r-l, 16px);
   background: var(--m3-error-container);
   color: var(--m3-on-error-container);
+}
+
+/*
+  Tertiary variant, for a banner that reports a healthy state rather than a fault.
+  The base class is hard-wired to the error container, which is why startup health
+  could not use it and fell back to a legacy dot-and-link strip instead.
+
+  `align-items: center` because this variant carries a trailing action rather than
+  a paragraph, and the copy wraps: the strip it replaces set `nowrap` +
+  `text-overflow: ellipsis`, which truncated the longest bilingual string instead
+  of wrapping it.
+*/
+.dash-banner--tertiary {
+  align-items: center;
+  background: var(--m3-tertiary-container);
+  color: var(--m3-on-tertiary-container);
+}
+
+.dash-banner__action {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-height: 40px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--r-pill, 999px);
+  background: color-mix(in oklab, currentColor 12%, transparent);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.dash-banner__action:hover { background: color-mix(in oklab, currentColor 20%, transparent); }
+.dash-banner__action:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+/*
+  Inline notice inside a dialog. Replaces the legacy `.notice` / `.notice-warn`
+  names, which alias --m3-* roles but are not M3 vocabulary and cannot be themed
+  through the appearance editor with the rest of the dashboard.
+*/
+.dash-notice {
+  padding: 10px 12px;
+  border-radius: var(--r-s, 8px);
+  background: var(--m3-error-container);
+  color: var(--m3-on-error-container);
+  font-size: var(--t-body-s);
+}
+.dash-notice--warn {
+  background: var(--m3-warn-container);
+  color: var(--m3-on-warn-container);
 }
 
 .dash-banner svg {
