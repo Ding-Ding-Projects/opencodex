@@ -387,6 +387,40 @@ npm uninstall -g @bitkyc08/opencodex
 `ocx uninstall` stops the proxy, removes any installed service, removes the Codex shim, restores
 native Codex config/catalog/history, and deletes `~/.opencodex`.
 
+### Using opencodex from other devices
+
+By default the proxy binds to `127.0.0.1` and is reachable only from the machine it runs on.
+`ocx host` exposes it to your local network so a laptop, phone, or another workstation can use
+the same proxy and open the dashboard:
+
+```bash
+ocx host enable --new-key --yes
+```
+
+That binds to all interfaces, generates an API key, prints it once, and lists the URLs other
+devices should open. Check the current state or turn it back off with:
+
+```bash
+ocx host status
+ocx host disable
+```
+
+A restart (`ocx stop && ocx start`) applies the change.
+
+**What this does and does not do.** It binds to your local network. It does not open a firewall
+port, forward anything, or expose the proxy to the internet. Only use it on a network you trust:
+anyone who can reach the port and holds the key can drive the proxy and every provider account
+behind it.
+
+Exposing the proxy makes a credential mandatory rather than optional — every `/api/*` and
+data-plane request must carry one, and the server refuses to start on a non-loopback bind
+without it. `ocx host enable` refuses too, so you cannot write a config that fails at startup.
+
+The dashboard asks for the key on first load and holds it **in memory only**, so every device
+and every reload asks again. That is deliberate: a browser reached over the network is never
+handed a session automatically, and the key is never written somewhere a page script could read
+it back.
+
 ## Configuration
 
 Config lives at `~/.opencodex/config.json`. If the file cannot be parsed (e.g. truncated or

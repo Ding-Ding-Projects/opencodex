@@ -167,7 +167,37 @@ Concretely, when touching the desktop app or the proxy:
 If a platform is added back later, that rule does not relax. It exists so the
 desktop app never becomes the place where feature parity quietly erodes.
 
-### 9. CI — `.github/workflows/gui-preview.yml`
+### 9. Network hosting — `ocx host`
+
+`src/cli/host.ts` — `status` / `enable` / `disable`, the supported way to reach
+the proxy and dashboard from another device.
+
+Most of this already existed server-side and was simply unreachable: binding to
+a non-loopback hostname already flips `isApiAuthRequired()`, which forces a
+credential onto every `/api/*` and data-plane request, and
+`assertServerAuthConfig()` already refuses to start without one. What was
+missing was a safe way to turn it on — previously you hand-edited
+`config.hostname` and hoped you had a key.
+
+Four properties to preserve if this is touched:
+
+1. **Off by default, never implicit.** `enable` is the only path, needs `--yes`,
+   and names what becomes reachable.
+2. **No credential, no exposure.** `enable` refuses unless a data-plane
+   credential exists or `--new-key` mints one — mirroring the server assertion
+   so you cannot write a config that fails at the next startup.
+3. **No session bootstrap over the network.** `issueGuiSession()` refuses any
+   non-loopback `Host`, so a remote browser gets a 401 and must paste the key,
+   which `gui/src/api.ts` holds in memory only (never localStorage). This is the
+   intended posture, not a gap — `status` explains it rather than apologising
+   for it.
+4. **Plaintext once.** A generated key prints exactly once, like
+   `ocx access key create`; `status` never echoes it back.
+
+`tests/cli-host.test.ts` pins each refusal, because the refusals are the
+feature. Every enable-path test asserts the bind is *still loopback* afterwards.
+
+### 10. CI — `.github/workflows/gui-preview.yml`
 
 Typecheck → lint → test → build, then uploads `gui/dist` as an artifact
 (`opencodex-dashboard-<sha>`, 14-day retention) with a `HOW-TO-RUN.txt`

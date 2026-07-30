@@ -1036,6 +1036,11 @@ switch (command) {
     process.exitCode = await handleChangelogCommand(args.slice(1));
     break;
   }
+  case "host": {
+    const { handleHostCommand } = await import("./host");
+    process.exitCode = await handleHostCommand(args.slice(1));
+    break;
+  }
   case "integration": {
     const integration = args[1];
     if (integration === "grok") {
