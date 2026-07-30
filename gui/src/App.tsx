@@ -99,14 +99,23 @@ export default function App() {
   const health = healthPoll.data;
   const displayedVersion = health?.version ?? __APP_VERSION__;
 
+  // The app-bar chip shows whoever the pool is currently routing through. The
+  // active id and the account list are separate endpoints, and the email the
+  // server returns is already masked — the chip only renders initials from it.
   const accountPoll = useKeyedClientResource(
     `app-codex-account:${API_BASE}`,
     [],
     async (signal) => {
-      const res = await fetch(`${API_BASE}/api/codex/auth`, { signal });
-      const d = await readJsonIfOk<{ email?: unknown; account?: { email?: unknown } }>(res);
-      const email = d?.email ?? d?.account?.email;
-      return typeof email === "string" && email ? email : null;
+      const [activeRes, accountsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/codex-auth/active`, { signal }),
+        fetch(`${API_BASE}/api/codex-auth/accounts`, { signal }),
+      ]);
+      const active = await readJsonIfOk<{ activeCodexAccountId?: unknown }>(activeRes);
+      const list = await readJsonIfOk<{ accounts?: { id?: unknown; email?: unknown }[] }>(accountsRes);
+      const activeId = active?.activeCodexAccountId;
+      if (typeof activeId !== "string" || !Array.isArray(list?.accounts)) return null;
+      const match = list.accounts.find(a => a.id === activeId);
+      return typeof match?.email === "string" && match.email ? match.email : null;
     },
     { pollMs: 60_000 },
   );

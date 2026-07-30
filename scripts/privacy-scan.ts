@@ -9,6 +9,11 @@ type Finding = {
 
 const TEXT_FILE_RE = /\.(?:cjs|css|html|js|json|jsonc|md|mjs|ps1|sh|toml|ts|tsx|txt|yml|yaml)$/;
 const EXCLUDED_PREFIXES = [
+  // Design prototype. `design/ocx-data.js` is offline mock data shaped like the
+  // real /api/* payloads, so it contains placeholder account emails on purpose.
+  // Nothing here is imported by src/ or gui/src/, and the package `files`
+  // allowlist keeps it out of the published tarball.
+  "design/",
   "devlog/",
   "gui/dist/",
   "node_modules/",

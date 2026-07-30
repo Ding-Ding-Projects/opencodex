@@ -64,6 +64,7 @@ describe("headless GUI parity CLI", () => {
       ["/api/selected-models", "ocx models"],
       ["/api/custom-models", "ocx models"],
       ["/api/model", "ocx models"],
+      ["/api/changelog", "ocx changelog"],
       ["/api/combos", "ocx combo"],
       ["/api/debug", "ocx debug/observe"],
       ["/api/diagnostics", "ocx system"],
