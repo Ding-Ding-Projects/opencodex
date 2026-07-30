@@ -212,7 +212,10 @@ function createWindow(port) {
     autoHideMenuBar: true,
     ...(icon ? { icon } : {}),
     webPreferences: {
-      preload: join(HERE, "preload.mjs"),
+      // .cjs, not .mjs: this window is sandboxed, and Electron only loads an ESM
+      // preload when sandbox is off. An .mjs preload here fails silently — no
+      // error, no `window.opencodexDesktop`, no drag region, no window controls.
+      preload: join(HERE, "preload.cjs"),
       // The dashboard is ordinary web content; it gets no Node access.
       contextIsolation: true,
       nodeIntegration: false,
