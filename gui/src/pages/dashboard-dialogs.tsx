@@ -1,6 +1,6 @@
 import { IconAlert, IconRefresh, IconX } from "../icons";
 import { Select } from "../ui";
-import { Empty, Toggle } from "../shell/m3-ui";
+import { Dialog, Empty, Toggle } from "../shell/m3-ui";
 import {
   updateReasonLabel,
   type UpdateChannel,
@@ -12,116 +12,37 @@ type Dash = ReturnType<typeof useDashboardData>;
 export function DashboardDialogs(d: Dash) {
   const {
     t,
-    updateOpen, closeUpdateDialog, updateDialogRef,
+    updateOpen, closeUpdateDialog,
     updateChannel, changeUpdateChannel, updateLoading, updateError, updateCheck,
     fetchUpdateCheck, updateRestart, setUpdateRestart, runUpdate,
-    maHelpOpen, setMaHelpOpen, maHelpDialogRef,
-    effortCapHelpOpen, setEffortCapHelpOpen, effortCapHelpDialogRef,
-    shadowCallHelpOpen, setShadowCallHelpOpen, shadowCallHelpDialogRef,
+    maHelpOpen, setMaHelpOpen,
+    effortCapHelpOpen, setEffortCapHelpOpen,
+    shadowCallHelpOpen, setShadowCallHelpOpen,
   } = d;
 
   return (
     <>
-      <dialog
-        ref={updateDialogRef}
+      {/* `Dialog` owns the native <dialog>, its showModal()/close() and Escape, so
+          none of these four pass a ref or an onCancel any more. The headline id
+          stays on a span the caller renders: `labelledBy` keeps the dialog's
+          accessible name exactly what it was before the port. */}
+      <Dialog
+        open={updateOpen}
+        onClose={closeUpdateDialog}
         id="dashboard-update-dialog"
-        className="modal-overlay"
-        style={{ display: updateOpen ? "flex" : "none", border: "none", margin: 0, maxWidth: "none", maxHeight: "none", width: "100%", height: "100%" }}
-        aria-labelledby="update-title"
-        onCancel={event => { event.preventDefault(); closeUpdateDialog(); }}
-      >
-        <div className="modal-card">
-          <div className="modal-head">
-            <h3 id="update-title">{t("dash.updateTitle")}</h3>
-            <button type="button" className="m3-icon-btn" onClick={closeUpdateDialog} aria-label={t("common.cancel")}>
-              <IconX />
-            </button>
-          </div>
-          <div className="modal-desc">{t("dash.updateDesc")}</div>
-          <div className="update-row">
-            {/* A span, not a <label htmlFor>: `Select` renders a listbox button with its
-                own aria-label, and nothing on this screen has ever carried the id the
-                htmlFor pointed at — a dangling association names nothing. */}
-            <span className="m3-field-label">{t("dash.updateChannel")}</span>
-            <Select
-              value={updateChannel}
-              options={[{ value: "latest", label: "latest" }, { value: "preview", label: "preview" }]}
-              onChange={v => changeUpdateChannel(v as UpdateChannel)}
-              disabled={updateLoading}
-              label={t("dash.updateChannel")}
-              portal={false}
-            />
-          </div>
-          {updateLoading && (
-            <Empty title={t("dash.updateChecking")}><span className="spin" aria-hidden="true" /></Empty>
-          )}
-          {updateError && (
-            <div className="dash-notice m3-row" role="status"><IconAlert width={16} height={16} aria-hidden="true" /><span>{updateError}</span></div>
-          )}
-          {updateCheck && !updateLoading && (
-            <div className="update-box">
-              <div className="spread">
-                <div>
-                  <div className="muted text-label">{t("dash.updateInstalled")}</div>
-                  <div className="mono">{updateCheck.currentVersion}</div>
-                </div>
-                <div>
-                  <div className="muted text-label">{t("dash.updateLatest")}</div>
-                  <div className="mono">{updateCheck.latestVersion ?? "—"}</div>
-                </div>
-                <span className={`m3-chip${updateCheck.updateAvailable ? " selected" : ""}`}>
-                  {updateCheck.updateAvailable ? t("dash.updateAvailable") : t("dash.updateCurrent")}
-                </span>
-              </div>
-              <div className="muted update-command">{t("dash.updateCommand")} <code className="m3-chip">{updateCheck.command}</code></div>
-              {updateCheck.reason === "source_checkout" && (
-                <div className="dash-notice dash-notice--warn m3-row" role="status"><IconAlert width={16} height={16} aria-hidden="true" /><span>{t("dash.updateSource")}</span></div>
-              )}
-              {updateCheck.reason === "latest_unavailable" && (
-                <div className="dash-notice dash-notice--warn m3-row" role="status">
-                  <IconAlert width={16} height={16} aria-hidden="true" />
-                  <span>{t("dash.updateUnavailable")}</span>
-                  <button
-                    type="button"
-                    className="m3-btn m3-btn--text"
-                    disabled={updateLoading}
-                    onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
-                  >
-                    <IconRefresh aria-hidden="true" /> {t("dash.updateRetry")}
-                  </button>
-                </div>
-              )}
-              {!updateCheck.canUpdate && updateCheck.reason !== "latest_unavailable" && updateCheck.reason !== "source_checkout" && (
-                <div className="update-recheck">
-                  <span className="muted update-recheck-reason">
-                    {t("dash.updateCannotAuto", { reason: updateReasonLabel(updateCheck.reason, t) })}
-                  </span>
-                  <button
-                    type="button"
-                    className="m3-btn m3-btn--text"
-                    disabled={updateLoading}
-                    onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
-                  >
-                    <IconRefresh aria-hidden="true" /> {updateLoading ? t("dash.updateChecking") : t("dash.updateRecheck")}
-                  </button>
-                </div>
-              )}
-              {updateCheck.canUpdate && (
-                <div className="spread update-restart">
-                  <div>
-                    <div className="font-semibold">{t("dash.updateRestart")}</div>
-                    <div className="muted text-label">{t("dash.updateRestartHint")}</div>
-                  </div>
-                  <Toggle
-                    on={updateRestart}
-                    onChange={next => setUpdateRestart(next)}
-                    label={t("dash.updateRestart")}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-          <div className="modal-actions">
+        title={t("dash.updateTitle")}
+        headAction={
+          <button type="button" className="m3-icon-btn" onClick={closeUpdateDialog} aria-label={t("common.cancel")}>
+            <IconX />
+          </button>
+        }
+        description={t("dash.updateDesc")}
+        /* The channel and the restart toggle are unsaved until "Run update" runs,
+           and this dialog never dismissed on a backdrop click before the port —
+           it is the one here that carries input, so a stray click must not close it. */
+        dismissOnScrim={false}
+        actions={
+          <>
             <button type="button" className="m3-btn m3-btn--text" onClick={closeUpdateDialog}>{t("common.cancel")}</button>
             <button
               type="button"
@@ -131,83 +52,144 @@ export function DashboardDialogs(d: Dash) {
             >
               {t("dash.runUpdate")}
             </button>
-          </div>
+          </>
+        }
+      >
+        <div className="update-row">
+          {/* A span, not a <label htmlFor>: `Select` renders a listbox button with its
+              own aria-label, and nothing on this screen has ever carried the id the
+              htmlFor pointed at — a dangling association names nothing. */}
+          <span className="m3-field-label">{t("dash.updateChannel")}</span>
+          <Select
+            value={updateChannel}
+            options={[{ value: "latest", label: "latest" }, { value: "preview", label: "preview" }]}
+            onChange={v => changeUpdateChannel(v as UpdateChannel)}
+            disabled={updateLoading}
+            label={t("dash.updateChannel")}
+            portal={false}
+          />
         </div>
-      </dialog>
+        {updateLoading && (
+          <Empty title={t("dash.updateChecking")}><span className="spin" aria-hidden="true" /></Empty>
+        )}
+        {updateError && (
+          <div className="dash-notice m3-row" role="status"><IconAlert width={16} height={16} aria-hidden="true" /><span>{updateError}</span></div>
+        )}
+        {updateCheck && !updateLoading && (
+          <div className="update-box">
+            <div className="spread">
+              <div>
+                <div className="muted text-label">{t("dash.updateInstalled")}</div>
+                <div className="mono">{updateCheck.currentVersion}</div>
+              </div>
+              <div>
+                <div className="muted text-label">{t("dash.updateLatest")}</div>
+                <div className="mono">{updateCheck.latestVersion ?? "—"}</div>
+              </div>
+              <span className={`m3-chip${updateCheck.updateAvailable ? " selected" : ""}`}>
+                {updateCheck.updateAvailable ? t("dash.updateAvailable") : t("dash.updateCurrent")}
+              </span>
+            </div>
+            <div className="muted update-command">{t("dash.updateCommand")} <code className="m3-chip">{updateCheck.command}</code></div>
+            {updateCheck.reason === "source_checkout" && (
+              <div className="dash-notice dash-notice--warn m3-row" role="status"><IconAlert width={16} height={16} aria-hidden="true" /><span>{t("dash.updateSource")}</span></div>
+            )}
+            {updateCheck.reason === "latest_unavailable" && (
+              <div className="dash-notice dash-notice--warn m3-row" role="status">
+                <IconAlert width={16} height={16} aria-hidden="true" />
+                <span>{t("dash.updateUnavailable")}</span>
+                <button
+                  type="button"
+                  className="m3-btn m3-btn--text"
+                  disabled={updateLoading}
+                  onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
+                >
+                  <IconRefresh aria-hidden="true" /> {t("dash.updateRetry")}
+                </button>
+              </div>
+            )}
+            {!updateCheck.canUpdate && updateCheck.reason !== "latest_unavailable" && updateCheck.reason !== "source_checkout" && (
+              <div className="update-recheck">
+                <span className="muted update-recheck-reason">
+                  {t("dash.updateCannotAuto", { reason: updateReasonLabel(updateCheck.reason, t) })}
+                </span>
+                <button
+                  type="button"
+                  className="m3-btn m3-btn--text"
+                  disabled={updateLoading}
+                  onClick={() => { void fetchUpdateCheck(updateChannel, true); }}
+                >
+                  <IconRefresh aria-hidden="true" /> {updateLoading ? t("dash.updateChecking") : t("dash.updateRecheck")}
+                </button>
+              </div>
+            )}
+            {updateCheck.canUpdate && (
+              <div className="spread update-restart">
+                <div>
+                  <div className="font-semibold">{t("dash.updateRestart")}</div>
+                  <div className="muted text-label">{t("dash.updateRestartHint")}</div>
+                </div>
+                <Toggle
+                  on={updateRestart}
+                  onChange={next => setUpdateRestart(next)}
+                  label={t("dash.updateRestart")}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </Dialog>
 
-      <dialog
-        ref={maHelpDialogRef}
+      {/* The three help dialogs carry no input, and each already dismissed on a
+          backdrop click through its own invisible button — `dismissOnScrim`
+          defaults to true, which is that same route. */}
+      <Dialog
+        open={maHelpOpen}
+        onClose={() => setMaHelpOpen(false)}
         id="multi-agent-help-dialog"
-        className="modal-overlay"
-        style={{ display: maHelpOpen ? "flex" : "none", border: "none", margin: 0, maxWidth: "none", maxHeight: "none", width: "100%", height: "100%" }}
-        aria-labelledby="multi-agent-help-title"
-        onCancel={event => { event.preventDefault(); setMaHelpOpen(false); }}
+        title={t("dash.multiAgent")}
+        headAction={
+          <button type="button" className="m3-icon-btn" onClick={() => setMaHelpOpen(false)} aria-label={t("common.close")}>
+            <IconX />
+          </button>
+        }
+        description={<span style={{ whiteSpace: "pre-line" }}>{t("models.v2Help")}</span>}
+        actions={<button type="button" className="m3-btn m3-btn--filled" onClick={() => setMaHelpOpen(false)}>{t("common.ok")}</button>}
       >
-        <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={() => setMaHelpOpen(false)} />
-        <div className="modal-card" onClick={e => e.stopPropagation()}>
-          <div className="modal-head">
-            <h3 id="multi-agent-help-title">{t("dash.multiAgent")}</h3>
-            <button type="button" className="m3-icon-btn" onClick={() => setMaHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
-          </div>
-          <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
-            {t("models.v2Help")}
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--m3-primary)" }}>
-              {t("models.v2DocsLink")}
-            </a>
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="m3-btn m3-btn--filled" onClick={() => setMaHelpOpen(false)}>{t("common.ok")}</button>
-          </div>
+        <div>
+          <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--m3-primary)" }}>
+            {t("models.v2DocsLink")}
+          </a>
         </div>
-      </dialog>
+      </Dialog>
 
-      <dialog
-        ref={effortCapHelpDialogRef}
+      <Dialog
+        open={effortCapHelpOpen}
+        onClose={() => setEffortCapHelpOpen(false)}
         id="effort-cap-help-dialog"
-        className="modal-overlay"
-        style={{ display: effortCapHelpOpen ? "flex" : "none", border: "none", margin: 0, maxWidth: "none", maxHeight: "none", width: "100%", height: "100%" }}
-        aria-labelledby="effort-cap-help-title"
-        onCancel={event => { event.preventDefault(); setEffortCapHelpOpen(false); }}
-      >
-        <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={() => setEffortCapHelpOpen(false)} />
-        <div className="modal-card" onClick={e => e.stopPropagation()}>
-          <div className="modal-head">
-            <h3 id="effort-cap-help-title">{t("dash.effortCapLabel")}</h3>
-            <button type="button" className="m3-icon-btn" onClick={() => setEffortCapHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
-          </div>
-          <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
-            {t("dash.effortCapHelp")}
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="m3-btn m3-btn--filled" onClick={() => setEffortCapHelpOpen(false)}>{t("common.ok")}</button>
-          </div>
-        </div>
-      </dialog>
+        title={t("dash.effortCapLabel")}
+        headAction={
+          <button type="button" className="m3-icon-btn" onClick={() => setEffortCapHelpOpen(false)} aria-label={t("common.close")}>
+            <IconX />
+          </button>
+        }
+        description={<span style={{ whiteSpace: "pre-line" }}>{t("dash.effortCapHelp")}</span>}
+        actions={<button type="button" className="m3-btn m3-btn--filled" onClick={() => setEffortCapHelpOpen(false)}>{t("common.ok")}</button>}
+      />
 
-      <dialog
-        ref={shadowCallHelpDialogRef}
+      <Dialog
+        open={shadowCallHelpOpen}
+        onClose={() => setShadowCallHelpOpen(false)}
         id="shadow-call-help-dialog"
-        className="modal-overlay"
-        style={{ display: shadowCallHelpOpen ? "flex" : "none", border: "none", margin: 0, maxWidth: "none", maxHeight: "none", width: "100%", height: "100%" }}
-        aria-labelledby="shadow-call-help-title"
-        onCancel={event => { event.preventDefault(); setShadowCallHelpOpen(false); }}
-      >
-        <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={() => setShadowCallHelpOpen(false)} />
-        <div className="modal-card" onClick={e => e.stopPropagation()}>
-          <div className="modal-head">
-            <h3 id="shadow-call-help-title">{t("dash.shadowCallIntercept")}</h3>
-            <button type="button" className="m3-icon-btn" onClick={() => setShadowCallHelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
-          </div>
-          <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
-            {t("dash.shadowCallTooltip")}
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="m3-btn m3-btn--filled" onClick={() => setShadowCallHelpOpen(false)}>{t("common.ok")}</button>
-          </div>
-        </div>
-      </dialog>
+        title={t("dash.shadowCallIntercept")}
+        headAction={
+          <button type="button" className="m3-icon-btn" onClick={() => setShadowCallHelpOpen(false)} aria-label={t("common.close")}>
+            <IconX />
+          </button>
+        }
+        description={<span style={{ whiteSpace: "pre-line" }}>{t("dash.shadowCallTooltip")}</span>}
+        actions={<button type="button" className="m3-btn m3-btn--filled" onClick={() => setShadowCallHelpOpen(false)}>{t("common.ok")}</button>}
+      />
     </>
   );
 }

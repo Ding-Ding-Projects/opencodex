@@ -835,6 +835,146 @@ html[data-desktop] .m3-appbar .m3-avatar {
   border: 0;
 }
 
+/* --------------------------------------------------------------- banner --
+   Inline status, in the same four tones the snackbars use — so a message reads
+   identically whether it lands beside its control or as a toast.
+   -------------------------------------------------------------------------- */
+
+.m3-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2, 12px);
+  padding: 12px 14px;
+  border-radius: var(--r-m, 12px);
+  font-size: var(--t-body-s, 13px);
+  line-height: 1.45;
+}
+.m3-banner__text { min-width: 0; flex: 1 1 auto; display: grid; gap: 2px; }
+.m3-banner__title { font-weight: 600; }
+.m3-banner__body { overflow-wrap: anywhere; }
+.m3-banner__action { flex: 0 0 auto; }
+
+.m3-banner--info { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-banner--success { background: var(--m3-ok-container); color: var(--m3-on-ok-container); }
+.m3-banner--warn { background: var(--m3-warn-container); color: var(--m3-on-warn-container); }
+.m3-banner--error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+
+/* --------------------------------------------------------------- select --
+   The native control, themed. A hand-rolled listbox loses the platform picker
+   that touch users expect, and has to reimplement keyboard support to match.
+   -------------------------------------------------------------------------- */
+
+.m3-select {
+  min-height: var(--h-btn, 40px);
+  padding: 0 32px 0 12px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s, 8px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-body-m, 14px);
+  cursor: pointer;
+  /* Room for the UA arrow without it colliding with a long option label. */
+  appearance: auto;
+}
+.m3-select:disabled { opacity: 0.5; cursor: default; }
+.m3-select:focus-visible { outline: 2px solid var(--m3-primary); outline-offset: 2px; }
+
+/* --------------------------------------------------------------- dialog --
+   Material 3 dialog. Replaces the liquid-glass `.modal-overlay`/`.modal-card`
+   pair: no backdrop blur, no hardcoded rgba, every colour an `--m3-*` role.
+   -------------------------------------------------------------------------- */
+
+.m3-dialog {
+  /* The native element IS the scrim, so its own UA chrome has to go: a border
+     and a `::backdrop` on top of our own dim produced a white frame and a
+     double-darkened page. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 6vh 16px;
+  border: none;
+  background: color-mix(in oklab, var(--m3-scrim) 40%, transparent);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+}
+.m3-dialog::backdrop { background: transparent; }
+
+/* Non-modal: no scrim and no pointer capture, so the page behind stays usable.
+   The surface itself still takes pointer events. */
+.m3-dialog--nonmodal {
+  background: transparent;
+  pointer-events: none;
+}
+.m3-dialog--nonmodal .m3-dialog__surface {
+  pointer-events: auto;
+  /* Outlined rather than floating on a scrim: with nothing dimmed behind it, an
+     edge is what separates it from the page. */
+  border: 1px solid var(--m3-outline-variant);
+}
+.m3-dialog:not([open]) { display: none; }
+
+.m3-dialog__surface {
+  width: 100%;
+  /* M3 dialogs are the most raised surface in the app, at the largest radius. */
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  border-radius: var(--r-xl, 28px);
+  box-shadow: var(--e3);
+  padding: var(--sp-4, 24px);
+  display: grid;
+  gap: var(--sp-3, 16px);
+  max-height: 84vh;
+  overflow-y: auto;
+}
+
+.m3-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2, 12px);
+}
+.m3-dialog__headtext { min-width: 0; flex: 1 1 auto; display: grid; gap: 8px; }
+.m3-dialog__headaction { flex: 0 0 auto; }
+.m3-dialog__title {
+  margin: 0;
+  font-size: var(--t-headline-s, 24px);
+  font-weight: 400;
+  color: var(--m3-on-surface);
+}
+.m3-dialog__desc {
+  margin: 0;
+  font-size: var(--t-body-m, 14px);
+  line-height: 1.45;
+  color: var(--m3-on-surface-variant);
+}
+.m3-dialog__body { min-width: 0; display: grid; gap: var(--sp-2, 12px); }
+
+.m3-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  /* End-aligned, per M3 — and wrapping rather than shrinking, so a long
+     localized label in bilingual mode never squeezes a button below its
+     touch target. */
+  justify-content: flex-end;
+}
+
+@media (max-width: 480px) {
+  .m3-dialog { padding: 0; align-items: flex-end; }
+  .m3-dialog__surface {
+    max-height: 92vh;
+    border-radius: var(--r-xl, 28px) var(--r-xl, 28px) 0 0;
+    padding-bottom: max(env(safe-area-inset-bottom), var(--sp-4, 24px));
+  }
+}
+
 /* Remote-access QR codes. */
 .m3-qr-row { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .m3-qr { margin: 0; display: grid; gap: 8px; justify-items: center; }

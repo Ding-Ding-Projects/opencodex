@@ -7,12 +7,11 @@
  * legacy `.badge` + `.startup-hero--*` chrome.
  */
 
-import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n, type TKey } from "../i18n/shared";
 import { startupRiskDetailKey } from "../startup-health-ui";
 import { IconAlert, IconCheck, IconDownload, IconPower, IconTerminal, IconX } from "../icons";
-import { Button, Card } from "../shell/m3-ui";
-import { useModalDialog } from "./dashboard-shared";
+import { Button, Card, Dialog } from "../shell/m3-ui";
 import type {
   StartupHealthData,
   StartupInstallAction,
@@ -120,18 +119,15 @@ const commandCodeStyle: CSSProperties = {
 const buttonsRowStyle: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 10, marginTop: "var(--sp-3)" };
 const platformStyle: CSSProperties = { color: "var(--m3-on-surface-variant)", fontFamily: "var(--mono)", fontSize: "var(--t-label-m)" };
 
-/** `<dialog>` defaults fight `.modal-overlay`'s full-bleed scrim, so they are cleared. */
-const dialogStyle = (open: boolean): CSSProperties => ({
-  display: open ? "flex" : "none",
-  border: "none",
-  margin: 0,
-  maxWidth: "none",
-  maxHeight: "none",
-  width: "100%",
-  height: "100%",
-});
-/** `.modal-actions` still stretches legacy buttons; the alignment travels with M3 ones. */
-const dialogActionsStyle: CSSProperties = { justifyContent: "flex-end" };
+/**
+ * The dialog headline is rendered here rather than through `Dialog`'s `title`
+ * prop so the corner close button keeps its own accessible name — folded into
+ * the prop it would become part of the heading's text, and the dialog would
+ * lose the `aria-labelledby` target it has always had. `.m3-dialog__title` and
+ * `.m3-dialog__desc` are the component's own vocabulary, so the typography
+ * still comes from one place.
+ */
+const dialogHeadStyle: CSSProperties = { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 };
 
 function StartupStatePill({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
   return <span style={pillStyle(ok ? "ok" : "warn")}>{ok ? yes : no}</span>;
@@ -270,9 +266,9 @@ export function StartupTraySection({
   // native `window.confirm` cannot be themed, localized past the browser's own
   // button labels, or told what removal actually costs. This one says it: the
   // proxy keeps running and restart protection is untouched.
+  // `Dialog` owns opening and closing the native element, so this is only state
+  // now — and the element hands focus back to the button that opened it.
   const [uninstallOpen, setUninstallOpen] = useState(false);
-  const uninstallTriggerRef = useRef<HTMLButtonElement>(null);
-  const uninstallDialogRef = useModalDialog(uninstallOpen, uninstallTriggerRef);
 
   return (
     <Card
@@ -306,17 +302,7 @@ export function StartupTraySection({
           <Button variant="tonal" disabled={trayBusy} onClick={() => onTrayAction("stop")}>{t("startup.tray.stop")}</Button>
         )}
         {!trayLoading && !trayError && tray && (tray.installed || tray.stale) && (
-          <Button
-            variant="danger"
-            disabled={trayBusy}
-            onClick={event => {
-              // Captured here rather than through a `ref` prop: `Button` types its
-              // props as plain button attributes, so focus return needs the element
-              // the click actually came from.
-              uninstallTriggerRef.current = event.currentTarget;
-              setUninstallOpen(true);
-            }}
-          >
+          <Button variant="danger" disabled={trayBusy} onClick={() => setUninstallOpen(true)}>
             {t("startup.tray.uninstall")}
           </Button>
         )}
@@ -325,22 +311,12 @@ export function StartupTraySection({
         <div className={noticeClass} style={noticeGapStyle} role="alert">{t("startup.tray.error")}</div>
       )}
 
-      <dialog
-        ref={uninstallDialogRef}
-        className="modal-overlay"
-        style={dialogStyle(uninstallOpen)}
-        aria-labelledby="startup-tray-uninstall-title"
-        onCancel={event => { event.preventDefault(); setUninstallOpen(false); }}
-      >
-        <div className="modal-card">
-          <div className="modal-head">
-            <h3 id="startup-tray-uninstall-title">{t("startup.tray.uninstall")}</h3>
-            <button type="button" className="m3-icon-btn" onClick={() => setUninstallOpen(false)} aria-label={t("common.cancel")}>
-              <IconX />
-            </button>
-          </div>
-          <div className="modal-desc">{t("startup.tray.uninstallConfirm")}</div>
-          <div className="modal-actions" style={dialogActionsStyle}>
+      <Dialog
+        open={uninstallOpen}
+        onClose={() => setUninstallOpen(false)}
+        labelledBy="startup-tray-uninstall-title"
+        actions={
+          <>
             <Button variant="text" onClick={() => setUninstallOpen(false)}>{t("common.cancel")}</Button>
             <Button
               variant="danger"
@@ -348,9 +324,17 @@ export function StartupTraySection({
             >
               {t("startup.tray.uninstall")}
             </Button>
-          </div>
+          </>
+        }
+      >
+        <div style={dialogHeadStyle}>
+          <h3 id="startup-tray-uninstall-title" className="m3-dialog__title">{t("startup.tray.uninstall")}</h3>
+          <button type="button" className="m3-icon-btn" onClick={() => setUninstallOpen(false)} aria-label={t("common.cancel")}>
+            <IconX />
+          </button>
         </div>
-      </dialog>
+        <p className="m3-dialog__desc">{t("startup.tray.uninstallConfirm")}</p>
+      </Dialog>
     </Card>
   );
 }

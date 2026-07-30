@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Notice, Select, Tooltip } from "../ui";
-import { Button, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { IconChevron, IconInfo, IconRegex, IconSearch, IconShuffle } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
@@ -1168,45 +1168,48 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const modalsBlock = (
     <>
       {v2HelpOpen && (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("models.v2Label")} onClick={() => setV2HelpOpen(false)} onKeyDown={e => { if (e.key === "Escape") setV2HelpOpen(false); }}>
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>{t("models.v2Label")}</h3>
+        <Dialog
+          onClose={() => setV2HelpOpen(false)}
+          // The headline carries the id so the dialog keeps the accessible name the
+          // legacy overlay set with `aria-label` — `<dialog>` gets no name from its
+          // contents, and Dialog exposes `labelledBy` rather than an aria-label prop.
+          title={<span id="models-v2-help-title">{t("models.v2Label")}</span>}
+          labelledBy="models-v2-help-title"
+          // The help text is authored with newlines, so it stays `pre-line`.
+          description={<span className="leading-relaxed" style={{ whiteSpace: "pre-line" }}>{t("models.v2Help")}</span>}
+          actions={
+            <>
               <Button variant="text" className="models-modal-close" onClick={() => setV2HelpOpen(false)} aria-label={t("common.close")}>&times;</Button>
-            </div>
-            <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
-              {t("models.v2Help")}
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--m3-primary)" }}>
-                {t("models.v2DocsLink")}
-              </a>
-            </div>
-            <div className="modal-actions">
               <Button variant="filled" onClick={() => setV2HelpOpen(false)}>{t("common.ok")}</Button>
-            </div>
+            </>
+          }
+        >
+          <div>
+            <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--m3-primary)" }}>
+              {t("models.v2DocsLink")}
+            </a>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {customModalOpen && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("models.customAdd")}
-          onClick={() => { if (!customSaving) setCustomModalOpen(false); }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && !customSaving) setCustomModalOpen(false);
-          }}
-        >
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>
-                {customModalMode === "add"
-                  ? t("models.customAddTitle", { provider: customModalProvider })
-                  : t("models.customEditTitle", { provider: customModalProvider })}
-              </h3>
+        <Dialog
+          // Escape still cannot abandon a save in flight, exactly as the legacy
+          // overlay's keydown guard had it.
+          onClose={() => { if (!customSaving) setCustomModalOpen(false); }}
+          // The form holds whatever the user typed, so a stray scrim click must
+          // not discard it.
+          dismissOnScrim={false}
+          title={
+            <span id="models-custom-model-title">
+              {customModalMode === "add"
+                ? t("models.customAddTitle", { provider: customModalProvider })
+                : t("models.customEditTitle", { provider: customModalProvider })}
+            </span>
+          }
+          labelledBy="models-custom-model-title"
+          actions={
+            <>
               <Button
                 variant="text"
                 className="models-modal-close"
@@ -1214,98 +1217,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
                 disabled={customSaving}
                 aria-label={t("common.close")}
               >&times;</Button>
-            </div>
-
-            {customError && <Notice tone="err">{customError}</Notice>}
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldModelId")}
-                <input
-                  className="m3-input"
-                  value={customFormModelId}
-                  onChange={e => setCustomFormModelId(e.target.value)}
-                  disabled={customSaving}
-                  placeholder={t("models.customFieldModelIdPlaceholder")}
-                  autoFocus
-                />
-              </label>
-
-              <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldDisplayName")}
-                <input
-                  className="m3-input"
-                  value={customFormDisplayName}
-                  onChange={e => setCustomFormDisplayName(e.target.value)}
-                  disabled={customSaving}
-                  placeholder={t("models.customFieldDisplayNamePlaceholder")}
-                />
-              </label>
-
-              <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldContext")}
-                <div className="row" style={{ gap: 6 }}>
-                  <Select
-                    value={customFormShowCustomCtx ? CUSTOM_OPTION : customFormContextWindow}
-                    options={[
-                      { value: "", label: "—" },
-                      { value: "100000", label: "100k" },
-                      { value: "128000", label: "128k" },
-                      { value: "200000", label: "200k" },
-                      { value: "256000", label: "256k" },
-                      { value: "352000", label: "352k" },
-                      { value: "500000", label: "500k" },
-                      { value: "1000000", label: "1M" },
-                      { value: CUSTOM_OPTION, label: t("models.custom") },
-                    ]}
-                    onChange={v => {
-                      if (v === CUSTOM_OPTION) {
-                        setCustomFormShowCustomCtx(true);
-                        return;
-                      }
-                      setCustomFormShowCustomCtx(false);
-                      setCustomFormContextWindow(v);
-                    }}
-                    disabled={customSaving}
-                    label={t("models.customFieldContext")}
-                  />
-                  {customFormShowCustomCtx && (
-                    <input
-                      className="m3-input models-input-narrow"
-                      inputMode="numeric"
-                      value={customFormContextWindow}
-                      onChange={e => setCustomFormContextWindow(e.target.value)}
-                      disabled={customSaving}
-                      placeholder={t("models.customPlaceholder")}
-                      aria-label={t("models.customFieldContext")}
-                    />
-                  )}
-                </div>
-              </label>
-
-              <div className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldModalities")}
-                <div className="row" style={{ gap: 8 }}>
-                  {(["text", "image", "audio"] as const).map(mod => (
-                    <label key={mod} className="row" style={{ gap: 4, cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={customFormModalities.includes(mod)}
-                        onChange={e => {
-                          setCustomFormModalities(prev => (
-                            e.target.checked ? [...prev, mod] : prev.filter(m => m !== mod)
-                          ));
-                        }}
-                        disabled={customSaving}
-                      />
-                      <span className="text-control">{mod}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-actions">
               <Button variant="text" onClick={() => setCustomModalOpen(false)} disabled={customSaving}>
                 {t("common.cancel")}
               </Button>
@@ -1339,9 +1250,98 @@ export default function Models({ apiBase }: { apiBase: string }) {
                   ? t("models.customSaving")
                   : (customModalMode === "add" ? t("models.customAddBtn") : t("models.customEditBtn"))}
               </Button>
+            </>
+          }
+        >
+          {customError && <Notice tone="err">{customError}</Notice>}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldModelId")}
+              <input
+                className="m3-input"
+                value={customFormModelId}
+                onChange={e => setCustomFormModelId(e.target.value)}
+                disabled={customSaving}
+                placeholder={t("models.customFieldModelIdPlaceholder")}
+                autoFocus
+              />
+            </label>
+
+            <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldDisplayName")}
+              <input
+                className="m3-input"
+                value={customFormDisplayName}
+                onChange={e => setCustomFormDisplayName(e.target.value)}
+                disabled={customSaving}
+                placeholder={t("models.customFieldDisplayNamePlaceholder")}
+              />
+            </label>
+
+            <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldContext")}
+              <div className="row" style={{ gap: 6 }}>
+                <Select
+                  value={customFormShowCustomCtx ? CUSTOM_OPTION : customFormContextWindow}
+                  options={[
+                    { value: "", label: "—" },
+                    { value: "100000", label: "100k" },
+                    { value: "128000", label: "128k" },
+                    { value: "200000", label: "200k" },
+                    { value: "256000", label: "256k" },
+                    { value: "352000", label: "352k" },
+                    { value: "500000", label: "500k" },
+                    { value: "1000000", label: "1M" },
+                    { value: CUSTOM_OPTION, label: t("models.custom") },
+                  ]}
+                  onChange={v => {
+                    if (v === CUSTOM_OPTION) {
+                      setCustomFormShowCustomCtx(true);
+                      return;
+                    }
+                    setCustomFormShowCustomCtx(false);
+                    setCustomFormContextWindow(v);
+                  }}
+                  disabled={customSaving}
+                  label={t("models.customFieldContext")}
+                />
+                {customFormShowCustomCtx && (
+                  <input
+                    className="m3-input models-input-narrow"
+                    inputMode="numeric"
+                    value={customFormContextWindow}
+                    onChange={e => setCustomFormContextWindow(e.target.value)}
+                    disabled={customSaving}
+                    placeholder={t("models.customPlaceholder")}
+                    aria-label={t("models.customFieldContext")}
+                  />
+                )}
+              </div>
+            </label>
+
+            <div className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldModalities")}
+              <div className="row" style={{ gap: 8 }}>
+                {(["text", "image", "audio"] as const).map(mod => (
+                  <label key={mod} className="row" style={{ gap: 4, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={customFormModalities.includes(mod)}
+                      onChange={e => {
+                        setCustomFormModalities(prev => (
+                          e.target.checked ? [...prev, mod] : prev.filter(m => m !== mod)
+                        ));
+                      }}
+                      disabled={customSaving}
+                    />
+                    <span className="text-control">{mod}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
     </>
   );

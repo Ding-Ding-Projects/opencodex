@@ -41,8 +41,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: cross-platform-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-SHA, and never cancelled. Grouping by ref meant a second push killed
+  # the run already testing the first, so a commit could reach main having
+  # been tested by nothing — and `Auto release` gates on this workflow's
+  # conclusion, so a cancelled run also silently skips the release.
+  group: cross-platform-ci-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   test:

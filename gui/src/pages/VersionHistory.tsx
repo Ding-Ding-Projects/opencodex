@@ -27,7 +27,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { Button, Card, Chip, Empty, Field, TextInput } from "../shell/m3-ui";
+import { Button, Card, Chip, Dialog, Empty, Field, TextInput } from "../shell/m3-ui";
 import {
   IconFilter, IconGlobe, IconHistory, IconKey, IconRegex, IconSearch,
   IconServer, IconShuffle, IconTag, IconUndo,
@@ -95,43 +95,12 @@ function originKey(origin: HistoryOrigin): TKey {
 }
 
 /**
- * The prototype's blocking dialog, which is what a restore, a relabel and a log
- * wipe each need — `confirm()` is a decision point too, but it cannot be themed,
- * cannot be localized and cannot hold an input.
+ * A restore, a relabel and a log wipe are each a decision, so each is gated by a
+ * blocking dialog — `confirm()` is a decision point too, but it cannot be themed,
+ * cannot be localized and cannot hold an input. The shared M3 `Dialog` owns the
+ * `<dialog>` element, `showModal()`, the focus trap, Escape and the scrim, so this
+ * screen only describes what each decision says and what confirming it does.
  */
-function Dialog({ titleId, title, closeLabel, onClose, children, actions }: {
-  titleId: string;
-  title: string;
-  closeLabel: string;
-  onClose: () => void;
-  children?: React.ReactNode;
-  actions: React.ReactNode;
-}) {
-  const [node, setNode] = useState<HTMLDialogElement | null>(null);
-
-  useEffect(() => {
-    // Guarded: the modal is only ever mounted while open, and not every DOM
-    // implementation the tests run under ships `showModal`.
-    if (node && !node.open && typeof node.showModal === "function") node.showModal();
-  }, [node]);
-
-  return (
-    <dialog
-      ref={setNode}
-      className="modal-overlay"
-      aria-labelledby={titleId}
-      onCancel={e => { e.preventDefault(); onClose(); }}
-    >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={closeLabel} tabIndex={-1} onClick={onClose} />
-      <div className="modal-card" role="document" onClick={e => e.stopPropagation()}>
-        <h3 id={titleId}>{title}</h3>
-        {children}
-        <div className="modal-actions">{actions}</div>
-      </div>
-    </dialog>
-  );
-}
-
 type DialogState =
   | { kind: "restore" }
   | { kind: "force"; count: number }
@@ -585,65 +554,70 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
 
       {dialog?.kind === "restore" && selected && (
         <Dialog
-          titleId="history-restore-title"
-          title={selected.origin === "server" ? t("history.restore") : t("history.localAction")}
-          closeLabel={t("common.close")}
+          // `Dialog` renders the M3 headline but does not name the `<dialog>`
+          // element itself, so the id rides on the title text and the modal keeps
+          // the accessible name the legacy markup gave it.
+          labelledBy="history-restore-title"
+          title={
+            <span id="history-restore-title">
+              {selected.origin === "server" ? t("history.restore") : t("history.localAction")}
+            </span>
+          }
+          /*
+            Both wordings state the append-only guarantee. The server one also has
+            to say that in-flight work finishes first and the proxy restarts,
+            because that restore reaches outside the browser — which is why the
+            supporting text keeps `pre-line`: that string's blank lines separate
+            what happens from what it costs, and collapsing them loses the break.
+          */
+          description={
+            <span style={{ whiteSpace: "pre-line" }}>
+              {selected.origin === "server"
+                ? t("network.restoreConfirm", { label: restoreLabel })
+                : t("history.restoreConfirm", { label: restoreLabel })}
+            </span>
+          }
           onClose={closeDialog}
           actions={
             <>
-              <button type="button" className="m3-btn m3-btn--text" onClick={closeDialog}>{t("common.cancel")}</button>
-              <button
-                type="button"
-                className="m3-btn m3-btn--filled"
-                onClick={() => selected.origin === "server" ? void restoreServer(selected, false) : restoreLocal(selected)}
-              >
+              <Button variant="text" onClick={closeDialog}>{t("common.cancel")}</Button>
+              <Button onClick={() => selected.origin === "server" ? void restoreServer(selected, false) : restoreLocal(selected)}>
                 {selected.origin === "server" ? t("history.restore") : t("history.localAction")}
-              </button>
+              </Button>
             </>
           }
-        >
-          {/*
-            Both wordings state the append-only guarantee. The server one also has
-            to say that in-flight work finishes first and the proxy restarts,
-            because that restore reaches outside the browser.
-          */}
-          <p className="modal-desc" style={{ whiteSpace: "pre-line" }}>
-            {selected.origin === "server"
-              ? t("network.restoreConfirm", { label: restoreLabel })
-              : t("history.restoreConfirm", { label: restoreLabel })}
-          </p>
-        </Dialog>
+        />
       )}
 
       {dialog?.kind === "force" && selected && (
         <Dialog
-          titleId="history-force-title"
-          title={t("history.restore")}
-          closeLabel={t("common.close")}
+          labelledBy="history-force-title"
+          title={<span id="history-force-title">{t("history.restore")}</span>}
+          description={t("network.restoreForceConfirm", { count: String(dialog.count) })}
           onClose={closeDialog}
           actions={
             <>
-              <button type="button" className="m3-btn m3-btn--text" onClick={closeDialog}>{t("common.cancel")}</button>
-              <button type="button" className="m3-btn m3-btn--danger" onClick={() => void restoreServer(selected, true)}>
+              <Button variant="text" onClick={closeDialog}>{t("common.cancel")}</Button>
+              <Button variant="danger" onClick={() => void restoreServer(selected, true)}>
                 {t("history.restore")}
-              </button>
+              </Button>
             </>
           }
-        >
-          <p className="modal-desc">{t("network.restoreForceConfirm", { count: String(dialog.count) })}</p>
-        </Dialog>
+        />
       )}
 
       {dialog?.kind === "label" && selected?.revision && (
         <Dialog
-          titleId="history-label-title"
-          title={t("history.label")}
-          closeLabel={t("common.close")}
+          labelledBy="history-label-title"
+          title={<span id="history-label-title">{t("history.label")}</span>}
           onClose={closeDialog}
+          // The only dialog on this screen holding typed input: a stray click on
+          // the scrim must not throw away a label the user is halfway through.
+          dismissOnScrim={false}
           actions={
             <>
-              <button type="button" className="m3-btn m3-btn--text" onClick={closeDialog}>{t("common.cancel")}</button>
-              <button type="button" className="m3-btn m3-btn--filled" onClick={applyLabel}>{t("common.save")}</button>
+              <Button variant="text" onClick={closeDialog}>{t("common.cancel")}</Button>
+              <Button onClick={applyLabel}>{t("common.save")}</Button>
             </>
           }
         >
@@ -659,19 +633,17 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
 
       {dialog?.kind === "clear" && (
         <Dialog
-          titleId="history-clear-title"
-          title={t("history.clear")}
-          closeLabel={t("common.close")}
+          labelledBy="history-clear-title"
+          title={<span id="history-clear-title">{t("history.clear")}</span>}
+          description={t("history.clearConfirm")}
           onClose={closeDialog}
           actions={
             <>
-              <button type="button" className="m3-btn m3-btn--text" onClick={closeDialog}>{t("common.cancel")}</button>
-              <button type="button" className="m3-btn m3-btn--danger" onClick={wipe}>{t("history.clear")}</button>
+              <Button variant="text" onClick={closeDialog}>{t("common.cancel")}</Button>
+              <Button variant="danger" onClick={wipe}>{t("history.clear")}</Button>
             </>
           }
-        >
-          <p className="modal-desc">{t("history.clearConfirm")}</p>
-        </Dialog>
+        />
       )}
     </>
   );

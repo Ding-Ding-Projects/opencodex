@@ -19,7 +19,7 @@ export function AddCodexAccountPickStep({
   return (
     <>
       <h3 style={{ marginBottom: 4 }}>{t("codexAuth.addTitle")}</h3>
-      <p className="modal-desc">{t("codexAuth.addPickDesc")}</p>
+      <p className="m3-dialog__desc">{t("codexAuth.addPickDesc")}</p>
 
       <label className="field-label" htmlFor="codex-account-id-input">{t("codexAuth.addIdLabel")}</label>
       <input

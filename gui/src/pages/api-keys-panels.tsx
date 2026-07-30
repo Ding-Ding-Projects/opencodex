@@ -1,7 +1,7 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import type { CSSProperties } from "react";
 import { IconAlert, IconCheck, IconCopy, IconKey, IconRegex, IconSearch, IconTrash } from "../icons";
 import { useI18n } from "../i18n/shared";
-import { Button, Card, Chip, TextInput } from "../shell/m3-ui";
+import { Button, Card, Chip, Dialog, TextInput } from "../shell/m3-ui";
 import type { CopyOutcome } from "../components/use-copy-feedback";
 import {
   externalModelId,
@@ -286,40 +286,37 @@ function ApiKeysDeleteDialog({
   onConfirm: () => void;
 }) {
   const { t } = useI18n();
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open && typeof dialog.showModal === "function") dialog.showModal();
-  }, []);
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal-overlay"
-      aria-labelledby="api-key-delete-title"
-      onCancel={event => { event.preventDefault(); onCancel(); }}
-    >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onCancel} />
-      <div className="modal-card" onClick={event => event.stopPropagation()} role="document">
-        {/* The prototype's destructive dialog opens on an error-tone medallion
-            above a centred title, so the stakes read before the sentence does. */}
-        <div style={DIALOG_MEDALLION} aria-hidden="true"><IconTrash width={26} height={26} /></div>
-        <h3 id="api-key-delete-title" style={DIALOG_TITLE}>{t("api.deleteAria")}</h3>
-        {/* The name the user recognises; the body below names the prefix that dies. */}
-        <div className="m3-card" style={{ margin: "var(--sp-2) 0" }}>
-          <strong style={{ minWidth: 0, overflowWrap: "anywhere" }}>{entry.name}</strong>
-        </div>
-        <p className="modal-desc">{t("api.deleteConfirmBody", { prefix: entry.prefix })}</p>
-        <div className="dash-notice m3-row" style={{ marginTop: "var(--sp-2)" }}>
-          <IconAlert width={16} height={16} aria-hidden="true" /> {t("codexAuth.irreversible")}
-        </div>
-        <div className="modal-actions">
+    <Dialog
+      // Escape, the scrim and Cancel all land here — the same three routes the
+      // hand-rolled overlay wired up separately. Nothing typed is at stake, so
+      // the scrim stays dismissable.
+      onClose={onCancel}
+      // The medallion has to read before the sentence, so the heading is
+      // rendered below rather than through `title`, and Dialog is pointed at
+      // its id instead.
+      labelledBy="api-key-delete-title"
+      actions={
+        <>
           <Button variant="text" onClick={onCancel}>{t("common.cancel")}</Button>
           <Button variant="danger" onClick={onConfirm}>{t("api.deleteConfirmAction")}</Button>
-        </div>
+        </>
+      }
+    >
+      {/* The prototype's destructive dialog opens on an error-tone medallion
+          above a centred title, so the stakes read before the sentence does. */}
+      <div style={DIALOG_MEDALLION} aria-hidden="true"><IconTrash width={26} height={26} /></div>
+      <h3 id="api-key-delete-title" style={DIALOG_TITLE}>{t("api.deleteAria")}</h3>
+      {/* The name the user recognises; the body below names the prefix that dies. */}
+      <div className="m3-card" style={{ margin: "var(--sp-2) 0" }}>
+        <strong style={{ minWidth: 0, overflowWrap: "anywhere" }}>{entry.name}</strong>
       </div>
-    </dialog>
+      <p className="m3-dialog__desc">{t("api.deleteConfirmBody", { prefix: entry.prefix })}</p>
+      <div className="dash-notice m3-row" style={{ marginTop: "var(--sp-2)" }}>
+        <IconAlert width={16} height={16} aria-hidden="true" /> {t("codexAuth.irreversible")}
+      </div>
+    </Dialog>
   );
 }
 

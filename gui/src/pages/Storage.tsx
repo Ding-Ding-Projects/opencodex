@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
-import { Button, Chip, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
+import { Button, Chip, Dialog, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh, IconRegex } from "../icons";
 import { formatBytes } from "../format-bytes";
 import { navigateHash } from "../hash-routing";
@@ -423,9 +423,6 @@ function ArchivedCleanupPanel({
   const [permanent, setPermanent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const busyRef = useRef(false);
 
   // The permanent switch lives on the card, not in the dialog, so closing the
   // dialog must not silently flip the mode the user already chose.
@@ -433,24 +430,6 @@ function ArchivedCleanupPanel({
     setConfirmOpen(false);
     if (clearPreview) setPreview(null);
   }, []);
-
-  useEffect(() => {
-    busyRef.current = busy;
-  }, [busy]);
-
-  useEffect(() => {
-    if (!confirmOpen) return;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyRef.current) closeConfirm();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousFocusRef.current?.focus();
-    };
-  }, [confirmOpen, closeConfirm]);
 
   const mapCleanupError = (code: string | undefined, fallback?: string, trashDir?: string) => {
     switch (code) {
@@ -626,46 +605,22 @@ function ArchivedCleanupPanel({
       {error && !confirmOpen && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
       {confirmOpen && preview && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="storage-cleanup-confirm-title"
-          onClick={() => !busy && closeConfirm()}
-        >
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <h3 id="storage-cleanup-confirm-title">{t("storage.cleanup.confirmTitle")}</h3>
-            <p>
-              {t("storage.cleanup.confirmBody", {
-                count: String(preview.count),
-                size: formatBytes(preview.bytes, locale),
-                percent: String(preview.percent),
-              })}
-            </p>
-            {preview.candidates.length > 0 && (
-              <ul className="mono" style={{ maxHeight: 160, overflow: "auto", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
-                {preview.candidates.slice(0, 8).map(c => (
-                  <li key={c.relPath}>{c.relPath}</li>
-                ))}
-                {preview.count > 8 && (
-                  <li>{t("storage.cleanup.moreFiles", { n: String(Math.max(0, preview.count - 8)) })}</li>
-                )}
-              </ul>
-            )}
-            <p style={{ marginTop: "var(--sp-3)", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
-              {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
-            </p>
-            {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
-            <div className="modal-actions">
-              <button
-                ref={cancelRef}
-                type="button"
-                className="m3-btn m3-btn--text"
-                disabled={busy}
-                onClick={() => closeConfirm()}
-              >
+        <Dialog
+          // Escape and the scrim both arrive here, and neither may abandon a
+          // cleanup that is already deleting — the same guard the hand-rolled
+          // overlay applied to both routes.
+          onClose={() => { if (!busy) closeConfirm(); }}
+          title={t("storage.cleanup.confirmTitle")}
+          description={t("storage.cleanup.confirmBody", {
+            count: String(preview.count),
+            size: formatBytes(preview.bytes, locale),
+            percent: String(preview.percent),
+          })}
+          actions={
+            <>
+              <Button variant="text" disabled={busy} onClick={() => closeConfirm()}>
                 {t("storage.cleanup.cancel")}
-              </button>
+              </Button>
               <Button
                 variant={permanent ? "danger" : "filled"}
                 disabled={busy || preview.count === 0}
@@ -673,9 +628,26 @@ function ArchivedCleanupPanel({
               >
                 {permanent ? t("storage.cleanup.confirmPermanent") : t("storage.cleanup.confirmQuarantine")}
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          {preview.candidates.length > 0 && (
+            <ul className="mono" style={{ maxHeight: 160, overflow: "auto", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
+              {preview.candidates.slice(0, 8).map(c => (
+                <li key={c.relPath}>{c.relPath}</li>
+              ))}
+              {preview.count > 8 && (
+                <li>{t("storage.cleanup.moreFiles", { n: String(Math.max(0, preview.count - 8)) })}</li>
+              )}
+            </ul>
+          )}
+          {/* No marginTop: the dialog body is a grid and owns the spacing the
+              legacy modal card left to each child's own margin. */}
+          <p style={{ fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
+            {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
+          </p>
+          {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
+        </Dialog>
       )}
     </section>
   );
@@ -702,30 +674,9 @@ function QuarantineTrashPanel({
   const [busy, setBusy] = useState(false);
   const [confirmEntry, setConfirmEntry] = useState<TrashEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const busyRef = useRef(false);
   const loadGenerationRef = useRef(0);
 
-  useEffect(() => {
-    busyRef.current = busy;
-  }, [busy]);
-
   const closeConfirm = useCallback(() => setConfirmEntry(null), []);
-
-  useEffect(() => {
-    if (!confirmEntry) return;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyRef.current) closeConfirm();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousFocusRef.current?.focus();
-    };
-  }, [confirmEntry, closeConfirm]);
 
   const loadTrash = useCallback(async (signal?: AbortSignal) => {
     const generation = ++loadGenerationRef.current;
@@ -885,33 +836,22 @@ function QuarantineTrashPanel({
       )}
 
       {confirmEntry && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="storage-trash-confirm-title"
-          onClick={() => !busy && closeConfirm()}
-        >
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <h3 id="storage-trash-confirm-title">{t("storage.trash.confirmTitle")}</h3>
-            <p>
-              {t("storage.trash.confirmBody", {
-                count: String(confirmEntry.fileCount),
-                size: formatBytes(confirmEntry.bytes, locale),
-                id: confirmEntry.id,
-              })}
-            </p>
-            {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
-            <div className="modal-actions">
-              <button
-                ref={cancelRef}
-                type="button"
-                className="m3-btn m3-btn--text"
-                disabled={busy}
-                onClick={() => closeConfirm()}
-              >
+        <Dialog
+          // Escape and the scrim both arrive here, and neither may abandon a
+          // restore that is already running — the same guard the hand-rolled
+          // overlay applied to both routes.
+          onClose={() => { if (!busy) closeConfirm(); }}
+          title={t("storage.trash.confirmTitle")}
+          description={t("storage.trash.confirmBody", {
+            count: String(confirmEntry.fileCount),
+            size: formatBytes(confirmEntry.bytes, locale),
+            id: confirmEntry.id,
+          })}
+          actions={
+            <>
+              <Button variant="text" disabled={busy} onClick={() => closeConfirm()}>
                 {t("storage.trash.cancel")}
-              </button>
+              </Button>
               <Button
                 variant="filled"
                 disabled={busy}
@@ -919,9 +859,11 @@ function QuarantineTrashPanel({
               >
                 {t("storage.trash.confirmRestore")}
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
+        </Dialog>
       )}
     </section>
   );

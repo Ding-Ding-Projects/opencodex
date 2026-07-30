@@ -21,8 +21,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: auto-release
-  cancel-in-progress: true
+  # Per-SHA, never cancelled: each green commit gets its own release, and a
+  # newer push must not abort a publish that is already uploading an
+  # installer. Releases are tagged build-<run>, so two in flight cannot
+  # collide on a tag.
+  group: auto-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
   release:

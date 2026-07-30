@@ -16,8 +16,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-installer-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-SHA, so a later push does not cancel an installer build that is
+  # already producing the artifact for an earlier commit.
+  group: desktop-installer-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   build:

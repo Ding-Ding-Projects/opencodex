@@ -34,7 +34,7 @@ export function AddCodexAccountWaitingStep({
   return (
     <>
       <h3 style={{ marginBottom: 4 }}>{reauthAccountId ? t("codexAuth.reauthenticate") : t("codexAuth.oauthLogin")}</h3>
-      <p className="modal-desc">{t("codexAuth.oauthWaiting")}</p>
+      <p className="m3-dialog__desc">{t("codexAuth.oauthWaiting")}</p>
       <LoginUrlBlock url={authUrl} />
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
         <div className="muted text-label">{t("prov.pasteRedirectHint")}</div>
