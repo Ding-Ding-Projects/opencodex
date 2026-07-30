@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n/shared";
+import { Button } from "../shell/m3-ui";
 import CodexAccountPool from "../components/CodexAccountPool";
 import { codexAccountModeState, type CodexAccountModeState } from "../codex-multi-state";
 import { ensureOpenAiProvider, openAiAccountProviderState, OpenAiEnableError } from "../provider-payload";
@@ -17,34 +18,52 @@ export function OpenAiAccountModeBanner({
 }) {
   const t = useT();
   return (
-    <div className="panel" style={{ marginBottom: 16 }}>
-      <div className="row">
-        <strong>{t("codexAuth.accountModeTitle")}</strong>
-        {state === "pool" && <span className="badge badge-accent">{t("codexAuth.accountModePool")}</span>}
-        {state === "direct" && <span className="badge badge-green">{t("codexAuth.accountModeDirect")}</span>}
-      </div>
-      {state === "pool" && (
-        <p className="card-sub" style={{ margin: "6px 0 0" }}>{t("codexAuth.accountModePoolDesc")}</p>
-      )}
-      {state === "direct" && (
-        <p className="card-sub" style={{ margin: "6px 0 0" }}>
-          {t("codexAuth.accountModeDirectDesc")} <a href="#providers">{t("codexAuth.openProviders")}</a>
-        </p>
-      )}
-      {(state === "absent" || state === "disabled") && (
-        <div className="row" style={{ alignItems: "center", marginTop: 8 }}>
-          <p className="card-sub" style={{ flex: 1, margin: 0 }}>{t("codexAuth.openaiUnavailableDesc")}</p>
-          <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={onEnable}>
-            {busy ? t("codexAuth.enablingOpenai") : t("codexAuth.enableOpenai")}
-          </button>
+    <section className="m3-card" style={{ marginBottom: "var(--sp-3)" }}>
+      <div className="m3-card-head" style={{ marginBottom: 0, alignItems: "center" }}>
+        <div className="m3-card-headtext">
+          <h2 className="m3-card-title">{t("codexAuth.accountModeTitle")}</h2>
+          {state === "pool" && (
+            <p className="m3-card-sub">{t("codexAuth.accountModePoolDesc")}</p>
+          )}
+          {state === "direct" && (
+            <p className="m3-card-sub">
+              {t("codexAuth.accountModeDirectDesc")} <a href="#providers">{t("codexAuth.openProviders")}</a>
+            </p>
+          )}
+          {(state === "absent" || state === "disabled") && (
+            <p className="m3-card-sub">{t("codexAuth.openaiUnavailableDesc")}</p>
+          )}
+          {state === "invalid" && (
+            <p className="m3-card-sub">
+              {t("codexAuth.openaiMissing")} <a href="#providers">{t("codexAuth.openProviders")}</a>
+            </p>
+          )}
         </div>
-      )}
-      {state === "invalid" && (
-        <p className="card-sub" style={{ margin: "6px 0 0" }}>
-          {t("codexAuth.openaiMissing")} <a href="#providers">{t("codexAuth.openProviders")}</a>
-        </p>
-      )}
-    </div>
+        <div className="m3-card-actions">
+          {state === "pool" && (
+            <span className="m3-chip selected" style={{ cursor: "default" }}>{t("codexAuth.accountModePool")}</span>
+          )}
+          {state === "direct" && (
+            <span
+              className="m3-chip"
+              style={{
+                cursor: "default",
+                background: "var(--m3-ok-container)",
+                color: "var(--m3-on-ok-container)",
+                borderColor: "transparent",
+              }}
+            >
+              {t("codexAuth.accountModeDirect")}
+            </span>
+          )}
+          {(state === "absent" || state === "disabled") && (
+            <Button variant="filled" disabled={busy} onClick={onEnable}>
+              {busy ? t("codexAuth.enablingOpenai") : t("codexAuth.enableOpenai")}
+            </Button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

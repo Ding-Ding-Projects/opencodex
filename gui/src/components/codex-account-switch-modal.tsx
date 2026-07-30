@@ -3,6 +3,7 @@ import { useT } from "../i18n/shared";
 import { IconAlert } from "../icons";
 import type { CodexAccountEntry } from "./codex-account-pool-types";
 import type { CodexAccountModeState } from "../codex-multi-state";
+import { chipStyle } from "./codex-account-pool-m3";
 
 export function CodexAccountSwitchModal({
   confirm,
@@ -50,16 +51,28 @@ export function CodexAccountSwitchModal({
             ? t("codexAuth.preparePoolDesc")
             : confirm.id === "__main__" ? t("codexAuth.switchBackDesc") : t("codexAuth.switchDesc")}
         </p>
-        <div className="card" style={{ margin: "12px 0" }}>
+        <div className="m3-card m3-row" style={{ margin: "var(--sp-2) 0", gap: 8 }}>
           <strong>{confirm.id === "__main__" ? (mainEmail || t("codexAuth.codexApp")) : confirm.email}</strong>
-          {confirm.plan && <span className="badge badge-green" style={{ marginLeft: 8 }}>{confirm.plan}</span>}
+          {confirm.plan && (
+            <span className="m3-chip" style={chipStyle("ok")}>{confirm.plan}</span>
+          )}
         </div>
         {confirm.id !== "__main__" && (
-          <div className="notice-warn"><IconAlert width={14} /> {t("codexAuth.cacheWarning")}</div>
+          <div
+            className="m3-row"
+            style={{
+              padding: "var(--sp-2)",
+              borderRadius: "var(--r-m)",
+              background: "var(--m3-warn-container)",
+              color: "var(--m3-on-warn-container)",
+            }}
+          >
+            <IconAlert width={14} aria-hidden="true" /> {t("codexAuth.cacheWarning")}
+          </div>
         )}
         <div className="modal-actions">
-          <button type="button" className="btn btn-ghost" onClick={onCancel}>{t("codexAuth.cancel")}</button>
-          <button type="button" className="btn btn-primary" disabled={Boolean(switchingId)} onClick={onConfirm}>
+          <button type="button" className="m3-btn m3-btn--text" onClick={onCancel}>{t("codexAuth.cancel")}</button>
+          <button type="button" className="m3-btn m3-btn--filled" disabled={Boolean(switchingId)} onClick={onConfirm}>
             {switchingId ? t("pws.accountSwitching") : t(accountModeState === "direct" ? "codexAuth.prepareForPool" : "codexAuth.setAsNext")}
           </button>
         </div>

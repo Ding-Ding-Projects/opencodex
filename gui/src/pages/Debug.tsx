@@ -2,6 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { setClientResourceData, useKeyedClientResource } from "../client-resource";
 import { useI18n } from "../i18n/shared";
+import { Empty } from "../shell/m3-ui";
 import { DebugClaudeInboundPanel } from "./debug-claude-inbound-panel";
 import { DebugLogViewer } from "./debug-log-viewer";
 import { DebugPageHeader, DebugSettingsPanel } from "./debug-settings-panel";
@@ -177,7 +178,7 @@ export default function Debug({ apiBase, embedded }: { apiBase: string; embedded
       />
 
       {!debug ? (
-        <div className="empty">{t("debug.loading")}</div>
+        <Empty title={t("debug.loading")} />
       ) : (
         <DebugSettingsPanel
           debug={debug}

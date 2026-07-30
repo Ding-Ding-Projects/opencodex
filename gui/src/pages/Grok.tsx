@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { EmptyState, Notice, Switch } from "../ui";
+import { Notice } from "../ui";
+import { Button, Card, Empty, Toggle } from "../shell/m3-ui";
 import { IconChevron } from "../icons";
 import { useT, type TKey } from "../i18n/shared";
 import { readJsonOrThrow } from "../fetch-json";
@@ -164,37 +165,38 @@ export default function Grok({ apiBase }: { apiBase: string }) {
     }
   };
 
-  if (loading) return <section className="grok-page"><p className="page-sub">{t("grok.loading")}</p></section>;
+  if (loading) return <p className="m3-card-sub">{t("grok.loading")}</p>;
 
   if (error) {
     return (
-      <section className="grok-page">
-        <div className="alert alert-err" role="alert">{error}</div>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => void load()}>{t("common.retry")}</button>
-      </section>
+      <Card title={t("grok.title")}>
+        <p role="alert" style={{ margin: 0, color: "var(--m3-error)", fontSize: "var(--t-body-m)" }}>{error}</p>
+        <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
+          <Button variant="tonal" onClick={() => void load()}>{t("common.retry")}</Button>
+        </div>
+      </Card>
     );
   }
 
   return (
-    <section className="grok-page">
-      <h2 className="page-title">{t("grok.title")}</h2>
-      <p className="page-sub">{t("grok.subtitle")}</p>
+    <>
+      <p className="m3-card-sub" style={{ maxWidth: "74ch", marginBottom: "var(--sp-3)" }}>{t("grok.subtitle")}</p>
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
 
       {status && status.candidates.length > 0 && (
-        <div className="claude-profile-bar">
-          <span className={`claude-dirty${dirty ? " active" : ""}`}>
+        <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-3)" }}>
+          <span className={`m3-chip${dirty ? " selected" : ""}`}>
             {dirty ? t("grok.unsaved") : t("grok.upToDate")}
           </span>
-          <div className="claude-save-actions">
-            <button type="button" className="btn btn-ghost" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
+          <div className="m3-row">
+            <Button variant="outlined" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
               {pending === "save" ? t("grok.saving") : t("common.save")}
-            </button>
-            <button type="button" className="btn btn-primary" disabled={!dirty || pending !== null} onClick={() => void save(true)}>
+            </Button>
+            <Button variant="filled" disabled={!dirty || pending !== null} onClick={() => void save(true)}>
               {pending === "apply" ? t("grok.applying") : pending === "save" ? t("grok.saving") : t("grok.saveApply")}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -202,76 +204,92 @@ export default function Grok({ apiBase }: { apiBase: string }) {
       {!status?.present ? (
         // Absent is a normal state, not a failure: Grok simply is not wired up yet. Name the
         // action that wires it rather than leaving an empty panel.
-        <EmptyState title={t("grok.notConfiguredTitle")}>
+        <Empty title={t("grok.notConfiguredTitle")}>
           {t("grok.notConfiguredHint")}
           <br />
-          <code>{status?.configPath}</code>
-        </EmptyState>
+          <code style={{ fontFamily: "var(--mono)" }}>{status?.configPath}</code>
+        </Empty>
       ) : (
-        <>
-          <div className="grok-endpoint">
-            <span>{t("grok.endpoint")}</span>
-            <code>{status.baseUrl ?? "—"}</code>
-          </div>
-          <p className="page-sub"><code>{status.configPath}</code></p>
-        </>
-      )}
-
-      {status && status.candidates.length > 0 && (
-        <div className="ocx-group-stack">
-          {GROUPS.map(group => {
-            const view = grokGroupView(status.candidates, aliasById, excluded, group.id);
-            if (view.total === 0) return null;
-            const isCollapsed = collapsed.has(group.id);
-            return (
-              <section key={group.id} className={`ocx-group${isCollapsed ? " collapsed" : ""}`} aria-labelledby={`grok-group-${group.id}`}>
-                <header className={`ocx-group-head${isCollapsed ? "" : " open"}`}>
-                  <h3 id={`grok-group-${group.id}`} className="ocx-group-heading">
-                    <button
-                      type="button"
-                      className="ocx-group-toggle"
-                      aria-expanded={!isCollapsed}
-                      aria-controls={`grok-group-body-${group.id}`}
-                      onClick={() => toggleGroup(group.id)}
-                    >
-                      <IconChevron
-                        className="ocx-chevron"
-                        width={14}
-                        height={14}
-                        aria-hidden="true"
-                        style={{ transform: isCollapsed ? "none" : "rotate(90deg)" }}
-                      />
-                      <span className="ocx-group-name">{t(group.tkey)}</span>
-                      <span className="ocx-group-count">
-                        {t("grok.enabledCount", { on: view.enabled, total: view.total })}
-                      </span>
-                    </button>
-                  </h3>
-                </header>
-                {!isCollapsed && (
-                  <div id={`grok-group-body-${group.id}`} className="grok-model-list">
-                    {view.rows.map(model => (
-                      <div key={model.id} className="grok-model-row">
-                        <Switch
-                          on={model.enabled}
-                          onClick={() => toggleModel(model.id, !model.enabled)}
-                          disabled={pending !== null}
-                          label={t("grok.toggleModel", { id: model.id })}
-                        />
-                        <span className="grok-model-names">
-                          <strong title={model.id}>{model.id}</strong>
-                          <code title={model.alias ?? undefined}>{model.alias ?? "—"}</code>
-                        </span>
-                        <span className="claude-model-context">{formatContext(model.contextWindow, t)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            );
-          })}
+        <div className="m3-row" style={{ marginBottom: "var(--sp-3)" }}>
+          <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>{t("grok.endpoint")}</span>
+          <code style={{
+            fontFamily: "var(--mono)",
+            fontSize: "var(--t-label-m)",
+            padding: "8px 12px",
+            borderRadius: "var(--r-s)",
+            background: "var(--m3-surface-container-highest)",
+          }}>{status.baseUrl ?? "—"}</code>
+          <code style={{ fontFamily: "var(--mono)", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
+            {status.configPath}
+          </code>
         </div>
       )}
-    </section>
+
+      {status && status.candidates.length > 0 && GROUPS.map(group => {
+        const view = grokGroupView(status.candidates, aliasById, excluded, group.id);
+        if (view.total === 0) return null;
+        const isCollapsed = collapsed.has(group.id);
+        return (
+          <Card
+            key={group.id}
+            title={
+              <button
+                type="button"
+                className="m3-btn m3-btn--text"
+                style={{ padding: 0, gap: 8, font: "inherit", color: "inherit" }}
+                aria-expanded={!isCollapsed}
+                aria-controls={`grok-group-body-${group.id}`}
+                onClick={() => toggleGroup(group.id)}
+              >
+                <IconChevron
+                  width={14}
+                  height={14}
+                  aria-hidden="true"
+                  style={{ transform: isCollapsed ? "none" : "rotate(90deg)" }}
+                />
+                {t(group.tkey)}
+              </button>
+            }
+            actions={<span className="m3-chip">{t("grok.enabledCount", { on: view.enabled, total: view.total })}</span>}
+          >
+            {!isCollapsed && (
+              <div id={`grok-group-body-${group.id}`} style={{ overflowX: "auto" }}>
+                <table className="m3-table">
+                  <thead>
+                    <tr>
+                      <th scope="col"><span className="sr-only">{t("grok.colEnabled")}</span></th>
+                      <th scope="col">{t("grok.colModel")}</th>
+                      <th scope="col">{t("grok.colAlias")}</th>
+                      <th scope="col">{t("grok.colContext")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {view.rows.map(model => (
+                      <tr key={model.id}>
+                        <td style={{ width: 1 }}>
+                          <Toggle
+                            on={model.enabled}
+                            onChange={() => toggleModel(model.id, !model.enabled)}
+                            disabled={pending !== null}
+                            label={t("grok.toggleModel", { id: model.id })}
+                          />
+                        </td>
+                        <td style={{ fontFamily: "var(--mono)", overflowWrap: "anywhere" }}>{model.id}</td>
+                        <td style={{ fontFamily: "var(--mono)", color: "var(--m3-on-surface-variant)", overflowWrap: "anywhere" }}>
+                          {model.alias ?? "—"}
+                        </td>
+                        <td style={{ color: "var(--m3-on-surface-variant)", whiteSpace: "nowrap" }}>
+                          {formatContext(model.contextWindow, t)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </>
   );
 }

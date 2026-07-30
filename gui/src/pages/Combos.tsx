@@ -219,7 +219,7 @@ export default function Combos({ apiBase }: { apiBase: string }) {
             <Notice tone={statusOk ? "ok" : "err"}>{status}</Notice>
           </div>
         )}
-        <div className="muted" style={{ padding: "24px 20px" }} role="status">
+        <div className="cwi-rail-empty" role="status">
           {status ? null : t("cws.loading")}
         </div>
       </div>

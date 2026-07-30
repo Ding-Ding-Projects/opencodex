@@ -85,8 +85,12 @@ test("renders independent guidance and native-default controls with editable sel
   expect(model.disabled).toBe(false);
   expect(effort.disabled).toBe(false);
   expect(defaults.disabled).toBe(false);
-  expect(defaults.getAttribute("aria-pressed")).toBe("true");
-  expect(guidance.getAttribute("aria-pressed")).toBe("false");
+  // Supersession: the Material 3 restyle swapped the legacy `.switch` button
+  // (aria-pressed) for the M3 `Toggle`, whose accessibility contract is
+  // role="switch" + aria-checked. Same invariant, current attribute pair.
+  expect(defaults.getAttribute("role")).toBe("switch");
+  expect(defaults.getAttribute("aria-checked")).toBe("true");
+  expect(guidance.getAttribute("aria-checked")).toBe("false");
   expect(host.textContent).not.toContain("Guidance active");
 });
 

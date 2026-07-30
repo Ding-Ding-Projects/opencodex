@@ -26,15 +26,14 @@ export function DashboardOverviewHead({
   return (
     <>
       <div className="dash-overview-head">
-        <div className="stat-row">
-          <div className="stat">
-            <div className="label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="dash-stats">
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label">
               {t("dash.multiAgent")}
               <button
                 ref={maHelpTriggerRef}
                 type="button"
-                className="btn btn-ghost btn-sm"
-                style={{ width: 24, height: 24, minWidth: 24, flex: "0 0 24px", padding: 0, borderRadius: "var(--radius-pill)", color: "var(--muted)" }}
+                className="dash-help-btn"
                 onClick={() => setMaHelpOpen(true)}
                 aria-label={t("dash.multiAgent")}
                 aria-haspopup="dialog"
@@ -44,36 +43,46 @@ export function DashboardOverviewHead({
                 <IconInfo width={14} height={14} aria-hidden="true" />
               </button>
             </div>
-            <div className="value" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div role="radiogroup" aria-label={t("dash.multiAgent")} style={{ display: "inline-flex", borderRadius: "var(--radius-pill)", background: "var(--surface-soft, var(--raised))", padding: 3, gap: 2 }}>
-                {(["v1", "default", "v2"] as const).map(mode => (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="radio"
-                    aria-checked={maMode === mode}
-                    className={`btn btn-sm text-caption${maMode === mode ? " btn-primary" : " btn-ghost"}`}
-                    style={{ borderRadius: "var(--radius-pill)", minWidth: 36, padding: "5px 10px", border: "none", background: maMode === mode ? undefined : "transparent", color: maMode === mode ? undefined : "var(--muted)" }}
-                    disabled={maBusy}
-                    onClick={() => void switchMaMode(mode)}
-                  >{t(`models.v2Mode_${mode}` as TKey)}</button>
-                ))}
-              </div>
+            <div className="m3-segmented" role="radiogroup" aria-label={t("dash.multiAgent")}>
+              {(["v1", "default", "v2"] as const).map(mode => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={maMode === mode}
+                  className={`m3-segment${maMode === mode ? " selected" : ""}`}
+                  disabled={maBusy}
+                  onClick={() => void switchMaMode(mode)}
+                >{t(`models.v2Mode_${mode}` as TKey)}</button>
+              ))}
             </div>
           </div>
-          <div className="stat">
-            <div className="label">{t("dash.status")}</div>
-            <div className="value" style={{ display: "flex", alignItems: "center", gap: 9, color: online ? "var(--green)" : "var(--red)" }}>
-              <span className={`dot ${online ? "dot-green" : "dot-red"}`} />{online ? t("dash.online") : t("dash.offline")}
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label">{t("dash.status")}</div>
+            <div className="dash-stat-card__value" style={{ display: "flex", alignItems: "center", gap: 9, color: online ? "var(--green)" : "var(--red)" }}>
+              <span className={`dot ${online ? "dot-green" : "dot-red"}`} aria-hidden="true" />{online ? t("dash.online") : t("dash.offline")}
             </div>
+            <div className="dash-stat-card__hint" />
           </div>
-          <div className="stat"><div className="label">{t("dash.version")}</div><div className="value mono">{health?.version ?? "—"}</div></div>
-          <div className="stat"><div className="label">{t("dash.uptime")}</div><div className="value mono">{health ? formatUptime(health.uptime, locale) : "—"}</div></div>
-          <div className="stat"><div className="label">{t("dash.providers")}</div><div className="value">{providers.length}</div></div>
-          <div className="stat">
-            <div className="label">{t("dash.tokens30d")}</div>
-            <div className="value mono">{usage30d && usage30d.summary.requests > 0 ? formatTokens(usage30d.summary.totalTokens, locale) : "—"}</div>
-            <div className="muted text-label dash-stat-coverage">
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label">{t("dash.version")}</div>
+            <div className="dash-stat-card__value mono">{health?.version ?? "—"}</div>
+            <div className="dash-stat-card__hint" />
+          </div>
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label">{t("dash.uptime")}</div>
+            <div className="dash-stat-card__value mono">{health ? formatUptime(health.uptime, locale) : "—"}</div>
+            <div className="dash-stat-card__hint" />
+          </div>
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label">{t("dash.providers")}</div>
+            <div className="dash-stat-card__value">{providers.length}</div>
+            <div className="dash-stat-card__hint" />
+          </div>
+          <div className="dash-stat-card">
+            <div className="dash-stat-card__label">{t("dash.tokens30d")}</div>
+            <div className="dash-stat-card__value mono">{usage30d && usage30d.summary.requests > 0 ? formatTokens(usage30d.summary.totalTokens, locale) : "—"}</div>
+            <div className="dash-stat-card__hint dash-stat-coverage">
               {usage30d && usage30d.summary.requests > 0
                 ? t("dash.coverage").replace("{pct}", `${Math.round(usage30d.summary.coverageRatio * 100)}%`)
                 : "\u00a0"}
@@ -105,16 +114,16 @@ export function DashboardOverviewHead({
       </div>
 
       {projectConfigWarnings.length > 0 && (
-        <div className="notice notice-err maintenance-notice" role="alert">
-          <IconAlert />
+        <div className="dash-banner" role="alert">
+          <IconAlert aria-hidden="true" />
           <div>
-            <div className="font-semibold">{t("dash.projectConfigTitle")}</div>
-            <div className="muted text-control" style={{ marginTop: 4 }}>{t("dash.projectConfigHint")}</div>
-            <ul className="text-control" style={{ margin: "10px 0 0", paddingLeft: 18 }}>
+            <div className="dash-banner__title">{t("dash.projectConfigTitle")}</div>
+            <div className="dash-banner__body">{t("dash.projectConfigHint")}</div>
+            <ul>
               {projectConfigWarnings.map(g => (
-                <li key={g.path} style={{ marginBottom: 8 }}>
-                  <code>{g.path}</code> — {g.issues.join(", ")}
-                  <div className="muted" style={{ marginTop: 2 }}>{g.bypass}</div>
+                <li key={g.path}>
+                  <code className="mono">{g.path}</code> — {g.issues.join(", ")}
+                  <div style={{ marginTop: 2 }}>{g.bypass}</div>
                 </li>
               ))}
             </ul>

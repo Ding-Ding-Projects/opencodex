@@ -1,6 +1,7 @@
 import { IconAlert, IconExternal, IconInfo, IconRefresh } from "../icons";
 import { Trans } from "../i18n/provider";
 import { Select } from "../ui";
+import { Button, Card, Toggle } from "../shell/m3-ui";
 import { EFFORT_CAP_LEVELS, requireJson, sidecarBackendForModel, updateJobLabel } from "./dashboard-shared";
 import type { useDashboardData } from "./use-dashboard-data";
 
@@ -16,15 +17,14 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
   if (!maModeResolved || maMode === "v1") return null;
 
   return (
-    <div className="panel">
+    <Card>
       <div className="injection-head">
-        <span className="injection-label" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <span className="injection-label dash-stat-card__label">
           {t("dash.effortCapLabel")}
           <button
             ref={effortCapHelpTriggerRef}
             type="button"
-            className="btn btn-ghost btn-sm"
-            style={{ width: 22, height: 22, minWidth: 22, padding: 0, borderRadius: "var(--radius-pill)", color: "var(--muted)" }}
+            className="dash-help-btn"
             onClick={() => setEffortCapHelpOpen(open => !open)}
             aria-label={t("dash.effortCapLabel")}
             aria-expanded={effortCapHelpOpen}
@@ -83,7 +83,7 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
           label={t("dash.subagentEffortCapLabel")}
         />
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -95,9 +95,9 @@ export function DashboardInjectionPanel({ d }: { apiBase: string; d: Dash }) {
   } = d;
 
   return (
-    <div className="panel">
+    <Card>
       <div className="injection-head">
-        <span className="injection-label">{t("dash.injectionLabel")}</span>
+        <span className="injection-label dash-stat-card__label">{t("dash.injectionLabel")}</span>
         <Select
           value={injectionModel}
           options={[
@@ -121,40 +121,32 @@ export function DashboardInjectionPanel({ d }: { apiBase: string; d: Dash }) {
           />
         )}
       </div>
-      <div className="muted text-control" style={{ marginTop: 6 }}>{t("dash.injectionHint")}</div>
-      <div className="spread dash-subagent-guidance-row">
-        <div className="setting-copy" style={{ flex: 1 }}>
+      <p className="dash-hint">{t("dash.injectionHint")}</p>
+      <div className="dash-toggle-row dash-subagent-guidance-row">
+        <div className="dash-toggle-row__copy">
           <div className="font-semibold">{t("dash.syncCodexSubagentDefaults")}</div>
-          <div className="muted setting-hint">{t("dash.syncCodexSubagentDefaultsHint")}</div>
+          <p className="dash-hint">{t("dash.syncCodexSubagentDefaultsHint")}</p>
         </div>
-        <button
-          type="button"
-          className={`switch ${syncCodexSubagentDefaults ? "on" : ""}`}
-          onClick={() => { void saveInjection({ syncCodexSubagentDefaults: !syncCodexSubagentDefaults }); }}
+        <Toggle
+          on={syncCodexSubagentDefaults}
+          onChange={() => { void saveInjection({ syncCodexSubagentDefaults: !syncCodexSubagentDefaults }); }}
           disabled={injectionSaving || !injectionModel}
-          aria-label={t("dash.syncCodexSubagentDefaults")}
-          aria-pressed={syncCodexSubagentDefaults}
-        >
-          <span className="knob" />
-        </button>
+          label={t("dash.syncCodexSubagentDefaults")}
+        />
       </div>
-      <div className="spread dash-subagent-guidance-row">
-        <div className="setting-copy" style={{ flex: 1 }}>
+      <div className="dash-toggle-row dash-subagent-guidance-row">
+        <div className="dash-toggle-row__copy">
           <div className="font-semibold">{t("dash.multiAgentGuidance")}</div>
-          <div className="muted setting-hint">{t("dash.multiAgentGuidanceHint")}</div>
+          <p className="dash-hint">{t("dash.multiAgentGuidanceHint")}</p>
         </div>
-        <button
-          type="button"
-          className={`switch ${multiAgentGuidanceEnabled ? "on" : ""}`}
-          onClick={() => { void saveInjection({ multiAgentGuidanceEnabled: !multiAgentGuidanceEnabled }); }}
+        <Toggle
+          on={multiAgentGuidanceEnabled}
+          onChange={() => { void saveInjection({ multiAgentGuidanceEnabled: !multiAgentGuidanceEnabled }); }}
           disabled={injectionSaving}
-          aria-label={t("dash.multiAgentGuidance")}
-          aria-pressed={multiAgentGuidanceEnabled}
-        >
-          <span className="knob" />
-        </button>
+          label={t("dash.multiAgentGuidance")}
+        />
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -165,30 +157,31 @@ export function DashboardMaintenancePanel({ d }: { d: Dash }) {
   } = d;
 
   return (
-    <div className="panel maintenance-panel">
-      <div className="spread maintenance-head">
-        <div>
-          <div className="font-semibold">{t("dash.maintenance")}</div>
-          <div className="muted text-control" style={{ marginTop: 3 }}>{t("dash.maintenanceHint")}</div>
-        </div>
-        <div className="maintenance-actions">
-          <button type="button" className="btn btn-ghost" onClick={runSync} disabled={syncing}>
-            <IconRefresh /> {syncing ? t("dash.syncing") : t("dash.syncModels")}
-          </button>
+    <Card
+      title={t("dash.maintenance")}
+      subtitle={t("dash.maintenanceHint")}
+      actions={
+        <>
+          <Button variant="outlined" onClick={runSync} disabled={syncing}>
+            <IconRefresh aria-hidden="true" /> {syncing ? t("dash.syncing") : t("dash.syncModels")}
+          </Button>
+          {/* Raw button: the update dialog's focus-return needs a real DOM ref,
+              which the M3 `Button` helper does not forward. */}
           <button
             ref={updateTriggerRef}
             type="button"
-            className="btn btn-primary"
+            className="m3-btn m3-btn--filled"
             onClick={openUpdateDialog}
             disabled={updateLoading}
             aria-haspopup="dialog"
             aria-controls="dashboard-update-dialog"
             aria-expanded={updateOpen}
           >
-            <IconExternal /> {t("dash.checkUpdate")}
+            <IconExternal aria-hidden="true" /> {t("dash.checkUpdate")}
           </button>
-        </div>
-      </div>
+        </>
+      }
+    >
       {syncResult && (
         <div className={`notice ${syncResult.nativeSubagentDefaultsWarning ? "notice-warn" : "notice-ok"} maintenance-notice`} role="status">
           {syncResult.nativeSubagentDefaultsWarning ? <IconAlert /> : <IconRefresh />}
@@ -216,7 +209,7 @@ export function DashboardMaintenancePanel({ d }: { d: Dash }) {
           </span>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -229,27 +222,23 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
 
   return (
     <>
-      <div className="panel">
-        <div className="spread">
-          <div style={{ flex: 1, minWidth: 0 }}>
+      <Card>
+        <div className="dash-toggle-row">
+          <div className="dash-toggle-row__copy">
             <div className="font-semibold">{t("dash.codexAutoStart")}</div>
-            <div className="muted setting-hint">{t("dash.codexAutoStartHint")}</div>
+            <p className="dash-hint">{t("dash.codexAutoStartHint")}</p>
           </div>
-          <button
-            type="button"
-            className={`switch ${settings?.codexAutoStart ?? true ? "on" : ""}`}
-            onClick={toggleCodexAutoStart}
+          <Toggle
+            on={settings?.codexAutoStart ?? true}
+            onChange={() => { void toggleCodexAutoStart(); }}
             disabled={!settings || settingsSaving}
-            aria-label={t("dash.codexAutoStart")}
-            aria-pressed={settings?.codexAutoStart ?? true}
-          >
-            <span className="knob" />
-          </button>
+            label={t("dash.codexAutoStart")}
+          />
         </div>
-      </div>
+      </Card>
 
       <div className="dash-sidecar-grid">
-        <div className="panel dash-sidecar-card">
+        <div className="m3-card dash-sidecar-card">
           <div className="dash-sidecar-card__row">
             <div className="font-semibold">{t("dash.webSearchSidecar")}</div>
             <Select
@@ -260,10 +249,10 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
               label={t("dash.sidecarModel")}
             />
           </div>
-          <div className="muted setting-hint">{t("dash.webSearchSidecarHint")}</div>
+          <p className="dash-hint">{t("dash.webSearchSidecarHint")}</p>
         </div>
 
-        <div className="panel dash-sidecar-card">
+        <div className="m3-card dash-sidecar-card">
           <div className="dash-sidecar-card__row">
             <div className="font-semibold">{t("dash.visionSidecar")}</div>
             <Select
@@ -274,19 +263,18 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
               label={t("dash.sidecarModel")}
             />
           </div>
-          <div className="muted setting-hint">{t("dash.visionSidecarHint")}</div>
+          <p className="dash-hint">{t("dash.visionSidecarHint")}</p>
         </div>
       </div>
 
-      <div className="panel">
-        <div className="spread" style={{ alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <Card>
+        <div className="dash-toggle-row">
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <span className="font-semibold">{t("dash.shadowCallIntercept")}</span>
             <button
               ref={shadowCallHelpTriggerRef}
               type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ width: 22, height: 22, minWidth: 22, padding: 0, borderRadius: "var(--radius-pill)", color: "var(--muted)" }}
+              className="dash-help-btn"
               onClick={() => setShadowCallHelpOpen(open => !open)}
               aria-label={t("dash.shadowCallIntercept")}
               aria-expanded={shadowCallHelpOpen}
@@ -295,19 +283,15 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
             >
               <IconInfo width={13} height={13} aria-hidden="true" />
             </button>
-            <code className="muted text-caption">⚠ 5.4-mini</code>
+            <code className="m3-chip">⚠ 5.4-mini</code>
           </div>
           <div className="setting-controls" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-              type="button"
-              className={`switch ${shadowCall?.enabled ? "on" : ""}`}
-              onClick={() => saveShadowCall({ enabled: !shadowCall?.enabled })}
+            <Toggle
+              on={shadowCall?.enabled ?? false}
+              onChange={() => saveShadowCall({ enabled: !shadowCall?.enabled })}
               disabled={!shadowCall || shadowCallSaving}
-              aria-label={t("dash.shadowCallIntercept")}
-              aria-pressed={shadowCall?.enabled ?? false}
-            >
-              <span className="knob" />
-            </button>
+              label={t("dash.shadowCallIntercept")}
+            />
             <Select
               value={shadowCall?.model ?? ""}
               options={[{ value: "", label: "—" }, ...models.map(m => ({ value: m.id, label: `${m.provider}/${m.id}` }))]}
@@ -318,7 +302,7 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
             />
           </div>
         </div>
-      </div>
+      </Card>
     </>
   );
 }

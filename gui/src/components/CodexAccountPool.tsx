@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n/shared";
 import { IconPlus } from "../icons";
-import { Notice, EmptyState } from "../ui";
+import { Notice } from "../ui";
+import { Empty } from "../shell/m3-ui";
+import { POOL_GRID, SECTION_TITLE } from "./codex-account-pool-m3";
 import AddCodexAccountModal from "./AddCodexAccountModal";
 import { useCodexAccountPool, type CodexAccountPoolController } from "../hooks/useCodexAccountPool";
 import type { ReactNode } from "react";
@@ -284,11 +286,10 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
         doctorCopyOutcomeFor={doctorCopy.outcomeFor}
       />
 
-      <div className="section-sep">
-        <span className="section-label">{t("codexAuth.accountPool")}</span>
-        <div className="sep-line" />
-        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setShowAdd(true)}>
-          <IconPlus width={14} /> {t("codexAuth.add")}
+      <div className="m3-row m3-row--split" style={{ margin: "var(--sp-4) 0 var(--sp-2)" }}>
+        <h2 style={{ ...SECTION_TITLE, margin: 0 }}>{t("codexAuth.accountPool")}</h2>
+        <button type="button" className="m3-btn m3-btn--outlined" onClick={() => setShowAdd(true)}>
+          <IconPlus width={14} aria-hidden="true" /> {t("codexAuth.add")}
         </button>
       </div>
 
@@ -296,25 +297,27 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
         <CodexAccountPoolReauthBanner onReauth={() => openReauth(activePoolAccount.id)} />
       )}
 
-      {pool.length === 0 && <EmptyState title={t("codexAuth.noPool")} />}
+      {pool.length === 0 && <Empty title={t("codexAuth.noPool")} />}
 
-      <CodexAccountPoolCards
-        pool={pool}
-        activeId={activeId}
-        accountModeState={accountModeState}
-        switchActionLabel={switchActionLabel}
-        threshold={autoSwitch.threshold ?? 0}
-        onOpenReset={openResetPopup}
-        onSwitch={setConfirm}
-        onTogglePause={togglePaused}
-        pauseUpdatingId={pauseUpdatingId}
-        pauseBusy={pauseUpdatingId !== null || pausingExhausted}
-        onReauth={openReauth}
-        onEditAlias={editAlias}
-        onRemove={remove}
-        onCopyDoctor={copyDoctor}
-        doctorCopyOutcomeFor={doctorCopy.outcomeFor}
-      />
+      <div style={POOL_GRID}>
+        <CodexAccountPoolCards
+          pool={pool}
+          activeId={activeId}
+          accountModeState={accountModeState}
+          switchActionLabel={switchActionLabel}
+          threshold={autoSwitch.threshold ?? 0}
+          onOpenReset={openResetPopup}
+          onSwitch={setConfirm}
+          onTogglePause={togglePaused}
+          pauseUpdatingId={pauseUpdatingId}
+          pauseBusy={pauseUpdatingId !== null || pausingExhausted}
+          onReauth={openReauth}
+          onEditAlias={editAlias}
+          onRemove={remove}
+          onCopyDoctor={copyDoctor}
+          doctorCopyOutcomeFor={doctorCopy.outcomeFor}
+        />
+      </div>
 
       <CodexAutoSwitchSetting
         threshold={autoSwitch.threshold}

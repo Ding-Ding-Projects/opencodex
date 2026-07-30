@@ -9,6 +9,7 @@ import {
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { Notice } from "../ui";
+import { Button, TextInput } from "../shell/m3-ui";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
 import { clampedNumberInput } from "./combo-workspace-utils";
@@ -95,21 +96,21 @@ export function AddComboModal({
       onCancel={handleCancel}
     >
       <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={requestClose} />
-      <div className="modal-card" style={{ width: "min(560px, 94vw)" }} onClick={(e) => e.stopPropagation()}>
-        <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-          <h3 id="cwi-add-title" style={{ margin: 0 }}>{t("cws.addTitle")}</h3>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={requestClose} disabled={busy} aria-label={t("common.close")}>
-            <IconX width={16} height={16} />
+      <div className="cwi-dialog-card cwi-dialog-card--add" onClick={(e) => e.stopPropagation()}>
+        <div className="m3-row m3-row--split">
+          <h3 id="cwi-add-title" className="cwi-dialog-title">{t("cws.addTitle")}</h3>
+          <button type="button" className="cwi-icon-btn" onClick={requestClose} disabled={busy} aria-label={t("common.close")}>
+            <IconX width={20} height={20} aria-hidden="true" />
           </button>
         </div>
-        <p className="muted" style={{ marginTop: 0 }}>{t("cws.addSubtitle")}</p>
+        <p className="cwi-dialog-desc">{t("cws.addSubtitle")}</p>
         {error && <Notice tone="err">{error}</Notice>}
         <div className="cwi-modal-form">
           <div className="cwi-field">
             <label htmlFor="cwi-new-id">{t("cws.field.id")}</label>
-            <input
+            <TextInput
               id="cwi-new-id"
-              className="input mono"
+              className="mono"
               value={draft.id}
               disabled={busy}
               onChange={(e) => setDraft((d) => ({
@@ -118,15 +119,15 @@ export function AddComboModal({
                 model: comboPublicModelId(e.target.value, d.alias),
               }))}
             />
-            <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+            <p className="m3-field-hint">
               {t("cws.field.idInternalHint")}
             </p>
           </div>
           <div className="cwi-field">
             <label htmlFor="cwi-new-alias">{t("cws.field.alias")}</label>
-            <input
+            <TextInput
               id="cwi-new-alias"
-              className="input mono"
+              className="mono"
               value={draft.alias ?? ""}
               placeholder={t("cws.field.aliasPlaceholder")}
               disabled={busy}
@@ -136,10 +137,10 @@ export function AddComboModal({
                 model: comboPublicModelId(d.id, e.target.value),
               }))}
             />
-            <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+            <p className="m3-field-hint">
               {t("cws.field.aliasHint")}
             </p>
-            <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+            <p className="m3-field-hint">
               {t("cws.field.idHint", {
                 model: draft.id.trim() ? comboPublicModelId(draft.id, draft.alias) : "…",
               })}
@@ -152,7 +153,7 @@ export function AddComboModal({
               disabled={busy}
               onChange={(strategy) => setDraft((d) => ({ ...d, strategy }))}
             />
-            <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
+            <p className="m3-field-hint">
               {draft.strategy === "failover" ? t("cws.strategy.failoverHint") : t("cws.strategy.roundRobinHint")}
             </p>
           </div>
@@ -165,16 +166,16 @@ export function AddComboModal({
               allowedEfforts={allowedEfforts}
               onChange={(defaultEffort) => setDraft((d) => ({ ...d, defaultEffort }))}
             />
-            <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+            <p className="m3-field-hint">
               {t("cws.field.defaultEffortHint")}
             </p>
           </div>
           {draft.strategy === "round-robin" && (
             <div className="cwi-field">
               <label htmlFor="cwi-new-sticky">{t("cws.field.stickyLimit")}</label>
-              <input
+              <TextInput
                 id="cwi-new-sticky"
-                className="input mono"
+                className="mono"
                 type="number"
                 min={1}
                 max={100}
@@ -186,14 +187,14 @@ export function AddComboModal({
                   setDraft((d) => ({ ...d, stickyLimit }));
                 }}
               />
-              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+              <p className="m3-field-hint">
                 {t("cws.field.stickyLimitHint")}
               </p>
             </div>
           )}
           <div className="cwi-field">
             <span className="field-label">{t("cws.targets")}</span>
-            <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
+            <p className="m3-field-hint" style={{ margin: "0 0 8px" }}>
               {draft.strategy === "failover" ? t("cws.targets.failoverHint") : t("cws.targets.roundRobinHint")}
             </p>
             <TargetEditor
@@ -206,10 +207,10 @@ export function AddComboModal({
           </div>
         </div>
         <div className="cwi-modal-actions">
-          <button type="button" className="btn btn-ghost" onClick={requestClose} disabled={busy}>{t("common.cancel")}</button>
-          <button type="button" className="btn btn-primary" onClick={() => { void submit(); }} disabled={busy}>
+          <Button variant="text" onClick={requestClose} disabled={busy}>{t("common.cancel")}</Button>
+          <Button variant="filled" onClick={() => { void submit(); }} disabled={busy}>
             {busy ? t("common.saving") : t("cws.create")}
-          </button>
+          </Button>
         </div>
       </div>
     </dialog>

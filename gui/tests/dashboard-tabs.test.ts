@@ -73,17 +73,28 @@ test("the nav separates product from system pages with exactly one divider", asy
   expect(dividerIdx).toBeGreaterThan(productIdx);
 });
 
-test("Dashboard uses the shared page-tabs strip with a tablist", async () => {
+/**
+ * Supersession: the Material 3 restyle replaced the shared `.page-tabs`
+ * underline strip on this screen with the prototype's pill tablist
+ * (`.dash-tabs`, owned by styles-dashboard-workspace.css). The invariants the
+ * original assertion protected are unchanged and re-pinned here against the M3
+ * markup: a real tablist/tab/tabpanel triple, no left rail, and a strip that
+ * scrolls rather than wrapping onto a second row (Q7).
+ */
+test("Dashboard uses a pill tablist strip that scrolls instead of wrapping", async () => {
   const page = await Bun.file(new URL("../src/pages/Dashboard.tsx", import.meta.url)).text();
-  expect(page).toContain('className="page-tabs" role="tablist"');
+  expect(page).toContain('className="dash-tabs" role="tablist"');
   expect(page).toContain('role="tab"');
   expect(page).toContain('role="tabpanel"');
   // The left rail is gone.
   expect(page).not.toContain("dashboard-workspace-rail");
 
   // Tabs never wrap; the strip scrolls instead (Q7).
-  const css = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
-  const strip = css.slice(css.indexOf(".page-tabs {"), css.indexOf("}", css.indexOf(".page-tabs {")));
+  const css = await Bun.file(new URL("../src/styles-dashboard-workspace.css", import.meta.url)).text();
+  const strip = css.slice(css.indexOf(".dash-tabs {"), css.indexOf("}", css.indexOf(".dash-tabs {")));
   expect(strip).toContain("flex-wrap: nowrap");
   expect(strip).toContain("overflow-x: auto");
+  // And it is the M3 pill container, not a bottom-border strip.
+  expect(strip).toContain("border-radius: 999px");
+  expect(strip).toContain("var(--m3-surface-container)");
 });

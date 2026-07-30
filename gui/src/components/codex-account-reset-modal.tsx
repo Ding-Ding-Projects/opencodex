@@ -51,8 +51,8 @@ export function CodexAccountResetModal({
       <div className="modal-card" onClick={e => e.stopPropagation()} role="document">
         {!resetConfirm ? (
           <>
-            <h3 id="codex-reset-title"><IconTicket width={16} /> {t("codexAuth.resetCreditsTitle")}</h3>
-            <div className="card-sub">{resetPopup.email}{resetPopup.plan ? ` · ${resetPopup.plan}` : ""}</div>
+            <h3 id="codex-reset-title"><IconTicket width={16} aria-hidden="true" /> {t("codexAuth.resetCreditsTitle")}</h3>
+            <div className="m3-card-sub">{resetPopup.email}{resetPopup.plan ? ` · ${resetPopup.plan}` : ""}</div>
             <div style={{ margin: "16px 0" }}>
               {(resetPopup.quota?.resetCredits ?? 0) > 0 ? (
                 <>
@@ -65,11 +65,11 @@ export function CodexAccountResetModal({
                       ))}
                     </div>
                   )}
-                  <button type="button" className="btn btn-primary" style={{ marginTop: 12, width: "100%" }}
+                  <button type="button" className="m3-btn m3-btn--filled" style={{ marginTop: "var(--sp-2)", width: "100%" }}
                     onClick={onShowConfirm} disabled={redeeming}>
                     {t("codexAuth.useOneCredit")}
                   </button>
-                  <p className="card-sub text-caption" style={{ marginTop: 8, textAlign: "center" }}>{t("codexAuth.fifoNote")}</p>
+                  <p className="m3-card-sub text-caption" style={{ marginTop: 8, textAlign: "center" }}>{t("codexAuth.fifoNote")}</p>
                 </>
               ) : (
                 <>
@@ -82,7 +82,7 @@ export function CodexAccountResetModal({
         ) : (
           <>
             <div style={{ textAlign: "center", padding: "12px 0" }}>
-              <div className="confirm-icon"><IconAlert width={22} /></div>
+              <div className="confirm-icon"><IconAlert width={22} aria-hidden="true" /></div>
               <h3 id="codex-reset-title">{t("codexAuth.confirmResetTitle")}</h3>
               <p className="modal-desc">{t("codexAuth.confirmResetDesc", { count: String(resetPopup.quota?.resetCredits ?? 0) })}</p>
               {creditDetails && creditDetails[0] && (
@@ -93,8 +93,8 @@ export function CodexAccountResetModal({
               <p className="faint text-label">{t("codexAuth.irreversible")}</p>
             </div>
             <div className="modal-actions">
-              <button type="button" className="btn btn-ghost" onClick={onCancelConfirm}>{t("codexAuth.cancel")}</button>
-              <button type="button" className="btn btn-primary" onClick={onRedeem} disabled={redeeming}>
+              <button type="button" className="m3-btn m3-btn--text" onClick={onCancelConfirm}>{t("codexAuth.cancel")}</button>
+              <button type="button" className="m3-btn m3-btn--danger" onClick={onRedeem} disabled={redeeming}>
                 {redeeming ? t("codexAuth.redeeming") : t("codexAuth.useCredit")}
               </button>
             </div>

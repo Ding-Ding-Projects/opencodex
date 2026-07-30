@@ -35,8 +35,11 @@ test("Usage stacked layout mounts every report panel in order", async () => {
     cursor = at;
   }
 
-  // Classic panels keep their section landmarks and headings.
-  expect(src).toContain('className="panel"');
+  // Panels keep their section landmarks and headings. The legacy `.panel` chrome was
+  // superseded by the Material 3 restyle, so this pins the M3 equivalent (`.m3-card`
+  // section + `.m3-card-title` heading) rather than the retired class name.
+  expect(src).toContain('className="m3-card"');
+  expect(src).toContain('className="m3-card-title"');
   expect(src).toContain('aria-labelledby={titleId}');
 });
 

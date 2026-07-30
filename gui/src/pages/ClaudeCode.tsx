@@ -121,12 +121,12 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
     }
   };
 
-  if (loading) return <div className="muted" style={{ padding: 8 }}>{t("claude.loading")}</div>;
+  if (loading) return <div role="status" style={{ padding: 8, color: "var(--m3-on-surface-variant)" }}>{t("claude.loading")}</div>;
   if (!state) return <Notice tone="err">{status || t("claude.loadFail")}</Notice>;
 
   return (
     <>
-      <div className="page-head"><h2>{t("claude.pageTitle")}</h2></div>
+      <h2 className="page-title">{t("claude.pageTitle")}</h2>
       <p className="page-sub">{t("claude.subtitle")}</p>
       {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
       <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} />

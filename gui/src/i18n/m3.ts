@@ -52,6 +52,16 @@ export const M3_EN = {
   "notif.toneSuccess": "Successes",
   "notif.toneInfo": "Info",
 
+  // ---- logs & debug ----
+  "debug.captureTitle": "Capture",
+  "debug.captureSub": "Each stream is opt-in and costs throughput while it is on.",
+  "debug.streamsAria": "Debug log streams",
+  "debug.claudeInbound.thinking": "Thinking",
+  "debug.claudeInbound.effort": "Effort",
+  "debug.claudeInbound.beta": "Beta",
+  "debug.claudeInbound.metadata": "Metadata",
+  "debug.claudeInbound.system": "System",
+
   // ---- appearance ----
   "appearance.title": "Appearance",
   "appearance.themeTitle": "Theme",
@@ -188,6 +198,9 @@ export const M3_EN = {
   "changelog.noResults": "No releases match",
   "changelog.noResultsBody": "Widen the date range or clear the search to see more.",
 
+  // ---- storage ----
+  "storage.col.share": "Share",
+
   // ---- version history ----
   "history.title": "Version history",
   "history.sub": "Append-only. Restoring an entry records a new revision, so an undo can itself be undone.",
@@ -211,6 +224,15 @@ export const M3_EN = {
   "history.scopeKey": "API keys",
   "history.scopeCombo": "Combos",
   "history.scopeSettings": "Settings",
+
+  // ---- grok (M3 restyle: column header for the registration switch) ----
+  "grok.colEnabled": "Registered",
+
+  // ---- providers (M3 restyle: pill tablist + rail landmarks) ----
+  "pws.sectionsAria": "Provider sections",
+
+  // ---- combos (M3 restyle: pill tablist label) ----
+  "cws.tabsAria": "Combo sections",
 } as const;
 
 export type M3Key = keyof typeof M3_EN;

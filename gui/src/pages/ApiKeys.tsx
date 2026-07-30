@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Notice } from "../ui";
+import { useCopyFeedback } from "../components/use-copy-feedback";
 import { useI18n, LOCALES } from "../i18n/shared";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import {
@@ -49,14 +50,15 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
-  const [copiedModelId, setCopiedModelId] = useState<string | null>(null);
   const [modelTests, setModelTests] = useState<Record<string, { state: ModelTestState; detail?: string }>>({});
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const creatingRef = useRef(false);
+  // One copy protocol for the reveal-once key and every model ID; the scope is
+  // the copied text itself, so a second click reads as idle on the first target.
+  const { outcomeFor: copyOutcomeFor, copy } = useCopyFeedback<string>();
 
   const fetchKeys = useCallback(async () => {
     try {
@@ -190,21 +192,11 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   };
 
   const copyKey = () => {
-    if (newKey) {
-      navigator.clipboard.writeText(newKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    if (newKey) copy(newKey, newKey);
   };
 
-  const copyModelId = async (modelId: string) => {
-    try {
-      await navigator.clipboard.writeText(modelId);
-      setCopiedModelId(modelId);
-      window.setTimeout(() => setCopiedModelId(current => (current === modelId ? null : current)), 2000);
-    } catch {
-      /* clipboard unavailable */
-    }
+  const copyModelId = (modelId: string) => {
+    copy(modelId, modelId);
   };
 
   const sourceLabel = (model: ExternalModelRow): string => {
@@ -257,9 +249,9 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   return (
     <section className="api-page">
       <div className="page-head">
-        <h2>{t("api.title")}</h2>
+        <h2 className="m3-card-title">{t("api.title")}</h2>
       </div>
-      <p className="page-sub">
+      <p className="page-sub m3-card-sub" style={{ maxWidth: "74ch", marginBottom: "var(--sp-4)" }}>
         {subtitleParts[0]}
         <code>Authorization: Bearer ocx_...</code>
         {subtitleParts[1]}
@@ -279,7 +271,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         newName={newName}
         creating={creating}
         newKey={newKey}
-        copied={copied}
+        copyOutcome={newKey ? copyOutcomeFor(newKey) : null}
         confirmDelete={confirmDelete}
         localeTag={localeTag}
         onNewNameChange={setNewName}
@@ -295,11 +287,11 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         modelsLoading={modelsLoading}
         modelsLoadFailed={modelsLoadFailed}
         modelQuery={modelQuery}
-        copiedModelId={copiedModelId}
+        copyOutcomeFor={copyOutcomeFor}
         modelTests={modelTests}
         claudeCodeEnabled={claudeCodeEnabled}
         onModelQueryChange={setModelQuery}
-        onCopyModelId={(modelId) => { void copyModelId(modelId); }}
+        onCopyModelId={copyModelId}
         onTestModel={(model) => { void testModel(model); }}
         sourceLabel={sourceLabel}
         protocolLabel={protocolLabel}

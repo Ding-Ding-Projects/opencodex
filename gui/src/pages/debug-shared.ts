@@ -1,3 +1,36 @@
+import type { CSSProperties } from "react";
+
+/**
+ * Pill tablist chrome shared by the Logs/Debug section tabs and the debug
+ * stream switcher, mirroring the LOGS section of the M3 prototype (4px inset,
+ * fully rounded track on `--m3-surface-container`).
+ */
+export const M3_TABLIST_STYLE: CSSProperties = {
+  display: "flex",
+  gap: 6,
+  padding: 4,
+  borderRadius: 999,
+  background: "var(--m3-surface-container)",
+  width: "fit-content",
+  flexWrap: "wrap",
+  rowGap: 4,
+};
+
+/** 44px-tall pill so every tab clears the minimum hit target. */
+export function m3TabStyle(selected: boolean): CSSProperties {
+  return {
+    minHeight: 44,
+    padding: "0 20px",
+    border: "none",
+    borderRadius: 999,
+    background: selected ? "var(--m3-secondary-container)" : "transparent",
+    color: selected ? "var(--m3-on-secondary-container)" : "var(--m3-on-surface-variant)",
+    font: "inherit",
+    fontWeight: selected ? 500 : 400,
+    cursor: "pointer",
+  };
+}
+
 export interface DebugSettings {
   enabled: boolean;
   usage: boolean;

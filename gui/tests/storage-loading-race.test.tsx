@@ -108,7 +108,9 @@ test("an aborted Storage fetch must not clear loading while its replacement is i
     await new Promise<void>(resolve => testWindow.setTimeout(resolve, 0));
   });
 
-  const refresh = container.querySelector<HTMLButtonElement>("button.btn");
+  // M3 restyle: the refresh control is now an m3-ui <Button variant="text">, so the
+  // legacy .btn class is gone. Same invariant, pinned to the M3 class instead.
+  const refresh = container.querySelector<HTMLButtonElement>("button.m3-btn");
   expect(container.textContent).toContain("Scanning storage");
   expect(refresh?.disabled).toBe(true);
   expect(container.textContent).not.toContain("/tmp/a");
@@ -216,7 +218,9 @@ test("effect cleanup invalidates generation before abort so loading stays owned 
       await Promise.resolve();
     });
 
-    const refresh = container.querySelector<HTMLButtonElement>("button.btn");
+    // M3 restyle: the refresh control is now an m3-ui <Button variant="text">, so the
+  // legacy .btn class is gone. Same invariant, pinned to the M3 class instead.
+  const refresh = container.querySelector<HTMLButtonElement>("button.m3-btn");
     expect(gates.length).toBe(1);
     expect(container.textContent).toContain("Scanning storage");
     expect(refresh?.disabled).toBe(true);

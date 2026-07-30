@@ -168,8 +168,11 @@ test("Models page combines final visibility, atomic actions, discovery status, a
     const switchFor = (id: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${provider}/${id}"]`)!;
     const buttonText = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === text)!;
     expect(container.textContent).toContain("2/5 visible");
-    expect(switchFor("gemini-pro").getAttribute("aria-pressed")).toBe("true");
-    expect(switchFor("claude-sonnet").getAttribute("aria-pressed")).toBe("false");
+    // M3 restyle: the visibility control is now a `role="switch"` button, so the
+    // checked state is exposed via aria-checked instead of the legacy aria-pressed.
+    expect(switchFor("gemini-pro").getAttribute("role")).toBe("switch");
+    expect(switchFor("gemini-pro").getAttribute("aria-checked")).toBe("true");
+    expect(switchFor("claude-sonnet").getAttribute("aria-checked")).toBe("false");
     expect(container.querySelector(".badge.badge-amber")?.textContent).toContain("Discovery failed");
     expect(container.textContent).not.toContain("Not selected");
 
@@ -186,7 +189,7 @@ test("Models page combines final visibility, atomic actions, discovery status, a
 
     failNext = true;
     await act(async () => { switchFor("claude-opus").click(); await new Promise(resolve => testWindow.setTimeout(resolve, 0)); });
-    expect(switchFor("claude-opus").getAttribute("aria-pressed")).toBe("false");
+    expect(switchFor("claude-opus").getAttribute("aria-checked")).toBe("false");
     expect(container.textContent).toContain("Save failed");
 
     await act(async () => { buttonText("All on").click(); await new Promise(resolve => testWindow.setTimeout(resolve, 0)); });

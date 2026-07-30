@@ -1,8 +1,9 @@
 import { useI18n } from "../i18n/shared";
 import { IconRefresh } from "../icons";
+import { Button } from "../shell/m3-ui";
 import { Switch } from "../ui";
 import type { DebugSettings, LogStream } from "./debug-shared";
-import { isDebugFlagEnabled } from "./debug-shared";
+import { M3_TABLIST_STYLE, isDebugFlagEnabled, m3TabStyle } from "./debug-shared";
 
 export function DebugSettingsPanel({
   debug,
@@ -22,35 +23,48 @@ export function DebugSettingsPanel({
   const { t } = useI18n();
 
   return (
-    <div className="card" style={{ marginBottom: 16, padding: "12px 14px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-          {(["debug", "usage", "injection", "claude"] as const).map(flag => {
-            const checked = isDebugFlagEnabled(debug, flag);
-            return (
-              <div key={flag} style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 220 }}>
-                <Switch
-                  on={checked}
-                  disabled={debugBusy}
-                  label={t(`debug.${flag}`)}
-                  onClick={() => onSetFlag(flag, !checked)}
-                />
-                <span className="text-control">{t(`debug.${flag}`)}</span>
-              </div>
-            );
-          })}
+    <section className="m3-card">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 className="m3-card-title">{t("debug.captureTitle")}</h3>
+          <p className="m3-card-sub">{t("debug.captureSub")}</p>
         </div>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={debugBusy} onClick={onReset}>
-          {t("debug.reset")}
-        </button>
+        <div className="m3-card-actions">
+          <Button variant="text" disabled={debugBusy} onClick={onReset}>
+            {t("debug.reset")}
+          </Button>
+        </div>
+      </header>
+
+      <div className="m3-grid">
+        {(["debug", "usage", "injection", "claude"] as const).map(flag => {
+          const checked = isDebugFlagEnabled(debug, flag);
+          return (
+            <div key={flag} className="m3-row" style={{ gap: 10, minHeight: 44 }}>
+              <Switch
+                on={checked}
+                disabled={debugBusy}
+                label={t(`debug.${flag}`)}
+                onClick={() => onSetFlag(flag, !checked)}
+              />
+              <span style={{ fontSize: "var(--t-body-m)" }}>{t(`debug.${flag}`)}</span>
+            </div>
+          );
+        })}
       </div>
 
       {(debug.enabled || debug.usage || debug.injection) && (
-        <div style={{ display: "inline-flex", gap: 6, marginTop: 12 }}>
+        <div
+          role="tablist"
+          aria-label={t("debug.streamsAria")}
+          style={{ ...M3_TABLIST_STYLE, marginTop: 16 }}
+        >
           {debug.enabled && (
             <button
               type="button"
-              className={`btn btn-sm${stream === "provider" ? " btn-primary" : " btn-ghost"}`}
+              role="tab"
+              aria-selected={stream === "provider"}
+              style={m3TabStyle(stream === "provider")}
               onClick={() => onStreamChange("provider")}
             >
               {t("debug.streamProvider")}
@@ -59,7 +73,9 @@ export function DebugSettingsPanel({
           {debug.usage && (
             <button
               type="button"
-              className={`btn btn-sm${stream === "usage" ? " btn-primary" : " btn-ghost"}`}
+              role="tab"
+              aria-selected={stream === "usage"}
+              style={m3TabStyle(stream === "usage")}
               onClick={() => onStreamChange("usage")}
             >
               {t("debug.streamUsage")}
@@ -68,7 +84,9 @@ export function DebugSettingsPanel({
           {debug.injection && (
             <button
               type="button"
-              className={`btn btn-sm${stream === "injection" ? " btn-primary" : " btn-ghost"}`}
+              role="tab"
+              aria-selected={stream === "injection"}
+              style={m3TabStyle(stream === "injection")}
               onClick={() => onStreamChange("injection")}
             >
               {t("debug.streamInjection")}
@@ -76,7 +94,7 @@ export function DebugSettingsPanel({
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -99,24 +117,29 @@ export function DebugPageHeader({
 
   return (
     <>
-      <div className={embedded ? "row" : "page-head"} style={embedded ? { justifyContent: "flex-end", marginBottom: 4 } : undefined}>
-        {!embedded && <h2>{t("debug.title")}</h2>}
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={refreshing || !streamEnabled}
-            onClick={onRefresh}
+      <div
+        className={embedded ? "m3-row" : "m3-row m3-row--split"}
+        style={embedded ? { justifyContent: "flex-end", marginBottom: 4 } : { marginBottom: 4 }}
+      >
+        {!embedded && (
+          <h2 style={{ margin: 0, fontSize: "var(--t-headline-s)", fontWeight: 400 }}>{t("debug.title")}</h2>
+        )}
+        <div className="m3-row" style={{ gap: 12 }}>
+          <Button variant="text" disabled={refreshing || !streamEnabled} onClick={onRefresh}>
+            <IconRefresh aria-hidden="true" /> {t("debug.refresh")}
+          </Button>
+          <label
+            className="m3-row"
+            style={{ cursor: "pointer", gap: 8, minHeight: 44, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}
           >
-            <IconRefresh /> {t("debug.refresh")}
-          </button>
-          <label className="muted text-control" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={follow} onChange={e => onFollowChange(e.target.checked)} />
             {t("debug.follow")}
           </label>
         </div>
       </div>
-      <p className="page-sub">{t("debug.subtitle")}</p>
+      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+        {t("debug.subtitle")}
+      </p>
     </>
   );
 }

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { IconRefresh } from "../icons";
 import { useI18n } from "../i18n/shared";
-import { EmptyState } from "../ui";
+import { Button, Empty } from "../shell/m3-ui";
 import {
   StartupDetailsSection,
   StartupHeroSection,
@@ -14,6 +14,15 @@ import {
   type StartupInstallAction,
   type TrayStatusData,
 } from "./startup-shared";
+
+const warnNoticeStyle: CSSProperties = {
+  background: "var(--m3-warn-container)",
+  color: "var(--m3-on-warn-container)",
+  padding: "12px 16px",
+  borderRadius: 12,
+  marginBottom: "var(--sp-3)",
+  fontSize: "var(--t-body-s)",
+};
 
 export default function Startup({ apiBase }: { apiBase: string }) {
   const { t } = useI18n();
@@ -194,33 +203,35 @@ export default function Startup({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h2>{t("startup.title")}</h2>
-          <p className="page-sub startup-page-sub">{t("startup.subtitle")}</p>
+      <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-3)", alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: "var(--t-headline-s)", fontWeight: 500 }}>{t("startup.title")}</h2>
+          <p style={{ margin: "6px 0 0", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-m)" }}>
+            {t("startup.subtitle")}
+          </p>
         </div>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refresh()} disabled={loading}>
-          <IconRefresh /> {t("startup.refresh")}
-        </button>
+        <Button variant="text" onClick={() => void refresh()} disabled={loading}>
+          <IconRefresh aria-hidden="true" /> {t("startup.refresh")}
+        </Button>
       </div>
 
       {loading && !data ? (
-        <EmptyState title={t("startup.loading")} />
+        <Empty title={t("startup.loading")} />
       ) : failed && !data ? (
-        <EmptyState title={t("startup.error")} />
+        <Empty title={t("startup.error")} />
       ) : data ? (
         <>
-          {failed && <div className="notice notice-warn" role="alert">{t("startup.staleData")}</div>}
+          {failed && <div style={warnNoticeStyle} role="alert">{t("startup.staleData")}</div>}
           {codexRuntimeWarning && (
-            <div className="notice notice-warn" role="status">
-              <p>{codexRuntimeWarning}</p>
+            <div style={warnNoticeStyle} role="status">
+              <p style={{ margin: 0 }}>{codexRuntimeWarning}</p>
               {codexRuntimeFix && (
-                <p>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void copyCommand(codexRuntimeFix)}>
+                <div className="m3-row" style={{ marginTop: 8, gap: 8 }}>
+                  <Button variant="outlined" onClick={() => void copyCommand(codexRuntimeFix)}>
                     {copied === codexRuntimeFix ? t("startup.copied") : t("startup.copy")}
-                  </button>
-                  <code style={{ marginLeft: "0.5rem" }}>{codexRuntimeFix}</code>
-                </p>
+                  </Button>
+                  <code style={{ fontFamily: "var(--mono)", fontSize: "var(--t-label-m)", overflowWrap: "anywhere" }}>{codexRuntimeFix}</code>
+                </div>
               )}
             </div>
           )}

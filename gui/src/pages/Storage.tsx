@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
-import { EmptyState } from "../ui";
+import { Button, Chip, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { IconRefresh } from "../icons";
 import { formatBytes } from "../format-bytes";
 
@@ -108,6 +108,38 @@ const BUCKET_TKEYS: Record<string, TKey> = {
 
 const PRESETS = [10, 25, 50] as const;
 
+/** Shared presentation constants — tokens only, no literal colours. */
+const SECTION_GAP: CSSProperties = { marginTop: "var(--sp-3)" };
+const NUM_CELL: CSSProperties = { textAlign: "right", fontVariantNumeric: "tabular-nums" };
+const MUTED_CELL: CSSProperties = { color: "var(--m3-on-surface-variant)" };
+const CARD_BODY: CSSProperties = { marginTop: "var(--sp-2)" };
+const TABLE_WRAP: CSSProperties = { overflowX: "auto", marginTop: "var(--sp-2)" };
+const ERROR_TEXT: CSSProperties = { marginTop: "var(--sp-2)", color: "var(--m3-error)" };
+const BAR_TRACK: CSSProperties = {
+  display: "block",
+  width: "100%",
+  minWidth: 64,
+  height: 8,
+  borderRadius: 999,
+  background: "var(--m3-surface-container-highest)",
+  overflow: "hidden",
+};
+const BAR_FILL: CSSProperties = { display: "block", height: "100%", background: "var(--m3-primary)" };
+/** Tonal stat tile matching the prototype's --h-stat cards. */
+const STAT_TILE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "center",
+  gap: 4,
+  minHeight: "var(--h-stat)",
+  padding: "var(--pad-card)",
+  borderRadius: "var(--r-l)",
+  background: "var(--m3-surface-container-low)",
+  border: "1px solid var(--m3-outline-variant)",
+};
+const STAT_LABEL: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" };
+const STAT_VALUE: CSSProperties = { fontSize: "var(--t-title-m)", fontWeight: 500, overflowWrap: "anywhere" };
+
 const localizedCatch = (e: unknown, fallback: string): string => {
   if (!(e instanceof Error)) return fallback;
   const msg = e.message;
@@ -133,34 +165,56 @@ function formatDate(ms: number | undefined, locale: Locale): string {
 }
 
 function BucketsTable({ buckets, locale, t }: { buckets: StorageBucket[]; locale: Locale; t: TFn }) {
+  // Presentation-only share of the largest bucket, so the bars read comparatively.
+  const peak = buckets.reduce((max, bucket) => Math.max(max, bucket.bytes), 0);
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-buckets-title">
-      <h3 id="storage-buckets-title" className="panel-title">{t("storage.section.buckets")}</h3>
-      <div className="tbl-wrap">
-        <table className="tbl">
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-buckets-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id="storage-buckets-title" className="m3-card-title">{t("storage.section.buckets")}</h3>
+        </div>
+      </header>
+      <div style={TABLE_WRAP}>
+        <table className="m3-table">
           <thead>
             <tr>
               <th>{t("storage.col.bucket")}</th>
-              <th className="num">{t("storage.col.size")}</th>
-              <th className="num">{t("storage.col.files")}</th>
+              <th>{t("storage.col.share")}</th>
+              <th style={NUM_CELL}>{t("storage.col.size")}</th>
+              <th style={NUM_CELL}>{t("storage.col.files")}</th>
               <th>{t("storage.col.oldest")}</th>
               <th>{t("storage.col.newest")}</th>
-              <th className="num">{t("storage.col.rows")}</th>
+              <th style={NUM_CELL}>{t("storage.col.rows")}</th>
             </tr>
           </thead>
           <tbody>
-            {buckets.map(bucket => (
-              <tr key={bucket.key}>
-                <td>{bucketLabel(bucket, t)}</td>
-                <td className="num mono">{formatBytes(bucket.bytes, locale)}</td>
-                <td className="num">{bucket.fileCount}</td>
-                <td className="muted">{formatDate(bucket.oldest, locale)}</td>
-                <td className="muted">{formatDate(bucket.newest, locale)}</td>
-                <td className="num mono">
-                  {bucket.rows === undefined ? "—" : bucket.rows === null ? t("storage.rows.unknown") : bucket.rows.toLocaleString(locale)}
-                </td>
-              </tr>
-            ))}
+            {buckets.map(bucket => {
+              const share = peak > 0 ? Math.round((bucket.bytes / peak) * 100) : 0;
+              return (
+                <tr key={bucket.key}>
+                  <td>{bucketLabel(bucket, t)}</td>
+                  <td>
+                    <span
+                      role="progressbar"
+                      aria-valuenow={share}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={bucketLabel(bucket, t)}
+                      style={BAR_TRACK}
+                    >
+                      <span aria-hidden="true" style={{ ...BAR_FILL, width: `${share}%` }} />
+                    </span>
+                  </td>
+                  <td className="mono" style={NUM_CELL}>{formatBytes(bucket.bytes, locale)}</td>
+                  <td style={NUM_CELL}>{bucket.fileCount}</td>
+                  <td style={MUTED_CELL}>{formatDate(bucket.oldest, locale)}</td>
+                  <td style={MUTED_CELL}>{formatDate(bucket.newest, locale)}</td>
+                  <td className="mono" style={NUM_CELL}>
+                    {bucket.rows === undefined ? "—" : bucket.rows === null ? t("storage.rows.unknown") : bucket.rows.toLocaleString(locale)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -172,18 +226,24 @@ function LargestFilesPanel({ buckets, locale, t }: { buckets: StorageBucket[]; l
   const withLargest = buckets.filter(bucket => (bucket.largest?.length ?? 0) > 0);
   if (withLargest.length === 0) return null;
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-largest-title">
-      <h3 id="storage-largest-title" className="panel-title">{t("storage.section.largest")}</h3>
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-largest-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id="storage-largest-title" className="m3-card-title">{t("storage.section.largest")}</h3>
+        </div>
+      </header>
       {withLargest.map(bucket => (
-        <details key={bucket.key} style={{ marginTop: 8 }}>
-          <summary>{bucketLabel(bucket, t)}</summary>
-          <div className="tbl-wrap" style={{ marginTop: 8 }}>
-            <table className="tbl">
+        <details key={bucket.key} style={CARD_BODY}>
+          <summary style={{ minHeight: 44, display: "flex", alignItems: "center", cursor: "pointer" }}>
+            {bucketLabel(bucket, t)}
+          </summary>
+          <div style={TABLE_WRAP}>
+            <table className="m3-table">
               <tbody>
                 {bucket.largest!.map(entry => (
                   <tr key={entry.path}>
-                    <td className="mono">{entry.path}</td>
-                    <td className="num mono">{formatBytes(entry.bytes, locale)}</td>
+                    <td className="mono" style={{ overflowWrap: "anywhere" }}>{entry.path}</td>
+                    <td className="mono" style={NUM_CELL}>{formatBytes(entry.bytes, locale)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -333,44 +393,49 @@ function ArchivedCleanupPanel({
   };
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-cleanup-title">
-      <h3 id="storage-cleanup-title" className="panel-title">{t("storage.cleanup.title")}</h3>
-      <p className="muted" style={{ marginTop: 4 }}>{t("storage.cleanup.help")}</p>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 12 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 220px" }}>
-          <span className="muted">{t("storage.cleanup.percent", { percent: String(percent) })}</span>
-          <input
-            type="range"
-            min={1}
-            max={100}
-            value={percent}
-            onChange={e => setPercent(Number(e.target.value))}
-            disabled={busy}
-            style={{ flex: 1 }}
-            aria-label={t("storage.cleanup.slider")}
-          />
-        </label>
-        <div style={{ display: "flex", gap: 6 }}>
-          {PRESETS.map(p => (
-            <button
-              key={p}
-              type="button"
-              className={`btn btn-ghost btn-sm${percent === p ? " active" : ""}`}
-              disabled={busy}
-              onClick={() => setPercent(p)}
-            >
-              {formatPreset(p)}
-            </button>
-          ))}
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-cleanup-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id="storage-cleanup-title" className="m3-card-title">{t("storage.cleanup.title")}</h3>
+          <p className="m3-card-sub">{t("storage.cleanup.help")}</p>
         </div>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void runPreview()}>
+      </header>
+
+      {/* Raw input rather than <Slider>: the primitive has no disabled prop and
+          the busy lock must stay exactly as it was. */}
+      <div className="m3-slider-row" style={CARD_BODY}>
+        <label className="m3-field-label" htmlFor="storage-cleanup-percent">{t("storage.cleanup.slider")}</label>
+        <input
+          id="storage-cleanup-percent"
+          className="m3-slider"
+          type="range"
+          min={1}
+          max={100}
+          value={percent}
+          onChange={e => setPercent(Number(e.target.value))}
+          disabled={busy}
+          aria-label={t("storage.cleanup.slider")}
+        />
+        <span className="m3-slider-value">{t("storage.cleanup.percent", { percent: String(percent) })}</span>
+      </div>
+      <div className="m3-row" style={CARD_BODY}>
+        {PRESETS.map(p => (
+          <Chip
+            key={p}
+            selected={percent === p}
+            disabled={busy}
+            onClick={() => setPercent(p)}
+          >
+            {formatPreset(p)}
+          </Chip>
+        ))}
+        <Button variant="tonal" disabled={busy} onClick={() => void runPreview()}>
           {t("storage.cleanup.preview")}
-        </button>
+        </Button>
       </div>
 
-      {status && <p className="muted" style={{ marginTop: 12 }}>{status}</p>}
-      {error && !confirmOpen && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
+      {status && <p className="m3-card-sub" style={CARD_BODY} role="status">{status}</p>}
+      {error && !confirmOpen && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
       {confirmOpen && preview && (
         <div
@@ -390,7 +455,7 @@ function ArchivedCleanupPanel({
               })}
             </p>
             {preview.candidates.length > 0 && (
-              <ul className="mono muted" style={{ maxHeight: 160, overflow: "auto", fontSize: "var(--text-caption)" }}>
+              <ul className="mono" style={{ maxHeight: 160, overflow: "auto", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
                 {preview.candidates.slice(0, 8).map(c => (
                   <li key={c.relPath}>{c.relPath}</li>
                 ))}
@@ -399,37 +464,36 @@ function ArchivedCleanupPanel({
                 )}
               </ul>
             )}
-            <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
-              <input
-                type="checkbox"
-                checked={permanent}
-                disabled={busy}
-                onChange={e => setPermanent(e.target.checked)}
-              />
+            <div className="m3-row m3-row--split" style={{ marginTop: "var(--sp-3)" }}>
               <span>{t("storage.cleanup.permanent")}</span>
-            </label>
-            <p className="muted" style={{ marginTop: 8, fontSize: "var(--text-caption)" }}>
+              <Toggle
+                on={permanent}
+                disabled={busy}
+                onChange={next => setPermanent(next)}
+                label={t("storage.cleanup.permanent")}
+              />
+            </div>
+            <p style={{ marginTop: "var(--sp-1)", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
               {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
             </p>
-            {error && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
-            <div className="dialog-actions" style={{ marginTop: 16 }}>
+            {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
+            <div className="m3-row" style={{ marginTop: "var(--sp-3)", justifyContent: "flex-end" }}>
               <button
                 ref={cancelRef}
                 type="button"
-                className="btn btn-ghost"
+                className="m3-btn m3-btn--text"
                 disabled={busy}
                 onClick={() => closeConfirm()}
               >
                 {t("storage.cleanup.cancel")}
               </button>
-              <button
-                type="button"
-                className={permanent ? "btn btn-danger" : "btn"}
+              <Button
+                variant={permanent ? "danger" : "filled"}
                 disabled={busy || preview.count === 0}
                 onClick={() => void runCleanup()}
               >
                 {permanent ? t("storage.cleanup.confirmPermanent") : t("storage.cleanup.confirmQuarantine")}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -584,25 +648,29 @@ function QuarantineTrashPanel({
   };
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-trash-title">
-      <h3 id="storage-trash-title" className="panel-title">{t("storage.trash.title")}</h3>
-      <p className="muted" style={{ marginTop: 4 }}>{t("storage.trash.help")}</p>
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-trash-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id="storage-trash-title" className="m3-card-title">{t("storage.trash.title")}</h3>
+          <p className="m3-card-sub">{t("storage.trash.help")}</p>
+        </div>
+      </header>
 
-      {status && <p className="muted" style={{ marginTop: 12 }}>{status}</p>}
-      {error && !confirmEntry && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
+      {status && <p className="m3-card-sub" style={CARD_BODY} role="status">{status}</p>}
+      {error && !confirmEntry && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
       {loading ? (
-        <p className="muted" style={{ marginTop: 12 }}>{t("storage.trash.loading")}</p>
+        <p className="m3-card-sub" style={CARD_BODY}>{t("storage.trash.loading")}</p>
       ) : entries.length === 0 ? (
-        <p className="muted" style={{ marginTop: 12 }}>{t("storage.trash.empty")}</p>
+        <div style={CARD_BODY}><Empty title={t("storage.trash.empty")} /></div>
       ) : (
-        <div className="tbl-wrap" style={{ marginTop: 12 }}>
-          <table className="tbl">
+        <div style={TABLE_WRAP}>
+          <table className="m3-table">
             <thead>
               <tr>
                 <th>{t("storage.trash.col.when")}</th>
-                <th className="num">{t("storage.trash.col.files")}</th>
-                <th className="num">{t("storage.trash.col.size")}</th>
+                <th style={NUM_CELL}>{t("storage.trash.col.files")}</th>
+                <th style={NUM_CELL}>{t("storage.trash.col.size")}</th>
                 <th>{t("storage.trash.col.mode")}</th>
                 <th>{t("storage.trash.col.id")}</th>
                 <th />
@@ -611,15 +679,14 @@ function QuarantineTrashPanel({
             <tbody>
               {entries.map(entry => (
                 <tr key={entry.id}>
-                  <td className="muted">{formatWhen(entry)}</td>
-                  <td className="num">{entry.fileCount}</td>
-                  <td className="num mono">{formatBytes(entry.bytes, locale)}</td>
-                  <td className="muted">{modeLabel(entry.mode)}</td>
-                  <td className="mono" style={{ fontSize: "var(--text-caption)" }}>{entry.id}</td>
+                  <td style={MUTED_CELL}>{formatWhen(entry)}</td>
+                  <td style={NUM_CELL}>{entry.fileCount}</td>
+                  <td className="mono" style={NUM_CELL}>{formatBytes(entry.bytes, locale)}</td>
+                  <td style={MUTED_CELL}>{modeLabel(entry.mode)}</td>
+                  <td className="mono" style={{ fontSize: "var(--t-label-m)" }}>{entry.id}</td>
                   <td>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
+                    <Button
+                      variant="outlined"
                       disabled={busy}
                       onClick={() => {
                         setError(null);
@@ -627,7 +694,7 @@ function QuarantineTrashPanel({
                       }}
                     >
                       {t("storage.trash.restore")}
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -653,25 +720,24 @@ function QuarantineTrashPanel({
                 id: confirmEntry.id,
               })}
             </p>
-            {error && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
-            <div className="dialog-actions" style={{ marginTop: 16 }}>
+            {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
+            <div className="m3-row" style={{ marginTop: "var(--sp-3)", justifyContent: "flex-end" }}>
               <button
                 ref={cancelRef}
                 type="button"
-                className="btn btn-ghost"
+                className="m3-btn m3-btn--text"
                 disabled={busy}
                 onClick={() => closeConfirm()}
               >
                 {t("storage.trash.cancel")}
               </button>
-              <button
-                type="button"
-                className="btn"
+              <Button
+                variant="filled"
                 disabled={busy}
                 onClick={() => void runRestore()}
               >
                 {t("storage.trash.confirmRestore")}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -977,47 +1043,58 @@ function AutoCleanupPolicyPanel({
   const formatWhen = (ms: number | undefined) =>
     ms === undefined ? t("storage.policy.never") : new Date(ms).toLocaleString(locale);
 
+  const policyHead = (
+    <header className="m3-card-head">
+      <div className="m3-card-headtext">
+        <h3 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h3>
+      </div>
+    </header>
+  );
+
   if (loading && !policy) {
     return (
-      <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-policy-title">
-        <h3 id="storage-policy-title" className="panel-title">{t("storage.policy.title")}</h3>
-        <p className="muted">{t("storage.policy.loading")}</p>
+      <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-policy-title">
+        {policyHead}
+        <p className="m3-card-sub">{t("storage.policy.loading")}</p>
       </section>
     );
   }
 
   if (!policy) {
     return (
-      <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-policy-title">
-        <h3 id="storage-policy-title" className="panel-title">{t("storage.policy.title")}</h3>
-        {error && <p className="err" role="alert">{error}</p>}
+      <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-policy-title">
+        {policyHead}
+        {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
       </section>
     );
   }
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-policy-title">
-      <h3 id="storage-policy-title" className="panel-title">{t("storage.policy.title")}</h3>
-      <p className="muted" style={{ marginTop: 4 }}>{t("storage.policy.help")}</p>
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-policy-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h3>
+          <p className="m3-card-sub">{t("storage.policy.help")}</p>
+        </div>
+      </header>
 
-      <label className="row" style={{ marginTop: 12, gap: 8, alignItems: "center" }}>
-        <input
-          type="checkbox"
-          checked={policy.enabled}
+      <div className="m3-row m3-row--split" style={CARD_BODY}>
+        <div>
+          <div>{t("storage.policy.enabled")}</div>
+          <p className="m3-card-sub">{t("storage.policy.enabledHint")}</p>
+        </div>
+        <Toggle
+          on={policy.enabled}
           disabled={saving || running}
-          onChange={e => {
-            const enabled = e.target.checked;
-            void savePolicy({ enabled });
-          }}
+          label={t("storage.policy.enabled")}
+          onChange={enabled => { void savePolicy({ enabled }); }}
         />
-        <span>{t("storage.policy.enabled")}</span>
-      </label>
-      <p className="muted" style={{ marginTop: 4, fontSize: "var(--text-sm)" }}>{t("storage.policy.enabledHint")}</p>
+      </div>
 
-      <div style={{ display: "grid", gap: 12, marginTop: 16, maxWidth: 420 }}>
-        <label>
-          <span className="muted">{t("storage.policy.threshold")}</span>
-          <input
+      <div className="m3-stack" style={{ marginTop: "var(--sp-3)", maxWidth: 420 }}>
+        <Field label={t("storage.policy.threshold")} id="storage-policy-threshold">
+          <TextInput
+            id="storage-policy-threshold"
             type="number"
             min={0}
             step={0.1}
@@ -1025,24 +1102,22 @@ function AutoCleanupPolicyPanel({
             disabled={saving || running}
             onChange={e => setThresholdGb(e.target.value)}
             onBlur={() => void savePolicy()}
-            style={{ display: "block", marginTop: 4, width: "100%" }}
           />
-        </label>
+        </Field>
 
-        <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
-          <legend className="muted">{t("storage.policy.target")}</legend>
-          <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 4 }}>
-            <input
-              type="radio"
-              name="storage-policy-target"
-              checked={targetMode === "percent"}
-              disabled={saving || running}
-              onChange={() => setTargetMode("percent")}
-            />
-            <span>{t("storage.policy.targetPercent")}</span>
-          </label>
+        <div className="m3-field">
+          <span className="m3-field-label">{t("storage.policy.target")}</span>
+          <Segmented
+            value={targetMode}
+            label={t("storage.policy.target")}
+            onChange={next => { if (!saving && !running) setTargetMode(next); }}
+            options={[
+              { value: "percent", label: t("storage.policy.targetPercent") },
+              { value: "reduce", label: t("storage.policy.targetReduce") },
+            ]}
+          />
           {targetMode === "percent" && (
-            <input
+            <TextInput
               type="number"
               min={1}
               max={100}
@@ -1051,21 +1126,11 @@ function AutoCleanupPolicyPanel({
               aria-label={t("storage.policy.targetPercent")}
               onChange={e => setPercent(e.target.value)}
               onBlur={() => void savePolicy()}
-              style={{ display: "block", marginTop: 4, width: "100%" }}
+              style={{ marginTop: "var(--sp-1)" }}
             />
           )}
-          <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 8 }}>
-            <input
-              type="radio"
-              name="storage-policy-target"
-              checked={targetMode === "reduce"}
-              disabled={saving || running}
-              onChange={() => setTargetMode("reduce")}
-            />
-            <span>{t("storage.policy.targetReduce")}</span>
-          </label>
           {targetMode === "reduce" && (
-            <input
+            <TextInput
               type="number"
               min={0}
               step={0.1}
@@ -1074,55 +1139,55 @@ function AutoCleanupPolicyPanel({
               aria-label={t("storage.policy.targetReduce")}
               onChange={e => setReduceGb(e.target.value)}
               onBlur={() => void savePolicy()}
-              style={{ display: "block", marginTop: 4, width: "100%" }}
+              style={{ marginTop: "var(--sp-1)" }}
             />
           )}
-        </fieldset>
+        </div>
 
-        <label>
-          <span className="muted">{t("storage.policy.schedule")}</span>
+        <Field label={t("storage.policy.schedule")} id="storage-policy-schedule">
           <select
+            id="storage-policy-schedule"
+            className="m3-input"
             value={policy.schedule}
             disabled={saving || running}
             onChange={e => {
               const schedule = e.target.value as CleanupPolicy["schedule"];
               void savePolicy({ schedule });
             }}
-            style={{ display: "block", marginTop: 4, width: "100%" }}
           >
             <option value="manual">{t("storage.policy.schedule.manual")}</option>
             <option value="startup">{t("storage.policy.schedule.startup")}</option>
             <option value="daily">{t("storage.policy.schedule.daily")}</option>
             <option value="weekly">{t("storage.policy.schedule.weekly")}</option>
           </select>
-        </label>
+        </Field>
 
-        <label>
-          <span className="muted">{t("storage.policy.mode")}</span>
+        <Field label={t("storage.policy.mode")} id="storage-policy-mode">
           <select
+            id="storage-policy-mode"
+            className="m3-input"
             value={policy.mode}
             disabled={saving || running}
             onChange={e => {
               const mode = e.target.value as CleanupPolicy["mode"];
               void savePolicy({ mode });
             }}
-            style={{ display: "block", marginTop: 4, width: "100%" }}
           >
             <option value="quarantine">{t("storage.policy.mode.quarantine")}</option>
             <option value="permanent">{t("storage.policy.mode.permanent")}</option>
           </select>
-        </label>
+        </Field>
         {policy.mode === "permanent" && (
-          <p className="err" role="status">{t("storage.policy.permanentWarn")}</p>
+          <p style={{ color: "var(--m3-error)" }} role="status">{t("storage.policy.permanentWarn")}</p>
         )}
       </div>
 
-      <div className="usage-cards" style={{ marginTop: 16 }}>
-        <div className="stat">
-          <div className="muted">{t("storage.policy.lastRun")}</div>
-          <div className="stat-value" style={{ fontSize: "var(--text-body)" }}>{formatWhen(policy.lastRun?.at)}</div>
+      <div className="m3-grid" style={{ marginTop: "var(--sp-3)" }}>
+        <div style={STAT_TILE}>
+          <div style={STAT_LABEL}>{t("storage.policy.lastRun")}</div>
+          <div style={STAT_VALUE}>{formatWhen(policy.lastRun?.at)}</div>
           {policy.lastRun && (
-            <div className="muted" style={{ marginTop: 4 }}>
+            <div style={STAT_LABEL}>
               {t("storage.policy.lastRunDetail", {
                 count: String(policy.lastRun.removed),
                 size: formatBytes(policy.lastRun.freedBytes, locale),
@@ -1130,22 +1195,22 @@ function AutoCleanupPolicyPanel({
             </div>
           )}
         </div>
-        <div className="stat">
-          <div className="muted">{t("storage.policy.nextRun")}</div>
-          <div className="stat-value" style={{ fontSize: "var(--text-body)" }}>{formatWhen(policy.nextRun)}</div>
+        <div style={STAT_TILE}>
+          <div style={STAT_LABEL}>{t("storage.policy.nextRun")}</div>
+          <div style={STAT_VALUE}>{formatWhen(policy.nextRun)}</div>
         </div>
       </div>
 
-      <div className="row" style={{ marginTop: 16, gap: 8, flexWrap: "wrap" }}>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={saving || running} onClick={() => void savePolicy()}>
+      <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
+        <Button variant="outlined" disabled={saving || running} onClick={() => void savePolicy()}>
           {t("storage.policy.save")}
-        </button>
-        <button type="button" className="btn btn-sm" disabled={saving || running || !policy.enabled} onClick={() => void runNow()}>
+        </Button>
+        <Button variant="filled" disabled={saving || running || !policy.enabled} onClick={() => void runNow()}>
           {running ? t("storage.policy.running") : t("storage.policy.runNow")}
-        </button>
+        </Button>
       </div>
-      {status && <p className="muted" style={{ marginTop: 8 }} role="status">{status}</p>}
-      {error && <p className="err" style={{ marginTop: 8 }} role="alert">{error}</p>}
+      {status && <p className="m3-card-sub" style={{ marginTop: "var(--sp-1)" }} role="status">{status}</p>}
+      {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
     </section>
   );
 }
@@ -1209,21 +1274,23 @@ export default function Storage({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <div className="page-head">
-        <h2 id="storage-page-title">{t("storage.title")}</h2>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={() => refreshAll()}>
-          <IconRefresh /> {t("storage.refresh")}
-        </button>
+      <div className="m3-row m3-row--split">
+        <h2 id="storage-page-title" style={{ margin: 0, fontSize: "var(--t-title-l)", fontWeight: 600 }}>
+          {t("storage.title")}
+        </h2>
+        <Button variant="text" disabled={loading} onClick={() => refreshAll()}>
+          <IconRefresh aria-hidden="true" /> {t("storage.refresh")}
+        </Button>
       </div>
-      <p className="page-sub">{t("storage.subtitle")}</p>
+      <p className="m3-card-sub" style={{ maxWidth: "74ch", marginTop: "var(--sp-1)" }}>{t("storage.subtitle")}</p>
 
       {loading && !data ? (
-        <EmptyState title={t("storage.loading")} />
+        <Empty title={t("storage.loading")} />
       ) : failed ? (
-        <EmptyState title={t("storage.error")} />
+        <Empty title={t("storage.error")} />
       ) : empty ? (
         <>
-          <EmptyState title={t("storage.empty")} />
+          <Empty title={t("storage.empty")} />
           <AutoCleanupPolicyPanel
             apiBase={apiBase}
             locale={locale}
@@ -1235,10 +1302,19 @@ export default function Storage({ apiBase }: { apiBase: string }) {
         <>
           {data && data.total.fileCount > 0 && (
             <>
-              <div className="usage-cards">
-                <div className="stat"><div className="muted">{t("storage.card.total")}</div><div className="stat-value">{formatBytes(data.total.bytes, locale)}</div></div>
-                <div className="stat"><div className="muted">{t("storage.card.files")}</div><div className="stat-value">{data.total.fileCount.toLocaleString(locale)}</div></div>
-                <div className="stat"><div className="muted">{t("storage.card.home")}</div><div className="stat-value mono" style={{ fontSize: "var(--text-body)", wordBreak: "break-all" }}>{data.codexHome}</div></div>
+              <div className="m3-grid" style={{ marginTop: "var(--sp-3)" }}>
+                <div style={STAT_TILE}>
+                  <div style={STAT_LABEL}>{t("storage.card.total")}</div>
+                  <div style={STAT_VALUE}>{formatBytes(data.total.bytes, locale)}</div>
+                </div>
+                <div style={STAT_TILE}>
+                  <div style={STAT_LABEL}>{t("storage.card.files")}</div>
+                  <div style={STAT_VALUE}>{data.total.fileCount.toLocaleString(locale)}</div>
+                </div>
+                <div style={STAT_TILE}>
+                  <div style={STAT_LABEL}>{t("storage.card.home")}</div>
+                  <div className="mono" style={{ ...STAT_VALUE, fontSize: "var(--t-body-m)" }}>{data.codexHome}</div>
+                </div>
               </div>
               <BucketsTable buckets={data.buckets} locale={locale} t={t} />
               <LargestFilesPanel buckets={data.buckets} locale={locale} t={t} />

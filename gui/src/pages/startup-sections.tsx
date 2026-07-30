@@ -1,6 +1,17 @@
+/**
+ * Startup — Material 3 restyle of the startup-protection screen.
+ *
+ * Markup and tokens only: every prop, handler and the `startup-health-ui`
+ * status mapping are carried over untouched from the legacy panels. Status is
+ * expressed with the M3 tonal containers (ok / warn / error) instead of the
+ * legacy `.badge` + `.startup-hero--*` chrome.
+ */
+
+import type { CSSProperties, ReactNode } from "react";
 import { useI18n, type TKey } from "../i18n/shared";
 import { startupRiskDetailKey } from "../startup-health-ui";
 import { IconAlert, IconCheck, IconPower, IconTerminal } from "../icons";
+import { Button, Card } from "../shell/m3-ui";
 import type {
   StartupHealthData,
   StartupInstallAction,
@@ -12,8 +23,113 @@ import {
   SUMMARY_KEYS,
 } from "./startup-shared";
 
-function StartupStateBadge({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
-  return <span className={`badge ${ok ? "badge-green" : "badge-amber"}`}>{ok ? yes : no}</span>;
+type Tone = "ok" | "warn" | "neutral";
+
+const TONE_SURFACE: Record<Tone, CSSProperties> = {
+  ok: { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
+  warn: { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" },
+  neutral: { background: "var(--m3-surface-container-low)", color: "var(--m3-on-surface)" },
+};
+
+const heroStyle = (tone: Tone): CSSProperties => ({
+  ...TONE_SURFACE[tone],
+  display: "flex",
+  alignItems: "flex-start",
+  gap: "var(--sp-3)",
+  padding: "var(--pad-card)",
+  borderRadius: "var(--r-l)",
+  marginBottom: "var(--sp-3)",
+});
+
+const heroIconStyle: CSSProperties = {
+  flex: "0 0 auto",
+  display: "grid",
+  placeItems: "center",
+  width: 48,
+  height: 48,
+  borderRadius: 999,
+  background: "color-mix(in oklab, currentColor 14%, transparent)",
+};
+
+const heroTitleStyle: CSSProperties = { margin: 0, fontSize: "var(--t-title-m)", fontWeight: 600 };
+const heroBodyStyle: CSSProperties = { margin: "6px 0 0", fontSize: "var(--t-body-m)", opacity: 0.92 };
+
+const statCardStyle: CSSProperties = { minHeight: "var(--h-stat)", justifyContent: "center", marginBottom: 0 };
+const statLabelStyle: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" };
+const statValueStyle: CSSProperties = { marginTop: 6, fontSize: "var(--t-title-s)", fontWeight: 600 };
+
+const rowStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 12,
+  padding: "12px 0",
+  borderTop: "1px solid var(--m3-outline-variant)",
+};
+const rowTextStyle: CSSProperties = { flex: "1 1 240px", minWidth: 0 };
+const rowLabelStyle: CSSProperties = { display: "block", fontSize: "var(--t-body-m)", fontWeight: 500 };
+const rowHintStyle: CSSProperties = { marginTop: 2, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" };
+const rowActionsStyle: CSSProperties = { flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" };
+
+const pillStyle = (tone: Tone): CSSProperties => ({
+  ...TONE_SURFACE[tone],
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: 28,
+  padding: "0 12px",
+  borderRadius: 999,
+  fontSize: "var(--t-label-l)",
+  fontWeight: 500,
+  whiteSpace: "nowrap",
+});
+
+const noticeStyle = (tone: Tone): CSSProperties => ({
+  ...TONE_SURFACE[tone],
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginTop: "var(--sp-3)",
+  padding: "12px 16px",
+  borderRadius: 12,
+  fontSize: "var(--t-body-s)",
+});
+
+const commandListStyle: CSSProperties = {
+  border: "1px solid var(--m3-outline-variant)",
+  borderRadius: "var(--r-l)",
+  background: "var(--m3-surface-container-lowest)",
+  overflow: "hidden",
+};
+const commandRowStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 12,
+  padding: "12px 16px",
+  borderTop: "1px solid var(--m3-outline-variant)",
+};
+const commandCodeStyle: CSSProperties = {
+  display: "block",
+  marginTop: 4,
+  color: "var(--m3-on-surface-variant)",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+  overflowWrap: "anywhere",
+};
+const buttonsRowStyle: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 10, marginTop: "var(--sp-3)" };
+const platformStyle: CSSProperties = { color: "var(--m3-on-surface-variant)", fontFamily: "var(--mono)", fontSize: "var(--t-label-m)" };
+
+function StartupStatePill({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
+  return <span style={pillStyle(ok ? "ok" : "warn")}>{ok ? yes : no}</span>;
+}
+
+function StartupStatCard({ label, value }: { label: ReactNode; value: ReactNode }) {
+  return (
+    <section className="m3-card" style={statCardStyle}>
+      <div style={statLabelStyle}>{label}</div>
+      <div style={statValueStyle}>{value}</div>
+    </section>
+  );
 }
 
 export function StartupHeroSection({
@@ -24,14 +140,9 @@ export function StartupHeroSection({
   data: StartupHealthData;
 }) {
   const { t } = useI18n();
-  const statusClass = failed
-    ? "startup-hero--risk"
-    : data.status === "protected"
-      ? "startup-hero--safe"
-      : data.status === "at-risk"
-        ? "startup-hero--risk"
-        : "startup-hero--native";
-  const StatusIcon = failed || data.status === "at-risk" ? IconAlert : IconCheck;
+  const atRisk = failed || data.status === "at-risk";
+  const tone: Tone = atRisk ? "warn" : data.status === "protected" ? "ok" : "neutral";
+  const StatusIcon = atRisk ? IconAlert : IconCheck;
 
   const routingKey: TKey = data.routingKind === "opencodex-local" ? "startup.routing.proxy"
     : data.routingKind === "custom-local" ? "startup.routing.customLocal"
@@ -41,14 +152,14 @@ export function StartupHeroSection({
 
   return (
     <>
-      <section className={`panel startup-hero ${statusClass}`} aria-live="polite">
-        <div className="startup-hero-icon"><StatusIcon /></div>
-        <div className="startup-hero-copy">
-          <span className={`badge ${failed || data.status === "at-risk" ? "badge-amber" : "badge-green"}`}>
+      <section style={heroStyle(tone)} aria-live="polite">
+        <span style={heroIconStyle} aria-hidden="true"><StatusIcon /></span>
+        <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+          <span style={pillStyle(atRisk ? "warn" : "ok")}>
             {t(failed ? "startup.status.atRisk" : STATUS_KEYS[data.status])}
           </span>
-          <h3>{t(failed ? "startup.error" : SUMMARY_KEYS[data.status])}</h3>
-          <p>{failed
+          <h3 style={{ ...heroTitleStyle, marginTop: 10 }}>{t(failed ? "startup.error" : SUMMARY_KEYS[data.status])}</h3>
+          <p style={heroBodyStyle}>{failed
             ? t("startup.staleData")
             : data.status === "at-risk"
               ? t(startupRiskDetailKey(data))
@@ -56,19 +167,10 @@ export function StartupHeroSection({
         </div>
       </section>
 
-      <div className="startup-state-grid">
-        <section className="stat">
-          <div className="label">{t("startup.routing")}</div>
-          <div className="value">{t(routingKey)}</div>
-        </section>
-        <section className="stat">
-          <div className="label">{t("startup.restartProtection")}</div>
-          <div className="value">{t(PROTECTION_KEYS[data.protection])}</div>
-        </section>
-        <section className="stat">
-          <div className="label">{t("startup.preference")}</div>
-          <div className="value">{t(data.autostartEnabled ? "startup.enabled" : "startup.disabled")}</div>
-        </section>
+      <div className="m3-grid" style={{ marginBottom: "var(--sp-3)" }}>
+        <StartupStatCard label={t("startup.routing")} value={t(routingKey)} />
+        <StartupStatCard label={t("startup.restartProtection")} value={t(PROTECTION_KEYS[data.protection])} />
+        <StartupStatCard label={t("startup.preference")} value={t(data.autostartEnabled ? "startup.enabled" : "startup.disabled")} />
       </div>
     </>
   );
@@ -90,30 +192,35 @@ export function StartupDetailsSection({
   const { t } = useI18n();
 
   return (
-    <section className="panel startup-details">
-      <div className="panel-head">
-        <h3 className="panel-title">{t("startup.details")}</h3>
-        <span className="muted mono">{data.platform}</span>
-      </div>
-      <div className="startup-detail-row">
-        <div><strong>{t("startup.service")}</strong><span>{t("startup.serviceHint")}</span></div>
-        <div className="startup-detail-actions">
-          <StartupStateBadge
+    <Card
+      title={t("startup.details")}
+      actions={<span style={platformStyle}>{data.platform}</span>}
+    >
+      <div style={rowStyle}>
+        <div style={rowTextStyle}>
+          <strong style={rowLabelStyle}>{t("startup.service")}</strong>
+          <div style={rowHintStyle}>{t("startup.serviceHint")}</div>
+        </div>
+        <div style={rowActionsStyle}>
+          <StartupStatePill
             ok={data.serviceViable}
             yes={t("startup.viable")}
             no={t(data.serviceConflict ? "startup.conflict" : data.serviceStale ? "startup.stale" : data.serviceInstalled ? "startup.unhealthy" : data.serviceSupported ? "startup.notInstalled" : "startup.unsupported")}
           />
           {data.serviceSupported && !data.serviceInstalled && (
-            <button type="button" className="btn btn-primary btn-sm" aria-label={`${t("startup.service")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-service")}>
+            <Button aria-label={`${t("startup.service")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-service")}>
               {t(installBusy === "install-service" ? "startup.installing" : "startup.install")}
-            </button>
+            </Button>
           )}
         </div>
       </div>
-      <div className="startup-detail-row">
-        <div><strong>{t("startup.shim")}</strong><span>{t("startup.shimHint")}</span></div>
-        <div className="startup-detail-actions">
-          <StartupStateBadge
+      <div style={rowStyle}>
+        <div style={rowTextStyle}>
+          <strong style={rowLabelStyle}>{t("startup.shim")}</strong>
+          <div style={rowHintStyle}>{t("startup.shimHint")}</div>
+        </div>
+        <div style={rowActionsStyle}>
+          <StartupStatePill
             ok={data.shimHealthy && data.autostartEnabled}
             yes={t(data.shimCoverage === "cli-only" ? "startup.cliOnly" : "startup.healthy")}
             no={t(data.shimInstalled
@@ -121,20 +228,20 @@ export function StartupDetailsSection({
               : "startup.notInstalled")}
           />
           {!data.shimInstalled && (
-            <button type="button" className="btn btn-primary btn-sm" aria-label={`${t("startup.shim")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-shim")}>
+            <Button aria-label={`${t("startup.shim")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-shim")}>
               {t(installBusy === "install-shim" ? "startup.installing" : "startup.install")}
-            </button>
+            </Button>
           )}
         </div>
       </div>
       {installResult && (
-        <div className={`notice ${installResult.kind === "success" ? "notice-ok" : "notice-warn"} startup-action-notice`} role="status" aria-live="polite">
+        <div style={noticeStyle(installResult.kind === "success" ? "ok" : "warn")} role="status" aria-live="polite">
           {installResult.kind === "success"
             ? t(installResult.action === "install-service" ? "startup.serviceInstalled" : "startup.shimInstalled")
             : `${t("startup.installFailed")} ${installResult.detail ?? ""}`}
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -154,43 +261,44 @@ export function StartupTraySection({
   const { t } = useI18n();
 
   return (
-    <section className="panel startup-actions">
-      <div className="panel-head">
-        <h3 className="panel-title">{t("startup.tray.title")}</h3>
-        <IconPower />
-      </div>
-      <p className="muted">{t("startup.tray.hint")}</p>
-      <div className="startup-detail-row">
-        <div>
-          <strong>{t("startup.tray.login")}</strong>
-          <span>{t("startup.tray.notProtection")}</span>
+    <Card
+      title={t("startup.tray.title")}
+      subtitle={t("startup.tray.hint")}
+      actions={<span aria-hidden="true" style={{ color: "var(--m3-on-surface-variant)" }}><IconPower /></span>}
+    >
+      <div style={rowStyle}>
+        <div style={rowTextStyle}>
+          <strong style={rowLabelStyle}>{t("startup.tray.login")}</strong>
+          <div style={rowHintStyle}>{t("startup.tray.notProtection")}</div>
         </div>
-        {trayLoading || trayError || !tray
-          ? <span className="badge badge-amber">{t(trayLoading ? "startup.tray.loading" : "startup.tray.unavailable")}</span>
-          : <StartupStateBadge
-            ok={tray.running && !tray.stale}
-            yes={t("startup.tray.running")}
-            no={t(tray.stale ? "startup.tray.stale" : tray.installed ? "startup.tray.stopped" : "startup.tray.notInstalled")}
-          />}
+        <div style={rowActionsStyle}>
+          {trayLoading || trayError || !tray
+            ? <span style={pillStyle("warn")}>{t(trayLoading ? "startup.tray.loading" : "startup.tray.unavailable")}</span>
+            : <StartupStatePill
+              ok={tray.running && !tray.stale}
+              yes={t("startup.tray.running")}
+              no={t(tray.stale ? "startup.tray.stale" : tray.installed ? "startup.tray.stopped" : "startup.tray.notInstalled")}
+            />}
+        </div>
       </div>
-      <div className="startup-tray-buttons">
+      <div style={buttonsRowStyle}>
         {!trayLoading && !trayError && tray && !tray.installed && !tray.stale && (
-          <button type="button" className="btn btn-primary" disabled={trayBusy} onClick={() => onTrayAction("install")}>{t("startup.tray.install")}</button>
+          <Button disabled={trayBusy} onClick={() => onTrayAction("install")}>{t("startup.tray.install")}</Button>
         )}
         {!trayLoading && !trayError && tray?.installed && !tray.stale && !tray.running && (
-          <button type="button" className="btn btn-primary" disabled={trayBusy} onClick={() => onTrayAction("start")}>{t("startup.tray.start")}</button>
+          <Button disabled={trayBusy} onClick={() => onTrayAction("start")}>{t("startup.tray.start")}</Button>
         )}
         {!trayLoading && !trayError && tray?.running && !tray.stale && (
-          <button type="button" className="btn btn-ghost" disabled={trayBusy} onClick={() => onTrayAction("stop")}>{t("startup.tray.stop")}</button>
+          <Button variant="tonal" disabled={trayBusy} onClick={() => onTrayAction("stop")}>{t("startup.tray.stop")}</Button>
         )}
         {!trayLoading && !trayError && tray && (tray.installed || tray.stale) && (
-          <button type="button" className="btn btn-danger" disabled={trayBusy} onClick={() => {
+          <Button variant="danger" disabled={trayBusy} onClick={() => {
             if (window.confirm(t("startup.tray.uninstall"))) onTrayAction("uninstall");
-          }}>{t("startup.tray.uninstall")}</button>
+          }}>{t("startup.tray.uninstall")}</Button>
         )}
       </div>
-      {(trayError || tray?.stale) && <div className="notice notice-warn" role="alert">{t("startup.tray.error")}</div>}
-    </section>
+      {(trayError || tray?.stale) && <div style={noticeStyle("warn")} role="alert">{t("startup.tray.error")}</div>}
+    </Card>
   );
 }
 
@@ -205,49 +313,37 @@ export function StartupRecoverySection({
 }) {
   const { t } = useI18n();
 
+  const commands: { label: string; command: string }[] = [
+    ...(data.serviceSupported ? [{ label: t("startup.command.service"), command: data.commands.installService }] : []),
+    { label: t("startup.command.shim"), command: data.commands.installShim },
+    { label: t("startup.command.native"), command: data.commands.restoreNative },
+  ];
+
   return (
-    <section className="panel startup-actions">
-      <div className="panel-head">
-        <h3 className="panel-title">{t("startup.recovery")}</h3>
-        <IconTerminal />
-      </div>
-      <p className="muted">{t("startup.recoveryHint")}</p>
-      <div className="startup-command-list">
-        {data.serviceSupported && (
-          <div className="startup-command-row">
-            <div>
-              <strong>{t("startup.command.service")}</strong>
-              <code>{data.commands.installService}</code>
+    <Card
+      title={t("startup.recovery")}
+      subtitle={t("startup.recoveryHint")}
+      actions={<span aria-hidden="true" style={{ color: "var(--m3-on-surface-variant)" }}><IconTerminal /></span>}
+    >
+      <div style={commandListStyle}>
+        {commands.map((entry, index) => (
+          <div key={entry.command} style={index === 0 ? { ...commandRowStyle, borderTop: "none" } : commandRowStyle}>
+            <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+              <strong style={rowLabelStyle}>{entry.label}</strong>
+              <code style={commandCodeStyle}>{entry.command}</code>
             </div>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCopy(data.commands.installService)}>
-              {copied === data.commands.installService ? t("startup.copied") : t("startup.copy")}
-            </button>
+            <Button variant="outlined" style={{ marginLeft: "auto" }} onClick={() => onCopy(entry.command)}>
+              {copied === entry.command ? t("startup.copied") : t("startup.copy")}
+            </Button>
           </div>
-        )}
-        <div className="startup-command-row">
-          <div>
-            <strong>{t("startup.command.shim")}</strong>
-            <code>{data.commands.installShim}</code>
-          </div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCopy(data.commands.installShim)}>
-            {copied === data.commands.installShim ? t("startup.copied") : t("startup.copy")}
-          </button>
-        </div>
-        <div className="startup-command-row">
-          <div>
-            <strong>{t("startup.command.native")}</strong>
-            <code>{data.commands.restoreNative}</code>
-          </div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCopy(data.commands.restoreNative)}>
-            {copied === data.commands.restoreNative ? t("startup.copied") : t("startup.copy")}
-          </button>
-        </div>
+        ))}
       </div>
       {data.status === "at-risk" && (
-        <div className="notice notice-warn startup-action-notice" role="alert">
-          <IconPower /> {t("startup.recommended", { cmd: data.recommendedCommand ?? data.commands.installService })}
+        <div style={noticeStyle("warn")} role="alert">
+          <span aria-hidden="true" style={{ display: "inline-flex", flex: "0 0 auto" }}><IconPower /></span>
+          {t("startup.recommended", { cmd: data.recommendedCommand ?? data.commands.installService })}
         </div>
       )}
-    </section>
+    </Card>
   );
 }

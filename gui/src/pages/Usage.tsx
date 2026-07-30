@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n, type TFn, type Locale } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { formatEstimatedUsdValue as formatUsdEstimate } from "../intl-formatters";
-import { EmptyState, Notice } from "../ui";
+import { Notice } from "../ui";
+import { Button, Empty } from "../shell/m3-ui";
 import { modelLabel } from "../model-display";
 
 type Range = "all" | "30d" | "7d";
@@ -191,6 +192,68 @@ function buildHeatmap(days: UsageDay[]): { weeks: HeatmapCell[][]; months: { lab
   return { weeks, months, buckets };
 }
 
+// ---- M3 presentation tokens -------------------------------------------------
+// Inline because the Usage screen has no dedicated stylesheet and the shared
+// ones are off-limits; every value is an --m3-* role token or a shell metric.
+const TAB_STYLE: React.CSSProperties = { minHeight: 44, display: "inline-flex", alignItems: "center", gap: 6 };
+const STAT_GRID: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+  gap: "var(--sp-2)",
+  marginBottom: "var(--sp-4)",
+};
+const STAT_TILE: React.CSSProperties = {
+  minHeight: "var(--h-stat, 96px)",
+  padding: "var(--pad-card)",
+  borderRadius: "var(--r-l)",
+  border: "1px solid var(--m3-outline-variant)",
+  background: "var(--m3-surface-container-low)",
+};
+const STAT_LABEL: React.CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" };
+const STAT_VALUE: React.CSSProperties = {
+  marginTop: 6,
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-title-l)",
+  fontWeight: 500,
+};
+const STAT_HINT: React.CSSProperties = { minHeight: 16, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-s)" };
+const BAR_TRACK: React.CSSProperties = {
+  display: "block",
+  minWidth: 80,
+  height: 8,
+  borderRadius: "var(--r-pill)",
+  background: "var(--m3-surface-container-highest)",
+  overflow: "hidden",
+};
+const SEARCH_INPUT: React.CSSProperties = { maxWidth: 420 };
+
+function StatTile({ label, value, hint, title }: { label: string; value: string | number; hint?: ReactNode; title?: string }) {
+  return (
+    <div style={STAT_TILE} title={title}>
+      <div style={STAT_LABEL}>{label}</div>
+      <div style={STAT_VALUE}>{value}</div>
+      <div style={STAT_HINT}>{hint}</div>
+    </div>
+  );
+}
+
+/** Share meter — functional data colour, carries the progressbar contract. */
+function ShareBar({ ratio, label }: { ratio: number; label: string }) {
+  const pct = Math.round(ratio * 100);
+  return (
+    <span
+      role="progressbar"
+      aria-label={label}
+      aria-valuenow={pct}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      style={BAR_TRACK}
+    >
+      <span style={{ display: "block", width: `${pct}%`, height: "100%", background: "var(--m3-primary)" }} />
+    </span>
+  );
+}
+
 function UsageFilters({
   surface,
   range,
@@ -205,17 +268,19 @@ function UsageFilters({
   t: TFn;
 }) {
   return (
-    <div className="usage-filters">
-      <div className="usage-segmented" role="group" aria-label={t("logs.filter.surface.label")}>
+    <div className="m3-row" style={{ gap: "var(--sp-2)" }}>
+      <div className="m3-segmented" role="tablist" aria-label={t("logs.filter.surface.label")}>
         {(["all", "codex", "claude", "grok"] as UsageSurface[]).map(choice => {
           const label = t(`logs.filter.surface.${choice}`);
           return (
             <button
               key={choice}
               type="button"
-              className={`usage-segmented-btn usage-source-btn${surface === choice ? " active" : ""}`}
+              role="tab"
+              className={`m3-segment${surface === choice ? " selected" : ""}`}
+              style={TAB_STYLE}
               aria-label={label}
-              aria-pressed={surface === choice}
+              aria-selected={surface === choice}
               onClick={() => onSurface(choice)}
             >
               {choice === "codex" && (
@@ -227,23 +292,23 @@ function UsageFilters({
               {choice === "grok" && (
                 <img className="usage-source-mark" src="/provider-icons/grok.svg" alt="" aria-hidden="true" />
               )}
-              <span className={choice === "all" ? "usage-source-label" : "usage-source-label usage-source-label-collapsible"}>
-                {label}
-              </span>
+              <span>{label}</span>
             </button>
           );
         })}
       </div>
-      <div className="usage-segmented" role="group" aria-label={t("usage.title")}>
+      <div className="m3-segmented" role="tablist" aria-label={t("usage.title")}>
         {(["all", "30d", "7d"] as Range[]).map(choice => {
           const label = t(`usage.range.${choice}`);
           return (
             <button
               key={choice}
               type="button"
-              className={`usage-segmented-btn${range === choice ? " active" : ""}`}
+              role="tab"
+              className={`m3-segment${range === choice ? " selected" : ""}`}
+              style={TAB_STYLE}
               aria-label={label}
-              aria-pressed={range === choice}
+              aria-selected={range === choice}
               onClick={() => onRange(choice)}
             >
               {label}
@@ -266,35 +331,38 @@ function UsageSummaryCards({
   locale: Locale;
   t: TFn;
 }) {
+  const cacheWrites = summary.cacheCreationInputTokens ?? 0;
+  const excluded = (summary.unpricedRequests ?? 0) + (summary.unmeteredRequests ?? 0);
   return (
     <>
-    <div className="usage-cards usage-cards-3x2" role="group" aria-label={t("usage.title")}>
-      <div className="stat"><div className="muted">{t("usage.card.requests")}</div><div className="stat-value">{summary.requests}</div></div>
-      <div className="stat"><div className="muted">{t("usage.card.measured")}</div><div className="stat-value">{summary.measuredRequests}</div></div>
-      <div className="stat"><div className="muted">{t("usage.card.totalTokens")}</div><div className="stat-value">{formatTokens(summary.totalTokens, locale)}</div></div>
-      <div className="stat" title={t("usage.card.cachedTokensHint")}>
-        <div className="muted">{t("usage.card.cachedTokens")}</div>
-        <div className="stat-value">{formatTokens(summary.cacheReadInputTokens ?? summary.cachedInputTokens, locale)}</div>
-        {(summary.cacheCreationInputTokens ?? 0) > 0 && (
-          <div className="muted text-caption">
-            {t("usage.card.cacheWriteTokens")}: {formatTokens(summary.cacheCreationInputTokens ?? 0, locale)}
-          </div>
-        )}
+      <div style={STAT_GRID} role="group" aria-label={t("usage.title")}>
+        <StatTile label={t("usage.card.requests")} value={summary.requests} />
+        <StatTile label={t("usage.card.measured")} value={summary.measuredRequests} />
+        <StatTile label={t("usage.card.totalTokens")} value={formatTokens(summary.totalTokens, locale)} />
+        <StatTile
+          label={t("usage.card.cachedTokens")}
+          title={t("usage.card.cachedTokensHint")}
+          value={formatTokens(summary.cacheReadInputTokens ?? summary.cachedInputTokens, locale)}
+          hint={cacheWrites > 0 ? `${t("usage.card.cacheWriteTokens")} ${formatTokens(cacheWrites, locale)}` : undefined}
+        />
+        <StatTile label={t("usage.card.coverage")} value={formatPct(summary.coverageRatio)} />
+        <StatTile label={t("usage.card.activeDays")} value={activeDays} />
       </div>
-      <div className="stat"><div className="muted">{t("usage.card.coverage")}</div><div className="stat-value">{formatPct(summary.coverageRatio)}</div></div>
-      <div className="stat"><div className="muted">{t("usage.card.activeDays")}</div><div className="stat-value">{activeDays}</div></div>
-    </div>
       {summary.estimatedCostUsd !== undefined && (
-        <div className="usage-cost-row" role="note">
-          <span className="muted">{t("usage.cost.total")}</span>
-          <span className="stat-value mono usage-cost-value">
-            {formatUsdEstimate(summary.estimatedCostUsd, locale)}
-          </span>
-          <span className="muted text-caption">{t("usage.cost.disclaimer")}</span>
-          {((summary.unpricedRequests ?? 0) + (summary.unmeteredRequests ?? 0)) > 0 && (
-            <span className="muted text-caption">
-              {t("usage.cost.unpricedNote").replace("{count}", String((summary.unpricedRequests ?? 0) + (summary.unmeteredRequests ?? 0)))}
+        <div className="m3-card" role="note">
+          <div className="m3-row" style={{ gap: "var(--sp-2)" }}>
+            <span style={STAT_LABEL}>{t("usage.cost.total")}</span>
+            <span style={{ fontFamily: "var(--mono)", fontSize: "var(--t-title-m)", fontWeight: 500 }}>
+              {formatUsdEstimate(summary.estimatedCostUsd, locale)}
             </span>
+          </div>
+          <p style={{ margin: "8px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+            {t("usage.cost.disclaimer")}
+          </p>
+          {excluded > 0 && (
+            <p style={{ margin: "4px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+              {t("usage.cost.unpricedNote").replace("{count}", String(excluded))}
+            </p>
           )}
         </div>
       )}
@@ -328,7 +396,7 @@ function WeekDayBars({ weekBars, locale, t }: { weekBars: UsageDay[]; locale: Lo
                   />
                 ))}
                 {day.models.length === 0 && day.totalTokens > 0 && (
-                  <div className="daybar-seg" style={{ flexGrow: 1, background: "var(--green)" }} />
+                  <div className="daybar-seg" style={{ flexGrow: 1, background: "var(--m3-ok)" }} />
                 )}
               </div>
             </div>
@@ -379,13 +447,18 @@ function UsageHeatmapPanel({
     return () => observer.disconnect();
   }, [heatmap, range]);
 
+  const titleId = "usage-heatmap-title";
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="usage-heatmap-title">
-      <h3 id="usage-heatmap-title" className="panel-title">{t("usage.section.heatmap")}</h3>
+    <section className="m3-card" aria-labelledby={titleId}>
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id={titleId} className="m3-card-title">{t("usage.section.heatmap")}</h3>
+        </div>
+      </header>
       {range === "7d" ? (
         <WeekDayBars weekBars={weekBars} locale={locale} t={t} />
       ) : (
-        <div className="heatmap" ref={heatmapRef} role="img" aria-labelledby="usage-heatmap-title">
+        <div className="heatmap" ref={heatmapRef} role="img" aria-labelledby={titleId}>
           <div className="heatmap-months" style={{ gridTemplateColumns: `28px repeat(${heatmap.weeks.length}, calc(var(--hm-cell) + var(--hm-gap)))` }}>
             <span className="heatmap-day-spacer" />
             {heatmap.months.map(month => (
@@ -457,7 +530,8 @@ function UsageModelsTable({
   const titleId = "usage-models-title";
   const searchInput = (
     <input
-      className="input"
+      className="m3-input"
+      style={SEARCH_INPUT}
       aria-label={searchLabel}
       placeholder={searchLabel}
       value={modelQuery}
@@ -465,8 +539,8 @@ function UsageModelsTable({
     />
   );
   const table = (
-    <div className="tbl-wrap usage-scroll">
-      <table className="tbl">
+    <div className="usage-scroll" style={{ overflowX: "auto" }}>
+      <table className="m3-table">
         <thead>
           <tr>
             <th>{t("logs.col.model")}</th>
@@ -485,7 +559,7 @@ function UsageModelsTable({
               <td className="num">{model.requests}</td>
               <td className="num">{model.measuredRequests}</td>
               <td className="num mono">{formatTokens(model.totalTokens, locale)}</td>
-              <td><div className="usage-bar"><div className="usage-bar-fill" style={{ width: `${Math.round(model.shareRatio * 100)}%` }} /></div></td>
+              <td><ShareBar ratio={model.shareRatio} label={model.model} /></td>
             </tr>
           ))}
         </tbody>
@@ -494,11 +568,13 @@ function UsageModelsTable({
   );
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby={titleId}>
-      <div className="panel-head">
-        <h3 id={titleId} className="panel-title">{sectionLabel}</h3>
-        {searchInput}
-      </div>
+    <section className="m3-card" aria-labelledby={titleId}>
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id={titleId} className="m3-card-title">{sectionLabel}</h3>
+        </div>
+        <div className="m3-card-actions">{searchInput}</div>
+      </header>
       {table}
     </section>
   );
@@ -516,8 +592,8 @@ function UsageProvidersTable({
   const sectionLabel = t("usage.section.providers");
   const titleId = "usage-providers-title";
   const table = (
-    <div className="tbl-wrap usage-scroll">
-      <table className="tbl">
+    <div className="usage-scroll" style={{ overflowX: "auto" }}>
+      <table className="m3-table">
         <thead>
           <tr>
             <th>{t("logs.col.provider")}</th>
@@ -534,7 +610,7 @@ function UsageProvidersTable({
               <td className="num">{provider.requests}</td>
               <td className="num">{provider.measuredRequests}</td>
               <td className="num mono">{formatTokens(provider.totalTokens, locale)}</td>
-              <td><div className="usage-bar"><div className="usage-bar-fill" style={{ width: `${Math.round(provider.shareRatio * 100)}%` }} /></div></td>
+              <td><ShareBar ratio={provider.shareRatio} label={provider.provider} /></td>
             </tr>
           ))}
         </tbody>
@@ -543,8 +619,12 @@ function UsageProvidersTable({
   );
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby={titleId}>
-      <h3 id={titleId} className="panel-title">{sectionLabel}</h3>
+    <section className="m3-card" aria-labelledby={titleId}>
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id={titleId} className="m3-card-title">{sectionLabel}</h3>
+        </div>
+      </header>
       {table}
     </section>
   );
@@ -561,20 +641,26 @@ function UsageCoveragePanel({
   const titleId = "usage-coverage-title";
   const body = (
     <>
-      <div className="usage-cards usage-cards-3x2">
-        <div className="stat"><div className="muted">{t("usage.coverage.measured")}</div><div className="stat-value">{summary.measuredRequests}</div></div>
-        <div className="stat"><div className="muted">{t("usage.coverage.reported")}</div><div className="stat-value">{summary.reportedRequests}</div></div>
-        <div className="stat"><div className="muted">{t("usage.coverage.estimated")}</div><div className="stat-value">{summary.estimatedRequests}</div></div>
-        <div className="stat"><div className="muted">{t("logs.tokens.unreported")}</div><div className="stat-value">{summary.unreportedRequests}</div></div>
-        <div className="stat"><div className="muted">{t("logs.tokens.unsupported")}</div><div className="stat-value">{summary.unsupportedRequests}</div></div>
+      <div style={{ ...STAT_GRID, marginBottom: 0 }}>
+        <StatTile label={t("usage.coverage.measured")} value={summary.measuredRequests} />
+        <StatTile label={t("usage.coverage.reported")} value={summary.reportedRequests} />
+        <StatTile label={t("usage.coverage.estimated")} value={summary.estimatedRequests} />
+        <StatTile label={t("logs.tokens.unreported")} value={summary.unreportedRequests} />
+        <StatTile label={t("logs.tokens.unsupported")} value={summary.unsupportedRequests} />
       </div>
-      <p className="muted text-control" style={{ marginTop: 12 }}>{t("usage.coverage.note")}</p>
+      <p style={{ margin: "12px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+        {t("usage.coverage.note")}
+      </p>
     </>
   );
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby={titleId}>
-      <h3 id={titleId} className="panel-title">{sectionLabel}</h3>
+    <section className="m3-card" aria-labelledby={titleId}>
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 id={titleId} className="m3-card-title">{sectionLabel}</h3>
+        </div>
+      </header>
       {body}
     </section>
   );
@@ -648,28 +734,28 @@ export default function Usage({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <div className="page-head usage-head">
-        <h2 id="usage-page-title">{t("usage.title")}</h2>
+      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+        {t("usage.subtitle")}
+      </p>
+      <div className="m3-row" style={{ marginBottom: "var(--sp-4)" }}>
         <UsageFilters surface={surface} range={range} onSurface={setSurface} onRange={setRange} t={t} />
       </div>
-      <p className="page-sub">{t("usage.subtitle")}</p>
 
       {error ? (
         <Notice tone="err">
           {error}{" "}
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
+          <Button
+            variant="text"
             onClick={() => void fetchUsage(range, surface, new AbortController().signal)}
             disabled={loading}
           >
             {t("common.retry")}
-          </button>
+          </Button>
         </Notice>
       ) : loading && !data ? (
-        <EmptyState title={t("usage.loading")} />
+        <Empty title={t("usage.loading")} />
       ) : data?.summary.requests === 0 ? (
-        <EmptyState title={t("usage.empty")} />
+        <Empty title={t("usage.empty")} />
       ) : data ? (
         <>
           <UsageSummaryCards summary={data.summary} activeDays={activeDays} locale={locale} t={t} />

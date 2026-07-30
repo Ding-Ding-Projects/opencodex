@@ -128,7 +128,10 @@ test("an aborted Startup fetch must not clear loading while its replacement is i
   await settle();
 
   expect(container.textContent).toContain("Checking startup protection");
-  const refresh = container.querySelector<HTMLButtonElement>("button.btn");
+  // Supersedes the legacy `button.btn` selector: the Material 3 restyle renders the refresh
+  // control as `m3-btn`. The invariant under test is unchanged — the refresh button stays
+  // disabled while the replacement request is in flight.
+  const refresh = container.querySelector<HTMLButtonElement>("button.m3-btn");
   expect(refresh?.disabled).toBe(true);
 
   await act(async () => {

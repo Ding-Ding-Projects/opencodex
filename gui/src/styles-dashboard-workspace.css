@@ -13,6 +13,225 @@
   min-width: 0;
 }
 
+/* ── Material 3 restyle ───────────────────────────────────
+   The screen used to lean on the shared `.page-tabs` underline strip and the
+   legacy `.panel` boxes. Both are replaced here by the M3 anatomy from the
+   prototype (pill tablist, m3-card surfaces, m3-table lists). Only screen-local
+   rules live in this file; the M3 vocabulary itself stays in m3-shell.css. */
+
+.dash-subtitle {
+  max-width: 74ch;
+  margin: 0 0 var(--sp-4, 24px);
+  color: var(--m3-on-surface-variant);
+}
+
+/* Pill tablist. Tabs still never wrap: the strip scrolls horizontally so a
+   narrow viewport cannot push them onto a second row (supersedes the
+   `.page-tabs` nowrap rule this screen used to borrow from styles.css). */
+.dash-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  gap: 8px;
+  padding: 4px;
+  margin: 0 0 var(--sp-4, 24px);
+  border-radius: 999px;
+  background: var(--m3-surface-container);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.dash-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.dash-tab:hover {
+  background: color-mix(in oklab, var(--m3-on-surface) 8%, transparent);
+  color: var(--m3-on-surface);
+}
+
+.dash-tab--active {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+
+/* ── Stat cards ───────────────────────────────────────── */
+
+.dash-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-3, 16px);
+}
+
+.dash-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: var(--h-stat);
+  padding: var(--pad-card, 16px);
+  border-radius: var(--r-l, 16px);
+  border: 1px solid var(--m3-outline-variant);
+  background: var(--m3-surface-container-low);
+  color: var(--m3-on-surface);
+  min-width: 0;
+}
+
+.dash-stat-card__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-l);
+}
+
+.dash-stat-card__value {
+  font-size: var(--t-headline-s);
+  font-weight: 500;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.dash-stat-card__hint {
+  min-height: 16px;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-m);
+}
+
+.dash-stat-card .m3-segmented {
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+/* Inline help affordance next to a stat/card label. */
+.dash-help-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+
+.dash-help-btn:hover {
+  background: color-mix(in oklab, var(--m3-on-surface) 10%, transparent);
+}
+
+/* ── Tonal banners (connection error, project-config warnings) ── */
+
+.dash-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--r-l, 16px);
+  background: var(--m3-error-container);
+  color: var(--m3-on-error-container);
+}
+
+.dash-banner svg {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+}
+
+.dash-banner__title {
+  font-size: var(--t-title-s);
+  font-weight: 600;
+}
+
+.dash-banner__body {
+  margin-top: 4px;
+  font-size: var(--t-body-m);
+}
+
+.dash-banner ul {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  font-size: var(--t-body-s);
+}
+
+.dash-banner li + li {
+  margin-top: 6px;
+}
+
+/* ── Tables ───────────────────────────────────────────── */
+
+.dash-table-wrap {
+  overflow-x: auto;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.dash-table-wrap .m3-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--m3-surface-container-lowest);
+}
+
+.dash-cell-url {
+  font-family: var(--mono, var(--font-code));
+  font-size: var(--t-label-m);
+  color: var(--m3-on-surface-variant);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Search field on the Models tab ───────────────────── */
+
+.dash-model-search {
+  margin-bottom: var(--sp-3, 16px);
+}
+
+.dash-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3, 16px);
+  min-width: 0;
+}
+
+.dash-toggle-row + .dash-toggle-row {
+  margin-top: var(--sp-3, 16px);
+}
+
+.dash-toggle-row__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dash-toggle-row__copy .font-semibold {
+  font-size: var(--t-body-m);
+}
+
+.dash-hint {
+  margin: 4px 0 0;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-body-s);
+}
+
 /* ── Main pane ────────────────────────────────────────── */
 
 .dashboard-workspace-main {
@@ -112,9 +331,9 @@
 }
 
 .dash-model-group {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-m, 12px);
+  background: var(--m3-surface-container-lowest);
   overflow: hidden;
 }
 
@@ -126,16 +345,17 @@
   appearance: none;
   background: none;
   border: none;
+  min-height: 44px;
   padding: 10px 14px;
   cursor: pointer;
   font: inherit;
-  color: var(--text);
+  color: var(--m3-on-surface);
   text-align: left;
   transition: background var(--motion-fast);
 }
 
 .dash-model-head:hover {
-  background: var(--hover);
+  background: var(--m3-surface-container);
 }
 
 .dash-model-head .count {
@@ -150,17 +370,17 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 4px 14px 14px;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--m3-outline-variant);
   padding-top: 12px;
 }
 
 .dash-model-chip {
-  font-family: var(--font-code);
-  font-size: var(--text-label);
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--raised);
-  color: var(--text);
+  font-family: var(--mono, var(--font-code));
+  font-size: var(--t-label-m);
+  padding: 4px 10px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: 999px;
+  background: var(--m3-surface-container);
+  color: var(--m3-on-surface);
   white-space: nowrap;
 }

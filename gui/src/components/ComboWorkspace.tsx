@@ -8,6 +8,7 @@ import {
 } from "../combo-workspace-data";
 import { IconChevron, IconPlus, IconSearch, IconShuffle } from "../icons";
 import { useT } from "../i18n/shared";
+import { Button, TextInput } from "../shell/m3-ui";
 import { AddComboModal } from "./combo-workspace-add-modal";
 import { DetailPanel } from "./combo-workspace-detail-panel";
 import { RemoveComboDialog, UnsavedLeaveDialog } from "./combo-workspace-dialogs";
@@ -104,15 +105,15 @@ export default function ComboWorkspace({
             <div className="combos-workspace-rail-title">{t("nav.combos")}</div>
             <div className="combos-workspace-rail-count">{combos.length}</div>
           </div>
-          <button type="button" className="btn btn-primary btn-sm" onClick={handleAdd} aria-label={t("cws.add")}>
-            <IconPlus width={14} height={14} /> {t("cws.add")}
-          </button>
+          <Button variant="filled" onClick={handleAdd} aria-label={t("cws.add")}>
+            <IconPlus aria-hidden="true" /> {t("cws.add")}
+          </Button>
         </div>
         <div className="cwi-search-row">
           <div className="cwi-search-wrap">
             <IconSearch className="cwi-search-icon" aria-hidden="true" />
-            <input
-              className="input cwi-search-input"
+            <TextInput
+              className="cwi-search-input"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t("cws.searchPlaceholder")}
@@ -122,7 +123,7 @@ export default function ComboWorkspace({
         </div>
         <div className="combos-workspace-rail-list">
           {filtered.length === 0 && combos.length > 0 ? (
-            <p className="muted" style={{ padding: "16px" }}>{t("cws.noSearchResults")}</p>
+            <p className="cwi-rail-empty">{t("cws.noSearchResults")}</p>
           ) : (
             <>
               {([

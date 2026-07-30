@@ -189,7 +189,16 @@ function QuotaRow({ label, percent, resetAt, threshold, t, locale }: {
       <span className="quota-reset-label">{t("codexAuth.resets")}</span>
       <span className="quota-reset-day">{reset.day}</span>
       <span className="quota-reset-time">{reset.time}</span>
-      <div className="bar"><div className={`bar-fill ${color}`} style={{ width: `${barWidth(percent)}%` }} /></div>
+      <div
+        className="bar"
+        role="progressbar"
+        aria-label={label}
+        aria-valuenow={Math.round(percent)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div className={`bar-fill ${color}`} style={{ width: `${barWidth(percent)}%` }} />
+      </div>
       <span
         className={`quota-val${warn ? " quota-val--warn" : ""}`}
         title={exhausted ? t("quota.limitReached") : undefined}
@@ -219,7 +228,14 @@ function StackedQuotaRow({ row, threshold, t, locale }: {
         <span className="quota-stacked-reset muted">{resetText}</span>
       </div>
       <div className="quota-stacked-bar-row">
-        <div className="bar quota-stacked-bar">
+        <div
+          className="bar quota-stacked-bar"
+          role="progressbar"
+          aria-label={row.limitLabel}
+          aria-valuenow={Math.round(row.percent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
           <div className={`bar-fill ${color}`} style={{ width: `${barWidth(row.percent)}%` }} />
         </div>
         <span className={`quota-stacked-used${warn ? " quota-stacked-used--warn" : ""}`}>

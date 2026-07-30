@@ -1,5 +1,7 @@
 import { IconCheck, IconPlus, IconX } from "../icons";
 import { useI18n } from "../i18n/shared";
+import { Button, Card, TextInput } from "../shell/m3-ui";
+import type { CopyOutcome } from "../components/use-copy-feedback";
 import {
   externalModelId,
   gatewayInboundProtocols,
@@ -12,6 +14,9 @@ import {
   type ModelTestState,
 } from "./api-keys-utils";
 
+/** Monospace value cell shared by the endpoint and key tables. */
+const CODE_CELL = { fontFamily: "var(--mono)", overflowWrap: "anywhere" } as const;
+
 export function ApiKeysEndpointsPanel({
   endpoints,
   claudeCodeEnabled,
@@ -20,51 +25,42 @@ export function ApiKeysEndpointsPanel({
   claudeCodeEnabled: boolean;
 }) {
   const { t } = useI18n();
+  const rows: { label: string; value: string }[] = [
+    { label: t("api.baseUrl"), value: endpoints.baseUrl },
+    { label: t("api.responsesEndpoint"), value: endpoints.responses },
+    { label: t("api.chatCompletionsEndpoint"), value: endpoints.chatCompletions },
+    ...(claudeCodeEnabled ? [{ label: t("api.messagesEndpoint"), value: endpoints.messages }] : []),
+    { label: t("api.modelsEndpoint"), value: endpoints.models },
+  ];
   return (
-    <div className="panel api-panel">
-      <h3 className="panel-title">{t("api.endpointsTitle")}</h3>
-      <div className="api-endpoints">
-        <div>
-          <span className="muted small">{t("api.baseUrl")}</span>
-          <code className="api-code api-code-inline">{endpoints.baseUrl}</code>
-        </div>
-        <div>
-          <span className="muted small">{t("api.responsesEndpoint")}</span>
-          <code className="api-code api-code-inline">{endpoints.responses}</code>
-        </div>
-        <div>
-          <span className="muted small">{t("api.chatCompletionsEndpoint")}</span>
-          <code className="api-code api-code-inline">{endpoints.chatCompletions}</code>
-        </div>
-        {claudeCodeEnabled && (
-          <div>
-            <span className="muted small">{t("api.messagesEndpoint")}</span>
-            <code className="api-code api-code-inline">{endpoints.messages}</code>
-          </div>
-        )}
-        <div>
-          <span className="muted small">{t("api.modelsEndpoint")}</span>
-          <code className="api-code api-code-inline">{endpoints.models}</code>
-        </div>
+    <Card title={t("api.endpointsTitle")} subtitle={t("api.endpointNote")}>
+      <div className="api-endpoints" style={{ overflowX: "auto" }}>
+        <table className="m3-table">
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.label}>
+                <th scope="row" style={{ width: 200 }}>{row.label}</th>
+                <td><code style={CODE_CELL}>{row.value}</code></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <p className="muted small">{t("api.endpointNote")}</p>
-    </div>
+    </Card>
   );
 }
 
 export function ApiKeysAuthPanel({ claudeCodeEnabled }: { claudeCodeEnabled: boolean }) {
   const { t } = useI18n();
   return (
-    <div className="panel api-panel" style={{ marginTop: "1rem" }}>
-      <h3 className="panel-title">{t("api.authTitle")}</h3>
-      <ul className="api-auth-list muted small">
+    <Card title={t("api.authTitle")} subtitle={t("api.authBaseUrlNote")}>
+      <ul className="api-auth-list">
         <li>{t("api.authChatCompletions")}</li>
         <li>{t("api.authResponses")}</li>
         {claudeCodeEnabled && <li>{t("api.authMessages")}</li>}
         <li>{t("api.authLoopback")}</li>
       </ul>
-      <p className="muted small">{t("api.authBaseUrlNote")}</p>
-    </div>
+    </Card>
   );
 }
 
@@ -74,7 +70,7 @@ export function ApiKeysManagePanel({
   newName,
   creating,
   newKey,
-  copied,
+  copyOutcome,
   confirmDelete,
   localeTag,
   onNewNameChange,
@@ -90,7 +86,7 @@ export function ApiKeysManagePanel({
   newName: string;
   creating: boolean;
   newKey: string | null;
-  copied: boolean;
+  copyOutcome: CopyOutcome | null;
   confirmDelete: string | null;
   localeTag?: string;
   onNewNameChange: (value: string) => void;
@@ -105,45 +101,51 @@ export function ApiKeysManagePanel({
 
   return (
     <>
+      {/* Reveal-once: the secret lives only in this card until it is dismissed. */}
       {newKey && (
-        <div className="panel api-panel panel-accent" style={{ marginTop: "1rem" }}>
-          <h3 className="panel-title">{t("api.newKeyTitle")}</h3>
-          <p className="muted small">{t("api.newKeyNote")}</p>
+        <Card
+          title={t("api.newKeyTitle")}
+          subtitle={t("api.newKeyNote")}
+          actions={<Button variant="text" onClick={onDismissNewKey}>{t("api.dismiss")}</Button>}
+          style={{
+            background: "var(--m3-primary-container)",
+            color: "var(--m3-on-primary-container)",
+          }}
+        >
           <div className="api-form-row">
             <code className="api-code" style={{ flex: 1, wordBreak: "break-all" }}>{newKey}</code>
-            <button type="button" className="btn btn-sm btn-ghost" onClick={onCopyKey}>
-              {copied ? <><IconCheck /> {t("api.copied")}</> : t("api.copy")}
-            </button>
+            <Button variant="tonal" onClick={onCopyKey}>
+              {copyOutcome === "copied"
+                ? <><IconCheck aria-hidden="true" /> {t("api.copied")}</>
+                : copyOutcome === "unavailable"
+                  ? t("prov.linkCopyUnavailable")
+                  : t("api.copy")}
+            </Button>
           </div>
-          <button type="button" className="btn btn-sm btn-ghost" style={{ alignSelf: "flex-start" }} onClick={onDismissNewKey}>
-            {t("api.dismiss")}
-          </button>
-        </div>
+        </Card>
       )}
 
-      <div className="panel api-panel" style={{ marginTop: "1rem" }}>
-        <h3 className="panel-title">{t("api.generateTitle")}</h3>
+      <Card title={t("api.generateTitle")}>
         <div className="api-form-row">
-          <input
+          <TextInput
             id="api-key-name"
             type="text"
             placeholder={t("api.keyNamePlaceholder")}
             aria-label={t("api.keyNamePlaceholder")}
             value={newName}
             onChange={e => onNewNameChange(e.target.value)}
-            className="input"
+            style={{ flex: "1 1 220px", width: "auto" }}
           />
-          <button type="button" className="btn btn-primary" onClick={onCreate} disabled={creating}>
-            <IconPlus /> {creating ? t("api.generating") : t("api.generate")}
-          </button>
+          <Button onClick={onCreate} disabled={creating}>
+            <IconPlus aria-hidden="true" /> {creating ? t("api.generating") : t("api.generate")}
+          </Button>
         </div>
-      </div>
+      </Card>
 
-      <div className="panel api-panel" style={{ marginTop: "1rem" }}>
-        <h3 className="panel-title">{t("api.activeKeys", { count: keys.length })}</h3>
+      <Card title={t("api.activeKeys", { count: keys.length })}>
         {keys.length > 0 ? (
-          <div className="tbl-wrap">
-            <table className="tbl">
+          <div style={{ overflowX: "auto" }}>
+            <table className="m3-table">
               <thead>
                 <tr><th>{t("api.colName")}</th><th>{t("api.colKey")}</th><th>{t("api.colCreated")}</th><th></th></tr>
               </thead>
@@ -151,16 +153,23 @@ export function ApiKeysManagePanel({
                 {keys.map(k => (
                   <tr key={k.id}>
                     <td>{k.name}</td>
-                    <td><code>{k.prefix}</code></td>
+                    <td><code style={CODE_CELL}>{k.prefix}</code></td>
                     <td>{formatCreatedDate(k.createdAt, localeTag)}</td>
                     <td>
                       {confirmDelete === k.id ? (
                         <span className="api-actions">
-                          <button type="button" className="btn btn-sm btn-danger" onClick={() => onDelete(k.id)}>{t("api.confirm")}</button>
-                          <button type="button" className="btn btn-sm btn-ghost" onClick={onCancelDelete}>{t("common.cancel")}</button>
+                          <Button variant="danger" onClick={() => onDelete(k.id)}>{t("api.confirm")}</Button>
+                          <Button variant="text" onClick={onCancelDelete}>{t("common.cancel")}</Button>
                         </span>
                       ) : (
-                        <button type="button" className="btn btn-sm btn-ghost" aria-label={t("api.deleteAria")} onClick={() => onConfirmDelete(k.id)}><IconX /></button>
+                        <Button
+                          variant="text"
+                          aria-label={t("api.deleteAria")}
+                          style={{ minWidth: 44, color: "var(--m3-error)" }}
+                          onClick={() => onConfirmDelete(k.id)}
+                        >
+                          <IconX aria-hidden="true" />
+                        </Button>
                       )}
                     </td>
                   </tr>
@@ -168,12 +177,10 @@ export function ApiKeysManagePanel({
               </tbody>
             </table>
           </div>
-        ) : keysLoadFailed ? (
-          <p className="muted">{t("api.keysLoadFailed")}</p>
         ) : (
-          <p className="muted">{t("api.noKeys")}</p>
+          <p className="m3-empty">{keysLoadFailed ? t("api.keysLoadFailed") : t("api.noKeys")}</p>
         )}
-      </div>
+      </Card>
     </>
   );
 }
@@ -183,7 +190,7 @@ export function ApiKeysModelsPanel({
   modelsLoading,
   modelsLoadFailed,
   modelQuery,
-  copiedModelId,
+  copyOutcomeFor,
   modelTests,
   claudeCodeEnabled,
   onModelQueryChange,
@@ -196,7 +203,7 @@ export function ApiKeysModelsPanel({
   modelsLoading: boolean;
   modelsLoadFailed: boolean;
   modelQuery: string;
-  copiedModelId: string | null;
+  copyOutcomeFor: (modelId: string) => CopyOutcome | null;
   modelTests: Record<string, { state: ModelTestState; detail?: string }>;
   claudeCodeEnabled: boolean;
   onModelQueryChange: (value: string) => void;
@@ -207,29 +214,30 @@ export function ApiKeysModelsPanel({
 }) {
   const { t } = useI18n();
   return (
-    <div className="panel api-panel" style={{ marginTop: "1rem" }}>
-      <div className="api-panel-head">
-        <h3 className="panel-title">{t("api.modelsTitle")}</h3>
-        <span className="muted mono text-label">{t("api.modelsCount", { count: filteredModels.length })}</span>
+    <Card
+      title={t("api.modelsTitle")}
+      subtitle={t("api.modelsSubtitle")}
+      actions={<span className="m3-chip" aria-hidden="true">{t("api.modelsCount", { count: filteredModels.length })}</span>}
+    >
+      <div className="m3-row" style={{ marginBottom: "var(--sp-3)" }}>
+        <TextInput
+          type="search"
+          value={modelQuery}
+          onChange={event => onModelQueryChange(event.target.value)}
+          placeholder={t("api.modelsSearch")}
+          aria-label={t("api.modelsSearch")}
+          style={{ flex: "1 1 240px", width: "auto" }}
+        />
       </div>
-      <p className="muted small">{t("api.modelsSubtitle")}</p>
-      <input
-        type="search"
-        className="input"
-        value={modelQuery}
-        onChange={event => onModelQueryChange(event.target.value)}
-        placeholder={t("api.modelsSearch")}
-        aria-label={t("api.modelsSearch")}
-      />
       {modelsLoading ? (
-        <p className="muted small" style={{ marginTop: "0.75rem" }}>{t("api.modelsLoading")}</p>
+        <p className="m3-empty">{t("api.modelsLoading")}</p>
       ) : modelsLoadFailed ? (
-        <p className="muted small" style={{ marginTop: "0.75rem" }}>{t("api.modelsLoadFailed")}</p>
+        <p className="m3-empty">{t("api.modelsLoadFailed")}</p>
       ) : filteredModels.length === 0 ? (
-        <p className="muted small" style={{ marginTop: "0.75rem" }}>{t("api.modelsEmpty")}</p>
+        <p className="m3-empty">{t("api.modelsEmpty")}</p>
       ) : (
-        <div className="tbl-wrap" style={{ marginTop: "0.75rem" }}>
-          <table className="tbl">
+        <div style={{ overflowX: "auto" }}>
+          <table className="m3-table">
             <thead>
               <tr>
                 <th>{t("api.colModel")}</th>
@@ -242,32 +250,42 @@ export function ApiKeysModelsPanel({
               {filteredModels.map(model => {
                 const modelId = externalModelId(model);
                 const testState = modelTests[modelId]?.state ?? "idle";
+                const copyOutcome = copyOutcomeFor(modelId);
                 return (
                   <tr key={modelId}>
                     <td>
                       <div className="api-model-cell">
-                        <code>{modelId}</code>
-                        {model.displayName !== model.id && <span className="muted small">{model.displayName}</span>}
+                        <code style={CODE_CELL}>{modelId}</code>
+                        {model.displayName !== model.id && (
+                          <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>{model.displayName}</span>
+                        )}
                       </div>
                     </td>
                     <td>{sourceLabel(model)}</td>
                     <td>{gatewayInboundProtocols(claudeCodeEnabled).map(protocolLabel).join(", ")}</td>
                     <td>
                       <div className="api-model-actions">
-                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => { onCopyModelId(modelId); }}>
-                          {copiedModelId === modelId ? t("api.modelCopied") : t("api.copyModelId")}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
+                        <Button variant="text" onClick={() => { onCopyModelId(modelId); }}>
+                          {copyOutcome === "copied"
+                            ? t("api.modelCopied")
+                            : copyOutcome === "unavailable"
+                              ? t("prov.linkCopyUnavailable")
+                              : t("api.copyModelId")}
+                        </Button>
+                        <Button
+                          variant="outlined"
                           disabled={testState === "testing"}
                           onClick={() => { onTestModel(model); }}
                         >
                           {testState === "testing" ? t("api.testingModel") : t("api.testModel")}
-                        </button>
+                        </Button>
                       </div>
-                      {testState === "ok" && <p className="muted small api-test-note api-test-note--ok">{t("api.testSucceeded")}</p>}
-                      {testState === "error" && <p className="muted small api-test-note api-test-note--error">{modelTests[modelId]?.detail ?? t("api.testFailed")}</p>}
+                      {testState === "ok" && (
+                        <p className="api-test-note api-test-note--ok">{t("api.testSucceeded")}</p>
+                      )}
+                      {testState === "error" && (
+                        <p className="api-test-note api-test-note--error">{modelTests[modelId]?.detail ?? t("api.testFailed")}</p>
+                      )}
                     </td>
                   </tr>
                 );
@@ -276,7 +294,7 @@ export function ApiKeysModelsPanel({
           </table>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -292,8 +310,7 @@ export function ApiKeysUsagePanel({
 
   return (
     <>
-      <div className="panel api-panel" style={{ marginTop: "1rem" }}>
-        <h3 className="panel-title">{t("api.usageChatTitle")}</h3>
+      <Card title={t("api.usageChatTitle")}>
         <pre className="api-code">{`curl ${endpoints.chatCompletions} \\
   -H "x-opencodex-api-key: ocx_YOUR_KEY_HERE" \\
   -H "Content-Type: application/json" \\
@@ -301,10 +318,9 @@ export function ApiKeysUsagePanel({
     "model": "gpt-5.4",
     "messages": [{"role": "user", "content": ${sampleInput}}]
   }'`}</pre>
-      </div>
+      </Card>
 
-      <div className="panel api-panel" style={{ marginTop: "1rem" }}>
-        <h3 className="panel-title">{t("api.usageResponsesTitle")}</h3>
+      <Card title={t("api.usageResponsesTitle")}>
         <pre className="api-code">{`curl ${endpoints.responses} \\
   -H "x-opencodex-api-key: ocx_YOUR_KEY_HERE" \\
   -H "Content-Type: application/json" \\
@@ -312,11 +328,10 @@ export function ApiKeysUsagePanel({
     "model": "gpt-5.4",
     "input": ${sampleInput}
   }'`}</pre>
-      </div>
+      </Card>
 
       {claudeCodeEnabled && (
-        <div className="panel api-panel" style={{ marginTop: "1rem" }}>
-          <h3 className="panel-title">{t("api.usageMessagesTitle")}</h3>
+        <Card title={t("api.usageMessagesTitle")}>
           <pre className="api-code">{`curl ${endpoints.messages} \\
   -H "x-opencodex-api-key: ocx_YOUR_KEY_HERE" \\
   -H "Content-Type: application/json" \\
@@ -325,7 +340,7 @@ export function ApiKeysUsagePanel({
     "max_tokens": 64,
     "messages": [{"role": "user", "content": ${sampleInput}}]
   }'`}</pre>
-        </div>
+        </Card>
       )}
     </>
   );

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useT } from "../i18n/shared";
+import { Button } from "../shell/m3-ui";
 
 export function RemoveComboDialog({
   model,
@@ -31,14 +32,14 @@ export function RemoveComboDialog({
       onCancel={handleCancel}
     >
       <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onCancel} />
-      <div className="modal-card pwi-remove-confirm-card" onClick={(e) => e.stopPropagation()}>
-        <h3 id="cwi-remove-title" className="pwi-remove-confirm-title">
+      <div className="cwi-dialog-card cwi-dialog-card--confirm" onClick={(e) => e.stopPropagation()}>
+        <h3 id="cwi-remove-title" className="cwi-dialog-title">
           {t("cws.removeConfirmTitle", { model })}
         </h3>
-        <p className="muted pwi-remove-confirm-desc">{t("cws.removeConfirmDesc")}</p>
-        <div className="pwi-remove-confirm-actions">
-          <button type="button" className="btn btn-ghost" onClick={onCancel}>{t("common.cancel")}</button>
-          <button type="button" className="btn pwi-remove-confirm-danger" onClick={onConfirm}>{t("common.remove")}</button>
+        <p className="cwi-dialog-desc">{t("cws.removeConfirmDesc")}</p>
+        <div className="cwi-modal-actions">
+          <Button variant="text" onClick={onCancel}>{t("common.cancel")}</Button>
+          <Button variant="danger" onClick={onConfirm}>{t("common.remove")}</Button>
         </div>
       </div>
     </dialog>
@@ -73,26 +74,24 @@ export function UnsavedLeaveDialog({
       onCancel={handleCancel}
     >
       <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onKeep} />
-      <div className="modal-card pwi-json-unsaved-card" onClick={(e) => e.stopPropagation()}>
-        <h3 id="cwi-unsaved-title" className="pwi-json-unsaved-title">{t("cws.unsavedTitle")}</h3>
-        <p className="muted pwi-json-unsaved-desc">{t("cws.unsavedDesc")}</p>
-        <div className="pwi-json-unsaved-actions">
-          <button
-            type="button"
-            className="btn btn-ghost"
+      <div className="cwi-dialog-card cwi-dialog-card--confirm" onClick={(e) => e.stopPropagation()}>
+        <h3 id="cwi-unsaved-title" className="cwi-dialog-title">{t("cws.unsavedTitle")}</h3>
+        <p className="cwi-dialog-desc">{t("cws.unsavedDesc")}</p>
+        <div className="cwi-modal-actions">
+          <Button
+            variant="text"
             data-testid="cwi-unsaved-keep"
             onClick={onKeep}
           >
             {t("cws.keepEditing")}
-          </button>
-          <button
-            type="button"
-            className="btn btn-danger"
+          </Button>
+          <Button
+            variant="danger"
             data-testid="cwi-unsaved-discard"
             onClick={onDiscard}
           >
             {t("common.discard")}
-          </button>
+          </Button>
         </div>
       </div>
     </dialog>

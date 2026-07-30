@@ -2,7 +2,6 @@ import { type ReactNode } from "react";
 import { IconAlert } from "../icons";
 import { Trans } from "../i18n/provider";
 import { navigateHash } from "../hash-routing";
-import { EmptyState } from "../ui";
 import { DashboardDialogs } from "./dashboard-dialogs";
 import { DashboardModelsSection } from "./dashboard-models-section";
 import { DashboardOverviewSection } from "./dashboard-overview-section";
@@ -28,10 +27,13 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
 
   if (error) {
     return (
-      <EmptyState style={{ marginTop: 40 }} icon={<IconAlert />}
-        title={<span style={{ color: "var(--red)" }}>{t("dash.cannotConnect")}</span>}>
-        <Trans k="dash.runStart" cmd="ocx start" />
-      </EmptyState>
+      <div className="dash-banner" role="alert">
+        <IconAlert aria-hidden="true" />
+        <div>
+          <div className="dash-banner__title">{t("dash.cannotConnect")}</div>
+          <div className="dash-banner__body"><Trans k="dash.runStart" cmd="ocx start" /></div>
+        </div>
+      </div>
     );
   }
 
@@ -74,11 +76,8 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
 
   return (
     <div className="dashboard-workspace-shell">
-      <div className="page-head">
-        <h2>{t("nav.dashboard")}</h2>
-      </div>
-      <p className="page-sub">{t("dash.subtitle")}</p>
-      <div className="page-tabs" role="tablist" aria-label={t("dash.workspace.sections")}>
+      <p className="page-sub dash-subtitle">{t("dash.subtitle")}</p>
+      <div className="dash-tabs" role="tablist" aria-label={t("dash.workspace.sections")}>
         {sections.map(s => (
           <button
             key={s.id}
@@ -88,7 +87,7 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
             aria-selected={selectedSection === s.id}
             aria-controls={`dashboard-panel-${s.id}`}
             tabIndex={selectedSection === s.id ? 0 : -1}
-            className={`page-tab${selectedSection === s.id ? " page-tab--active" : ""}`}
+            className={`dash-tab${selectedSection === s.id ? " dash-tab--active" : ""}`}
             onClick={() => selectTab(s.id)}
             onKeyDown={onTabKeyDown}
           >

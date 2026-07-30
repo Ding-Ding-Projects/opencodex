@@ -90,16 +90,22 @@ async function mount() {
   await act(async () => { await new Promise(r => setTimeout(r, 50)); });
 }
 
+// The Material 3 restyle replaced the `.grok-model-row` flex rows with an `.m3-table`
+// and the legacy `button.switch` with the M3 `role="switch"` toggle. Same invariant —
+// one switch per candidate row, reflecting the exclusion state — pinned on the M3
+// markup: role="switch" is the accessibility contract, so it is the stronger anchor.
 function switchFor(id: string): HTMLButtonElement {
-  const row = Array.from(container.querySelectorAll(".grok-model-row"))
+  const row = Array.from(container.querySelectorAll(".m3-table tbody tr"))
     .find(el => (el.textContent ?? "").includes(id));
-  const sw = row?.querySelector("button.switch");
+  const sw = row?.querySelector('button[role="switch"]');
   if (!sw) throw new Error(`switch not found for ${id}`);
   return sw as unknown as HTMLButtonElement;
 }
 
+// Legacy `.btn-primary` became the M3 filled button; the save-apply action is the only
+// filled button on the page.
 function saveApplyButton(): HTMLButtonElement {
-  const btn = Array.from(container.querySelectorAll("button.btn-primary"))
+  const btn = Array.from(container.querySelectorAll("button.m3-btn--filled"))
     .find(b => (b.textContent ?? "").length > 0);
   if (!btn) throw new Error("save-apply button not found");
   return btn as unknown as HTMLButtonElement;
@@ -107,8 +113,10 @@ function saveApplyButton(): HTMLButtonElement {
 
 test("each candidate renders a switch reflecting the exclusion state", async () => {
   await mount();
-  expect(switchFor("gpt-5.6-sol").className).toContain("on");
-  expect(switchFor("cursor/grok-4.5").className).toContain("on");
+  // aria-checked replaces the legacy `.on` class check: the M3 toggle carries the state
+  // on the accessibility attribute, and the class merely mirrors it.
+  expect(switchFor("gpt-5.6-sol").getAttribute("aria-checked")).toBe("true");
+  expect(switchFor("cursor/grok-4.5").getAttribute("aria-checked")).toBe("true");
 });
 
 test("flipping a switch marks the page dirty and Save & apply writes both endpoints in order", async () => {

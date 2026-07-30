@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
 import { IconChevron } from "../icons";
-import { EmptyState, Notice } from "../ui";
+import { Notice } from "../ui";
+import { Button, Empty } from "../shell/m3-ui";
 import { useT, type TFn, type TKey } from "../i18n/shared";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import { createBoundedFetch } from "../bounded-fetch";
@@ -61,6 +62,33 @@ interface DesktopResponse {
 }
 
 type PendingAction = "save" | "apply" | null;
+
+/** Tonal badge containers for the model rows (M3 status vocabulary). */
+const BADGE_BASE = {
+  display: "inline-flex",
+  alignItems: "center",
+  height: "24px",
+  padding: "0 10px",
+  borderRadius: "999px",
+  border: "none",
+  fontSize: "var(--t-label-s)",
+  fontWeight: 500,
+  whiteSpace: "nowrap",
+} as const;
+
+const TONAL_BADGE = {
+  ok: { ...BADGE_BASE, background: "var(--green-soft)", color: "var(--green)" },
+  muted: { ...BADGE_BASE, background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
+  neutral: { ...BADGE_BASE, background: "var(--m3-secondary-container)", color: "var(--m3-on-secondary-container)" },
+  primary: { ...BADGE_BASE, background: "var(--m3-primary)", color: "var(--m3-on-primary)" },
+} as const;
+
+/** M3 tonal status container; the tone-specific colours are applied per render. */
+const STATUS_BAR_STYLE = {
+  borderRadius: "var(--r-l)",
+  borderWidth: "1px",
+  borderStyle: "solid",
+} as const;
 
 const FAMILY_KEYS: Record<Family, TKey> = {
   opus: "claudeDesktop.family.opus",
@@ -340,28 +368,41 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
     return (
       <div className="claude-desktop-error">
         <Notice tone="err">{loadError || t("claudeDesktop.loadFail")}</Notice>
-        <button type="button" className="btn btn-ghost" onClick={() => void load()}>{t("claudeDesktop.retry")}</button>
+        <Button variant="outlined" onClick={() => void load()}>{t("claudeDesktop.retry")}</Button>
       </div>
     );
   }
+
+  const statusTone = status?.activeProfile === false
+    ? "not-applied"
+    : status?.stale ? "stale" : status?.applied ? "applied" : "not-applied";
 
   return (
     <>
       <div className="page-head claude-desktop-head">
         <div>
-          <h2>{t("claudeDesktop.title")}</h2>
+          <h2 className="page-title">{t("claudeDesktop.title")}</h2>
           <p className="page-sub">{t("claudeDesktop.subtitle", { port: data.port })}</p>
         </div>
-        <div className="claude-profile-tools">
+        <div className="claude-profile-tools m3-row">
           <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={event => void importProfile(event)} />
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => importRef.current?.click()}>{t("claudeDesktop.importJson")}</button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={exportProfile}>{t("claudeDesktop.exportJson")}</button>
+          <Button variant="outlined" onClick={() => importRef.current?.click()}>{t("claudeDesktop.importJson")}</Button>
+          <Button variant="outlined" onClick={exportProfile}>{t("claudeDesktop.exportJson")}</Button>
         </div>
       </div>
 
       {status && (
-        <div className={`claude-status-bar ${status.activeProfile === false ? "not-applied" : status.stale ? "stale" : status.applied ? "applied" : "not-applied"}`}>
-          <span className="claude-status-dot" />
+        // Tonal status container: the applied/stale/ignored state carries the colour role,
+        // so the badge reads without depending on the dot alone.
+        <div
+          className={`claude-status-bar ${statusTone}`}
+          style={{
+            ...STATUS_BAR_STYLE,
+            background: statusTone === "applied" ? "var(--green-soft)" : statusTone === "stale" ? "var(--amber-soft)" : "var(--m3-surface-container)",
+            borderColor: statusTone === "applied" ? "var(--green)" : statusTone === "stale" ? "var(--amber)" : "var(--m3-outline-variant)",
+          }}
+        >
+          <span className="claude-status-dot" style={{ background: statusTone === "applied" ? "var(--green)" : statusTone === "stale" ? "var(--amber)" : "var(--m3-outline)" }} />
           {/* Desktop serving another profile outranks content drift: stale config that is
               read still works, a config that is never read does not. */}
           <span>{status.activeProfile === false ? t("claudeDesktop.status.notActiveProfile") : status.stale ? t("claudeDesktop.status.stale") : status.applied ? t("claudeDesktop.status.applied") : t("claudeDesktop.status.notApplied")}</span>
@@ -375,18 +416,18 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
 
       <div className="claude-profile-bar">
         <span className={`claude-dirty${dirty ? " active" : ""}`}>{dirty ? t("claudeDesktop.unsaved") : t("claudeDesktop.upToDate")}</span>
-        <div className="claude-save-actions">
-          <button type="button" className="btn btn-ghost" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
+        <div className="claude-save-actions m3-row">
+          <Button variant="outlined" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
             {pending === "save" ? t("claudeDesktop.saving") : t("common.save")}
-          </button>
-          <button type="button" className="btn btn-primary" disabled={pending !== null} onClick={() => void save(true)}>
+          </Button>
+          <Button variant="filled" disabled={pending !== null} onClick={() => void save(true)}>
             {pending === "apply" ? t("claudeDesktop.applying") : pending === "save" ? t("claudeDesktop.saving") : t("claudeDesktop.saveApply")}
-          </button>
+          </Button>
         </div>
       </div>
 
       {data.models.length === 0 && (
-        <EmptyState title={t("claudeDesktop.emptyTitle")}>{t("claudeDesktop.emptyHint")}</EmptyState>
+        <Empty title={t("claudeDesktop.emptyTitle")}>{t("claudeDesktop.emptyHint")}</Empty>
       )}
 
       <div className="ocx-group-stack" aria-label={t("claudeDesktop.assignmentsLabel")}>
@@ -444,7 +485,7 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
             <div id={`claude-lane-body-${family}`}>
             {lane.showSearch && (
               <input
-                className="input claude-lane-search"
+                className="m3-input claude-lane-search"
                 type="search"
                 placeholder={t("models.search")}
                 aria-label={t("models.search")}
@@ -504,13 +545,15 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       {/* Read-only view of the 1M capability the written config already
                           carries — distinct from the context number, because a 984k
                           model is below the threshold. */}
-                      {model.supports1m === true && <span className="claude-1m-chip">{t("claudeDesktop.supports1m")}</span>}
-                      {model.effortSupported === false && <span className="claude-effort-badge off">{t("claudeDesktop.effort.displayOnly")}</span>}
-                      {model.effortSupported === true && <span className="claude-effort-badge on">{t("claudeDesktop.effort.supported")}</span>}
+                      {/* Tonal containers per the M3 status vocabulary. The legacy class names
+                          stay: they are the row's a11y/test contract, only the paint changes. */}
+                      {model.supports1m === true && <span className="claude-1m-chip" style={TONAL_BADGE.neutral}>{t("claudeDesktop.supports1m")}</span>}
+                      {model.effortSupported === false && <span className="claude-effort-badge off" style={TONAL_BADGE.muted}>{t("claudeDesktop.effort.displayOnly")}</span>}
+                      {model.effortSupported === true && <span className="claude-effort-badge on" style={TONAL_BADGE.neutral}>{t("claudeDesktop.effort.supported")}</span>}
                       {profile.defaults[family] === model.route && (
-                        <span className="claude-row-default">{t("claudeDesktop.defaultBadge")}</span>
+                        <span className="claude-row-default" style={TONAL_BADGE.primary}>{t("claudeDesktop.defaultBadge")}</span>
                       )}
-                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`}>
+                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`} style={model.available ? TONAL_BADGE.ok : TONAL_BADGE.muted}>
                         {model.available ? t("claudeDesktop.available") : t("claudeDesktop.unavailable")}
                       </span>
                     </button>
@@ -548,14 +591,13 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       >
                         {FAMILIES.map(option => <option key={option} value={option}>{t(FAMILY_KEYS[option])}</option>)}
                       </select>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
+                      <Button
+                        variant="outlined"
                         disabled={!model.available || destination === family}
                         onClick={() => moveModel(model.route, destination)}
                       >
                         {t("claudeDesktop.move")}
-                      </button>
+                      </Button>
                     </div>
                     </div>
                     )}
@@ -563,13 +605,13 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                 );
               })}
               {lane.hidden > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm claude-lane-more"
+                <Button
+                  variant="text"
+                  className="claude-lane-more"
                   onClick={() => setLaneLimit(current => ({ ...current, [family]: (current[family] ?? LANE_PAGE) + LANE_PAGE }))}
                 >
                   {t("models.showMore", { n: lane.hidden })}
-                </button>
+                </Button>
               )}
             </div>
             </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, LOCALES, type TFn } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
@@ -6,9 +6,11 @@ import { hashLogConversationQuery, matchesLogConversationId } from "../log-conve
 import { statusCodeInfo } from "../status-codes";
 import { IconX } from "../icons";
 import { modelLabel } from "../model-display";
-import { EmptyState, Notice } from "../ui";
+import { Notice } from "../ui";
+import { Button, Empty, Segmented } from "../shell/m3-ui";
 import Debug from "./Debug";
 
+import { M3_TABLIST_STYLE, m3TabStyle } from "./debug-shared";
 import type { LogsTab } from "./logs-tab-keydown";
 import { logsTabKeyDown, readTabFromHash, selectLogsTab } from "./logs-tab-keydown";
 
@@ -251,10 +253,27 @@ function verificationKey(status: MatchedPriceInfo["status"]): "logs.detail.verif
 }
 
 function statusColor(status: number): string {
-  if (status >= 200 && status < 300) return "var(--green)";
-  if (status >= 400) return "var(--red)";
-  return "var(--amber)";
+  if (status >= 200 && status < 300) return "var(--m3-ok)";
+  if (status >= 400) return "var(--m3-error)";
+  return "var(--m3-warn)";
 }
+
+/**
+ * `.m3-table` intentionally carries no numeric-column rule, so the right
+ * alignment the legacy `.tbl .num` selector supplied is re-applied inline with
+ * role tokens. Cells keep `.num`/`.mono` for the mono face + tabular figures.
+ */
+const NUM_CELL: CSSProperties = { textAlign: "right" };
+
+/** Rounded surface the log table scrolls inside, replacing legacy `.tbl-wrap`. */
+const TABLE_SHELL: CSSProperties = {
+  border: "1px solid var(--m3-outline-variant)",
+  borderRadius: "var(--r-l)",
+  background: "var(--m3-surface-container-lowest)",
+  overflowY: "auto",
+  overflowX: "auto",
+  maxHeight: "calc(100vh - 260px)",
+};
 
 function formatLogTimestamp(ts: number, localeTag?: string): string {
   return new Date(ts).toLocaleTimeString(localeTag);
@@ -394,16 +413,21 @@ export default function Logs({ apiBase }: { apiBase: string }) {
 
   return (
     <>
-      <div className="page-head">
-        <h2>{t("nav.logs")}</h2>
+      <div className="m3-row m3-row--split" style={{ marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: "var(--t-headline-s)", fontWeight: 400 }}>{t("nav.logs")}</h2>
         {tab === "logs" && (
-          <label className="muted text-control" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <label
+            className="m3-row"
+            style={{ cursor: "pointer", gap: 8, minHeight: 44, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}
+          >
             <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
             {t("logs.autoRefresh")}
           </label>
         )}
       </div>
-      <div className="page-tabs" role="tablist" aria-label={t("nav.logs")}>
+      {/* Pill tablist per the prototype's LOGS section; roving focus still comes
+          from logsTabKeyDown so ArrowLeft/Right/Home/End keep working. */}
+      <div role="tablist" aria-label={t("nav.logs")} style={{ ...M3_TABLIST_STYLE, marginBottom: 16 }}>
         <button
           type="button"
           role="tab"
@@ -411,7 +435,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
           aria-selected={tab === "logs"}
           aria-controls="logs-panel-logs"
           tabIndex={tab === "logs" ? 0 : -1}
-          className={`page-tab${tab === "logs" ? " page-tab--active" : ""}`}
+          style={m3TabStyle(tab === "logs")}
           onClick={() => selectTab("logs")}
           onKeyDown={logsTabKeyDown}
         >
@@ -424,7 +448,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
           aria-selected={tab === "debug"}
           aria-controls="logs-panel-debug"
           tabIndex={tab === "debug" ? 0 : -1}
-          className={`page-tab${tab === "debug" ? " page-tab--active" : ""}`}
+          style={m3TabStyle(tab === "debug")}
           onClick={() => selectTab("debug")}
           onKeyDown={logsTabKeyDown}
         >
@@ -440,41 +464,39 @@ export default function Logs({ apiBase }: { apiBase: string }) {
 
       {tab === "logs" && (
       <div role="tabpanel" id="logs-panel-logs" aria-labelledby="logs-tab-logs">
-      <p className="page-sub">{t("logs.subtitle")}</p>
+      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+        {t("logs.subtitle")}
+      </p>
 
-      <div className="row" style={{ gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <span className="muted text-control">{t("logs.filter.surface.label")}</span>
-        <div className="segmented" role="radiogroup" aria-label={t("logs.filter.surface.label")} style={{ display: "inline-flex", borderRadius: "var(--radius-pill)", background: "var(--surface-soft, var(--raised))", padding: 3, gap: 2 }}>
-          {(["all", "claude", "codex"] as const).map(surface => (
-            <button
-              key={surface}
-              type="button"
-              role="radio"
-              aria-checked={surfaceFilter === surface}
-              className={`btn btn-sm${surfaceFilter === surface ? " btn-primary" : " btn-ghost"}`}
-              style={{ borderRadius: "var(--radius-pill)", minWidth: 64, padding: "5px 12px", border: "none", background: surfaceFilter === surface ? undefined : "transparent", color: surfaceFilter === surface ? undefined : "var(--muted)" }}
-              onClick={() => setSurfaceFilter(surface)}
-            >
-              {t(`logs.filter.surface.${surface}`)}
-            </button>
-          ))}
-        </div>
-        <label className="muted text-control" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <div className="m3-row" style={{ gap: 8, marginBottom: 12 }}>
+        <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>
+          {t("logs.filter.surface.label")}
+        </span>
+        <Segmented
+          value={surfaceFilter}
+          label={t("logs.filter.surface.label")}
+          onChange={setSurfaceFilter}
+          options={(["all", "claude", "codex"] as const).map(surface => ({
+            value: surface,
+            label: t(`logs.filter.surface.${surface}`),
+          }))}
+        />
+        <label className="m3-row" style={{ gap: 8, flex: "1 1 300px", minWidth: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>
           {t("logs.filter.conversation.label")}
           <input
             type="search"
-            className="input mono"
+            className="m3-input mono"
             value={conversationFilter}
             onChange={e => setConversationFilter(e.target.value)}
             placeholder={t("logs.filter.conversation.placeholder")}
             aria-label={t("logs.filter.conversation.label")}
-            style={{ minWidth: 220, maxWidth: 360 }}
+            style={{ flex: "1 1 auto", minWidth: 200, maxWidth: 360 }}
           />
         </label>
         {conversationQuery && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConversationFilter("")}>
+          <Button variant="text" onClick={() => setConversationFilter("")}>
             {t("logs.filter.conversation.clear")}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -503,30 +525,30 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       {error ? (
         <Notice tone="err">
           {error}{" "}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void fetchLogs()} disabled={loading}>
+          <Button variant="text" onClick={() => void fetchLogs()} disabled={loading}>
             {t("common.retry")}
-          </button>
+          </Button>
         </Notice>
       ) : loading && logs.length === 0 ? (
-        <EmptyState title={t("common.loading")} />
+        <Empty title={t("common.loading")} />
       ) : filteredLogs.length === 0 ? (
-        <EmptyState title={t("logs.noRequests")} />
+        <Empty title={t("logs.noRequests")} />
       ) : (
         <>
-        <div ref={scrollContainerRef} className="tbl-wrap" style={{ overflowY: "auto", maxHeight: "calc(100vh - 260px)" }}>
-          <table className="tbl logs-table">
-            <thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--surface)" }}>
+        <div ref={scrollContainerRef} style={TABLE_SHELL}>
+          <table className="m3-table logs-table">
+            <thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--m3-surface-container-lowest)" }}>
              <tr>
-               <th>{t("logs.col.time")}</th>
-                <th className="num log-col-tokens">{t("logs.col.tokens")}</th>
-                <th className="num log-col-rate" title={t("logs.metric.tokPerSecTitle")}>{t("logs.col.tokPerSec")}</th>
-                <th className="num log-col-cost" title={t("logs.metric.estimatedCostTitle")}>{t("logs.col.estimatedCost")}</th>
-               <th className="log-col-model">{t("logs.col.model")}</th>
-               <th>{t("logs.col.effort")}</th>
-               <th>{t("logs.col.provider")}</th>
-               <th>{t("logs.col.status")}</th>
-                <th>{t("logs.col.request")}</th>
-               <th className="num">{t("logs.col.duration")}</th>
+               <th scope="col">{t("logs.col.time")}</th>
+                <th scope="col" className="num log-col-tokens" style={NUM_CELL}>{t("logs.col.tokens")}</th>
+                <th scope="col" className="num log-col-rate" style={NUM_CELL} title={t("logs.metric.tokPerSecTitle")}>{t("logs.col.tokPerSec")}</th>
+                <th scope="col" className="num log-col-cost" style={NUM_CELL} title={t("logs.metric.estimatedCostTitle")}>{t("logs.col.estimatedCost")}</th>
+               <th scope="col" className="log-col-model">{t("logs.col.model")}</th>
+               <th scope="col">{t("logs.col.effort")}</th>
+               <th scope="col">{t("logs.col.provider")}</th>
+               <th scope="col">{t("logs.col.status")}</th>
+                <th scope="col">{t("logs.col.request")}</th>
+               <th scope="col" className="num" style={NUM_CELL}>{t("logs.col.duration")}</th>
              </tr>
             </thead>
             <tbody>
@@ -544,8 +566,8 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                  data-index={virtualRow.index}
                  ref={rowVirtualizer.measureElement}
                >
-                 <td className="muted mono">{formatLogTimestamp(log.timestamp, localeTag)}</td>
-                  <td className="num mono log-col-tokens" title={tokensTitle(log, t)}>
+                 <td className="muted mono" style={{ whiteSpace: "nowrap" }}>{formatLogTimestamp(log.timestamp, localeTag)}</td>
+                  <td className="num mono log-col-tokens" style={NUM_CELL} title={tokensTitle(log, t)}>
                     {(() => {
                       const tokenTotal = displayTokenTotal(log);
                       const { read, write } = cacheSplit(log);
@@ -573,17 +595,28 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                         : <span className="muted">{t(`logs.tokens.${log.usageStatus ?? "unreported"}`)}</span>;
                     })()}
                   </td>
-                  <td className="num mono log-col-rate">
+                  <td className="num mono log-col-rate" style={NUM_CELL}>
                     {formatTokPerSecond(log.displayMetrics?.tokPerSecond, localeTag)}
                   </td>
-                  <td className="num mono log-col-cost">
+                  <td className="num mono log-col-cost" style={NUM_CELL}>
                     {formatEstimatedUsd(log.displayMetrics?.cost, localeTag)}
                   </td>
                  <td className="mono log-col-model" title={modelTitle(log)}>
                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     <span>{modelLabel(log.resolvedModel ?? log.model)}</span>
-                      {log.surface === "claude" && <span className="badge badge-accent">{t("logs.badge.claude")}</span>}
-                      {speedLabel(log) && <span className="badge badge-amber">{speedLabel(log)}</span>}
+                      {log.surface === "claude" && (
+                        <span className="m3-chip selected" style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)" }}>
+                          {t("logs.badge.claude")}
+                        </span>
+                      )}
+                      {speedLabel(log) && (
+                        <span
+                          className="m3-chip"
+                          style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)", background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)", borderColor: "transparent" }}
+                        >
+                          {speedLabel(log)}
+                        </span>
+                      )}
                     </span>
                   </td>
                   <td className="mono log-reasoning-cell" title={reasoningWire}>
@@ -592,7 +625,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                       {reasoningWire && <span className="muted text-caption leading-tight">{reasoningWire}</span>}
                     </span>
                   </td>
-                  <td className="muted">{log.provider}</td>
+                  <td style={{ color: "var(--m3-on-surface-variant)" }}>{log.provider}</td>
                   <td>
                     <span className="log-status-cell">
                       <span className="mono font-semibold" style={{ color: statusColor(log.status) }}>{log.status}</span>
@@ -607,7 +640,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                     </span>
                  </td>
                   <td className="muted mono"><span className="log-reqid" title={log.requestId}>{log.requestId ?? "-"}</span></td>
-                 <td className="num">{log.durationMs}ms</td>
+                 <td className="num mono" style={NUM_CELL}>{log.durationMs}ms</td>
                 </tr>
                 );
               })}
@@ -694,7 +727,7 @@ function LogDetailDialog({
             <span className="mono" style={{ color: statusColor(detail.status) }}>{detail.status}</span>
             {detailInfo && <span style={{ marginLeft: 8 }}>{detailInfo.label}</span>}
           </h3>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.cancel")}><IconX /></button>
+          <Button variant="text" onClick={onClose} aria-label={t("common.cancel")}><IconX aria-hidden="true" /></Button>
         </div>
         {detailInfo && <p className="modal-desc">{detailInfo.description}</p>}
 
@@ -706,9 +739,9 @@ function LogDetailDialog({
             <span className="log-detail-request-row">
               <span className="mono log-detail-break">{detail.requestId ?? "\u2014"}</span>
               {detail.requestId && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => void copyRequestId()}>
+                <Button variant="text" onClick={() => void copyRequestId()}>
                   {t(copied ? "logs.detail.copied" : "logs.detail.copyRequestId")}
-                </button>
+                </Button>
               )}
             </span>
             {detail.conversationId && (
@@ -717,13 +750,9 @@ function LogDetailDialog({
                 <span className="log-detail-request-row">
                   <span className="mono log-detail-break">{detail.conversationId}</span>
                   {onFilterConversation && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => onFilterConversation(detail.conversationId!)}
-                    >
+                    <Button variant="text" onClick={() => onFilterConversation(detail.conversationId!)}>
                       {t("logs.filter.conversation.apply")}
-                    </button>
+                    </Button>
                   )}
                 </span>
               </>
@@ -792,14 +821,14 @@ function LogDetailDialog({
             <h4 id="log-detail-attempts" className="log-detail-section-title">{t("logs.detail.section.attempts")}</h4>
             <p className="log-detail-notes-line muted">{t("logs.detail.attempt.e2eNote")}</p>
             <div className="log-detail-attempts-wrap">
-              <table className="tbl log-detail-attempts">
+              <table className="m3-table log-detail-attempts">
                 <thead><tr>
-                  <th className="num">#</th>
-                  <th>{t("logs.detail.attempt.target")}</th>
-                  <th className="num">{t("logs.col.duration")}</th>
-                  <th className="num">{t("logs.col.tokPerSec")}</th>
-                  <th className="num">{t("logs.col.estimatedCost")}</th>
-                  <th>{t("logs.detail.attempt.reason")}</th>
+                  <th scope="col" className="num" style={NUM_CELL}>#</th>
+                  <th scope="col">{t("logs.detail.attempt.target")}</th>
+                  <th scope="col" className="num" style={NUM_CELL}>{t("logs.col.duration")}</th>
+                  <th scope="col" className="num" style={NUM_CELL}>{t("logs.col.tokPerSec")}</th>
+                  <th scope="col" className="num" style={NUM_CELL}>{t("logs.col.estimatedCost")}</th>
+                  <th scope="col">{t("logs.detail.attempt.reason")}</th>
                 </tr></thead>
                 <tbody>{detail.attempts.toSorted((a, b) => a.ordinal - b.ordinal).map(attempt => {
                   const attemptCost = attempt.displayMetrics?.cost;
@@ -810,7 +839,7 @@ function LogDetailDialog({
                     ?? (attemptCost?.kind === "unavailable" ? t(metricReasonKey(attemptCost.reason)) : t("logs.detail.attempt.completed"));
                   return (
                     <tr key={`${attempt.ordinal}-${attempt.provider}-${attempt.model}`}>
-                      <td className="num mono">{attempt.ordinal}</td>
+                      <td className="num mono" style={NUM_CELL}>{attempt.ordinal}</td>
                       <td>
                         <span>{attempt.provider}</span><br />
                         <span className="mono muted log-detail-break">{attempt.model}</span>
@@ -831,9 +860,9 @@ function LogDetailDialog({
                           </>
                         )}
                       </td>
-                      <td className="num mono">{attempt.durationMs}ms</td>
-                      <td className="num mono">{formatTokPerSecond(attempt.displayMetrics?.tokPerSecond, localeTag)}</td>
-                      <td className="num mono">{formatEstimatedUsd(attemptCost, localeTag)}</td>
+                      <td className="num mono" style={NUM_CELL}>{attempt.durationMs}ms</td>
+                      <td className="num mono" style={NUM_CELL}>{formatTokPerSecond(attempt.displayMetrics?.tokPerSecond, localeTag)}</td>
+                      <td className="num mono" style={NUM_CELL}>{formatEstimatedUsd(attemptCost, localeTag)}</td>
                       <td className="log-detail-break">{reason}</td>
                     </tr>
                   );

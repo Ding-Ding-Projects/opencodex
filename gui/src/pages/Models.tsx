@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Switch, Notice, EmptyState, Select, Tooltip } from "../ui";
-import { IconChevron, IconBoxes, IconInfo, IconShuffle } from "../icons";
+import { Notice, Select, Tooltip } from "../ui";
+import { Button, Chip, Empty, Toggle } from "../shell/m3-ui";
+import { IconChevron, IconInfo, IconShuffle } from "../icons";
 import { useT } from "../i18n/shared";
 import type { TFn, TKey } from "../i18n/shared";
 import { modelLabel } from "../model-display";
@@ -610,18 +611,17 @@ export default function Models({ apiBase }: { apiBase: string }) {
        );
      };
     return (
-      <div key={provider} className="card models-provider-card" style={{ marginBottom: 8, overflow: "hidden" }}>
+      <div key={provider} className="m3-card models-provider-card">
        <div className={`row group-head models-provider-head${isCollapsed ? "" : " open"}`}>
           <button
             type="button"
             className="row models-provider-toggle"
             onClick={() => toggleCollapse(provider)}
             aria-expanded={!isCollapsed}
-            style={{ flex: 1, border: 0, background: "transparent", padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
           >
-          <IconChevron style={{ width: 14, height: 14, color: "var(--muted)", transform: isCollapsed ? "none" : "rotate(90deg)", transition: "transform .12s" }} />
+          <IconChevron aria-hidden="true" className="models-provider-chevron" style={{ transform: isCollapsed ? "none" : "rotate(90deg)" }} />
           <span className="text-body font-semibold">{provider}</span>
-          {isNative && <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>{t("models.nativeGroupLabel")}</span>}
+          {isNative && <span className="models-tag">{t("models.nativeGroupLabel")}</span>}
          {discoveryFailure && (
            <span
              className="badge badge-amber"
@@ -635,10 +635,9 @@ export default function Models({ apiBase }: { apiBase: string }) {
           </button>
            <div className="row models-provider-actions">
              {!isNative && (
-               <button
-                 type="button"
-                 className="btn btn-ghost btn-sm text-caption"
-                 style={{ padding: "2px 8px" }}
+               <Button
+                 variant="text"
+                 className="models-provider-add"
                  onClick={(e) => {
                    e.stopPropagation();
                    setCustomModalMode("add");
@@ -654,26 +653,25 @@ export default function Models({ apiBase }: { apiBase: string }) {
                  }}
                  aria-label={t("models.customAdd")}
                  aria-haspopup="dialog"
-               >+</button>
+               >+</Button>
              )}
-             <button type="button" className="btn btn-ghost btn-sm text-caption" disabled={busy || allOn} onClick={() => bulkToggle(true)} style={{ padding: "2px 8px" }}>{t("models.allOn")}</button>
-             <button type="button" className="btn btn-ghost btn-sm text-caption" disabled={busy || allOff} onClick={() => bulkToggle(false)} style={{ padding: "2px 8px" }}>{t("models.allOff")}</button>
+             <Button variant="text" disabled={busy || allOn} onClick={() => bulkToggle(true)}>{t("models.allOn")}</Button>
+             <Button variant="text" className="models-btn-quiet" disabled={busy || allOff} onClick={() => bulkToggle(false)}>{t("models.allOff")}</Button>
              {!isNative && <>
-               <Switch on={capOn} onClick={() => toggleProviderCap(provider)} disabled={busy} label={t("models.capValue", { value: fmtK(contextCapValue) })} />
+               <Toggle on={capOn} onChange={() => void toggleProviderCap(provider)} disabled={busy} label={t("models.capValue", { value: fmtK(contextCapValue) })} />
                <span className="muted mono text-label">{t("models.capValue", { value: fmtK(contextCapValue) })}</span>
              </>}
            </div>
         </div>
         {!isCollapsed && (
-          <div style={{ padding: "6px 12px" }}>
-            {isNative && <p className="muted text-label" style={{ margin: "2px 0 6px" }}>{t("models.nativeHint")}</p>}
+          <div className="models-provider-body">
+            {isNative && <p className="muted text-label models-provider-note">{t("models.nativeHint")}</p>}
             {rows.length === 0 && (
               <EmptyProviderHint liveModels={liveModels} discovery={discovery} showFailureBadge={false} />
             )}
             {rows.length > PAGE / 2 && (
               <input
-                className="input"
-                style={{ width: "100%", marginBottom: 6 }}
+                className="m3-input models-search-input"
                 placeholder={t("models.search")}
                 value={search[provider] ?? ""}
                 onChange={e => setSearch(prev => ({ ...prev, [provider]: e.target.value }))}
@@ -694,15 +692,15 @@ export default function Models({ apiBase }: { apiBase: string }) {
                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoveredModel(null);
                    }}
                  >
-                   <div className="row" style={{ padding: "5px 0" }}>
-                     <Switch on={!off} onClick={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy} label={m.native ? m.id : m.namespaced} />
-                     <code className="mono text-control" style={{ color: off ? "var(--faint)" : "var(--text)", textDecoration: off ? "line-through" : "none" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
+                   <div className="row models-model-row">
+                     <Toggle on={!off} onChange={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy} label={m.native ? m.id : m.namespaced} />
+                     <code className={`mono text-control models-model-id${off ? " models-model-id--off" : ""}`}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
                      {m.custom && (
-                       <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>
+                       <span className="models-tag">
                          {t("models.customBadge")}
                        </span>
                      )}
-                     {m.contextCapped && <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>{t("models.contextCappedValue", { value: fmtK(m.contextCap ?? contextCapValue) })}</span>}
+                     {m.contextCapped && <span className="models-tag">{t("models.contextCappedValue", { value: fmtK(m.contextCap ?? contextCapValue) })}</span>}
                    </div>
                    {hoveredModel?.namespaced === m.namespaced && (() => {
                      const r = hoveredModel.rect;
@@ -725,7 +723,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                          <div className="model-tip-id">{m.native ? m.id : m.namespaced}</div>
                          {m.displayName && <div className="model-tip-display">{m.displayName}</div>}
                          {m.custom && (
-                           <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)", display: "inline-block", marginBottom: 4 }}>
+                           <span className="models-tag models-tag--block">
                              {t("models.customBadge")}
                            </span>
                          )}
@@ -749,9 +747,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
                          </div>
                          {m.custom && m.customId && (
                            <div className="model-tip-actions">
-                             <button
-                               type="button"
-                               className="btn btn-ghost btn-sm text-caption"
+                             <Button
+                               variant="text"
                                onClick={() => {
                                  setCustomModalMode("edit");
                                  setCustomModalProvider(m.provider);
@@ -765,18 +762,17 @@ export default function Models({ apiBase }: { apiBase: string }) {
                                  setCustomModalOpen(true);
                                  setHoveredModel(null);
                                }}
-                             >{t("models.customEdit")}</button>
-                             <button
-                               type="button"
-                               className="btn btn-ghost btn-sm text-caption"
-                               style={{ color: "var(--red)" }}
+                             >{t("models.customEdit")}</Button>
+                             <Button
+                               variant="text"
+                               className="models-btn-danger"
                                onClick={() => {
                                  if (window.confirm(t("models.customDeleteConfirm", { name: m.displayName ?? m.id }))) {
                                    void deleteCustomModel(m.customId!);
                                  }
                                  setHoveredModel(null);
                                }}
-                             >{t("models.customDelete")}</button>
+                             >{t("models.customDelete")}</Button>
                            </div>
                          )}
                        </div>
@@ -786,12 +782,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
                );
              })}
              {remaining > 0 && (
-               <button
-                 type="button"
+               <Button
+                 variant="text"
                  onClick={() => setLimit(prev => ({ ...prev, [provider]: shown + PAGE }))}
-                 className="btn btn-ghost btn-sm"
-                 style={{ marginTop: 4 }}
-               >{t("models.showMore", { n: remaining })}</button>
+                 className="models-show-more"
+               >{t("models.showMore", { n: remaining })}</Button>
              )}
            </div>
          )}
@@ -809,7 +804,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         <div className="models-shadow-row row muted text-control">
           <span className="models-shadow-label">{t("models.shadowCallIntercept")} <Tooltip content={t("models.shadowCallInterceptHint")} side="top" maxWidth={320}><span style={{ cursor: "help" }} aria-label={t("models.shadowCallInterceptHint")}>ⓘ</span></Tooltip></span>
           <code className="text-caption models-shadow-warning" style={{ opacity: 0.6 }}>{t("models.shadowCallOriginal")}</code>
-          <Switch on={shadowCall?.enabled ?? false} onClick={() => void saveShadowCall({ enabled: !shadowCall?.enabled })} disabled={!shadowCall || shadowCallSaving} label={t("models.shadowCallIntercept")} />
+          <Toggle on={shadowCall?.enabled ?? false} onChange={() => void saveShadowCall({ enabled: !shadowCall?.enabled })} disabled={!shadowCall || shadowCallSaving} label={t("models.shadowCallIntercept")} />
           <div className="models-shadow-model-slot">
             <Select value={shadowCall?.model ?? ""} options={[{ value: "", label: "\u2014" }, ...shadowModelOptions]} onChange={v => { setShadowCall(c => c ? { ...c, model: v } : c); void saveShadowCall({ model: v }); }} disabled={!shadowCall || shadowCallSaving || !shadowCall.enabled} label={t("models.shadowCallIntercept")} />
           </div>
@@ -818,15 +813,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
         {v2 && (
           <div className="models-v2-mode-row row">
             <span className="muted text-control">{t("models.v2Label")}</span>
-            <div className="segmented" role="radiogroup" aria-label={t("models.v2Label")} style={{ display: "inline-flex", borderRadius: "var(--radius-pill)", background: "var(--surface-soft, var(--raised))", padding: 3, gap: 2 }}>
+            <div className="m3-segmented" role="radiogroup" aria-label={t("models.v2Label")}>
               {(["v1", "default", "v2"] as const).map(mode => (
                 <button
                   key={mode}
                   type="button"
                   role="radio"
                   aria-checked={(v2.multiAgentMode ?? "default") === mode}
-                  className={`btn btn-sm${(v2.multiAgentMode ?? "default") === mode ? " btn-primary" : " btn-ghost"}`}
-                  style={{ borderRadius: "var(--radius-pill)", minWidth: 64, padding: "5px 12px", border: "none", background: (v2.multiAgentMode ?? "default") === mode ? undefined : "transparent", color: (v2.multiAgentMode ?? "default") === mode ? undefined : "var(--muted)" }}
+                  className={`m3-segment${(v2.multiAgentMode ?? "default") === mode ? " selected" : ""}`}
                   disabled={v2Busy}
                   onClick={() => void setMultiAgentMode(mode)}
                 >
@@ -836,13 +830,12 @@ export default function Models({ apiBase }: { apiBase: string }) {
             </div>
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ width: 24, height: 24, minWidth: 24, flex: "0 0 24px", padding: 0, borderRadius: "var(--radius-pill)", color: "var(--muted)" }}
+              className="models-icon-btn"
               onClick={() => setV2HelpOpen(true)}
               aria-label={t("models.v2Label")}
               aria-haspopup="dialog"
             >
-              <IconInfo width={14} height={14} aria-hidden="true" />
+              <IconInfo width={20} height={20} aria-hidden="true" />
             </button>
           </div>
         )}
@@ -875,8 +868,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
               {showThreadsCustom && (
                 <>
                   <input
-                    className="input"
-                    style={{ width: 100 }}
+                    className="m3-input models-input-narrow"
                     inputMode="numeric"
                     value={threadsCustom}
                     onChange={e => setThreadsCustom(e.target.value)}
@@ -884,40 +876,40 @@ export default function Models({ apiBase }: { apiBase: string }) {
                     disabled={v2Busy}
                     aria-label={t("models.v2ThreadsLabel")}
                   />
-                  <button type="button" className="btn btn-sm" disabled={v2Busy}
+                  <Button variant="tonal" disabled={v2Busy}
                     onClick={() => { void putV2Threads(Number(threadsCustom.replace(/[_,\s]/g, ""))); }}>
                     {t("models.v2ThreadsApply")}
-                  </button>
+                  </Button>
                 </>
               )}
             </>
           )}
           {v2.enabled && v2.agentsMaxThreadsConflict && (
-            <span className="mono text-label" style={{ color: "var(--err, #e5484d)" }}>{t("models.v2Conflict")}</span>
+            <span className="mono text-label models-conflict">{t("models.v2Conflict")}</span>
           )}
           {v2Note && <span className="muted text-label">{v2Note}</span>}
         </div>
       )}
 
-      <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+      <div className="row models-cap-row" role="group" aria-label={t("models.contextCapLabel")}>
         <span className="muted text-control">{t("models.contextCapLabel")}</span>
-        <Select
-          value={showCustom ? CUSTOM_OPTION : (CAP_OPTION_SET.has(contextCapValue) ? String(contextCapValue) : CUSTOM_OPTION)}
-          options={[
-            ...(!CAP_OPTION_SET.has(contextCapValue) && !showCustom
-              ? [{ value: String(contextCapValue), label: fmtK(contextCapValue) }] : []),
-            ...CAP_OPTIONS.map(v => ({ value: String(v), label: fmtK(v) })),
-            { value: CUSTOM_OPTION, label: t("models.custom") },
-          ]}
-          onChange={v => onSelectCap(v)}
+        {CAP_OPTIONS.map(v => (
+          <Chip
+            key={v}
+            selected={!showCustom && contextCapValue === v}
+            disabled={busy}
+            onClick={() => onSelectCap(String(v))}
+          >{fmtK(v)}</Chip>
+        ))}
+        <Chip
+          selected={showCustom || !CAP_OPTION_SET.has(contextCapValue)}
           disabled={busy}
-          label={t("models.contextCapLabel")}
-        />
+          onClick={() => onSelectCap(CUSTOM_OPTION)}
+        >{!showCustom && !CAP_OPTION_SET.has(contextCapValue) ? fmtK(contextCapValue) : t("models.custom")}</Chip>
         {showCustom && (
           <>
             <input
-              className="input"
-              style={{ width: 160 }}
+              className="m3-input models-input-cap"
               inputMode="numeric"
               placeholder={t("models.customPlaceholder")}
               value={customCap}
@@ -926,10 +918,10 @@ export default function Models({ apiBase }: { apiBase: string }) {
               disabled={busy}
               aria-label={t("models.customPlaceholder")}
             />
-            <button type="button" onClick={applyCustomCap} disabled={busy} className="btn btn-ghost btn-sm">{t("models.customApply")}</button>
+            <Button variant="tonal" onClick={applyCustomCap} disabled={busy}>{t("models.customApply")}</Button>
           </>
         )}
-        <Switch on={allCapped} onClick={setAll} disabled={busy} label={t("models.setAll")} />
+        <Toggle on={allCapped} onChange={setAll} disabled={busy} label={t("models.setAll")} />
         <span className="muted text-label leading-body">{t("models.setAllHint", { value: fmtK(contextCapValue) })}</span>
       </div>
 
@@ -937,16 +929,16 @@ export default function Models({ apiBase }: { apiBase: string }) {
         const customCount = models.filter(m => m.custom).length;
         if (customCount === 0) return null;
         return (
-          <div className="row muted text-label" style={{ gap: 6, marginBottom: 8 }}>
-            <span className="mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>
+          <div className="row muted text-label models-custom-summary">
+            <span className="models-tag">
               {t("models.customSummary", { count: customCount })}
             </span>
           </div>
         );
       })()}
 
-      <div className="row muted text-label leading-body" style={{ alignItems: "flex-start", gap: 8, marginBottom: 12, maxWidth: "80ch" }}>
-        <IconInfo width={15} height={15} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }} />
+      <div className="row muted text-label leading-body models-order-hint">
+        <IconInfo width={18} height={18} aria-hidden="true" />
         <span>{t("models.orderHint")}</span>
       </div>
     </>
@@ -955,33 +947,32 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const combosBlock = (
     <>
      {combos !== null && !combosError && combos.length === 0 && (
-       <div className="card models-combos-card" style={{ marginBottom: 10 }}>
-         <div className="row" style={{ padding: "10px 12px", justifyContent: "space-between", gap: 8 }}>
-           <div className="row" style={{ gap: 8, minWidth: 0 }}>
-             <IconShuffle width={14} height={14} aria-hidden="true" style={{ flexShrink: 0 }} />
+       <div className="m3-card models-combos-card">
+         <div className="row models-combos-head models-row-split">
+           <div className="row models-combos-title">
+             <IconShuffle width={18} height={18} aria-hidden="true" />
              <strong>{t("nav.combos")}</strong>
              <span className="muted text-label">{t("models.combosEmpty")}</span>
            </div>
-           <a className="btn btn-sm" href="#combos" style={{ flexShrink: 0 }}>{t("models.combosSetup")}</a>
+           <a className="m3-btn m3-btn--tonal" href="#combos">{t("models.combosSetup")}</a>
          </div>
        </div>
      )}
      {combos !== null && !combosError && combos.length > 0 && (
-       <div className="card models-combos-card" style={{ marginBottom: 10 }}>
-         <div className={`row group-head${combosOpen ? " open" : ""}`} style={{ gap: 8 }}>
+       <div className="m3-card models-combos-card">
+         <div className={`row group-head models-combos-head${combosOpen ? " open" : ""}`}>
            <button
              type="button"
-             className="row"
+             className="row models-combos-toggle"
              aria-expanded={combosOpen}
              onClick={toggleCombosOpen}
-             style={{ flex: 1, gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit", color: "inherit", textAlign: "left", minWidth: 0 }}
            >
-             <IconChevron style={{ width: 14, height: 14, color: "var(--muted)", flexShrink: 0, transform: combosOpen ? "rotate(90deg)" : "none", transition: "transform .12s" }} />
-             <IconShuffle width={14} height={14} aria-hidden="true" style={{ flexShrink: 0 }} />
+             <IconChevron aria-hidden="true" className="models-provider-chevron" style={{ transform: combosOpen ? "rotate(90deg)" : "none" }} />
+             <IconShuffle width={18} height={18} aria-hidden="true" />
              <strong>{t("nav.combos")}</strong>
              <span className="muted mono text-label">{t("models.combosActive", { count: combos.length })}</span>
            </button>
-           <a className="btn btn-sm btn-ghost" href="#combos" style={{ flexShrink: 0 }}>{t("models.combosSetup")}</a>
+           <a className="m3-btn m3-btn--text" href="#combos">{t("models.combosSetup")}</a>
          </div>
          {combosOpen && (
            <div>
@@ -991,7 +982,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                  <span className="muted text-label">{c.strategy} · {c.targets.length}</span>
                </div>
              ))}
-             <a className="row muted" href="#combos" style={{ padding: "8px 12px 10px 34px", gap: 6, textDecoration: "none" }}>
+             <a className="row muted models-combos-add" href="#combos">
                + {t("models.combosAdd")}
              </a>
            </div>
@@ -1002,22 +993,22 @@ export default function Models({ apiBase }: { apiBase: string }) {
   );
 
   const collapseControls = (
-    <div className="row" style={{ gap: 6, margin: "2px 0 10px" }}>
-      <button type="button" className="btn btn-ghost btn-sm text-caption" onClick={() => setAllCollapsed(true)} disabled={busy}>
-        <IconChevron width={12} height={12} aria-hidden="true" /> {t("models.collapseAll")}
-      </button>
-      <button type="button" className="btn btn-ghost btn-sm text-caption" onClick={() => setAllCollapsed(false)} disabled={busy}>
-        <IconChevron width={12} height={12} aria-hidden="true" style={{ transform: "rotate(90deg)" }} /> {t("models.expandAll")}
-      </button>
+    <div className="row models-collapse-row">
+      <Button variant="text" onClick={() => setAllCollapsed(true)} disabled={busy}>
+        <IconChevron width={16} height={16} aria-hidden="true" /> {t("models.collapseAll")}
+      </Button>
+      <Button variant="text" onClick={() => setAllCollapsed(false)} disabled={busy}>
+        <IconChevron width={16} height={16} aria-hidden="true" style={{ transform: "rotate(90deg)" }} /> {t("models.expandAll")}
+      </Button>
     </div>
   );
 
   const emptyStateBlock = (
     <>
       {groups.length === 0 && (
-        <EmptyState icon={<IconBoxes />} title={t("models.noRouted")}>
+        <Empty title={t("models.noRouted")}>
           {t("models.noRoutedHint")}
-        </EmptyState>
+        </Empty>
       )}
     </>
   );
@@ -1029,7 +1020,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
           <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-head">
               <h3>{t("models.v2Label")}</h3>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setV2HelpOpen(false)} aria-label={t("common.close")}>&times;</button>
+              <Button variant="text" className="models-modal-close" onClick={() => setV2HelpOpen(false)} aria-label={t("common.close")}>&times;</Button>
             </div>
             <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
               {t("models.v2Help")}
@@ -1040,7 +1031,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
               </a>
             </div>
             <div className="modal-actions">
-              <button type="button" className="btn btn-primary" onClick={() => setV2HelpOpen(false)}>{t("common.ok")}</button>
+              <Button variant="filled" onClick={() => setV2HelpOpen(false)}>{t("common.ok")}</Button>
             </div>
           </div>
         </div>
@@ -1064,13 +1055,13 @@ export default function Models({ apiBase }: { apiBase: string }) {
                   ? t("models.customAddTitle", { provider: customModalProvider })
                   : t("models.customEditTitle", { provider: customModalProvider })}
               </h3>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
+              <Button
+                variant="text"
+                className="models-modal-close"
                 onClick={() => setCustomModalOpen(false)}
                 disabled={customSaving}
                 aria-label={t("common.close")}
-              >&times;</button>
+              >&times;</Button>
             </div>
 
             {customError && <Notice tone="err">{customError}</Notice>}
@@ -1079,7 +1070,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
               <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {t("models.customFieldModelId")}
                 <input
-                  className="input"
+                  className="m3-input"
                   value={customFormModelId}
                   onChange={e => setCustomFormModelId(e.target.value)}
                   disabled={customSaving}
@@ -1091,7 +1082,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
               <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {t("models.customFieldDisplayName")}
                 <input
-                  className="input"
+                  className="m3-input"
                   value={customFormDisplayName}
                   onChange={e => setCustomFormDisplayName(e.target.value)}
                   disabled={customSaving}
@@ -1128,8 +1119,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                   />
                   {customFormShowCustomCtx && (
                     <input
-                      className="input"
-                      style={{ width: 120 }}
+                      className="m3-input models-input-narrow"
                       inputMode="numeric"
                       value={customFormContextWindow}
                       onChange={e => setCustomFormContextWindow(e.target.value)}
@@ -1164,12 +1154,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
             </div>
 
             <div className="modal-actions">
-              <button type="button" className="btn btn-ghost" onClick={() => setCustomModalOpen(false)} disabled={customSaving}>
+              <Button variant="text" onClick={() => setCustomModalOpen(false)} disabled={customSaving}>
                 {t("common.cancel")}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
+              </Button>
+              <Button
+                variant="filled"
                 disabled={customSaving || !customFormModelId.trim()}
                 onClick={() => {
                   const modelId = customFormModelId.trim();
@@ -1197,7 +1186,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                 {customSaving
                   ? t("models.customSaving")
                   : (customModalMode === "add" ? t("models.customAddBtn") : t("models.customEditBtn"))}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

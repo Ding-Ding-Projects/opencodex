@@ -1,7 +1,14 @@
 import type { ReactNode } from "react";
-import { IconLock, IconPause, IconPlay, IconRefresh } from "../icons";
+import { IconKey, IconLock, IconPause, IconPlay, IconRefresh } from "../icons";
 import QuotaBars from "./QuotaBars";
 import { CodexTicketBadge } from "./codex-account-pool-helpers";
+import {
+  ACCOUNT_AVATAR,
+  ACCOUNT_META,
+  ACCOUNT_TITLE,
+  accountCardStyle,
+  chipStyle,
+} from "./codex-account-pool-m3";
 import type { CodexAccountEntry } from "./codex-account-pool-types";
 import type { CodexAccountModeState } from "../codex-multi-state";
 import type { TFn } from "../i18n/shared";
@@ -9,7 +16,6 @@ import {
   doctorCopyButtonLabel,
   formatOAuthHealthLabel,
   formatOAuthHealthSummary,
-  oauthHealthBadgeClass,
   oauthHealthIsCooldown,
   oauthHealthShowsDoctor,
   oauthHealthShowsReauth,
@@ -63,60 +69,68 @@ export function CodexAccountPoolMainCard({
     : null;
 
   return (
-    <div className={`card ${isMainActive ? "card-active" : ""}`} style={{ marginBottom: 12 }}>
-      <div className="card-head">
-        <span className={`dot ${showReauth ? "dot-amber" : "dot-green"}`} />
-        <strong>{t("codexAuth.mainAccount")}</strong>
-        <span className="card-badges">
+    <section className="m3-card" style={accountCardStyle(isMainActive)}>
+      <div className="m3-row" style={{ gap: 10, marginBottom: "var(--sp-2)" }}>
+        <span style={ACCOUNT_AVATAR} aria-hidden="true"><IconKey width={18} /></span>
+        <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+          <div style={ACCOUNT_TITLE}>{t("codexAuth.mainAccount")}</div>
+          <div style={ACCOUNT_META}>
+            {main?.email || t("codexAuth.appLogin")}{main?.plan ? ` · ${main.plan}` : ""}
+          </div>
+        </div>
+        <span className="m3-row" style={{ gap: 6 }}>
           {main && <CodexTicketBadge t={t} account={{ ...main, id: "__main__" } as CodexAccountEntry} onClick={() => onOpenReset({ ...main, id: "__main__" } as CodexAccountEntry)} />}
-          {main?.paused && <span className="badge badge-muted">{t("codexAuth.paused")}</span>}
+          {main?.paused && <span className="m3-chip" style={chipStyle("neutral")}>{t("codexAuth.paused")}</span>}
           {healthLabel && (
-            <span className={oauthHealthBadgeClass(main?.health?.status)}>{healthLabel}</span>
+            <span className="m3-chip" style={chipStyle(showReauth ? "error" : "warn")}>{healthLabel}</span>
           )}
-          {showReauth && !healthLabel && <span className="badge badge-amber">{t("codexAuth.needsReauth")}</span>}
+          {showReauth && !healthLabel && (
+            <span className="m3-chip" style={chipStyle("warn")}>{t("codexAuth.needsReauth")}</span>
+          )}
           {!main?.paused && (
-            <span className={`badge ${isMainActive ? "badge-primary" : "badge-muted"}`}>
+            <span className="m3-chip" style={chipStyle(isMainActive ? "primary" : "neutral")}>
               {isMainActive
                 ? t(accountModeState === "direct" ? "codexAuth.poolPrepared" : "codexAuth.nextSession")
                 : t("codexAuth.current")}
             </span>
           )}
+          <span className="m3-chip" style={chipStyle("neutral")}>
+            <IconLock width={13} aria-hidden="true" /> {t("codexAuth.appLogin")}
+          </span>
         </span>
+      </div>
+
+      {healthSummary && <p className="m3-card-sub" style={{ marginTop: 0 }}>{healthSummary}</p>}
+      {main?.paused && <p className="m3-card-sub" style={{ marginTop: 0 }}>{t("codexAuth.pausedHint")}</p>}
+      {inCooldown && <p className="m3-card-sub" style={{ marginTop: 0 }}>{t("pws.healthCooldownHint")}</p>}
+      {showReauth
+        ? <p className="m3-card-sub" style={{ marginTop: 0 }}>{t("codexAuth.mainTokenExpired")}</p>
+        : !inCooldown && main?.quota && <QuotaBars quota={main.quota} plan={main.plan} threshold={threshold} t={t} />}
+
+      <div className="m3-row" style={{ gap: 8, marginTop: "var(--sp-2)" }}>
         {!main?.paused && !isMainActive && !showReauth && !inCooldown && (
-          <button type="button" className="btn btn-ghost btn-sm codex-account-switch" onClick={() => onSwitch(mainSwitchEntry)}>
+          <button type="button" className="m3-btn m3-btn--tonal codex-account-switch" onClick={() => onSwitch(mainSwitchEntry)}>
             {switchActionLabel}
           </button>
         )}
         {onCopyDoctor && oauthHealthShowsDoctor(main?.health?.status) && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCopyDoctor(mainId)}>
+          <button type="button" className="m3-btn m3-btn--text" onClick={() => onCopyDoctor(mainId)}>
             <span aria-live="polite">{doctorCopyButtonLabel(t, doctorCopyOutcomeFor?.(mainId))}</span>
           </button>
         )}
         {main && (
           <button
             type="button"
-            className={`btn btn-sm ${main.paused ? "btn-primary" : "btn-ghost"}`}
+            className={`m3-btn ${main.paused ? "m3-btn--filled" : "m3-btn--outlined"}`}
             onClick={() => onTogglePause(mainSwitchEntry)}
             disabled={pauseBusy}
           >
-            {main.paused ? <IconPlay width={14} /> : <IconPause width={14} />}
+            {main.paused ? <IconPlay width={14} aria-hidden="true" /> : <IconPause width={14} aria-hidden="true" />}
             {pauseUpdatingId === "__main__" ? t("common.saving") : t(main.paused ? "codexAuth.resume" : "codexAuth.pause")}
           </button>
         )}
-        <span className="card-right"><IconLock width={14} /> {t("codexAuth.appLogin")}</span>
       </div>
-      <div className="card-sub">{main?.email || t("codexAuth.appLogin")}{main?.plan ? ` · ${main.plan}` : ""}</div>
-      {healthSummary && (
-        <div className="card-sub faint">{healthSummary}</div>
-      )}
-      {main?.paused && <div className="card-sub faint">{t("codexAuth.pausedHint")}</div>}
-      {inCooldown && (
-        <div className="card-sub faint">{t("pws.healthCooldownHint")}</div>
-      )}
-      {showReauth
-        ? <div className="card-sub faint">{t("codexAuth.mainTokenExpired")}</div>
-        : !inCooldown && main?.quota && <QuotaBars quota={main.quota} plan={main.plan} threshold={threshold} t={t} />}
-    </div>
+    </section>
   );
 }
 
@@ -139,26 +153,26 @@ export function CodexAccountPoolPageHead({
 }) {
   return (
     <div
-      className={embedded ? "row" : "page-head"}
-      style={embedded ? { justifyContent: "flex-end", marginBottom: 8 } : undefined}
+      className="m3-row m3-row--split"
+      style={{ marginBottom: "var(--sp-3)", justifyContent: embedded ? "flex-end" : undefined }}
     >
-      {!embedded && <h2 className="page-title">{t("nav.codexAuth")}</h2>}
-      <div className="row">
+      {!embedded && <h1 className="m3-card-title" style={{ fontSize: "var(--t-title-l)" }}>{t("nav.codexAuth")}</h1>}
+      <div className="m3-row" style={{ gap: 8 }}>
         <button
           type="button"
-          className="btn btn-sm btn-ghost"
+          className="m3-btn m3-btn--outlined"
           onClick={onPauseExhausted}
           disabled={refreshingQuota || pausingExhausted || !!pauseBusy}
         >
-          <IconPause width={14} /> {pausingExhausted ? t("codexAuth.pausingExhausted") : t("codexAuth.pauseExhausted")}
+          <IconPause width={14} aria-hidden="true" /> {pausingExhausted ? t("codexAuth.pausingExhausted") : t("codexAuth.pauseExhausted")}
         </button>
         <button
           type="button"
-          className="btn btn-sm btn-ghost"
+          className="m3-btn m3-btn--filled"
           onClick={onRefresh}
           disabled={refreshingQuota || pausingExhausted || !!pauseBusy}
         >
-          <IconRefresh width={14} /> {refreshingQuota ? t("codexAuth.refreshingQuota") : t("codexAuth.refreshQuota")}
+          <IconRefresh width={14} aria-hidden="true" /> {refreshingQuota ? t("codexAuth.refreshingQuota") : t("codexAuth.refreshQuota")}
         </button>
       </div>
     </div>
@@ -179,12 +193,22 @@ export function CodexAccountPoolLoadStates({
   return (
     <>
       {loadState === "loading" && accountsCount === 0 && (
-        <div className="pwi-auth-state" role="status">{t("pws.accountsLoading")}</div>
+        <p className="m3-card-sub" role="status" style={{ marginBottom: "var(--sp-3)" }}>{t("pws.accountsLoading")}</p>
       )}
       {loadState === "error" && (
-        <div className="pwi-auth-state pwi-auth-state--error" role="alert">
+        <div
+          className="m3-row m3-row--split"
+          role="alert"
+          style={{
+            marginBottom: "var(--sp-3)",
+            padding: "var(--sp-2)",
+            borderRadius: "var(--r-m)",
+            background: "var(--m3-error-container)",
+            color: "var(--m3-on-error-container)",
+          }}
+        >
           <span>{t("codexAuth.loadFailed")}</span>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>{t("pws.retryAccounts")}</button>
+          <button type="button" className="m3-btn m3-btn--text" onClick={onRetry}>{t("pws.retryAccounts")}</button>
         </div>
       )}
     </>
