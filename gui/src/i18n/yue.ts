@@ -110,9 +110,11 @@ export const yue: Partial<Record<TKey, string>> = {
   "mobile.loopback": "淨係限呢部機",
   "mobile.noCredential": "已經開放咗畀網絡，但係未設定憑證。",
   "mobile.apiKey": "API key",
-  "mobile.apiKeyHint": "proxy 開放咗畀網絡先需要。淨係存喺呢部裝置。",
+  "mobile.apiKeyHint": "proxy 開放咗畀網絡先需要。淨係擺喺記憶體，唔會寫入儲存空間，所以重新載入之後要再入一次。",
   "mobile.tokens": "{n} 個 token",
   "mobile.httpStatus": "Proxy 回咗 {status}，冇其他資料。",
+  "mobile.modelsFailed": "連唔到 proxy，載入唔到模型清單。",
+  "mobile.retry": "再試一次",
 
   // ---- notifications ----
   "notif.dismiss": "關閉",

@@ -65,21 +65,22 @@ interface HostStatus {
 /** Sessions poll while the tab is open; a phone on mobile data should not poll hard. */
 const SESSION_POLL_MS = 5000;
 
-const KEY_STORAGE = "ocx-m3:mobile-key";
-
 /**
- * The remembered API key. It is the same credential the proxy already demands
- * from every other client, it stays on this device, and it is only needed once
- * the proxy is published to the network.
+ * The API key lives in memory for the life of the page, and nowhere else.
+ *
+ * An earlier version persisted it to `localStorage`, which is exactly what
+ * `gui/src/api.ts` forbids in as many words — "never write tokens to web
+ * storage (XSS can read sessionStorage/localStorage)" — and which it enforces
+ * by wiping a legacy stored token on every boot. Reintroducing one here would
+ * have made this screen the single place in the GUI where a live proxy
+ * credential sits readable by any script on the origin.
+ *
+ * The cost is retyping it after a reload, which is the same bargain the desktop
+ * dashboard already makes for its management token. A module-scope variable
+ * rather than component state so it survives navigating away and back within
+ * one page load.
  */
-function readStoredKey(): string {
-  try {
-    return localStorage.getItem(KEY_STORAGE) ?? "";
-  } catch {
-    // Private browsing: the field simply starts empty.
-    return "";
-  }
-}
+let memoryKey = "";
 
 export default function Mobile({ apiBase }: { apiBase: string }) {
   const t = useT();
@@ -90,7 +91,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
   const [model, setModel] = useState("");
   // Lazy initializer rather than an effect: this is a synchronous storage read
   // that produces the initial value, so an effect would only add a second render.
-  const [apiKey, setApiKey] = useState(readStoredKey);
+  const [apiKey, setApiKey] = useState(memoryKey);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -100,29 +101,48 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
   const transcript = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
 
+  // `reload` is a nonce the retry button bumps. Without it the models effect
+  // depends only on `apiBase`, which never changes — so one failed fetch left
+  // the model picker empty and Send disabled for the life of the page, with no
+  // error shown and no way back short of restarting the app.
+  const [reload, setReload] = useState(0);
+  const [modelsError, setModelsError] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const res = await fetch(`${apiBase}/api/models`);
-      const data = await readJsonIfOk<{ models?: ModelRow[] } | ModelRow[]>(res);
-      const rows = Array.isArray(data) ? data : data?.models;
-      if (cancelled || !Array.isArray(rows)) return;
-      setModels(rows);
-      setModel(current => current || rows[0]?.id || "");
+      try {
+        const res = await fetch(`${apiBase}/api/models`);
+        const data = await readJsonIfOk<{ models?: ModelRow[] } | ModelRow[]>(res);
+        const rows = Array.isArray(data) ? data : data?.models;
+        if (cancelled) return;
+        if (!Array.isArray(rows)) { setModelsError(true); return; }
+        setModelsError(false);
+        setModels(rows);
+        setModel(current => current || rows[0]?.id || "");
+      } catch {
+        // A phone dropping off Wi-Fi rejects the fetch rather than returning an
+        // HTTP error, so `readJsonIfOk` never sees it.
+        if (!cancelled) setModelsError(true);
+      }
     })();
     return () => { cancelled = true; };
-  }, [apiBase]);
+  }, [apiBase, reload]);
 
   // Sessions and host status refresh only while their tab is showing.
   useEffect(() => {
     if (panel !== "sessions") return;
     let cancelled = false;
     const load = async () => {
-      const res = await fetch(`${apiBase}/api/logs`);
-      const data = await readJsonIfOk<{ logs?: LogRow[] } | LogRow[]>(res);
-      const rows = Array.isArray(data) ? data : data?.logs;
-      // null, not [], so a failed read cannot render as "no sessions".
-      if (!cancelled) setLogs(Array.isArray(rows) ? rows : null);
+      try {
+        const res = await fetch(`${apiBase}/api/logs`);
+        const data = await readJsonIfOk<{ logs?: LogRow[] } | LogRow[]>(res);
+        const rows = Array.isArray(data) ? data : data?.logs;
+        // null, not [], so a failed read cannot render as "no sessions".
+        if (!cancelled) setLogs(Array.isArray(rows) ? rows : null);
+      } catch {
+        if (!cancelled) setLogs(null);
+      }
     };
     void load();
     const timer = setInterval(() => void load(), SESSION_POLL_MS);
@@ -133,9 +153,13 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
     if (panel !== "control") return;
     let cancelled = false;
     void (async () => {
-      const res = await fetch(`${apiBase}/api/host`);
-      const data = await readJsonIfOk<HostStatus>(res);
-      if (!cancelled) setHost(data ?? null);
+      try {
+        const res = await fetch(`${apiBase}/api/host`);
+        const data = await readJsonIfOk<HostStatus>(res);
+        if (!cancelled) setHost(data ?? null);
+      } catch {
+        if (!cancelled) setHost(null);
+      }
     })();
     return () => { cancelled = true; };
   }, [apiBase, panel]);
@@ -255,7 +279,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
 
   const saveKey = useCallback((value: string) => {
     setApiKey(value);
-    try { localStorage.setItem(KEY_STORAGE, value); } catch { /* private mode */ }
+    memoryKey = value;
   }, []);
 
   return (
@@ -278,8 +302,26 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
       <main className="m3-mob__body">
         {panel === "chat" && (
           <>
-            <div className="m3-mob__chat" ref={transcript} role="log" aria-live="polite" aria-label={t("mobile.transcript")}>
-              {messages.length === 0 && (
+            {/*
+              `role="log"` without `aria-live`: the streaming loop rewrites the
+              last bubble's entire text on every delta, so a live region here
+              announced the whole reply-so-far once per token — hundreds of
+              ever-longer interruptions that made the screen unusable with a
+              screen reader exactly while it was producing the answer. The
+              completed reply is announced once, from the polite region below.
+            */}
+            <div className="m3-mob__chat" ref={transcript} role="log" aria-label={t("mobile.transcript")}>
+              {modelsError && (
+                <div className="m3-mob__msg m3-mob__msg--error" role="alert">
+                  {t("mobile.modelsFailed")}
+                  <div style={{ marginTop: 8 }}>
+                    <button type="button" className="m3-mob__send" onClick={() => setReload(n => n + 1)}>
+                      {t("mobile.retry")}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {messages.length === 0 && !modelsError && (
                 <p className="m3-mob__hint">{t("mobile.chatHint")}</p>
               )}
               {messages.map((message, i) => (
@@ -291,6 +333,13 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
                   {message.streaming && <span className="m3-mob__caret" aria-hidden="true" />}
                 </div>
               ))}
+            </div>
+
+            {/* Announced once, when the reply is finished. */}
+            <div className="m3-visually-hidden" aria-live="polite">
+              {!sending && messages.length > 0 && messages[messages.length - 1].role === "assistant"
+                ? messages[messages.length - 1].content
+                : ""}
             </div>
 
             <form

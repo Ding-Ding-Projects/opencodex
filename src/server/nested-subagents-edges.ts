@@ -115,11 +115,36 @@ function readSpawnEdgesFromDisk(): SpawnEdgeGraph | null {
   }
 }
 
+/**
+ * When the last read failed, and for how long that failure is honoured.
+ *
+ * Failures are cached as well as successes. Only caching the successes meant
+ * that in exactly the degraded states this module documents — DB missing,
+ * locked by a Codex WAL checkpoint, schema drifted — every spawn-marked request
+ * re-ran the synchronous readdir + `new Database()` + query on the request
+ * path. `bun:sqlite` is synchronous, so with `PRAGMA busy_timeout = 100` a
+ * spawn storm stalls the whole event loop ~100 ms per turn and delays every
+ * unrelated proxied request, which is the precise opposite of the "a spawn
+ * storm must not open sqlite per request" invariant this cache exists for.
+ *
+ * The window is shorter than the success TTL: a transient lock should clear
+ * quickly, and waiting the full TTL to notice would keep depth unresolved (and
+ * therefore nesting disabled) for longer than necessary.
+ */
+const EDGE_FAILURE_TTL_MS = 750;
+let lastFailureAt = 0;
+
 export function spawnEdgeGraph(now = Date.now()): SpawnEdgeGraph | null {
   if (edgeReader) return edgeReader();
   if (cachedGraph && now - cachedGraph.readAt < EDGE_CACHE_TTL_MS) return cachedGraph;
+  if (lastFailureAt && now - lastFailureAt < EDGE_FAILURE_TTL_MS) return null;
   const graph = readSpawnEdgesFromDisk();
-  if (graph) cachedGraph = graph;
+  if (graph) {
+    cachedGraph = graph;
+    lastFailureAt = 0;
+  } else {
+    lastFailureAt = now;
+  }
   return graph;
 }
 
@@ -142,6 +167,10 @@ let latchedSemantics: ParentThreadHeaderSemantics | null = null;
 
 export function resetHeaderSemanticsForTests(): void {
   latchedSemantics = null;
+  // The caches are process state too: a test that seeds a graph and then a
+  // failure would otherwise inherit the previous case's negative window.
+  cachedGraph = null;
+  lastFailureAt = 0;
 }
 
 export function latchedHeaderSemantics(): ParentThreadHeaderSemantics | null {
@@ -186,6 +215,21 @@ export function spawnEdgeDepth(threadId: string | null | undefined, now = Date.n
 
   const isChild = graph.parentOf.has(id);
   const isParent = graph.parents.has(id);
+
+  // An id the graph has never seen is UNKNOWN, not depth 0.
+  //
+  // `walkToRoot` returns 0 steps both for the genuine root and for an id with
+  // no parent edge, and those are not the same thing. A grandchild's edge is
+  // written by its parent, and this graph is cached for up to EDGE_CACHE_TTL_MS
+  // — so a spawned turn routinely arrives before its own edge is visible.
+  // Reporting that as a confident depth 0 told the caller "this is the root",
+  // which left the delegation tools in place on a leaf and handed it exactly
+  // the nesting the ceiling exists to deny.
+  //
+  // Latching on an unseen id is just as wrong: `isChild` is false only because
+  // the edge has not landed, and that would fix the process-wide reading of the
+  // header on an observation that was never evidence of anything.
+  if (!isChild && !isParent) return null;
 
   if (latchedSemantics === null) {
     if (isChild && !isParent) latchedSemantics = "own";

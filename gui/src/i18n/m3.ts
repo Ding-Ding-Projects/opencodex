@@ -55,10 +55,12 @@ export const M3_EN = {
   "mobile.loopback": "This machine only",
   "mobile.noCredential": "Published to the network with no credential configured.",
   "mobile.apiKey": "API key",
-  "mobile.apiKeyHint": "Needed when the proxy is published to the network. Stored on this device only.",
+  "mobile.apiKeyHint": "Needed when the proxy is published to the network. Kept in memory for this session only — never written to storage, so you will re-enter it after a reload.",
   "mobile.keyPlaceholder": "ocx_…",
   "mobile.tokens": "{n} tokens",
   "mobile.httpStatus": "The proxy answered {status} with no detail.",
+  "mobile.modelsFailed": "Could not reach the proxy to load models.",
+  "mobile.retry": "Retry",
   "nav.settings": "Settings",
 
   // ---- settings surface ----
