@@ -1016,7 +1016,15 @@ export async function handleCodexAuthAPI(
         let completed = false;
         for (let i = 0; i < 150; i++) {
           await new Promise(r => setTimeout(r, 2000));
-          const st = getLoginStatus("chatgpt");
+          // This loop is detached and runs for up to five minutes, so it can easily
+          // outlive whatever set it going — a cancelled flow, a provider removed
+          // mid-login, or a torn-down test environment. `getLoginStatus` then answers
+          // with nothing, and reading `.done` off it threw a TypeError with no catch
+          // above it: an unhandled rejection from a background task, surfacing
+          // wherever the runtime happened to be. Stop instead; a login whose status
+          // has disappeared is over regardless of why.
+          const st = getLoginStatus("chatgpt") as ReturnType<typeof getLoginStatus> | undefined;
+          if (!st) break;
           if (st.done && st.loggedIn) {
             const { getCredential } = await import("../oauth/store");
             const cred = getCredential("chatgpt");
