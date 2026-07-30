@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { IconBell, IconMenu, IconPalette } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
+import CostMeter from "./CostMeter";
 import { usePrefs } from "../theme/prefs-context";
 import type { Page } from "../app-routing";
 
@@ -19,6 +20,7 @@ function initials(email: string | null): string {
 }
 
 interface AppBarProps {
+  apiBase: string;
   title: string;
   statusLine: string;
   accountEmail: string | null;
@@ -27,7 +29,7 @@ interface AppBarProps {
   onOpen: (page: Page, newTab: boolean) => void;
 }
 
-export default function AppBar({ title, statusLine, accountEmail, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
+export default function AppBar({ apiBase, title, statusLine, accountEmail, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
   const { history, unreadCount, markAllRead } = useNotifications();
@@ -62,6 +64,8 @@ export default function AppBar({ title, statusLine, accountEmail, onOpenDrawer, 
         <h1>{title}</h1>
         <span className="m3-appbar-status">{statusLine}</span>
       </div>
+
+      <CostMeter apiBase={apiBase} />
 
       <div ref={notifRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
         <button type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}

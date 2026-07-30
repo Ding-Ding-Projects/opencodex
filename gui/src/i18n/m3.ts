@@ -120,6 +120,14 @@ export const M3_EN = {
   "narrator.spoke": "Test message sent to the narrator",
   "narrator.unavailable": "This browser does not expose speech synthesis, so the narrator cannot run here.",
 
+  // ---- app-bar cost meter ----
+  "cost.rangeAll": "lifetime",
+  "cost.range30d": "30 days",
+  "cost.range7d": "7 days",
+  "cost.menuTitle": "Estimated cost range",
+  "cost.aria": "Estimated API cost {amount} over {range}. Change range.",
+  "cost.title": "Estimated API cost ({range}) — click to change the range",
+
   // ---- dim sum surprise ----
   "dimsum.title": "Dim sum time!",
   "dimsum.hint": "A 1-in-100 launch treat. Turn it off under Appearance.",

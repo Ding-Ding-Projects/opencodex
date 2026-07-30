@@ -737,3 +737,30 @@ html[data-desktop] .m3-appbar [role="dialog"],
 html[data-desktop] .m3-appbar .m3-avatar {
   app-region: no-drag;
 }
+
+/* App-bar cost meter: tonal chip, always visible, machine number in mono. */
+.m3-cost-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  margin-right: 2px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font: inherit;
+  cursor: pointer;
+}
+.m3-cost-chip:hover { box-shadow: var(--e1); }
+.m3-cost-amount {
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.m3-cost-range { font-size: var(--t-label-s); opacity: 0.8; }
+/* Compact width: the range word goes; the number stays. */
+.m3-app--compact .m3-cost-range { display: none; }

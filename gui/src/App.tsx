@@ -198,6 +198,7 @@ export default function App() {
 
       <div className="m3-main-col">
         <AppBar
+          apiBase={API_BASE}
           title={title}
           statusLine={statusLine}
           accountEmail={accountPoll.data ?? null}

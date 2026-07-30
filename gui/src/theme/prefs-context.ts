@@ -8,6 +8,9 @@
 
 import { createContext, useContext } from "react";
 import type { DensityLevel, ElementStyle, ThemeMode, WindowClass } from "./m3";
+
+/** Range for the app-bar cost meter; mirrors the ranges /api/usage accepts. */
+export type CostRange = "7d" | "30d" | "all";
 import { DEFAULT_SEED } from "./m3";
 
 export const PREFS_KEY = "ocx-m3:v1";
@@ -34,6 +37,8 @@ export interface Prefs {
   narratorLang: string;
   /** Dim sum surprise: one 1% draw per launch. On by default; the switch is honoured before the draw. */
   dimsum: boolean;
+  /** App-bar cost meter range. "all" = lifetime, the default. */
+  costRange: CostRange;
   elementStyles: Record<string, ElementStyle>;
 }
 
@@ -47,6 +52,7 @@ export const DEFAULT_PREFS: Prefs = {
   narrator: false,
   narratorLang: "en",
   dimsum: true,
+  costRange: "all",
   elementStyles: {},
 };
 
@@ -85,6 +91,7 @@ export function readPrefs(): Prefs {
       fontScale: Number.isFinite(Number(raw.fontScale)) ? Math.min(1.6, Math.max(0.8, Number(raw.fontScale))) : 1,
       fontWeight: Number.isFinite(Number(raw.fontWeight)) ? Math.min(700, Math.max(300, Number(raw.fontWeight))) : 400,
       dimsum: typeof raw.dimsum === "boolean" ? raw.dimsum : true,
+      costRange: raw.costRange === "7d" || raw.costRange === "30d" || raw.costRange === "all" ? raw.costRange : "all",
       elementStyles: raw.elementStyles && typeof raw.elementStyles === "object" ? raw.elementStyles : {},
     };
   } catch {
