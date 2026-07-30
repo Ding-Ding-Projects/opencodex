@@ -246,17 +246,13 @@ check that list before anything else.
 
 ## Not landed
 
-### Stage 2+ — the thirteen product screens
+### ~~Stage 2+ — the thirteen product screens~~ DONE
 
-Not started. Each keeps its current markup and data wiring, restyled through the
-token aliases. Port targets and the `en.ts` namespace each screen was derived
-from are tabulated in `design/PORT-TO-GUI.md` §3. Read the real component file
-before porting: where its markup differs from what the `en.ts` keys implied, the
-source file wins.
-
-Suggested order — highest visual payoff first, and each is independent:
-Dashboard → Codex Auth → Providers → Models → Combos → Logs & Debug → Usage →
-Storage → API → Claude → Grok → Subagents → Startup.
+All thirteen landed in `f0c7bb07` as a restyle-in-place: data wiring untouched,
+markup moved to the m3-card / pill-tablist / m3-table / role="switch"
+vocabulary, colours all `--m3-*` roles. Source-text tests were retargeted with
+supersession comments; the combined tree verified green (gui 380/0, both
+typechecks, lint, build, privacy, parity).
 
 ### Deferred by scope
 
