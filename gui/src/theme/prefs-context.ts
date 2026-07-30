@@ -32,6 +32,8 @@ export interface Prefs {
   /** Narrator (speech synthesis) is off by default and never auto-enables. */
   narrator: boolean;
   narratorLang: string;
+  /** Dim sum surprise: one 1% draw per launch. On by default; the switch is honoured before the draw. */
+  dimsum: boolean;
   elementStyles: Record<string, ElementStyle>;
 }
 
@@ -44,6 +46,7 @@ export const DEFAULT_PREFS: Prefs = {
   fontWeight: 400,
   narrator: false,
   narratorLang: "en",
+  dimsum: true,
   elementStyles: {},
 };
 
@@ -81,6 +84,7 @@ export function readPrefs(): Prefs {
       density: (density >= 1 && density <= 5 ? Math.round(density) : DEFAULT_PREFS.density) as DensityLevel,
       fontScale: Number.isFinite(Number(raw.fontScale)) ? Math.min(1.6, Math.max(0.8, Number(raw.fontScale))) : 1,
       fontWeight: Number.isFinite(Number(raw.fontWeight)) ? Math.min(700, Math.max(300, Number(raw.fontWeight))) : 400,
+      dimsum: typeof raw.dimsum === "boolean" ? raw.dimsum : true,
       elementStyles: raw.elementStyles && typeof raw.elementStyles === "object" ? raw.elementStyles : {},
     };
   } catch {

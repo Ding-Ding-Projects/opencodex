@@ -110,6 +110,12 @@ export const M3_EN = {
   "narrator.spoke": "Test message sent to the narrator",
   "narrator.unavailable": "This browser does not expose speech synthesis, so the narrator cannot run here.",
 
+  // ---- dim sum surprise ----
+  "dimsum.title": "Dim sum time!",
+  "dimsum.hint": "A 1-in-100 launch treat. Turn it off under Appearance.",
+  "dimsum.toggle": "Dim sum surprise",
+  "dimsum.toggleHint": "Roughly one launch in a hundred shows a small dim sum card. Never on your first run or right after an update.",
+
   // ---- regex builder ----
   "regex.title": "Regex builder",
   "regex.sub": "Build and test a pattern, then use it in any search bar that has the .* toggle switched on.",

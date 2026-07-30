@@ -32,6 +32,7 @@ import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
 import TabStrip from "./shell/TabStrip";
 import SnackbarHost from "./shell/SnackbarHost";
+import DimSumCard from "./shell/DimSumCard";
 import { PAGE_META_BY_ID } from "./shell/page-meta";
 import { readJsonIfOk } from "./fetch-json";
 
@@ -243,6 +244,7 @@ export default function App() {
       </div>
 
       <SnackbarHost />
+      <DimSumCard version={displayedVersion} />
     </div>
   );
 }

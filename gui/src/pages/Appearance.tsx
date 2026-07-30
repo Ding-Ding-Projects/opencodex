@@ -185,6 +185,17 @@ export default function Appearance() {
         <Button variant="text" onClick={() => resetElementStyle(target)}>{t("appearance.elReset")}</Button>
       </Card>
 
+      <Card title={t("dimsum.toggle")} subtitle={t("dimsum.toggleHint")}>
+        <div className="m3-row m3-row--split">
+          <span>{t("dimsum.toggle")}</span>
+          <Toggle
+            on={prefs.dimsum}
+            onChange={dimsum => setPrefs({ dimsum })}
+            label={t("dimsum.toggle")}
+          />
+        </div>
+      </Card>
+
       <Card title={t("appearance.motionTitle")} subtitle={t("appearance.motionSub")}>
         <div className="m3-row m3-row--split">
           <span>{t("appearance.reducedMotion")}</span>
