@@ -16,6 +16,13 @@ const MIME_TYPES: Record<string, string> = {
   ".html": "text/html", ".js": "application/javascript", ".css": "text/css",
   ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
   ".ico": "image/x-icon",
+  // Bundled art and fonts. Without these they fall through to
+  // application/octet-stream: browsers usually sniff an <img> anyway, but a
+  // font served as a generic blob is rejected outright, and "usually" is not a
+  // property to rely on for assets that ship inside the installer.
+  ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".avif": "image/avif",
+  ".woff2": "font/woff2", ".woff": "font/woff",
 };
 
 function findGuiDist(): string | null {

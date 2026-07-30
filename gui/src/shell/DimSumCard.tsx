@@ -51,7 +51,10 @@ export function DishArt({ dish }: { dish: DimSumDish }) {
       aria-hidden="true"
       width={48}
       height={48}
-      loading="lazy"
+      // Eager, not lazy. The card lives for twelve seconds and the file is a few
+      // kilobytes; deferring the load can push it past the card's own lifetime,
+      // so the surprise renders as an empty square and then disappears.
+      loading="eager"
       decoding="async"
       onError={() => setFailed(true)}
       style={{ width: 48, height: 48, borderRadius: "var(--r-m)", objectFit: "cover", flex: "0 0 auto" }}
