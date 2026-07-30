@@ -82,43 +82,148 @@ Everything there is live: the cost meter in the app bar, proxy status, provider 
 **Launch** card — which detects what is actually installed and offers a download link for what is
 not, rather than a button that fails when you press it.
 
+<p align="center">
+  <img src="assets/shots/terminal.png" alt="The Terminal screen running a shell session: the command ocx --version shown in the transcript above its output, opencodex 2.7.43, with preset buttons for Shell, Codex CLI, Claude Code and Grok CLI" width="900"><br>
+  <sub><b>Embedded terminal.</b> No console window appears. The line you sent is recorded beside the output, so the log reads as a conversation.</sub>
+</p>
+
+There are twenty-two screens. Every screenshot below is a real capture of the build in this
+repository — open a section to see the ones you care about.
+
+<details open>
+<summary><b>Routing — what Codex is allowed to see</b></summary>
+<br>
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="assets/shots/providers.png" alt="Providers screen with a searchable rail, a Needs attention group, and counts for ready, needs-attention and disabled providers" width="440"><br>
-      <sub><b>Providers.</b> Grouped by state, searchable, regex opt-in.</sub>
+      <img src="assets/shots/providers.png" alt="Providers screen: a searchable provider rail on the left, and an overview counting ready, needs-attention and disabled providers, with a Needs attention group naming the account that must re-authenticate" width="440"><br>
+      <sub><b>Providers.</b> Grouped by state, with <b>Edit JSON</b> when the form is not enough.</sub>
     </td>
     <td width="50%" align="center">
-      <img src="assets/shots/codex-auth.png" alt="Codex Auth screen showing the ChatGPT account pool and its rate-limit windows" width="440"><br>
-      <sub><b>Accounts.</b> The pool, its quota windows, and what routes next.</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="assets/shots/models.png" alt="Models screen listing routable models grouped by provider" width="440"><br>
-      <sub><b>Models.</b> Everything routable, grouped by provider.</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="assets/shots/usage.png" alt="Usage screen with stat tiles for requests, tokens and estimated cost" width="440"><br>
-      <sub><b>Usage.</b> Tokens, requests and estimated cost over time.</sub>
+      <img src="assets/shots/models.png" alt="Models screen: providers rail showing 7 of 7 models visible, a model search, Shadow Call Intercept, and a row of context-cap chips from 100k to 950k with 350k selected" width="440"><br>
+      <sub><b>Models.</b> Toggle what reaches Codex's picker. Hidden models stay callable by exact id.</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="assets/shots/logs.png" alt="Logs and debug screen with a searchable request log" width="440"><br>
-      <sub><b>Logs &amp; debug.</b> Every request, searchable by id, model or provider.</sub>
+      <img src="assets/shots/combos.png" alt="Combos screen with a strategy selector offering Failover and Round-robin, and a target list for a virtual model" width="440"><br>
+      <sub><b>Combos.</b> Virtual models that fail over, or spread load by weighted round-robin.</sub>
     </td>
     <td width="50%" align="center">
-      <img src="assets/shots/storage.png" alt="Storage screen showing session storage buckets and cleanup controls" width="440"><br>
-      <sub><b>Storage.</b> What sessions cost on disk, and how to reclaim it.</sub>
+      <img src="assets/shots/subagents.png" alt="Subagents screen listing native OpenAI models with a Featured section, for choosing the five models offered as spawn_agent overrides" width="440"><br>
+      <sub><b>Sub-agents.</b> <code>spawn_agent</code> only advertises five models — you pick which five.</sub>
     </td>
   </tr>
 </table>
+</details>
 
-<p align="center">
-  <img src="assets/shots/regex-builder.png" alt="The dashboard with eight open tabs and an overflow counter in the tab strip" width="900"><br>
-  <sub><b>Browser-style tabs.</b> Open as many screens as you like; the strip counts what overflows.</sub>
-</p>
+<details>
+<summary><b>Accounts, cost and what actually happened</b></summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/codex-auth.png" alt="Codex Auth screen showing OpenAI account mode, the account pool with rate-limit windows, and buttons to refresh quotas, add an account and pause exhausted accounts" width="440"><br>
+      <sub><b>Codex Auth.</b> The pool, its quota windows, and which account routes next.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/usage.png" alt="Usage screen with daily activity, per-model and per-provider breakdowns, a coverage breakdown, and 7d/30d range filters" width="440"><br>
+      <sub><b>Usage.</b> Local token accounting. Missing usage is shown as missing, never as zero.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/logs.png" alt="Logs and Debug screen listing recent proxy requests newest first, with Logs and Debug tabs and per-client filters for Codex, Claude and Grok" width="440"><br>
+      <sub><b>Logs &amp; debug.</b> Every request, newest first, filterable by client.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/storage.png" alt="Storage screen showing CODEX_HOME buckets, largest files, archived cleanup with a preview step, quarantine, and an auto-cleanup policy" width="440"><br>
+      <sub><b>Storage.</b> Cleanup previews before it deletes, and quarantines before that.</sub>
+    </td>
+  </tr>
+</table>
+</details>
+
+<details>
+<summary><b>The clients — Claude Code, Grok, and anything that speaks HTTP</b></summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/claude.png" alt="Claude screen with Code and Desktop tabs, a background helper model selector, model interception, and a context cap setting" width="440"><br>
+      <sub><b>Claude.</b> GPT and Gemini inside Claude Code — with or without a Claude account.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/grok.png" alt="Grok screen listing the native models opencodex has registered in the Grok config, with Save and Save and apply buttons" width="440"><br>
+      <sub><b>Grok.</b> What opencodex has registered in your Grok config.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/api.png" alt="API screen showing endpoints, bearer-token authentication, key generation, and worked examples for Chat Completions, Responses and Messages" width="440"><br>
+      <sub><b>API.</b> Bearer keys, plus worked Chat Completions / Responses / Messages examples.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/startup.png" alt="Startup screen warning that Codex can lose model access after restart, with protection details, Windows system tray installation and repair options" width="440"><br>
+      <sub><b>Startup.</b> Stops "Codex forgot the proxy after a reboot" becoming a reconnect loop.</sub>
+    </td>
+  </tr>
+</table>
+</details>
+
+<details>
+<summary><b>Making it yours — appearance, language, regex, settings</b></summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/appearance.png" alt="Appearance screen with light, dark and system theme choices, a font list including Roboto Flex and Noto Sans HK, per-element styling and a live preview" width="440"><br>
+      <sub><b>Appearance.</b> Theme, density, seed colour and type — applied live, not on restart.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/language.png" alt="Language and voice screen with interface language choices, per-language funny level, a spoken narrator, and the dim sum surprise toggle" width="440"><br>
+      <sub><b>Language &amp; voice.</b> Language mode, funny level, narrator, and the dim sum surprise.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/regex.png" alt="Regex builder with guided construction sections for literals, character classes, anchors, groups, alternation and quantifiers, above a pattern field and live matches" width="440"><br>
+      <sub><b>Regex builder.</b> Feeds every search bar with a <code>.*</code> toggle. Evaluated locally.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/settings.png" alt="Settings screen grouping proxy, routing, agents, storage, appearance and privacy settings into one searchable page" width="440"><br>
+      <sub><b>Settings.</b> Every adjustable value in one place — and every change recorded.</sub>
+    </td>
+  </tr>
+</table>
+</details>
+
+<details>
+<summary><b>Undo, reach and the paper trail</b></summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/history.png" alt="Version history screen with an append-only revision list, filters for providers, accounts, API keys, combos and settings, and an account-change history" width="440"><br>
+      <sub><b>Version history.</b> Append-only — restoring writes a new revision, so undo is undoable.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/network.png" alt="Remote access and backup screen with network access controls, a custom key section, and an export-everything download" width="440"><br>
+      <sub><b>Remote access.</b> Reach the proxy from other devices; export the whole state.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/changelog.png" alt="Changelog screen listing released versions with a date-range filter, text search and Markdown copy and export buttons" width="440"><br>
+      <sub><b>Changelog.</b> Every release, date-filtered and searchable, exportable as Markdown.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/notifications.png" alt="Notifications screen listing every message shown since the dashboard was first opened, filtered by errors, warnings, successes and info" width="440"><br>
+      <sub><b>Notifications.</b> Nothing that toasted past you is lost — it is all still here.</sub>
+    </td>
+  </tr>
+</table>
+</details>
 
 ---
 
@@ -212,6 +317,15 @@ and restarts. Append-only throughout: an undo can be undone, and that undo undon
 - Search everywhere: plain text by default, a `.*` regex opt-in, and a real regex builder behind it.
 - English, playful Hong Kong Cantonese, and a bilingual mode.
 - Non-blocking notifications with a history, so nothing important is a modal you dismissed by reflex.
+- **One-press launch, and "Get it" that actually installs.** The Launch card probes what is on the
+  machine; missing tooling installs through winget or npm with the output streamed into the card. The
+  two targets with no official package say so and open the vendor's page rather than pulling a
+  community repackage.
+- **Embedded terminal.** Run commands without a console window appearing. Piped rather than a
+  pseudo-terminal, so non-interactive commands work and a full-screen TUI is honestly declined.
+  Disabled outright while the proxy is exposed to other devices — a terminal is a shell.
+- A 1-in-100 chance of dim sum at launch. Never on your first run, never after an update, and there
+  is a switch.
 
 </details>
 
@@ -290,8 +404,11 @@ bun run test         # full suite
 cd gui && bun run lint
 ```
 
-Bun is required — the proxy is Bun-native and the test runner is `bun test`. The GUI has its own
-dependency tree; installing only one of the two leaves the suite erroring on missing modules.
+Source development requires the `bun` CLI on your `PATH`. This is separate from the published npm
+package's bundled Bun runtime, which is used only by installed `ocx` commands.
+
+The GUI has its own dependency tree; installing only one of the two leaves the suite erroring on
+missing modules.
 
 ---
 
