@@ -11,7 +11,9 @@
  * Layout follows the prototype's regex section: a body-large page lead and the
  * engine line, preset chips, the grouped guided-construction palette, the
  * pattern/flags/sample card with its safety note, then the matches and capture
- * groups panels side by side.
+ * groups panels side by side. Both panels carry their own empty sentence, so a
+ * pattern that matches nothing and a pattern that declares no named group each
+ * say so rather than leaving a blank box the user has to interpret.
  */
 
 import { useMemo, useState } from "react";
@@ -27,6 +29,15 @@ const MATCH_CAP = 200;
 
 /** Shown when a group participated in no capture, and for a zero-width match. */
 const EMPTY_MARK = "∅";
+
+/**
+ * Shown in the capture-groups panel for a declared group that no match in the
+ * sample ever filled. Deliberately *not* `EMPTY_MARK`: the prototype keeps the
+ * two apart, and they mean different things — `∅` beside a match says that group
+ * did not participate in *that* match, while `—` says nothing in the whole
+ * sample reached the group at all.
+ */
+const NO_VALUE_MARK = "—";
 
 /**
  * Where "Use in search" leaves the pattern for the receiving screen. Written on
@@ -212,11 +223,17 @@ function namedGroups(pattern: string): { index: number; name: string }[] {
   return found;
 }
 
-/** `$1=… name=…` beside a match, so captures are readable without a second table. */
-function groupsLabel(row: MatchRow): string {
-  const parts = row.positional.map((g, i) => `$${i + 1}=${g ?? EMPTY_MARK}`);
-  for (const [name, value] of Object.entries(row.groups)) parts.push(`${name}=${value ?? EMPTY_MARK}`);
-  return parts.join("  ");
+/**
+ * `$1=… name=…` beside a match, so captures are readable without a second table.
+ *
+ * One entry per positional capture and no more: a named group *is* a positional
+ * one, so listing `row.groups` as well printed `$1=9fa2c1  id=9fa2c1` — the same
+ * capture twice. Named slots are labelled by their name, unnamed ones by `$n`.
+ */
+function groupsLabel(row: MatchRow, names: Map<number, string>): string {
+  return row.positional
+    .map((value, i) => `${names.get(i + 1) ?? `$${i + 1}`}=${value ?? EMPTY_MARK}`)
+    .join("  ");
 }
 
 const MONO = { fontFamily: "var(--mono)" } as const;
@@ -262,6 +279,12 @@ export default function RegexBuilder() {
       value: result.rows.find(row => row.groups[g.name] != null)?.groups[g.name],
     }));
   }, [pattern, result]);
+
+  /** Positional index → declared name, so a match row can label `$3` as `tail`. */
+  const groupNames = useMemo(
+    () => new Map(captureGroups.map(g => [g.index, g.name] as const)),
+    [captureGroups],
+  );
 
   const toggleFlag = (flag: string) => {
     setFlags(prev => (prev.includes(flag) ? prev.replace(flag, "") : prev + flag));
@@ -464,7 +487,7 @@ export default function RegexBuilder() {
                     {row.text || EMPTY_MARK}
                   </mark>
                   <span style={{ ...MUTED_MONO, minWidth: 0, overflowWrap: "anywhere" }}>
-                    {groupsLabel(row)}
+                    {groupsLabel(row, groupNames)}
                   </span>
                 </li>
               ))}
@@ -472,20 +495,24 @@ export default function RegexBuilder() {
           )}
         </Card>
 
-        {/*
-          Empty state: the prototype shows the header alone when the pattern
-          declares no named group, and no key exists for a sentence here — an
-          unrelated string would be worse than the blank the design specifies.
-        */}
         <Card title={t("regex.groups")}>
-          {captureGroups.length > 0 && (
+          {captureGroups.length === 0 ? (
+            /*
+              Only once there is a pattern worth the statement: an empty box says
+              nothing about a pattern the user has not typed, and while the
+              pattern is invalid the real problem is already on the error line.
+            */
+            <p style={{ margin: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+              {pattern && !result.error ? t("regex.noGroups") : ""}
+            </p>
+          ) : (
             <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
               {captureGroups.map(group => (
                 <li key={group.name} className="m3-row" style={PANEL_ROW}>
                   <span style={{ ...MUTED_MONO, fontVariantNumeric: "tabular-nums" }}>${group.index}</span>
                   <span style={{ ...MONO, fontSize: "var(--t-label-m)", fontWeight: 600 }}>{group.name}</span>
                   <span style={{ ...MONO, fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)", minWidth: 0, overflowWrap: "anywhere" }}>
-                    {group.value ?? EMPTY_MARK}
+                    {group.value ?? NO_VALUE_MARK}
                   </span>
                 </li>
               ))}

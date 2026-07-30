@@ -370,28 +370,33 @@ export default function Appearance() {
             </div>
           </div>
 
-          {/* Text and background sit side by side under one caption, as in the
-              prototype; the tooltip carries whether the swatch is an override. */}
-          <div className="m3-row" style={{ gap: 10 }}>
-            <input
-              type="color"
-              value={el.color ?? COLOR_FALLBACK}
-              onChange={e => setElementStyle(target, { color: e.target.value })}
-              aria-label={t("appearance.elColor")}
-              title={el.color ?? t("appearance.elInherit")}
-              style={COLOR_SWATCH}
-            />
-            <input
-              type="color"
-              value={el.bg ?? BG_FALLBACK}
-              onChange={e => setElementStyle(target, { bg: e.target.value })}
-              aria-label={t("appearance.elBg")}
-              title={el.bg ?? t("appearance.elInherit")}
-              style={COLOR_SWATCH}
-            />
-            <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
-              {t("appearance.elColorCaption")}
-            </span>
+          {/* Text and background sit side by side under one group caption, as in
+              the prototype; the tooltip carries whether the swatch is an
+              override, and the group label gives the pair the same standing as
+              the font, radius and padding controls beside it. */}
+          <div>
+            <span className="m3-field-label">{t("appearance.elColourGroup")}</span>
+            <div className="m3-row" style={{ gap: 10 }}>
+              <input
+                type="color"
+                value={el.color ?? COLOR_FALLBACK}
+                onChange={e => setElementStyle(target, { color: e.target.value })}
+                aria-label={t("appearance.elColor")}
+                title={el.color ?? t("appearance.elInherit")}
+                style={COLOR_SWATCH}
+              />
+              <input
+                type="color"
+                value={el.bg ?? BG_FALLBACK}
+                onChange={e => setElementStyle(target, { bg: e.target.value })}
+                aria-label={t("appearance.elBg")}
+                title={el.bg ?? t("appearance.elInherit")}
+                style={COLOR_SWATCH}
+              />
+              <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+                {t("appearance.elColorCaption")}
+              </span>
+            </div>
           </div>
 
           <Slider
@@ -417,7 +422,11 @@ export default function Appearance() {
         </div>
 
         <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
-          <Button variant="outlined" onClick={onResetElement}>{t("appearance.elReset")}</Button>
+          {/* Named, as the prototype names it: the button says which target it
+              clears, so it can never be read as "reset everything". */}
+          <Button variant="outlined" onClick={onResetElement}>
+            {t("appearance.elResetTarget", { target: targetLabel })}
+          </Button>
           <Button
             variant="text"
             onClick={onResetAllElements}
@@ -446,7 +455,7 @@ export default function Appearance() {
           {t("appearance.previewBodySample")}
         </p>
         <div className="m3-row" style={{ gap: 8 }}>
-          <span className="m3-btn m3-btn--filled">{t("appearance.previewPrimary")}</span>
+          <span className="m3-btn m3-btn--filled">{t("appearance.previewFilled")}</span>
           <span className="m3-btn m3-btn--tonal">{t("appearance.previewTonal")}</span>
           <span className="m3-btn m3-btn--outlined">{t("appearance.previewOutlined")}</span>
         </div>

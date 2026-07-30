@@ -124,8 +124,10 @@ export default function Grok({ apiBase }: { apiBase: string }) {
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [savedExcluded, setSavedExcluded] = useState<Set<string>>(new Set());
   const [pending, setPending] = useState<"save" | "apply" | null>(null);
-  // Settings search over this surface's per-model switches. Plain text is the default;
-  // `.*` is an explicit opt-in, exactly as on every other search bar in the app.
+  // Settings search over this surface's per-model switches, worded in Grok's own copy
+  // (`grok.search`/`grok.noMatch`) rather than the generic settings strings — the rows
+  // are models and aliases, not settings. Plain text is the default; `.*` is an explicit
+  // opt-in, exactly as on every other search bar in the app.
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
 
@@ -323,8 +325,8 @@ export default function Grok({ apiBase }: { apiBase: string }) {
             <TextInput
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder={t("settings.search")}
-              aria-label={t("settings.search")}
+              placeholder={t("grok.search")}
+              aria-label={t("grok.search")}
               aria-invalid={!!regexError}
               style={searchInputStyle}
             />
@@ -342,7 +344,7 @@ export default function Grok({ apiBase }: { apiBase: string }) {
         </>
       )}
 
-      {candidates.length > 0 && !anyVisible && <Empty title={t("settings.noMatch")} />}
+      {candidates.length > 0 && !anyVisible && <Empty title={t("grok.noMatch")} />}
 
       {candidates.length > 0 && groupViews.map(({ id: groupId, tkey, view }) => {
         if (view.total === 0) return null;

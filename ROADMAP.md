@@ -91,9 +91,13 @@ Checked in the tree; each of these is genuinely absent, not merely undocumented.
 
 ### Appearance
 
-- **Bundled fonts are not bundled.** `FONT_CHOICES` in `gui/src/theme/m3.ts` names Roboto Flex,
-  Roboto, System UI, Noto Sans HK, and Roboto Mono as CSS stacks; the faces themselves are not
-  shipped as assets, so a host missing them falls back silently.
+- ~~**Bundled fonts are not bundled.**~~ Fixed. Eleven woff2 files (Roboto Flex, Roboto, Roboto Mono,
+  Noto Sans HK — Latin subsets, 0.41 MB total) live in `gui/public/fonts` with `@font-face`
+  declarations in `gui/src/styles/fonts.css`. Nothing is fetched at runtime. **Noto Sans HK's CJK
+  coverage is deliberately not bundled**: one weight is 6.7 MB and three would be ~20 MB in every
+  clone and installer, duplicating a face Windows (Microsoft JhengHei) and macOS (PingFang) already
+  ship. The stacks name it first and fall through to the system's Chinese face. If that is ever
+  revisited, subset it to the glyphs the interface actually uses rather than shipping the whole font.
 - The appearance editor covers theme, seed, density, font id/scale/weight and per-element overrides.
   Word-depth typography (variable axes, underline styles, small caps, spacing) is not there.
 - **Dim sum dishes are emoji, not photos.** `gui/src/shell/dimsum.ts` labels its own art as a

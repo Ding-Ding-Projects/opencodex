@@ -335,10 +335,9 @@ export default function ProviderWorkspaceShell({
   const railGroups = [
     { id: "ready", label: t("pws.status.ready"), count: filteredSections.ready.length, ariaLabel: t("pws.groupReady", { count: filteredSections.ready.length }), items: filteredSections.ready },
     { id: "needs-setup", label: t("pws.status.needsSetup"), count: filteredSections.needsSetup.length, ariaLabel: t("pws.groupNeedsSetup", { count: filteredSections.needsSetup.length }), items: filteredSections.needsSetup },
-    // No `pws.groupNeedsAttention` key exists yet, so the count is appended in the same
-    // "Label (n)" shape the other three keys spell out — a screen reader must still hear
-    // how many providers are broken, not just that some are.
-    { id: "needs-attention", label: t("pws.status.needsAttention"), count: filteredSections.needsAttention.length, ariaLabel: `${t("pws.status.needsAttention")} (${filteredSections.needsAttention.length})`, items: filteredSections.needsAttention },
+    // The group a broken login lands in, so it gets the same translated "Label (n)"
+    // aria-label as its three siblings rather than a hand-concatenated count.
+    { id: "needs-attention", label: t("pws.status.needsAttention"), count: filteredSections.needsAttention.length, ariaLabel: t("pws.groupNeedsAttention", { count: filteredSections.needsAttention.length }), items: filteredSections.needsAttention },
     { id: "disabled", label: t("prov.disabledBadge"), count: filteredSections.disabled.length, ariaLabel: t("pws.groupDisabled", { count: filteredSections.disabled.length }), items: filteredSections.disabled },
   ];
   const visibleRailNames = railGroups.flatMap(group => group.items.map(item => item.name));

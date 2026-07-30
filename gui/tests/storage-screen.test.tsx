@@ -139,6 +139,24 @@ test("the cleanup estimate follows the slider without asking the server", async 
   }
 });
 
+test("the Preview and clean action carries a leading mark, like the prototype's", async () => {
+  const { container, root } = await mount();
+  try {
+    const button = [...container.querySelectorAll<HTMLButtonElement>("button.m3-btn")]
+      .find(b => (b.textContent ?? "").includes("Preview and clean"));
+    expect(button).toBeDefined();
+    // The prototype leads this button with a glyph. The label is what says what
+    // the button does; the mark must never be the only thing carrying it, and it
+    // is hidden from assistive tech precisely because it is decoration.
+    const mark = button!.querySelector("svg");
+    expect(mark).not.toBeNull();
+    expect(mark!.getAttribute("aria-hidden")).toBe("true");
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+  }
+});
+
 test("the settings search filters the policy card and points at hits on the other card", async () => {
   const { container, root } = await mount();
   try {

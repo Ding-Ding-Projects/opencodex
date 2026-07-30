@@ -173,5 +173,10 @@ export default function CodexAuth({ apiBase }: { apiBase: string }) {
     )}
   </>;
 
-  return <CodexAccountPool apiBase={apiBase} accountModeState={accountModeState} banner={banner} />;
+  // The page lead the prototype opens this screen with. It belongs to the page, not
+  // to the pool component, so the Providers workspace embedding the same pool does
+  // not inherit copy that describes a whole screen it is only one tab of.
+  const lead = <p className="m3-page-lead">{t("codexAuth.subtitle")}</p>;
+
+  return <CodexAccountPool apiBase={apiBase} accountModeState={accountModeState} banner={banner} lead={lead} />;
 }

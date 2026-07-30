@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { IconRefresh } from "../icons";
 import { useI18n } from "../i18n/shared";
 import { copyTextToClipboard } from "../oauth-health-display";
@@ -18,14 +18,12 @@ import {
   type TrayStatusData,
 } from "./startup-shared";
 
-const warnNoticeStyle: CSSProperties = {
-  background: "var(--m3-warn-container)",
-  color: "var(--m3-on-warn-container)",
-  padding: "12px 16px",
-  borderRadius: 12,
-  marginBottom: "var(--sp-3)",
-  fontSize: "var(--t-body-s)",
-};
+/**
+ * `.dash-notice--warn` is the shared inline-notice vocabulary; the name is
+ * historical, not dashboard-scoped. Only the trailing gap stays local, because
+ * the class carries no margin of its own.
+ */
+const warnNoticeClass = "dash-notice dash-notice--warn";
 
 export default function Startup({ apiBase }: { apiBase: string }) {
   const { t } = useI18n();
@@ -242,9 +240,13 @@ export default function Startup({ apiBase }: { apiBase: string }) {
         <Empty title={t("startup.error")} />
       ) : data ? (
         <>
-          {failed && <div style={warnNoticeStyle} role="alert">{t("startup.staleData")}</div>}
+          {failed && (
+            <div className={warnNoticeClass} role="alert" style={{ marginBottom: "var(--sp-3)" }}>
+              {t("startup.staleData")}
+            </div>
+          )}
           {codexRuntimeWarning && (
-            <div style={warnNoticeStyle} role="status">
+            <div className={warnNoticeClass} role="status" style={{ marginBottom: "var(--sp-3)" }}>
               <p style={{ margin: 0 }}>{codexRuntimeWarning}</p>
               {codexRuntimeFix && (
                 <div className="m3-row" style={{ marginTop: 8, gap: 8 }}>

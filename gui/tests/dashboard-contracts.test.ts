@@ -3,7 +3,7 @@ import { en } from "../src/i18n/en";
 import { M3_EN } from "../src/i18n/m3";
 import { interpolate, type TFn } from "../src/i18n/shared";
 import { normalizeInjectionSelection } from "../src/pages/dashboard-core-poll";
-import { modelMetaLabel, providersStatHint } from "../src/pages/dashboard-shared";
+import { defaultUpdateChannel, modelMetaLabel, providersStatHint } from "../src/pages/dashboard-shared";
 import { PROJECT_CONFIG_DIAGNOSTICS_POLL_MS } from "../src/startup-health-ui";
 
 /** English resolver, enough for the pure label helpers below. */
@@ -224,4 +224,71 @@ test("Dashboard dialog notices use the M3 notice, not the legacy one", async () 
   expect(dialogs).not.toMatch(/className="notice[ "]/);
   expect(dialogs).not.toContain("notice-warn");
   expect(dialogs).not.toContain("notice-err");
+});
+
+/**
+ * Supersession: the Models tab drew each model as a `white-space: nowrap` pill whose
+ * only readable content was the id — the `provider · ctx · cap` line the prototype
+ * prints under every model was hidden in a `title` attribute, which is unreachable by
+ * keyboard and unspoken by most screen readers. The prototype's two-line card is now
+ * the markup, and the meta is real rendered text.
+ */
+test("Models tab renders the prototype's two-line cards, not nowrap pills", async () => {
+  const modelsTab = await Bun.file(new URL("../src/pages/dashboard-models-section.tsx", import.meta.url)).text();
+  expect(modelsTab).toContain('className="dash-model-grid"');
+  expect(modelsTab).toContain('className="dash-model-card"');
+  expect(modelsTab).toContain('className="dash-model-card__id"');
+  expect(modelsTab).toContain('className="dash-model-card__meta"');
+  // The meta is the shared label, rendered — not stashed in a tooltip.
+  expect(modelsTab).toContain("modelMetaLabel(m, t)");
+  expect(modelsTab).not.toContain("dash-model-chip");
+  expect(modelsTab).not.toContain("title={modelMetaLabel");
+
+  // The card grid the prototype specifies: auto-fill at a 260px minimum, so a long
+  // model id wraps inside its card instead of scrolling the page sideways.
+  const css = await Bun.file(new URL("../src/styles-dashboard-workspace.css", import.meta.url)).text();
+  const grid = css.slice(css.indexOf(".dash-model-grid {"), css.indexOf("}", css.indexOf(".dash-model-grid {")));
+  expect(grid).toContain("minmax(260px, 1fr)");
+
+  // A collection keeps its search bar; the grid replaces the pills, not the field.
+  expect(modelsTab).toContain('t("models.search")');
+  expect(modelsTab).toContain('role="search"');
+});
+
+/**
+ * The version stat's hint. The prototype hard-codes "npm latest", which reads as a
+ * freshness claim the dashboard cannot make before an update check has run. The hint
+ * states only what the running version proves — which dist-tag this build came from —
+ * and derives it from the same helper that seeds the update dialog's channel.
+ */
+test("the version stat hints the release channel, not an unchecked freshness claim", async () => {
+  const head = await Bun.file(new URL("../src/pages/dashboard-overview-head.tsx", import.meta.url)).text();
+  expect(head).toContain('t("dash.channelHint"');
+  expect(head).toContain("defaultUpdateChannel(health.version)");
+  // No borrowed freshness copy.
+  expect(head).not.toContain("npm latest");
+
+  // The hint is only claimed when a version actually arrived.
+  expect(head).toContain("health?.version ? t(\"dash.channelHint\"");
+
+  expect(M3_EN["dash.channelHint"]).toBe("{channel} channel");
+  expect(t("dash.channelHint", { channel: defaultUpdateChannel("0.0.33.1") })).toBe("latest channel");
+  expect(t("dash.channelHint", { channel: defaultUpdateChannel("0.0.34-preview.2") })).toBe("preview channel");
+});
+
+/**
+ * Every screen is one labelled landmark named by its own lead paragraph, so a screen
+ * reader can jump to it and hear which screen it landed on. The Dashboard was an
+ * anonymous div whose only name was the nav item that had opened it.
+ */
+test("the Dashboard is a landmark named by its lead paragraph", async () => {
+  const page = await Bun.file(new URL("../src/pages/Dashboard.tsx", import.meta.url)).text();
+  expect(page).toContain("const DASHBOARD_LEAD_ID = \"dashboard-lead\"");
+  expect(page).toContain('<section className="dashboard-workspace-shell" aria-labelledby={DASHBOARD_LEAD_ID}>');
+  expect(page).toContain('<p id={DASHBOARD_LEAD_ID} className="m3-page-lead dash-subtitle">');
+  // The lead is body-large at a readable measure, not the body-small card subtitle.
+  const shell = await Bun.file(new URL("../src/styles/m3-shell.css", import.meta.url)).text();
+  const lead = shell.slice(shell.indexOf(".m3-page-lead {"), shell.indexOf("}", shell.indexOf(".m3-page-lead {")));
+  expect(lead).toContain("max-width: 74ch");
+  expect(lead).toContain("var(--t-body-l)");
 });

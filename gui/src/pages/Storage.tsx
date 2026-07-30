@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
 import { Button, Chip, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
-import { IconBoxes, IconClock, IconHardDrive, IconList, IconRefresh, IconRegex } from "../icons";
+import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh, IconRegex } from "../icons";
 import { formatBytes } from "../format-bytes";
 import { navigateHash } from "../hash-routing";
 import { useNotifications } from "../shell/notifications-context";
@@ -610,10 +610,16 @@ function ArchivedCleanupPanel({
       </div>
 
       {/* Filled, not danger: previewing deletes nothing. The destructive tone
-          belongs on the dialog's confirm, which is where the decision is made. */}
+          belongs on the dialog's confirm, which is where the decision is made.
+
+          The prototype marks this button with the `cleaning_services` broom. The
+          icon set has no broom, and IconTrash would be a lie on a control whose
+          first act is to measure rather than delete — so this is IconDataUsage,
+          the share-of-storage wedge, which is exactly what the slider selects and
+          the preview reports. Swap it for the real broom when one exists. */}
       <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
         <Button variant="filled" disabled={busy} onClick={() => void runPreview()}>
-          {t("storage.cleanup.previewAndClean")}
+          <IconDataUsage aria-hidden="true" /> {t("storage.cleanup.previewAndClean")}
         </Button>
       </div>
 

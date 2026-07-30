@@ -235,7 +235,11 @@ describe("Codex auto-switch controller interactions", () => {
       await flush();
     });
     expect(harness.input.value).toBe("95");
-    expect(harness.container.querySelector('[role="status"]')?.textContent).toContain("updated");
+    // Addressed by id: the settings-search row below the pool keeps its own
+    // always-mounted `role="status"` live region, so a bare role selector would
+    // now pick up whichever region happens to render first.
+    expect(harness.container.querySelector('#codex-auto-switch-feedback[role="status"]')?.textContent)
+      .toContain("updated");
     expect(harness.writes).toEqual([95]);
   });
 
@@ -298,7 +302,7 @@ describe("Codex auto-switch controller interactions", () => {
 
     expect(harness.input.value).toBe("80");
     expect(harness.writes).toEqual([]);
-    expect(harness.container.querySelector('[role="status"]')).toBeNull();
+    expect(harness.container.querySelector("#codex-auto-switch-feedback")).toBeNull();
   });
 
   test("pointer toggle disables a dirty valid draft before blur can commit it", async () => {

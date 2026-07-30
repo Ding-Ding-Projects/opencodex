@@ -3,7 +3,7 @@ import { type TKey, useT } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { formatUptime } from "../formatUptime";
 import { navigateHash } from "../hash-routing";
-import { providersStatHint } from "./dashboard-shared";
+import { defaultUpdateChannel, providersStatHint } from "./dashboard-shared";
 import type { useDashboardData } from "./use-dashboard-data";
 
 type Dash = ReturnType<typeof useDashboardData>;
@@ -45,7 +45,14 @@ export function DashboardOverviewHead({
           <div className="dash-stat-card">
             <div className="dash-stat-card__label"><IconTag {...STAT_ICON} />{t("dash.version")}</div>
             <div className="dash-stat-card__value mono">{health?.version ?? "—"}</div>
-            <div className="dash-stat-card__hint" />
+            {/* The prototype hard-codes a freshness claim here, which reads as "you are
+                up to date" — something the dashboard cannot know until an update check
+                has actually run. This states only what the running version proves: which
+                dist-tag the build came from, derived by the same function that seeds the
+                update dialog's channel, so the two can never disagree. */}
+            <div className="dash-stat-card__hint">
+              {health?.version ? t("dash.channelHint", { channel: defaultUpdateChannel(health.version) }) : " "}
+            </div>
           </div>
           <div className="dash-stat-card">
             <div className="dash-stat-card__label"><IconClock {...STAT_ICON} />{t("dash.uptime")}</div>

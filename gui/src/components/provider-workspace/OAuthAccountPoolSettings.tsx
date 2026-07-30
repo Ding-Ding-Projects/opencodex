@@ -238,9 +238,13 @@ export default function OAuthAccountPoolSettings({
         style={{
           marginTop: 10,
           padding: "8px 10px",
-          border: "1px solid var(--border, #c9a227)",
-          borderRadius: 6,
-          background: "color-mix(in srgb, var(--warn, #c9a227) 12%, transparent)",
+          // M3 roles, not the legacy `--border`/`--warn` pair with a baked-in amber hex:
+          // the fallback chain is the one the rest of this workspace's warning surfaces
+          // use, so the banner tracks the seed colour instead of staying literally amber.
+          border: "1px solid var(--m3-outline-variant)",
+          borderRadius: "var(--r-s)",
+          background: "var(--m3-warn-container, var(--m3-tertiary-container))",
+          color: "var(--m3-on-warn-container, var(--m3-on-tertiary-container))",
         }}
       >
         {copy.warning}
@@ -330,7 +334,7 @@ export default function OAuthAccountPoolSettings({
       )}
 
       {error && (
-        <div role="alert" className="card-sub" style={{ marginTop: 8, color: "var(--danger, #c44)" }}>
+        <div role="alert" className="card-sub" style={{ marginTop: 8, color: "var(--m3-error)" }}>
           {error}
         </div>
       )}

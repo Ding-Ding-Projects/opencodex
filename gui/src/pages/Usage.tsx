@@ -96,6 +96,49 @@ function formatPct(ratio: number): string {
   return `${Math.round(ratio * 100)}%`;
 }
 
+// ---- Locale-aware calendar labels -------------------------------------------
+// The heatmap's month strip and the day tooltips are calendar labels, not product copy, so they
+// come from Intl in the active locale rather than an English array baked into this file.
+const MONTH_OPTIONS: Intl.DateTimeFormatOptions = { month: "short" };
+const DAY_OPTIONS: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+const FULL_DAY_OPTIONS: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" };
+
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function cachedDateFormat(locale: Locale, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${locale}|${JSON.stringify(options)}`;
+  let fmt = dateFormatters.get(key);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat(locale, options);
+    dateFormatters.set(key, fmt);
+  }
+  return fmt;
+}
+
+/**
+ * Parse a `YYYY-MM-DD` bucket key as a *local* calendar day. `new Date(iso)` would read it as UTC
+ * midnight, which renders the previous day west of Greenwich — a heatmap cell labelled with the
+ * wrong date is worse than no label at all.
+ */
+function parseIsoDay(iso: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Localized `Jul 30`; falls back to the raw bucket key so a malformed date still identifies itself. */
+function formatDayShort(iso: string, locale: Locale): string {
+  const date = parseIsoDay(iso);
+  return date ? cachedDateFormat(locale, DAY_OPTIONS).format(date) : iso;
+}
+
+/** Localized `Jul 30, 2026` for the tooltips, where the year disambiguates a year-long heatmap. */
+function formatDayFull(iso: string, locale: Locale): string {
+  const date = parseIsoDay(iso);
+  return date ? cachedDateFormat(locale, FULL_DAY_OPTIONS).format(date) : iso;
+}
+
 /** Share readout beside each bar — one decimal, so the long tail of small models stays distinguishable. */
 function formatShare(ratio: number): string {
   return `${(ratio * 100).toFixed(1)}%`;
@@ -162,7 +205,7 @@ interface HeatmapCell {
   dayOfWeek: number;
 }
 
-function buildHeatmap(days: UsageDay[]): { weeks: HeatmapCell[][]; months: { label: string; col: number }[]; buckets: number[] } {
+function buildHeatmap(days: UsageDay[], locale: Locale): { weeks: HeatmapCell[][]; months: { label: string; col: number }[]; buckets: number[] } {
   const buckets = quantileBuckets(days.map(d => d.totalTokens));
   const dayMap = new Map(days.map(d => [d.date, d]));
 
@@ -175,7 +218,7 @@ function buildHeatmap(days: UsageDay[]): { weeks: HeatmapCell[][]; months: { lab
 
   const weeks: HeatmapCell[][] = [];
   const months: { label: string; col: number }[] = [];
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthFormat = cachedDateFormat(locale, MONTH_OPTIONS);
   let lastMonthCol = -4;
   let prevMonthIdx = -1;
   let week: HeatmapCell[] = [];
@@ -185,7 +228,7 @@ function buildHeatmap(days: UsageDay[]): { weeks: HeatmapCell[][]; months: { lab
     const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
     const m = cursor.getMonth();
     if (cursor.getDay() === 0 && m !== prevMonthIdx && weeks.length - lastMonthCol >= 4) {
-      months.push({ label: monthNames[m], col: weeks.length });
+      months.push({ label: monthFormat.format(cursor), col: weeks.length });
       lastMonthCol = weeks.length;
       prevMonthIdx = m;
     }
@@ -470,7 +513,7 @@ function WeekDayBars({ weekBars, locale, t }: { weekBars: UsageDay[]; locale: Lo
     <div className="daybars" role="img" aria-label={t("usage.section.heatmap")}>
       {weekBars.map(day => {
         const percentage = Math.round((day.totalTokens / max) * 100);
-        const label = day.date.slice(5);
+        const label = formatDayShort(day.date, locale);
         return (
           <div
             key={day.date}
@@ -494,7 +537,7 @@ function WeekDayBars({ weekBars, locale, t }: { weekBars: UsageDay[]; locale: Lo
             </div>
             {hoverDay === day.date && day.totalTokens > 0 && (
               <div className="daybar-tip" role="tooltip">
-                <div className="daybar-tip-date">{day.date}</div>
+                <div className="daybar-tip-date">{formatDayFull(day.date, locale)}</div>
                 {day.models.slice(0, 8).map(model => (
                   <div key={`${model.provider}/${model.model}`} className="daybar-tip-row">
                     <span className="daybar-tip-swatch" style={{ background: modelColor(model.model, model.provider) }} />
@@ -587,7 +630,7 @@ function UsageHeatmapPanel({
             if (!cell?.date) return null;
             return (
               <div className="heatmap-tip" role="tooltip" style={{ left: hoverCell.x, top: hoverCell.y }}>
-                <div className="heatmap-tip-date">{cell.date}</div>
+                <div className="heatmap-tip-date">{formatDayFull(cell.date, locale)}</div>
                 <div className="heatmap-tip-val">{t("usage.heatmap.tooltipTokens", { tokens: formatTokens(cell.totalTokens, locale) })}</div>
                 <div className="heatmap-tip-req muted">{t("usage.heatmap.tooltipRequests", { requests: cell.requests })}</div>
               </div>
@@ -855,7 +898,7 @@ export default function Usage({ apiBase }: { apiBase: string }) {
     };
   }, [fetchUsage, range, surface]);
 
-  const heatmap = useMemo(() => buildHeatmap(data?.days ?? []), [data?.days]);
+  const heatmap = useMemo(() => buildHeatmap(data?.days ?? [], locale), [data?.days, locale]);
   const weekBars = useMemo(() => lastSevenDays(data?.days ?? []), [data?.days]);
   const activeDays = useMemo(() => (data?.days ?? []).filter(d => d.requests > 0).length, [data?.days]);
   // Plain substring by default; the `.*` chip switches the same field to ECMAScript RegExp,

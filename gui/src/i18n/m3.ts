@@ -84,7 +84,11 @@ export const M3_EN = {
   "appearance.densitySub": "1 is Material's comfortable spacing; 5 matches the compact console layout.",
   "appearance.density": "Density level",
   "appearance.typeTitle": "Typography",
-  "appearance.typeSub": "All faces are bundled — the dashboard never fetches a font over the network.",
+  // Was "All faces are bundled", which was not true of anything: no font files
+  // existed and no @font-face was declared, so four of the five choices quietly
+  // rendered as whatever the system had. The faces are bundled now; the sentence
+  // says what is actually bundled, because the CJK coverage deliberately is not.
+  "appearance.typeSub": "Latin faces are bundled — the dashboard never fetches a font over the network. Chinese text uses your system's font.",
   "appearance.fontFamily": "Font family",
   "appearance.fontScale": "Text size",
   "appearance.fontWeight": "Text weight",

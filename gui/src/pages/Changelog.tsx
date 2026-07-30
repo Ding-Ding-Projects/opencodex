@@ -196,7 +196,9 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
     link.download = "changelog.md";
     link.click();
     URL.revokeObjectURL(url);
-    notify({ tone: "success", title: t("changelog.export"), body: rangeLabel });
+    // The confirmation says what landed on disk, not what the button was called —
+    // "Export as Markdown" as a past-tense toast reads like the action is still pending.
+    notify({ tone: "success", title: t("changelog.downloaded"), body: rangeLabel });
   };
 
   return (

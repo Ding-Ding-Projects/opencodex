@@ -87,16 +87,13 @@ const pillStyle = (tone: Tone): CSSProperties => ({
   whiteSpace: "nowrap",
 });
 
-const noticeStyle = (tone: Tone): CSSProperties => ({
-  ...TONE_SURFACE[tone],
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  marginTop: "var(--sp-3)",
-  padding: "12px 16px",
-  borderRadius: 12,
-  fontSize: "var(--t-body-s)",
-});
+/**
+ * Inline notice. `.dash-notice--warn` is the shared vocabulary for this — the
+ * `dash-` prefix is historical, not a dashboard scope — and `.m3-row` supplies
+ * the icon/text row. Only the leading gap stays local: the class has no margin.
+ */
+const noticeClass = "dash-notice dash-notice--warn m3-row";
+const noticeGapStyle: CSSProperties = { marginTop: "var(--sp-3)" };
 
 const commandListStyle: CSSProperties = {
   border: "1px solid var(--m3-outline-variant)",
@@ -324,7 +321,9 @@ export function StartupTraySection({
           </Button>
         )}
       </div>
-      {(trayError || tray?.stale) && <div style={noticeStyle("warn")} role="alert">{t("startup.tray.error")}</div>}
+      {(trayError || tray?.stale) && (
+        <div className={noticeClass} style={noticeGapStyle} role="alert">{t("startup.tray.error")}</div>
+      )}
 
       <dialog
         ref={uninstallDialogRef}
@@ -391,7 +390,7 @@ export function StartupRecoverySection({
         ))}
       </div>
       {data.status === "at-risk" && (
-        <div style={noticeStyle("warn")} role="alert">
+        <div className={noticeClass} style={noticeGapStyle} role="alert">
           <span aria-hidden="true" style={{ display: "inline-flex", flex: "0 0 auto" }}><IconPower /></span>
           {t("startup.recommended", { cmd: data.recommendedCommand ?? data.commands.installService })}
         </div>

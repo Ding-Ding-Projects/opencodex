@@ -34,7 +34,7 @@ import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider } from "../../
 import { codexAccountNamespaceProviderCollisionError } from "../../codex/account-namespace-match";
 import { clearThreadAccountMap } from "../../codex/routing";
 import { primeCodexPoolQuotas } from "../../codex/auth-api";
-import { getProviderDiscoveryStatus } from "../../codex/model-cache";
+import { getProviderDiscoveryStatus, getProviderLiveModelCount } from "../../codex/model-cache";
 import { DEFAULT_PROVIDER_CONTEXT_CAP, globalContextCapValue, providerContextCap, providerContextCaps, setAllProviderContextCaps, setGlobalContextCapValue, setProviderContextCap } from "../../providers/context-cap";
 import { resolveCodexHomeDir } from "../../codex/home";
 import { readUsageEntries } from "../../usage/log";
@@ -83,8 +83,25 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       disabled: p.disabled === true,
       codexAccountMode: providerCodexAccountMode(name, p),
       discovery: p.liveModels === false ? undefined : getProviderDiscoveryStatus(name),
+      // How many models this provider actually exposes. `models` alone cannot answer
+      // it: a live-discovery provider carries an empty configured list while serving
+      // dozens, so a count taken from that array reads "0 models" for exactly the
+      // providers with the most. Live count first, configured list as the fallback,
+      // and undefined when discovery has never succeeded — which the GUI shows as
+      // "unknown" rather than inventing a zero.
+      modelCount: p.liveModels === false
+        ? (p.models?.length ?? 0)
+        : getProviderLiveModelCount(name) ?? (p.models?.length ? p.models.length : undefined),
     })));
   }
+
+  // NOTE for anyone told the "Test connection" button needs a new endpoint: it does
+  // not. `POST /api/providers/test?name=<name>` is below, it is what `ocx provider
+  // test` already calls, and it handles more than a bare probe would — a disabled
+  // provider and forward auth mode both answer without a pointless round-trip. The
+  // GUI strings (pws.testConnection / pws.testing / pws.connectionOk /
+  // pws.connectionFailed) are unreferenced because nothing wired the button, not
+  // because the route is missing.
 
   // Add (or overwrite) a single provider. Merges into the live in-memory config and
   // persists — existing providers' real keys are never round-tripped (unlike PUT /api/config,

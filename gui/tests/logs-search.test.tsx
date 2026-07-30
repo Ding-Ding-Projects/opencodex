@@ -5,7 +5,8 @@ import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
 import Logs from "../src/pages/Logs";
 
-const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT", "ResizeObserver"] as const;
+const globals = ["document", "window", "navigator", "localStorage", "sessionStorage", "IS_REACT_ACT_ENVIRONMENT", "ResizeObserver"] as const;
+const SEARCH_HANDOFF_KEY = "ocx-m3:search-handoff";
 let previousGlobals: Record<(typeof globals)[number], unknown>;
 let testWindow: Window;
 const originalFetch = globalThis.fetch;
@@ -94,6 +95,7 @@ beforeEach(() => {
     window: { configurable: true, value: testWindow },
     navigator: { configurable: true, value: testWindow.navigator },
     localStorage: { configurable: true, value: testWindow.localStorage },
+    sessionStorage: { configurable: true, value: testWindow.sessionStorage },
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   installLayoutStubs(testWindow);
@@ -190,7 +192,7 @@ test("Logs: plain text is the default and `.*` opts the same field into regex", 
   // `gpt-one|sonnet` is a literal in plain-text mode, so it matches nothing.
   await typeInto(searchInput(container), "gpt-one|sonnet-two");
   expect(requestIds(container)).toHaveLength(0);
-  expect(container.textContent).toContain("No requests yet.");
+  expect(container.textContent).toContain("No requests match your search.");
 
   const regexChip = [...container.querySelectorAll<HTMLButtonElement>("button.m3-chip")]
     .find(btn => btn.textContent?.trim() === ".*");
@@ -221,6 +223,74 @@ test("Logs: an invalid pattern reports itself instead of silently matching every
   expect(searchInput(container).getAttribute("aria-invalid")).toBe("true");
   // A pattern that cannot compile must not fall back to matching every row.
   expect(requestIds(container)).toHaveLength(0);
+
+  await act(async () => { root.unmount(); });
+});
+
+test("Logs: an empty table distinguishes a narrowed search from a quiet server", async () => {
+  const { root, container } = await mountLogs();
+
+  // Requests exist, the search hid them: say so rather than claiming none arrived.
+  await typeInto(searchInput(container), "no-such-request");
+  expect(requestIds(container)).toHaveLength(0);
+  expect(container.textContent).toContain("No requests match your search.");
+  expect(container.textContent).not.toContain("No requests yet.");
+
+  // A surface chip narrows the table just as a typed query does.
+  await typeInto(searchInput(container), "");
+  const surfaces = container.querySelector<HTMLElement>('[role="group"][aria-label="Surface"]');
+  const claude = [...surfaces!.querySelectorAll<HTMLButtonElement>("button.m3-chip")][2];
+  await act(async () => { claude.click(); });
+  await act(async () => { jest.advanceTimersByTime(0); await Promise.resolve(); });
+  expect(container.textContent).toContain("No requests match your search.");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("Logs: with nothing logged at all the empty state stays the quiet-server one", async () => {
+  globalThis.fetch = (async (input) => {
+    if (!String(input).includes("/api/logs")) return new Response(null, { status: 404 });
+    return jsonResponse([]);
+  }) as typeof fetch;
+  const { root, container } = await mountLogs();
+
+  await typeInto(searchInput(container), "anything");
+  expect(container.textContent).toContain("No requests yet.");
+  expect(container.textContent).not.toContain("No requests match your search.");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("Logs: the search row claims a pattern handed over by the regex builder", async () => {
+  sessionStorage.setItem(SEARCH_HANDOFF_KEY, JSON.stringify({
+    page: "logs", pattern: "gpt-one|sonnet-two", flags: "g", regex: true,
+  }));
+
+  const { root, container } = await mountLogs();
+
+  expect(searchInput(container).value).toBe("gpt-one|sonnet-two");
+  const regexChip = [...container.querySelectorAll<HTMLButtonElement>("button.m3-chip")]
+    .find(btn => btn.textContent?.trim() === ".*");
+  expect(regexChip!.getAttribute("aria-pressed")).toBe("true");
+  // The alternation only matches both rows when it is read as a pattern.
+  expect(requestIds(container).sort()).toEqual(["req-alpha", "req-beta"]);
+  // One-shot: a claimed pattern must not re-filter the table on the next visit.
+  expect(sessionStorage.getItem(SEARCH_HANDOFF_KEY)).toBeNull();
+
+  await act(async () => { root.unmount(); });
+});
+
+test("Logs: a hand-off addressed to another screen is left alone", async () => {
+  sessionStorage.setItem(SEARCH_HANDOFF_KEY, JSON.stringify({
+    page: "notifications", pattern: "req-alpha", regex: true,
+  }));
+
+  const { root, container } = await mountLogs();
+
+  expect(searchInput(container).value).toBe("");
+  expect(requestIds(container)).toHaveLength(2);
+  // Logs must not eat a pattern meant for another search bar on its way past.
+  expect(sessionStorage.getItem(SEARCH_HANDOFF_KEY)).not.toBeNull();
 
   await act(async () => { root.unmount(); });
 });

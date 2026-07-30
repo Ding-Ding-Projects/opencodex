@@ -13,6 +13,9 @@ import {
 } from "./dashboard-shared";
 import { useDashboardData } from "./use-dashboard-data";
 
+/** The lead paragraph names the screen's landmark; both ends must agree on the id. */
+const DASHBOARD_LEAD_ID = "dashboard-lead";
+
 function selectDashboardTab(next: DashboardSection) {
   // Deliberate navigation: push a history entry so Back/Forward restore the tab.
   navigateHash(dashboardHashForSection(next));
@@ -80,9 +83,12 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
   };
 
   return (
-    <div className="dashboard-workspace-shell">
+    // The prototype wraps each screen in a section named by its lead paragraph, so the
+    // screen is one labelled landmark a screen reader can jump to and announce, rather
+    // than an anonymous div whose only name is the nav item that opened it.
+    <section className="dashboard-workspace-shell" aria-labelledby={DASHBOARD_LEAD_ID}>
       {/* The prototype leads every screen with body-large copy at a 74ch measure. */}
-      <p className="m3-page-lead dash-subtitle">{t("dash.subtitle")}</p>
+      <p id={DASHBOARD_LEAD_ID} className="m3-page-lead dash-subtitle">{t("dash.subtitle")}</p>
       {/* Above the section tabs on purpose: launching an agent is a one-press action
           from the landing screen, not something to navigate to. */}
       <LaunchCard apiBase={apiBase} />
@@ -114,6 +120,6 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
         {selected.body}
       </section>
       {updateDialog}
-    </div>
+    </section>
   );
 }

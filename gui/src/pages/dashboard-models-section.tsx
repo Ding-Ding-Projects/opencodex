@@ -85,15 +85,18 @@ export function DashboardModelsSection({
                       <span className="count">{rows.length}</span>
                     </button>
                     {open && (
-                      <div className="dash-model-chips">
+                      // The prototype renders every model as a two-line card — the id
+                      // above `provider · ctx · cap` — where the port had a nowrap pill
+                      // that could only ever hold the id and pushed the meta into a
+                      // `title` no keyboard user could reach. The card repeats the
+                      // provider the group heading states on purpose: a card surfaced by
+                      // a search is read on its own, and the heading scrolls away.
+                      <div className="dash-model-grid">
                         {rows.map(m => (
-                          // The prototype prints `provider · ctx · cap` under every model.
-                          // The group heading already names the provider, so the chip
-                          // carries the part the heading does not.
-                          <code key={`${m.provider}/${m.id}`} className="dash-model-chip" title={modelMetaLabel(m, t)}>
-                            {m.id}
-                            <span className="muted">{modelMetaChipSuffix(m, t)}</span>
-                          </code>
+                          <div key={`${m.provider}/${m.id}`} className="dash-model-card">
+                            <div className="dash-model-card__id">{m.id}</div>
+                            <div className="dash-model-card__meta">{modelMetaLabel(m, t)}</div>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -106,11 +109,4 @@ export function DashboardModelsSection({
       )}
     </Card>
   );
-}
-
-/** The meta line minus the provider, which the group heading above already states. */
-function modelMetaChipSuffix(model: ModelInfo, t: TFn): string {
-  const full = modelMetaLabel(model, t);
-  const rest = full.slice(model.provider.length);
-  return rest;
 }

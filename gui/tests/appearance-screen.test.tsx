@@ -88,6 +88,40 @@ test("leads with body-large copy and proves the seed on six role swatches", asyn
   await act(async () => { root.unmount(); });
 });
 
+test("the per-element editor names its colour group and its reset target", async () => {
+  const { container, root } = await mount();
+
+  // The colour pair is a labelled group, not two unlabelled swatches floating
+  // beside the font, radius and padding controls.
+  const labels = [...container.querySelectorAll(".m3-field-label")].map(node => node.textContent);
+  expect(labels).toContain("Colour");
+
+  // The per-target reset is the row's only outlined button; the two beside it
+  // (reset-all and reset-appearance) are text buttons.
+  const resetButton = () => container.querySelector("button.m3-btn--outlined");
+
+  // The first target is selected on mount, so the button names it outright.
+  expect(resetButton()?.textContent).toBe("Reset Navigation rail");
+
+  // Switching target retargets the button rather than leaving generic copy that
+  // could be read as clearing every override.
+  const cardChip = [...container.querySelectorAll("button")].find(node => node.textContent === "Cards");
+  await act(async () => { cardChip?.dispatchEvent(new testWindow.Event("click", { bubbles: true }) as never); });
+  expect(resetButton()?.textContent).toBe("Reset Cards");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("the live preview names the three Material button styles the prototype shows", async () => {
+  const { container, root } = await mount();
+
+  // Spans, not buttons — the preview is a specimen sheet, not three dead controls.
+  const specimens = [...container.querySelectorAll("span.m3-btn")].map(node => node.textContent);
+  expect(specimens).toEqual(["Filled", "Tonal", "Outlined"]);
+
+  await act(async () => { root.unmount(); });
+});
+
 test("the settings search filters this surface and reports matches on another tab", async () => {
   const { container, root } = await mount();
 

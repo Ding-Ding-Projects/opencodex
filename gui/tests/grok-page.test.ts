@@ -46,12 +46,28 @@ test("the Grok page is routable and present in the nav", async () => {
 test("the Grok page carries the settings search row wired to the regex builder", async () => {
   const page = await read("../src/pages/Grok.tsx");
   expect(page).toContain('role="search"');
-  expect(page).toContain("settings.search");
   expect(page).toContain("search.regexHint");
   expect(page).toContain("settings.openBuilder");
   expect(page).toContain('href="#regex"');
+});
+
+// The rows are models and aliases, so the field and its empty state say so. Borrowing
+// "Search settings…" / "No settings match on this surface." described the wrong things.
+test("the Grok search uses its own copy, not the generic settings strings", async () => {
+  const page = await read("../src/pages/Grok.tsx");
+  expect(page).toContain('placeholder={t("grok.search")}');
+  expect(page).toContain('aria-label={t("grok.search")}');
   // No-match is an honest empty state, not a silently blank list.
-  expect(page).toContain("settings.noMatch");
+  expect(page).toContain('t("grok.noMatch")');
+  expect(page).not.toContain('t("settings.search")');
+  expect(page).not.toContain('t("settings.noMatch")');
+});
+
+test("the Grok search copy exists in the M3 dictionary", async () => {
+  const dict = await read("../src/i18n/m3.ts");
+  for (const key of ["grok.search", "grok.noMatch"]) {
+    expect(new RegExp(`"${key.replace(".", "\\.")}":\\s*"[^"]+"`).test(dict)).toBe(true);
+  }
 });
 
 // A Version history entry must name the event, not that "something changed" — and it must

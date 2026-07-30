@@ -85,6 +85,23 @@ test("Usage model search offers regex opt-in and the anchored builder", async ()
   expect(src).toContain('t("regex.invalid")');
 });
 
+// The heatmap's month strip and the day tooltips are calendar labels. They used to be an English
+// month array and a raw `YYYY-MM-DD` slice, which read as English in every locale.
+test("Usage calendar labels come from Intl in the active locale, not a baked-in English array", async () => {
+  const src = await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text();
+
+  expect(src).not.toContain('"Jan", "Feb"');
+  expect(src).not.toContain("day.date.slice(5)");
+  expect(src).toContain("new Intl.DateTimeFormat(locale, options)");
+  expect(src).toContain("buildHeatmap(data?.days ?? [], locale)");
+  expect(src).toContain("formatDayShort(day.date, locale)");
+  expect(src).toContain("formatDayFull(cell.date, locale)");
+  // A bucket key must be read as a local calendar day; `new Date(iso)` would shift it a day west
+  // of Greenwich and mislabel the cell.
+  expect(src).toContain("function parseIsoDay");
+  expect(src).toContain("new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))");
+});
+
 test("retired usage workspace i18n keys stay removed from every locale", async () => {
   const locales = ["en", "de", "ja", "ko", "ru", "zh"] as const;
   for (const locale of locales) {

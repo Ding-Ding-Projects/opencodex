@@ -150,6 +150,16 @@ test("an active account that needs re-auth gets its own group, not the setup pil
   expect(rowNames(2)).toEqual(["Beta"]);
 });
 
+test("every rail group announces its own count, the attention group included", async () => {
+  await mountShell({ beta: true });
+
+  // The head is aria-hidden, so the count a screen reader hears comes from the group's
+  // own aria-label. All four read through their translated "Label (n)" key — the
+  // attention group used to hand-concatenate its count and so could never translate.
+  const labels = Array.from(host.querySelectorAll(".pws-rail-group")).map((el) => el.getAttribute("aria-label"));
+  expect(labels).toEqual(["Ready (1)", "Needs setup (1)", "Needs attention (1)", "Disabled (1)"]);
+});
+
 test("the attention group is a real facet in the status filter, with its own count", async () => {
   await mountShell({ beta: true });
 

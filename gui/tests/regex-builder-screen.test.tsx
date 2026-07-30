@@ -122,6 +122,45 @@ test("lists named capture groups at the index the engine really assigns them", a
   await act(async () => { root.unmount(); });
 });
 
+test("says a pattern declares no named group, and stays silent when there is no pattern", async () => {
+  const { container, root } = await mount();
+
+  const groupsPanel = () => [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Capture groups");
+  const pattern = container.querySelector("#ocx-rx-pattern") as unknown as HTMLInputElement;
+
+  await act(async () => { typeInto(pattern, "\\d+"); });
+  expect(groupsPanel()?.querySelector("p")?.textContent)
+    .toBe("This pattern declares no named capture group.");
+
+  // Nothing typed yet: an empty box beats a sentence about a pattern that does not exist.
+  await act(async () => { typeInto(pattern, ""); });
+  expect(groupsPanel()?.querySelector("p")?.textContent).toBe("");
+
+  // Invalid: the error line already says what is wrong, so the panel does not add to it.
+  await act(async () => { typeInto(pattern, "(?<"); });
+  expect(groupsPanel()?.querySelector("p")?.textContent).toBe("");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("labels each capture once, by its declared name where it has one", async () => {
+  const { container, root } = await mount();
+
+  const pattern = container.querySelector("#ocx-rx-pattern") as unknown as HTMLInputElement;
+  const sample = container.querySelector("#ocx-rx-sample") as unknown as HTMLInputElement;
+  await act(async () => { typeInto(sample, "ab"); });
+  await act(async () => { typeInto(pattern, "(a)(?<tail>b)"); });
+
+  const matchesPanel = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Matches");
+  const label = [...(matchesPanel?.querySelectorAll("li span") ?? [])].map(n => n.textContent).pop();
+  // Not "$1=a  $2=b  tail=b" — the named group must not be printed a second time.
+  expect(label).toBe("$1=a  tail=b");
+
+  await act(async () => { root.unmount(); });
+});
+
 test("states the local-evaluation safety caps the builder actually enforces", async () => {
   const { container, root } = await mount();
 

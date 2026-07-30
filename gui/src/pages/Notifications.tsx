@@ -97,6 +97,11 @@ export default function NotificationsPage() {
         ))}
       </div>
 
+      {/*
+        `aria-describedby` is bound only while the pattern error is on screen: a
+        dangling reference resolves to nothing and quietly costs the field its
+        accessible description.
+      */}
       <div className="m3-row" role="search" style={{ marginBottom: "var(--sp-3)" }}>
         <IconSearch width={20} height={20} aria-hidden="true" />
         <TextInput
@@ -105,7 +110,7 @@ export default function NotificationsPage() {
           placeholder={t("notif.search")}
           aria-label={t("notif.search")}
           aria-invalid={!!error}
-          aria-describedby="notif-regex-error"
+          aria-describedby={error ? "notif-regex-error" : undefined}
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -124,7 +129,18 @@ export default function NotificationsPage() {
         </p>
       )}
 
-      {rows.length === 0 ? (
+      {/*
+        Three distinct nothings, and they must not borrow each other's copy.
+        An unreadable pattern already speaks through the alert above, so no empty
+        block follows it; an empty history invites the user to expect messages
+        later; a filter that matched nothing says so, because "Nothing yet" over a
+        history the user can see is not just wrong, it reads as a broken screen.
+      */}
+      {error ? null : rows.length === 0 && history.length > 0 ? (
+        <div role="status">
+          <Empty title={t("notif.noMatch")} />
+        </div>
+      ) : rows.length === 0 ? (
         <Empty title={t("notif.empty")}>{t("notif.emptyBody")}</Empty>
       ) : (
         <ul style={{ display: "grid", gap: 8, margin: 0, padding: 0, listStyle: "none" }}>

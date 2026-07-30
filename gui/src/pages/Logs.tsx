@@ -11,6 +11,7 @@ import { Button, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import Debug from "./Debug";
 
 import { M3_TABLIST_STYLE, m3TabStyle } from "./debug-shared";
+import { consumeLogsSearchHandoff } from "./logs-search-handoff";
 import type { LogsTab } from "./logs-tab-keydown";
 import { logsTabKeyDown, readTabFromHash, selectLogsTab } from "./logs-tab-keydown";
 
@@ -327,6 +328,9 @@ function logSearchText(log: LogEntry): string {
  * alignment the legacy `.tbl .num` selector supplied is re-applied inline with
  * role tokens. Cells keep `.num`/`.mono` for the mono face + tabular figures.
  */
+/** Same bound every other search in the app applies before compiling a pattern. */
+const PATTERN_CAP = 400;
+
 const NUM_CELL: CSSProperties = { textAlign: "right" };
 
 /**
@@ -429,6 +433,17 @@ export default function Logs({ apiBase }: { apiBase: string }) {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  // The regex builder navigates here after stashing a finished pattern. Claiming
+  // it in an effect rather than a lazy initialiser keeps StrictMode's double
+  // mount honest: the record is gone by the second pass, and the state set on the
+  // first one survives, so the pattern is neither lost nor applied twice.
+  useEffect(() => {
+    const handoff = consumeLogsSearchHandoff();
+    if (!handoff) return;
+    setQuery(handoff.pattern);
+    setUseRegex(handoff.regex);
+  }, []);
+
   const selectTab = selectLogsTab;
 
   const fetchLogs = useCallback(async (opts?: { silent?: boolean }) => {
@@ -476,12 +491,18 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   // Plain text is the default; `.*` opts the same field into ECMAScript RegExp,
   // evaluated locally. An invalid pattern matches nothing and says why rather
   // than silently falling back to a substring search.
+  //
+  // Bounded like every other search in the app. This one matters more than the
+  // rest now: the regex-builder hand-off writes a pattern into this field from
+  // outside the screen, so it is the only search bar whose input does not come
+  // from the box in front of the user — and it was the only one without the cap.
+  // An unbounded pattern over every log line is a page the tab cannot recover from.
   const { matchesQuery, regexError } = useMemo(() => {
     const trimmed = query.trim();
     if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
     if (useRegex) {
       try {
-        const re = new RegExp(trimmed, "i");
+        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), "i");
         return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
       } catch (cause) {
         return {
@@ -503,6 +524,10 @@ export default function Logs({ apiBase }: { apiBase: string }) {
     && (!conversationQuery || matchesLogConversationId(log.conversationId, conversationQuery, conversationQueryHash))
   ));
   const conversationTotals = conversationQuery ? summarizeFilteredLogs(filteredLogs) : null;
+  // "No requests yet" and "nothing matched" are different facts, and telling the
+  // user the wrong one hides their own filter from them. Anything that narrows
+  // the table counts, including the surface chips.
+  const isNarrowed = query.trim() !== "" || conversationQuery !== "" || surfaceFilter !== "all";
 
   // TanStack Virtual returns unstable function identities; React Compiler skips this call.
   // eslint-disable-next-line react-hooks/incompatible-library -- known useVirtualizer limitation
@@ -665,7 +690,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       ) : loading && logs.length === 0 ? (
         <Empty title={t("common.loading")} />
       ) : filteredLogs.length === 0 ? (
-        <Empty title={t("logs.noRequests")} />
+        <Empty title={t(logs.length > 0 && isNarrowed ? "logs.noMatch" : "logs.noRequests")} />
       ) : (
         <div ref={scrollContainerRef} style={TABLE_SHELL}>
           <table className="m3-table logs-table">
