@@ -165,6 +165,14 @@ function createWindow(port) {
     show: false,
     backgroundColor: "#101010",
     title: `opencodex v${appVersion()}`,
+    // No native title bar: the dashboard's Material 3 app bar is the chrome.
+    // The Window Controls Overlay keeps native min/max/close floating over it,
+    // and the app bar declares itself draggable (app-region) on the web side.
+    titleBarStyle: "hidden",
+    ...(process.platform !== "darwin"
+      ? { titleBarOverlay: { color: "#101010", symbolColor: "#e6e6e6", height: 48 } }
+      : {}),
+    autoHideMenuBar: true,
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(HERE, "preload.mjs"),

@@ -718,3 +718,22 @@
 /* In rail mode the row is icon-over-label, so the switch tucks under it. */
 .m3-nav--rail .m3-nav-entry { flex-direction: column; gap: 2px; }
 .m3-nav--rail .m3-nav-entry > :not(.m3-nav-item) { margin: 0 0 4px; }
+
+/* ----------------------------------------------------------- desktop shell -- */
+
+/*
+  Desktop app only (html[data-desktop]): the native title bar is hidden, so the
+  app bar doubles as the window chrome. The bar itself is the drag region;
+  everything interactive inside it opts back out, or it would stop being
+  clickable. The right padding keeps the account chip clear of the native
+  min/max/close overlay (env() resolves only when the overlay exists).
+*/
+html[data-desktop] .m3-appbar {
+  app-region: drag;
+  padding-right: max(8px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
+}
+html[data-desktop] .m3-appbar button,
+html[data-desktop] .m3-appbar [role="dialog"],
+html[data-desktop] .m3-appbar .m3-avatar {
+  app-region: no-drag;
+}
