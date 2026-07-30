@@ -1257,6 +1257,12 @@ export function saveConfig(config: OcxConfig): void {
 let configSnapshotTimer: ReturnType<typeof setTimeout> | undefined;
 function noteConfigWritten(): void {
   if (process.env.OCX_DISABLE_STATE_HISTORY === "1") return;
+  // `bun test` sets NODE_ENV=test, and the suite writes config thousands of times.
+  // Leaving this on spawned git across the whole run and pushed timing-sensitive
+  // tests past their deadline — including the state history's own, which is how it
+  // was noticed. Tests that actually exercise the history call recordStateSnapshot
+  // directly, so only this implicit save-path snapshot is suppressed.
+  if (process.env.NODE_ENV === "test") return;
   if (configSnapshotTimer) clearTimeout(configSnapshotTimer);
   configSnapshotTimer = setTimeout(() => {
     configSnapshotTimer = undefined;

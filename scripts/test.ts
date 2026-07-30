@@ -25,6 +25,13 @@ export function createIsolatedTestEnvironment(
       USERPROFILE: root,
       OPENCODEX_HOME: opencodexHome,
       CODEX_HOME: codexHome,
+      // Every `saveConfig` schedules a git snapshot of the state files, which is
+      // what makes a settings change recoverable. The suite writes config
+      // thousands of times, so leaving it on spawns git across the whole run and
+      // pushes timing-sensitive tests over their deadline — including the state
+      // history's own. Tests that exercise the history call it directly and are
+      // unaffected; this only stops the implicit save-path snapshot.
+      OCX_DISABLE_STATE_HISTORY: "1",
     },
     cleanup() {
       rmSync(root, { recursive: true, force: true });
