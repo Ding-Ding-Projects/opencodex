@@ -329,7 +329,8 @@ export default function LanguageVoice() {
                 <div style={{ fontSize: "var(--t-body-s)" }}>
                   <span lang="zh-HK">{preview.zh}</span>
                   {" · "}
-                  <span role="img" aria-label={preview.name}>{preview.name}</span>
+                  <span>{preview.name}</span>
+                  <div style={{ fontSize: "var(--t-label-s)", opacity: 0.85, fontStyle: "italic" }}>{preview.jyutping}</div>
                 </div>
               </div>
             </div>

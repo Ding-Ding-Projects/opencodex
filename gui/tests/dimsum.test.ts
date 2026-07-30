@@ -71,6 +71,21 @@ describe("dim sum draw", () => {
       expect(dish.emoji.length).toBeGreaterThan(0);
       expect(dish.name.length).toBeGreaterThan(0);
       expect(dish.zh.length).toBeGreaterThan(0);
+      expect(dish.jyutping.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("every dish has a real bundled photo on disk", () => {
+    // The card falls back to an emoji when a file is missing, which is the
+    // right behaviour and also the reason a missing file would never be
+    // noticed. Assert the files exist rather than trusting the fallback.
+    const { existsSync } = require("node:fs") as typeof import("node:fs");
+    const { fileURLToPath } = require("node:url") as typeof import("node:url");
+    for (const dish of DISHES) {
+      // fileURLToPath, not `.pathname`: on Windows the latter yields
+      // "/C:/Users/…", which existsSync never resolves.
+      const path = fileURLToPath(new URL(`../public/${photoSrc(dish)}`, import.meta.url));
+      expect(`${dish.id}: ${existsSync(path)}`).toBe(`${dish.id}: true`);
     }
   });
   test("every dish resolves to a bundled, same-origin photo path", () => {

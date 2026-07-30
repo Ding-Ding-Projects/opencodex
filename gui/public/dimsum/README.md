@@ -1,24 +1,30 @@
 # Dim sum photos
 
-Drop one image per dish here, named `<dish-id>.webp`, and the surprise card
-starts showing it — no code change needed. The card renders the photo first and
-falls back to the labelled emoji stand-in only when the file is missing, so a
-partial set is fine: dishes with art get art, the rest keep the stand-in.
+One image per dish, named `<dish-id>.webp`, matching the ids in `DISHES`
+(`gui/src/shell/dimsum.ts`). The card renders the photo and falls back to the
+emoji stand-in only when a file is missing, so a partial set is fine.
 
-Dish ids come from `DISHES` in `gui/src/shell/dimsum.ts`:
+These are real photographs from the shared dim sum catalog — **not generated
+here**. They are centre-cropped to a square and downscaled to 192×192 WebP,
+which is the size the card actually renders at 2x. The originals average
+2.3 MB each; shipping those to draw a 48px thumbnail would have added most of a
+gigabyte to an installer for no visible difference.
 
-| id | dish |
+| File | Dish |
 | --- | --- |
-| `har-gow` | Har gow (shrimp dumpling) · 蝦餃 |
-| `siu-mai` | Siu mai (pork and shrimp dumpling) · 燒賣 |
-| `char-siu-bao` | Char siu bao (barbecue pork bun) · 叉燒包 |
-| `cheung-fun` | Cheung fun (rice noodle roll) · 腸粉 |
-| `dan-tat` | Dan tat (egg tart) · 蛋撻 |
-| `lo-bak-go` | Lo bak go (turnip cake) · 蘿蔔糕 |
-| `fung-zao` | Fung zao (chicken feet) · 鳳爪 |
-| `nor-mai-gai` | Nor mai gai (sticky rice in lotus leaf) · 糯米雞 |
+| `classic-har-gow.webp` | Classic Har Gow · 蝦餃 |
+| `classic-siu-mai.webp` | Classic Siu Mai · 燒賣 |
+| `classic-char-siu-bao.webp` | Classic Char Siu Bao · 叉燒包 |
+| `steamed-chicken-with-black-fungus.webp` | Steamed Chicken with Black Fungus · 雲耳蒸雞 |
+| `puff-pastry-egg-tarts.webp` | Puff Pastry Egg Tarts · 酥皮蛋撻 |
+| `steamed-radish-cake.webp` | Steamed Radish Cake · 蒸蘿蔔糕 |
+| `black-bean-chicken-feet.webp` | Steamed Chicken Feet in Black Bean Sauce · 豉汁蒸鳳爪 |
+| `steamed-bean-curd-roll.webp` | Steamed Bean Curd Skin Roll · 鮮竹卷 |
+| `traditional-big-bun.webp` | Traditional Big Bun · 大包 |
+| `steamed-beef-balls.webp` | Steamed Beef Balls · 山竹牛肉 |
+| `sausage-turnip-pudding.webp` | Turnip Pudding with Chinese Sausage · 臘味蘿蔔糕 |
 
-Requirements: bundled locally (never a CDN or a tracking pixel), square, at
-least 96×96 so it stays sharp at 2x, and small — this ships inside the
-installer. The card names the dish in text beside the image, so the image is
-marked decorative and needs no alt text of its own.
+Requirements for anything added here: bundled locally (never a CDN or a
+tracking pixel), square, at least 96×96 so it stays sharp at 2x, and small —
+this ships inside the installer. The card names the dish in text beside the
+image, so the image is marked decorative and needs no alt text of its own.

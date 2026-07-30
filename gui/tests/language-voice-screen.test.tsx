@@ -175,7 +175,13 @@ test("show one now reveals a named dim sum dish without blocking anything", asyn
   const card = container.querySelector('[role="status"]');
   expect(card).toBeTruthy();
   // The dish is named for screen readers too — the art alone is not the label.
-  expect(card?.querySelector('[role="img"]')?.getAttribute("aria-label")).toBeTruthy();
+  // The name is plain text now rather than an aria-label on a `role="img"`
+  // span: a text node is not an image, and labelling it as one made assistive
+  // technology announce a picture where there was only a word. The photo beside
+  // it is marked decorative precisely because this text carries the name.
+  const text = card?.textContent ?? "";
+  const { DISHES } = require("../src/shell/dimsum") as typeof import("../src/shell/dimsum");
+  expect(DISHES.some(d => text.includes(d.name) && text.includes(d.zh))).toBe(true);
   // Non-blocking: nothing modal, nothing focus-trapped.
   expect(container.querySelector('[role="dialog"]')).toBeNull();
 

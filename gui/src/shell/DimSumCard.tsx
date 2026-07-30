@@ -99,8 +99,9 @@ export default function DimSumCard({ version }: { version: string }) {
       <div style={{ minWidth: 0, flex: "1 1 auto" }}>
         <div style={{ fontWeight: 600, fontSize: "var(--t-title-s)" }}>{t("dimsum.title")}</div>
         <div style={{ fontSize: "var(--t-body-s)" }}>
-          <span lang="yue">{dish.zh}</span> · <span role="img" aria-label={dish.name}>{dish.name}</span>
+          <span lang="zh-HK">{dish.zh}</span> · <span>{dish.name}</span>
         </div>
+        <div style={{ fontSize: "var(--t-label-s)", opacity: 0.85, fontStyle: "italic" }}>{dish.jyutping}</div>
         <div style={{ fontSize: "var(--t-label-s)", opacity: 0.8, marginTop: 2 }}>{t("dimsum.hint")}</div>
       </div>
       <button

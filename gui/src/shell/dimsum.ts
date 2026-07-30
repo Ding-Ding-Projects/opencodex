@@ -16,13 +16,12 @@ export interface DimSumDish {
   name: string;
   /** Chinese name shown alongside. */
   zh: string;
+  /** Jyutping romanisation, so the name is pronounceable by a non-reader. */
+  jyutping: string;
   /**
-   * Fallback art, shown when no bundled photo is present for this dish.
-   *
-   * Deliberately a labelled stand-in rather than a pretend photo: the card
-   * renders {@link photoSrc} first and only falls back here if that asset is
-   * absent, so dropping the real images into `gui/public/dimsum/` completes the
-   * feature with no code change.
+   * Fallback art, for the moment between a dish being listed and its photo
+   * being bundled. Every dish here currently ships a real photo; the fallback
+   * stays because adding a dish should never be able to render a broken image.
    */
   emoji: string;
 }
@@ -40,14 +39,17 @@ export function photoSrc(dish: DimSumDish): string {
 }
 
 export const DISHES: DimSumDish[] = [
-  { id: "har-gow", name: "Har gow (shrimp dumpling)", zh: "蝦餃", emoji: "🥟" },
-  { id: "siu-mai", name: "Siu mai (pork and shrimp dumpling)", zh: "燒賣", emoji: "🥟" },
-  { id: "char-siu-bao", name: "Char siu bao (barbecue pork bun)", zh: "叉燒包", emoji: "🥠" },
-  { id: "cheung-fun", name: "Cheung fun (rice noodle roll)", zh: "腸粉", emoji: "🍜" },
-  { id: "dan-tat", name: "Dan tat (egg tart)", zh: "蛋撻", emoji: "🥧" },
-  { id: "lo-bak-go", name: "Lo bak go (turnip cake)", zh: "蘿蔔糕", emoji: "🍘" },
-  { id: "fung-zao", name: "Fung zao (chicken feet)", zh: "鳳爪", emoji: "🍗" },
-  { id: "nor-mai-gai", name: "Nor mai gai (sticky rice in lotus leaf)", zh: "糯米雞", emoji: "🍙" },
+  { id: "classic-har-gow", name: "Classic Har Gow", zh: "蝦餃", jyutping: "haa1 gaau2", emoji: "🥟" },
+  { id: "classic-siu-mai", name: "Classic Siu Mai", zh: "燒賣", jyutping: "siu1 maai6", emoji: "🥟" },
+  { id: "classic-char-siu-bao", name: "Classic Char Siu Bao", zh: "叉燒包", jyutping: "caa1 siu1 baau1", emoji: "🥟" },
+  { id: "steamed-chicken-with-black-fungus", name: "Steamed Chicken with Black Fungus", zh: "雲耳蒸雞", jyutping: "wan4 ji5 zing1 gai1", emoji: "🥟" },
+  { id: "puff-pastry-egg-tarts", name: "Puff Pastry Egg Tarts", zh: "酥皮蛋撻", jyutping: "sou1 pei4 daan6 taat1", emoji: "🥟" },
+  { id: "steamed-radish-cake", name: "Steamed Radish Cake", zh: "蒸蘿蔔糕", jyutping: "zing1 lo4 baak6 gou1", emoji: "🥟" },
+  { id: "black-bean-chicken-feet", name: "Steamed Chicken Feet in Black Bean Sauce", zh: "豉汁蒸鳳爪", jyutping: "si6 zap1 zing1 fung6 zaau2", emoji: "🥟" },
+  { id: "steamed-bean-curd-roll", name: "Steamed Bean Curd Skin Roll", zh: "鮮竹卷", jyutping: "sin1 zuk1 gyun2", emoji: "🥟" },
+  { id: "traditional-big-bun", name: "Traditional Big Bun", zh: "大包", jyutping: "daai6 baau1", emoji: "🥟" },
+  { id: "steamed-beef-balls", name: "Steamed Beef Balls", zh: "山竹牛肉", jyutping: "saan1 zuk1 ngau4 juk6", emoji: "🥟" },
+  { id: "sausage-turnip-pudding", name: "Turnip Pudding with Chinese Sausage", zh: "臘味蘿蔔糕", jyutping: "laap6 mei6 lo4 baak6 gou1", emoji: "🥟" },
 ];
 
 const LAUNCHED_KEY = "ocx-m3:launched";
