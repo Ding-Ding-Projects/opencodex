@@ -122,6 +122,28 @@ on checkout, so restored files came back with different bytes than were committe
 `.gitattributes` carrying `* -text`, written at init and refreshed on every `ensureRepo` so repos
 created by older builds are repaired. `tests/log-store.test.ts` guards it with mixed line endings.
 
+Verified on the merged tree (`b7003d8e`, after `git merge origin/main`):
+
+```
+bun run typecheck                         → clean (tsc --noEmit, no diagnostics)
+cd gui && npx tsc --noEmit                → clean
+cd gui && npx eslint src --max-warnings=0 → clean
+cd gui && bun test                        → 692 pass, 0 fail, 9518 expect() calls (116 files)
+bun run test tests/log-store.test.ts tests/app-log-file.test.ts \
+  tests/management-api-logs-clear.test.ts tests/usage-log.test.ts tests/request-log.test.ts \
+  tests/management-api-logs-metrics.test.ts tests/api-usage.test.ts \
+  tests/config-ownership-uninstall.test.ts
+                                          → 121 pass, 0 fail, 509 expect() calls (8 files)
+cd docs-site && bun install && bun run build
+                                          → 161 pages built, Complete!
+```
+
+**Known environment flake:** a full `bun run test` (which is `bun test --isolate ./tests/`) panicked
+after ~74 s inside `tests/api-storage-policy.test.ts` with `panic: Internal assertion failure` —
+Bun 1.3.14 crashing, not a test failing; zero `(fail)` lines were recorded before it went. It is not
+deterministic: an earlier run of the same command got roughly 60 files further without it. The
+targeted runs above are what has actually been proven green.
+
 ## Verification actually performed
 
 Docs work in this session was verified with:
