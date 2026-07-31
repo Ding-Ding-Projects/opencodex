@@ -520,31 +520,6 @@
 
 /* --------------------------------------------------------------- dialogs -- */
 
-/* The dialogs keep the shared `.modal-overlay` positioning/scrim machinery and
-   only re-skin the card surface, so focus trapping and backdrop dismissal are
-   untouched by the restyle. */
-.cwi-dialog-card {
-  position: relative;
-  z-index: 1;
-  box-sizing: border-box;
-  border-radius: var(--r-l);
-  background: var(--m3-surface-container-high);
-  color: var(--m3-on-surface);
-  border: 1px solid var(--m3-outline-variant);
-  box-shadow: var(--e3);
-  padding: var(--pad-card);
-  max-height: 84vh;
-  overflow-y: auto;
-}
-
-.cwi-dialog-card--add {
-  width: min(600px, 94vw);
-}
-
-.cwi-dialog-card--confirm {
-  width: min(420px, 92vw);
-}
-
 .cwi-dialog-title {
   margin: 0;
   font-size: var(--t-title-l);
@@ -564,14 +539,6 @@
   max-height: min(66vh, 560px);
   overflow-y: auto;
   padding-right: 2px;
-}
-
-.cwi-modal-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--sp-1);
-  margin-top: var(--sp-3);
 }
 
 @media (max-width: 939px) {

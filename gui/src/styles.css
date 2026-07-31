@@ -292,17 +292,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .nav-item svg { width: 17px; height: 17px; color: var(--faint); flex-shrink: 0; }
 .nav-item.active svg { color: var(--text); }
 
-.nav-entry { display: flex; align-items: center; min-width: 0; border-radius: var(--radius-sm); }
-.nav-entry .nav-item { flex: 1 1 auto; min-width: 0; }
-.nav-entry-claude {
-  padding-right: 2px;
-  transition: background var(--motion-fast), color var(--motion-fast);
-}
-.nav-entry-claude:hover,
-.nav-entry-claude.active { background: var(--accent-soft); color: var(--text); }
-.nav-entry-claude .nav-item,
-.nav-entry-claude .nav-item:hover,
-.nav-entry-claude .nav-item.active { width: auto; background: transparent; }
 /* The `.switch` overrides that padded this row's toggle out to a 44px target
    went with the component: the Claude row uses `.m3-switch`, which is 52x32
    without needing a per-screen exception to clear the hit-target floor. */
