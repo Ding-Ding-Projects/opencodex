@@ -477,7 +477,12 @@ export function parseColor(input: string): Color | null {
   const text = String(input ?? "").trim().toLowerCase();
   if (!text) return null;
   if (text === "transparent") return { l: 0, c: 0, h: 0, alpha: 0 };
-  if (NAMED_COLORS[text]) return parseHex(NAMED_COLORS[text]);
+  // `hasOwnProperty`, not a bare index. `NAMED_COLORS` is an object literal, so
+  // it inherits `Object.prototype` — and a plain index for "constructor" returns
+  // a *function*, which is truthy, so `parseHex` was then handed something with
+  // no `.trim()` and threw. The picker's free-text field parses on every
+  // keystroke, so typing the word "constructor" took the whole editor down.
+  if (Object.prototype.hasOwnProperty.call(NAMED_COLORS, text)) return parseHex(NAMED_COLORS[text]);
   if (text.startsWith("#")) return parseHex(text);
 
   const fn = /^([a-z-]+)\(([^)]*)\)$/.exec(text);
@@ -488,8 +493,14 @@ export function parseColor(input: string): Color | null {
   }
   const name = fn[1];
   const { values, alpha } = args(fn[2]);
-  // Legacy comma syntax puts alpha in the fourth slot instead of after a slash.
-  const a = alphaOf(alpha ?? (values.length > 3 ? values[3] : null));
+  // Legacy comma syntax puts alpha in the fourth slot instead of after a slash —
+  // but CMYK legitimately *has* four components, and its fourth is K. Reading it
+  // as alpha made the space one-way: `formatColor` emits
+  // `device-cmyk(0% 100% 100% 0%)` for red, and parsing that back returned a
+  // fully transparent colour. Alpha for CMYK comes only from the explicit
+  // `/ <alpha>` form.
+  const fourIsAlpha = name !== "cmyk" && name !== "device-cmyk";
+  const a = alphaOf(alpha ?? (fourIsAlpha && values.length > 3 ? values[3] : null));
   const v = (i: number, scale = 1) => num(values[i], scale);
   if (!Number.isFinite(v(0)) && values[0] !== "none") return null;
 

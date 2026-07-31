@@ -27,7 +27,9 @@
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { onOutsidePress } from "./outside-press";
-import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
+import { Button, Field, Slider, TextInput } from "./m3-ui";
+import { ColorField } from "../components/appearance/ColorPicker";
+import { FontPicker } from "../components/appearance/FontPicker";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { SettingsSearchRow } from "./SettingsSearch";
@@ -36,12 +38,12 @@ import type { SettingsOption } from "./settings-search";
 import { clampToViewport, tabStyleProps, type TabStyle } from "./use-tabs";
 import { FONT_CHOICES } from "../theme/m3";
 
-/** `<input type="color">` refuses a CSS variable, so a token-valued or unset
- * property needs a concrete hex for the swatch. The text field beside it holds
- * the real value, and the hint says the swatch is showing a fallback. */
-const COLOR_FALLBACK = "#000000";
-const BG_FALLBACK = "#ffffff";
-const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+/* The hex fallbacks and the `HEX` test that used to live here are gone with the
+   `<input type="color">` they existed for. That input cannot hold a CSS variable,
+   so every colour row needed a concrete hex for the swatch, a text field beside it
+   for the real value, and a hint admitting the swatch was showing something else.
+   `ColorField` holds the value itself, so none of that scaffolding has anything
+   left to do. */
 
 /** Matches `readTabStyle`'s clamps in use-tabs.ts. A slider that offered a range
  * the store then narrowed would silently discard the end of its own scale. */
@@ -55,17 +57,6 @@ const BADGE_MAX = 12;
  * honest instead of at its minimum. */
 const SIZE_DEFAULT = 14;
 const WEIGHT_DEFAULT = 400;
-
-const SWATCH: React.CSSProperties = {
-  width: 56,
-  height: 44,
-  padding: 2,
-  border: "1px solid var(--m3-outline)",
-  borderRadius: "var(--r-s)",
-  background: "var(--m3-surface-container-lowest)",
-  cursor: "pointer",
-  flex: "0 0 auto",
-};
 
 const PANEL: React.CSSProperties = {
   position: "fixed",
@@ -297,88 +288,40 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
       {/* A group's accent tints its whole run, so it is edited here beside the
           rest of the group's appearance rather than from a separate surface. */}
       {onAccentChange && matches("groupAccent") && (
-        <Field label={t("tabs.groupAccent")} hint={accent && !HEX.test(accent) ? t("tabs.styleSwatchFallback") : undefined}>
-          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-            <input
-              type="color"
-              value={accent && HEX.test(accent) ? accent : COLOR_FALLBACK}
-              aria-label={t("tabs.groupAccentPicker")}
-              onChange={event => onAccentChange(event.target.value)}
-              style={SWATCH}
-            />
-            <TextInput
-              value={accent ?? ""}
-              spellCheck={false}
-              placeholder={t("tabs.styleInherits")}
-              aria-label={t("tabs.groupAccent")}
-              onChange={event => onAccentChange(event.target.value || undefined)}
-              style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
-            />
-            <ResetButton on={!!accent} name={t("tabs.groupAccent")} clear={() => onAccentChange(undefined)} />
-          </div>
-        </Field>
+        <ColorField
+          label={t("tabs.groupAccent")}
+          value={accent}
+          onChange={onAccentChange}
+        />
       )}
 
+      {/* The infinite picker, not a swatch input. The two it replaces could not
+          accept a CSS variable, so each needed a hex fallback beside it and a
+          hint explaining that the swatch was showing something other than the
+          stored value — all of which the picker's own value row makes
+          unnecessary, while adding alpha, gamut and a contrast readout. */}
       {matches("color") && (
-        <Field id={colorId} label={t("tabs.styleColor")} hint={style.color && !HEX.test(style.color) ? t("tabs.styleSwatchFallback") : undefined}>
-          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-            <input
-              type="color"
-              value={style.color && HEX.test(style.color) ? style.color : COLOR_FALLBACK}
-              aria-label={t("tabs.styleColorPicker")}
-              onChange={event => onChange({ color: event.target.value })}
-              style={SWATCH}
-            />
-            <TextInput
-              id={colorId}
-              value={style.color ?? ""}
-              spellCheck={false}
-              placeholder={t("tabs.styleInherits")}
-              aria-label={t("tabs.styleColor")}
-              onChange={event => onChange({ color: event.target.value || undefined })}
-              style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
-            />
-            <ResetButton on={!!style.color} name={t("tabs.styleColor")} clear={() => onChange({ color: undefined })} />
-          </div>
-        </Field>
+        <ColorField
+          id={colorId}
+          label={t("tabs.styleColor")}
+          value={style.color}
+          onChange={color => onChange({ color })}
+        />
       )}
 
       {matches("bg") && (
-        <Field label={t("tabs.styleBg")} hint={style.bg && !HEX.test(style.bg) ? t("tabs.styleSwatchFallback") : undefined}>
-          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-            <input
-              type="color"
-              value={style.bg && HEX.test(style.bg) ? style.bg : BG_FALLBACK}
-              aria-label={t("tabs.styleBgPicker")}
-              onChange={event => onChange({ bg: event.target.value })}
-              style={SWATCH}
-            />
-            <TextInput
-              value={style.bg ?? ""}
-              spellCheck={false}
-              placeholder={t("tabs.styleInherits")}
-              aria-label={t("tabs.styleBg")}
-              onChange={event => onChange({ bg: event.target.value || undefined })}
-              style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
-            />
-            <ResetButton on={!!style.bg} name={t("tabs.styleBg")} clear={() => onChange({ bg: undefined })} />
-          </div>
-        </Field>
+        <ColorField label={t("tabs.styleBg")} value={style.bg} onChange={bg => onChange({ bg })} />
       )}
 
       {matches("font") && (
         <Field label={t("tabs.styleFont")}>
+          {/* Every installed family, not the five bundled ones the select offered.
+              No axis sliders: `TabStyle` stores one stack and has nowhere to put
+              axis values, and a slider that saves nothing is worse than none. */}
           <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-            <SelectField
-              label={t("tabs.styleFont")}
-              value={style.font ?? ""}
-              onChange={next => onChange({ font: next || undefined })}
-              options={[
-                { value: "", label: t("tabs.styleFontInherit") },
-                ...FONT_CHOICES.map(font => ({ value: font.stack, label: font.label })),
-              ]}
-              style={{ flex: "1 1 auto", minWidth: 0 }}
-            />
+            <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+              <FontPicker value={style.font} onChange={font => onChange({ font })} />
+            </div>
             <ResetButton on={!!style.font} name={t("tabs.styleFont")} clear={() => onChange({ font: undefined })} />
           </div>
         </Field>

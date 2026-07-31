@@ -179,3 +179,62 @@ describe("names", () => {
     expect(formatColor(hex("#ff0000"), "named")).toBe("red");
   });
 });
+
+describe("the translator is genuinely bidirectional", () => {
+  // The rules ask the translator to convert *bidirectionally* among every
+  // space. A one-way space is not a smaller feature — it is a trap: the row
+  // reads correctly, and pasting it back produces a different colour.
+  const SPACES = ["hex", "hex8", "rgb", "rgba", "hsl", "hsla", "hsv", "hwb",
+    "lab", "lch", "oklab", "oklch", "cmyk"] as const;
+
+  test("every space parses back to the colour it was written from", () => {
+    for (const source of ["#3a7fc1", "#2f6b4f", "#ff0000", "#808080", "#000000", "#ffffff"]) {
+      const colour = hex(source);
+      for (const space of SPACES) {
+        const written = formatColor(colour, space);
+        const read = parseColor(written);
+        expect(read, `${space} of ${source} → ${written}`).not.toBeNull();
+        expect(formatHex(read!), `${space} of ${source} → ${written}`).toBe(source);
+      }
+    }
+  });
+
+  test("a CMYK fourth component is K, not alpha", () => {
+    // `device-cmyk()` has four positional components, and the legacy
+    // comma-syntax rule that reads a fourth slot as alpha applies to `rgba()`
+    // and `hsla()` — not here. Red round-tripped to fully transparent.
+    expect(parseColor("device-cmyk(0% 100% 100% 0%)")!.alpha).toBe(1);
+    expect(toCssValue(parseColor("device-cmyk(0% 100% 100% 0%)")!)).toBe("#ff0000");
+    // 100% black is black, not a colour that has vanished.
+    expect(toCssValue(parseColor("device-cmyk(0% 0% 0% 100%)")!)).toBe("#000000");
+    // The explicit slash form still carries alpha.
+    expect(parseColor("device-cmyk(0% 100% 100% 0% / 0.5)")!.alpha).toBe(0.5);
+  });
+
+  test("the legacy fourth slot is still alpha everywhere it should be", () => {
+    expect(parseColor("rgba(255, 0, 0, 0.25)")!.alpha).toBe(0.25);
+    expect(parseColor("hsla(120, 50%, 40%, 0.4)")!.alpha).toBeCloseTo(0.4, 5);
+  });
+
+  test("alpha survives every space that can carry it", () => {
+    const translucent = hex("#3a7fc180");
+    for (const space of ["hex8", "rgba", "hsla", "hwb", "lab", "lch", "oklab", "oklch"] as const) {
+      const read = parseColor(formatColor(translucent, space));
+      expect(read!.alpha, space).toBeCloseTo(0x80 / 255, 2);
+    }
+  });
+});
+
+describe("a prototype key is not a colour", () => {
+  test("parsing a word that names an Object prototype member returns null", () => {
+    // `NAMED_COLORS` is an object literal, so a bare index for "constructor"
+    // returned a *function*, which is truthy — and the hex parser then called
+    // `.trim()` on it. The picker's value field parses on every keystroke, so
+    // typing the word took the whole editor down.
+    for (const word of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(parseColor(word)).toBeNull();
+    }
+    // A real name still resolves.
+    expect(formatHex(parseColor("rebeccapurple")!)).toBe("#663399");
+  });
+});

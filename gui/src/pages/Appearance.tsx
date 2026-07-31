@@ -10,43 +10,29 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Button, Card, Chip, Segmented, Slider, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { ColorField } from "../components/appearance/ColorPicker";
+import { FontPicker } from "../components/appearance/FontPicker";
+import { TypographyEditor } from "../components/appearance/TypographyEditor";
+import { TYPOGRAPHY_LABEL_KEYS } from "../components/appearance/typography-labels";
 import { IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
-import { FONT_CHOICES, SEED_SWATCHES, type DensityLevel, type ThemeMode } from "../theme/m3";
+import { DEFAULT_SEED, SEED_SWATCHES, fontStackFor, type DensityLevel, type ThemeMode } from "../theme/m3";
+import { familyOf } from "../theme/fonts";
+import { formatHex, parseColor } from "../../../shared/m3/color";
 import { elsewhereFor } from "./settings-elsewhere";
 import { recordRevision } from "../shell/revisions";
 import { useNotifications } from "../shell/notifications-context";
 import type { TKey } from "../i18n/shared";
 
-const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
-
 /** Shown when a target carries no override of its own; mirrors the prototype. */
 const EL_RADIUS_DEFAULT = 16;
 const EL_PAD_DEFAULT = 16;
-
-/**
- * `<input type="color">` refuses a CSS variable, so an override-less swatch has
- * to fall back to a concrete hex. The swatch's tooltip says "inherits theme" so
- * that fallback is never mistaken for an applied override.
- */
-const COLOR_FALLBACK = "#000000";
-const BG_FALLBACK = "#ffffff";
 
 /** The regex builder's own cap, applied here too so one search cannot outgrow it. */
 const PATTERN_CAP = 400;
 
 const MONO: CSSProperties = { fontFamily: "var(--mono)" };
-
-const COLOR_SWATCH: CSSProperties = {
-  width: 56,
-  height: 48,
-  padding: 2,
-  border: "1px solid var(--m3-outline)",
-  borderRadius: "var(--r-s)",
-  background: "var(--m3-surface-container-lowest)",
-  cursor: "pointer",
-};
 
 /**
  * The six role chips the prototype prints under the seed picker: one look at
@@ -125,22 +111,37 @@ function Section({ label, hint, hintBelow, children }: {
 
 export default function Appearance() {
   const t = useT();
-  const { prefs, setPrefs, setElementStyle, resetElementStyle, resetAppearance } = usePrefs();
+  const { prefs, setPrefs, setElementStyle, setElementTypography, resetElementStyle, resetAppearance } = usePrefs();
   const { notify } = useNotifications();
-  const [seedText, setSeedText] = useState(prefs.seed);
   const [target, setTarget] = useState<string>(ELEMENT_TARGETS[0].id);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  // The typography panel's own search, kept separate from the page search
+  // above: they filter different things, and one shared string would make
+  // typing in either quietly reach into the other.
+  const [typeQuery, setTypeQuery] = useState("");
+  const [typeRegex, setTypeRegex] = useState(false);
 
-  const commitSeed = (value: string) => {
-    setSeedText(value);
-    if (HEX.test(value)) setPrefs({ seed: value });
+  /**
+   * The seed is stored as a hex, and the picker is not restricted to one.
+   *
+   * `buildScheme` derives the whole palette through `srgbToOklch`, which reads
+   * hex digits and nothing else — hand it an `oklch()` string and it parses
+   * garbage and returns a palette nobody chose. So a colour picked outside sRGB
+   * is clipped to its nearest hex on the way in. That is a real loss, and it is
+   * the picker's own clipping warning that tells the user it is about to happen.
+   */
+  const commitSeed = (value: string | undefined) => {
+    const parsed = value ? parseColor(value) : null;
+    setPrefs({ seed: parsed ? formatHex(parsed) : DEFAULT_SEED });
   };
 
   const el = prefs.elementStyles[target] ?? {};
+  const elType = el.typography ?? {};
   const targetLabel = t((ELEMENT_TARGETS.find(x => x.id === target) ?? ELEMENT_TARGETS[0]).tkey as TKey);
   const overrideCount = Object.keys(prefs.elementStyles).length;
-  const fontLabel = (FONT_CHOICES.find(f => f.id === prefs.fontId) ?? FONT_CHOICES[0]).label;
+  const activeStack = prefs.fontStack || fontStackFor(prefs.fontId);
+  const fontLabel = familyOf(activeStack) ?? activeStack;
 
   // The settings index for this surface, carrying each setting's live value so a
   // search answers "what is it set to" without scrolling to the control.
@@ -179,6 +180,13 @@ export default function Appearance() {
 
   const matcher = makeMatcher(query, useRegex);
   const hits = here.filter(row => matcher.test(`${row.label} ${row.desc} ${row.value}`));
+
+  const typeMatcher = makeMatcher(typeQuery, typeRegex);
+  const typeLabels = TYPOGRAPHY_LABEL_KEYS.map(key => t(key));
+  // Only asked once something was typed: an untouched field has not failed to
+  // match anything, so claiming "no match" there would be a lie about a search
+  // nobody ran.
+  const typeHasHits = !typeQuery || typeLabels.some(label => typeMatcher.test(label));
   // Only claimed once something was actually typed — an untouched field has not
   // matched anything, here or anywhere else.
   // Descriptions are matched too, so a search for what a setting *does* finds it
@@ -268,22 +276,15 @@ export default function Appearance() {
         </Section>
 
         <Section label={t("appearance.seedTitle")} hint={t("appearance.seedSub")}>
-          <div className="m3-row">
-            <input
-              type="color"
-              value={HEX.test(seedText) ? seedText : prefs.seed}
-              onChange={e => commitSeed(e.target.value)}
-              aria-label={t("appearance.seedPicker")}
-              style={{ ...COLOR_SWATCH, width: 64 }}
-            />
-            <TextInput
-              value={seedText}
-              onChange={e => commitSeed(e.target.value)}
-              aria-label={t("appearance.seedHex")}
-              aria-invalid={!HEX.test(seedText)}
-              spellCheck={false}
-              style={{ width: 160, fontFamily: "var(--mono)" }}
-            />
+          <div className="m3-row" style={{ alignItems: "flex-start" }}>
+            {/* The infinite picker, not a swatch grid: a continuous field plus
+                numeric entry in every colour space, with the gamut and contrast
+                readouts a seed decision actually needs. */}
+            <div style={{ flex: "1 1 260px", minWidth: 0, maxWidth: 360 }}>
+              <ColorField label={t("appearance.seedPicker")} value={prefs.seed} onChange={commitSeed} />
+            </div>
+            {/* The eight curated seeds stay as one-tap shortcuts. The picker
+                offers them too, but reaching them here costs no popover. */}
             <div className="m3-row" style={{ gap: 8 }}>
               {SEED_SWATCHES.map(hex => (
                 <button
@@ -304,9 +305,6 @@ export default function Appearance() {
               ))}
             </div>
           </div>
-          {!HEX.test(seedText) && (
-            <p className="m3-field-hint" style={{ color: "var(--m3-error)" }}>{t("appearance.seedInvalid")}</p>
-          )}
           {/* The palette the seed just derived, in the roles that carry it. */}
           <div data-role-swatches="" className="m3-row" style={{ gap: 8, marginTop: "var(--sp-2)" }}>
             {ROLE_SWATCHES.map(role => (
@@ -329,14 +327,17 @@ export default function Appearance() {
           />
         </Section>
 
-        <Section label={t("appearance.font")} hint={t("appearance.typeSub")}>
-          <div className="m3-row" style={{ gap: 8 }}>
-            {FONT_CHOICES.map(font => (
-              <Chip key={font.id} selected={prefs.fontId === font.id} onClick={() => setPrefs({ fontId: font.id })}>
-                <span style={{ fontFamily: font.stack }}>{font.label}</span>
-              </Chip>
-            ))}
-          </div>
+        {/* Every family this machine has, each drawn in itself — not the five
+            bundled chips this replaces, which could not name a face the user had
+            installed and could not show what any of them looked like. */}
+        <Section label={t("appearance.fontPickerTitle")} hint={t("appearance.fontPickerSub")}>
+          <FontPicker
+            value={activeStack}
+            onChange={stack => setPrefs({ fontStack: stack })}
+            // The interface font is applied through `--m3-font`, a single stack
+            // with nowhere to carry axis values, so no axis sliders are offered
+            // here. The per-element editor below has them.
+          />
         </Section>
 
         <div className="m3-grid">
@@ -373,48 +374,24 @@ export default function Appearance() {
         </div>
 
         <div className="m3-grid">
-          <div>
-            <span className="m3-field-label">{t("appearance.elFont", { target: targetLabel })}</span>
-            <div className="m3-row" style={{ gap: 6 }}>
-              {FONT_CHOICES.map(font => (
-                <Chip
-                  key={font.id}
-                  selected={el.font === font.stack}
-                  onClick={() => setElementStyle(target, { font: font.stack })}
-                >
-                  <span style={{ fontFamily: font.stack }}>{font.label}</span>
-                </Chip>
-              ))}
-            </div>
-          </div>
-
-          {/* Text and background sit side by side under one group caption, as in
-              the prototype; the tooltip carries whether the swatch is an
-              override, and the group label gives the pair the same standing as
-              the font, radius and padding controls beside it. */}
+          {/* The element's own surface colours, distinct from the typography
+              below: these are the box — its text colour and its background —
+              and they feed the `--el-<id>-*` variables that some forty rules
+              across three stylesheets already read. `type.highlight` in the
+              editor underneath is the run behind the glyphs, which is a
+              different thing that CSS paints differently. */}
           <div>
             <span className="m3-field-label">{t("appearance.elColourGroup")}</span>
-            <div className="m3-row" style={{ gap: 10 }}>
-              <input
-                type="color"
-                value={el.color ?? COLOR_FALLBACK}
-                onChange={e => setElementStyle(target, { color: e.target.value })}
-                aria-label={t("appearance.elColor")}
-                title={el.color ?? t("appearance.elInherit")}
-                style={COLOR_SWATCH}
-              />
-              <input
-                type="color"
-                value={el.bg ?? BG_FALLBACK}
-                onChange={e => setElementStyle(target, { bg: e.target.value })}
-                aria-label={t("appearance.elBg")}
-                title={el.bg ?? t("appearance.elInherit")}
-                style={COLOR_SWATCH}
-              />
-              <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
-                {t("appearance.elColorCaption")}
-              </span>
-            </div>
+            <ColorField
+              label={t("appearance.elColor")}
+              value={el.color}
+              onChange={color => setElementStyle(target, { color })}
+            />
+            <ColorField
+              label={t("appearance.elBg")}
+              value={el.bg}
+              onChange={bg => setElementStyle(target, { bg })}
+            />
           </div>
 
           <Slider
@@ -436,6 +413,47 @@ export default function Appearance() {
             value={el.pad ?? EL_PAD_DEFAULT}
             valueLabel={t("appearance.pxValue", { n: String(el.pad ?? EL_PAD_DEFAULT) })}
             onChange={pad => setElementStyle(target, { pad })}
+          />
+        </div>
+
+        {/* Word-processor depth, for this one target. Its own search, because
+            thirty controls is more than anyone scrolls: the rule that every
+            settings surface carries a search bar applies inside a panel as much
+            as it does to a page. */}
+        <div className="m3-field" style={{ marginTop: "var(--sp-4)" }}>
+          <span className="m3-field-label">{t("appearance.elTypeTitle", { target: targetLabel })}</span>
+          <p className="m3-field-hint" style={{ margin: "0 0 var(--sp-2)" }}>{t("appearance.elTypeSub")}</p>
+
+          <div className="m3-row" role="search">
+            <IconSearch width={20} height={20} aria-hidden="true" />
+            <TextInput
+              value={typeQuery}
+              onChange={e => setTypeQuery(e.target.value)}
+              placeholder={t("appearance.elTypeSearch")}
+              aria-label={t("appearance.elTypeSearch")}
+              aria-invalid={typeMatcher.invalid}
+              style={{ flex: "1 1 200px", width: "auto", minWidth: 0, maxWidth: 380 }}
+            />
+            <Chip selected={typeRegex} onClick={() => setTypeRegex(v => !v)} title={t("regex.regexMode")}>
+              <code style={MONO}>.*</code>
+            </Chip>
+            <RegexBuilderButton
+              value={typeQuery}
+              onApply={pattern => setTypeQuery(pattern)}
+              regex={typeRegex}
+              onRegexChange={setTypeRegex}
+              sample={typeLabels.join("\n")}
+              label={t("settings.openBuilder")}
+            />
+          </div>
+          <p role="status" style={{ minHeight: 20, margin: "4px 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+            {typeMatcher.invalid ? t("regex.invalid") : typeHasHits ? "" : t("appearance.elTypeNoMatch")}
+          </p>
+
+          <TypographyEditor
+            style={elType}
+            onChange={patch => setElementTypography(target, patch)}
+            match={typeQuery ? typeMatcher.test : undefined}
           />
         </div>
 

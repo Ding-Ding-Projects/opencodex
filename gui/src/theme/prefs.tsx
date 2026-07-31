@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  applyElementTypography,
   applyLayout,
   applyTokens,
   clearElementStyle,
@@ -23,6 +24,7 @@ import {
   type PrefsContextValue,
 } from "./prefs-context";
 import type { ElementStyle } from "./m3";
+import type { TypographyStyle } from "../../../shared/m3/typography";
 
 export function PrefsProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefsState] = useState<Prefs>(readPrefs);
@@ -51,11 +53,17 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
       seed: prefs.seed,
       dark,
       density: prefs.density,
-      fontStack: fontStackFor(prefs.fontId),
+      // `fontStack` wins when the user picked a family the five bundled presets
+      // do not cover — the font picker can reach anything installed, and
+      // `fontId` can only name one of five.
+      fontStack: prefs.fontStack || fontStackFor(prefs.fontId),
       fontScale: prefs.fontScale,
       fontWeight: prefs.fontWeight,
       elementStyles: prefs.elementStyles,
     });
+    // Rich per-element typography cannot ride the `--el-*` variable channel; it
+    // is compiled into one generated stylesheet instead.
+    applyElementTypography(document, prefs.elementStyles);
     // Legacy pages still branch on `data-theme`; keep it authoritative in both directions.
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
   }, [prefs, dark]);
@@ -82,6 +90,36 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  /**
+   * Merge one typography property into a target.
+   *
+   * Not `setElementStyle(id, { typography: patch })`: that spread replaces the
+   * whole `typography` object, so setting a size would wipe the family, the
+   * colour and every other property already on it. This merges key by key.
+   *
+   * A key explicitly set to `undefined` is *deleted* rather than stored as
+   * undefined, because `typographyCss` and `isEmptyTypography` both ask whether
+   * a key is present — a stored `undefined` reads as "set" to `Object.keys` and
+   * would keep a cleared property alive as an empty override.
+   */
+  const setElementTypography = useCallback((id: string, patch: Partial<TypographyStyle>) => {
+    setPrefsState(prev => {
+      const current = prev.elementStyles[id] ?? {};
+      const next: TypographyStyle = { ...current.typography };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete next[key as keyof TypographyStyle];
+        else Object.assign(next, { [key]: value });
+      }
+      const style: ElementStyle = { ...current };
+      // An empty object is not the same as no override: it would make
+      // "does this target have typography" answer yes for a target the user has
+      // just cleared, and leave an empty rule in the generated stylesheet.
+      if (Object.keys(next).length) style.typography = next;
+      else delete style.typography;
+      return { ...prev, elementStyles: { ...prev.elementStyles, [id]: style } };
+    });
+  }, []);
+
   const resetElementStyle = useCallback((id: string) => {
     clearElementStyle(document.documentElement, id);
     setPrefsState(prev => {
@@ -97,9 +135,9 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<PrefsContextValue>(() => ({
-    prefs, setPrefs, setElementStyle, resetElementStyle, resetAppearance,
+    prefs, setPrefs, setElementStyle, setElementTypography, resetElementStyle, resetAppearance,
     dark, windowClass: windowClass(width), width,
-  }), [prefs, setPrefs, setElementStyle, resetElementStyle, resetAppearance, dark, width]);
+  }), [prefs, setPrefs, setElementStyle, setElementTypography, resetElementStyle, resetAppearance, dark, width]);
 
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }

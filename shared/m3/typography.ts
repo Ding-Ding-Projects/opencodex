@@ -277,8 +277,32 @@ export function typographyCss(style: TypographyStyle | undefined): Record<string
  */
 export function cssText(declarations: Record<string, string>): string {
   return Object.entries(declarations)
+    .filter(([, value]) => isSafeDeclarationValue(value))
     .map(([prop, value]) => `${kebab(prop)}: ${value};`)
     .join(" ");
+}
+
+/**
+ * Whether a value can be concatenated into a stylesheet without escaping it.
+ *
+ * The per-property channel (`Object.assign(el.style, …)`, React's
+ * `CSSProperties`) is safe by construction: the engine parses each value on its
+ * own and simply rejects junk. A generated `<style>` block is not — there, a
+ * value carrying `;` or `}` closes the declaration and the rule, and everything
+ * after it is parsed as new CSS against whatever selector the attacker wrote.
+ *
+ * `readTypography` cannot close this on its own: it validates *stored* values,
+ * and a family name typed into the picker's free-text field never passes through
+ * it. So the check lives here, at the one function whose whole purpose is
+ * building stylesheet text.
+ *
+ * A rejected declaration is dropped rather than escaped. Escaping would have to
+ * be per-property — a font family is a CSS string, a colour is not — and a
+ * half-right escaper is how the hole gets reopened. Dropping means the property
+ * visibly does not apply, which is a bug report rather than a silent breach.
+ */
+function isSafeDeclarationValue(value: string): boolean {
+  return !/[;{}<>\\]/.test(value) && !value.includes("/*") && !/url\s*\(/i.test(value);
 }
 
 export function kebab(prop: string): string {

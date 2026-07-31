@@ -122,18 +122,47 @@ const PROBE_CANDIDATES: readonly string[] = [
   "Lato", "Montserrat", "Nunito", "Poppins", "Merriweather", "Playfair Display",
 ];
 
+/**
+ * The faces a host application actually ships, for the two apps that share this
+ * module.
+ *
+ * The constants above describe the docs site. The dashboard bundles a different
+ * set entirely — Roboto Flex, Roboto, Roboto Mono, Noto Sans HK — and listing
+ * `Geist Variable` in *its* picker would offer a face that cannot render, which
+ * is the one thing a font list must never do. So every entry point takes an
+ * optional host description and defaults to this module's own, leaving the docs
+ * site's behaviour byte-identical.
+ */
+export interface FontHost {
+  /** Faces the host ships itself. */
+  bundled?: readonly FontFamily[];
+  /** Generic families the browser always resolves. */
+  generic?: readonly FontFamily[];
+  /** Appended to a family that has no entry of its own; see `CJK_TAIL`. */
+  cjkTail?: string;
+}
+
+const DEFAULT_HOST: Required<FontHost> = {
+  bundled: BUNDLED_FAMILIES,
+  generic: GENERIC_FAMILIES,
+  cjkTail: CJK_TAIL,
+};
+
+const hostOf = (host?: FontHost): Required<FontHost> => ({ ...DEFAULT_HOST, ...host });
+
 /** Quote a family name for a `font-family` value when it needs it. */
 export function quoteFamily(family: string): string {
   return /^[A-Za-z][A-Za-z0-9 -]*$/.test(family) && !/^\d/.test(family) ? `"${family}"` : JSON.stringify(family);
 }
 
 /** A family plus the CJK-safe tail, which is what actually gets applied. */
-export function stackFor(family: string): string {
-  const generic = GENERIC_FAMILIES.find(f => f.family === family);
-  if (generic) return generic.stack;
-  const bundled = BUNDLED_FAMILIES.find(f => f.family === family);
-  if (bundled) return bundled.stack;
-  return `${quoteFamily(family)}, ${CJK_TAIL}`;
+export function stackFor(family: string, host?: FontHost): string {
+  const { bundled, generic, cjkTail } = hostOf(host);
+  const isGeneric = generic.find(f => f.family === family);
+  if (isGeneric) return isGeneric.stack;
+  const isBundled = bundled.find(f => f.family === family);
+  if (isBundled) return isBundled.stack;
+  return `${quoteFamily(family)}, ${cjkTail}`;
 }
 
 /* ----------------------------------------------------------------- probe -- */
@@ -308,14 +337,16 @@ export interface FontCatalogue {
   heuristic: boolean;
   /** Why the real list was not available, in words a user can act on. */
   note: string;
+  /** The same fact as `note`, for a caller that has to translate it. */
+  reason: CatalogueReason;
 }
 
 const sortFamilies = (a: FontFamily, b: FontFamily) => a.family.localeCompare(b.family);
 
 /** Bundled + generic, deduplicated against `extra`. Always the floor of any catalogue. */
-function withBundled(extra: FontFamily[]): FontFamily[] {
+function withBundled(extra: FontFamily[], host: Required<FontHost>): FontFamily[] {
   const seen = new Set(extra.map(f => f.family));
-  const base = [...BUNDLED_FAMILIES, ...GENERIC_FAMILIES].filter(f => !seen.has(f.family));
+  const base = [...host.bundled, ...host.generic].filter(f => !seen.has(f.family));
   return base.concat(extra.sort(sortFamilies));
 }
 
@@ -329,7 +360,8 @@ function withBundled(extra: FontFamily[]): FontFamily[] {
  * So the first open probes, and an explicit "Use my installed fonts" button
  * calls again with the prompt allowed.
  */
-export async function loadFontCatalogue(options: { allowPrompt?: boolean } = {}): Promise<FontCatalogue> {
+export async function loadFontCatalogue(options: { allowPrompt?: boolean; host?: FontHost } = {}): Promise<FontCatalogue> {
+  const host = hostOf(options.host);
   const query = (globalThis as { queryLocalFonts?: () => Promise<LocalFontData[]> }).queryLocalFonts;
   const permitted = options.allowPrompt || (await alreadyGranted());
   if (typeof query === "function" && permitted) {
@@ -343,28 +375,52 @@ export async function loadFontCatalogue(options: { allowPrompt?: boolean } = {})
       }
       const families: FontFamily[] = [...byFamily.entries()].map(([family, faces]) => ({
         family,
-        stack: stackFor(family),
+        stack: stackFor(family, host),
         source: "local" as const,
         faces: faces.length,
       }));
       return {
-        families: withBundled(families),
+        families: withBundled(families, host),
         source: "local",
         heuristic: false,
         note: "",
+        reason: "granted",
       };
     } catch (error) {
       // A dismissed or denied prompt lands here. Falling through to the probe is
       // the right answer: the picker still works, with a smaller list and a note.
-      return probeCatalogue(deniedNote(error));
+      return probeCatalogue(
+        deniedNote(error),
+        host,
+        (error as { name?: string })?.name === "NotAllowedError" ? "denied" : "failed",
+      );
     }
   }
   return probeCatalogue(
     typeof query === "function"
       ? "Showing measured families. Grant access to list every installed font."
       : "This browser cannot enumerate installed fonts (queryLocalFonts is Chromium-only), so the list below was measured. Any family name can still be typed in by hand.",
+    host,
+    typeof query === "function" ? "notPrompted" : "unsupported",
   );
 }
+
+/**
+ * Why the catalogue is what it is, as a token rather than a sentence.
+ *
+ * `note` above is English prose, and the dashboard renders in eight locales with
+ * a per-language funny level layered on top — so a component there cannot show
+ * `note` and still be translated. This says the same thing in a form a caller
+ * can map onto its own dictionary, and `note` stays for callers that just want
+ * a string.
+ */
+export type CatalogueReason =
+  | "granted"
+  | "notPrompted"
+  | "unsupported"
+  | "denied"
+  | "failed"
+  | "noSurface";
 
 function deniedNote(error: unknown): string {
   const name = (error as { name?: string })?.name;
@@ -389,17 +445,21 @@ async function alreadyGranted(): Promise<boolean> {
   }
 }
 
-function probeCatalogue(note: string): FontCatalogue {
+function probeCatalogue(note: string, host: Required<FontHost>, reason: CatalogueReason): FontCatalogue {
   const measure = canvasMeasurer();
   const found: FontFamily[] = measure
     ? PROBE_CANDIDATES.filter(family => probeInstalled(measure, family))
-        .map(family => ({ family, stack: stackFor(family), source: "probed" as const }))
+        .map(family => ({ family, stack: stackFor(family, host), source: "probed" as const }))
     : [];
   return {
-    families: withBundled(found),
+    families: withBundled(found, host),
     source: measure ? "probed" : "bundled",
     heuristic: true,
     note: measure ? note : "No rendering surface was available to measure fonts, so only the bundled families are listed.",
+    // A missing canvas is a stronger fact than whatever kept `queryLocalFonts`
+    // from running: nothing was measured at all, so the caller must say that
+    // rather than "grant access" for a list it could never have produced.
+    reason: measure ? reason : "noSurface",
   };
 }
 
@@ -411,8 +471,9 @@ function probeCatalogue(note: string): FontCatalogue {
  * no axes". Those are different facts and only one of them is a reason to hide
  * the axis controls.
  */
-export async function loadAxesFor(family: string): Promise<VariationAxis[] | undefined> {
-  const bundled = BUNDLED_FAMILIES.find(f => f.family === family) ?? GENERIC_FAMILIES.find(f => f.family === family);
+export async function loadAxesFor(family: string, host?: FontHost): Promise<VariationAxis[] | undefined> {
+  const { bundled: hostBundled, generic } = hostOf(host);
+  const bundled = hostBundled.find(f => f.family === family) ?? generic.find(f => f.family === family);
   if (bundled) return bundled.axes;
   const query = (globalThis as { queryLocalFonts?: (o?: unknown) => Promise<LocalFontData[]> }).queryLocalFonts;
   if (typeof query !== "function" || !(await alreadyGranted())) return undefined;

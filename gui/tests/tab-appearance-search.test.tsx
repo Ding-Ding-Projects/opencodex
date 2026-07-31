@@ -77,11 +77,25 @@ async function open() {
 }
 
 const field = (c: HTMLElement) => c.querySelector<HTMLInputElement>('input[type="search"]')!;
-/** Every control the panel offers, by its accessible name. */
+/**
+ * Every control the panel offers, by its accessible name.
+ *
+ * `aria-labelledby` is resolved, not skipped: `ColorField` names its trigger by
+ * pointing at its own label element and describes it with the current value, so
+ * reading `textContent` alone reports the colour ("#ff0000") where the name is
+ * actually "Label colour" — and a test that cannot see a control's real name
+ * fails on a control that is perfectly labelled.
+ */
+const nameOf = (el: HTMLElement): string => {
+  const by = el.getAttribute("aria-labelledby");
+  if (by) {
+    const named = by.split(/\s+/).map(id => el.ownerDocument.getElementById(id)?.textContent ?? "").join(" ").trim();
+    if (named) return named;
+  }
+  return el.getAttribute("aria-label") ?? el.textContent ?? "";
+};
 const namesOf = (c: HTMLElement) =>
-  [...c.querySelectorAll<HTMLElement>("input, select, button")]
-    .map(el => el.getAttribute("aria-label") ?? el.textContent ?? "")
-    .filter(Boolean);
+  [...c.querySelectorAll<HTMLElement>("input, select, button")].map(nameOf).filter(Boolean);
 
 function typeInto(el: HTMLInputElement, value: string): void {
   const proto = Object.getPrototypeOf(el) as HTMLInputElement;
@@ -157,11 +171,15 @@ test("the preview survives a query that matches no control", async () => {
 test("the panel's search reaches the regex builder, anchored inside the panel", async () => {
   const { container, root } = await open();
 
+  // Not "the panel has exactly one dialog trigger": the font picker brings its
+  // own typeface search, with its own builder, and every colour row opens a
+  // picker dialog. The rule is that the *settings search* has a builder beside
+  // it, so that is what this looks for.
   const triggers = [...container.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="dialog"]')];
-  expect(triggers.length).toBe(1);
-  expect(triggers[0]!.getAttribute("aria-label")).toBe("Open regex builder");
+  const builder = triggers.find(el => el.getAttribute("aria-label") === "Open regex builder");
+  expect(builder).toBeDefined();
 
-  await act(async () => { triggers[0]!.click(); });
+  await act(async () => { builder!.click(); });
   // Inside this panel, not a navigation to the builder page — the editor is
   // itself a popover, and losing it to a route change loses the tab being edited.
   expect(container.querySelector('[role="dialog"].m3-rxpop')).not.toBeNull();
