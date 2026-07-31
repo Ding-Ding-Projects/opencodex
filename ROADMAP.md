@@ -36,6 +36,7 @@ Behaviour documented on [opencodex.me](https://opencodex.me/) and shipped in a t
 | `ocx export` full-state bundle + local-only git history of account changes | `1b2558e0` |
 | Home Assistant usage-meter integration; auto-release on green CI | `7a6cdd3a` |
 | Estimated API cost meter in the app bar | `34b1dea0` |
+| App logs written to `~/.opencodex/logs/opencodex.log`, rotated at 2 MiB keeping 3 generations (8 MiB ceiling); clearing the logs commits them to the local git history first, and restoring appends rather than rewinds | uncommitted |
 
 ## Design parity with `design/`
 

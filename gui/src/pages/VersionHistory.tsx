@@ -42,8 +42,8 @@ import {
   type Revision, type RevisionScope,
 } from "../shell/revisions";
 import {
-  PATTERN_CAP, buildTimeline, filterTimeline, isValidIsoDate, isoDay,
-  type HistoryOrigin, type StateHistoryEntry, type TimelineEntry,
+  PATTERN_CAP, buildTimeline, filterTimeline, isValidIsoDate, isoDay, snapshotScope,
+  type HistoryOrigin, type SnapshotScope, type StateHistoryEntry, type TimelineEntry,
 } from "./history-model";
 import HistoryPayload from "./history-payload";
 import type { TKey } from "../i18n/shared";
@@ -86,6 +86,18 @@ const ORIGINS: { origin: HistoryOrigin; tkey: TKey; Icon: typeof IconServer }[] 
   { origin: "local", tkey: "history.revisions", Icon: IconHistory },
   { origin: "server", tkey: "network.historyTitle", Icon: IconServer },
 ];
+
+/**
+ * What each snapshot kind is called, in words, on the row and in its confirm
+ * dialog. A log snapshot and a credential snapshot restore through completely
+ * different endpoints — one restarts the proxy, one does not — so the reader is
+ * told which they are looking at before they press anything.
+ */
+const SNAPSHOT_KEYS: Record<SnapshotScope, TKey> = {
+  state: "history.snapshotState",
+  logs: "history.snapshotLogs",
+  mixed: "history.snapshotMixed",
+};
 
 const PRESET_DAYS = [7, 30, 90] as const;
 const PRESET_KEYS: Record<number, TKey> = {
@@ -233,6 +245,62 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
   };
 
   /**
+   * Log restore, through `/api/logs/restore`.
+   *
+   * Separate from the state restore on purpose rather than a flag on it. That
+   * one drains in-flight turns, rewrites credential files and restarts the
+   * proxy; none of which a log file needs or deserves. Folding both into one
+   * endpoint would mean either restarting a machine to put a log back, or
+   * teaching the credential path a "sometimes skip the restart" branch — and a
+   * conditional restart on the code that rewrites secrets is the last place to
+   * put one.
+   *
+   * Append-only just the same: the server commits the current logs first and
+   * commits the restore second, so this undo can itself be undone.
+   */
+  const restoreLogs = async (entry: TimelineEntry): Promise<void> => {
+    const snapshot = entry.snapshot;
+    if (!snapshot) return;
+    closeDialog();
+    setBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/api/logs/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commit: snapshot.hash }),
+      });
+      const body = await res.json().catch(() => null) as {
+        success?: boolean; error?: string; restored?: string[]; kept?: string[];
+      } | null;
+      if (!res.ok || !body?.success) {
+        notify({ tone: "error", title: t("history.logsRestoreFailed"), body: body?.error });
+        return;
+      }
+      recordRevision({
+        scope: "settings",
+        label: snapshot.subject,
+        summary: t("history.restoredFrom", { at: new Date(entry.at).toLocaleString() }),
+        restored: true,
+      });
+      setRevisions(readRevisions());
+      notify({
+        tone: "success",
+        title: t("history.logsRestored"),
+        // Log files added since that revision are kept, not deleted, exactly as
+        // the state restore keeps files absent from its snapshot. Saying so beats
+        // letting the user assume the directory now matches the snapshot.
+        body: t("history.logsRestoredBody", { count: String(body.restored?.length ?? 0) })
+          + (body.kept?.length ? "\n" + t("history.logsRestoredKept", { files: body.kept.join(", ") }) : ""),
+      });
+      history.refresh();
+    } catch {
+      notify({ tone: "error", title: t("history.logsRestoreFailed") });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
    * Server restore, reusing `/api/host/restore` exactly as Network.tsx does.
    *
    * The proxy finishes in-flight requests before rewriting any credential file
@@ -324,6 +392,15 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
   const restoreLabel = selected?.origin === "server" && selected.snapshot
     ? selected.snapshot.short + " " + selected.snapshot.subject
     : selected?.title ?? "";
+
+  /**
+   * A pure-logs snapshot restores through the log endpoint. A `mixed` one holds
+   * both and is treated as state: that restore is the one that can lose an
+   * account if it is skipped, so when the two disagree the safer target wins.
+   */
+  const selectedScope = selected?.origin === "server" ? snapshotScope(selected.snapshot) : "state";
+  const restoresLogs = selectedScope === "logs";
+  const serverRestoreLabel = restoresLogs ? t("history.restoreLogs") : t("history.restore");
 
   /**
    * Nothing recorded anywhere and nothing matching the filters are different
@@ -524,6 +601,10 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
               <span style={{ ...MONO, overflowWrap: "anywhere" }}>
                 {t(originKey(selected.origin))}{SEP}{selected.ref}{SEP}{new Date(selected.at).toLocaleString()}
                 {selected.scope ? SEP + t(scopeKey(selected.scope)) : ""}
+                {/* Which files this commit holds, in words. The restore button
+                    below changes behaviour with it, so it must be readable
+                    before the button is pressed rather than inferred after. */}
+                {selected.origin === "server" ? SEP + t(SNAPSHOT_KEYS[selectedScope]) : ""}
               </span>
             }
           >
@@ -563,7 +644,7 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
                 onClick={() => setDialog({ kind: "restore" })}
               >
                 <IconUndo aria-hidden="true" />
-                {selected.origin === "server" ? t("history.restore") : t("history.localAction")}
+                {selected.origin === "server" ? serverRestoreLabel : t("history.localAction")}
               </Button>
               {selected.revision && (
                 <Button
@@ -587,29 +668,36 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
           labelledBy="history-restore-title"
           title={
             <span id="history-restore-title">
-              {selected.origin === "server" ? t("history.restore") : t("history.localAction")}
+              {selected.origin === "server" ? serverRestoreLabel : t("history.localAction")}
             </span>
           }
           /*
-            Both wordings state the append-only guarantee. The server one also has
-            to say that in-flight work finishes first and the proxy restarts,
-            because that restore reaches outside the browser — which is why the
-            supporting text keeps `pre-line`: that string's blank lines separate
-            what happens from what it costs, and collapsing them loses the break.
+            All three wordings state the append-only guarantee. The state one also
+            has to say that in-flight work finishes first and the proxy restarts,
+            because that restore reaches outside the browser; the log one has to
+            say the opposite just as plainly, or a reader primed by the first
+            would brace for a restart that is not coming. Hence `pre-line`: those
+            strings' blank lines separate what happens from what it costs, and
+            collapsing them loses the break.
           */
           description={
             <span style={{ whiteSpace: "pre-line" }}>
-              {selected.origin === "server"
-                ? t("network.restoreConfirm", { label: restoreLabel })
-                : t("history.restoreConfirm", { label: restoreLabel })}
+              {selected.origin !== "server"
+                ? t("history.restoreConfirm", { label: restoreLabel })
+                : restoresLogs
+                  ? t("history.restoreLogsConfirm", { label: restoreLabel })
+                  : t("network.restoreConfirm", { label: restoreLabel })}
             </span>
           }
           onClose={closeDialog}
           actions={
             <>
               <Button variant="text" onClick={closeDialog}>{t("common.cancel")}</Button>
-              <Button onClick={() => selected.origin === "server" ? void restoreServer(selected, false) : restoreLocal(selected)}>
-                {selected.origin === "server" ? t("history.restore") : t("history.localAction")}
+              <Button onClick={() => {
+                if (selected.origin !== "server") { restoreLocal(selected); return; }
+                void (restoresLogs ? restoreLogs(selected) : restoreServer(selected, false));
+              }}>
+                {selected.origin === "server" ? serverRestoreLabel : t("history.localAction")}
               </Button>
             </>
           }

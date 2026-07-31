@@ -10,7 +10,7 @@
 
 import { expect, test } from "bun:test";
 import {
-  PATTERN_CAP, buildTimeline, filterTimeline, flattenPayload, isValidIsoDate, isoDay,
+  PATTERN_CAP, buildTimeline, filterTimeline, flattenPayload, isValidIsoDate, isoDay, snapshotScope,
   type StateHistoryEntry, type TimelineFilter,
 } from "../src/pages/history-model";
 import type { Revision } from "../src/shell/revisions";
@@ -124,4 +124,27 @@ test("a JSON payload flattens to dotted paths; anything else keeps its raw text"
   expect(flattenPayload("Seed colour changed")).toBeNull();
   expect(flattenPayload("42")).toBeNull();
   expect(flattenPayload("not json {")).toBeNull();
+});
+
+/**
+ * The two restores behave very differently — one drains in-flight turns,
+ * rewrites credential files and restarts the proxy; the other touches nothing
+ * but log files. Reading the scope wrong therefore either restarts a machine to
+ * put a log file back, or quietly skips the restart a credential rewrite needs.
+ *
+ * `mixed` keeps its own name here and is resolved to the state path by the
+ * screen: when a commit holds both, the restore that can lose an account is the
+ * one that must not be skipped.
+ */
+test("a snapshot's scope decides which restore it gets, and defaults safely", () => {
+  const at = "2026-07-31T00:00:00Z";
+  expect(snapshotScope({ hash: "a", short: "a", subject: "s", at, scope: "logs" })).toBe("logs");
+  expect(snapshotScope({ hash: "a", short: "a", subject: "s", at, scope: "mixed" })).toBe("mixed");
+  expect(snapshotScope({ hash: "a", short: "a", subject: "s", at, scope: "state" })).toBe("state");
+  // A proxy older than this field sends no scope at all, and every snapshot it
+  // ever wrote was a state snapshot — so that is what an absent value means.
+  expect(snapshotScope({ hash: "a", short: "a", subject: "s", at })).toBe("state");
+  expect(snapshotScope(null)).toBe("state");
+  // Junk from a hand-edited or future payload falls back rather than leaking through.
+  expect(snapshotScope({ hash: "a", short: "a", subject: "s", at, scope: "nonsense" as never })).toBe("state");
 });

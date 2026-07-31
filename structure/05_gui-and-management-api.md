@@ -68,6 +68,7 @@ be treated as implemented:
 | Subagents | Read/write the featured `subagentModels` list capped at five ids. `GET/PUT /api/injection-model` manages the shared delegation model/effort selection, the independent OpenCodex guidance switch, and the default-off `syncCodexSubagentDefaults` opt-in for native Codex subagent defaults. When OpenCodex owns the active Codex routing, native `[agents]` defaults apply to newly created Codex tasks after sync/restart; external user-managed provider configs remain untouched. The defaults do not cause delegation and preserve existing user-owned defaults rather than overwriting them. PUT is partial-update: absent keys are unchanged, `null` clears, and non-object bodies are rejected with 400 before field validation. `syncCodexSubagentDefaults: true` requires a nonblank `model` and a supported Codex reasoning effort when effort is set; clearing `model` (null/empty) always clears effort and disables native-default sync even when the stored effort was invalid. |
 | V2 / Multi-agent mode | `GET/PUT /api/v2` — reports/sets the codex `multi_agent_v2` feature flag, the 3-state `multiAgentMode` override (`v1`/`default`/`v2`), and the logical maximum thread count. Selecting `v2` enables the native flag and migrates `[agents] max_threads` to the v2 key; selecting `v1` disables it and migrates the same value back. `default` leaves the native flag unchanged. PUT accepts `enabled`, `multiAgentMode`, and/or the compatibility-named `maxConcurrentThreadsPerSession`; contradictory mode/flag pairs are rejected before writes. Every transition is rollback-safe and resyncs the catalog. |
 | Logs & Debug | One sidebar entry (`/#logs`) with two tabs. Logs tab: request/runtime logs for local diagnosis. Debug tab (`/#logs/debug`; legacy `/#debug` deep links redirect there): provider + usage toggles, refresh/follow log viewer. `GET/PUT /api/debug`; `GET /api/debug/logs` and `GET /api/debug/usage-logs` (monotonic `after` cursor, legacy `since` accepted). CLI: `ocx debug provider|usage …` (both streams via running proxy API). |
+| Log files & undo | `GET /api/logs/footprint` reports both absolute log paths, row/line counts, and the enforced retention. `DELETE /api/logs` commits `usage.jsonl` + `logs/` into the local state-history repo **and awaits that commit** before unlinking either; a failed commit answers `snapshot: false` and the delete still proceeds — history must never fail the operation the user asked for. `POST /api/logs/restore { commit }` writes a revision back, appending a pre-restore commit and a post-restore commit so the undo is itself undoable, and needs no drain or restart because logs are not credentials. Both re-seed the in-memory request and debug rings from disk, or the screen shows the opposite of what just happened. |
 | Usage | `GET /api/usage` aggregate read-only summary derived from `~/.opencodex/usage.jsonl`; measured / reported / unreported / unsupported / estimated counts, daily zero-filled grid, model and provider breakdowns. Never exposes prompts. |
 | System | `GET /api/system/memory` — service-process runtime/memory identity (pid, Bun version/revision, platform, RSS/heap/external/ArrayBuffers scalars, observed memory = max(RSS, external, ArrayBuffers), `bun:jsc` heap context, streamMode + eager-relay gate decision, watchdog snapshot sliced to the last 60 samples). Scalar-only payload; rides the standard management auth gate and must never move to unauthenticated `/healthz`. Consumed by `ocx doctor`'s Memory/runtime section and the dashboard Memory observability card. |
 | Stop | `POST /api/stop` — restore native Codex, stop any installed service, and exit the proxy. |
@@ -144,6 +145,48 @@ OAuth polling API: submit request, waiting-for-login completion, and terminal su
 `POST /api/codex-auth/login/code` succeeds, the GUI must keep the input disabled, expose an
 `aria-live` status message that the code was accepted, and surface repeated `login-status` polling
 network failures as a visible warning instead of silently looking idle again.
+
+## Logs on disk, and the undo that guards deleting them
+
+`src/lib/app-log-file.ts` mirrors every `appendDebugLogLine` into
+`~/.opencodex/logs/opencodex.log` (mode `0o600`), timestamped, one line per entry, so the proxy's own
+diagnostics survive the process that wrote them and are readable in a text editor with nothing
+running. The bound is arithmetic and not a background job: rotate at `MAX_LOG_BYTES` (2 MiB), keep
+`MAX_ROTATED_FILES` (3) generations, hard ceiling `MAX_TOTAL_BYTES` (8 MiB). Rotation renames
+oldest-first so no generation is overwritten by the one behind it, and every write path is
+self-swallowing — a request must never fail because its diagnostics could not be recorded. The ring
+buffer is re-seeded from the file at startup (`hydrateDebugLogFromDisk`) exactly as `/api/logs` is
+re-seeded from `usage.jsonl`.
+
+`src/lib/state-history.ts` now tracks two independent path sets in the **same** repository:
+`TRACKED` (config/accounts/auth) and `TRACKED_LOGS` (`usage.jsonl`, `logs/`). One timeline, two
+undos: restoring a credential snapshot must not throw away the logs explaining why, and restoring the
+logs must not roll an account back. `git add -- <paths>` stages only what it is handed, so a log-only
+commit leaves the state files at whatever the previous tree held.
+
+Three invariants that are silent when broken:
+
+- **The `.gitignore` must whitelist the log paths.** `*` ignores directories too, and a negation
+  cannot reach inside an ignored directory — so `logs/` is un-ignored, its contents re-ignored, and
+  the files whitelisted by glob. `git add` *refuses* an ignored path rather than warning, so getting
+  this wrong means the snapshot never happens and the delete proceeds with nothing behind it.
+  `refreshRepoRules` rewrites the rule files on every `ensureRepo`, because a repo created by an
+  older build carries rules that exclude the logs.
+- **`.gitattributes` carries `* -text`.** Git's Windows default (`core.autocrlf=true`) rewrites LF to
+  CRLF on checkout, so a restored file came back with different bytes than were committed. Merely
+  wrong for JSONL; unrecoverable for anything encrypted, which fails indistinguishably from
+  corruption in the one path whose job is making data recoverable.
+- **Identity is content-borne, never positional.** `usage.jsonl` rows are addressed by `requestId`,
+  which travels inside the row. Anything bound to a row's *position* — an autoincrement id, a line
+  offset, an AEAD AAD derived from either — stops matching the moment a restore lands the row at a
+  different offset.
+
+`src/lib/log-store.ts` owns the ordering, and the ordering is the feature: measure, commit, *then*
+unlink. A post-hoc commit records the absence rather than the content, so recovery would depend on
+some earlier commit happening to hold the rows — never true for the first clear a machine performs.
+Revision subjects name what changed with counts (`cleared 1,204 request log rows and 87 app log
+lines`), because a history whose rows all say "Updated" is one nobody can navigate; an unchanged
+state commits nothing.
 
 ## Usage accounting
 

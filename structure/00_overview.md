@@ -53,7 +53,8 @@ providers are routed by explicit `provider/model`, provider model lists, or the 
 | `~/.opencodex/auth.json` | opencodex | OAuth tokens; not committed. Multiauth shape: `provider -> { activeAccountId, accounts[] }` (legacy single-credential values normalize on load; a one-time `auth.json.pre-multiauth` backup guards downgrades). ChatGPT scratch OAuth stays separate from the Codex account store; identity-less providers (kimi/kiro/cursor) replace their active slot. |
 | `~/.opencodex/codex-accounts.json` | opencodex | Hardened main-plus-added credential store used by `openai` in Pool mode. |
 | `~/.opencodex/catalog-backup.json` | opencodex | One-time pristine Codex catalog backup for restore. |
-| `~/.opencodex/usage.jsonl` | opencodex | Append-only request usage log (0o600); request metadata + token counts only, never prompts or auth. |
+| `~/.opencodex/usage.jsonl` | opencodex | Append-only request usage log (0o600); request metadata + token counts only, never prompts or auth. Tracked by the local state-history repo and committed before `DELETE /api/logs` unlinks it. |
+| `~/.opencodex/logs/opencodex.log[.1-.3]` | opencodex | The proxy's own diagnostic lines (0o600), timestamped and plain text. Rotates at 2 MiB keeping 3 generations, so `logs/` is hard-capped at 8 MiB. Tracked and snapshotted like `usage.jsonl`. |
 | `$CODEX_HOME/config.toml` | Codex, edited by opencodex | Active provider and provider table. |
 | `$CODEX_HOME/opencodex.config.toml` | opencodex | Optional profile for explicit Codex opt-in. |
 | `$CODEX_HOME/opencodex-catalog.json` | opencodex | Shared native+routed model catalog. |

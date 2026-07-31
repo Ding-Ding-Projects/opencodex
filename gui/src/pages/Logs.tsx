@@ -9,6 +9,9 @@ import { modelLabel } from "../model-display";
 import { Notice } from "../ui";
 import { Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { useConfirm } from "../shell/confirm-context";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 import Debug from "./Debug";
 
 import { M3_TABLIST_STYLE, m3TabStyle } from "./debug-shared";
@@ -342,6 +345,76 @@ const SAMPLE_ROWS = 40;
 const NUM_CELL: CSSProperties = { textAlign: "right" };
 
 /**
+ * What `GET /api/logs/footprint` reports: where the logs actually live, how much
+ * is there, and the retention the proxy enforces.
+ *
+ * The paths and the cap are read from the server rather than written into the
+ * copy, because a number duplicated into a translated string is a number that
+ * drifts the moment the constant changes — and a stated retention that is not
+ * the real one is worse than none at all.
+ */
+interface LogFootprint {
+  requestRows: number;
+  appLines: number;
+  bytes: number;
+  appLogPath: string;
+  usageLogPath: string;
+  retention: { maxLogBytes: number; maxRotatedFiles: number; maxTotalBytes: number };
+}
+
+/**
+ * Validated rather than cast.
+ *
+ * A proxy older than this endpoint answers `/api/logs/footprint` with the SPA
+ * fallback or a route that happens to match a prefix, and `as LogFootprint` on
+ * either produces an object whose `retention` is undefined — which crashes the
+ * render of the whole Logs screen the first time it is read. The caption is the
+ * least important thing on this page; it must never be the thing that takes the
+ * log table down.
+ */
+function asLogFootprint(raw: unknown): LogFootprint | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const retention = value.retention as Record<string, unknown> | undefined;
+  if (typeof value.requestRows !== "number" || typeof value.appLines !== "number"
+    || typeof value.bytes !== "number"
+    || typeof value.appLogPath !== "string" || typeof value.usageLogPath !== "string"
+    || !retention || typeof retention !== "object"
+    || typeof retention.maxLogBytes !== "number"
+    || typeof retention.maxRotatedFiles !== "number"
+    || typeof retention.maxTotalBytes !== "number") {
+    return null;
+  }
+  return raw as LogFootprint;
+}
+
+/**
+ * Exact and grouped, never abbreviated.
+ *
+ * `formatTokens` is right for token counts, where 1.2M is more readable than the
+ * digits — but these numbers sit beside a delete button and are repeated in its
+ * confirmation. "1.2K request rows" in the caption and "1204" in the dialog is
+ * the same fact told two ways, which reads as one of them being wrong.
+ */
+function formatCount(n: number, localeTag?: string): string {
+  return new Intl.NumberFormat(localeTag).format(n);
+}
+
+const BYTE_UNITS = ["B", "KB", "MB", "GB"] as const;
+
+function formatBytes(bytes: number, localeTag?: string): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 || value >= 100 ? 0 : 1;
+  return `${new Intl.NumberFormat(localeTag, { maximumFractionDigits: digits }).format(value)} ${BYTE_UNITS[unit]}`;
+}
+
+/**
  * The prototype's Details affordance is a text-button pill, not the underlined
  * caption link `.log-detail-btn` still describes. styles.css is imported after
  * m3-shell.css, so the legacy rule outranks `.m3-btn--text` at equal specificity —
@@ -419,6 +492,10 @@ function summarizeFilteredLogs(entries: LogEntry[]): {
 
 export default function Logs({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
+  const confirm = useConfirm();
+  const { notify } = useNotifications();
+  const [footprint, setFootprint] = useState<LogFootprint | null>(null);
+  const [clearing, setClearing] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -480,6 +557,84 @@ export default function Logs({ apiBase }: { apiBase: string }) {
     const interval = setInterval(() => void fetchLogs({ silent: true }), 2000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchLogs, tab]);
+
+  /**
+   * Where the logs are and how big they have got. Deliberately NOT on the
+   * two-second poll: it stats files, the numbers only matter when someone is
+   * about to delete them, and a disk read every two seconds to render a caption
+   * is a cost nobody asked for.
+   */
+  const fetchFootprint = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/logs/footprint`);
+      if (!res.ok) return;
+      setFootprint(asLogFootprint(await res.json()));
+    } catch {
+      // The caption simply does not appear. The log table is unaffected, and an
+      // error banner about a caption would be noise on the screen people open
+      // when something else is already wrong.
+    }
+  }, [apiBase]);
+
+  useEffect(() => {
+    if (tab !== "logs") return;
+    void fetchFootprint();
+  }, [fetchFootprint, tab]);
+
+  /**
+   * Clear, guarded by a modal decision — this destroys data, which is the one
+   * category the project's rules keep blocking rather than sending to a snackbar.
+   *
+   * The server commits the files into the local git history before unlinking
+   * them, so this is undoable from Version history. When that commit could not
+   * be made the toast says so in as many words: a delete that quietly lost its
+   * undo must never look like one that kept it.
+   */
+  const clearLogs = async () => {
+    const rows = footprint?.requestRows ?? 0;
+    const lines = footprint?.appLines ?? 0;
+    if (rows === 0 && lines === 0) {
+      notify({ tone: "info", title: t("logs.clearNothing") });
+      return;
+    }
+    const agreed = await confirm({
+      title: t("logs.clearTitle"),
+      body: t("logs.clearBody", { rows: formatCount(rows, localeTag), lines: formatCount(lines, localeTag) }),
+      confirmLabel: t("logs.clear"),
+      tone: "danger",
+    });
+    if (!agreed) return;
+    setClearing(true);
+    try {
+      const res = await fetch(`${apiBase}/api/logs`, { method: "DELETE" });
+      const body = await res.json().catch(() => null) as
+        { ok?: boolean; snapshot?: boolean; label?: string } | null;
+      if (!res.ok || !body?.ok) {
+        notify({ tone: "error", title: t("logs.clearFailed") });
+        return;
+      }
+      // The dashboard's own revision log records the event too, so Version
+      // history shows the deletion whether or not the git snapshot landed —
+      // "nothing was recorded" is exactly the wrong thing to show after a delete.
+      recordRevision({
+        scope: "settings",
+        label: t("logs.revisionLabel"),
+        summary: body.label ?? t("logs.cleared"),
+      });
+      notify({
+        tone: body.snapshot ? "success" : "warn",
+        title: t("logs.cleared"),
+        body: body.snapshot ? t("logs.clearedBody", { label: body.label ?? "" }) : t("logs.clearedNoSnapshot"),
+      });
+      setLogs([]);
+      await fetchLogs({ silent: true });
+      await fetchFootprint();
+    } catch {
+      notify({ tone: "error", title: t("logs.clearFailed") });
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const detailInfo = detail ? statusCodeInfo(detail.status, locale) : null;
   const conversationQuery = conversationFilter.trim();
@@ -595,6 +750,49 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>
         {t("logs.subtitle")}
       </p>
+
+      {/*
+        Where the logs are, in words, next to the button that deletes them.
+        "Save the logs to a file so I can see them" is only half answered by
+        writing the file — the other half is telling the reader its path, so the
+        answer to "where is it?" is on the screen rather than in a doc.
+      */}
+      {footprint && (
+        <section
+          aria-label={t("logs.file.title")}
+          style={{
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--sp-2)",
+            margin: "0 0 12px", padding: "10px 14px",
+            border: "1px solid var(--m3-outline-variant)", borderRadius: "var(--r-l)",
+            background: "var(--m3-surface-container-low)",
+          }}
+        >
+          <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: "var(--t-body-s)", overflowWrap: "anywhere" }}>
+              {t("logs.file.where", { path: footprint.appLogPath })}
+            </p>
+            <p style={{ margin: "2px 0 0", fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", overflowWrap: "anywhere" }}>
+              {t("logs.file.usage", { path: footprint.usageLogPath })}
+            </p>
+            <p style={{ margin: "6px 0 0", fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)" }}>
+              {t("logs.file.footprint", {
+                rows: formatCount(footprint.requestRows, localeTag),
+                lines: formatCount(footprint.appLines, localeTag),
+                size: formatBytes(footprint.bytes, localeTag),
+              })}
+              {" · "}
+              {t("logs.file.retention", {
+                size: formatBytes(footprint.retention.maxLogBytes, localeTag),
+                count: footprint.retention.maxRotatedFiles,
+                total: formatBytes(footprint.retention.maxTotalBytes, localeTag),
+              })}
+            </p>
+          </div>
+          <Button variant="danger" disabled={clearing} onClick={() => void clearLogs()}>
+            {t("logs.clear")}
+          </Button>
+        </section>
+      )}
 
       {/* One control row per the prototype: search (+ `.*` opt-in and the
           builder shortcut), surface filter, auto-refresh. */}

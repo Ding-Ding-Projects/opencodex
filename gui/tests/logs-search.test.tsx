@@ -3,6 +3,8 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
+import { ConfirmProvider } from "../src/shell/confirm";
 import Logs from "../src/pages/Logs";
 
 const globals = ["document", "window", "navigator", "localStorage", "sessionStorage", "IS_REACT_ACT_ENVIRONMENT", "ResizeObserver"] as const;
@@ -123,8 +125,15 @@ async function mountLogs(): Promise<{ root: Root; container: HTMLElement }> {
   await act(async () => {
     root = createRoot(container);
     root.render(
+      // Logs now owns a destructive action, so it reads the confirm and
+      // notification contexts main.tsx supplies. Mounting it bare would fail
+      // on a missing provider rather than on anything these tests assert.
       <LanguageProvider>
-        <Logs apiBase="http://localhost" />
+        <NotificationsProvider>
+          <ConfirmProvider>
+            <Logs apiBase="http://localhost" />
+          </ConfirmProvider>
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });

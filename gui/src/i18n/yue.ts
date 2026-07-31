@@ -252,4 +252,35 @@ export const yue: Partial<Record<TKey, string>> = {
   "tabs.styleResetAll": "全部還原",
   "tabs.styleInherits": "跟主題",
   "tabs.styleSwatchFallback": "個色板顯示唔到呢個值 —— 真正用緊嘅係隔籬個欄入面嗰個。",
+
+  // ---- 紀錄檔同刪咗之後點救 ----
+  // 講到明幾多行、擺喺邊、留幾耐。刪嘢之前唔講清楚會冇咗啲乜,
+  // 就等於叫人閉住眼簽名。
+  "logs.file.title": "紀錄檔",
+  "logs.file.where": "寫咗落 {path} —— 用任何文字編輯器都開得。",
+  "logs.file.usage": "請求嗰啲行：{path}",
+  "logs.file.retention": "每個紀錄檔最多 {size}，舊嘅留 {count} 個，所以成個資料夾點都唔會超過 {total}。",
+  "logs.file.footprint": "{rows} 行請求 · {lines} 行程式紀錄 · 佔咗 {size}",
+  "logs.clear": "清走紀錄",
+  "logs.clearTitle": "清走呢部機嘅紀錄",
+  "logs.clearBody": "會刪咗 {rows} 行請求同 {lines} 行程式紀錄。紀錄表、除錯分頁同用量統計全部都係讀呢啲檔嘅，所以三樣都會變返吉。\n\n刪之前會先 commit 落本機嘅版本歷史，所以喺「版本歷史」度撳返轉頭就攞得返。嗰個歷史淨係留喺呢部機，唔會上傳去邊。",
+  "logs.cleared": "紀錄清走咗",
+  "logs.clearedBody": "已經存咗落版本歷史，個名叫「{label}」。想攞返就去「版本歷史」。",
+  "logs.clearedNoSnapshot": "紀錄係清走咗，但係寫唔到落版本歷史 —— 呢次冇得反悔。",
+  "logs.clearFailed": "清唔到啲紀錄",
+  "logs.clearNothing": "冇紀錄可以清。",
+  "logs.revisionLabel": "紀錄",
+
+  // ---- 紀錄快照喺同一條時間線 ----
+  // 紀錄快照同帳號快照嘅還原方式唔同 —— 唔使等請求做完，又唔使重啟,
+  // 所以自己有自己個掣，唔會借人哋嗰個。
+  "history.snapshotLogs": "紀錄檔",
+  "history.snapshotState": "帳號同設定",
+  "history.snapshotMixed": "帳號、設定同紀錄",
+  "history.restoreLogs": "還原紀錄",
+  "history.restoreLogsConfirm": "要將啲紀錄還原做「{label}」嗰陣個樣？\n\n而家啲紀錄會先 commit 咗，所以呢次還原本身都反悔得返。唔會斷任何請求，proxy 亦都唔使重啟。",
+  "history.logsRestored": "紀錄還原咗",
+  "history.logsRestoredBody": "寫返咗 {count} 個檔，仲記低咗做一條新紀錄 —— 所以呢次都反悔得返。",
+  "history.logsRestoredKept": "嗰條紀錄之後先加嘅檔照留低：{files}",
+  "history.logsRestoreFailed": "還原唔到啲紀錄",
 };

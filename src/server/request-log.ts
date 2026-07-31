@@ -919,9 +919,24 @@ export function aggregateAttemptUsage(
 
 export function getRequestLogEntries(): RequestLogEntry[] { return requestLog; }
 
+/**
+ * Drop the in-memory ring after usage.jsonl has been cleared or restored, and
+ * re-arm hydration so the next `hydrateRequestLogsFromDisk` reads what is on
+ * disk now.
+ *
+ * Both halves matter. Without the reset flag a restore would put the rows back
+ * on disk and leave /api/logs empty until the next process start, which reads
+ * as "the restore did nothing". Without clearing the ring, a clear would leave
+ * the deleted rows on screen, which reads as "the delete did nothing". Either
+ * way the user reasonably concludes the button is broken.
+ */
+export function resetRequestLogsForReload(): void {
+  requestLog.length = 0;
+  requestLogsHydratedFromDisk = false;
+}
+
 /** Test-only process-state reset for isolated integration harnesses. */
 export function clearRequestLogsForTests(): void {
-  requestLog.length = 0;
+  resetRequestLogsForReload();
   requestLogSeq = 0;
-  requestLogsHydratedFromDisk = false;
 }

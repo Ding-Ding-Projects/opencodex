@@ -147,6 +147,16 @@ repository — open a section to see the ones you care about.
     </td>
   </tr>
 </table>
+
+**The logs are files, and deleting them is undoable.** Requests go to
+`~/.opencodex/usage.jsonl`, the proxy's own diagnostics to `~/.opencodex/logs/opencodex.log` — plain
+text, timestamped, readable in any editor with nothing running. The app log rotates at 2 MiB and
+keeps 3 generations, so `logs/` is capped at 8 MiB and a long-running proxy cannot fill a disk.
+**Clear logs** commits both into the local git history *before* unlinking them, so **Version
+history → Restore logs** puts them back; if that commit cannot be made, the clear still happens and
+says in as many words that this one cannot be undone. Restoring appends rather than rewinds, so an
+undo can itself be undone. Full detail in
+[Log files and undoing a clear](https://opencodex.me/guides/log-files/).
 </details>
 
 <details>

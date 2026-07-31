@@ -50,6 +50,7 @@ import {
 import {
   currentUsageLogRevision,
   readUsageSnapshotForManagement,
+  usageLogPath,
   usageLogRevisionKey,
   type PersistedUsageEntry,
 } from "../../usage/log";
@@ -57,7 +58,8 @@ import { getUsageDebugLogEntries } from "../../usage/debug";
 import { parseRange, parseUsageSurface, summarizeUsage, type UsageRange, type UsageSummary, type UsageSurface } from "../../usage/summary";
 import { stripCodexRuntimeProviderFields } from "../../codex/auth-context";
 import { getProviderRegistryEntry } from "../../providers/registry";
-import { getDebugLogEntries } from "../../lib/debug-log-buffer";
+import { clearDebugLogBuffer, getDebugLogEntries, hydrateDebugLogFromDisk } from "../../lib/debug-log-buffer";
+import { MAX_LOG_BYTES, MAX_ROTATED_FILES, MAX_TOTAL_BYTES } from "../../lib/app-log-file";
 import { getInjectionDebugLogEntries } from "../../lib/injection-debug-log";
 import {
   clearDebugSettings,
@@ -68,7 +70,7 @@ import {
 } from "../../lib/debug-settings";
 import type { OcxClaudeCodeConfig, OcxConfig, OcxCustomModel, OcxProviderConfig } from "../../types";
 import { drainAndShutdown } from "../lifecycle";
-import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
+import { filterRequestLogs, getRequestLogEntries, hydrateRequestLogsFromDisk, resetRequestLogsForReload, type RequestLogEntry } from "../request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
@@ -79,6 +81,34 @@ import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, C
 import type { ManagementContext } from "./context";
 
 const USAGE_DAY_MS = 86_400_000;
+
+/**
+ * Re-seed both in-memory log rings from what is now on disk.
+ *
+ * Called after a clear AND after a restore. Skipping it leaves the dashboard
+ * showing the opposite of what just happened — deleted rows still listed, or a
+ * restored file invisible until the next process start — and in both cases the
+ * user concludes the button did nothing.
+ */
+function reloadLogBuffers(): void {
+  resetRequestLogsForReload();
+  hydrateRequestLogsFromDisk();
+  clearDebugLogBuffer();
+  hydrateDebugLogFromDisk();
+}
+
+/**
+ * The retention the app actually enforces, reported alongside the footprint so
+ * the dashboard states a real bound rather than a number copied into its copy
+ * and left to drift when the constants change.
+ */
+function logRetentionFacts(): { maxLogBytes: number; maxRotatedFiles: number; maxTotalBytes: number } {
+  return {
+    maxLogBytes: MAX_LOG_BYTES,
+    maxRotatedFiles: MAX_ROTATED_FILES,
+    maxTotalBytes: MAX_TOTAL_BYTES,
+  };
+}
 const usageSummaryCache = new Map<string, {
   revisionKey: string;
   expiresAt: number;
@@ -126,6 +156,49 @@ export async function handleLogsUsageRoutes(ctx: ManagementContext): Promise<Res
   if (url.pathname === "/api/logs" && req.method === "GET") {
     const logs = filterRequestLogs(getRequestLogEntries(), url.searchParams);
     return jsonResponse(logs.map(requestLogDto));
+  }
+
+  // What a clear would destroy, so the confirmation can name the real counts
+  // instead of asking the user to agree to an unspecified amount of loss.
+  if (url.pathname === "/api/logs/footprint" && req.method === "GET") {
+    const { measurePersistedLogs } = await import("../../lib/log-store");
+    const { appLogPath } = await import("../../lib/app-log-file");
+    // The path is the point of the feature: a user who wants to read the log in
+    // a text editor needs to be told where it is, not left to guess at it.
+    return jsonResponse({
+      ...measurePersistedLogs(),
+      appLogPath: appLogPath(),
+      usageLogPath: usageLogPath(),
+      retention: logRetentionFacts(),
+    });
+  }
+
+  /*
+   * Clearing the logs. The bytes are committed into the local git history FIRST
+   * and only then deleted, so this is undoable from Version history — and a
+   * history write that fails is reported as `snapshot: false` rather than
+   * failing the delete the user actually asked for.
+   */
+  if (url.pathname === "/api/logs" && req.method === "DELETE") {
+    const { clearPersistedLogs } = await import("../../lib/log-store");
+    const result = await clearPersistedLogs({ reload: reloadLogBuffers });
+    return jsonResponse(result);
+  }
+
+  /*
+   * Undo. Appends rather than rewinds: the logs as they are now are committed
+   * before the chosen revision is written over them, and the restore is
+   * committed too, so this can itself be undone. No drain and no restart —
+   * logs are not credentials, and nothing in flight is reading them.
+   */
+  if (url.pathname === "/api/logs/restore" && req.method === "POST") {
+    let body: { commit?: unknown };
+    try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "invalid_json" }, 400); }
+    const commit = typeof body.commit === "string" ? body.commit.trim() : "";
+    if (!commit) return jsonResponse({ error: "commit is required" }, 400);
+    const { restorePersistedLogs } = await import("../../lib/log-store");
+    const result = await restorePersistedLogs(commit, { reload: reloadLogBuffers });
+    return jsonResponse({ success: result.ok, ...result }, result.ok ? 200 : 400);
   }
 
   if (url.pathname === "/api/debug" && req.method === "GET") {

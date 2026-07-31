@@ -98,6 +98,30 @@ its native traffic lights — hiding those would leave a Mac window with no way 
 region now also opts `[role="menu"]`/`[role="listbox"]` out, or a dropdown rendered inside the app bar
 becomes a drag handle and cannot be clicked.
 
+### Logs on disk, and a git-backed undo for clearing them
+
+The proxy's own diagnostic lines used to live only in a 2 000-entry in-memory ring, so the crash that
+needed explaining took its own explanation with it, and "open the log file" had no answer.
+
+- `src/lib/app-log-file.ts` mirrors every `appendDebugLogLine` into
+  `~/.opencodex/logs/opencodex.log` (mode `0o600`, ISO-8601 prefix, plain text). Rotates at 2 MiB
+  keeping 3 generations, so `logs/` is hard-capped at 8 MiB by arithmetic rather than by a prune job.
+  The ring is re-seeded from the file at startup, exactly as `/api/logs` is from `usage.jsonl`.
+- `src/lib/state-history.ts` now tracks a second path set (`usage.jsonl`, `logs/`) in the **same**
+  local git repository as the account snapshots. One timeline, two independent undos.
+- `src/lib/log-store.ts` owns the ordering: measure, commit, *then* unlink. `DELETE /api/logs`
+  awaits that commit; a failed commit answers `snapshot: false` and the delete still proceeds.
+  `POST /api/logs/restore` appends a pre-restore commit and a post-restore commit, so an undo can be
+  undone. Neither drains nor restarts the proxy — logs are not credentials.
+- Logs screen states both absolute paths and the retention bound, with a **Clear logs** button behind
+  a modal that names the exact counts. Version history labels log snapshots and offers **Restore
+  logs** for them. Every string in `gui/src/i18n/m3.ts` and `gui/src/i18n/yue.ts`.
+
+**A real defect the tests caught:** git's Windows default (`core.autocrlf=true`) rewrote LF to CRLF
+on checkout, so restored files came back with different bytes than were committed. Fixed with a
+`.gitattributes` carrying `* -text`, written at init and refreshed on every `ensureRepo` so repos
+created by older builds are repaired. `tests/log-store.test.ts` guards it with mixed line endings.
+
 ## Verification actually performed
 
 Docs work in this session was verified with:
