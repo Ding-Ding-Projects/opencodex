@@ -103,7 +103,7 @@ test("opens on a fresh profile with nothing connected, as a labelled modal", asy
   const titleId = dialog?.getAttribute("aria-labelledby");
   expect(container.querySelector(`#${titleId}`)?.textContent).toBe("Welcome to opencodex");
   // The step counter is announced rather than left as decoration.
-  const counter = [...container.querySelectorAll("span")].find(s => s.textContent === "Step 1 of 3");
+  const counter = [...container.querySelectorAll("span")].find(s => s.textContent === "Step 1 of 4");
   expect(counter?.getAttribute("aria-live")).toBe("polite");
   // Focus is moved into the dialog, not left behind it.
   expect(document.activeElement).toBe(dialog as unknown as Element);
@@ -157,7 +157,7 @@ test("opens when providers are listed but none carries a credential", async () =
   await act(async () => { root.unmount(); });
 });
 
-test("walks all three steps and finishing records the flag", async () => {
+test("walks all four steps and finishing records the flag", async () => {
   stubProviders([]);
   const { container, root } = await mount();
 
@@ -166,16 +166,20 @@ test("walks all three steps and finishing records the flag", async () => {
 
   expect(heading()).toContain("Pick a language");
   await click(buttonWith(container, "Next")!);
-  expect(stepText()).toBe("Step 2 of 3");
+  expect(stepText()).toBe("Step 2 of 4");
   expect(heading()).toContain("Connect a provider");
 
-  // "I'll do this later" is not a dead end: it advances to the closing step.
+  // "I'll do this later" is not a dead end: it advances rather than closing.
   await click(buttonWith(container, "I'll do this later")!);
-  expect(stepText()).toBe("Step 3 of 3");
+  expect(stepText()).toBe("Step 3 of 4");
+  expect(heading()).toContain("Reach it from other devices");
+
+  await click(buttonWith(container, "Next")!);
+  expect(stepText()).toBe("Step 4 of 4");
   expect(heading()).toContain("You're set");
 
   await click(buttonWith(container, "Back")!);
-  expect(stepText()).toBe("Step 2 of 3");
+  expect(stepText()).toBe("Step 3 of 4");
   await click(buttonWith(container, "Next")!);
 
   await click(buttonWith(container, "Finish")!);

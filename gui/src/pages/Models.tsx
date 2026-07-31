@@ -1170,6 +1170,9 @@ export default function Models({ apiBase }: { apiBase: string }) {
       {v2HelpOpen && (
         <Dialog
           onClose={() => setV2HelpOpen(false)}
+          // Help text about the v2 models, opened to be read while the list it
+          // describes stays visible. Not a decision, so not blocking.
+          modal={false}
           // The headline carries the id so the dialog keeps the accessible name the
           // legacy overlay set with `aria-label` — `<dialog>` gets no name from its
           // contents, and Dialog exposes `labelledBy` rather than an aria-label prop.

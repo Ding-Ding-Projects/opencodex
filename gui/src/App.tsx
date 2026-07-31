@@ -28,11 +28,10 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { useT } from "./i18n/shared";
 import { installApiAuthFetch } from "./api";
 import { type Page } from "./app-routing";
-import { useAppRouteState } from "./use-app-route-state";
 import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
 import { useNotifications } from "./shell/notifications-context";
-import { useTabs } from "./shell/use-tabs";
+import { useTabRouting } from "./shell/use-tab-routing";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
 import TabStrip from "./shell/TabStrip";
@@ -94,22 +93,19 @@ function renderPage(page: Page): ReactNode {
 }
 
 export default function App() {
-  const { page, setPageState, navigateToPage } = useAppRouteState();
   const { windowClass } = usePrefs();
   const { notify } = useNotifications();
   const t = useT();
 
-  // The tab strip owns navigation; the hash router stays the source of truth for deep links.
-  const tabs = useTabs(page, navigateToPage);
+  // The tab strip owns the active page and the hash follows it. Both directions
+  // live in one hook because wiring them as a pair of effects here is a cycle
+  // with no fixed point — see the note in `use-tab-routing.ts`.
+  const tabs = useTabRouting();
+  const page = tabs.activePage;
   // Held rather than derived so growing past the compact breakpoint closes the
   // drawer without an effect that would cascade a second render.
   const [drawerRequested, setDrawerRequested] = useState(false);
   const [stopping, setStopping] = useState(false);
-
-  // Hash changes from outside the strip (back/forward, a pasted link) retarget the active tab.
-  useEffect(() => { tabs.setActivePage(page); }, [page, tabs]);
-  // Keep the legacy route state in step so `hashBelongsToPage` normalisation stays correct.
-  useEffect(() => { setPageState(tabs.activePage); }, [tabs.activePage, setPageState]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerRequested(false); };

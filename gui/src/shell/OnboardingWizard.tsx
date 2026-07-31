@@ -18,9 +18,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { IconCheck, IconServer, IconTranslate, IconX } from "../icons";
+import { IconCheck, IconDevices, IconServer, IconTranslate, IconX } from "../icons";
 import { LOCALES, useI18n, useT, type Locale } from "../i18n/shared";
-import { Button, Chip, Toggle } from "./m3-ui";
+import { Button, Chip, TextInput, Toggle } from "./m3-ui";
 import { useNotifications } from "./notifications-context";
 import { recordRevision } from "./revisions";
 import {
@@ -31,7 +31,10 @@ import {
   isClosedForLaunch,
 } from "./onboarding-state";
 
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 4;
+
+/** Shortest key `/api/host` will store. Stated up front rather than after a rejection. */
+const MIN_KEY_LENGTH = 12;
 
 const TITLE_ID = "ocx-onboard-title";
 const SUB_ID = "ocx-onboard-sub";
@@ -63,6 +66,11 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
+  const [scanning, setScanning] = useState(false);
+  const [found, setFound] = useState<{ url: string; self: boolean; version?: string }[] | null>(null);
+  const [expose, setExpose] = useState(false);
+  const [key, setKey] = useState("");
+  const [exposeBusy, setExposeBusy] = useState(false);
   // Pre-armed on purpose: the wizard is a once-only surface, so the default
   // behaviour of every exit path is "never again". Turning it off is how a user
   // asks to be shown it on the next launch, which is the only way this control
@@ -182,8 +190,14 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
 
   if (!open) return null;
 
-  const heading = step === 0 ? t("onboard.langTitle") : step === 1 ? t("onboard.providerTitle") : t("onboard.doneTitle");
-  const body = step === 0 ? t("onboard.langSub") : step === 1 ? t("onboard.providerSub") : t("onboard.doneSub");
+  const heading = step === 0 ? t("onboard.langTitle")
+    : step === 1 ? t("onboard.providerTitle")
+    : step === 2 ? t("onboard.networkTitle")
+    : t("onboard.doneTitle");
+  const body = step === 0 ? t("onboard.langSub")
+    : step === 1 ? t("onboard.providerSub")
+    : step === 2 ? t("onboard.networkSub")
+    : t("onboard.doneSub");
 
   return (
     <div className="modal-overlay">
@@ -218,7 +232,8 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
           >
             {step === 0 && <IconTranslate aria-hidden="true" width={20} height={20} />}
             {step === 1 && <IconServer aria-hidden="true" width={20} height={20} />}
-            {step === 2 && <IconCheck aria-hidden="true" width={20} height={20} />}
+            {step === 2 && <IconDevices aria-hidden="true" width={20} height={20} />}
+            {step === 3 && <IconCheck aria-hidden="true" width={20} height={20} />}
             {heading}
           </h4>
           <p style={{ margin: "0 0 var(--sp-3)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
@@ -255,9 +270,117 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
                 <IconServer aria-hidden="true" width={18} height={18} />
                 {t("settings.jumpTo", { page: t("nav.providers") })}
               </a>
-              {/* Never a dead end: "later" moves on to the last step, which says
-                  what is already running and where to go next. */}
+              {/* Never a dead end: "later" moves on to the network step rather
+                  than closing, so skipping a provider still reaches the rest. */}
               <Button variant="text" onClick={() => setStep(2)}>{t("onboard.providerSkip")}</Button>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="m3-stack" style={{ gap: "var(--sp-3)" }}>
+              {/* Discovery is a button, never automatic. A first-run wizard that
+                  silently sweeps the subnet is indistinguishable from the thing
+                  security tooling exists to catch. */}
+              <div className="m3-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <Button
+                  variant="outlined"
+                  disabled={scanning}
+                  onClick={async () => {
+                    setScanning(true);
+                    try {
+                      const res = await fetch(`${apiBase}/api/host/discover`, { method: "POST" });
+                      const data = await res.json().catch(() => null) as { found?: typeof found } | null;
+                      setFound(data?.found ?? []);
+                    } catch {
+                      setFound([]);
+                    } finally {
+                      setScanning(false);
+                    }
+                  }}
+                >
+                  <IconDevices aria-hidden="true" width={18} height={18} />
+                  {scanning ? t("onboard.netScanning") : t("onboard.netScan")}
+                </Button>
+              </div>
+
+              {found !== null && (
+                found.length === 0 ? (
+                  <p className="m3-dialog__desc">{t("onboard.netNone")}</p>
+                ) : (
+                  <ul className="m3-stack" style={{ listStyle: "none", margin: 0, padding: 0, gap: 6 }}>
+                    {found.map(hit => (
+                      <li key={hit.url} className="m3-row m3-row--split">
+                        <span style={{ fontFamily: "var(--mono)", fontSize: "var(--t-body-s)" }}>
+                          {hit.url}
+                          {hit.self && ` · ${t("onboard.netThisMachine")}`}
+                        </span>
+                        {!hit.self && (
+                          <a className="m3-btn m3-btn--text" href={hit.url} target="_blank" rel="noreferrer noopener">
+                            {t("onboard.netConnect")}
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              )}
+
+              <div className="m3-row m3-row--split">
+                <div>
+                  <div style={{ fontWeight: 500 }}>{t("onboard.netExpose")}</div>
+                  <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
+                    {t("onboard.netExposeHint")}
+                  </div>
+                </div>
+                <Toggle on={expose} onChange={setExpose} label={t("onboard.netExpose")} />
+              </div>
+
+              {expose && (
+                <div className="m3-stack" style={{ gap: 8 }}>
+                  {/* Said before they type, not after the server refuses: exposing
+                      the proxy publishes the dashboard too, and the password is
+                      the only thing between the two. */}
+                  <p className="m3-banner m3-banner--warn" role="note">{t("onboard.netExposeWarn")}</p>
+                  <TextInput
+                    type="password"
+                    value={key}
+                    onChange={e => setKey(e.target.value)}
+                    placeholder={t("onboard.netKeyPlaceholder")}
+                    aria-label={t("onboard.netKey")}
+                    autoComplete="new-password"
+                  />
+                  <Button
+                    variant="filled"
+                    disabled={exposeBusy || key.trim().length < MIN_KEY_LENGTH}
+                    onClick={async () => {
+                      setExposeBusy(true);
+                      try {
+                        const res = await fetch(`${apiBase}/api/host`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ exposed: true, customKeyValue: key, newKeyName: "onboarding" }),
+                        });
+                        const body = await res.json().catch(() => null) as { error?: string } | null;
+                        if (!res.ok) {
+                          notify({ tone: "error", title: t("onboard.netExposeFailed"), body: body?.error });
+                          return;
+                        }
+                        notify({ tone: "success", title: t("onboard.netExposed"), body: t("network.restartHint") });
+                        setStep(3);
+                      } catch {
+                        notify({ tone: "error", title: t("onboard.netExposeFailed") });
+                      } finally {
+                        setExposeBusy(false);
+                      }
+                    }}
+                  >
+                    {t("onboard.netExposeAction")}
+                  </Button>
+                  <p style={{ fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", margin: 0 }}>
+                    {t("onboard.netKeyRule", { n: MIN_KEY_LENGTH })}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </section>

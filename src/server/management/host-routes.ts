@@ -239,6 +239,15 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
     return jsonResponse(outcome, outcome.ok ? 200 : 409, req, config);
   }
 
+  // Discovery is user-initiated only: the wizard's "find an existing install"
+  // button, never a background sweep. See lan-discovery.ts for what it refuses
+  // to do and why.
+  if (url.pathname === "/api/host/discover" && req.method === "POST") {
+    const { discoverProxies } = await import("../../lib/lan-discovery");
+    const found = await discoverProxies(config.port);
+    return jsonResponse({ found }, 200, req, config);
+  }
+
   // ---- Embedded terminal -------------------------------------------------
   //
   // Every route here is refused outright when the proxy is published to other

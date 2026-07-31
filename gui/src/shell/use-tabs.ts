@@ -251,6 +251,11 @@ export function useTabs(initialPage: Page, onPageChange: (page: Page) => void): 
   }, []);
 
   const setActivePage = useCallback((page: Page) => {
+    // The hash already carries this page — that is where the call came from.
+    // Recording it as pushed stops the effect above writing it straight back,
+    // which would add a history entry for a Back the user just pressed and make
+    // Back look like it does nothing.
+    lastPushed.current = page;
     setState(prev => {
       const current = prev.tabs.find(t => t.id === prev.activeTab);
       if (!current || current.page === page) return prev;

@@ -875,6 +875,10 @@ function LogDetailDialog({
     <Dialog
       onClose={onClose}
       width={760}
+      // A request inspector, not a decision. The user opened it to read one
+      // log line against the list behind it, and blocking that list is the
+      // opposite of useful — the comparison is the point.
+      modal={false}
       // The heading owns the id the dialog is named by, exactly as the legacy
       // `<h3 id="log-detail-title">` did, so the accessible name is unchanged.
       labelledBy="log-detail-title"

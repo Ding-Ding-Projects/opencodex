@@ -147,6 +147,9 @@ export function DashboardDialogs(d: Dash) {
         open={maHelpOpen}
         onClose={() => setMaHelpOpen(false)}
         id="multi-agent-help-dialog"
+        // Help text, not a decision: it opens because the user asked to read
+        // it, so it must not inert the page it is explaining.
+        modal={false}
         title={t("dash.multiAgent")}
         headAction={
           <button type="button" className="m3-icon-btn" onClick={() => setMaHelpOpen(false)} aria-label={t("common.close")}>
@@ -167,6 +170,9 @@ export function DashboardDialogs(d: Dash) {
         open={effortCapHelpOpen}
         onClose={() => setEffortCapHelpOpen(false)}
         id="effort-cap-help-dialog"
+        // Help text, not a decision: it opens because the user asked to read
+        // it, so it must not inert the page it is explaining.
+        modal={false}
         title={t("dash.effortCapLabel")}
         headAction={
           <button type="button" className="m3-icon-btn" onClick={() => setEffortCapHelpOpen(false)} aria-label={t("common.close")}>
@@ -181,6 +187,9 @@ export function DashboardDialogs(d: Dash) {
         open={shadowCallHelpOpen}
         onClose={() => setShadowCallHelpOpen(false)}
         id="shadow-call-help-dialog"
+        // Help text, not a decision: it opens because the user asked to read
+        // it, so it must not inert the page it is explaining.
+        modal={false}
         title={t("dash.shadowCallIntercept")}
         headAction={
           <button type="button" className="m3-icon-btn" onClick={() => setShadowCallHelpOpen(false)} aria-label={t("common.close")}>
