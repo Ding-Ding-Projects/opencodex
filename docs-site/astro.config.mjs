@@ -194,6 +194,7 @@ export default defineConfig({
             { label: "opencode", translations: { ko: "opencode", "zh-CN": "opencode", ru: "opencode", ja: "opencode" }, slug: "guides/opencode" },
             { label: "Sidecars: Web Search & Vision", translations: { ko: "사이드카: 웹 검색 & 비전", "zh-CN": "边车：网络搜索与视觉", ru: "Сайдкары: веб-поиск и зрение", ja: "サイドカー: ウェブ検索 & ビジョン" }, slug: "guides/sidecars" },
             { label: "Web Dashboard", translations: { ko: "웹 대시보드", "zh-CN": "网页控制台", ru: "Веб-дашборд", ja: "ウェブダッシュボード" }, slug: "guides/web-dashboard" },
+            { label: "Tab Groups & Tab Search", translations: { ko: "탭 그룹 & 탭 검색", "zh-CN": "标签分组与标签搜索", ru: "Группы вкладок и поиск", ja: "タブグループ & タブ検索" }, slug: "guides/tab-groups-and-search" },
             { label: "Launcher & Terminal", translations: { ko: "런처 & 터미널", "zh-CN": "启动器与终端", ru: "Лаунчер и терминал", ja: "ランチャー & ターミナル" }, slug: "guides/launcher-and-terminal" },
             { label: "Log Files", translations: { ko: "로그 파일", "zh-CN": "日志文件", ru: "Файлы логов", ja: "ログファイル" }, slug: "guides/log-files" },
             { label: "Docker", translations: { ko: "Docker", "zh-CN": "Docker", ru: "Docker", ja: "Docker" }, slug: "guides/docker" },

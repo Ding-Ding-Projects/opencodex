@@ -48,6 +48,7 @@ the intended posture, not a missing feature; see
 | **Usage / Debug** | Inspect token-usage coverage and trends, or enable opt-in provider transport and usage-extraction diagnostics. |
 | **Storage** | Read-only CODEX_HOME disk breakdown (sessions, archives, DBs, attachments). Optional archived cleanup: preview the oldest N%, then quarantine to `CODEX_HOME/.trash` (default) or permanently delete behind an explicit checkbox. **Auto-cleanup policy** is opt-in and **default OFF** (`storageCleanupPolicy.enabled`); configure threshold/target/schedule/mode on the Storage page, or trigger **Run now**. Quarantined entries can be restored from the Storage page (JSONL + threads). Active sessions stay read-only. Cleanup and restore are refused while Codex holds the newest/active `state_*.sqlite` locked. |
 | **Stop** | Gracefully stop the proxy and installed background service, restore native Codex, and exit (`POST /api/stop`). |
+| **Tabs** | Browser-style tabs with pinning, drag reordering, an overflow menu, per-tab appearance, named and collapsible **groups**, and four searches that find a tab across this strip, inside a group, by group name, or across every window. See [Tab Groups & Tab Search](/guides/tab-groups-and-search/). |
 
 ### Linking to a section
 

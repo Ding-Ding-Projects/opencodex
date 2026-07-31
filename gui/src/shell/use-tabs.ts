@@ -7,118 +7,28 @@
  * Persisted under `ocx-m3:tabs` rather than inside `ocx-m3:v1`: appearance prefs
  * and tab state change at very different rates, and sharing one key would mean
  * two independent writers racing to clobber each other's last value.
+ *
+ * ## What lives here and what does not
+ *
+ * None of the *rules* are in this file. Which tabs a bulk close removes, what a
+ * pin protects, where a group's run sits, whether opening a page retargets the
+ * front tab — all of it is `shared/m3/tabs.ts`, so the dashboard and the docs
+ * site cannot drift into two different answers. This file contributes React
+ * glue, persistence under a key this surface owns, and the hash handshake.
+ *
+ * What it *does* own is the pure search layer below the hook: the four
+ * tab-discovery searches turn strip state into rows, and those projections are
+ * plain functions on plain data so they can be exercised without mounting
+ * anything. A search that can only be tested by rendering a panel is a search
+ * nobody tests at the boundaries that matter — a collapsed group, a pinned tab,
+ * a peer window that stopped answering.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as engine from "../../../shared/m3/tabs";
 import { VALID_PAGES, type Page } from "../app-routing";
 
 const TABS_KEY = "ocx-m3:tabs";
-
-/**
- * Per-tab appearance override, written by the "Edit tab appearance…" editor and
- * read by every surface that renders a tab.
- *
- * It lives on the tab record rather than in `prefs.elementStyles` because those
- * are per-*surface* (`--el-tabStrip-*` styles the whole strip); this one has to
- * survive being rendered somewhere other than the strip — the overflow menu —
- * which is exactly the customization a plain text menu would throw away.
- */
-export interface TabStyle {
-  /** Label and icon colour; any CSS colour the infinite picker can produce. */
-  color?: string;
-  /** Tab background. */
-  bg?: string;
-  /** Font family stack. */
-  font?: string;
-  /** Label size in px. */
-  size?: number;
-  /** Label weight, 300–700. */
-  weight?: number;
-  /** Short user-authored badge shown after the label. */
-  badge?: string;
-}
-
-export interface Tab {
-  id: string;
-  page: Page;
-  pinned: boolean;
-  style?: TabStyle;
-}
-
-/** Drop anything that is not a value this style can actually render. */
-function readTabStyle(raw: unknown): TabStyle | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const input = raw as Record<string, unknown>;
-  const style: TabStyle = {};
-  for (const key of ["color", "bg", "font"] as const) {
-    if (typeof input[key] === "string" && input[key]) style[key] = input[key] as string;
-  }
-  if (typeof input.size === "number" && Number.isFinite(input.size)) {
-    style.size = Math.min(24, Math.max(9, input.size));
-  }
-  if (typeof input.weight === "number" && Number.isFinite(input.weight)) {
-    style.weight = Math.min(700, Math.max(300, input.weight));
-  }
-  if (typeof input.badge === "string" && input.badge.trim()) style.badge = input.badge.trim().slice(0, 12);
-  return Object.keys(style).length ? style : undefined;
-}
-
-/**
- * One tab's appearance, split into the two elements that carry it.
- *
- * Both the strip and the overflow menu render through this, so a customized tab
- * cannot look like one thing in the strip and grey text in the dropdown.
- * `.m3-tab-btn` sets its own `color`, which would win over an inherited one —
- * hence the label half is applied to the button rather than the wrapper.
- */
-export function tabStyleProps(style?: TabStyle): { surface: CSSProperties; label: CSSProperties } {
-  if (!style) return { surface: {}, label: {} };
-  return {
-    surface: style.bg ? { background: style.bg } : {},
-    label: {
-      ...(style.color ? { color: style.color } : {}),
-      ...(style.font ? { fontFamily: style.font } : {}),
-      ...(style.size != null ? { fontSize: `${style.size}px` } : {}),
-      ...(style.weight != null ? { fontWeight: style.weight } : {}),
-    },
-  };
-}
-
-interface StoredTabs {
-  tabs: Tab[];
-  activeTab: string;
-}
-
-function newTabId(): string {
-  // Unique per call even within the same millisecond, which `Date.now()` alone is not.
-  return "t" + Math.random().toString(36).slice(2, 9);
-}
-
-function readTabs(initialPage: Page): StoredTabs {
-  try {
-    const raw = JSON.parse(localStorage.getItem(TABS_KEY) || "null");
-    const tabs: Tab[] = Array.isArray(raw?.tabs)
-      ? raw.tabs
-          .filter((t: unknown): t is Tab =>
-            !!t && typeof t === "object"
-            && typeof (t as Tab).id === "string"
-            && VALID_PAGES.has((t as Tab).page))
-          .map((t: Tab) => ({ id: t.id, page: t.page, pinned: !!t.pinned, style: readTabStyle(t.style) }))
-      : [];
-    if (tabs.length) {
-      const activeTab = tabs.some(t => t.id === raw.activeTab) ? raw.activeTab : tabs[0].id;
-      return { tabs, activeTab };
-    }
-  } catch { /* corrupt or unavailable storage falls through to a fresh strip */ }
-  const id = newTabId();
-  return { tabs: [{ id, page: initialPage, pinned: false }], activeTab: id };
-}
-
-/** Pinned tabs sort ahead of unpinned ones; order is otherwise stable. */
-function orderTabs(tabs: Tab[]): Tab[] {
-  return tabs.slice().sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
-}
 
 /* ------------------------------------------------ the shared pure layer -- */
 
@@ -147,18 +57,202 @@ export {
   bulkCloseTargets,
   clampToViewport,
   tabMatcher,
+  tabStyleProps,
+  groupDecorProps,
+  groupPinState,
+  visibleTabs,
+  readGroupDecor,
 } from "../../../shared/m3/tabs";
-export type { TabMatcher, TabRow, BulkCloseOptions } from "../../../shared/m3/tabs";
+export type {
+  TabMatcher, TabRow, BulkCloseOptions, TabStyle, TabGroup, GroupDecor,
+} from "../../../shared/m3/tabs";
 
-// Imported as well as re-exported: `export … from` forwards a name without
-// binding it locally, and the hook below calls these two itself. Re-exporting
-// alone compiles as a module and fails as a program.
-import { closeOthersTargets, closeToRightTargets } from "../../../shared/m3/tabs";
+import type {
+  GroupDecor, Tab as EngineTab, TabGroup, TabMatcher, TabStyle, TabsState,
+} from "../../../shared/m3/tabs";
+
+/** A dashboard tab: the shared record with its page identity pinned to a route. */
+export type Tab = EngineTab<Page>;
+
+/**
+ * The id of the panel a given tab controls.
+ *
+ * Shared by the strip (which writes `aria-controls`) and `App` (which renders
+ * the panel), because the two halves of that relationship are in different
+ * files and a relationship built from two separately-spelled strings dangles the
+ * first time one of them is edited. Every tab keeps its own live panel — the
+ * shell keeps them all mounted and hides the inactive ones — so this is a
+ * function of the tab id rather than one constant shared by the whole strip.
+ */
+export const tabPanelId = (tabId: string): string => `ocx-tabpanel-${tabId}`;
+
+/* --------------------------------------------------------- search rows -- */
+
+/**
+ * Where a tab is, as any of the four searches has to report it.
+ *
+ * The rule asks results to identify "the window/workspace, strip, group, pinned
+ * state and visible tab label", so that is exactly the row shape rather than a
+ * label and an id the caller is expected to re-look-up. A result the reader
+ * cannot place is a result they have to click to understand, which defeats
+ * searching.
+ */
+export interface TabResult {
+  id: string;
+  label: string;
+  pinned: boolean;
+  /** Undefined for a loose tab; the caller renders its own "ungrouped" wording. */
+  groupId?: string;
+  groupName?: string;
+  /** True when the tab's group is collapsed, so the row can say so. */
+  groupCollapsed: boolean;
+  /** True for the tab currently in front of *its own* strip. */
+  active: boolean;
+  /** Which window owns it. Empty until the registry has issued this window an id. */
+  windowId: string;
+  /** Stable display number for that window, from `numberWindows`. */
+  windowNumber: number;
+  /** False for a tab in another window, which is acted on by message rather than directly. */
+  local: boolean;
+  /** The strip it lives in. One strip per window today; named so results stay readable if that changes. */
+  strip: string;
+}
+
+/** A group as the group-name search reports it. */
+export interface GroupResult {
+  id: string;
+  name: string;
+  color?: string;
+  collapsed: boolean;
+  /** Members in this window's strip, so an emptied group is visibly empty. */
+  count: number;
+  pinned: "none" | "some" | "all";
+}
+
+/** One window's strip, flattened for the master search. */
+export interface StripSnapshot {
+  windowId: string;
+  windowNumber: number;
+  local: boolean;
+  strip: string;
+  tabs: TabResult[];
+}
+
+/**
+ * Project this window's strip into search rows.
+ *
+ * `labelOf` is passed rather than read from a route table because the label a
+ * tab renders is a *translated* string, and translating is the caller's job —
+ * this module has no locale and should not grow one just to answer a search.
+ */
+export function stripResults(
+  state: TabsState<Page>,
+  labelOf: (tab: Tab) => string,
+  window: { windowId: string; windowNumber: number; strip: string } = { windowId: "", windowNumber: 1, strip: "main" },
+): TabResult[] {
+  const byId = new Map(state.groups.map(group => [group.id, group]));
+  return state.tabs.map(tab => {
+    const group = tab.groupId ? byId.get(tab.groupId) : undefined;
+    return {
+      id: tab.id,
+      label: labelOf(tab),
+      pinned: tab.pinned,
+      groupId: group?.id,
+      groupName: group?.name,
+      groupCollapsed: !!group?.collapsed,
+      active: tab.id === state.activeTab,
+      windowId: window.windowId,
+      windowNumber: window.windowNumber,
+      local: true,
+      strip: window.strip,
+    };
+  });
+}
+
+/** Project the groups themselves, for the search that looks for groups by name. */
+export function groupResults(state: TabsState<Page>): GroupResult[] {
+  return state.groups.map(group => ({
+    id: group.id,
+    name: group.name,
+    color: group.color,
+    collapsed: group.collapsed,
+    count: state.tabs.filter(tab => tab.groupId === group.id).length,
+    pinned: engine.groupPinState(state.tabs, group.id),
+  }));
+}
+
+/**
+ * Run one compiled matcher over a set of rows.
+ *
+ * A matcher that is not runnable returns everything rather than nothing. An
+ * empty query is not a filter — it is the unfiltered list — and answering it
+ * with zero rows would make every search look broken before the user has typed.
+ * An *invalid* pattern is the one case that hides rows, and the caller says so
+ * on screen instead of leaving a blank list to be misread as "no matches".
+ */
+export function matchRows<T>(rows: T[], matcher: TabMatcher, textOf: (row: T) => string): T[] {
+  if (!matcher.ok) return matcher.reason === "empty" ? rows : [];
+  return rows.filter(row => matcher.test(textOf(row)));
+}
+
+/**
+ * Every open tab this app can see, in one addressable list.
+ *
+ * The master search is required to cover "every open tab across all windows,
+ * workspaces, strips, and groups the app owns". This window's own strip is one
+ * snapshot; the rest arrive from `tab-registry.ts`, because a peer's live strip
+ * is not in storage — storage only ever holds the last writer's copy, which is
+ * a window that may have been idle for ten minutes.
+ *
+ * The local snapshot is listed first so the reader's own tabs are at the top of
+ * a list they are most likely searching for their own tabs in.
+ */
+export function masterResults(local: StripSnapshot, peers: StripSnapshot[]): TabResult[] {
+  return [local, ...peers].flatMap(snapshot => snapshot.tabs.map(tab => ({
+    ...tab,
+    windowId: snapshot.windowId,
+    windowNumber: snapshot.windowNumber,
+    local: snapshot.local,
+    strip: snapshot.strip,
+  })));
+}
+
+/**
+ * Whether selecting `id` would reveal it without disturbing any group's
+ * collapsed state.
+ *
+ * This is the mechanism behind "reveal a result inside a collapsed group WITHOUT
+ * destroying that collapsed preference", stated as a predicate so a test can
+ * hold it rather than trusting a comment. It is true because `visibleTabs`
+ * exempts the active tab: selecting a member of a collapsed group brings that
+ * one tab back onto the strip and leaves the group collapsed, so the reader's
+ * preference survives being searched. Expanding the group instead would undo a
+ * choice they made, to show them something one selection already shows.
+ */
+export function revealsWithoutExpanding(state: TabsState<Page>, id: string): boolean {
+  if (!state.tabs.some(tab => tab.id === id)) return false;
+  return engine.visibleTabs({ ...state, activeTab: id }).some(tab => tab.id === id);
+}
+
+/* ------------------------------------------------------------ the hook -- */
+
+const isValidPage = (value: unknown): value is Page => typeof value === "string" && VALID_PAGES.has(value as Page);
+
+function readTabs(initialPage: Page): TabsState<Page> {
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(localStorage.getItem(TABS_KEY) || "null");
+  } catch { /* corrupt or unavailable storage falls through to a fresh strip */ }
+  return engine.reviveTabs(raw, isValidPage, initialPage);
+}
 
 export interface TabsApi {
   tabs: Tab[];
+  groups: TabGroup[];
   activeTab: string;
   activePage: Page;
+  /** Strip order minus the members of collapsed groups. Never hides the active or a pinned tab. */
+  visible: Tab[];
   /** Focus the tab already showing `page`, or open a new one. */
   openPage: (page: Page, newTab?: boolean) => void;
   selectTab: (id: string) => void;
@@ -180,10 +274,21 @@ export interface TabsApi {
   setTabStyle: (id: string, patch: TabStyle) => void;
   /** Point the active tab at a different page without opening one (hash sync). */
   setActivePage: (page: Page) => void;
+  /** Returns the new group's id, which the caller almost always needs at once. */
+  createGroup: (name: string, memberIds?: string[]) => string;
+  renameGroup: (id: string, name: string) => void;
+  setGroupColor: (id: string, color?: string) => void;
+  setGroupStyle: (id: string, patch: TabStyle) => void;
+  setGroupDecor: (id: string, patch: Partial<GroupDecor>) => void;
+  toggleGroupCollapsed: (id: string) => void;
+  removeGroup: (id: string) => void;
+  moveGroup: (fromId: string, toId: string) => void;
+  assignGroup: (tabId: string, groupId?: string) => void;
+  setGroupPinned: (id: string, pinned: boolean) => void;
 }
 
 export function useTabs(initialPage: Page, onPageChange: (page: Page) => void): TabsApi {
-  const [state, setState] = useState<StoredTabs>(() => readTabs(initialPage));
+  const [state, setState] = useState<TabsState<Page>>(() => readTabs(initialPage));
 
   useEffect(() => {
     try { localStorage.setItem(TABS_KEY, JSON.stringify(state)); } catch { /* quota */ }
@@ -199,132 +304,38 @@ export function useTabs(initialPage: Page, onPageChange: (page: Page) => void): 
     onPageChange(activePage);
   }, [activePage, onPageChange]);
 
-  /**
-   * Open a page, in this tab unless a new one was asked for.
-   *
-   * A plain click used to append a tab whenever the page was not already open,
-   * so working through the nav left a strip of a dozen tabs nobody opened. That
-   * is not how a browser behaves and it is not what clicking a nav item means:
-   * navigating is the default, and a new tab is something the user asks for —
-   * with the middle button, ctrl/cmd-click, or the "+" menu.
-   */
-  const openPage = useCallback((page: Page, newTab = false) => {
-    setState(prev => {
-      const existing = prev.tabs.find(t => t.page === page);
-      if (existing && !newTab) return { ...prev, activeTab: existing.id };
-      if (!newTab) {
-        const current = prev.tabs.find(t => t.id === prev.activeTab);
-        // A pinned tab is one the user asked to keep where it is; retargeting it
-        // would quietly move the thing they pinned. Browsers open a new tab in
-        // that case, and so does this — otherwise pinning means nothing the
-        // moment the user clicks anything in the nav.
-        if (current && !current.pinned) {
-          return {
-            ...prev,
-            tabs: prev.tabs.map(t => (t.id === prev.activeTab ? { ...t, page } : t)),
-          };
-        }
-      }
-      const id = newTabId();
-      return { tabs: prev.tabs.concat([{ id, page, pinned: false }]), activeTab: id };
-    });
-  }, []);
-
-  const selectTab = useCallback((id: string) => {
-    setState(prev => (prev.tabs.some(t => t.id === id) ? { ...prev, activeTab: id } : prev));
-  }, []);
-
-  const closeTab = useCallback((id: string) => {
-    setState(prev => {
-      // The strip never empties — a zero-tab shell has nothing to render.
-      if (prev.tabs.length <= 1) return prev;
-      const idx = prev.tabs.findIndex(t => t.id === id);
-      if (idx < 0) return prev;
-      const tabs = prev.tabs.filter(t => t.id !== id);
-      const activeTab = prev.activeTab === id ? tabs[Math.max(0, idx - 1)].id : prev.activeTab;
-      return { tabs, activeTab };
-    });
-  }, []);
+  const visible = useMemo(() => engine.visibleTabs(state), [state]);
 
   /**
-   * One commit for a whole set, rather than a `closeTab` loop.
+   * Every command, bound to `setState` once.
    *
-   * Closing four tabs one at a time would run `closeTab`'s "never empty" guard
-   * four times and re-derive the active tab at each step, so the tab left in
-   * front would depend on the order the ids happened to arrive in. The caller
-   * has already decided which tabs survive; this only applies that decision.
+   * One `useMemo` rather than twenty `useCallback`s: none of them depends on
+   * anything but `setState`, which React guarantees is stable, so this is a
+   * single object identity for the life of the component. Effects elsewhere that
+   * depend on a command therefore do not re-subscribe on every keystroke — the
+   * exact failure `use-tab-routing.ts` documents at length.
    */
-  const closeTabs = useCallback((ids: string[]) => {
-    setState(prev => {
-      const doomed = new Set(ids);
-      const tabs = prev.tabs.filter(t => !doomed.has(t.id));
-      // Nothing matched, or the set would empty the strip: leave state alone so
-      // React does not re-render for a no-op.
-      if (!tabs.length || tabs.length === prev.tabs.length) return prev;
-      const activeTab = tabs.some(t => t.id === prev.activeTab) ? prev.activeTab : tabs[0].id;
-      return { tabs, activeTab };
-    });
-  }, []);
-
-  const closeOthers = useCallback((keepId: string) => {
-    setState(prev => {
-      const doomed = new Set(closeOthersTargets(prev.tabs, keepId));
-      if (!doomed.size) return prev;
-      return { tabs: prev.tabs.filter(t => !doomed.has(t.id)), activeTab: keepId };
-    });
-  }, []);
-
-  const closeToRight = useCallback((fromId: string) => {
-    setState(prev => {
-      const doomed = new Set(closeToRightTargets(prev.tabs, fromId));
-      if (!doomed.size) return prev;
-      const tabs = prev.tabs.filter(t => !doomed.has(t.id));
-      const activeTab = tabs.some(t => t.id === prev.activeTab) ? prev.activeTab : fromId;
-      return { tabs, activeTab };
-    });
-  }, []);
-
-  const duplicateTab = useCallback((id: string) => {
-    setState(prev => {
-      const index = prev.tabs.findIndex(t => t.id === id);
-      if (index < 0) return prev;
-      const source = prev.tabs[index];
-      // The copy inherits the pin. An unpinned duplicate of a pinned tab would
-      // be sorted to the far end of the strip by `orderTabs`, so the tab the
-      // user just asked for would appear nowhere near the one they copied.
-      const copy: Tab = { id: newTabId(), page: source.page, pinned: source.pinned, style: source.style };
-      const tabs = prev.tabs.slice();
-      tabs.splice(index + 1, 0, copy);
-      return { tabs: orderTabs(tabs), activeTab: copy.id };
-    });
-  }, []);
-
-  const togglePin = useCallback((id: string) => {
-    setState(prev => ({
-      ...prev,
-      tabs: orderTabs(prev.tabs.map(t => (t.id === id ? { ...t, pinned: !t.pinned } : t))),
-    }));
-  }, []);
-
-  const moveTab = useCallback((fromId: string, toId: string) => {
-    if (!fromId || fromId === toId) return;
-    setState(prev => {
-      const tabs = prev.tabs.slice();
-      const from = tabs.findIndex(t => t.id === fromId);
-      const to = tabs.findIndex(t => t.id === toId);
-      if (from < 0 || to < 0) return prev;
-      const [moved] = tabs.splice(from, 1);
-      tabs.splice(to, 0, moved);
-      return { ...prev, tabs: orderTabs(tabs) };
-    });
-  }, []);
-
-  const setTabStyle = useCallback((id: string, patch: TabStyle) => {
-    setState(prev => ({
-      ...prev,
-      tabs: prev.tabs.map(t => (t.id === id ? { ...t, style: readTabStyle({ ...t.style, ...patch }) } : t)),
-    }));
-  }, []);
+  const api = useMemo(() => ({
+    openPage: (page: Page, newTab = false) => setState(s => engine.openPage(s, page, { newTab })),
+    selectTab: (id: string) => setState(s => engine.selectTab(s, id)),
+    closeTab: (id: string) => setState(s => engine.closeTab(s, id)),
+    closeTabs: (ids: string[]) => setState(s => engine.closeTabs(s, ids)),
+    closeOthers: (keepId: string) => setState(s => engine.closeOthers(s, keepId)),
+    closeToRight: (fromId: string) => setState(s => engine.closeToRight(s, fromId)),
+    duplicateTab: (id: string) => setState(s => engine.duplicateTab(s, id)),
+    togglePin: (id: string) => setState(s => engine.togglePin(s, id)),
+    moveTab: (fromId: string, toId: string) => setState(s => engine.moveTab(s, fromId, toId)),
+    setTabStyle: (id: string, patch: TabStyle) => setState(s => engine.setTabStyle(s, id, patch)),
+    renameGroup: (id: string, name: string) => setState(s => engine.renameGroup(s, id, name)),
+    setGroupColor: (id: string, color?: string) => setState(s => engine.setGroupColor(s, id, color)),
+    setGroupStyle: (id: string, patch: TabStyle) => setState(s => engine.setGroupStyle(s, id, patch)),
+    setGroupDecor: (id: string, patch: Partial<GroupDecor>) => setState(s => engine.setGroupDecor(s, id, patch)),
+    toggleGroupCollapsed: (id: string) => setState(s => engine.toggleGroupCollapsed(s, id)),
+    removeGroup: (id: string) => setState(s => engine.removeGroup(s, id)),
+    moveGroup: (fromId: string, toId: string) => setState(s => engine.moveGroup(s, fromId, toId)),
+    assignGroup: (tabId: string, groupId?: string) => setState(s => engine.assignGroup(s, tabId, groupId)),
+    setGroupPinned: (id: string, pinned: boolean) => setState(s => engine.setGroupPinned(s, id, pinned)),
+  }), []);
 
   const setActivePage = useCallback((page: Page) => {
     // The hash already carries this page — that is where the call came from.
@@ -332,34 +343,32 @@ export function useTabs(initialPage: Page, onPageChange: (page: Page) => void): 
     // which would add a history entry for a Back the user just pressed and make
     // Back look like it does nothing.
     lastPushed.current = page;
-    setState(prev => {
-      const current = prev.tabs.find(t => t.id === prev.activeTab);
-      if (!current || current.page === page) return prev;
-      // A tab already on that page wins over retargeting the active one, so
-      // back/forward lands on the tab the user opened rather than duplicating it.
-      const existing = prev.tabs.find(t => t.page === page);
-      if (existing) return { ...prev, activeTab: existing.id };
-      return {
-        ...prev,
-        tabs: prev.tabs.map(t => (t.id === prev.activeTab ? { ...t, page } : t)),
-      };
-    });
+    setState(s => engine.setActivePage(s, page));
+  }, []);
+
+  /**
+   * Create a group and hand back its id.
+   *
+   * The id is minted here rather than inside the reducer so the caller has it
+   * synchronously — every real use ("group these two tabs, then open the
+   * rename field on the group") needs to name the group it just made, and
+   * digging it back out of the next render's group list is a guess about which
+   * one is new.
+   */
+  const createGroup = useCallback((name: string, memberIds: string[] = []) => {
+    const id = engine.newTabId("g");
+    setState(s => engine.createGroup(s, id, name, memberIds));
+    return id;
   }, []);
 
   return {
     tabs: state.tabs,
+    groups: state.groups,
     activeTab: state.activeTab,
     activePage,
-    openPage,
-    selectTab,
-    closeTab,
-    closeTabs,
-    closeOthers,
-    closeToRight,
-    duplicateTab,
-    togglePin,
-    moveTab,
-    setTabStyle,
+    visible,
     setActivePage,
+    createGroup,
+    ...api,
   };
 }

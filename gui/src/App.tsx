@@ -33,6 +33,7 @@ import { usePrefs } from "./theme/prefs-context";
 import { useNotifications } from "./shell/notifications-context";
 import { useConfirm } from "./shell/confirm-context";
 import { useTabRouting } from "./shell/use-tab-routing";
+import { tabPanelId } from "./shell/use-tabs";
 import { fullBuildLabel, readBuildInfo, shortBuildLabel } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
@@ -248,6 +249,12 @@ export default function App() {
           {tabs.tabs.map(tab => (
             <div
               key={tab.id}
+              // The panel half of the tablist relationship. Each tab points its
+              // `aria-controls` here, so the pairing stays live as tabs open and
+              // close rather than naming one region the whole strip shares.
+              id={tabPanelId(tab.id)}
+              role="tabpanel"
+              aria-label={t(PAGE_META_BY_ID[tab.page].tkey)}
               className={`m3-page-inner${WIDE_PAGES.has(tab.page) ? " m3-page-inner--wide" : ""}`}
               hidden={tab.id !== tabs.activeTab}
             >

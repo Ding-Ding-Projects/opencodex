@@ -365,6 +365,208 @@
 }
 .m3-tabstrip-btn:hover { background: var(--m3-surface-container-highest); }
 .m3-tabstrip-btn svg { width: 20px; height: 20px; }
+.m3-tabstrip-btn[aria-expanded='true'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+
+/* ---- tab groups ---------------------------------------------------------
+
+   A group is a coloured header immediately before its members' run. The header
+   is a real button (collapse/expand) carrying the group's name and its member
+   count, so the colour is decoration and never the only way to tell two groups
+   apart.
+
+   Every `--g-*` below is written by `groupDecorProps` and falls back here rather
+   than in JavaScript. That is what lets a cleared property follow a theme the
+   user changes later: an editor that stored today's default would freeze it.
+
+   The state fills are custom properties for the same reason — hover and focus
+   are states, and a state cannot be expressed in an inline style without
+   re-rendering the header on mouseenter, which is both slower and wrong for
+   someone driving the keyboard.
+   ------------------------------------------------------------------------- */
+
+.m3-tabgroup {
+  display: flex;
+  align-items: stretch;
+  gap: var(--g-gap, 4px);
+  min-width: 0;
+  flex: 0 1 auto;
+  padding-inline: 4px;
+  border-radius: var(--g-radius, var(--r-m)) var(--g-radius, var(--r-m)) 0 0;
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 14%, transparent);
+  box-shadow: inset 0 -2px 0 0 var(--m3-group-color, var(--m3-tertiary));
+  border: var(--g-border-width, 0) var(--g-border-style, solid) var(--g-border, transparent);
+}
+/* A collapsed group stops competing for width: it is one header, not a run. */
+.m3-tabgroup.collapsed { flex: 0 0 auto; }
+.m3-tabgroup.drop-target { outline: 2px solid var(--m3-primary); outline-offset: -2px; }
+.m3-tabgroup.sep-line { border-left: 1px solid var(--m3-outline-variant); margin-left: 4px; }
+.m3-tabgroup.sep-space { margin-left: 12px; }
+
+.m3-tabgroup-head {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  /* Floored at 26px but allowed to grow with the type scale, so a large font
+     size set in the editor is not clipped by a height chosen for the default. */
+  min-height: 26px;
+  /* Three layers, narrowest first: this group's own decoration, then the
+     Appearance screen's per-element override for every group header, then the
+     theme. Skipping the middle one would make registering `tabGroup` as an
+     element target a setting that changed nothing. */
+  padding: 2px var(--g-pad, var(--el-tabGroup-pad, 10px));
+  border: none;
+  border-radius: var(--g-radius, var(--el-tabGroup-radius, var(--r-pill)));
+  background: var(--g-bg, var(--el-tabGroup-bg, color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 30%, transparent)));
+  color: var(--g-text, var(--el-tabGroup-color, var(--m3-on-surface)));
+  font: inherit;
+  font-family: var(--g-font, var(--el-tabGroup-font, inherit));
+  font-size: var(--g-size, var(--el-tabGroup-size, var(--t-label-m)));
+  font-weight: var(--g-weight, 500);
+  font-style: var(--g-style, normal);
+  font-variant-caps: var(--g-caps, normal);
+  text-decoration: var(--g-decoration, none);
+  letter-spacing: var(--g-tracking, normal);
+  cursor: pointer;
+}
+.m3-tabgroup-head:hover {
+  background: var(--g-hover-bg, color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 46%, transparent));
+}
+.m3-tabgroup.collapsed .m3-tabgroup-head {
+  background: var(--g-collapsed-bg, var(--g-bg, color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 40%, transparent)));
+}
+/* A custom fill must never be able to swallow the focus indicator, so the ring
+   is its own overridable property rather than inheriting the header's colour. */
+.m3-app .m3-tabgroup-head:focus-visible {
+  outline: 3px solid var(--g-focus-ring, var(--m3-primary));
+  outline-offset: 2px;
+}
+.m3-tabgroup-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* The highlight sits behind the text only, so it reads as a highlight rather
+     than as a second header fill. */
+  background: var(--g-highlight, transparent);
+  border-radius: 3px;
+}
+.m3-tabgroup-icon { flex: 0 0 auto; line-height: 1; }
+.m3-tabgroup-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.m3-tabgroup-badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font-size: var(--t-label-s);
+}
+
+/* ---- the tab search panel ----------------------------------------------- */
+
+.m3-tabsearch-wrap { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; }
+.m3-ts-section { padding-block: var(--sp-3); border-top: 1px solid var(--m3-outline-variant); }
+.m3-ts-section:first-of-type { border-top: none; }
+.m3-ts-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: var(--t-title-s);
+  font-weight: 600;
+}
+.m3-ts-searchrow { display: grid; gap: 6px; }
+.m3-ts-count {
+  margin-left: auto;
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+.m3-ts-mode { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-ts-empty { margin: 6px 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); list-style: none; }
+.m3-ts-list { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.m3-tsr { display: flex; align-items: center; gap: 4px; border-radius: var(--r-s); flex-wrap: wrap; }
+.m3-tsr:hover { background: var(--m3-surface-container-highest); }
+.m3-tsr.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-tsr-go {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: left;
+  cursor: pointer;
+}
+.m3-tsr-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tsr-badge {
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container-highest);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-s);
+  line-height: 20px;
+}
+.m3-tsr-note { flex: 1 1 100%; padding: 0 10px 4px; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+/* 44px, because these sit in a dense list and a 28px target in a scrolling
+   panel is the one control everybody misses. */
+.m3-tsr-act {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-tsr-act:hover { background: var(--m3-surface-container-highest); }
+.m3-tsr-act:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-tsr-act svg { width: 18px; height: 18px; }
+.m3-ts-group {
+  margin-top: var(--sp-3);
+  padding: var(--sp-2);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container);
+}
+.m3-ts-grouphead { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.m3-ts-groupdot { width: 10px; height: 10px; border-radius: var(--r-pill); flex: 0 0 auto; }
+.m3-ts-grouptitle { margin: 0; font-size: var(--t-label-l); font-weight: 600; }
+
+/* ---- the colour control ------------------------------------------------- */
+
+.m3-color-more { display: grid; gap: 6px; margin-top: 6px; }
+.m3-color-rows { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.m3-color-rows li { align-items: center; gap: 8px; }
+.m3-color-space { flex: 0 0 84px; font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.m3-color-value { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: var(--t-body-s); overflow-wrap: anywhere; }
+
+/* ---- group appearance samples ------------------------------------------- */
+
+.m3-group-samples { display: flex; flex-wrap: wrap; gap: 10px; }
+.m3-group-sample { display: grid; gap: 4px; justify-items: start; }
+.m3-group-sample-label { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+/* The focus sample draws the ring the header would get, because a sample nobody
+   can focus cannot show what focusing it looks like. */
+.m3-group-sample .m3-tabgroup-head.sample-focus {
+  outline: 3px solid var(--g-focus-ring, var(--m3-primary));
+  outline-offset: 2px;
+}
 
 /* ---------------------------------------------------------------- menus -- */
 
@@ -497,6 +699,42 @@
 .m3-snack-close svg { width: 16px; height: 16px; }
 
 /* --------------------------------------------------------- accessibility -- */
+
+/* Visually gone, still announced. The strip's live region uses it: grouping a
+   tab, pinning a group and moving a tab between groups change nothing that
+   carries focus, so without a spoken confirmation a screen-reader user gets no
+   evidence anything happened at all. `clip-path` rather than `display:none`,
+   which would take it out of the accessibility tree along with the pixels. */
+.m3-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The overflow menu is the first line of defence and it is computed in JS; this
+   is the second, for the window sizes and display scales where a group header
+   plus a pinned run still exceeds the strip. Scrolling the strip inside itself
+   is what keeps the *document* from widening. */
+@media (max-width: 900px) {
+  .m3-tabstrip { overflow-x: auto; scrollbar-width: none; }
+  .m3-tabstrip::-webkit-scrollbar { display: none; }
+  .m3-tab { max-width: 180px; }
+  .m3-tabgroup-head { max-width: 116px; }
+}
+
+/* A pointer that cannot be precise needs a target it cannot miss. The group
+   header is a 26px pill by design — inside a coarse-pointer session it grows to
+   the platform minimum instead. */
+@media (pointer: coarse) {
+  .m3-tabgroup-head { min-height: 44px; }
+  .m3-tabstrip-btn { min-width: 44px; min-height: 44px; }
+}
 
 .m3-app :focus-visible {
   outline: 3px solid var(--m3-primary);
