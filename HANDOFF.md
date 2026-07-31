@@ -1,5 +1,58 @@
 # Handoff
 
+## Integrate-and-clean pass, 2026-07-31 — MERGED, NOT DELETED
+
+`main` is `2aa852fd` and pushed. **No branch, worktree or stash was deleted.** Deletion was
+authorised, but the preservation rule outranks the authorisation: most of these still hold work that
+is not on `main`, and deleting them would lose it.
+
+### Merged in this pass
+
+| Branch | What |
+| --- | --- |
+| `claude/hopeful-babbage-1f6555` | provider-option e2e test scope |
+| `claude/amazing-chandrasekhar-1d2846` | one shared settings search |
+| `claude/keen-kilby-8de5be` | infinite colour picker + font picker in the tab editor |
+| `claude/vibrant-wilbur-1a32b8` | 44 lines of dead CSS removed |
+| `claude/inspiring-lewin-0b6737` | updater resolves its runtime through a trusted path |
+
+Uncommitted work in three worktrees was committed first (`62bcd591`, `132f24ef`, `69d8de83`).
+Verified after each: `cd gui && bun test` → **797 pass, 0 fail**; `npx tsc -b --force` clean.
+
+### Still unmerged — do not delete these
+
+- **`claude/festive-hugle-fc8136` (QR pairing).** Merge attempted and **aborted**. It genuinely
+  completes pairing — `main` has `src/lib/pairing.ts` and the QR markup but **no pairing routes at
+  all** in `host-routes.ts`, and this branch adds them plus `src/lib/pairing-rate-limit.ts` (main
+  rate-limits the unauthenticated claim route nowhere). Eight conflicts against the mobile-shell
+  rewrite were resolved and it typechecked, but one test — *"a rejected key asks to pair again"* —
+  still failed: the send never reaches its 401 branch, so `setPanel("control")` never runs and the
+  message never renders. Not diagnosed. The resolution is **not** committed; redo it.
+- **`claude/keen-dijkstra-a12563`.** A parallel 4,875-line implementation of tab groups and the four
+  searches that `main` already has (`TabSearchPanel.tsx` carries all four scopes, cross-window master
+  search included). Merging means choosing between two complete implementations — a product decision,
+  not a mechanical merge.
+- **`claude/priceless-benz-5f0696`.** Not attempted; another screenshot pass, likely superseded by
+  `fc661370`.
+- **`tmp/harvest`** (3 commits), **`origin/dev`** (12 real fixes, promotion to `main` not done),
+  **`origin/preview`** (2 useful commits; its third sets `version` to `2.7.43-preview.20260728`,
+  which is a release-channel decision, not a merge).
+- **`origin/dev2-go`** — 523 commits of the Go port the user rejected. Keep; never merge into `main`.
+
+### Load-bearing — deleting these breaks CI
+
+`dev`, `dev2-go`, `preview` are wired into `ci.yml` (push + PR triggers), `gui-preview.yml`, and
+`enforce-pr-target.yml` (`ALLOWED_BASES = ["dev", "dev2-go"]`, `DEFAULT_BASE = "dev"`). Change the
+wiring first or keep them.
+
+### Also outstanding
+
+- 18 worktrees still on disk under `.claude/worktrees/` and the temp dirs; `tmp/merge-six` holds an
+  abandoned mid-merge (`UU bin/ocx.mjs`) and is 56 commits behind.
+- Two stashes, undiffed.
+- The full root `bun test tests/` suite has **still never been seen green** in these sessions.
+
+
 > [!NOTE]
 > Several handoffs live in this file, newest first. They were written by different sessions against
 > different trees, so each one states its own date and the branch it describes — read the date before
