@@ -1,0 +1,476 @@
+/* ============================================================================
+   The appearance system's own anatomy: the anchored editor, the infinite colour
+   picker, the typeface list and the regex popover.
+
+   Imported by the island rather than added to `customCss` in `astro.config.mjs`.
+   Two reasons, and the second is the one that decided it: the config file is
+   being edited by another stage right now, and a shared module's stylesheet
+   should not need a config change to exist. Astro hoists the CSS a `client:only`
+   component imports into the page's head at build time, so the rules are present
+   before the editor ever renders — the import is a dependency declaration, not a
+   lazy load.
+
+   Every value resolves to an `--m3-*` role token written by `applyTokens`. That
+   is what lets these surfaces be themed by the very editor they implement: the
+   picker's own dialog, the font list and the menu obey the same tokens as the
+   page behind them, and a theming feature that cannot theme its own dialog is
+   incomplete. There is no raw hex here except the alpha checkerboard, which is
+   a transparency indicator rather than chrome — it has to stay legible against
+   any colour the user builds, including the theme's own surface.
+
+   Deliberately NOT here: `.m3-icon-btn`, `.m3-textarea`, or any other class
+   `shared/m3/components.css` owns or is about to. The same selector in two
+   stylesheets makes which one wins a load-order accident, and load order is not
+   something either file can see.
+   ============================================================================ */
+
+/* ---------------------------------------------------------------- shared -- */
+
+/**
+ * 44px square, because that is the hit-target floor rather than a style choice.
+ * Named `ap-` and not `m3-` so it cannot collide with the component sheet's own
+ * icon button when that lands.
+ */
+.ap-iconbtn {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ap-iconbtn:hover { background: var(--m3-surface-container-highest); }
+.ap-iconbtn.on,
+.ap-iconbtn[aria-expanded='true'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+
+/* A search field and the affordances anchored to it. `min-width: 0` on the
+   input is what stops a long placeholder forcing the row wider than the panel
+   and giving the whole editor a horizontal scrollbar. */
+.ap-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.ap-search > .m3-input { flex: 1 1 auto; min-width: 0; }
+
+.ap-row { display: grid; gap: 6px; margin-block: var(--sp-2); min-width: 0; }
+.ap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* A capability note. Colour-coded AND worded, never colour alone — the state is
+   in the sentence, so a reader who cannot distinguish the two tints loses
+   nothing. */
+.ap-cap { margin-top: 2px; }
+.ap-cap--unsupported { color: var(--m3-error); }
+.ap-cap--partial,
+.ap-cap--unknown { color: var(--m3-on-surface-variant); }
+
+/* -------------------------------------------------------------- popovers -- */
+
+/**
+ * The anchored popover shared by the colour picker and the regex builder.
+ *
+ * `position: fixed`, not `absolute`, and that is not a preference. These
+ * popovers open from inside `.ap-editor`, which is a scroll container: an
+ * absolutely-positioned child would be CLIPPED at the editor's edge, so the
+ * colour picker would open and be cut in half by the panel that contains it.
+ * Fixed positioning escapes the clip, and the placement effect re-measures on
+ * scroll and resize so the panel still tracks its trigger — which is the part
+ * that must not be traded away for the clip fix.
+ *
+ * `max-width` is clamped to the viewport so a panel opened near an edge on a
+ * phone scrolls inside itself rather than pushing the page sideways.
+ */
+.ap-popover {
+  position: fixed;
+  z-index: 100;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-3);
+  display: grid;
+  gap: var(--sp-2);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+}
+/* Hidden until the placement effect has measured it, so it is never painted in
+   the wrong place and then jumped into the right one. */
+.ap-popover[data-placed='no'] { visibility: hidden; }
+
+/* ---------------------------------------------------------------- colour -- */
+
+.ap-colorfield { position: relative; display: grid; gap: 6px; min-width: 0; }
+.ap-colorfield__row { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; }
+.ap-colorfield__trigger {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container-lowest);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: left;
+  cursor: pointer;
+}
+.ap-colorfield__chip {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-s);
+  box-shadow: inset 0 0 0 1px var(--m3-outline-variant);
+  /* The checkerboard shows through a translucent colour, which is the only way
+     a swatch can distinguish 20% black from light grey. */
+  background-image:
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%),
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 5px 5px;
+}
+.ap-colorfield__chip[data-empty] { background-color: transparent; }
+.ap-colorfield__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+}
+
+.ap-picker { display: grid; gap: var(--sp-2); min-width: 0; }
+
+/* The 2-D field. `touch-action: none` so a drag steers the colour instead of
+   scrolling the panel out from under the finger — without it the gesture is
+   unusable on a phone. */
+.ap-picker__field {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--r-m);
+  overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
+}
+.ap-picker__field canvas { width: 100%; height: 100%; display: block; image-rendering: auto; }
+.ap-picker__field:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+.ap-picker__cursor {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: var(--r-pill);
+  /* Two rings, light over dark, so the marker stays visible at every point of a
+     field that spans white to black. */
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #000;
+  pointer-events: none;
+}
+
+.ap-picker__ramp-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.ap-picker__num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ap-picker__ramp {
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  border-radius: var(--r-pill);
+  appearance: none;
+  cursor: pointer;
+}
+.ap-picker__ramp:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+.ap-picker__ramp--hue {
+  /* Stepped through OKLCh rather than through the HSL rainbow, so the ramp
+     matches the field it steers — an sRGB rainbow puts yellow and cyan in
+     visibly the wrong place relative to an OKLCh hue angle. */
+  background: linear-gradient(to right,
+    oklch(70% 0.16 0), oklch(70% 0.16 30), oklch(70% 0.16 60), oklch(70% 0.16 90),
+    oklch(70% 0.16 120), oklch(70% 0.16 150), oklch(70% 0.16 180), oklch(70% 0.16 210),
+    oklch(70% 0.16 240), oklch(70% 0.16 270), oklch(70% 0.16 300), oklch(70% 0.16 330),
+    oklch(70% 0.16 360));
+}
+.ap-picker__ramp--alpha {
+  background-image:
+    linear-gradient(to right, transparent, var(--ap-solid, currentColor)),
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%),
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%);
+  background-size: 100% 100%, 12px 12px, 12px 12px;
+  background-position: 0 0, 0 0, 6px 6px;
+}
+
+.ap-picker__numbers { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ap-picker__number { display: flex; align-items: center; gap: 4px; flex: 1 1 88px; min-width: 0; }
+.ap-picker__number > span { font-family: var(--mono); color: var(--m3-on-surface-variant); }
+.ap-picker__number .m3-input { min-height: 40px; padding: 0 8px; width: 100%; min-width: 0; }
+.ap-picker__rgb {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--t-label-m);
+  color: var(--m3-on-surface-variant);
+}
+
+.ap-picker__facts { display: grid; gap: 2px; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.ap-picker__gamut.warn { color: var(--m3-warn); }
+.ap-picker__warn {
+  margin: 0;
+  padding: var(--sp-2);
+  border-radius: var(--r-s);
+  background: var(--m3-warn-container);
+  color: var(--m3-on-warn-container);
+  font-size: var(--t-body-s);
+}
+
+.ap-picker__swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ap-picker__swatch {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--r-s);
+  box-shadow: inset 0 0 0 1px var(--m3-outline-variant);
+  cursor: pointer;
+}
+/* The swatch itself is 32px for density, but its hit target is not: a 6px
+   negative margin on a transparent border gives every one of them the 44px a
+   finger needs without opening gaps in the grid. */
+.ap-picker__swatch::after { content: ''; display: block; margin: -6px; padding: 22px; }
+
+.ap-picker__translator > summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.ap-picker__translator ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ap-picker__translator li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ap-picker__translator code {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: var(--t-label-m);
+}
+.ap-picker__space { font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+
+/* ----------------------------------------------------------------- fonts -- */
+
+.ap-fonts { display: grid; gap: var(--sp-2); min-width: 0; }
+.ap-fonts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s);
+}
+.ap-fonts__row {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ap-fonts__row:hover { background: var(--m3-surface-container-highest); }
+.ap-fonts__row.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.ap-fonts__name { font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.ap-fonts__row.selected .ap-fonts__name { color: inherit; }
+/* The whole point of the list: each family drawn in itself. */
+.ap-fonts__sample { font-size: var(--t-body-l); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-fonts__empty { padding: var(--sp-3); font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.ap-fonts__axes { display: grid; gap: 6px; }
+.ap-axis { display: grid; grid-template-columns: 1fr 2fr auto; align-items: center; gap: 6px; }
+.ap-axis > span:first-child { font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+
+/* ----------------------------------------------------------------- regex -- */
+
+.ap-rx { position: relative; flex: 0 0 auto; }
+.ap-rx__panel { width: 340px; }
+.ap-rx__modes, .ap-rx__flags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-rx__tokens { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ap-rx__tokenhead {
+  width: 100%;
+  font-size: var(--t-label-m);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--m3-on-surface-variant);
+}
+.ap-rx__token {
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--m3-on-surface);
+  cursor: pointer;
+}
+.ap-rx__token:hover { background: var(--m3-surface-container-highest); }
+.ap-rx__token code { font-size: var(--t-label-m); }
+.ap-rx__sample { min-height: 72px; padding: 8px 12px; font-family: var(--mono); resize: vertical; }
+.ap-rx__count { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.ap-rx__groups ul,
+.ap-rx__matches { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: var(--t-label-m); }
+.ap-rx__matches { max-height: 130px; overflow-y: auto; }
+.ap-rx__matches span { color: var(--m3-on-surface-variant); }
+.ap-rx__actions { display: flex; justify-content: flex-end; }
+
+/* ---------------------------------------------------------------- editor -- */
+
+.ap-editor {
+  position: fixed;
+  z-index: 95;
+  width: min(380px, calc(100vw - 24px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-3);
+  display: grid;
+  gap: var(--sp-2);
+  align-content: start;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--el-appearanceEditor-radius, var(--r-xl));
+  background: var(--el-appearanceEditor-bg, var(--m3-surface-container-high));
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+}
+
+/**
+ * The bottom-sheet fallback for genuinely constrained widths.
+ *
+ * A 380px panel anchored to a 40px control on a 360px phone cannot be both
+ * beside its anchor and on screen. The rules permit a modal fallback exactly
+ * here, and require it to return focus on close — which the host does, because
+ * only the host knows what opened it.
+ */
+.ap-editor--sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  width: 100%;
+  max-height: 88dvh;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  border-bottom: none;
+}
+
+.ap-editor__head { display: flex; align-items: start; justify-content: space-between; gap: var(--sp-2); }
+.ap-editor__title { margin: 0; font-size: var(--t-title-s); font-weight: 600; }
+.ap-editor__scope { margin: 0; }
+.ap-editor__scope code { font-size: var(--t-label-s); word-break: break-all; }
+.ap-editor__elsewhere { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.ap-editor__jump {
+  min-height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--m3-tertiary-container);
+  color: var(--m3-on-tertiary-container);
+  font: inherit;
+  font-size: var(--t-label-m);
+  cursor: pointer;
+}
+
+.ap-editor__preview {
+  padding: var(--sp-3);
+  border: 1px dashed var(--m3-outline-variant);
+  border-radius: var(--r-m);
+  background: var(--m3-surface);
+  /* The preview renders whatever the user built, including a very long stack in
+     a very large size; it scrolls inside itself so the editor never grows a
+     horizontal scrollbar because of it. */
+  overflow-x: auto;
+}
+
+.ap-editor__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
+}
+.ap-editor__tab {
+  flex: 1 1 auto;
+  min-height: 40px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.ap-editor__tab.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); font-weight: 500; }
+.ap-editor__panel { display: grid; gap: var(--sp-2); min-width: 0; }
+.ap-editor__actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+.ap-presets { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ap-presets li { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; }
+.ap-presets__apply {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ap-presets__apply:hover { background: var(--m3-surface-container-highest); }
+.ap-presets__apply span { font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+
+.ap-menu__scope { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 12px 8px; }
+
+/* ------------------------------------------------------------ small screens */
+
+@media (max-width: 34.99em) {
+  /* Anchored popovers inside the sheet stop being anchored to anything useful:
+     the sheet is already the width of the screen, so they flow inline within it
+     rather than hanging off one side. `position: static` also neutralises the
+     inline `left`/`top` the placement effect writes — those are ignored on a
+     static box, so the two systems do not have to know about each other. */
+  .ap-popover { position: static; width: auto; max-width: 100%; box-shadow: none; border-radius: var(--r-m); }
+  .ap-popover[data-placed='no'] { visibility: visible; }
+  .ap-rx__panel { width: auto; }
+  .ap-picker__translator li { grid-template-columns: 4.5rem 1fr auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ap-iconbtn { transition: none; }
+}

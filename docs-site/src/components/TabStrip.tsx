@@ -23,21 +23,23 @@
  * strip's height in CSS so there is no layout shift while it mounts — one blank
  * bar for one frame, once per session, instead of a jump on every page.
  *
- * What this component deliberately does NOT own:
- *  - The four tab-discovery searches and the two bulk closes. Their engine is
- *    already in `shared/m3/tabs.ts` — `tabMatcher` is the one predicate both
- *    closes share, and `bulkCloseTargets` is the only answer to "what would
- *    this close", so a preview and the close that follows cannot disagree. The
- *    surfaces themselves belong with the regex builder: every one of those
- *    searches must carry the builder anchored beside it, and shipping a
- *    plain-text-only field first would be shipping the rule broken.
+ * What this component owns and what it delegates:
+ *  - The strip itself, its overflow, its context menus and its keyboard model.
+ *  - The four tab-discovery searches and the two bulk closes live in
+ *    `TabSearchPanel`, behind a `lazy()` boundary. They are a large surface with
+ *    a regex builder in it, and nobody opens them on the way to reading a page;
+ *    splitting them out keeps that weight off the first paint of a phone.
+ *  - Cross-window awareness comes from `lib/tab-registry.ts`. The master search
+ *    has to cover every window with this site open, and `localStorage` only ever
+ *    holds the last writer's strip, so the live picture is announced rather than
+ *    read.
  *  - Per-tab and per-group appearance editing. `setTabStyle` / `setGroupStyle`
- *    are wired and persisted; the anchored editor and the infinite colour
- *    picker it needs are a separate surface. A menu entry that opened nothing
- *    would be worse than no entry.
+ *    are wired and persisted; the anchored editor and the infinite colour picker
+ *    it needs are a separate surface. A menu entry that opened nothing would be
+ *    worse than no entry.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { navigate } from "astro:transitions/client";
 import {
@@ -49,65 +51,28 @@ import {
 } from "../../../shared/m3/tabs";
 import { useTabs } from "../lib/use-tabs";
 import { homeFor, isDocsRoute, localeOf, normalizeRoute, routeFallbackLabel, type DocsRoute } from "../lib/routes";
-
-/* --------------------------------------------------------------- strings -- */
+import { useChromeT } from "../lib/i18n/use-ui";
+import {
+  createTabRegistry,
+  newWindowId,
+  type RemoteTab,
+  type TabCommand,
+  type TabRegistry,
+  type WindowSnapshot,
+} from "../lib/tab-registry";
+import { Icon as UiIcon } from "./ui";
 
 /**
- * The strip's own copy, per locale.
+ * The search panel, its four builders and the regex engine behind them, fetched
+ * the first time somebody opens it.
  *
- * Inline rather than pulled from a dictionary module because this is the only
- * component in the tree that needs them yet, and a shared dictionary that
- * exists to serve one consumer is a layer with nothing in it. The i18n surface
- * (language modes, the funny-level sliders) is a separate piece of work and
- * will absorb these — `STRINGS` is one object, keyed by the same locale codes
- * Starlight uses, so absorbing it is a rename.
+ * `lazy` and not a static import because that subtree is most of this island's
+ * weight and none of its first paint. A reader who came to read a page never
+ * pays for it; a reader who opens tab search waits one chunk. The fallback is
+ * `null` rather than a spinner: the chunk arrives in a frame or two on anything
+ * but a dead connection, and a spinner that flashes for 40ms is noise.
  */
-const STRINGS = {
-  root: {
-    tabs: "Tabs", newTab: "New tab", close: "Close tab", more: "More tabs", pinned: "Pinned",
-    pin: "Pin tab", unpin: "Unpin tab", duplicate: "Duplicate tab", closeTab: "Close",
-    closeOthers: "Close other tabs", closeRight: "Close tabs to the right",
-    group: "Group", newGroup: "New group…", addTo: "Add to group", removeFrom: "Remove from group",
-    renameGroup: "Rename group…", ungroup: "Ungroup", collapse: "Collapse group", expand: "Expand group",
-    groupName: "Group name", save: "Save", cancel: "Cancel", opened: "Opened", closed: "Closed",
-  },
-  ko: {
-    tabs: "탭", newTab: "새 탭", close: "탭 닫기", more: "더 많은 탭", pinned: "고정됨",
-    pin: "탭 고정", unpin: "고정 해제", duplicate: "탭 복제", closeTab: "닫기",
-    closeOthers: "다른 탭 닫기", closeRight: "오른쪽 탭 닫기",
-    group: "그룹", newGroup: "새 그룹…", addTo: "그룹에 추가", removeFrom: "그룹에서 제거",
-    renameGroup: "그룹 이름 변경…", ungroup: "그룹 해제", collapse: "그룹 접기", expand: "그룹 펼치기",
-    groupName: "그룹 이름", save: "저장", cancel: "취소", opened: "열림", closed: "닫힘",
-  },
-  "zh-cn": {
-    tabs: "标签页", newTab: "新建标签页", close: "关闭标签页", more: "更多标签页", pinned: "已固定",
-    pin: "固定标签页", unpin: "取消固定", duplicate: "复制标签页", closeTab: "关闭",
-    closeOthers: "关闭其他标签页", closeRight: "关闭右侧标签页",
-    group: "分组", newGroup: "新建分组…", addTo: "加入分组", removeFrom: "移出分组",
-    renameGroup: "重命名分组…", ungroup: "解散分组", collapse: "折叠分组", expand: "展开分组",
-    groupName: "分组名称", save: "保存", cancel: "取消", opened: "已打开", closed: "已关闭",
-  },
-  ru: {
-    tabs: "Вкладки", newTab: "Новая вкладка", close: "Закрыть вкладку", more: "Ещё вкладки", pinned: "Закреплённые",
-    pin: "Закрепить", unpin: "Открепить", duplicate: "Дублировать", closeTab: "Закрыть",
-    closeOthers: "Закрыть другие вкладки", closeRight: "Закрыть вкладки справа",
-    group: "Группа", newGroup: "Новая группа…", addTo: "Добавить в группу", removeFrom: "Убрать из группы",
-    renameGroup: "Переименовать группу…", ungroup: "Разгруппировать", collapse: "Свернуть группу", expand: "Развернуть группу",
-    groupName: "Название группы", save: "Сохранить", cancel: "Отмена", opened: "Открыто", closed: "Закрыто",
-  },
-  ja: {
-    tabs: "タブ", newTab: "新しいタブ", close: "タブを閉じる", more: "他のタブ", pinned: "固定済み",
-    pin: "タブを固定", unpin: "固定を解除", duplicate: "タブを複製", closeTab: "閉じる",
-    closeOthers: "他のタブを閉じる", closeRight: "右側のタブを閉じる",
-    group: "グループ", newGroup: "新しいグループ…", addTo: "グループに追加", removeFrom: "グループから外す",
-    renameGroup: "グループ名を変更…", ungroup: "グループを解除", collapse: "グループを折りたたむ", expand: "グループを展開",
-    groupName: "グループ名", save: "保存", cancel: "キャンセル", opened: "開きました", closed: "閉じました",
-  },
-} as const;
-
-/** The English map's *keys*, widened to `string` — every locale supplies all of
- *  them, so a missing key is a type error while a different wording is not. */
-type Strings = Record<keyof (typeof STRINGS)["root"], string>;
+const TabSearchPanel = lazy(() => import("./TabSearchPanel"));
 
 /* ----------------------------------------------------------------- icons -- */
 
@@ -132,6 +97,7 @@ const Icon = {
       <path d="M14 3l7 7-2.1 2.1-1.4-.4-3.6 3.6.5 3.5L12 21l-3.3-3.3L3 21l3.3-5.7L3 12l1.6-1.4 3.5.5 3.6-3.6-.4-1.4z" />
     </svg>
   ),
+  search: UiIcon.search,
 };
 
 /* ----------------------------------------------------------------- menus -- */
@@ -180,7 +146,24 @@ export interface TabStripProps {
 
 export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
   const initialRoute = normalizeRoute(initialPath);
-  const strings: Strings = STRINGS[localeOf(initialRoute)] ?? STRINGS.root;
+  /**
+   * One translator for the strip and everything it opens.
+   *
+   * The per-locale table moved to `lib/strings.ts` when the searches landed: the
+   * strip, the builder, the four searches and the settings search all render
+   * copy, and five separate inline tables is five places to forget Japanese.
+   */
+  /*
+    The reader's chosen interface language, not the page's content locale.
+
+    Two axes: which translation of an *article* you are reading (the URL) and
+    what the *chrome* speaks (a stored preference, English / 廣東話 / bilingual
+    / one of the documentation languages). `useChromeT` resolves the second,
+    defaulting to "follow the page" — so with no preference set this is exactly
+    `translator(<content locale>)` and nothing here changes. See
+    `lib/i18n/index.ts`.
+  */
+  const t = useChromeT(localeOf(initialRoute));
 
   /**
    * Navigate when the front tab changes page.
@@ -340,6 +323,91 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
   const [announcement, setAnnouncement] = useState("");
   const say = useCallback((message: string) => setAnnouncement(message), []);
 
+  /* --------------------------------------------------------------- helpers */
+
+  const labelOf = useCallback(
+    (tab: Tab<DocsRoute>) => tab.label || routeFallbackLabel(tab.page),
+    [],
+  );
+
+  /* ---------------------------------------------------- cross-window registry
+
+     Every window with this site open announces its strip so the master search
+     can list tabs it does not own, and act on them where they live. The refs are
+     what let one long-lived registry read the newest state: `api` and the tab
+     array are rebuilt on every render, and a registry rebuilt with them would
+     re-announce (and re-`hello`) on every keystroke. */
+
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const labelRef = useRef(labelOf);
+  labelRef.current = labelOf;
+  const sayRef = useRef(say);
+  sayRef.current = say;
+
+  const registryRef = useRef<TabRegistry | null>(null);
+  const [peers, setPeers] = useState<WindowSnapshot[]>([]);
+  const [self, setSelf] = useState(() => ({ windowId: "", openedAt: 0 }));
+
+  useEffect(() => {
+    const registry = createTabRegistry({
+      windowId: newWindowId(),
+      getSnapshot: () => {
+        const current = apiRef.current;
+        const label = labelRef.current;
+        return {
+          tabs: current.tabs.map((tab): RemoteTab => ({
+            id: tab.id,
+            label: label(tab),
+            page: tab.page,
+            pinned: tab.pinned,
+            groupId: tab.groupId,
+            active: tab.id === current.activeTab,
+          })),
+          groups: current.groups.map(group => ({ id: group.id, name: group.name, collapsed: group.collapsed })),
+        };
+      },
+      onCommand: command => {
+        const current = apiRef.current;
+        const target = current.tabs.find(tab => tab.id === command.tabId);
+        if (!target) return;
+        if (command.type === "activate") {
+          current.selectTab(target.id);
+          // Usually refused — a browser only lets a window raise itself when the
+          // opener asks — so the selection above is the part that has to work,
+          // and the search says so before the reader clicks.
+          try { window.focus(); } catch { /* not permitted here */ }
+        } else {
+          current.closeTab(target.id);
+          sayRef.current(`${t("tabs.closed")}: ${labelRef.current(target)}`);
+        }
+      },
+    });
+    registryRef.current = registry;
+    setSelf(registry.self);
+    const unsubscribe = registry.subscribe(setPeers);
+    return () => { unsubscribe(); registry.dispose(); registryRef.current = null; };
+  }, [t]);
+
+  /* Announce the strip whenever it actually changes, rather than on the ping
+     alone — a peer's master search should see a tab close within a frame, not
+     within four seconds. */
+  useEffect(() => { registryRef.current?.publish(); }, [tabs, groups, activeTab]);
+
+  const sendRemote = useCallback((command: TabCommand) => {
+    registryRef.current?.send(command);
+  }, []);
+
+  /* --------------------------------------------------------- search panel */
+
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchWrapRef = useRef<HTMLDivElement | null>(null);
+  const searchBtnRef = useRef<HTMLButtonElement | null>(null);
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    searchBtnRef.current?.focus();
+  }, []);
+
   /* ------------------------------------------------------------------ drag */
 
   const [dragId, setDragId] = useState<string | null>(null);
@@ -372,7 +440,7 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
     else if (event.key === "End") next = order.length - 1;
     else if (event.key === "Delete") {
       event.preventDefault();
-      say(`${strings.closed}: ${labelOf(tab)}`);
+      say(`${t("tabs.closed")}: ${labelOf(tab)}`);
       api.closeTab(tab.id);
       return;
     } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
@@ -392,13 +460,11 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
 
   /* --------------------------------------------------------------- helpers */
 
-  const labelOf = (tab: Tab<DocsRoute>) => tab.label || routeFallbackLabel(tab.page);
-
   const openNewTab = useCallback(() => {
     const home = homeFor(localeOf(normalizeRoute(location.pathname)));
     api.openPage(home, { newTab: true });
-    say(strings.opened);
-  }, [api, say, strings.opened]);
+    say(t("tabs.opened"));
+  }, [api, say, t]);
 
   /* ----------------------------------------------------------------- render */
 
@@ -445,7 +511,7 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
             // Middle click closes, exactly as it does in a browser.
             if (event.button !== 1) return;
             event.preventDefault();
-            say(`${strings.closed}: ${label}`);
+            say(`${t("tabs.closed")}: ${label}`);
             api.closeTab(tab.id);
           }}
           onKeyDown={event => onTabKeyDown(event, tab)}
@@ -457,9 +523,9 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
         <button
           type="button"
           className="m3-tab-close"
-          aria-label={`${strings.close}: ${label}`}
+          aria-label={`${t("tabs.close")}: ${label}`}
           hidden={tabs.length <= 1}
-          onClick={() => { say(`${strings.closed}: ${label}`); api.closeTab(tab.id); }}
+          onClick={() => { say(`${t("tabs.closed")}: ${label}`); api.closeTab(tab.id); }}
         >
           {Icon.close}
         </button>
@@ -469,8 +535,8 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
 
   return (
     <div className="m3-tabstrip" data-m3-el="tabStrip">
-      <div className="m3-tablist" role="tablist" aria-label={strings.tabs} ref={listRef}>
-        {runs.map((run, index) => {
+      <div className="m3-tablist" role="tablist" aria-label={t("tabs.tabs")} ref={listRef}>
+        {runs.map((run) => {
           if (!run.group) return run.tabs.map(renderTab);
           const memberCount = tabs.filter(t => t.groupId === run.group!.id).length;
           return (
@@ -506,7 +572,7 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
           className="m3-tabstrip-btn"
           aria-haspopup="menu"
           aria-expanded={menu?.kind === "overflow"}
-          aria-label={`${strings.more}: ${split.overflow.length}`}
+          aria-label={`${t("tabs.more")}: ${split.overflow.length}`}
           onClick={event => {
             if (menu?.kind === "overflow") { closeMenu(); return; }
             const rect = event.currentTarget.getBoundingClientRect();
@@ -518,7 +584,41 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
         </button>
       )}
 
-      <button type="button" className="m3-tabstrip-btn" aria-label={strings.newTab} title={strings.newTab} onClick={openNewTab}>
+      {/* The searchable tab list. Its wrapper is the anchor the panel positions
+          itself inside, which is why the button is not the wrapper: a panel
+          anchored to a 44px button would be measured against the button's own
+          box and clamp itself into a corner of it. */}
+      <div className="m3-tabsearch-wrap" ref={searchWrapRef}>
+        <button
+          type="button"
+          ref={searchBtnRef}
+          className="m3-tabstrip-btn"
+          aria-haspopup="dialog"
+          aria-expanded={searchOpen}
+          aria-label={t("tabs.search")}
+          title={t("tabs.search")}
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+        >
+          {Icon.search}
+        </button>
+        {searchOpen && (
+          <Suspense fallback={null}>
+            <TabSearchPanel
+              t={t}
+              api={api}
+              labelOf={labelOf}
+              peers={peers}
+              self={self}
+              onRemote={sendRemote}
+              anchorRef={searchWrapRef}
+              onDismiss={closeSearch}
+              say={say}
+            />
+          </Suspense>
+        )}
+      </div>
+
+      <button type="button" className="m3-tabstrip-btn" aria-label={t("tabs.newTab")} title={t("tabs.newTab")} onClick={openNewTab}>
         {Icon.plus}
       </button>
 
@@ -540,7 +640,7 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
         >
           {menu.kind === "overflow" && (
             <>
-              <div className="m3-menu-heading">{strings.more}</div>
+              <div className="m3-menu-heading">{t("tabs.more")}</div>
               {split.overflow.map(tab => (
                 <button
                   key={tab.id}
@@ -559,15 +659,16 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
 
           {menuTab && renaming === null && (
             <>
-              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { openNewTab(); closeMenu(); }}>{strings.newTab}</button>
-              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { api.duplicateTab(menuTab.id); closeMenu(); }}>{strings.duplicate}</button>
+              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { openNewTab(); closeMenu(); }}>{t("tabs.newTab")}</button>
+              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { api.duplicateTab(menuTab.id); closeMenu(); }}>{t("tabs.duplicate")}</button>
               <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { api.togglePin(menuTab.id); closeMenu(); }}>
-                {menuTab.pinned ? strings.unpin : strings.pin}
+                {menuTab.pinned ? t("tabs.unpin") : t("tabs.pin")}
               </button>
+              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { closeMenu(false); setSearchOpen(true); }}>{t("tabs.search")}</button>
               <div className="m3-menu-sep" />
-              <div className="m3-menu-heading">{strings.group}</div>
+              <div className="m3-menu-heading">{t("tabs.group")}</div>
               <button type="button" role="menuitem" className="m3-menu-item" disabled={menuTab.pinned} onClick={() => setRenaming("")}>
-                {strings.newGroup}
+                {t("tabs.newGroup")}
               </button>
               {groups.filter(g => g.id !== menuTab.groupId).map(group => (
                 <button
@@ -578,29 +679,30 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
                   disabled={menuTab.pinned}
                   onClick={() => { api.assignGroup(menuTab.id, group.id); closeMenu(); }}
                 >
-                  {`${strings.addTo}: ${group.name}`}
+                  {`${t("tabs.addTo")}: ${group.name}`}
                 </button>
               ))}
               {menuTab.groupId && (
                 <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { api.assignGroup(menuTab.id, undefined); closeMenu(); }}>
-                  {strings.removeFrom}
+                  {t("tabs.removeFrom")}
                 </button>
               )}
               <div className="m3-menu-sep" />
-              <button type="button" role="menuitem" className="m3-menu-item m3-menu-item--danger" onClick={() => { api.closeTab(menuTab.id); closeMenu(false); }}>{strings.closeTab}</button>
-              <button type="button" role="menuitem" className="m3-menu-item m3-menu-item--danger" onClick={() => { api.closeOthers(menuTab.id); closeMenu(false); }}>{strings.closeOthers}</button>
-              <button type="button" role="menuitem" className="m3-menu-item m3-menu-item--danger" onClick={() => { api.closeToRight(menuTab.id); closeMenu(false); }}>{strings.closeRight}</button>
+              <button type="button" role="menuitem" className="m3-menu-item m3-menu-item--danger" onClick={() => { api.closeTab(menuTab.id); closeMenu(false); }}>{t("tabs.closeTab")}</button>
+              <button type="button" role="menuitem" className="m3-menu-item m3-menu-item--danger" onClick={() => { api.closeOthers(menuTab.id); closeMenu(false); }}>{t("tabs.closeOthers")}</button>
+              <button type="button" role="menuitem" className="m3-menu-item m3-menu-item--danger" onClick={() => { api.closeToRight(menuTab.id); closeMenu(false); }}>{t("tabs.closeRight")}</button>
             </>
           )}
 
           {menuGroup && renaming === null && (
             <>
               <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { api.toggleGroupCollapsed(menuGroup.id); closeMenu(); }}>
-                {menuGroup.collapsed ? strings.expand : strings.collapse}
+                {menuGroup.collapsed ? t("tabs.expand") : t("tabs.collapse")}
               </button>
-              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => setRenaming(menuGroup.name)}>{strings.renameGroup}</button>
+              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => setRenaming(menuGroup.name)}>{t("tabs.renameGroup")}</button>
+              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { closeMenu(false); setSearchOpen(true); }}>{t("tabs.search")}</button>
               <div className="m3-menu-sep" />
-              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { api.removeGroup(menuGroup.id); closeMenu(false); }}>{strings.ungroup}</button>
+              <button type="button" role="menuitem" className="m3-menu-item" onClick={() => { api.removeGroup(menuGroup.id); closeMenu(false); }}>{t("tabs.ungroup")}</button>
             </>
           )}
 
@@ -616,7 +718,7 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
                 closeMenu();
               }}
             >
-              <label className="m3-field-label" htmlFor={`${stripId}-gname`}>{strings.groupName}</label>
+              <label className="m3-field-label" htmlFor={`${stripId}-gname`}>{t("tabs.groupName")}</label>
               <input
                 id={`${stripId}-gname`}
                 className="m3-input"
@@ -626,8 +728,8 @@ export default function TabStrip({ initialPath, initialTitle }: TabStripProps) {
                 onChange={event => setRenaming(event.target.value)}
               />
               <div className="m3-row">
-                <button type="submit" className="m3-btn m3-btn--filled">{strings.save}</button>
-                <button type="button" className="m3-btn m3-btn--text" onClick={() => closeMenu()}>{strings.cancel}</button>
+                <button type="submit" className="m3-btn m3-btn--filled">{t("tabs.save")}</button>
+                <button type="button" className="m3-btn m3-btn--text" onClick={() => closeMenu()}>{t("tabs.cancel")}</button>
               </div>
             </form>
           )}

@@ -2,6 +2,7 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import react from "@astrojs/react";
+import { rehypeBasePath } from "./src/plugins/rehype-base-path.mjs";
 
 // Canonical GitHub Pages custom domain. The site is served at the domain root,
 // so Starlight must not emit the former /opencodex project-site prefix.
@@ -41,6 +42,12 @@ export default defineConfig({
   site: SITE_URL,
   ...(BASE ? { base: BASE } : {}),
   trailingSlash: "ignore",
+  // Root-absolute links inside Markdown bodies are invisible to Astro's base
+  // rewriting — see `src/plugins/rehype-base-path.mjs`. Applies to MDX too:
+  // `@astrojs/mdx` extends this markdown config unless told otherwise.
+  markdown: {
+    rehypePlugins: [[rehypeBasePath, { base: BASE_PATH }]],
+  },
   // Section roots that have no index page of their own.
   //
   // Four of the five sections are directories of pages, and Starlight emits a
@@ -58,11 +65,19 @@ export default defineConfig({
   // Each target is that section's FIRST sidebar entry, so following a section
   // root lands where the section starts rather than in its middle. `benchmarks`
   // is absent on purpose — it is the one section with a real overview page.
+  //
+  // The targets carry `BASE_PATH` explicitly because Astro applies `base` to a
+  // redirect's SOURCE but not to its DESTINATION. Under the project-site prefix
+  // that emitted a stub at `/opencodex/guides/` whose refresh pointed at
+  // `/guides/providers` — so the fix for these four dead section roots worked on
+  // the canonical domain and left them dead on the other host, complete with a
+  // canonical URL pointing at a page that does not exist. `BASE_PATH` is "" on
+  // the root deploy, so this is a no-op there.
   redirects: {
-    "/getting-started": "/getting-started/installation",
-    "/guides": "/guides/providers",
-    "/reference": "/reference/cli",
-    "/troubleshooting": "/troubleshooting/windows-memory",
+    "/getting-started": `${BASE_PATH}/getting-started/installation`,
+    "/guides": `${BASE_PATH}/guides/providers`,
+    "/reference": `${BASE_PATH}/reference/cli`,
+    "/troubleshooting": `${BASE_PATH}/troubleshooting/windows-memory`,
   },
   // lightningcss merges animation-timeline into the `animation` shorthand,
   // which Chrome cannot parse — the scroll-driven animations die silently.
@@ -116,6 +131,11 @@ export default defineConfig({
         "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css",
         "../shared/m3/components.css",
         "./src/styles/m3.css",
+        // The corner notifications, the dim sum card, the changelog viewer and
+        // the settings page. Its own sheet rather than more of `m3.css`: those
+        // are three product surfaces that arrived together and could be retired
+        // together, and keeping them separate makes what they cost visible.
+        "./src/styles/surfaces.css",
       ],
       components: {
         // Renders Starlight's own head plus `<ClientRouter />`; see the file.
@@ -212,6 +232,14 @@ export default defineConfig({
           ],
         },
         { label: "Contributing", translations: { ko: "기여하기", "zh-CN": "贡献", ru: "Как внести вклад", ja: "コントリビュート" }, slug: "contributing" },
+        // Neither of these is documentation, and both are in the sidebar anyway:
+        // a changelog nobody can find is a changelog nobody reads, and a
+        // settings page reachable only from a link inside a dim sum card is a
+        // settings page the reader will never see twice. Their sidebar labels
+        // are the *content* locale's; the pages themselves render in whatever
+        // interface language the reader has chosen.
+        { label: "Changelog", translations: { ko: "변경 내역", "zh-CN": "更新日志", ru: "История изменений", ja: "変更履歴" }, slug: "changelog" },
+        { label: "Settings", translations: { ko: "설정", "zh-CN": "设置", ru: "Настройки", ja: "設定" }, slug: "settings" },
       ],
     }),
   ],

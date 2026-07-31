@@ -26,11 +26,13 @@
  * one deleted file away from silently falling back to its second argument.
  */
 import { Icon } from '@astrojs/starlight/components';
-import Search from '@astrojs/starlight/components/Search.astro';
 import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
 import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
 import Appearance from './Appearance.astro';
+import SiteSearch from './SiteSearch.tsx';
 import TabStrip from './TabStrip.tsx';
+import AppearanceHost from './appearance/AppearanceHost.tsx';
+import ShellSurfaces from './ShellSurfaces.tsx';
 
 const { locale } = Astro.locals.starlightRoute;
 // Splash pages have no Starlight sidebar/hamburger, so the bar carries its own
@@ -149,8 +151,40 @@ const contributing: NavLink = {
 			</li>
 		</ul>
 	</nav>
+	{/*
+		The site's own search, in the slot Starlight's `<Search />` used to occupy.
+
+		Pagefind is not replaced — the index and Starlight's integration that
+		builds it are untouched, and plain-text queries still go to it through its
+		own JS API. What is replaced is the UI, because the regex builder has to
+		be anchored beside the search bar and Pagefind's default modal has nowhere
+		to put one. Dropping that modal also drops `@pagefind/default-ui` from the
+		idle load of all 156 pages; Pagefind's core is now fetched on the first
+		query instead.
+
+		`client:idle` and not `client:only`: the trigger's markup depends on
+		nothing in storage, so it is in the served HTML and a reader on a slow
+		connection sees a search control before any JavaScript arrives.
+	*/}
 	<div class="sl-flex print:hidden search-wrapper">
-		<Search />
+		<SiteSearch client:idle locale={locale ?? 'root'} />
+	</div>
+	{/*
+		The notification bell, the corner snackbars and the dim sum card.
+
+		Outside `right-group` deliberately: that group is `sl-hidden md:sl-flex`,
+		so anything inside it disappears below the medium breakpoint — which for
+		the social links and the appearance panel is a reasonable trade and for
+		the notification centre is not. A reader on a phone gets the same toasts
+		as everyone else, and the only way back to a dismissed one is this bell.
+
+		`transition:persist` so the live stack, the open panel and the once-per-
+		launch dim sum draw all survive a client-side navigation. Like the strip,
+		it is on every page — see `scripts/check-dist.mjs` — because a page that
+		omitted it would destroy the reader's notification state on arrival.
+	*/}
+	<div class="print:hidden ocx-shell-host">
+		<ShellSurfaces client:only="react" transition:persist="ocx-shell" />
 	</div>
 	<div class="sl-hidden md:sl-flex print:hidden right-group">
 		<div class="sl-flex social-icons">
@@ -267,12 +301,44 @@ const contributing: NavLink = {
 	/>
 </div>
 
+{/*
+	The per-element appearance editor's host.
+
+	Here for the same reason the tab strip is: this is the only component
+	Starlight renders on all 156 pages, so a `transition:persist` island placed
+	here survives every navigation, and one placed in a layout some route skips
+	would be destroyed the first time a reader visited that route.
+
+	`transition:persist` matters more than it looks. The host installs the
+	document-level listeners that re-apply stored element styles on every
+	`astro:page-load`; remounting it per navigation would register them again on
+	each page. It renders nothing at all until a reader opens the editor, so it
+	costs one idle component and no layout box — hence no wrapper element and no
+	reserved height.
+
+	`client:only="react"`, like the strip: its state is read from localStorage,
+	which the server cannot know, and React 19 answers a hydration mismatch by
+	throwing the tree away.
+*/}
+<AppearanceHost
+	client:only="react"
+	transition:persist="ocx-appearance-host"
+	transition:persist-props
+	locale={(locale ?? 'root') as 'root' | 'ko' | 'zh-cn' | 'ru' | 'ja'}
+/>
+
 <style>
 	.title-wrapper {
 		overflow: clip;
 		padding: 0.25rem;
 		margin: -0.25rem;
 		min-width: 0;
+	}
+
+	/* Always visible, at every width — see the mount above. */
+	.ocx-shell-host {
+		display: flex;
+		align-items: center;
 	}
 
 	.right-group,
@@ -387,6 +453,34 @@ const contributing: NavLink = {
 		.preference-caret,
 		.language-menu {
 			transition: none;
+		}
+	}
+
+	/*
+		Touch targets. `min-height: 2.25rem` is 36px, under the 44px minimum a
+		finger needs, and these sit in a row where the neighbour is a different
+		setting.
+
+		It lives here rather than in `m3.css` because Astro scopes these rules to
+		`.preference-control[data-astro-cid-…]`, which outranks a bare
+		`.preference-control` in the global sheet — the override would lose, and
+		lose silently. Gated on `pointer: coarse`, so the desktop bar keeps its
+		compact density.
+	*/
+	@media (pointer: coarse) {
+		.preference-control,
+		.nav-link {
+			min-height: 44px;
+			padding-inline: 0.875rem;
+		}
+		/* These are `display: block` links, so a bare `min-height` would grow the
+		   box and leave the label sitting at the top of it. */
+		.language-menu a,
+		.ocx-menu-group a,
+		.ocx-menu-contrib {
+			display: flex;
+			align-items: center;
+			min-height: 44px;
 		}
 	}
 

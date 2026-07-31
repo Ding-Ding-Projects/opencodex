@@ -139,8 +139,32 @@ export function isDark(theme: ThemeMode): boolean {
 /** Starlight's own theme store, written by the header's Auto→Light→Dark button. */
 const STARLIGHT_THEME_KEY = "starlight-theme";
 
-/** Set while we are writing `data-theme` ourselves, so the observer ignores it. */
-let applying = false;
+/**
+ * Non-zero while we are writing `data-theme` ourselves, so the observer below
+ * does not mistake our own write for the reader's.
+ *
+ * A counter released on a microtask, not a boolean released on the next line.
+ * `MutationObserver` delivers at the microtask checkpoint — *after* the
+ * synchronous block that caused the mutation — so a flag set and cleared around
+ * `setAttribute` is always back to `false` by the time the observer looks at it.
+ * The observer then adopts our own write as if the reader had made it and calls
+ * `applyAppearance` again, which mutates the attribute again, which re-enters
+ * the observer. `setAttribute` queues a mutation record even when the value is
+ * identical, so nothing about that cycle converges.
+ *
+ * The result was a microtask loop, and a microtask loop never yields to the
+ * event loop: the page painted, then froze before `load` with the main thread
+ * unreachable — a docs site permanently "loading". A counter rather than a
+ * boolean because two applies in one turn would otherwise have the first one's
+ * release clear the second one's guard.
+ */
+let applying = 0;
+
+/** Hold the guard across the microtask checkpoint where the observer runs. */
+function guardOurOwnWrite(): void {
+  applying++;
+  queueMicrotask(() => { applying--; });
+}
 
 /**
  * Paint an appearance onto the document.
@@ -160,9 +184,8 @@ let applying = false;
 export function applyAppearance(appearance: DocsAppearance, root?: HTMLElement): void {
   const el = root ?? document.documentElement;
   const dark = isDark(appearance.theme);
-  applying = true;
+  guardOurOwnWrite();
   el.setAttribute("data-theme", dark ? "dark" : "light");
-  applying = false;
   try {
     localStorage.setItem(STARLIGHT_THEME_KEY, appearance.theme === "system" ? "auto" : appearance.theme);
   } catch { /* private mode */ }
@@ -193,6 +216,14 @@ export function watchExternalThemeChanges(read: () => DocsAppearance): () => voi
     const attr = el.getAttribute("data-theme");
     if (attr !== "dark" && attr !== "light") return;
     const current = read();
+    // Nothing to adopt if the attribute already says what our own state
+    // resolves to. This is the structural half of the loop guard: the timing
+    // guard above depends on the observer running at the microtask checkpoint
+    // we expect, whereas this one holds no matter who wrote the attribute or
+    // when. A "system" reader in a dark OS resolves to exactly the "dark" that
+    // is already there, so the mutation carried no new information and
+    // re-applying it would only mutate the attribute again.
+    if (attr === (isDark(current.theme) ? "dark" : "light")) return;
     // Only the theme is adopted; seed, density and type stay the visitor's.
     applyAppearance({ ...current, theme: attr });
     writeAppearance({ ...current, theme: attr });
@@ -221,9 +252,11 @@ let runtimeInstalled = false;
  *
  * So: suppress the observer for the duration of the swap, then re-apply the
  * stored appearance in `astro:after-swap`, which runs before the new page is
- * painted. The observer's own callback is a microtask queued during the swap;
- * clearing the flag in a *later* microtask guarantees the callback sees it
- * still set and ignores the swap's write rather than persisting it.
+ * painted. The swap's own attribute write has to stay suppressed from
+ * `before-swap` until after the observer has run, which is why the guard is
+ * taken in one listener and released in the other rather than around a single
+ * call — `guardOurOwnWrite` releases on the next microtask, far too early to
+ * cover a swap.
  *
  * Idempotent, because it is called from an `astro:page-load` handler that fires
  * on every navigation as well as the first load.
@@ -232,11 +265,12 @@ export function installAppearanceRuntime(read: () => DocsAppearance): void {
   if (runtimeInstalled) return;
   runtimeInstalled = true;
 
-  document.addEventListener("astro:before-swap", () => { applying = true; });
+  document.addEventListener("astro:before-swap", () => { applying++; });
   document.addEventListener("astro:after-swap", () => {
     applyAppearance(read());
-    applying = true;
-    queueMicrotask(() => { applying = false; });
+    // Release the `before-swap` hold only after the observer's checkpoint, so
+    // the swap's own write to `data-theme` is never mistaken for the reader's.
+    queueMicrotask(() => { applying--; });
   });
 
   // A visitor on "System" should follow the OS while the page is open.

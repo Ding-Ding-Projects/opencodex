@@ -1,0 +1,19 @@
+---
+title: Settings
+description: Interface language, funny level, notifications and the dim sum surprise — stored in this browser only.
+tableOfContents: false
+---
+
+import Settings from '../../components/Settings.tsx';
+
+{/*
+  `client:only`: every control on this page reads its value out of
+  `localStorage`, which the server has never seen. A server render would show a
+  page of defaults and then replace it, and React 19 treats the mismatch as a
+  reason to throw the tree away rather than patch it.
+
+  The settings themselves are inert without JavaScript — they are browser
+  preferences — so unlike the documentation pages there is nothing here that a
+  prerender could usefully have shown.
+*/}
+<Settings client:only="react" />

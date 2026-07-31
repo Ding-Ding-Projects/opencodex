@@ -52,7 +52,14 @@ describe("section roots", () => {
 
   test("every redirect target is a page that actually exists", async () => {
     // A redirect to a missing file turns one 404 into a slower 404.
-    const targets = [...config.matchAll(/"\/([a-z-]+)":\s*"\/([a-z0-9/-]+)"/g)].map(m => m[2]);
+    //
+    // Targets are template literals carrying the deployment base, not plain
+    // strings. They started as plain strings and that was wrong: a bare
+    // `/getting-started/installation` is correct on the canonical domain and a
+    // 404 on the project site, so the redirect that existed to fix a dead
+    // section root was itself dead on one of the two hosts.
+    const targets = [...config.matchAll(/"\/([a-z-]+)":\s*[`"]\$?\{?BASE_PATH\}?\/([a-z0-9/-]+)[`"]/g)]
+      .map(m => m[2]);
     expect(targets.length).toBeGreaterThan(0);
     for (const target of targets) {
       const exists = [".md", ".mdx"].some(ext => existsSync(join(DOCS, `${target}${ext}`)));
@@ -64,7 +71,7 @@ describe("section roots", () => {
     // Landing in the middle of a section is disorienting in a way that landing
     // at its start is not, and the sidebar already encodes where a section
     // starts. This pins the two together so they cannot drift apart.
-    for (const [, section, target] of config.matchAll(/"\/([a-z-]+)":\s*"\/([a-z0-9/-]+)"/g)) {
+    for (const [, section, target] of config.matchAll(/"\/([a-z-]+)":\s*[`"]\$?\{?BASE_PATH\}?\/([a-z0-9/-]+)[`"]/g)) {
       const group = config.split(new RegExp(`label: "[^"]*",\\s*(?:translations:[^}]*},\\s*)?\\n\\s*(?:collapsed[^\\n]*\\n\\s*)?items: \\[`))
         .find(chunk => chunk.includes(`slug: "${section}/`));
       if (!group) continue;

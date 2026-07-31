@@ -1,0 +1,789 @@
+/* ============================================================================
+   The corner surfaces, the changelog viewer and the settings page.
+
+   A separate sheet from `m3.css` (the site's own layout) and from
+   `shared/m3/components.css` (the component anatomy both trees render) because
+   these are neither: they are three product surfaces this stage added, and
+   keeping them in one file means the next person can see what they cost and
+   delete them together if a surface is retired.
+
+   Every value resolves to an `--m3-*` role written by `applyTokens`, plus the
+   shape / elevation / spacing / type tokens the generated block declares. No raw
+   hex, no `!important`, nothing that has to out-specify a sheet it is layered
+   over — there is no other sheet here to beat.
+
+   Two rules run through the whole file:
+
+   1. **Nothing may make the page scroll sideways.** Every panel is capped with
+      `min(…, 100vw - 2rem)` and every wide thing scrolls inside its own box. A
+      popover anchored near a viewport edge is repositioned by
+      `shared/m3/anchor.ts`, but a panel *wider than the viewport* cannot be
+      repositioned out of trouble — only sized out of it, which is what these
+      caps do.
+   2. **44px is the floor for anything a finger touches**, applied under
+      `pointer: coarse` so the desktop density is not inflated to pay for it.
+   ============================================================================ */
+
+/* ==========================================================================
+   Notification bell and centre
+   ========================================================================== */
+
+.ocx-notif {
+  position: relative;
+  display: inline-flex;
+}
+
+/*
+  Styled here in full rather than by borrowing `.preference-control`.
+
+  That class is declared inside `Header.astro`'s scoped `<style>`, so Astro
+  compiles it to `.preference-control[data-astro-cid-…]`. The bell is rendered by
+  a React island, which never receives that attribute — so wearing the class got
+  it exactly none of the appearance it was named for: no height, no pill, no
+  hover, and a 35px hit target measured in a real browser at 430x932. A shared
+  look has to come from a shared *sheet*, not from a shared class name that only
+  one of the two renderers can match.
+
+  The values below are the header's, restated: same minimum height, same pill,
+  same idle and hover roles, so the bell sits in that row as one of it.
+*/
+.ocx-notif-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0.375rem 0.5rem;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+.ocx-notif-trigger:hover,
+.ocx-notif-trigger[aria-expanded='true'] {
+  background-color: var(--m3-surface-container-highest);
+  color: var(--m3-on-surface);
+}
+
+.ocx-notif-icon {
+  display: inline-flex;
+}
+.ocx-notif-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Sits on the bell rather than beside it, so the control keeps one hit target
+   and the count cannot wrap the row at a narrow width. */
+.ocx-notif-badge {
+  position: absolute;
+  top: 0.125rem;
+  inset-inline-end: 0.125rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding-inline: 0.25rem;
+  border-radius: var(--r-pill);
+  background: var(--m3-error);
+  color: var(--m3-on-error);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  Anchored to the bell and non-modal: the reader can still read and scroll the
+  page behind it. `left` and `max-height` are written by `computePlacement`, so
+  the declarations here are the ones that survive a viewport it did not expect —
+  the width cap, and the scroll container.
+*/
+.ocx-notif-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: min(70dvh, 32rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-high);
+  box-shadow: var(--e3);
+  z-index: var(--sl-z-index-navbar);
+}
+.ocx-notif-panel.above {
+  top: auto;
+  bottom: calc(100% + 0.5rem);
+}
+
+.ocx-notif-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.75rem 0.75rem 0.5rem 1rem;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.ocx-notif-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--t-title-s);
+  font-weight: 600;
+  color: var(--m3-on-surface);
+}
+
+.ocx-notif-empty {
+  padding: 1.5rem 1rem;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-body-m);
+}
+.ocx-notif-empty p {
+  margin: 0 0 0.375rem;
+}
+
+.ocx-notif-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+}
+
+.ocx-notif-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--r-s);
+}
+.ocx-notif-row + .ocx-notif-row {
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.ocx-notif-row-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.ocx-notif-row--info .ocx-notif-row-icon { color: var(--m3-primary); }
+.ocx-notif-row--success .ocx-notif-row-icon { color: var(--m3-ok); }
+.ocx-notif-row--warn .ocx-notif-row-icon { color: var(--m3-warn); }
+.ocx-notif-row--error .ocx-notif-row-icon { color: var(--m3-error); }
+
+.ocx-notif-row-text { min-width: 0; }
+.ocx-notif-row-title {
+  margin: 0;
+  font-size: var(--t-body-m);
+  font-weight: 500;
+  color: var(--m3-on-surface);
+  overflow-wrap: anywhere;
+}
+.ocx-notif-row-body {
+  margin: 0.125rem 0 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.ocx-notif-row-link {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: var(--t-label-l);
+  color: var(--m3-primary);
+}
+.ocx-notif-row-when {
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ocx-notif-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.375rem;
+  border-top: 1px solid var(--m3-outline-variant);
+}
+
+/* ==========================================================================
+   Snackbars
+   ========================================================================== */
+
+/*
+  Bottom-left, stacked upward, above everything.
+
+  `pointer-events: none` on the host with `auto` on each card: the host spans a
+  column the width of a phone, and a transparent strip that swallowed taps down
+  the left of every page would be a bug nobody could see. `env(safe-area-inset-*)`
+  keeps the stack clear of a home indicator.
+*/
+.ocx-snack-host {
+  position: fixed;
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(24rem, calc(100vw - 2rem));
+  pointer-events: none;
+}
+
+.ocx-snack {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: start;
+  gap: 0.625rem;
+  padding: 0.75rem 0.75rem 0.75rem 0.875rem;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+  animation: ocx-snack-in 0.18s ease-out;
+}
+
+@keyframes ocx-snack-in {
+  from { opacity: 0; translate: 0 0.5rem; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+.ocx-snack-icon svg { width: 20px; height: 20px; }
+.ocx-snack--info .ocx-snack-icon { color: var(--m3-primary); }
+.ocx-snack--success .ocx-snack-icon { color: var(--m3-ok); }
+.ocx-snack--warn .ocx-snack-icon { color: var(--m3-warn); }
+.ocx-snack--error .ocx-snack-icon { color: var(--m3-error); }
+
+/* A left rule as well as the icon colour, so tone survives a monochrome or
+   high-contrast rendering where the icon tint is flattened away. */
+.ocx-snack--warn { border-inline-start: 3px solid var(--m3-warn); }
+.ocx-snack--error { border-inline-start: 3px solid var(--m3-error); }
+
+.ocx-snack-text { min-width: 0; }
+.ocx-snack-title {
+  margin: 0;
+  font-size: var(--t-body-m);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.ocx-snack-body {
+  margin: 0.125rem 0 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.m3-snack-action {
+  align-self: center;
+  padding: 0.375rem 0.625rem;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-primary);
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.m3-snack-action:hover {
+  background: color-mix(in oklab, var(--m3-primary) 12%, transparent);
+}
+
+.ocx-snack-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.ocx-snack-close:hover {
+  background: var(--m3-surface-container-highest);
+  color: var(--m3-on-surface);
+}
+.ocx-snack-close svg { width: 16px; height: 16px; }
+
+/* ==========================================================================
+   Dim sum
+   ========================================================================== */
+
+/*
+  Bottom-right, so it never sits on top of a snackbar that is telling the reader
+  something they asked for. It is the one surface on this site that appears
+  without being asked for, which is exactly why it yields the more useful corner.
+*/
+.ocx-dimsum {
+  position: fixed;
+  inset-inline-end: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 190;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 0.75rem;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+  animation: ocx-snack-in 0.24s ease-out;
+}
+
+.ocx-dimsum-art img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: var(--r-m);
+}
+.ocx-dimsum-emoji {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-highest);
+  font-size: 2rem;
+}
+
+.ocx-dimsum-text { min-width: 0; }
+.ocx-dimsum-title {
+  margin: 0;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+}
+.ocx-dimsum-dish {
+  margin: 0.125rem 0 0;
+  font-size: var(--t-body-m);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.ocx-dimsum-jyut {
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-body-s);
+  font-style: italic;
+}
+.ocx-dimsum-why {
+  margin: 0.25rem 0 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+}
+
+/* ==========================================================================
+   Changelog viewer
+   ========================================================================== */
+
+.ocx-changelog-lead {
+  margin: 0 0 var(--sp-4);
+  color: var(--m3-on-surface-variant);
+}
+
+.ocx-changelog-filters {
+  display: grid;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-5);
+  padding: var(--sp-4);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-low);
+  /*
+    Sticky, so a reader ninety releases down can change the range without
+    scrolling back to the top.
+
+    Deliberately NOT `overflow-y: auto` with a `max-height`, which is what this
+    was. A scroll container is also a clipping container, and the calendar and
+    the regex builder are absolutely-positioned popovers *inside* this block — a
+    real browser at 430x932 put the calendar's right edge outside the viewport
+    because the container it lives in had started clipping and scrolling on its
+    own. The block is a search row, two date fields and a row of chips; it does
+    not need a scrollbar, and giving it one cost two anchored surfaces.
+  */
+  position: sticky;
+  top: calc(var(--sl-nav-height, 4rem) + 0.5rem);
+  z-index: 5;
+}
+
+.ocx-changelog-dates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--sp-3);
+}
+
+.ocx-changelog-presets {
+  flex-wrap: wrap;
+}
+
+.ocx-changelog-actions {
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.ocx-changelog-count {
+  margin: 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+.ocx-spacer { flex: 1 1 auto; }
+
+.ocx-changelog-empty {
+  padding: var(--sp-5);
+  border: 1px dashed var(--m3-outline-variant);
+  border-radius: var(--r-l);
+  color: var(--m3-on-surface-variant);
+  text-align: center;
+}
+.ocx-changelog-empty p { margin: 0 0 0.375rem; }
+
+.ocx-release {
+  padding: var(--sp-4) 0;
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.ocx-release-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin: 0 0 var(--sp-2);
+  font-size: var(--t-title-m);
+}
+.ocx-release-version {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--m3-on-surface);
+}
+.ocx-release-date {
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocx-release-group { margin-block: var(--sp-2); }
+.ocx-release-kind {
+  margin: 0 0 0.25rem;
+  font-size: var(--t-label-m);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+/* A category tint, keyed to the role palette rather than to fixed hues so it
+   follows the reader's seed colour like everything else. */
+.ocx-kind--feat { color: var(--m3-primary); }
+.ocx-kind--fix { color: var(--m3-ok); }
+.ocx-kind--perf { color: var(--m3-tertiary); }
+.ocx-release-list {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+.ocx-release-list li {
+  margin-block: 0.125rem;
+  font-size: var(--t-body-m);
+  overflow-wrap: anywhere;
+}
+
+/* ---- date field + calendar ---------------------------------------------- */
+
+.ocx-datefield {
+  position: relative;
+  display: grid;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.ocx-datefield-row {
+  display: flex;
+  gap: 0.375rem;
+  align-items: center;
+}
+.ocx-datefield-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.ocx-error { color: var(--m3-error); }
+
+.ocx-calendar {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  width: min(19rem, calc(100vw - 2rem));
+  /* `max-height` is written by `computePlacement`; this is the scroll that makes
+     it usable rather than merely bounded. A calendar flipped above a field near
+     the bottom of a short phone has less room than it wants, and the choice is
+     between scrolling and hanging off the top of the page. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-3);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-high);
+  box-shadow: var(--e3);
+  z-index: 20;
+}
+/* No `.above` rule: the flipped position is an explicit wrapper-relative `top`
+   written by the component. Expressing it in CSS as "above the wrapper" would be
+   measuring against a box the placement was never computed for. */
+
+.ocx-calendar-head {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.ocx-calendar-jump {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.ocx-calendar-jump select { flex: 1 1 auto; min-width: 0; }
+.ocx-calendar-year { width: 5rem; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+/* The single chevron glyph, turned to point the other way. One icon, two
+   directions, so the two buttons cannot drift into different shapes. */
+.ocx-chev-left { display: inline-flex; rotate: 90deg; }
+.ocx-calendar-head .m3-icon-btn svg { rotate: -90deg; }
+.ocx-calendar-head .m3-icon-btn:first-child svg { rotate: 0deg; }
+
+.ocx-calendar-month {
+  margin: var(--sp-2) 0;
+  text-align: center;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+}
+
+.ocx-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.ocx-calendar-weekday {
+  display: grid;
+  place-items: center;
+  height: 1.75rem;
+  font-size: var(--t-label-s);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+}
+.ocx-calendar-day {
+  display: grid;
+  place-items: center;
+  height: 2.25rem;
+  border: 0;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-body-s);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.ocx-calendar-day:hover { background: var(--m3-surface-container-highest); }
+.ocx-calendar-day.outside { color: var(--m3-on-surface-variant); opacity: 0.55; }
+.ocx-calendar-day.selected {
+  background: var(--m3-primary);
+  color: var(--m3-on-primary);
+  font-weight: 700;
+}
+
+.ocx-calendar-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--sp-2);
+}
+
+/* ==========================================================================
+   Settings
+   ========================================================================== */
+
+.ocx-settings-lead {
+  margin: 0 0 var(--sp-4);
+  color: var(--m3-on-surface-variant);
+}
+
+/*
+  A tab strip, not a stack of headings — the same reason the site itself has one.
+  It scrolls inside itself rather than wrapping, so the page body never gains a
+  horizontal scrollbar because a bilingual label was long.
+*/
+.ocx-settings-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: var(--sp-4) 0 0;
+  padding-bottom: 0.25rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--m3-outline-variant);
+  scrollbar-width: thin;
+}
+.ocx-settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 0 0 auto;
+  min-height: 2.5rem;
+  padding: 0 0.875rem;
+  border: 0;
+  border-radius: var(--r-pill) var(--r-pill) 0 0;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ocx-settings-tab:hover { background: var(--m3-surface-container); }
+.ocx-settings-tab.selected {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+.ocx-settings-tabcount {
+  min-width: 1.25rem;
+  padding-inline: 0.25rem;
+  border-radius: var(--r-pill);
+  background: var(--m3-primary);
+  color: var(--m3-on-primary);
+  font-size: var(--t-label-s);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.ocx-settings-panel {
+  display: grid;
+  gap: var(--sp-4);
+  padding-top: var(--sp-4);
+}
+
+.ocx-setting {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-low);
+}
+.ocx-setting-label {
+  margin: 0;
+  font-size: var(--t-title-s);
+  font-weight: 600;
+  color: var(--m3-on-surface);
+}
+.ocx-setting-value {
+  margin: 0;
+  font-size: var(--t-label-l);
+  color: var(--m3-on-surface-variant);
+}
+
+.ocx-settings-empty {
+  padding: var(--sp-5);
+  border: 1px dashed var(--m3-outline-variant);
+  border-radius: var(--r-l);
+  color: var(--m3-on-surface-variant);
+  text-align: center;
+}
+
+.ocx-mode-chips { flex-wrap: wrap; }
+
+/* The disclosure is the one paragraph on this page a reader must not skim past,
+   so it is given a container tint rather than being another grey hint. */
+.ocx-disclosure,
+.ocx-note {
+  margin: 0;
+  padding: var(--sp-3);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-highest);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-body-s);
+}
+.ocx-note {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+
+.ocx-preview {
+  display: grid;
+  gap: 0.25rem;
+  padding: var(--sp-3);
+  border: 1px dashed var(--m3-outline-variant);
+  border-radius: var(--r-m);
+}
+.ocx-preview-line {
+  margin: 0;
+  font-size: var(--t-body-m);
+  overflow-wrap: anywhere;
+}
+
+.ocx-categories summary {
+  cursor: pointer;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+}
+.ocx-categories ul {
+  margin: var(--sp-2) 0;
+  padding-inline-start: 1.25rem;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocx-funny { margin-block: var(--sp-2); }
+
+.ocx-settings-foot {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--m3-outline-variant);
+}
+
+/* ==========================================================================
+   Touch, motion, print
+   ========================================================================== */
+
+@media (pointer: coarse) {
+  .ocx-snack-close,
+  .ocx-notif-trigger {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .ocx-calendar-day { height: 44px; }
+  .ocx-settings-tab { min-height: 44px; }
+  .ocx-notif-row { padding-block: 0.75rem; }
+  .ocx-notif-row-link { min-height: 44px; display: inline-flex; align-items: center; }
+}
+
+/* Below the sidebar breakpoint the filter block stops being sticky: on a phone
+   it is a third of the screen, and pinning it leaves almost no room for the
+   results it is filtering. */
+@media (max-width: 49.99em) {
+  .ocx-changelog-filters {
+    position: static;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ocx-snack,
+  .ocx-dimsum {
+    animation: none;
+  }
+}
+
+@media print {
+  .ocx-snack-host,
+  .ocx-dimsum,
+  .ocx-notif,
+  .ocx-changelog-filters {
+    display: none;
+  }
+}

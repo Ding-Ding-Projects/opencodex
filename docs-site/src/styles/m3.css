@@ -217,21 +217,14 @@
   --sl-shadow-md: var(--e2);
   --sl-shadow-lg: var(--e3);
 
-  /* Pagefind ships its own palette and its own greys, and it draws the search
-     results a reader looks at most. Left alone it is the one surface on the
-     site still painted in hardcoded #393939 / #eeeeee — visibly a different
-     product inside the search modal. Its variables are public API, so this is
-     the supported way to make the results M3 rather than restyling its
-     internals. `--pagefind-ui-primary` is what it uses for links and the
-     focused result, hence the primary role rather than a text colour. */
-  --pagefind-ui-primary: var(--m3-primary);
-  --pagefind-ui-text: var(--m3-on-surface);
-  --pagefind-ui-background: var(--m3-surface-container);
-  --pagefind-ui-border: var(--m3-outline-variant);
-  --pagefind-ui-tag: var(--m3-surface-container-high);
-  --pagefind-ui-border-radius: var(--r-m);
-  --pagefind-ui-image-border-radius: var(--r-s);
-  --pagefind-ui-font: var(--sl-font);
+  /* The `--pagefind-ui-*` block that used to be here is gone with the surface it
+     retinted. Pagefind's *index* is untouched and is still what answers a
+     plain-text query, but its default UI — a modal with its own palette and no
+     room for a regex builder — was replaced by `components/SiteSearch.tsx`, so
+     the results are now drawn from the M3 roles directly instead of being
+     approximated through eight of Pagefind's variables. Nothing on the site
+     reads them any more, and a block of dead variables is exactly the kind of
+     thing the next reader spends ten minutes deciding not to delete. */
 }
 
 /* Starlight's badges put white text on a container background — correct for its
@@ -320,6 +313,57 @@ body::before {
 }
 @media (min-width: 50em) {
   :root { --ocx-appbar-h: 4rem; }
+}
+
+/* Touch targets, on touch devices only.
+   ==========================================================================
+   Measured at 320/360/430px: the tab buttons came out at 37px and the strip's
+   overflow and menu buttons at 36px, against a 44px minimum. A finger is not a
+   mouse pointer, and a 36px tab in a row of tabs is how a reader closes the one
+   next to the one they meant.
+
+   Expressed as `min-height` on the controls rather than by raising `--h-tab`,
+   because `--h-tab` is a density token and `applyTokens` writes it as an INLINE
+   style on `<html>` — an inline custom property outranks any stylesheet rule,
+   so a `:root { --h-tab: 44px }` here would be silently discarded the moment
+   the appearance runtime ran. `min-height` also beats `height` in the box
+   calculation, so it holds without `!important`.
+
+   `--ocx-tabstrip-h` reserves the strip's height before React mounts, so it has
+   to grow by exactly the same amount or the reservation stops matching what
+   renders and the page shifts under the reader. Gated on `pointer: coarse` so
+   the desktop dashboard, which renders the same component classes at its own
+   density, is untouched. */
+@media (pointer: coarse) {
+  :root {
+    --ocx-tabstrip-h: calc(max(var(--h-tab, 37px), 44px) + 13px);
+  }
+  .m3-tab-btn,
+  .m3-tabstrip-btn,
+  .m3-tab-close {
+    min-height: 44px;
+  }
+  .m3-tabstrip-btn,
+  .m3-tab-close {
+    min-width: 44px;
+  }
+  /* Starlight's wordmark is a link, and at 35px it is one of the smallest
+     targets on the page while also being the way back to the home page. */
+  a.site-title {
+    min-height: 44px;
+  }
+
+  /* Starlight's own search button, measured at 40x34 — the narrowest target in
+     the bar, and on a phone the primary way into 161 pages.
+
+     Scoped inside `.ocx-appbar` to reach 0,2,1, which beats Starlight's own
+     `button.astro-…` (0,1,1) on specificity rather than on sheet order. Order
+     would work today and break the day the bundler emits these two sheets the
+     other way round, which is not a thing that announces itself. */
+  .ocx-appbar .search-wrapper button {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }
 
 header.header {
@@ -453,8 +497,9 @@ pre.astro-code { border-radius: var(--r-m); }
   max-width: 100%;
 }
 
-/* Search and the preference controls read as M3 pills rather than square boxes. */
-site-search button[data-open-modal],
+/* The preference controls read as M3 pills rather than square boxes. The site's
+   own search trigger is not in this list because it is not Starlight's: it draws
+   its own pill in `shared/m3/components.css`, next to the panel it opens. */
 starlight-theme-select select,
 starlight-lang-select select {
   border-radius: var(--r-pill);

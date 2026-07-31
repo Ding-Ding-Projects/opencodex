@@ -1,0 +1,29 @@
+---
+title: Changelog
+description: Every released version of opencodex, filterable by date and searchable with the regex builder.
+tableOfContents: false
+---
+
+import Changelog from '../../components/Changelog.tsx';
+
+{/*
+  `client:only` and not `client:load`: the viewer's first render depends on the
+  reader's stored interface language and funny level, neither of which the server
+  can know. Server-rendering the English level-3 wording and then hydrating the
+  Cantonese level-5 wording is a hydration mismatch, and React 19 answers a
+  mismatch by discarding the tree — so the page would flash the whole changelog
+  and then blank it.
+
+  The cost is that this page's content needs JavaScript, which is a real
+  trade-off and the reason it is made *here* and not in the documentation pages:
+  every one of the 161 prose pages is prerendered and readable with scripting off.
+  This one is a filter over a file that is itself published in the repository, so
+  a reader without JavaScript has CHANGELOG.md, linked below.
+*/}
+<Changelog client:only="react" />
+
+<noscript>
+  This viewer filters the release history in your browser, so it needs
+  JavaScript. The same content is in
+  [`CHANGELOG.md`](https://github.com/lidge-jun/opencodex/blob/main/CHANGELOG.md).
+</noscript>

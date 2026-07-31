@@ -408,3 +408,447 @@
   .m3-switch,
   .m3-switch-thumb { transition: none; }
 }
+
+/* ============================================================================
+   Search: the anchored regex builder, the search bars that open it, the tab
+   search panel and the site search panel.
+
+   All the anchored surfaces below are `position: fixed` and take their
+   coordinates from `shared/m3/anchor.ts` at runtime. That is not a style choice:
+   two of the places they open from are inside `overflow: auto` containers (the
+   tab strip scrolls horizontally on a phone, and the tab-search panel's own body
+   scrolls vertically), and an absolutely positioned descendant of a scroll
+   container is clipped by it. `fixed` is the only positioning that escapes the
+   clip, which is why none of these rules set `top`, `left` or `bottom` — the
+   component does, from measured rects, on every scroll and resize.
+
+   Widths are `min(<ideal>, calc(100vw - 16px))` throughout, so the same panel is
+   a 480px popover on a desktop and a full-width sheet on a 320px phone without a
+   second design. Bodies scroll inside themselves with
+   `overscroll-behavior: contain`, so reaching the end of a result list does not
+   start scrolling the documentation behind it.
+   ============================================================================ */
+
+/* ------------------------------------------------------- extra primitives -- */
+
+/* 44px because that is the hit-target floor, not because it looks balanced. */
+.m3-icon-btn {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-icon-btn:hover { background: var(--m3-surface-container-high); }
+.m3-icon-btn[aria-expanded='true'] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-icon-btn svg { width: 20px; height: 20px; }
+
+.m3-textarea {
+  min-height: 96px;
+  padding: 12px 16px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: var(--t-body-s);
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------- the search bar -- */
+
+.m3-searchbar { display: grid; gap: 4px; min-width: 0; }
+.m3-searchbar-row { gap: var(--sp-2); flex-wrap: nowrap; align-items: center; min-width: 0; }
+
+/* The field grows, the mode chip and the builder trigger do not. Without the
+   `min-width: 0` the input's intrinsic width wins and the trigger is pushed off
+   the end of a narrow row — where it is still focusable and no longer visible. */
+.m3-searchbar-field { position: relative; flex: 1 1 auto; min-width: 0; display: flex; }
+.m3-searchbar-field .m3-input { padding-inline: 40px 40px; }
+.m3-searchbar-icon {
+  position: absolute;
+  inset-inline-start: 12px;
+  top: 50%;
+  translate: 0 -50%;
+  display: inline-flex;
+  color: var(--m3-on-surface-variant);
+  pointer-events: none;
+}
+.m3-searchbar-icon svg { width: 18px; height: 18px; }
+.m3-searchbar-clear {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-searchbar-clear:hover { background: var(--m3-surface-container-highest); }
+.m3-searchbar-clear svg { width: 16px; height: 16px; }
+.m3-searchbar-error { margin: 0; color: var(--m3-error); font-size: var(--t-label-m); }
+
+/* The mode label is the first thing to go when the row runs out of room: the
+   chip keeps its glyph and its pressed state, which is enough to read the mode
+   at a glance, and the accessible name still says it in words. */
+@media (max-width: 30em) {
+  .m3-searchbar-modelabel { display: none; }
+}
+
+/* ----------------------------------------------- the regex builder popover -- */
+
+.m3-rxpop-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+
+.m3-rxpop {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 16px));
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+  animation: m3-rxpop-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes m3-rxpop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .m3-rxpop,
+  .m3-tspanel,
+  .m3-searchpanel { animation-duration: 1ms; }
+}
+
+.m3-rxpop-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 12px 8px 4px 20px;
+}
+.m3-rxpop-title { flex: 1 1 auto; margin: 0; font-size: var(--t-title-m); font-weight: 500; }
+
+/* The body scrolls, not the panel: the heading and the apply button stay put so
+   the control that commits the pattern is never scrolled out of reach. */
+.m3-rxpop-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px 12px;
+}
+
+.m3-rxpop-engine {
+  margin: 0 0 var(--sp-3);
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-patternrow { gap: 8px; flex-wrap: nowrap; }
+.m3-rxpop-chiprow { gap: 6px; }
+.m3-rxpop-slash {
+  font-family: var(--mono);
+  font-size: var(--t-title-m);
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-error {
+  min-height: 22px;
+  margin: 0 0 var(--sp-2);
+  color: var(--m3-error);
+  font-size: var(--t-label-m);
+}
+
+.m3-rxpop-section { margin-bottom: var(--sp-3); }
+.m3-rxpop-heading {
+  margin: 0 0 6px;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  color: var(--m3-on-surface);
+}
+.m3-rxpop-subheading {
+  margin: 0 0 4px;
+  font-size: var(--t-label-s);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-tokgroup { margin-bottom: 10px; }
+.m3-rxpop-tokdesc { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-rxpop-list { margin: 0; padding: 0; list-style: none; }
+.m3-rxpop-row {
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-rxpop-row:last-child { border-bottom: none; }
+.m3-rxpop-at {
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+.m3-rxpop-hit {
+  padding: 1px 6px;
+  border-radius: var(--r-s);
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  font-family: var(--mono);
+  font-size: var(--t-label-m);
+}
+.m3-rxpop-name { font-family: var(--mono); font-size: var(--t-label-m); font-weight: 600; }
+.m3-rxpop-caps {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-rxpop-empty { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.m3-rxpop-safety { margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-rxpop-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.m3-rxpop-hint { flex: 1 1 auto; margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+/* --------------------------------------------------- the tab search panel -- */
+
+.m3-tabsearch-wrap { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; }
+
+.m3-tspanel,
+.m3-searchpanel {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+  animation: m3-rxpop-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-tspanel { width: min(560px, calc(100vw - 16px)); }
+.m3-searchpanel { width: min(640px, calc(100vw - 16px)); }
+
+.m3-tspanel-head,
+.m3-searchpanel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 10px 8px 4px 20px;
+}
+.m3-tspanel-title,
+.m3-searchpanel-title { flex: 1 1 auto; margin: 0; font-size: var(--t-title-m); font-weight: 500; }
+
+.m3-tspanel-body,
+.m3-searchpanel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px 16px;
+}
+
+.m3-ts-section { padding-block: var(--sp-3); border-top: 1px solid var(--m3-outline-variant); }
+.m3-ts-section:first-child { border-top: none; padding-top: 4px; }
+.m3-ts-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 0 0 6px;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+}
+.m3-ts-subheading {
+  margin: var(--sp-2) 0 4px;
+  font-size: var(--t-label-s);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+.m3-ts-count {
+  margin-inline-start: auto;
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+.m3-ts-empty { margin: 6px 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); list-style: none; }
+.m3-ts-note { margin: 6px 0 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-ts-mode { margin: var(--sp-2) 0 4px; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-ts-pinned { margin: 0 0 var(--sp-2); font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.m3-ts-pinned.danger { color: var(--m3-error); }
+.m3-ts-pinnames { font-family: var(--mono); font-size: var(--t-label-s); overflow-wrap: anywhere; }
+
+.m3-ts-list { margin: 6px 0 0; padding: 0; list-style: none; }
+
+.m3-tsr { display: flex; align-items: stretch; gap: 4px; border-radius: var(--r-s); }
+.m3-tsr:hover { background: var(--m3-surface-container-highest); }
+.m3-tsr.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-tsr-go {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: start;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.m3-tsr-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tsr-badge {
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-s);
+  line-height: 1.8;
+}
+.m3-tsr-note { flex: 1 1 100%; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-tsr-close { width: 44px; height: 44px; align-self: center; }
+
+.m3-ts-group {
+  margin-top: var(--sp-3);
+  padding: var(--sp-2);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container);
+}
+.m3-ts-grouphead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.m3-ts-groupdot { width: 10px; height: 10px; border-radius: var(--r-pill); flex: 0 0 auto; }
+.m3-ts-grouptitle { margin: 0; font-size: var(--t-label-l); font-weight: 600; }
+
+.m3-ts-bulkopts { display: grid; gap: 6px; margin-top: var(--sp-2); }
+.m3-ts-check { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: var(--t-body-m); cursor: pointer; }
+.m3-ts-check input { width: 20px; height: 20px; accent-color: var(--m3-primary); }
+.m3-ts-bulkrow { gap: var(--sp-2); margin-top: var(--sp-2); }
+.m3-ts-preview { margin-top: var(--sp-2); }
+.m3-ts-previewblock { margin-bottom: var(--sp-2); }
+.m3-ts-previewtitle { margin: 0; font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.m3-ts-previewlist {
+  margin: 4px 0 0;
+  padding-inline-start: 20px;
+  font-size: var(--t-body-s);
+  max-height: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ------------------------------------------------------- the site search -- */
+
+.m3-sitesearch { position: relative; display: flex; align-items: center; min-width: 0; width: 100%; }
+.m3-sitesearch-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 22rem;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.m3-sitesearch-trigger:hover { background: var(--m3-surface-container-highest); border-color: var(--m3-outline); }
+.m3-sitesearch-icon { display: inline-flex; }
+.m3-sitesearch-icon svg { width: 18px; height: 18px; }
+.m3-sitesearch-text { flex: 1 1 auto; text-align: start; }
+.m3-sitesearch-kbd {
+  flex: 0 0 auto;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container);
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+}
+
+/* On a phone the bar has no room for a labelled field, so the trigger collapses
+   to its icon. It keeps its 44px box and its accessible name, so nothing but a
+   word the icon already says is lost. */
+@media (max-width: 50em) {
+  .m3-sitesearch-trigger { width: 44px; justify-content: center; padding: 0; }
+  .m3-sitesearch-text,
+  .m3-sitesearch-kbd { display: none; }
+}
+
+.m3-searchpanel-engine { margin: var(--sp-2) 0 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-searchpanel-warn { margin: var(--sp-2) 0 0; font-size: var(--t-label-m); color: var(--m3-warn); }
+.m3-searchpanel-status { margin: var(--sp-2) 0 0; font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.m3-searchpanel-more { margin: var(--sp-2) 0 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-searchpanel-list { margin: 6px 0 0; padding: 0; list-style: none; }
+
+.m3-searchhit + .m3-searchhit { border-top: 1px solid var(--m3-outline-variant); }
+.m3-searchhit a {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border-radius: var(--r-s);
+  color: inherit;
+  text-decoration: none;
+}
+.m3-searchhit a:hover { background: var(--m3-surface-container-highest); }
+.m3-searchhit-title { font-size: var(--t-body-m); font-weight: 600; color: var(--m3-on-surface); }
+.m3-searchhit-section { font-size: var(--t-label-s); color: var(--m3-primary); }
+.m3-searchhit-count { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); font-variant-numeric: tabular-nums; }
+.m3-searchhit-excerpt {
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-searchhit-excerpt mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+}
+
+/* --------------------------------------------------- the settings search -- */
+
+.m3-settings-search { display: grid; gap: 4px; margin-bottom: var(--sp-2); }
+.m3-settings-searchstatus { margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+/* -------------------------------------------------------- touch targets -- */
+
+/* A finger is not a pointer. Gated on `pointer: coarse` so a desktop keeps the
+   compact density these controls were sized for. */
+@media (pointer: coarse) {
+  .m3-chip,
+  .m3-segment { min-height: 44px; }
+  .m3-searchbar-clear { width: 44px; height: 44px; inset-inline-end: 0; }
+  .m3-searchbar-field .m3-input { padding-inline-end: 48px; }
+}

@@ -27,6 +27,11 @@
  * too, so this is not a fallback path, it is the path.
  */
 import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
+import SettingsSearch from "./SettingsSearch.tsx";
+
+// The panel's own copy is still English while the language-mode work lands; the
+// search bar below is translated, because it comes from `lib/strings.ts`.
+const locale = Astro.locals.starlightRoute.locale ?? "root";
 ---
 
 {/*
@@ -62,9 +67,22 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
     </svg>
   </button>
 
-  <div id="m3-appearance-panel" class="m3-appearance__panel" hidden role="dialog" aria-label="Appearance">
-    <div class="m3-appearance__row">
-      <span class="m3-appearance__label" id="m3-ap-theme">Theme</span>
+  <div id="m3-appearance-panel" class="m3-appearance__panel" hidden role="dialog" aria-label="Appearance" data-settings-root>
+    {/*
+      Every settings surface carries its own search bar wired to the regex
+      builder — including this one, which is six rows and exactly the kind of
+      surface someone would call obviously scannable. It searches each row's
+      label, its description and its *current value*, so "700" finds the weight
+      row because the weight row is currently showing 700.
+
+      `client:visible` is doing real work here: the panel starts `hidden`, a
+      hidden element never intersects, so this island costs nothing at all until
+      somebody opens appearance settings.
+    */}
+    <SettingsSearch client:visible tab="Appearance" locale={locale} />
+
+    <div class="m3-appearance__row" data-setting-id="theme" data-setting-desc="Light, dark or follow the operating system">
+      <span class="m3-appearance__label" id="m3-ap-theme" data-setting-label>Theme</span>
       <div class="m3-appearance__chips" role="group" aria-labelledby="m3-ap-theme">
         <button type="button" data-theme-set="light">Light</button>
         <button type="button" data-theme-set="dark">Dark</button>
@@ -72,8 +90,8 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
       </div>
     </div>
 
-    <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-seed">Accent colour</label>
+    <div class="m3-appearance__row" data-setting-id="seed" data-setting-desc="Seed colour every Material 3 role is derived from">
+      <label class="m3-appearance__label" for="m3-ap-seed" data-setting-label>Accent colour</label>
       <div class="m3-appearance__chips">
         {SEED_SWATCHES.map(hex => (
           <button
@@ -98,25 +116,25 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
       </div>
     </div>
 
-    <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-density">Density <span class="m3-appearance__value" data-value="density"></span></label>
+    <div class="m3-appearance__row" data-setting-id="density" data-setting-desc="Spacing and control heights, 1 compact to 5 comfortable">
+      <label class="m3-appearance__label" for="m3-ap-density" data-setting-label>Density <span class="m3-appearance__value" data-value="density"></span></label>
       <input id="m3-ap-density" type="range" min="1" max="5" step="1" />
     </div>
 
-    <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-font">Typeface</label>
+    <div class="m3-appearance__row" data-setting-id="font" data-setting-desc="Interface typeface; every stack has a CJK-safe fallback">
+      <label class="m3-appearance__label" for="m3-ap-font" data-setting-label>Typeface</label>
       <select id="m3-ap-font">
         {FONT_STACKS.map(font => <option value={font.id}>{font.label}</option>)}
       </select>
     </div>
 
-    <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-scale">Text size <span class="m3-appearance__value" data-value="scale"></span></label>
+    <div class="m3-appearance__row" data-setting-id="scale" data-setting-desc="Type scale, 80% to 160% of the default size">
+      <label class="m3-appearance__label" for="m3-ap-scale" data-setting-label>Text size <span class="m3-appearance__value" data-value="scale"></span></label>
       <input id="m3-ap-scale" type="range" min="0.8" max="1.6" step="0.05" />
     </div>
 
-    <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-weight">Weight <span class="m3-appearance__value" data-value="weight"></span></label>
+    <div class="m3-appearance__row" data-setting-id="weight" data-setting-desc="Interface font weight, 300 light to 700 bold">
+      <label class="m3-appearance__label" for="m3-ap-weight" data-setting-label>Weight <span class="m3-appearance__value" data-value="weight"></span></label>
       <input id="m3-ap-weight" type="range" min="300" max="700" step="100" />
     </div>
 
@@ -134,6 +152,7 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
 <script>
   import {
     DEFAULT_APPEARANCE,
+    FONT_STACKS,
     applyAppearance,
     installAppearanceRuntime,
     normalizeSeed,
@@ -188,6 +207,25 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
       };
       for (const node of panel.querySelectorAll<HTMLElement>("[data-value]")) {
         node.textContent = readouts[node.dataset.value ?? ""] ?? "";
+      }
+
+      /*
+        The live value, stamped onto each row for the settings search to read.
+
+        Written here rather than derived by the search because this function is
+        already the one place that knows what every control is showing — a second
+        reader that inspected the inputs itself would have to re-derive "Geist"
+        from the id "geist" and would drift the day a row grows a second control.
+        Stamped on every sync, so a search for "700" answers about the weight the
+        panel is showing right now.
+      */
+      const rowValues: Record<string, string> = {
+        ...readouts,
+        theme: current.theme,
+        font: FONT_STACKS.find(f => f.id === current.fontId)?.label ?? current.fontId,
+      };
+      for (const row of panel.querySelectorAll<HTMLElement>("[data-setting-id]")) {
+        row.dataset.settingValue = rowValues[row.dataset.settingId ?? ""] ?? "";
       }
     }
 
