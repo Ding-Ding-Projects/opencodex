@@ -1,9 +1,10 @@
 # Handoff
 
 > [!NOTE]
-> Two handoffs live in this file. The section immediately below covers the **shared settings-search
-> component** on branch `claude/amazing-chandrasekhar-1d2846` (written 2026-07-31). Everything from
-> *"State of the working tree"* onward is the earlier **2026-07-30 `main`** handoff and is unchanged.
+> Several handoffs live in this file, newest first. They were written by different sessions against
+> different trees, so each one states its own date and the branch it describes — read the date before
+> trusting a claim about "the current state". Everything from *"State of the working tree"* onward is
+> the earliest of them, written **2026-07-30**, and is unchanged.
 
 ---
 
@@ -205,6 +206,105 @@ produced — where something was not run, it says so rather than implying a pass
 
 `ROADMAP.md` says what is done and what is missing. This file says what is *in progress right now*,
 what has been proven, and what a successor still has to do.
+
+---
+
+## Windows Bun update binary resolution — 2026-07-31
+
+**Branch `claude/inspiring-lewin-0b6737`, worktree `.claude/worktrees/inspiring-lewin-0b6737`,
+UNCOMMITTED.** Nothing was committed, merged or dewed — stopped at the user's request for a handoff.
+**Do not remove that worktree; the work exists nowhere else.**
+
+Branch tip is `fc661370`, which was `origin/main` when this session started. By the end of the
+session `origin/main` had moved **8 commits ahead** (other agents dewing into the shared object
+store — `git rev-list --left-right --count origin/main...HEAD` → `8 0`). So this is **no longer a
+fast-forward**; it needs a merge or rebase onto current `main`, and the conflict risk is real
+because `src/update/*` is exactly what the neighbouring update-hardening work touches. Re-check the
+count before integrating rather than trusting this line.
+
+### What was reported vs. what is true
+
+The report was that `updateExecutionCommand` / `updateSpawnTarget` spawn `node.exe add -g <pkg>` on
+Windows for Bun installs, because they substitute `process.execPath` while keeping Bun's arguments.
+
+**That spawn does not actually happen, and the report's premise is wrong on that point.** Traced:
+
+- `bin/ocx.mjs:415` always re-execs the *bundled Bun*: `spawn(bun, [cliPath, ...])`.
+- `src/cli/index.ts` is `#!/usr/bin/env bun` TypeScript — Node cannot execute it at all.
+- `runUpdate()` is reached only from `src/cli/index.ts:917` and `src/update/notify.ts:247`, both
+  inside that Bun process.
+- The GUI worker is `spawn(process.execPath, [process.argv[1], "__gui-update-worker", …])` from the
+  server, which *is* that Bun process.
+- `electron/main.mjs:97` (`ELECTRON_RUN_AS_NODE`) runs only the *launcher* under Electron-as-Node;
+  the launcher still re-execs Bun.
+
+So `process.execPath` is a Bun binary at both sites and the spawn was `bun.exe add -g <pkg>` — the
+correct command. Verified end to end: `node bin/ocx.mjs --version` → `opencodex 2.7.42`.
+
+Two further corrections to the record:
+
+1. `src/update/job.ts` was **already** fixed on this branch by `7584e5dd`, along with the exact test
+   assertion the report asked to move (`expect(cmd.bin).toBe(… process.execPath : "bun")` no longer
+   exists). Only `updateSpawnTarget` still had the raw substitution.
+2. That earlier fix's guard did not hold. It gated on `isRealBunBinary()`, which is a **≥1 MB size
+   gate** for rejecting the `bun` package's ~450-byte placeholder stub — not an identity check.
+   Measured on this host: `node.exe` is **103,230,280 bytes** and passes it. The comment's promise
+   ("used only when it is genuinely a Bun binary") was not what the code did.
+
+The defect is therefore **latent, not live**: a real invariant that the code depended on without
+stating or checking. It was fixed on that basis, not as an active-outage fix.
+
+### What changed (all uncommitted)
+
+| File | Change |
+| --- | --- |
+| `src/lib/trusted-path.mjs` (new) | Trusted-PATH scan extracted from `npm-invocation.mjs` so bun and npm share one cwd-hijack rule instead of forking it |
+| `src/lib/trusted-path.d.mts` (new) | Types for the above |
+| `src/lib/bun-runtime.ts` | `runningUnderBun()` (the `Bun` global — the only thing that can prove `execPath` is Bun) and `resolveBunCommand()`: bundled → this executable *only when provably Bun* → trusted absolute PATH entry → null |
+| `src/update/index.ts` | `updateSpawnTarget` resolves a real Bun and is exported for testing; unresolvable now returns null so `runUpdate` aborts **before** stopping the proxy. Abort message names the actual installer |
+| `src/update/job.ts` | `updateExecutionCommand` uses the same resolver instead of the size gate |
+| `tests/update-job.test.ts` | Pairing assertion kept; added coverage of `updateSpawnTarget` and `resolveBunCommand`, plus a test recording that `isRealBunBinary` cannot serve as an identity check |
+| `docs/adr/0001-gui-update-worker.md` | Resolution paragraph said "neither path spawns a bare npm"; now covers Bun |
+
+POSIX behaviour is unchanged — `resolveBunCommand` returns the bare `bun` there, exactly as before.
+
+### Verification actually run
+
+- `bun x tsc --noEmit` — clean.
+- `bun run test <10 files touching the changed modules>` — **208 pass, 0 fail**.
+- Mutation-tested both new assertions: reverting `updateSpawnTarget` to `process.execPath` fails the
+  CLI test; swapping the identity check back to the size gate fails the resolver test. They pin
+  behaviour rather than merely passing.
+- `node bin/ocx.mjs --version` and a Node-side check of `resolveNpmCommand` — the refactor is
+  behaviour-preserving for the Node launcher, which imports `npm-invocation.mjs`.
+- Full suite `bun run test` — **6302 pass, 3 skip, 1 fail** (456 files, ~15 min).
+
+### The one full-suite failure is pre-existing — proven, not assumed
+
+`(fail) ocx restore back > sync exits nonzero when managed-default cleanup is ambiguous`
+(`tests/cli-restore-back.test.ts`). It fails in isolation too, so it is not a load flake. It was
+baselined by stashing every change in this session and re-running on the clean tree: **still 3 pass,
+1 fail**. Unrelated to the update path and untouched here — it needs its own investigation.
+
+An earlier full run also showed 3 `Cannot find package 'react'` errors. That was this worktree
+missing `gui/node_modules` (worktrees do not share it). Fixed with `cd gui && bun install`
+(gitignored); those tests then passed.
+
+### What a successor still has to do
+
+1. Decide whether to commit this. If yes: bilingual commit message, then integrate onto current
+   `main` and dew. **Re-fetch and re-check the ahead/behind count first** — `main` already moved 8
+   commits during this session, and `git worktree list` shows ~15 other agent worktrees still live.
+   Expect to resolve `src/update/*` against whatever landed in the meantime; re-run the blast-radius
+   tests below after any merge rather than assuming they still hold.
+2. `stash@{0}` and `stash@{1}` predate this session and are **not** mine — leave them alone.
+3. Open issue [#2 "GitHub pages not loading"](https://github.com/Ding-Ding-Projects/opencodex/issues/2)
+   (filed 2026-07-31) is untouched and unrelated to this work.
+4. No Discussion, Project item, release or issue comment was created for this work.
+
+---
+
+## Earlier session — written 2026-07-30 against branch `main`
 
 ## Where the work is
 
