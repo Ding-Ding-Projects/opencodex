@@ -36,12 +36,13 @@ describe("oauth ToS risk map", () => {
 
 describe("oauth ToS warning UI seam", () => {
   test("Providers and AddProvider gate OAuth login behind the warning modal", async () => {
-    const [page, modals, modal, warn, risk] = await Promise.all([
+    const [page, modals, modal, warn, risk, dialog] = await Promise.all([
       Bun.file("gui/src/pages/Providers.tsx").text(),
       Bun.file("gui/src/pages/providers-page-modals.tsx").text(),
       Bun.file("gui/src/components/AddProviderModal.tsx").text(),
       Bun.file("gui/src/components/OAuthTosWarningModal.tsx").text(),
       Bun.file("gui/src/oauth-tos-risk.ts").text(),
+      Bun.file("gui/src/shell/m3-ui.tsx").text(),
     ]);
     const providersSeam = page + modals;
     expect(risk).toContain('"anthropic"');
@@ -57,8 +58,14 @@ describe("oauth ToS warning UI seam", () => {
     expect(modal).toContain("!oauthTosPending");
     expect(warn).toContain("oauthTos.acknowledge");
     expect(warn).toContain("disabled={!acknowledged || submitted}");
-    expect(warn).toContain("showModal()");
-    expect(warn).toContain("onCancel={handleCancel}");
+    // The warning is a real modal <dialog>, but since 7b8b4b2e it delegates that
+    // to the shared M3 Dialog rather than calling showModal() itself.
+    expect(warn).toContain("<Dialog");
+    expect(dialog).toContain("showModal()");
+    // Dialog dismissal and the Cancel button both reach the caller's onCancel;
+    // 7b8b4b2e dropped the local handleCancel wrapper that used to sit between.
+    expect(warn).toContain("onClose={onCancel}");
+    expect(warn).toContain("onClick={onCancel}");
     expect(warn).not.toContain('?? "elevated"');
   });
 

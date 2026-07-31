@@ -182,8 +182,10 @@ describe("GitHub Actions hardening", () => {
     const workflow = await readText(".github/workflows/service-lifecycle.yml");
 
     expect(workflow).toContain("permissions:\n  contents: read");
-    expect(workflow).toContain("group: service-lifecycle-${{ github.ref }}");
-    expect(workflow).toContain("cancel-in-progress: true");
+    // Per-SHA and never cancelled (c23ebad3): this validates a commit, and a
+    // cancelled run leaves that commit tested by nothing.
+    expect(workflow).toContain("group: service-lifecycle-${{ github.sha }}");
+    expect(workflow).toContain("cancel-in-progress: false");
     expect(count(workflow, "timeout-minutes: 10")).toBe(3);
     expect(count(workflow, "if: ${{ !cancelled() }}")).toBe(3);
     expect(workflow).not.toContain("always()");
