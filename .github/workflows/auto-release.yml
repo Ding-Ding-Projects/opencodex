@@ -1,6 +1,6 @@
 name: Auto release
 
-# Every commit on main that passes Cross-platform CI becomes an installable
+# Every commit on main that passes CI becomes an installable
 # GitHub release: the Windows installer plus the dashboard bundle, tagged
 # build-<run>. Gating on the CI run (workflow_run, not push) is the point —
 # a red commit never becomes a release, so "latest release" is always a
@@ -13,7 +13,7 @@ name: Auto release
 
 on:
   workflow_run:
-    workflows: ["Cross-platform CI"]
+    workflows: ["CI"]
     types: [completed]
     branches: [main]
 
@@ -124,7 +124,7 @@ jobs:
 
           *$DISH_ZH · $DISH_NAME · \`$DISH_JYUTPING\`*
 
-          Automated build of \`${SHA:0:9}\` (v${version}), published because Cross-platform CI passed on it.
+          Automated build of \`${SHA:0:9}\` (v${version}), published because CI passed on it.
 
           | Asset | What it is |
           | --- | --- |

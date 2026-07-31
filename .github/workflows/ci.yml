@@ -1,4 +1,10 @@
-name: Cross-platform CI
+# Windows only, deliberately. `electron-builder.yml` ships an NSIS installer and
+# nothing else — the macOS and Linux desktop targets were removed rather than
+# left half-configured — so validating on runners the product never ships to
+# bought nothing and cost three times the wall-clock on every commit. A green
+# tick from a platform with no installer is not evidence about anything a user
+# can install.
+name: CI
 
 on:
   pull_request:
@@ -65,7 +71,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # One entry rather than a bare `runs-on:` so the narrowing is visible as
+        # a narrowing, and widening again is one line if a second desktop target
+        # is ever shipped.
+        os: [windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -116,7 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

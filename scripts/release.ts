@@ -5,7 +5,7 @@
  * Usage:
  *   bun scripts/release.ts <version> [--tag latest|preview] [--publish]
  *       Preflight (clean tree + typecheck + tests + privacy scan) → bump package.json → commit → push →
- *       wait for Cross-platform CI → dispatch the Release workflow → watch it.
+ *       wait for CI → dispatch the Release workflow → watch it.
  *       The version bump commit/push is real; the Release workflow publish step is dry-run by default.
  *       Pass --publish to publish.
  *   bun scripts/release.ts watch
@@ -162,7 +162,7 @@ async function listCiRuns(sha: string, workflow: string = CI_WORKFLOW): Promise<
   return runs.filter(run => run.headSha === sha);
 }
 
-async function waitForSuccessfulCi(sha: string, workflow: string = CI_WORKFLOW, label = "Cross-platform CI"): Promise<GhRun> {
+async function waitForSuccessfulCi(sha: string, workflow: string = CI_WORKFLOW, label = "CI"): Promise<GhRun> {
   const deadline = Date.now() + CI_WAIT_TIMEOUT_MS;
   let attempt = 1;
   while (Date.now() < deadline) {
@@ -265,7 +265,7 @@ console.log(`→ push origin ${branch}`);
 await $`git push origin ${branch}`;
 
 // 4. Wait for the pushed release commit to pass CI, then dispatch the Release workflow.
-console.log(`→ wait for Cross-platform CI (${releaseSha})`);
+console.log(`→ wait for CI (${releaseSha})`);
 await waitForSuccessfulCi(releaseSha);
 
 // The release bump always touches package.json, which is a service-lifecycle trigger path —
