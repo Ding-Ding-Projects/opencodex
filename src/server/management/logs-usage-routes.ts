@@ -98,7 +98,23 @@ function nextLocalMidnight(now: number): number {
   return next.getTime();
 }
 
-function usageSummaryExpiresAt(
+/**
+ * When the cached summary for a rolling window must be rebuilt.
+ *
+ * The `+ 1` matters and is not padding. summarizeUsage()'s cutoff is INCLUSIVE
+ * (`entry.timestamp < since` drops the row, so `timestamp === since` is still
+ * counted), which means a row remains eligible right up to and including
+ * `timestamp + windowMs`. Expiring at that exact instant left the row counted
+ * by the rebuild but contributing no bound — `expiry > now` was false — so
+ * `expiresAt` fell back to the next local midnight and the overcounted 7d/30d
+ * totals were served for up to ~24h, until an unrelated write bumped the usage
+ * log revision.
+ *
+ * Expire one millisecond later: the first instant the row is genuinely
+ * ineligible. Exported so the boundary can be pinned against summarizeUsage()
+ * directly, since the invariant is the agreement between the two.
+ */
+export function usageSummaryExpiresAt(
   entries: PersistedUsageEntry[],
   range: UsageRange,
   surface: UsageSurface,
@@ -109,7 +125,7 @@ function usageSummaryExpiresAt(
   if (windowMs === null) return expiresAt;
   for (const entry of entries) {
     if (!usageEntryMatchesSurface(entry, surface)) continue;
-    const expiry = entry.timestamp + windowMs;
+    const expiry = entry.timestamp + windowMs + 1;
     if (expiry > now && expiry < expiresAt) expiresAt = expiry;
   }
   return expiresAt;
