@@ -1,10 +1,10 @@
 /**
  * Runtime appearance for the docs site.
  *
- * The dashboard's token engine is imported directly rather than copied. A copy
- * would drift the moment either side is touched, and "the site looks almost
- * like the app" is the failure this rewrite exists to end. One engine, one set
- * of roles, two surfaces.
+ * The token engine is imported through `shared/m3/tokens.ts` rather than
+ * copied. A copy would drift the moment either side is touched, and "the site
+ * looks almost like the app" is the failure this rewrite exists to end. One
+ * engine, one set of roles, two surfaces.
  *
  * Preferences live under their own key: a visitor to the published site is not
  * the same person as the operator of a local dashboard, and reading the app's
@@ -14,10 +14,11 @@
 
 import {
   DEFAULT_SEED,
+  SEED_SWATCHES as SHARED_SEED_SWATCHES,
   applyTokens,
   type DensityLevel,
   type ThemeMode,
-} from "../../../gui/src/theme/m3";
+} from "../../../shared/m3/tokens";
 
 export const STORAGE_KEY = "ocx-docs:appearance";
 
@@ -72,11 +73,15 @@ export const DEFAULT_APPEARANCE: DocsAppearance = {
   fontWeight: 400,
 };
 
-/** Seeds offered as swatches. Any hex is accepted; these are just shortcuts. */
-export const SEED_SWATCHES = [
-  "#2F6B4F", "#1F6FEB", "#7C4DFF", "#B3261E",
-  "#E8A33D", "#00897B", "#C2185B", "#455A64",
-];
+/**
+ * Seeds offered as swatches. Any hex is accepted; these are just shortcuts.
+ *
+ * Taken from the shared module rather than restated. The site used to carry its
+ * own eight, six of which were different colours from the dashboard's eight —
+ * so "the green one" meant two different greens depending on which surface you
+ * were looking at, for no reason anyone had decided.
+ */
+export const SEED_SWATCHES: readonly string[] = SHARED_SEED_SWATCHES;
 
 function clampDensity(value: unknown): DensityLevel {
   const n = Math.round(Number(value));
@@ -194,4 +199,53 @@ export function watchExternalThemeChanges(read: () => DocsAppearance): () => voi
   });
   observer.observe(el, { attributes: true, attributeFilter: ["data-theme"] });
   return () => observer.disconnect();
+}
+
+/* ------------------------------------------------- view-transition survival -- */
+
+/** Registered once per document; the listeners below outlive every page swap. */
+let runtimeInstalled = false;
+
+/**
+ * Keep the appearance alive across client-side navigations.
+ *
+ * This is not defensive programming, it is a required repair. Astro's view
+ * transition swap calls `swapRootAttributes`, which **removes every attribute
+ * from `<html>`** and replaces them with the incoming document's. Two things
+ * die there: `data-theme`, and the inline `style` attribute carrying all
+ * thirty-nine `--m3-*` role tokens that `applyTokens` wrote. Worse, Starlight's
+ * server render pins `data-theme="dark"` on every page, so a reader in light
+ * mode gets flipped to dark by the swap itself — and the `data-theme` observer
+ * above would then see that flip, believe the reader asked for it, and persist
+ * it. One navigation and their theme is gone.
+ *
+ * So: suppress the observer for the duration of the swap, then re-apply the
+ * stored appearance in `astro:after-swap`, which runs before the new page is
+ * painted. The observer's own callback is a microtask queued during the swap;
+ * clearing the flag in a *later* microtask guarantees the callback sees it
+ * still set and ignores the swap's write rather than persisting it.
+ *
+ * Idempotent, because it is called from an `astro:page-load` handler that fires
+ * on every navigation as well as the first load.
+ */
+export function installAppearanceRuntime(read: () => DocsAppearance): void {
+  if (runtimeInstalled) return;
+  runtimeInstalled = true;
+
+  document.addEventListener("astro:before-swap", () => { applying = true; });
+  document.addEventListener("astro:after-swap", () => {
+    applyAppearance(read());
+    applying = true;
+    queueMicrotask(() => { applying = false; });
+  });
+
+  // A visitor on "System" should follow the OS while the page is open.
+  if (typeof matchMedia === "function") {
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      const current = read();
+      if (current.theme === "system") applyAppearance(current);
+    });
+  }
+
+  watchExternalThemeChanges(read);
 }

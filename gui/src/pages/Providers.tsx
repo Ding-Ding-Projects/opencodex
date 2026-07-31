@@ -4,8 +4,8 @@ import ProviderDetails from "../components/provider-workspace/ProviderDetails";
 import type { WorkspaceProvider } from "../provider-workspace/catalog";
 import { ensureOpenAiProvider, openAiAccountProviderState, OpenAiEnableError } from "../provider-payload";
 import { oauthTosRisk } from "../oauth-tos-risk";
-import { Notice } from "../ui";
 import { IconPlus } from "../icons";
+import { Banner } from "../shell/m3-ui";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
@@ -144,7 +144,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
         </div>
         <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>{t("prov.subtitle")}</p>
         {loadError
-          ? <Notice tone="err">{loadError}</Notice>
+          ? <Banner tone="error">{loadError}</Banner>
           : <div className="muted">{t("prov.loadingConfig")}</div>}
       </>
     );

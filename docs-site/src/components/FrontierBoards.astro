@@ -177,9 +177,19 @@ const boards = data.benchmarks.filter(board => !include || include.has(board.id)
     rows: ChartRow[];
   }
 
-  const charts: echarts.ECharts[] = [];
+  let charts: echarts.ECharts[] = [];
 
   function renderAll(): void {
+    // With a client-side router the previous page's chart elements are gone but
+    // their ECharts instances are not — each one holds a canvas, a resize
+    // listener and its whole option tree. Left alone they accumulate for the
+    // life of the session, so a reader browsing the benchmark section leaks one
+    // renderer per visit.
+    charts = charts.filter(chart => {
+      if (chart.getDom().isConnected) return true;
+      chart.dispose();
+      return false;
+    });
     const textColor = getComputedStyle(document.body).color;
     document.querySelectorAll<HTMLElement>(".frontier-chart").forEach(el => {
       const cfg = JSON.parse(el.dataset.chart ?? "{}") as ChartConfig;
@@ -232,11 +242,17 @@ const boards = data.benchmarks.filter(board => !include || include.has(board.id)
     });
   }
 
-  renderAll();
+  // `astro:page-load` rather than a bare call: this module runs once for the
+  // whole session under the client-side router, so a top-level `renderAll()`
+  // would draw the charts on whichever page happened to be loaded first and
+  // leave every later visit to a benchmark page showing empty boxes — with the
+  // build still reporting success.
+  document.addEventListener("astro:page-load", renderAll);
   window.addEventListener("resize", () => charts.forEach(c => c.resize()));
-  // Starlight flips data-theme on <html> — re-render so axis/legend colors follow.
+  // The theme (and the seed, and the density) are written onto <html> — re-render
+  // so axis and legend colours follow the tokens they are read from.
   new MutationObserver(() => renderAll()).observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["data-theme"],
+    attributeFilter: ["data-theme", "style"],
   });
 </script>

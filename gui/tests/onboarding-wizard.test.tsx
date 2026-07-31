@@ -6,6 +6,17 @@
  * case below is therefore about *when* it appears as much as what it renders —
  * an upgrading user, a proxy that will not answer, and an install that already
  * has a credential all have to end with nothing on screen.
+ *
+ * The wizard renders through the shared `Dialog`, so it is a native `<dialog>`
+ * opened with `showModal()`. Two consequences run through every case here:
+ *
+ *  - It is found with `querySelector("dialog")`, not `[role="dialog"]`. The
+ *    element's dialog role is implicit and never appears as an attribute.
+ *  - happy-dom implements neither the top layer nor `cancel`-on-Escape, so
+ *    `showModal()` is stubbed to the observable part (the `open` attribute) and
+ *    Escape is exercised by dispatching the `cancel` event the browser raises
+ *    for it. Asserting a hand-rolled Tab trap instead would be asserting code
+ *    that no longer exists — the trap is `showModal()`'s now.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -44,6 +55,14 @@ beforeEach(() => {
     localStorage: { configurable: true, value: testWindow.localStorage },
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // happy-dom has no top layer, so the native modal methods are stubbed to the
+  // one thing a test can observe: the `open` attribute.
+  const proto = testWindow.HTMLDialogElement?.prototype as unknown as Record<string, unknown> | undefined;
+  if (proto) {
+    proto.showModal = function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+    proto.show = function show(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+    proto.close = function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
+  }
   // Each case is its own launch.
   resetLaunchLatch();
 });
@@ -79,8 +98,8 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   return { container, root };
 }
 
-function dialogOf(container: HTMLElement): HTMLElement | null {
-  return container.querySelector('[role="dialog"]');
+function dialogOf(container: HTMLElement): HTMLDialogElement | null {
+  return container.querySelector("dialog");
 }
 
 function buttonWith(container: HTMLElement, text: string): HTMLButtonElement | undefined {
@@ -100,13 +119,37 @@ test("opens on a fresh profile with nothing connected, as a labelled modal", asy
   const dialog = dialogOf(container);
   expect(dialog).toBeTruthy();
   expect(dialog?.getAttribute("aria-modal")).toBe("true");
+  expect(dialog?.hasAttribute("open")).toBe(true);
   const titleId = dialog?.getAttribute("aria-labelledby");
-  expect(container.querySelector(`#${titleId}`)?.textContent).toBe("Welcome to opencodex");
+  // getElementById rather than a `#id` selector: React's useId emits colons,
+  // which are not valid in a CSS id selector without escaping.
+  expect(container.ownerDocument.getElementById(titleId!)?.textContent).toBe("Welcome to opencodex");
+  // The supporting text is wired as the description, not merely drawn — focus
+  // lands on a control, so an unlinked paragraph is never read out.
+  const descId = dialog?.getAttribute("aria-describedby");
+  expect(container.ownerDocument.getElementById(descId!)?.textContent).toBeTruthy();
   // The step counter is announced rather than left as decoration.
   const counter = [...container.querySelectorAll("span")].find(s => s.textContent === "Step 1 of 4");
   expect(counter?.getAttribute("aria-live")).toBe("polite");
-  // Focus is moved into the dialog, not left behind it.
-  expect(document.activeElement).toBe(dialog as unknown as Element);
+  // Focus starts inside the dialog — on the step heading, so a screen reader
+  // reads which step this is rather than whichever control happened to be first.
+  expect(document.activeElement).toBe(container.querySelector("#ocx-onboard-step-title") as unknown as Element);
+  expect(dialog?.contains(document.activeElement as unknown as Node)).toBe(true);
+
+  await act(async () => { root.unmount(); });
+});
+
+// The step heading is the focus target on every step, not just the first: a
+// wizard that leaves focus on the "Next" button it just replaced announces
+// nothing when the content underneath changes.
+test("moves focus to the new step's heading when the step changes", async () => {
+  stubProviders([]);
+  const { container, root } = await mount();
+
+  await click(buttonWith(container, "Next")!);
+  const heading = container.querySelector("#ocx-onboard-step-title")!;
+  expect(heading.textContent).toContain("Connect a provider");
+  expect(document.activeElement).toBe(heading as unknown as Element);
 
   await act(async () => { root.unmount(); });
 });
@@ -190,6 +233,11 @@ test("walks all four steps and finishing records the flag", async () => {
 });
 
 // Escape counts as a skip: closed, remembered, and focus handed back.
+//
+// Dispatched as `cancel` rather than as a keydown, because that is the event the
+// browser actually raises for Escape on an open `<dialog>` — the wizard no
+// longer carries a key handler of its own, and asserting one would be asserting
+// code that is not there.
 test("Escape closes it as a skip and returns focus where it came from", async () => {
   stubProviders([]);
   const opener = document.createElement("button");
@@ -202,7 +250,7 @@ test("Escape closes it as a skip and returns focus where it came from", async ()
   expect(dialog).toBeTruthy();
 
   await act(async () => {
-    dialog.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true }) as never);
+    dialog.dispatchEvent(new testWindow.Event("cancel", { bubbles: false, cancelable: true }) as unknown as Event);
   });
 
   expect(dialogOf(container)).toBeNull();
@@ -254,29 +302,25 @@ test("picking a language sets the shared locale and records a revision", async (
   await act(async () => { root.unmount(); });
 });
 
-// Focus is trapped while the dialog is open: Tab off the last control wraps to
-// the first instead of landing on the page behind.
-test("traps Tab and Shift+Tab inside the dialog", async () => {
+// Focus is confined to the dialog by `showModal()`, which is what replaced the
+// hand-rolled Tab/Shift+Tab handler this case used to assert. There is no
+// keyboard trap left to exercise, so what has to hold is that the wizard opens
+// through the *modal* route: `show()` would leave the page behind reachable by
+// Tab, and a first-run wizard the user can tab out of is not a gate at all.
+test("opens through showModal(), so the native focus trap is the trap", async () => {
+  const calls: string[] = [];
+  const proto = testWindow.HTMLDialogElement.prototype as unknown as Record<string, unknown>;
+  proto.showModal = function showModal(this: HTMLDialogElement) { calls.push("showModal"); this.setAttribute("open", ""); };
+  proto.show = function show(this: HTMLDialogElement) { calls.push("show"); this.setAttribute("open", ""); };
+
   stubProviders([]);
   const { container, root } = await mount();
 
-  const dialog = dialogOf(container)!;
-  const focusable = [...dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
+  expect(calls).toEqual(["showModal"]);
+  // Every control the wizard offers is inside the dialog, so the native trap has
+  // something to hold on to rather than an empty subtree.
+  const focusable = [...dialogOf(container)!.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
   expect(focusable.length).toBeGreaterThan(2);
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-
-  await act(async () => {
-    last.focus();
-    dialog.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Tab", bubbles: true }) as never);
-  });
-  expect(document.activeElement).toBe(first as unknown as Element);
-
-  await act(async () => {
-    first.focus();
-    dialog.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }) as never);
-  });
-  expect(document.activeElement).toBe(last as unknown as Element);
 
   await act(async () => { root.unmount(); });
 });

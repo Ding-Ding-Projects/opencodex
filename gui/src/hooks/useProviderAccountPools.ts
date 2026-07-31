@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type { AccountLoadState } from "../components/provider-workspace/types";
+import { useConfirm, usePrompt } from "../shell/confirm-context";
 import { accountNeedsReauth } from "../oauth-health-display";
 import type { AccountQuota } from "../codex-quota-utils";
 import { oauthAccountDisplayLabel } from "../provider-workspace/auth";
@@ -59,6 +60,11 @@ export function useProviderAccountPools(deps: {
     apiBase, t, config, aliveRef, notify,
     fetchConfig, fetchOauth, fetchProviderQuotas, codexActiveNeedsReauth,
   } = deps;
+  // Taken here rather than passed in through `deps`: this is already a hook, and
+  // threading two dialog functions down from the page would give every caller a
+  // second chance to forget one and fall back to the browser's.
+  const confirm = useConfirm();
+  const prompt = usePrompt();
   const [accountSets, setAccountSets] = useState<Record<string, { activeAccountId: string | null; accounts: OAuthAccount[] }>>({});
   const [accountLoadStates, setAccountLoadStates] = useState<Record<string, AccountLoadState>>({});
   const [switchingAccount, setSwitchingAccount] = useState<{ provider: string; accountId: string } | null>(null);
@@ -163,7 +169,13 @@ export function useProviderAccountPools(deps: {
   };
 
   const removeApiKey = async (provider: string, entry: ApiKeyEntry) => {
-    if (!window.confirm(t("prov.keyRemoveConfirm", { key: entry.label ?? entry.masked }))) return;
+    const confirmed = await confirm({
+      title: t("confirm.removeKeyTitle"),
+      body: t("prov.keyRemoveConfirm", { key: entry.label ?? entry.masked }),
+      confirmLabel: t("confirm.removeAction"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
     const res = await fetch(`${apiBase}/api/providers/keys?name=${encodeURIComponent(provider)}&id=${encodeURIComponent(entry.id)}`, { method: "DELETE" });
     if (res.ok) {
       notify(t("prov.keyRemoved", { key: entry.label ?? entry.masked }), true);
@@ -202,7 +214,14 @@ export function useProviderAccountPools(deps: {
   };
 
   const editCredentialAlias = async (provider: string, type: "oauth" | "api-key", id: string, current?: string) => {
-    const entered = window.prompt(t("prov.aliasPrompt"), current ?? "");
+    // `null` is cancel; `""` is a deliberate clear, and the request below sends
+    // it as an empty alias on purpose.
+    const entered = await prompt({
+      title: t("prompt.aliasTitle"),
+      label: t("prov.aliasPrompt"),
+      initialValue: current ?? "",
+      confirmLabel: t("prompt.aliasAction"),
+    });
     if (entered === null) return;
     const alias = entered.trim();
     const response = await fetch(type === "oauth" ? `${apiBase}/api/oauth/accounts/alias` : `${apiBase}/api/providers/keys/alias`, {
@@ -221,7 +240,13 @@ export function useProviderAccountPools(deps: {
 
   const removeAccount = async (provider: string, account: OAuthAccount) => {
     const label = oauthAccountDisplayLabel(accountSets[provider]?.accounts ?? [account], account, t);
-    if (!window.confirm(t("prov.accountRemoveConfirm", { email: label }))) return;
+    const confirmed = await confirm({
+      title: t("confirm.removeAccountTitle"),
+      body: t("prov.accountRemoveConfirm", { email: label }),
+      confirmLabel: t("confirm.removeAction"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       const res = await fetch(`${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(account.id)}`, { method: "DELETE" });
       if (!res.ok) { notify(t("prov.accountRemoveFail", { email: label }), false); return; }

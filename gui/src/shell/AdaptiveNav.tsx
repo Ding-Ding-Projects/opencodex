@@ -9,7 +9,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { IconMoon, IconPower, IconSun, IconMonitor, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
-import { Switch } from "../ui";
+import { Toggle } from "./m3-ui";
 import { BOTTOM_NAV_PAGES, PAGE_META, PAGE_META_BY_ID, type PageMeta } from "./page-meta";
 import type { Page } from "../app-routing";
 
@@ -134,9 +134,12 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
           showLabel={showLabels}
           onOpen={onOpen}
           trailing={meta.id === "claude" && claudeEnabled !== null ? (
-            <Switch
+            // The next state is discarded on purpose: the parent owns the value and
+            // flips it, so passing it back would let this row and the server disagree
+            // about which direction the toggle went.
+            <Toggle
               on={claudeEnabled}
-              onClick={onToggleClaude}
+              onChange={onToggleClaude}
               disabled={claudeTogglePending}
               label={t("claude.toggleAria")}
             />

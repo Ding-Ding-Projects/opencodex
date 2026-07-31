@@ -6,6 +6,8 @@ import CodexAccountPool from "../src/components/CodexAccountPool";
 import CodexAuth from "../src/pages/CodexAuth";
 import type { CodexAccountPoolController } from "../src/hooks/useCodexAccountPool";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 /**
  * Codex Auth parity: the prototype's top action row (refresh, then add account) and
@@ -95,11 +97,15 @@ async function mountPool(lead?: string) {
     root = createRoot(host);
     root.render(
       <LanguageProvider>
-        <CodexAccountPool
-          apiBase=""
-          controller={makeController()}
-          lead={lead ? <p className="m3-page-lead">{lead}</p> : null}
-        />
+        <NotificationsProvider>
+          <ConfirmProvider>
+            <CodexAccountPool
+              apiBase=""
+              controller={makeController()}
+              lead={lead ? <p className="m3-page-lead">{lead}</p> : null}
+            />
+          </ConfirmProvider>
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });
@@ -137,7 +143,11 @@ test("the Codex Auth page supplies the real subtitle as its lead", async () => {
     root = createRoot(host);
     root.render(
       <LanguageProvider>
-        <CodexAuth apiBase="" />
+        <NotificationsProvider>
+          <ConfirmProvider>
+            <CodexAuth apiBase="" />
+          </ConfirmProvider>
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });

@@ -1,7 +1,6 @@
 import { useI18n } from "../i18n/shared";
 import { IconRefresh } from "../icons";
-import { Button } from "../shell/m3-ui";
-import { Switch } from "../ui";
+import { Button, Toggle } from "../shell/m3-ui";
 import type { DebugSettings, LogStream } from "./debug-shared";
 import { M3_TABLIST_STYLE, isDebugFlagEnabled, m3TabStyle } from "./debug-shared";
 
@@ -41,11 +40,11 @@ export function DebugSettingsPanel({
           const checked = isDebugFlagEnabled(debug, flag);
           return (
             <div key={flag} className="m3-row" style={{ gap: 10, minHeight: 44 }}>
-              <Switch
+              <Toggle
                 on={checked}
                 disabled={debugBusy}
                 label={t(`debug.${flag}`)}
-                onClick={() => onSetFlag(flag, !checked)}
+                onChange={next => onSetFlag(flag, next)}
               />
               <span style={{ fontSize: "var(--t-body-m)" }}>{t(`debug.${flag}`)}</span>
             </div>

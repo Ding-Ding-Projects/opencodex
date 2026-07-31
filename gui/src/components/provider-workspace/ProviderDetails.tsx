@@ -11,7 +11,7 @@ import { isLocalProvider } from "../../provider-workspace/kind";
 import { providerAuthSurface } from "../../provider-workspace/auth";
 import { ProviderIcon, statusLabel } from "./ProviderRail";
 import { binProviderStatus } from "../../provider-workspace/catalog";
-import { Switch } from "../../ui";
+import { Toggle } from "../../shell/m3-ui";
 import { IconChevron, IconTrash } from "../../icons";
 import ProviderOverview from "./ProviderOverview";
 import ProviderModels from "./ProviderModels";
@@ -204,9 +204,13 @@ export default function ProviderDetails({
           {onSetDisabled && (
             <div className="pws-detail-toggle">
               <span className="pws-detail-toggle-label">{t("pws.enabledLabel")}</span>
-              <Switch
+              {/* The switch reads "enabled" and the API stores "disabled", so the
+                  next state is inverted on the way out rather than recomputed from
+                  the current one — a stale `isDisabled` would otherwise send the
+                  value the user just moved away from. */}
+              <Toggle
                 on={!isDisabled}
-                onClick={() => onSetDisabled(item.name, !isDisabled)}
+                onChange={enabled => onSetDisabled(item.name, !enabled)}
                 disabled={isDefault}
                 label={t("pws.enabledLabel")}
               />

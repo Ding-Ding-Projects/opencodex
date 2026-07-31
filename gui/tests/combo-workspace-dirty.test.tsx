@@ -5,6 +5,7 @@ import type { Root } from "react-dom/client";
 import type { ComboItem } from "../src/combo-workspace-data";
 import ComboWorkspace from "../src/components/ComboWorkspace";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -82,19 +83,23 @@ test("Strict Mode: edit, revert, and unsaved navigation keep dirty state coheren
     root.render(
       <StrictMode>
         <LanguageProvider>
-          <ComboWorkspace
-            combos={combos}
-            providers={[{ name: "openai" }]}
-            models={[{ provider: "openai", id: "gpt-5" }]}
-            loading={false}
-            onRefresh={() => {}}
-            onSave={async () => ({ ok: true })}
-            onRemove={async () => ({ ok: true })}
-            onAdd={() => {}}
-            adding={false}
-            onCloseAdd={() => {}}
-            onCreated={() => {}}
-          />
+          {/* The detail panel reports a successful save as a snackbar now, so the
+              provider it reads has to exist even where no save happens. */}
+          <NotificationsProvider>
+            <ComboWorkspace
+              combos={combos}
+              providers={[{ name: "openai" }]}
+              models={[{ provider: "openai", id: "gpt-5" }]}
+              loading={false}
+              onRefresh={() => {}}
+              onSave={async () => ({ ok: true })}
+              onRemove={async () => ({ ok: true })}
+              onAdd={() => {}}
+              adding={false}
+              onCloseAdd={() => {}}
+              onCreated={() => {}}
+            />
+          </NotificationsProvider>
         </LanguageProvider>
       </StrictMode>,
     );

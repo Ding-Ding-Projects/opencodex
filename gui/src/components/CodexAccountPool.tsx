@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n/shared";
 import { IconPause, IconPlus, IconRefresh, IconSearch } from "../icons";
-import { Notice } from "../ui";
 import { Chip, Empty, TextInput } from "../shell/m3-ui";
+import { useNotifications } from "../shell/notifications-context";
+import { useConfirm, usePrompt } from "../shell/confirm-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { makeMatcher } from "../pages/models-shared";
 import { POOL_GRID, SECTION_TITLE } from "./codex-account-pool-m3";
@@ -73,6 +74,16 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   controller?: CodexAccountPoolController;
 }) {
   const t = useT();
+  // Not named `confirm`/`prompt`: the switch modal already owns a `confirm`
+  // state variable here, and shadowing the globals is the point elsewhere but
+  // would collide with it in this file.
+  const askConfirm = useConfirm();
+  const askPrompt = usePrompt();
+  // Every outcome here used to be one inline toast string plus a separate error
+  // flag plus a hand-rolled 5s timer — three pieces of state that could disagree,
+  // which is how a successful redeem once rendered in the error colour. A
+  // snackbar carries its tone in the same call as its text.
+  const { notify } = useNotifications();
   const autoSwitch = useCodexAutoSwitch(apiBase, {
     updated: t("codexAuth.autoSwitchUpdated"),
     updateFailed: t("codexAuth.autoSwitchUpdateFailed"),
@@ -87,8 +98,6 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   const [confirm, setConfirm] = useState<CodexAccountEntry | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [reauthId, setReauthId] = useState<string | null>(null);
-  const [toast, setToast] = useState("");
-  const [toastError, setToastError] = useState(false);
   const [refreshingQuota, setRefreshingQuota] = useState(false);
   const [resetPopup, setResetPopup] = useState<CodexAccountEntry | null>(null);
   const [resetConfirm, setResetConfirm] = useState(false);
@@ -153,19 +162,15 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
 
   const handleAccountAdded = useCallback(() => {
     void controller.syncAfterAccountAdded();
-    setToast(t("codexAuth.accountAdded"));
-    setToastError(false);
-    setTimeout(() => setToast(""), 5000);
+    notify({ tone: "success", title: t("codexAuth.accountAdded") });
     closeAddModal();
-  }, [closeAddModal, controller, t]);
+  }, [closeAddModal, controller, notify, t]);
 
   const setActive = async (id: string | null) => {
     const result = await controller.switchAccount(id);
     if (!result.ok) {
       if (result.reason === "busy") return;
-      setToast(t("codexAuth.switchFailed"));
-      setToastError(true);
-      setTimeout(() => setToast(""), 5000);
+      notify({ tone: "error", title: t("codexAuth.switchFailed") });
       return;
     }
     setConfirm(null);
@@ -173,19 +178,29 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
     const label = selectedId && selectedId !== "__main__"
       ? accounts.find(account => account.id === selectedId)?.email ?? t("pws.accountOrdinal", { count: "1" })
       : t("codexAuth.mainAccount");
-    setToast(accountModeState === "direct"
-      ? t("codexAuth.poolPreparedToast", { email: label })
-      : t("codexAuth.switched", { email: label }));
-    setToastError(false);
-    setTimeout(() => setToast(""), 5000);
+    notify({
+      tone: "success",
+      title: accountModeState === "direct"
+        ? t("codexAuth.poolPreparedToast", { email: label })
+        : t("codexAuth.switched", { email: label }),
+    });
   };
 
   const editAlias = async (account: CodexAccountEntry) => {
-    const entered = window.prompt(t("prov.aliasPrompt"), account.alias ?? "");
+    // `null` is cancel; `""` is a deliberate clear. Conflating them would make
+    // "remove the alias I set" impossible.
+    const entered = await askPrompt({
+      title: t("prompt.aliasTitle"),
+      label: t("prov.aliasPrompt"),
+      initialValue: account.alias ?? "",
+      confirmLabel: t("prompt.aliasAction"),
+    });
     if (entered === null) return;
     const result = await controller.saveAlias(account.id, entered);
-    setToastError(!result.ok);
-    setToast(t(result.ok ? "prov.aliasSaved" : "prov.aliasSaveFailed"));
+    notify({
+      tone: result.ok ? "success" : "error",
+      title: t(result.ok ? "prov.aliasSaved" : "prov.aliasSaveFailed"),
+    });
   };
 
   const togglePaused = async (account: CodexAccountEntry) => {
@@ -193,32 +208,40 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
     const result = await controller.setAccountPaused(account.id, paused);
     if (!result.ok && result.reason === "busy") return;
     setConfirm(current => current?.id === account.id ? null : current);
-    setToastError(!result.ok);
-    setToast(t(result.ok
-      ? paused ? "codexAuth.pauseSucceeded" : "codexAuth.resumeSucceeded"
-      : paused ? "codexAuth.pauseFailed" : "codexAuth.resumeFailed", {
-      email: account.alias ?? account.email,
-    }));
-    setTimeout(() => setToast(""), 5000);
+    notify({
+      tone: result.ok ? "success" : "error",
+      title: t(result.ok
+        ? paused ? "codexAuth.pauseSucceeded" : "codexAuth.resumeSucceeded"
+        : paused ? "codexAuth.pauseFailed" : "codexAuth.resumeFailed", {
+        email: account.alias ?? account.email,
+      }),
+    });
   };
 
   const remove = async (id: string) => {
     const label = accounts.find(account => account.id === id)?.email ?? t("pws.accountOrdinal", { count: "1" });
-    if (!window.confirm(t("codexAuth.removeConfirm", { id: label }))) return;
+    const confirmed = await askConfirm({
+      title: t("confirm.removeAccountTitle"),
+      body: t("codexAuth.removeConfirm", { id: label }),
+      confirmLabel: t("confirm.removeAction"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
     const result = await controller.removeAccount(id);
-    if (!result.ok) {
-      setToast(t("codexAuth.removeFailed"));
-      setToastError(true);
-      setTimeout(() => setToast(""), 5000);
-    }
+    if (!result.ok) notify({ tone: "error", title: t("codexAuth.removeFailed") });
   };
 
   const refreshQuotas = async () => {
     setRefreshingQuota(true);
     try {
       const ok = await load(true);
-      setToast(t(ok ? "codexAuth.quotaRefreshed" : "codexAuth.quotaRefreshFailed"));
-      setTimeout(() => setToast(""), 5000);
+      // The tone follows `ok`. It did not before: both outcomes went through one
+      // setter that left the error flag untouched, so a failed quota refresh
+      // announced itself in the success colour.
+      notify({
+        tone: ok ? "success" : "error",
+        title: t(ok ? "codexAuth.quotaRefreshed" : "codexAuth.quotaRefreshFailed"),
+      });
     } finally {
       setRefreshingQuota(false);
     }
@@ -227,13 +250,14 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   const pauseExhausted = async () => {
     const result = await controller.pauseExhaustedAccounts();
     if (!result.ok && result.reason === "busy") return;
-    setToastError(!result.ok);
-    setToast(result.ok
-      ? result.pausedCount > 0
-        ? t("codexAuth.pauseExhaustedSucceeded", { count: String(result.pausedCount) })
-        : t("codexAuth.pauseExhaustedNone")
-      : t("codexAuth.pauseExhaustedFailed"));
-    setTimeout(() => setToast(""), 5000);
+    notify({
+      tone: result.ok ? "success" : "error",
+      title: result.ok
+        ? result.pausedCount > 0
+          ? t("codexAuth.pauseExhaustedSucceeded", { count: String(result.pausedCount) })
+          : t("codexAuth.pauseExhaustedNone")
+        : t("codexAuth.pauseExhaustedFailed"),
+    });
   };
 
   const openResetPopup = async (account: CodexAccountEntry) => {
@@ -262,11 +286,7 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
         setResetPopup(null);
         setResetConfirm(false);
       }
-      if (result.toast) {
-        setToastError(!result.ok);
-        setToast(result.toast);
-        setTimeout(() => setToast(""), 5000);
-      }
+      if (result.toast) notify({ tone: result.ok ? "success" : "error", title: result.toast });
     } finally {
       setRedeeming(false);
     }
@@ -380,8 +400,6 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
           <IconPause width={14} aria-hidden="true" /> {pausingExhausted ? t("codexAuth.pausingExhausted") : t("codexAuth.pauseExhausted")}
         </button>
       </div>
-
-      {toast && <Notice tone={toastError ? "err" : "ok"}>{toast}</Notice>}
 
       <CodexAccountPoolLoadStates
         t={t}

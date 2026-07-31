@@ -303,31 +303,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .nav-entry-claude .nav-item,
 .nav-entry-claude .nav-item:hover,
 .nav-entry-claude .nav-item.active { width: auto; background: transparent; }
-.nav-entry-claude .switch {
-  position: relative;
-  width: 44px;
-  height: 36px;
-  padding: 0;
-  border-color: transparent;
-  background: transparent;
-}
-.nav-entry-claude .switch::before {
-  content: "";
-  position: absolute;
-  top: 10px;
-  left: 8px;
-  width: 28px;
-  height: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--raised);
-  transition: background var(--motion-normal), border-color var(--motion-normal);
-}
-.nav-entry-claude .switch.on { border-color: transparent; background: transparent; }
-.nav-entry-claude .switch.on::before { border-color: var(--toggle-on-bg); background: var(--toggle-on-bg); }
-.nav-entry-claude .switch .knob { position: absolute; top: 13px; left: 11px; z-index: 1; width: 10px; height: 10px; }
-.nav-entry-claude .switch.on .knob { transform: translateX(12px); }
-.nav-entry-claude .switch:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 0; }
+/* The `.switch` overrides that padded this row's toggle out to a 44px target
+   went with the component: the Claude row uses `.m3-switch`, which is 52x32
+   without needing a per-screen exception to clear the hit-target floor. */
 
 .sidebar-foot { margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 2px; }
 
@@ -358,11 +336,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .lang-toggle { display: flex; align-items: center; gap: 9px; padding: 8px 10px; width: 100%; color: var(--muted); font-size: var(--text-control); border-radius: var(--radius-sm); transition: background var(--motion-fast), color var(--motion-fast); position: relative; }
 .lang-toggle:hover { background: var(--accent-soft); color: var(--text); }
 .lang-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
-.lang-toggle .custom-select { width: 100%; position: static !important; }
-.lang-toggle .select-trigger { width: 100%; justify-content: space-between; border: none; background: none; color: inherit; font-size: var(--text-control); padding: 0; min-height: auto; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-.lang-toggle .select-trigger:hover:not(:disabled) { border: none; background: none; color: inherit; box-shadow: none; }
-.lang-toggle .select-dropdown { background: var(--glass-rail); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
-.lang-toggle .select-dropdown-beside { top: auto; bottom: 0; left: calc(100% + 6px); right: auto; min-width: 10rem; max-height: min(60vh, 20rem); overflow-y: auto; }
 .theme-toggle { display: flex; align-items: center; gap: 9px; padding: 8px 10px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; color: var(--muted); font: inherit; font-size: var(--text-control); border-radius: var(--radius-sm); transition: background var(--motion-fast), color var(--motion-fast); }
 .theme-toggle:hover { background: var(--accent-soft); color: var(--text); }
 .theme-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
@@ -515,7 +488,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   .injection-head { gap: 8px; }
   .injection-label { order: 1; flex: 1 0 calc(100% - 70px); }
   .injection-head > .badge { order: 1; margin-left: auto; }
-  .injection-head > .custom-select { order: 2; }
 }
 
 /* ---- stat cards (metric tiles) ---- */
@@ -630,106 +602,16 @@ select.input { appearance: none; }
 .select-sm:hover:not(:disabled) { border-color: var(--faint); box-shadow: 0 2px 12px rgb(0 0 0 / 0.10); }
 .select-sm:disabled { opacity: 0.5; cursor: default; backdrop-filter: none; -webkit-backdrop-filter: none; }
 
-/* Custom select (replaces native <select>) */
-.select-trigger {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 12px; border-radius: var(--radius-pill);
-  background: color-mix(in oklab, canvas 75%, transparent);
-  backdrop-filter: blur(12px) saturate(1.3);
-  -webkit-backdrop-filter: blur(12px) saturate(1.3);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.06);
-  color: var(--text); font: inherit; font-size: var(--text-control); line-height: var(--leading-ui); cursor: pointer;
-  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
-  white-space: nowrap;
-}
-.select-trigger:hover:not(:disabled) { border-color: var(--faint); box-shadow: 0 2px 12px rgb(0 0 0 / 0.10); }
-.select-trigger:disabled { opacity: 0.5; cursor: default; }
-.select-dropdown {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-popover);
-  min-width: 100%; max-height: 280px; overflow-y: auto;
-  background: color-mix(in oklab, canvas 84%, transparent);
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 4px; box-shadow: 0 8px 32px rgb(0 0 0 / 0.16);
-}
-.select-dropdown-portal {
-  /* Position (top/bottom/left/right/maxHeight) comes from computeSelectMenuStyle. */
-  position: fixed;
-  top: auto;
-  left: auto;
-  right: auto;
-  bottom: auto;
-}
-.select-dropdown-right { left: auto !important; right: 0; }
-/* Beside-placement lives inside the sidebar, which establishes a containing block via
-   backdrop-filter (and a transform on the mobile drawer) — so a fixed-position fix would
-   resolve against the sidebar, not the viewport. Anchor the menu's BOTTOM to the trigger row
-   instead: the locale control sits in the footer, so the menu grows upward into empty sidebar
-   space. The height bound is what makes this count-independent — adding a locale used to push
-   the menu past the sidebar edge. */
-.select-dropdown-beside { top: auto; bottom: 0; left: calc(100% + 6px); right: auto; min-width: 10rem; max-height: min(60vh, 20rem); overflow-y: auto; }
-.select-option {
-  display: block; width: 100%; text-align: left;
-  padding: 7px 12px; border: none; border-radius: var(--radius-sm);
-  background: transparent; color: var(--text); font: inherit; font-size: var(--text-control); line-height: var(--leading-ui);
-  cursor: pointer; transition: background var(--motion-fast), box-shadow var(--motion-fast);
-  white-space: nowrap;
-}
-/* Pointer hover alone — softer than keyboard focus so the two cues stay distinct. */
-.select-option:hover:not(.select-option-active) { background: var(--hover); }
-/* Selected value (committed). */
-.select-option.active { background: var(--accent-soft); color: var(--accent); font-weight: var(--weight-semibold); }
-/* Keyboard / aria-activedescendant focus — visible without relying on :hover. */
-.select-option-active {
-  background: var(--hover);
-}
-/* Selected + keyboard-highlighted: full inset ring (not a left stripe). */
-.select-option.active.select-option-active {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
+/* The `.select-trigger` / `.select-dropdown` / `.select-option` family that lived
+   here is gone with the hand-rolled listbox it dressed: a portaled menu with its
+   own flip-above-the-viewport maths, several hundred lines reimplementing the
+   platform control and losing the native picker on touch. Its call sites use
+   `.m3-select` in `styles/m3-shell.css`, which is the native `<select>` themed. */
 
-/* ---- switch ---- */
-.switch {
-  width: 34px;
-  height: 20px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  background: var(--raised);
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  flex-shrink: 0;
-  line-height: 0;
-  vertical-align: middle;
-  transition: background var(--motion-normal), border-color var(--motion-normal);
-  appearance: none;
-  -webkit-appearance: none;
-}
-.switch.on { background: var(--toggle-on-bg); border-color: var(--toggle-on-bg); }
-.switch:disabled { opacity: 0.6; cursor: default; }
-.switch .knob {
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-round);
-  background: light-dark(#ffffff, #ececec);
-  box-shadow: 0 0 0 1px rgba(16, 24, 40, 0.08), 0 1px 1px rgba(16, 24, 40, 0.18);
-  transform: translateX(0);
-  transition: transform var(--motion-normal), background var(--motion-normal);
-}
-.switch.on .knob {
-  transform: translateX(14px);
-  /* [Decision Log]
-  - 목적: 다크 모드의 활성 트랙과 핸들이 모두 밝게 뭉개지는 문제를 없앤다.
-  - 대안 분석: 테두리만 강화하면 상태 구분이 약하고, 화면별 색상 지정은 중복되며, 공통 토글 토큰은 모든 스위치에 같은 대비 규칙을 적용한다.
-  - 선택 근거: 활성 트랙은 다크 모드 성공 색상, 핸들은 어두운 색으로 분리해 상태와 위치를 동시에 읽기 쉽다.
-  */
-  background: var(--toggle-dot-color);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
-}
+/* The `.switch` / `.knob` pair that lived here is gone with the component it
+   dressed: a 34x20px track, under half the 44px hit-target floor, painted with
+   literal rgba shadows. Its three call sites use `.m3-switch` in
+   `styles/m3-shell.css`, which is M3's 52x32 anatomy in role tokens. */
 
 /* ---- misc ---- */
 .muted { color: var(--muted); }
@@ -740,14 +622,13 @@ select.input { appearance: none; }
 .stack { display: flex; flex-direction: column; }
 .chip { font-family: var(--font-code); font-size: var(--text-label); line-height: var(--leading-ui); background: var(--raised); border: 1px solid var(--border); padding: 1px 7px; border-radius: var(--radius-xs); color: var(--text); }
 
-.empty { text-align: center; padding: 56px 20px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted); }
-.empty svg { width: 30px; height: 30px; color: var(--faint); margin-bottom: 12px; }
-.empty .title { color: var(--text); font-weight: var(--weight-semibold); margin-bottom: 6px; }
+/* `.empty` went with `EmptyState`; `.m3-empty` in `styles/m3-shell.css` replaced it.
 
-.notice { font-size: var(--text-control); line-height: var(--leading-body); padding: 9px 12px; border-radius: var(--radius-sm); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
-.notice svg { width: 15px; height: 15px; flex-shrink: 0; }
-.notice-ok { background: var(--green-soft); color: var(--green); }
-.notice-err { background: var(--red-soft); color: var(--red); }
+   `.notice` / `.notice-ok` / `.notice-err` are still here on purpose. The `Notice`
+   COMPONENT is gone, but the un-ported Add-Codex-Account modal still writes these
+   class names by hand, and deleting the rules would strip the styling off a live
+   surface. They go when that modal is ported. `.notice-warn` below is a separate
+   rule with its own callers and is not part of this family. */
 
 .h-section { font-size: var(--text-control); font-weight: var(--weight-semibold); line-height: var(--leading-ui); color: var(--text); margin: 30px 0 12px; display: flex; align-items: center; gap: 8px; }
 .h-section .count { color: var(--muted); font-weight: var(--weight-medium); font-family: var(--font-code); font-size: var(--text-label); }
@@ -760,37 +641,21 @@ select.input { appearance: none; }
 /* glass fallbacks: solid surfaces when blur is unsupported or unwanted */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .sidebar { background: var(--rail); }
-  .lang-toggle .select-dropdown { background: var(--rail); }
-  .modal-card { background: var(--surface); }
 }
 @media (prefers-reduced-transparency: reduce) {
   body::before { display: none; }
   .sidebar { background: var(--rail); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .lang-toggle .select-dropdown { background: var(--rail); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .modal-card { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .modal-overlay { backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
-/* ---- modal ---- */
-/* Liquid-glass modal: heavy tint + blur so background content is unreadable */
-.modal-overlay { position: fixed; inset: 0; background: light-dark(rgba(17, 19, 28, 0.78), rgba(0, 0, 0, 0.82)); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px; z-index: var(--z-modal); }
-/* Native <dialog>.showModal() UA styles (solid border + ::backdrop) stack on top of
-   .modal-overlay and produce a white frame + double dim. Reset when the dialog IS the overlay. */
-dialog.modal-overlay {
-  border: none;
-  margin: 0;
-  max-width: none;
-  max-height: none;
-  width: 100%;
-  height: 100%;
-  color: inherit;
-}
-dialog.modal-overlay::backdrop {
-  background: transparent;
-}
-.modal-card { position: relative; z-index: 1; background: color-mix(in oklab, canvas 92%, transparent); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; width: 100%; max-width: 520px; box-shadow: 0 8px 32px rgb(0 0 0 / 0.18); max-height: 84vh; overflow-y: auto; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.modal-head h3 { font-size: var(--text-subtitle); }
+/* The `.modal-overlay` / `.modal-card` liquid-glass pair is gone, and with it
+   the last surface in the app that could not be retinted. Its card painted
+   `color-mix(in oklab, canvas 92%, transparent)` — `canvas` being a *UA system
+   colour*, not one of ours — under 40px of backdrop blur, so the first-run
+   wizard rendered in the browser's idea of a window colour whatever seed the
+   user had picked. `.m3-dialog` in `styles/m3-shell.css` replaces it: a flat
+   `--m3-scrim` wash, no blur, every colour a role token. The reduced-
+   transparency and no-backdrop-filter fallbacks above lost their modal clauses
+   with it — there is nothing left to fall back from. */
 
 /* ---- codex auth page ---- */
 .card-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px; flex-wrap: wrap; min-width: 0; }
@@ -880,12 +745,9 @@ dialog.modal-overlay::backdrop {
   .startup-detail-row { align-items: flex-start; }
   .startup-detail-row > .startup-detail-actions { flex-direction: column; align-items: flex-end; }
 }
-.modal-desc { font-size: var(--text-control); line-height: var(--leading-body); color: var(--muted); margin-bottom: 14px; }
-/* Right-aligned, as M3 dialogs are. Legacy `.btn` children keep stretching so the
-   screens still using them do not reflow; M3 buttons size to their label. */
-.modal-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
-.modal-actions .btn { flex: 1; }
-.modal-actions .m3-btn { flex: 0 0 auto; }
+/* `.modal-desc` and `.modal-actions` went with `.modal-overlay`/`.modal-card`:
+   the onboarding wizard was their last consumer, and `Dialog` draws supporting
+   text and an end-aligned action row itself. */
 
 /* request logs: clamped request id, status + details affordance, detail modal */
 .log-reqid {
@@ -931,7 +793,6 @@ table.logs-table { min-width: 960px; }
 }
 .usage-cost-value { font-size: var(--text-lg, 1.15em); }
 @media (max-width: 760px) {
-  .modal-overlay { padding: 16px 10px; }
   .log-detail-card { max-height: calc(100dvh - 32px); padding: 16px; }
   .log-detail-grid { grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: 8px 10px; }
   .log-detail-request-row { align-items: flex-start; flex-direction: column; }
@@ -1093,7 +954,6 @@ button.prov-account-row.active { cursor: default; }
   .oauth-grid { grid-template-columns: minmax(0, auto) minmax(0, 1fr) max-content; column-gap: 8px; }
   /* language menu: the drawer scrolls (overflow-y) so the beside-placement would be
      clipped at the drawer edge — open upward from the foot row instead. */
-  .sidebar .lang-toggle .select-dropdown-beside { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; }
 }
 
 .usage-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }

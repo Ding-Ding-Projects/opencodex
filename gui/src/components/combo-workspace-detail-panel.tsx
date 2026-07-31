@@ -10,8 +10,8 @@ import {
 } from "../combo-workspace-data";
 import { IconAlert, IconChevron, IconSearch, IconTrash } from "../icons";
 import { useT } from "../i18n/shared";
-import { Notice } from "../ui";
-import { Button, Card, Chip, TextInput } from "../shell/m3-ui";
+import { Banner, Button, Card, Chip, TextInput } from "../shell/m3-ui";
+import { useNotifications } from "../shell/notifications-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
@@ -54,10 +54,14 @@ export function DetailPanel({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const t = useT();
+  const { notify } = useNotifications();
   const [tab, setTab] = useState<DetailTab>("config");
   const [draft, setDraft] = useState<ComboItem>(baseline);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Failures only. A save that WORKED is a one-shot outcome and leaves as a
+  // snackbar; a save that was refused names a field the user still has to fix, so
+  // it stays on the panel until the next attempt gets past validation.
+  const [saveError, setSaveError] = useState("");
   const [copied, setCopied] = useState(false);
   // This tab's own settings search. Bound to this field alone — it never shares state
   // with the rail's combo search, which looks for a different kind of thing.
@@ -107,7 +111,7 @@ export function DetailPanel({
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setDraft(baseline);
-      setMsg(null);
+      setSaveError("");
       setTab("config");
       setSettingsQuery("");
       onDirtyChange(false);
@@ -134,7 +138,7 @@ export function DetailPanel({
       providers: providerMap,
     });
     if (code) {
-      setMsg({ ok: false, text: t(`cws.err.${code}`) });
+      setSaveError(t(`cws.err.${code}`));
       return;
     }
     setBusy(true);
@@ -150,12 +154,13 @@ export function DetailPanel({
     try {
       const res = await onSave(item, isCreate, renameFrom);
       if (!res.ok) {
-        setMsg({ ok: false, text: res.error || t("cws.saveFailed") });
+        setSaveError(res.error || t("cws.saveFailed"));
         return;
       }
-      setMsg({
-        ok: true,
-        text: isCreate ? t("cws.created", { model: item.model }) : t("cws.saved"),
+      setSaveError("");
+      notify({
+        tone: "success",
+        title: isCreate ? t("cws.created", { model: item.model }) : t("cws.saved"),
       });
       onSaved(item);
     } finally {
@@ -207,7 +212,7 @@ export function DetailPanel({
         </div>
       ))}
 
-      {msg && <Notice tone={msg.ok ? "ok" : "err"}>{msg.text}</Notice>}
+      {saveError && <Banner tone="error">{saveError}</Banner>}
 
       <div className="combos-workspace-tabs" role="tablist" aria-label={t("cws.tabsAria")}>
         <button type="button" role="tab" aria-selected={tab === "config"} className={`combos-workspace-tab${tab === "config" ? " combos-workspace-tab--active" : ""}`} onClick={() => setTab("config")}>

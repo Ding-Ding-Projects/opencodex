@@ -6,25 +6,34 @@
  * Two scripts, deliberately:
  *
  * 1. An `is:inline` script that resolves the stored light/dark choice *before*
- *    first paint. It sets only `data-theme`, which is enough: `m3-tokens.css`
+ *    first paint. It sets only `data-theme`, which is enough: the stylesheet
  *    already carries correct role values for both themes at the default seed,
  *    so the first frame is right for everyone who has not picked a custom
  *    accent. Without it every visit flashes the wrong theme for a frame.
+ *    Importing the token engine here instead would block rendering on a module
+ *    fetch, which costs more than the flash it prevents.
  * 2. The module below, which applies the full token set (seed, density, type)
  *    and drives the panel once the page is interactive.
  *
  * The panel is a non-modal popover anchored to its button, per the appearance
  * rules — it never blocks reading the page it is restyling, and it returns
  * focus to the button on close.
+ *
+ * Everything here binds on `astro:page-load` rather than at module scope.
+ * With a client-side router in place, a module script runs on the first
+ * document and is *skipped* on every subsequent swap, so a one-time binding
+ * would leave the panel's button dead from the second page onwards — while the
+ * build still reported success. `astro:page-load` fires on the initial load
+ * too, so this is not a fallback path, it is the path.
  */
 import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
 ---
 
 {/*
-  Runs before first paint. Deliberately tiny and dependency-free — importing the
-  token engine here would block rendering on a module fetch, which costs more
-  than the flash it prevents. Wrapped in try/catch because a blocked or full
-  localStorage must not stop the page from rendering at all.
+  Runs before first paint. Deliberately tiny and dependency-free. Wrapped in
+  try/catch because a blocked or full localStorage must not stop the page from
+  rendering at all. Its text is byte-identical on all 156 pages, which is what
+  makes the view-transition swap preserve it in the head instead of re-running it.
 */}
 <script is:inline>
   try {
@@ -35,7 +44,7 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
   } catch (e) { /* leave the server-rendered theme in place */ }
 </script>
 
-<div class="m3-appearance">
+<div class="m3-appearance" data-m3-el="appearance">
   <button
     type="button"
     class="m3-appearance__toggle"
@@ -76,12 +85,21 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
             title={hex}
           />
         ))}
+        {/*
+          A continuous picker, not a swatch grid — the swatches above are
+          shortcuts layered on it. It is the platform control for now; the
+          project's own infinite picker (with the colour-space translator,
+          alpha, gamut and contrast readout the rules require) replaces this
+          input without changing anything else on this panel, because the value
+          that leaves here is just a hex string.
+        */}
         <input id="m3-ap-seed" type="color" aria-label="Custom accent colour" />
+        <span class="m3-appearance__value" data-value="seed"></span>
       </div>
     </div>
 
     <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-density">Density</label>
+      <label class="m3-appearance__label" for="m3-ap-density">Density <span class="m3-appearance__value" data-value="density"></span></label>
       <input id="m3-ap-density" type="range" min="1" max="5" step="1" />
     </div>
 
@@ -93,14 +111,21 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
     </div>
 
     <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-scale">Text size</label>
+      <label class="m3-appearance__label" for="m3-ap-scale">Text size <span class="m3-appearance__value" data-value="scale"></span></label>
       <input id="m3-ap-scale" type="range" min="0.8" max="1.6" step="0.05" />
     </div>
 
     <div class="m3-appearance__row">
-      <label class="m3-appearance__label" for="m3-ap-weight">Weight</label>
+      <label class="m3-appearance__label" for="m3-ap-weight">Weight <span class="m3-appearance__value" data-value="weight"></span></label>
       <input id="m3-ap-weight" type="range" min="300" max="700" step="100" />
     </div>
+
+    {/*
+      The live preview carries CJK alongside Latin on purpose: every stack in
+      `FONT_STACKS` has a CJK-safe tail, and the only honest way to show that it
+      works is to render characters that need it.
+    */}
+    <p class="m3-appearance__preview" data-preview>Aa Bb Cc 0123 — 廣東話 · 한국어 · 日本語</p>
 
     <button type="button" class="m3-appearance__reset">Reset to defaults</button>
   </div>
@@ -110,18 +135,30 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
   import {
     DEFAULT_APPEARANCE,
     applyAppearance,
+    installAppearanceRuntime,
     normalizeSeed,
     readAppearance,
-    watchExternalThemeChanges,
     writeAppearance,
     type DocsAppearance,
   } from "../lib/appearance";
 
-  const root = document.querySelector<HTMLElement>(".m3-appearance");
-  if (root) {
+  /** The single source for what the controls currently show. */
+  let current: DocsAppearance = readAppearance();
+
+  /**
+   * Bind whatever panel is in the document right now.
+   *
+   * Called again after every client-side navigation because the header — and
+   * therefore this panel — is re-rendered by the swap, leaving the previous
+   * bindings attached to nodes that are no longer in the page. The listeners
+   * are attached to fresh elements each time, so nothing accumulates; the
+   * document-level listeners are installed once by `installAppearanceRuntime`.
+   */
+  function bind(): void {
+    const root = document.querySelector<HTMLElement>(".m3-appearance");
+    if (!root) return;
     const toggle = root.querySelector<HTMLButtonElement>(".m3-appearance__toggle")!;
     const panel = root.querySelector<HTMLElement>(".m3-appearance__panel")!;
-    let current: DocsAppearance = readAppearance();
 
     const commit = (patch: Partial<DocsAppearance>) => {
       current = { ...current, ...patch };
@@ -143,6 +180,15 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
       (panel.querySelector("#m3-ap-font") as HTMLSelectElement).value = current.fontId;
       (panel.querySelector("#m3-ap-scale") as HTMLInputElement).value = String(current.fontScale);
       (panel.querySelector("#m3-ap-weight") as HTMLInputElement).value = String(current.fontWeight);
+      const readouts: Record<string, string> = {
+        seed: current.seed,
+        density: String(current.density),
+        scale: `${Math.round(current.fontScale * 100)}%`,
+        weight: String(current.fontWeight),
+      };
+      for (const node of panel.querySelectorAll<HTMLElement>("[data-value]")) {
+        node.textContent = readouts[node.dataset.value ?? ""] ?? "";
+      }
     }
 
     const setOpen = (open: boolean) => {
@@ -152,11 +198,12 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
     };
 
     toggle.addEventListener("click", () => setOpen(panel.hidden));
+    // Document-level handlers are re-added per navigation along with the panel
+    // they close; each one is scoped to the panel captured in this closure, and
+    // the old panel is no longer in the document, so a stale handler is a no-op.
     document.addEventListener("keydown", event => {
       if (event.key === "Escape" && !panel.hidden) setOpen(false);
     });
-    // Clicking away closes it; clicking inside must not, or every control
-    // would dismiss the panel it lives in.
     document.addEventListener("click", event => {
       if (!panel.hidden && !root.contains(event.target as Node)) setOpen(false);
     });
@@ -193,18 +240,11 @@ import { FONT_STACKS, SEED_SWATCHES } from "../lib/appearance";
       sync();
     });
 
-    // A visitor on "System" should follow the OS while the page is open.
-    if (typeof matchMedia === "function") {
-      matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-        if (current.theme === "system") applyAppearance(current);
-      });
-    }
-
-    // Starlight's header still owns a theme button. Adopt whatever it sets so
-    // the two controls read as one setting instead of overwriting each other.
-    watchExternalThemeChanges(() => current);
-
     applyAppearance(current);
     sync();
   }
+
+  // Installed once; survives every swap because `document` does.
+  installAppearanceRuntime(() => current);
+  document.addEventListener("astro:page-load", bind);
 </script>

@@ -2,9 +2,8 @@ import type { ReactNode } from "react";
 import { Trans } from "../i18n/provider";
 import { useT } from "../i18n/shared";
 import { IconSearch } from "../icons";
-import { Card, Chip, TextInput } from "../shell/m3-ui";
+import { Card, Chip, SelectField, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
-import { Select, type SelectOption } from "../ui";
 import { claudeSettingLabels } from "./claude-settings-search";
 import type { ClaudeSettingsSearch } from "./claude-settings-search";
 
@@ -204,14 +203,19 @@ export function SmallFastModelSetting({
 }: {
   value: string;
   tierHaikuModel?: string;
-  options: SelectOption[];
+  /**
+   * Plain-text labels: the native `<option>` this feeds cannot hold markup, so
+   * an icon-decorated model name would be dropped on the floor by the browser
+   * rather than rendered.
+   */
+  options: { value: string; label: string }[];
   onChange: (value: string) => void;
 }) {
   const t = useT();
   const effectiveHelperModel = tierHaikuModel ?? value;
   return (
     <Card title={t("claude.smallFastModel")} subtitle={t("claude.smallFastModelAccurateHint")}>
-      <Select
+      <SelectField
         value={value}
         options={options}
         onChange={onChange}

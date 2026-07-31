@@ -120,7 +120,15 @@ describe("workspace account integration seam", () => {
     expect(page).toContain('notify(t("prov.logoutFail"');
     expect(page).toContain('notify(t("prov.accountRemoveFail"');
     expect(page).toContain("await fetchAccountSets([provider])");
-    expect(codexPool).toContain('setToast(t("codexAuth.removeFailed"))');
+    // A failed remove must still announce itself, and in the error colour. The
+    // pool moved off the hand-rolled `setToast` — one inline string plus a
+    // separate error flag plus a 5s timer, three pieces of state that could
+    // disagree, which is how a failure once rendered as a success — onto the
+    // shared snackbar, where tone travels in the same call as the text. So the
+    // tone is pinned here alongside the key: dropping `tone: "error"` would
+    // resurrect exactly the bug the migration removed, and a bare key check
+    // would not notice.
+    expect(codexPool).toContain('notify({ tone: "error", title: t("codexAuth.removeFailed") })');
     expect(hook).toContain("pauseTokensRef");
   });
 

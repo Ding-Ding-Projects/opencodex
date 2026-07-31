@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Notice, Select, Tooltip } from "../ui";
-import { Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { Tooltip } from "../ui";
+import { Banner, Button, Chip, Dialog, Empty, SelectField, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
+import { useConfirm } from "../shell/confirm-context";
 import { recordRevision } from "../shell/revisions";
 import { useT } from "../i18n/shared";
 import type { TFn, TKey } from "../i18n/shared";
@@ -61,6 +62,9 @@ const SAMPLE_ROWS_PER_GROUP = 8;
 export default function Models({ apiBase }: { apiBase: string }) {
   const t: TFn = useT();
   const { notify } = useNotifications();
+  // Shadows the global `confirm` deliberately: an accidental native call in this
+  // file is now a type error rather than a grey Windows box at runtime.
+  const confirm = useConfirm();
   const [models, setModels] = useState<ModelRow[]>([]);
   const [providers, setProviders] = useState<ConfiguredProviderSummary[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
@@ -641,7 +645,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
 
   if (loading) return <div className="row muted"><span className="spin" /> {t("models.loading")}</div>;
   if (!selectedModels) {
-    return <Notice tone="err">{t("models.loadFail")}</Notice>;
+    return <Banner tone="error">{t("models.loadFail")}</Banner>;
   }
 
 
@@ -846,10 +850,22 @@ export default function Models({ apiBase }: { apiBase: string }) {
                                variant="text"
                                className="models-btn-danger"
                                onClick={() => {
-                                 if (window.confirm(t("models.customDeleteConfirm", { name: m.displayName ?? m.id }))) {
-                                   void deleteCustomModel(m.customId!, m.namespaced);
-                                 }
+                                 // The hover card is dismissed first, not after
+                                 // the await: it is anchored to a row the dialog
+                                 // now covers, and leaving it up behind a modal
+                                 // is a tooltip the user cannot dismiss.
+                                 const customId = m.customId!;
+                                 const namespaced = m.namespaced;
                                  setHoveredModel(null);
+                                 void (async () => {
+                                   const confirmed = await confirm({
+                                     title: t("confirm.deleteModelTitle"),
+                                     body: t("models.customDeleteConfirm", { name: m.displayName ?? m.id }),
+                                     confirmLabel: t("confirm.deleteAction"),
+                                     tone: "danger",
+                                   });
+                                   if (confirmed) await deleteCustomModel(customId, namespaced);
+                                 })();
                                }}
                              >{t("models.customDelete")}</Button>
                            </div>
@@ -987,7 +1003,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
           <code className="text-caption models-shadow-warning" style={{ opacity: 0.6 }}>{t("models.shadowCallOriginal")}</code>
           <Toggle on={shadowCall?.enabled ?? false} onChange={() => void saveShadowCall({ enabled: !shadowCall?.enabled })} disabled={!shadowCall || shadowCallSaving} label={t("models.shadowCallIntercept")} />
           <div className="models-shadow-model-slot">
-            <Select value={shadowCall?.model ?? ""} options={[{ value: "", label: "\u2014" }, ...shadowModelOptions]} onChange={v => { setShadowCall(c => c ? { ...c, model: v } : c); void saveShadowCall({ model: v }); }} disabled={!shadowCall || shadowCallSaving || !shadowCall.enabled} label={t("models.shadowCallIntercept")} />
+            <SelectField value={shadowCall?.model ?? ""} options={[{ value: "", label: "\u2014" }, ...shadowModelOptions]} onChange={v => { setShadowCall(c => c ? { ...c, model: v } : c); void saveShadowCall({ model: v }); }} disabled={!shadowCall || shadowCallSaving || !shadowCall.enabled} label={t("models.shadowCallIntercept")} />
           </div>
         </div>}
 
@@ -1027,7 +1043,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
           {v2.enabled && (
             <>
               <span className="muted text-control">{t("models.v2ThreadsLabel")}</span>
-              <Select
+              <SelectField
                 value={showThreadsCustom
                   ? CUSTOM_OPTION
                   : (v2.maxConcurrentThreadsPerSession !== null && v2.maxConcurrentThreadsPerSession !== undefined
@@ -1291,7 +1307,9 @@ export default function Models({ apiBase }: { apiBase: string }) {
             </>
           }
         >
-          {customError && <Notice tone="err">{customError}</Notice>}
+          {/* Inline, not a snackbar: it names why THIS form was refused, and it
+              belongs beside the fields the user has to correct. */}
+          {customError && <Banner tone="error">{customError}</Banner>}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1320,7 +1338,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
             <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {t("models.customFieldContext")}
               <div className="row" style={{ gap: 6 }}>
-                <Select
+                <SelectField
                   value={customFormShowCustomCtx ? CUSTOM_OPTION : customFormContextWindow}
                   options={[
                     { value: "", label: "—" },
@@ -1394,7 +1412,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
       </div>
       {/* The prototype leads the screen with body-large copy at a 74ch measure. */}
       <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>{t("models.subtitle")}</p>
-      {loadError && <Notice tone="err">{t("models.loadFail")}</Notice>}
+      {loadError && <Banner tone="error">{t("models.loadFail")}</Banner>}
       <div className="models-workspace-root">
         <aside className="models-workspace-rail" aria-label={t("nav.models")}>
           <div className="models-workspace-rail-header">

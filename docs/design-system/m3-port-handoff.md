@@ -52,7 +52,7 @@ preference on each edit.
 | `notifications*.ts(x)` | snackbars + capped, persisted history |
 | `narrator.ts` | single-utterance speech queue that supersedes rather than stacks |
 | `revisions.ts` | append-only revision log |
-| `m3-ui.tsx` | Card / Button / Segmented / Slider / Field / Chip / Toggle / Empty |
+| `m3-ui.tsx` | Card / Button / Segmented / Slider / Field / TextInput / TextArea / Chip / Toggle / Empty / Dialog / Banner / SelectField |
 | `page-meta.ts` | nav order, icons and label keys for all 19 pages |
 
 `App.tsx` is rebuilt around these. `styles/m3-shell.css` holds every shell rule;
@@ -315,6 +315,32 @@ vocabulary, colours all `--m3-*` roles. Source-text tests were retargeted with
 supersession comments; the combined tree verified green (gui 380/0, both
 typechecks, lint, build, privacy, parity).
 
+### `ui.tsx` retired down to `Tooltip`
+
+The pre-M3 primitive module is now one component. `Switch`, `Notice`, `Select`,
+`SelectOption` and `EmptyState` are deleted, along with their `styles.css` rules
+and the `select-position.ts` helper that existed solely to place the hand-rolled
+listbox's portaled menu.
+
+Two of those swaps changed behaviour rather than only appearance, and both were
+bugs the old primitives could not express:
+
+- `Notice` had exactly two tones, `ok` and `err`, so **every warning in the
+  product had been shipping as an error**. `Banner` carries the same four tones
+  the notification system does. Each former `<Notice>` was re-decided per site
+  rather than renamed: page state that persists until its condition clears
+  became an inline `Banner`; a one-shot outcome ("saved", "switched", "removed")
+  became `notify()`, and the `useState` + `setTimeout` driving it was deleted.
+- `Select` was a hand-rolled listbox. `SelectField` wraps the native control, so
+  touch users get the platform picker back — at the cost of markup inside an
+  `<option>`, which is why `ClaudeCode`'s helper-model picker passes plain slugs
+  instead of `modelLabel()`'s icon-prefixed node.
+
+`Tooltip` stays: it still has one caller (the shadow-call hint on Models) and
+there is no M3 tooltip to move it to yet. `.notice` / `.notice-ok` /
+`.notice-err` stay in `styles.css` for the same reason — the un-ported
+Add-Codex-Account modal writes those class names by hand.
+
 ### Deferred by scope
 
 - ~~**Docker.**~~ Landed — `Dockerfile` + `scripts/docker-entrypoint.sh`. Documented for
@@ -366,3 +392,21 @@ typechecks, lint, build, privacy, parity).
   that cannot be taken back. `ConfirmProvider` is mounted in `main.tsx` inside
   `NotificationsProvider`, so a confirmation renders above a live snackbar.
   Nothing in `gui/src` may call the global `confirm`, `alert` or `prompt`.
+
+- Collecting a *value* goes through `usePrompt()` from the same module and the
+  same provider — `(request) => Promise<string | null>`, `null` for every
+  dismissal route, `""` a deliberate answer rather than a cancellation.
+
+  ```ts
+  const prompt = usePrompt();
+  const alias = await prompt({ title, label, initialValue, confirmLabel });
+  if (alias === null) return;
+  ```
+
+  `label` is required: `window.prompt()` gave the box no accessible name, and
+  inside Electron it does not merely look wrong — `prompt` is unimplemented and
+  *throws*. Confirmations and prompts share one queue, so only one modal is ever
+  on screen. `shell/api-token-prompt.tsx` registers this prompt with `api.ts`'s
+  `setTokenRequester()`, which is how a 401 in the desktop shell can ask for an
+  admin token at all; `api.ts` keeps its `window.prompt` fallback in a try/catch
+  for anything that has not registered one.

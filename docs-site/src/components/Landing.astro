@@ -303,36 +303,45 @@ const tabs = [
 	 * not asked for it, and stealing focus scrolls the panel out from under
 	 * them. Keyboard selection does move focus, because that is how the
 	 * keyboard user follows the control they just operated.
+	 *
+	 * Bound on `astro:page-load`, not at module scope. Under the client-side
+	 * router this module runs once per session, so a one-time binding would work
+	 * on the first document and leave five inert buttons on every locale home
+	 * page a reader reached by navigating — a failure no build reports.
 	 */
-	for (const root of document.querySelectorAll<HTMLElement>('[data-m3-tabs]')) {
-		const tabs = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-		const panels = tabs.map(tab => document.getElementById(tab.getAttribute('aria-controls') ?? ''));
+	function bindSectionTabs(): void {
+		for (const root of document.querySelectorAll<HTMLElement>('[data-m3-tabs]')) {
+			const tabs = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+			const panels = tabs.map(tab => document.getElementById(tab.getAttribute('aria-controls') ?? ''));
 
-		const select = (index: number, focus: boolean) => {
+			const select = (index: number, focus: boolean) => {
+				tabs.forEach((tab, i) => {
+					const active = i === index;
+					tab.setAttribute('aria-selected', String(active));
+					tab.tabIndex = active ? 0 : -1;
+					const panel = panels[i];
+					if (panel) panel.hidden = !active;
+				});
+				if (focus) tabs[index].focus();
+			};
+
 			tabs.forEach((tab, i) => {
-				const active = i === index;
-				tab.setAttribute('aria-selected', String(active));
-				tab.tabIndex = active ? 0 : -1;
-				const panel = panels[i];
-				if (panel) panel.hidden = !active;
+				tab.addEventListener('click', () => select(i, false));
+				tab.addEventListener('keydown', event => {
+					const last = tabs.length - 1;
+					let next: number | null = null;
+					if (event.key === 'ArrowRight') next = i === last ? 0 : i + 1;
+					else if (event.key === 'ArrowLeft') next = i === 0 ? last : i - 1;
+					else if (event.key === 'Home') next = 0;
+					else if (event.key === 'End') next = last;
+					if (next !== null) {
+						event.preventDefault();
+						select(next, true);
+					}
+				});
 			});
-			if (focus) tabs[index].focus();
-		};
-
-		tabs.forEach((tab, i) => {
-			tab.addEventListener('click', () => select(i, false));
-			tab.addEventListener('keydown', event => {
-				const last = tabs.length - 1;
-				let next: number | null = null;
-				if (event.key === 'ArrowRight') next = i === last ? 0 : i + 1;
-				else if (event.key === 'ArrowLeft') next = i === 0 ? last : i - 1;
-				else if (event.key === 'Home') next = 0;
-				else if (event.key === 'End') next = last;
-				if (next !== null) {
-					event.preventDefault();
-					select(next, true);
-				}
-			});
-		});
+		}
 	}
+
+	document.addEventListener('astro:page-load', bindSectionTabs);
 </script>

@@ -1,0 +1,410 @@
+/* ============================================================================
+   M3 component anatomy, shared by every surface in this repository.
+
+   The portable half of `gui/src/styles/m3-shell.css`. That file mixes two
+   things: component anatomy (a tab, a menu, a button) and an application frame
+   (`.m3-app` / `.m3-page`, ten `dvh` units and five `position: fixed` rules that
+   assume a full-height desktop window, not a scrolling document). Only the
+   first half is portable, so only the first half is here — importing the whole
+   sheet into a documentation site would pin its body to the viewport and break
+   scrolling on every page.
+
+   Every value resolves to a role token written by `applyTokens`: no raw hex, no
+   `!important`, nothing that has to out-specify a sheet it is layered over.
+   That is the point of the rewrite — there is no other sheet to beat.
+
+   `--mono` is DEFINED here rather than inherited. In the dashboard it is
+   declared in the legacy stylesheet, so any consumer that imported the
+   components without that file silently lost the monospace face in the regex
+   builder's pattern field and every numeric readout. A component sheet that
+   depends on a file it does not name is not portable.
+
+   Deliberately absent: colour values, page layout, and anything a specific
+   product surface owns. A consumer positions these components; it does not have
+   to restyle them.
+   ============================================================================ */
+
+:root {
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+/* ------------------------------------------------------------- tab strip -- */
+
+.m3-tabstrip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--el-tabStrip-pad, 6px) 8px 0;
+  background: var(--el-tabStrip-bg, var(--m3-surface-container-low));
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-tablist {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.m3-tab {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 220px;
+  flex: 1 1 auto;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: transparent;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-tab:hover { background: var(--m3-surface-container); }
+.m3-tab.selected { background: var(--m3-surface); box-shadow: var(--e1); }
+.m3-tab.dragging { opacity: 0.5; }
+.m3-tab.drop-target { outline: 2px solid var(--m3-primary); outline-offset: -2px; }
+
+.m3-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: var(--h-tab);
+  padding: 0 4px 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+  border-radius: var(--r-m) 0 0 0;
+}
+.m3-tab.selected .m3-tab-btn { color: var(--m3-on-surface); font-weight: 500; }
+.m3-tab-btn svg { flex: 0 0 auto; width: 18px; height: 18px; }
+/* Specific enough to beat `.m3-tab-btn svg` on its own terms rather than with
+   `!important` — the pin is a status marker, not an icon at icon size. */
+.m3-tab-btn svg.m3-tab-pin { width: 14px; height: 14px; color: var(--m3-primary); }
+.m3-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tab-badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font-size: var(--t-label-s);
+  line-height: 1.6;
+}
+
+.m3-tab-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  align-self: center;
+  height: 28px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-tab-close:hover { background: var(--m3-surface-container-highest); }
+.m3-tab-close svg { width: 16px; height: 16px; }
+.m3-tab-close[hidden] { display: none; }
+
+.m3-tabstrip-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 10px;
+  margin-bottom: 6px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.m3-tabstrip-btn:hover { background: var(--m3-surface-container-highest); }
+.m3-tabstrip-btn[aria-expanded='true'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+.m3-tabstrip-btn svg { width: 20px; height: 20px; }
+
+/* ---- groups -------------------------------------------------------------
+
+   A group is a coloured header immediately before its members' run. The header
+   is a real button (collapse/expand) carrying the group's accessible name, so
+   the colour is decoration and never the only way to tell two groups apart.
+   ------------------------------------------------------------------------- */
+
+.m3-tabgroup {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  padding-inline: 4px;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 14%, transparent);
+  box-shadow: inset 0 -2px 0 0 var(--m3-group-color, var(--m3-tertiary));
+}
+.m3-tabgroup-head {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 30%, transparent);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-weight: 500;
+  cursor: pointer;
+}
+.m3-tabgroup-head:hover { background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 46%, transparent); }
+.m3-tabgroup-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tabgroup-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.m3-tabgroup.collapsed { flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------- menus -- */
+
+.m3-menu {
+  position: absolute;
+  z-index: 70;
+  min-width: 220px;
+  max-width: min(92vw, 380px);
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+}
+.m3-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: left;
+  cursor: pointer;
+}
+.m3-menu-item:hover { background: var(--m3-surface-container-highest); }
+.m3-menu-item svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+.m3-menu-item--danger { color: var(--m3-error); }
+.m3-menu-item--danger svg { color: var(--m3-error); }
+.m3-menu-heading {
+  padding: 8px 12px 4px;
+  font-size: var(--t-label-m);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.m3-menu-sep { height: 1px; margin: 6px 4px; background: var(--m3-outline-variant); }
+.m3-menu-item:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-menu-item:disabled:hover { background: transparent; }
+
+/* A menu that turns into a one-field form in place — renaming a group, naming a
+   new one. In place rather than in a dialog because the thing being named is
+   the element the menu is anchored to, and a modal would cover it. */
+.m3-menu-form { display: grid; gap: var(--sp-2); padding: 8px 12px 4px; }
+.m3-menu-form .m3-btn { min-height: 40px; padding: 0 16px; }
+
+/* ----------------------------------------------------------- primitives -- */
+
+.m3-card {
+  padding: var(--el-card-pad, var(--pad-card));
+  border-radius: var(--el-card-radius, var(--r-l));
+  background: var(--el-card-bg, var(--m3-surface-container-low));
+  color: var(--el-card-color, var(--m3-on-surface));
+  font-family: var(--el-card-font, inherit);
+}
+
+.m3-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--el-button-size, var(--h-btn));
+  padding: 0 var(--el-button-pad, 24px);
+  border: none;
+  border-radius: var(--el-button-radius, var(--r-pill));
+  font: inherit;
+  font-family: var(--el-button-font, inherit);
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms;
+}
+.m3-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-btn svg { width: 18px; height: 18px; }
+.m3-btn--filled { background: var(--el-button-bg, var(--m3-primary)); color: var(--m3-on-primary); }
+.m3-btn--filled:hover:not(:disabled) { box-shadow: var(--e1); }
+.m3-btn--tonal { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-btn--outlined { background: transparent; color: var(--m3-primary); box-shadow: inset 0 0 0 1px var(--m3-outline); }
+.m3-btn--text { background: transparent; color: var(--m3-primary); padding: 0 12px; }
+.m3-btn--text:hover:not(:disabled) { background: color-mix(in oklab, var(--m3-primary) 10%, transparent); }
+.m3-btn--danger { background: var(--m3-error); color: var(--m3-on-error); }
+
+.m3-segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.m3-segment {
+  min-height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.m3-segment.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); font-weight: 500; }
+
+.m3-field { display: grid; gap: 6px; }
+.m3-field-label {
+  display: block;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.m3-field-hint { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+
+.m3-input {
+  width: 100%;
+  min-height: var(--h-btn);
+  padding: 0 16px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container-lowest);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-body-m);
+}
+.m3-input:focus { border-color: var(--m3-primary); }
+.m3-input--mono { font-family: var(--mono); }
+
+/* 44px tall so the whole control clears the minimum hit target, not just the thumb. */
+.m3-slider-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.m3-slider {
+  flex: 1 1 160px;
+  height: 44px;
+  accent-color: var(--m3-primary);
+  background: transparent;
+  cursor: pointer;
+}
+.m3-slider-value {
+  flex: 0 0 auto;
+  min-width: 48px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+
+.m3-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.m3-chip.selected {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  border-color: transparent;
+  font-weight: 500;
+}
+
+.m3-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--m3-outline);
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container-highest);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.m3-switch.on { background: var(--m3-primary); border-color: var(--m3-primary); }
+.m3-switch:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-switch-thumb {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: var(--m3-outline);
+  transform: translateY(-50%);
+  transition: left 150ms cubic-bezier(0.2, 0, 0, 1), width 150ms, height 150ms, background 150ms;
+}
+.m3-switch.on .m3-switch-thumb { left: 26px; width: 20px; height: 20px; background: var(--m3-on-primary); }
+
+.m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.m3-row--split { justify-content: space-between; }
+.m3-stack { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* --------------------------------------------------------- accessibility -- */
+
+/* Reachable by a screen reader, invisible to everyone else. Used for the live
+   region that announces what a tab action just did. */
+.m3-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m3-tab,
+  .m3-btn,
+  .m3-switch,
+  .m3-switch-thumb { transition: none; }
+}

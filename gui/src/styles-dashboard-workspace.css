@@ -386,26 +386,15 @@
   min-width: 0;
 }
 
-.dash-sidecar-card__row .custom-select {
-  /* Reserve baseline space to prevent row reflow, but keep the trigger
-     compact instead of forcing a permanently wide fixed width. */
+.dash-sidecar-card__row .m3-select {
+  /* Reserve baseline space to prevent row reflow, but keep the control compact
+     instead of forcing a permanently wide fixed width. The native <select>
+     truncates a long option itself, so the ellipsis rules the hand-rolled
+     trigger needed are gone. */
   flex: 0 1 auto;
   width: auto;
   min-width: clamp(10rem, 24vw, 11.5rem);
   max-width: min(100%, 14rem);
-}
-
-.dash-sidecar-card__row .select-trigger {
-  width: 100%;
-  max-width: 100%;
-  justify-content: space-between;
-}
-
-.dash-sidecar-card__row .select-trigger > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
 }
 
 .dash-sidecar-card .setting-hint {

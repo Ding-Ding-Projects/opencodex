@@ -451,6 +451,28 @@ export const M3_EN = {
   "confirm.restoreForceAction": "Restore anyway",
   "confirm.exposeTitle": "Expose the proxy to your network",
   "confirm.exposeAction": "Expose",
+  // The second wave: four more decisions the browser was still drawing, found by
+  // a wider grep than the first pass used. Same rule — the body already exists
+  // beside the feature, only the headline and the labelled button are new.
+  "confirm.removeAccountTitle": "Remove this account",
+  "confirm.removeKeyTitle": "Remove this API key",
+  "confirm.removeAction": "Remove",
+  "confirm.restartTitle": "Restart the proxy",
+  "confirm.restartAction": "Restart",
+  "confirm.deleteModelTitle": "Delete this model",
+  "confirm.deleteAction": "Delete",
+
+  // ---- prompts ----
+  // Headline, field label and button for the awaitable text prompt. The native
+  // `prompt()` these replace had no field label at all — a screen reader
+  // announced the box as "edit, blank" — and threw outright inside Electron, so
+  // renaming a credential in the desktop app raised an exception rather than
+  // asking anything.
+  "prompt.aliasTitle": "Set a display name",
+  "prompt.aliasAction": "Save",
+  "auth.adminTokenTitle": "Admin token needed",
+  "auth.adminTokenLabel": "Admin token",
+  "auth.adminTokenAction": "Use this token",
 
   // ---- app-bar account switcher ----
   "switcher.title": "Codex accounts",

@@ -6,8 +6,7 @@ import { hashLogConversationQuery, matchesLogConversationId } from "../log-conve
 import { statusCodeInfo } from "../status-codes";
 import { IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
-import { Notice } from "../ui";
-import { Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { Banner, Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { useConfirm } from "../shell/confirm-context";
 import { useNotifications } from "../shell/notifications-context";
@@ -866,9 +865,12 @@ export default function Logs({ apiBase }: { apiBase: string }) {
         )}
       </div>
 
+      {/* Informational, not a success: it reports what the active conversation filter
+          adds up to, and it stays for exactly as long as that filter does. The legacy
+          notice had no info tone, so this had been painting itself green. */}
       {conversationTotals && (
         <div style={{ marginBottom: 12 }}>
-          <Notice tone="ok">
+          <Banner tone="info">
             {t("logs.conversation.totals", {
               requests: conversationTotals.requests,
               tokens: formatTokens(conversationTotals.totalTokens, localeTag ?? locale),
@@ -884,17 +886,23 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                 })}`
                 : ""}
             </span>
-          </Notice>
+          </Banner>
         </div>
       )}
 
       {error ? (
-        <Notice tone="err">
-          {error}{" "}
-          <Button variant="text" onClick={() => void fetchLogs()} disabled={loading}>
-            {t("common.retry")}
-          </Button>
-        </Notice>
+        /* Stays until the fetch actually succeeds, with the retry that clears it as
+           the banner's own action rather than a word inside the sentence. */
+        <Banner
+          tone="error"
+          action={(
+            <Button variant="text" onClick={() => void fetchLogs()} disabled={loading}>
+              {t("common.retry")}
+            </Button>
+          )}
+        >
+          {error}
+        </Banner>
       ) : loading && logs.length === 0 ? (
         <Empty title={t("common.loading")} />
       ) : filteredLogs.length === 0 ? (

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import { installApiAuthFetch, resetApiAuthFetchForTests } from "../src/api";
+import { installApiAuthFetch, resetApiAuthFetchForTests, setTokenRequester } from "../src/api";
 
 const LEGACY_TOKEN_KEY = "opencodex-api-token";
 const globals = ["document", "window", "navigator", "sessionStorage", "fetch"] as const;
@@ -25,6 +25,9 @@ beforeEach(() => {
 
 afterEach(() => {
   window.prompt = originalPrompt;
+  // Module-level state that outlives a test: a requester left registered would
+  // answer the next test's 401 from a torn-down tree.
+  setTokenRequester(null);
   resetApiAuthFetchForTests();
   testWindow.close();
   for (const key of globals) {
@@ -80,6 +83,59 @@ test("prompted API tokens stay memory-only and are not written to sessionStorage
   expect(authorized).toBe(true);
   expect(sessionStorage.getItem(LEGACY_TOKEN_KEY)).toBeNull();
   expect(sessionStorage.length).toBe(0);
+});
+
+test("a registered requester is used in preference to window.prompt", async () => {
+  // The desktop shell is the whole point of the registry. Electron does not
+  // implement `window.prompt` — it throws — so before the React tree registered
+  // an M3 dialog, a 401 inside the app had no way to ask for a token and every
+  // authenticated call after it failed. `window.prompt` throwing here proves the
+  // registered requester is reached first rather than merely reached as well.
+  let promptCalls = 0;
+  let asked: string | null = null;
+  window.prompt = () => {
+    promptCalls += 1;
+    throw new Error("prompt() is not supported");
+  };
+  setTokenRequester(async message => { asked = message; return "  from-the-dialog  "; });
+
+  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    if (headers.get("X-OpenCodex-API-Key") === "from-the-dialog") return new Response("{}", { status: 200 });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  // 200, not a rejection: the retry carried the token the dialog returned, with
+  // its surrounding whitespace trimmed the same way the native path trims it.
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(promptCalls).toBe(0);
+  // The requester is handed the same explanation the native prompt showed, so
+  // there is only one copy of it to keep accurate.
+  expect(asked).toContain("ocx host token");
+});
+
+test("unregistering falls back to window.prompt rather than leaving nothing to ask with", async () => {
+  // `setTokenRequester(null)` runs when the React tree unmounts. Anything still
+  // making requests after that — or before it mounted — has to keep the old
+  // route, or a 401 becomes a silent, permanent failure.
+  setTokenRequester(async () => "never-used");
+  setTokenRequester(null);
+
+  let promptCalls = 0;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "fallback-token";
+  };
+  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    if (headers.get("X-OpenCodex-API-Key") === "fallback-token") return new Response("{}", { status: 200 });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(promptCalls).toBe(1);
 });
 
 test("cross-origin /api/* requests do not receive the API key or token prompt", async () => {

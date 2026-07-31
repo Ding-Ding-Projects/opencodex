@@ -1,29 +1,168 @@
 /* ============================================================================
-   Material 3 skin for the docs site.
+   The docs site's stylesheet. Singular.
 
-   The previous skin was "liquid glass": a monochrome grammar with translucent
-   chrome, authored independently of the dashboard. Two design systems for one
-   product is one too many, so this file retires it — every colour below
-   resolves to an `--m3-*` role from `m3-tokens.css`, which is generated from
-   the dashboard's own token engine.
+   What this replaces: three sheets stacked in a precedence order that had to be
+   explained in a comment — generated tokens, then a retired "liquid glass" skin
+   still carrying the layout, then a Material 3 skin painted last "so it wins
+   every colour conflict with what it is replacing". 900 lines of retired design
+   with 74 raw hex values, 7 `!important` declarations between them, and a whole
+   landing-page vocabulary (`.lp-*`) that nothing had rendered since the landing
+   was rewritten. There is one sheet now, and nothing left to out-specify: this
+   file contains no `!important` at all.
 
-   The strategy is deliberately *not* to restyle every Starlight component by
-   hand. Starlight already draws its whole interface from a small set of
-   `--sl-*` variables; remapping those onto M3 roles retints the entire site —
-   sidebar, search modal, code blocks, admonitions, tables, pagination — in one
-   place, and keeps working when Starlight adds a component. Only the pieces
-   whose *shape* is wrong for M3 (radius, elevation, the pill controls) are
-   restyled below.
+   Why unlayered rules beat Starlight without one: every Starlight stylesheet is
+   inside `@layer starlight.{base,reset,core,content,components,utils}`, and
+   unlayered CSS outranks every layer no matter what order it loads in. So the
+   remap below simply wins, and it keeps winning when Starlight adds a
+   component.
 
-   Functional data colour is exempt from M3 by the design rules — the frontier
+   The strategy is deliberately not "restyle every Starlight component". Starlight
+   draws its whole interface from a small set of `--sl-*` variables; expressing
+   those as M3 roles retints the sidebar, search modal, code blocks, admonitions,
+   tables and pagination in one place. Only the pieces whose *shape* is wrong for
+   M3 — radius, elevation, the pill controls, the two-row app bar — are restyled
+   by hand below.
+
+   Functional data colour is exempt from M3 by the design rules: the benchmark
    board series keep their own palette because there they are data, not chrome.
    ============================================================================ */
 
-/* ---- Starlight's variables, expressed as M3 roles ------------------------ */
+/* @generated:m3-tokens — start. Written by scripts/gen-docs-m3-tokens.ts; do not hand-edit. */
+/* Source: gui/src/theme/m3.ts at seed #2F6B4F, density 4.
+   Starlight's server render pins data-theme="dark" on <html>, so dark is the
+   unqualified default and light is authored as the override. */
+
+:root,
+:root[data-theme='dark'] {
+  --m3-primary: oklch(82.76% 0.0720 161.08);
+  --m3-on-primary: oklch(31.03% 0.0709 161.08);
+  --m3-primary-container: oklch(39.66% 0.0747 161.08);
+  --m3-on-primary-container: oklch(91.38% 0.0671 161.08);
+  --m3-secondary: oklch(82.76% 0.0245 161.08);
+  --m3-on-secondary: oklch(31.03% 0.0241 161.08);
+  --m3-secondary-container: oklch(39.66% 0.0254 161.08);
+  --m3-on-secondary-container: oklch(91.38% 0.0228 161.08);
+  --m3-tertiary: oklch(82.76% 0.0374 221.08);
+  --m3-on-tertiary: oklch(31.03% 0.0369 221.08);
+  --m3-tertiary-container: oklch(39.66% 0.0388 221.08);
+  --m3-on-tertiary-container: oklch(91.38% 0.0349 221.08);
+  --m3-error: oklch(82.76% 0.1478 27.00);
+  --m3-on-error: oklch(31.03% 0.1455 27.00);
+  --m3-error-container: oklch(39.66% 0.1533 27.00);
+  --m3-on-error-container: oklch(91.38% 0.1377 27.00);
+  --m3-ok: oklch(82.76% 0.1016 158.00);
+  --m3-on-ok-container: oklch(91.38% 0.0947 158.00);
+  --m3-ok-container: oklch(39.66% 0.1054 158.00);
+  --m3-warn: oklch(82.76% 0.1201 75.00);
+  --m3-on-warn-container: oklch(91.38% 0.1119 75.00);
+  --m3-warn-container: oklch(39.66% 0.1245 75.00);
+  --m3-surface: oklch(18.80% 0.0048 161.08);
+  --m3-on-surface: oklch(91.38% 0.0052 161.08);
+  --m3-surface-variant: oklch(39.66% 0.0153 161.08);
+  --m3-on-surface-variant: oklch(82.76% 0.0148 161.08);
+  --m3-surface-container-lowest: oklch(16.42% 0.0047 161.08);
+  --m3-surface-container-low: oklch(22.41% 0.0051 161.08);
+  --m3-surface-container: oklch(24.14% 0.0051 161.08);
+  --m3-surface-container-high: oklch(28.45% 0.0053 161.08);
+  --m3-surface-container-highest: oklch(32.76% 0.0055 161.08);
+  --m3-surface-dim: oklch(18.80% 0.0048 161.08);
+  --m3-surface-bright: oklch(34.48% 0.0056 161.08);
+  --m3-inverse-surface: oklch(91.38% 0.0052 161.08);
+  --m3-inverse-on-surface: oklch(31.03% 0.0055 161.08);
+  --m3-inverse-primary: oklch(48.28% 0.0771 161.08);
+  --m3-outline: oklch(65.52% 0.0159 161.08);
+  --m3-outline-variant: oklch(39.66% 0.0153 161.08);
+  --m3-scrim: oklch(0.00% 0.0035 161.08);
+  --e1: 0 1px 3px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
+  --e2: 0 2px 6px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.4);
+  --e3: 0 8px 24px rgba(0,0,0,.6), 0 2px 6px rgba(0,0,0,.4);
+  --h-btn: 41px;
+  --h-row: 46px;
+  --h-appbar: 60px;
+  --h-tab: 37px;
+  --h-nav: 47px;
+  --h-stat: 85px;
+  --pad-card: 15px;
+  --page-pad-y: 20px;
+  --page-pad-x: 20px;
+  --sp-1: 5px;
+  --sp-2: 9px;
+  --sp-3: 12px;
+  --sp-4: 17px;
+  --sp-5: 22px;
+  --t-display-s: 36.00px;
+  --t-headline-s: 24.00px;
+  --t-title-l: 22.00px;
+  --t-title-m: 16.00px;
+  --t-title-s: 14.00px;
+  --t-body-l: 16.00px;
+  --t-body-m: 14.00px;
+  --t-body-s: 12.50px;
+  --t-label-l: 14.00px;
+  --t-label-m: 12.00px;
+  --t-label-s: 11.00px;
+  --r-s: 8px;
+  --r-m: 12px;
+  --r-l: 16px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+  --m3-type-scale: 1;
+}
+
+:root[data-theme='light'] {
+  --m3-primary: oklch(48.28% 0.0771 161.08);
+  --m3-on-primary: oklch(100.00% 0.0608 161.08);
+  --m3-primary-container: oklch(91.38% 0.0671 161.08);
+  --m3-on-primary-container: oklch(22.41% 0.0656 161.08);
+  --m3-secondary: oklch(48.28% 0.0262 161.08);
+  --m3-on-secondary: oklch(100.00% 0.0207 161.08);
+  --m3-secondary-container: oklch(91.38% 0.0228 161.08);
+  --m3-on-secondary-container: oklch(22.41% 0.0223 161.08);
+  --m3-tertiary: oklch(48.28% 0.0401 221.08);
+  --m3-on-tertiary: oklch(100.00% 0.0316 221.08);
+  --m3-tertiary-container: oklch(91.38% 0.0349 221.08);
+  --m3-on-tertiary-container: oklch(22.41% 0.0341 221.08);
+  --m3-error: oklch(48.28% 0.1581 27.00);
+  --m3-on-error: oklch(100.00% 0.1248 27.00);
+  --m3-error-container: oklch(91.38% 0.1377 27.00);
+  --m3-on-error-container: oklch(22.41% 0.1347 27.00);
+  --m3-ok: oklch(46.55% 0.1082 158.00);
+  --m3-on-ok-container: oklch(22.41% 0.0926 158.00);
+  --m3-ok-container: oklch(91.38% 0.0947 158.00);
+  --m3-warn: oklch(44.83% 0.1272 75.00);
+  --m3-on-warn-container: oklch(22.41% 0.1094 75.00);
+  --m3-warn-container: oklch(91.38% 0.1119 75.00);
+  --m3-surface: oklch(98.28% 0.0048 161.08);
+  --m3-on-surface: oklch(22.41% 0.0051 161.08);
+  --m3-surface-variant: oklch(91.38% 0.0138 161.08);
+  --m3-on-surface-variant: oklch(39.66% 0.0153 161.08);
+  --m3-surface-container-lowest: oklch(100.00% 0.0047 161.08);
+  --m3-surface-container-low: oklch(96.55% 0.0049 161.08);
+  --m3-surface-container: oklch(94.83% 0.0050 161.08);
+  --m3-surface-container-high: oklch(93.10% 0.0051 161.08);
+  --m3-surface-container-highest: oklch(91.38% 0.0052 161.08);
+  --m3-surface-dim: oklch(88.79% 0.0053 161.08);
+  --m3-surface-bright: oklch(98.28% 0.0048 161.08);
+  --m3-inverse-surface: oklch(31.03% 0.0055 161.08);
+  --m3-inverse-on-surface: oklch(95.69% 0.0049 161.08);
+  --m3-inverse-primary: oklch(82.76% 0.0720 161.08);
+  --m3-outline: oklch(56.90% 0.0160 161.08);
+  --m3-outline-variant: oklch(82.76% 0.0148 161.08);
+  --m3-scrim: oklch(0.00% 0.0035 161.08);
+  --e1: 0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
+  --e2: 0 2px 6px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.07);
+  --e3: 0 8px 24px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08);
+}
+/* @generated:m3-tokens — end. */
+
+/* ==========================================================================
+   1. Starlight's variables, expressed as M3 roles
+   ========================================================================== */
 
 :root,
 :root[data-theme='dark'],
-:root[data-theme='light'] {
+:root[data-theme='light'],
+::backdrop {
   /* Starlight names greys by lightness: gray-1 is nearest the text colour and
      gray-6 nearest the background. Mapping them onto the surface-container
      ladder keeps that ordering in both themes without a second set of values. */
@@ -71,127 +210,185 @@
   --sl-color-purple-low: var(--m3-tertiary-container);
   --sl-color-purple-high: var(--m3-on-tertiary-container);
 
-  --sl-font: var(--m3-font, "Roboto Flex", "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif);
-  --sl-font-mono: var(--m3-font-mono, ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace);
+  --sl-font: var(--m3-font, "Geist Variable", "Pretendard Variable", system-ui, sans-serif);
+  --sl-font-mono: var(--mono);
 
   --sl-shadow-sm: var(--e1);
   --sl-shadow-md: var(--e2);
   --sl-shadow-lg: var(--e3);
+
+  /* Pagefind ships its own palette and its own greys, and it draws the search
+     results a reader looks at most. Left alone it is the one surface on the
+     site still painted in hardcoded #393939 / #eeeeee — visibly a different
+     product inside the search modal. Its variables are public API, so this is
+     the supported way to make the results M3 rather than restyling its
+     internals. `--pagefind-ui-primary` is what it uses for links and the
+     focused result, hence the primary role rather than a text colour. */
+  --pagefind-ui-primary: var(--m3-primary);
+  --pagefind-ui-text: var(--m3-on-surface);
+  --pagefind-ui-background: var(--m3-surface-container);
+  --pagefind-ui-border: var(--m3-outline-variant);
+  --pagefind-ui-tag: var(--m3-surface-container-high);
+  --pagefind-ui-border-radius: var(--r-m);
+  --pagefind-ui-image-border-radius: var(--r-s);
+  --pagefind-ui-font: var(--sl-font);
 }
 
-/* Starlight sets `color-scheme` from its own theme switch; keep native form
-   controls and scrollbars in step with the M3 surface underneath them. */
+/* Starlight's badges put white text on a container background — correct for its
+   own high-contrast palette, and wrong against an M3 container, whose legible
+   pair is the matching `on-*-container` role. On a light theme the difference
+   is white-on-pale, which is to say unreadable. */
+.sl-badge {
+  --sl-badge-default-text: var(--m3-on-primary-container);
+  --sl-badge-note-text: var(--m3-on-primary-container);
+  --sl-badge-danger-text: var(--m3-on-error-container);
+  --sl-badge-success-text: var(--m3-on-ok-container);
+  --sl-badge-caution-text: var(--m3-on-warn-container);
+  --sl-badge-tip-text: var(--m3-on-tertiary-container);
+}
+
+/* Native form controls and scrollbars follow the surface they sit on. The
+   runtime sets `color-scheme` inline as well; this covers the first paint and
+   the no-JavaScript case. */
 :root[data-theme='dark'] { color-scheme: dark; }
 :root[data-theme='light'] { color-scheme: light; }
 
-/* ---- shape and elevation ------------------------------------------------ */
+/* ==========================================================================
+   2. Document
+   ========================================================================== */
+
+html { background-color: var(--m3-surface); }
 
 body {
   background: var(--m3-surface);
   color: var(--m3-on-surface);
   font-family: var(--sl-font);
   font-weight: var(--m3-fw, 400);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* M3 wants generous, consistent corners. Starlight's defaults are squarer. */
-.card,
-.starlight-aside,
-figure.frame,
-details,
-table {
-  border-radius: var(--r-l, 16px);
-}
-pre.astro-code,
-.expressive-code .frame pre {
-  border-radius: var(--r-m, 12px);
-}
-:where(.sl-markdown-content) :where(code:not(:where(pre *))) {
-  border-radius: var(--r-s, 8px);
-  padding: 0.15em 0.4em;
-}
-
-.starlight-aside {
-  border-inline-start-width: 4px;
-  padding: var(--sp-3, 16px);
-}
-
-/* Search and nav controls read as M3 pills rather than square boxes. */
-site-search button[data-open-modal],
-.sl-flex button[aria-expanded],
-starlight-theme-select select,
-starlight-lang-select select {
-  border-radius: var(--r-pill, 999px);
-  border: 1px solid var(--m3-outline-variant);
-  background: var(--m3-surface-container-high);
-  color: var(--m3-on-surface-variant);
-}
-
-dialog[aria-label] {
-  border-radius: var(--r-l, 16px);
-  border: 1px solid var(--m3-outline-variant);
-  background: var(--m3-surface-container);
-  box-shadow: var(--e3);
-}
-
-/* The header is a Material top app bar: a container surface with one hairline,
-   no translucency and no blur. */
-header.header {
-  background: var(--m3-surface-container);
-  border-bottom: 1px solid var(--m3-outline-variant);
-  backdrop-filter: none;
-}
-
-/* Links carry the primary role, and get a real focus ring — the previous skin
-   relied on colour alone, which fails a keyboard user on a bright display. */
-.sl-markdown-content a:not(:where(.not-content *)) {
-  color: var(--m3-primary);
-  text-underline-offset: 0.2em;
-}
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--m3-primary);
-  outline-offset: 2px;
-  border-radius: var(--r-s, 8px);
-}
-
-/* Sidebar entries take the M3 active pill instead of a left rule. */
-.sidebar-content a[aria-current='page'] {
-  background: var(--m3-secondary-container);
-  color: var(--m3-on-secondary-container);
-  border-radius: var(--r-pill, 999px);
-  font-weight: 600;
-}
-.sidebar-content a:hover {
-  background: var(--m3-surface-container-highest);
-  border-radius: var(--r-pill, 999px);
-}
-
-/* ---- the ambient wash, retired ------------------------------------------
-
-   The sheet this replaces painted a fixed tri-radial wash in hardcoded RGB —
-   a cool blue, a green and a warm sand. Those values predate the seed picker
-   and cannot follow it, so choosing a purple accent used to leave a blue-green
-   glow behind it. Re-derived from the live roles instead, so the background
-   tracks whatever seed the visitor picked; a flat surface underneath keeps it
-   honest when `color-mix` is unavailable.
-   ------------------------------------------------------------------------- */
-
-html { background-color: var(--m3-surface); }
-
-/* The theme-qualified selectors are not redundant: the sheet being replaced
-   sets this on `:root[data-theme='light'] body::before`, which outspecifies a
-   bare `body::before` no matter which file loads last. Matching its shape is
-   what actually retires the old wash. */
-:root body::before,
-:root[data-theme='light'] body::before,
-:root[data-theme='dark'] body::before {
+/* The retired sheet painted a fixed tri-radial wash in hardcoded RGB — a cool
+   blue, a green and a warm sand chosen before the seed picker existed, so
+   picking a purple accent left a blue-green glow behind it. Re-derived from the
+   live roles so the background tracks whatever seed the visitor chose, and kept
+   faint enough that text contrast is decided by the surface, not the wash. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  filter: blur(70px);
   background:
     radial-gradient(42% 38% at 12% 6%, color-mix(in oklab, var(--m3-primary) 16%, transparent), transparent 70%),
     radial-gradient(46% 42% at 88% 18%, color-mix(in oklab, var(--m3-tertiary) 13%, transparent), transparent 70%),
     radial-gradient(40% 36% at 70% 92%, color-mix(in oklab, var(--m3-secondary) 11%, transparent), transparent 72%);
 }
 
-/* Starlight's chrome was glass; M3 surfaces are opaque containers. */
-header.header,
+/* Colour alone is not a focus indicator on a bright display. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+  border-radius: var(--r-s);
+}
+
+/* ==========================================================================
+   3. The two-row app bar
+
+   Starlight's header is one fixed row whose height is `--sl-nav-height`, and
+   every other measurement in the theme is expressed against that variable — the
+   sidebar's top inset, the main frame's padding, the mobile ToC, scroll padding
+   for anchor links. So the tab strip is added by making the header two rows and
+   redefining `--sl-nav-height` as their sum: everything that offsets itself
+   against the header keeps working, with no per-component patch and nothing to
+   re-fix when Starlight adds a component that reads it.
+
+   The rows are sized independently because two things that were centred against
+   the old single-row height would otherwise centre themselves across both rows
+   — the mobile menu button would sit halfway down the tab strip, and the logo
+   would grow to twice its size.
+   ========================================================================== */
+
+:root {
+  --ocx-appbar-h: 3.5rem;
+  /* `--h-tab` is a density token, so the strip gets shorter with the density
+     slider and the header follows it. The constant is the strip's own padding
+     and hairline (6px top + 6px bottom + 1px border). */
+  --ocx-tabstrip-h: calc(var(--h-tab, 37px) + 13px);
+  --sl-nav-height: calc(var(--ocx-appbar-h) + var(--ocx-tabstrip-h));
+}
+@media (min-width: 50em) {
+  :root { --ocx-appbar-h: 4rem; }
+}
+
+header.header {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: var(--m3-surface-container);
+  /* The strip draws the hairline at the header's bottom edge; a second one here
+     would render as a double rule. */
+  border-bottom: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ocx-appbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sl-nav-gap);
+  height: var(--ocx-appbar-h);
+  padding-inline: var(--sl-nav-pad-x);
+  min-width: 0;
+}
+
+/* Room reserved before the strip mounts, so the page does not jump once the
+   island hydrates. The height is the same expression the header sums, so the
+   two cannot disagree. */
+.ocx-tabhost {
+  flex: 0 0 auto;
+  min-height: var(--ocx-tabstrip-h);
+  min-width: 0;
+  display: flex;
+}
+.ocx-tabhost > * { flex: 1 1 auto; min-width: 0; }
+
+/* Starlight centres its menu button and sizes its logo against the whole nav
+   height; both belong to the top row only. */
+starlight-menu-button button {
+  top: calc((var(--ocx-appbar-h) - var(--sl-menu-button-size)) / 2);
+}
+.site-title img { height: calc(var(--ocx-appbar-h) - 2 * var(--sl-nav-pad-y)); }
+
+/* Below the sidebar breakpoint the fixed hamburger overlays the bar's trailing
+   end; reserve room so it never lands on top of a control. */
+@media (max-width: 49.99em) {
+  [data-has-sidebar] .ocx-appbar {
+    padding-inline-end: calc(var(--sl-menu-button-size) + var(--sl-nav-pad-x) + 0.5rem);
+  }
+}
+
+/* The strip is horizontal chrome; on a phone it must scroll inside itself
+   rather than widening the document. The overflow menu still catches everything
+   that does not fit, so this is the second line of defence, not the first. */
+@media (max-width: 49.99em) {
+  .m3-tabstrip { overflow-x: auto; scrollbar-width: none; }
+  .m3-tabstrip::-webkit-scrollbar { display: none; }
+  .m3-tab { max-width: 180px; }
+}
+
+@media print {
+  header.header { position: static; height: auto; }
+  .ocx-tabhost { display: none; }
+}
+
+/* ==========================================================================
+   4. Starlight chrome, reshaped for M3
+   ========================================================================== */
+
 .sidebar-pane,
 .right-sidebar {
   backdrop-filter: none;
@@ -199,7 +396,89 @@ header.header,
 }
 .sidebar-pane { background: var(--m3-surface-container); }
 
-/* ---- appearance panel --------------------------------------------------- */
+/* Sidebar entries take the M3 active pill instead of a left rule. */
+.sidebar-content a { border-radius: var(--r-pill); }
+.sidebar-content a[aria-current='page'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font-weight: 600;
+}
+.sidebar-content a:hover:not([aria-current='page']) {
+  background: var(--m3-surface-container-highest);
+}
+
+.right-sidebar a[aria-current='true'] {
+  color: var(--m3-primary);
+  font-weight: 600;
+}
+
+/* M3 wants generous, consistent corners. Starlight's defaults are squarer. */
+.card,
+.sl-link-card,
+.starlight-aside,
+figure.frame,
+details,
+table {
+  border-radius: var(--r-l);
+}
+.sl-link-card,
+article.card {
+  background: var(--m3-surface-container-low);
+  border: 1px solid var(--m3-outline-variant);
+  box-shadow: none;
+}
+.sl-link-card:hover,
+article.card:hover {
+  background: var(--m3-surface-container);
+  border-color: var(--m3-outline);
+}
+.expressive-code .frame { --ec-brdRad: var(--r-m); }
+pre.astro-code { border-radius: var(--r-m); }
+:where(.sl-markdown-content) :where(code:not(:where(pre *))) {
+  border-radius: var(--r-s);
+  padding: 0.15em 0.4em;
+}
+
+.starlight-aside {
+  border-inline-start-width: 4px;
+  padding: var(--sp-3);
+}
+
+/* A wide table scrolls inside its own container; the page body never does. */
+.sl-markdown-content table {
+  border-collapse: separate;
+  border-spacing: 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* Search and the preference controls read as M3 pills rather than square boxes. */
+site-search button[data-open-modal],
+starlight-theme-select select,
+starlight-lang-select select {
+  border-radius: var(--r-pill);
+  border: 1px solid var(--m3-outline-variant);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-variant);
+}
+
+dialog[aria-label] {
+  border-radius: var(--r-l);
+  border: 1px solid var(--m3-outline-variant);
+  background: var(--m3-surface-container);
+  box-shadow: var(--e3);
+}
+dialog::backdrop { backdrop-filter: blur(6px); }
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--m3-primary);
+  text-underline-offset: 0.2em;
+}
+
+/* ==========================================================================
+   5. Appearance panel
+   ========================================================================== */
 
 .m3-appearance { position: relative; display: flex; align-items: center; }
 
@@ -209,7 +488,7 @@ header.header,
   width: 36px;
   height: 36px;
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-pill);
   background: var(--m3-surface-container-high);
   color: var(--m3-on-surface-variant);
   cursor: pointer;
@@ -220,18 +499,22 @@ header.header,
 }
 
 /* Anchored to its button and non-modal: it restyles the page behind it, so it
-   must never cover the thing the visitor is judging. */
+   must never cover the thing the visitor is judging. On a phone it becomes a
+   full-width sheet under the bar rather than a 320px card hanging off the
+   viewport edge. */
 .m3-appearance__panel {
   position: absolute;
   top: calc(100% + 8px);
   inset-inline-end: 0;
   z-index: 100;
   width: min(320px, calc(100vw - 24px));
+  max-height: min(70vh, 34rem);
+  overflow-y: auto;
   display: grid;
-  gap: var(--sp-3, 16px);
-  padding: var(--sp-3, 16px);
+  gap: var(--sp-3);
+  padding: var(--sp-3);
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-l, 16px);
+  border-radius: var(--r-l);
   background: var(--m3-surface-container);
   color: var(--m3-on-surface);
   box-shadow: var(--e3);
@@ -240,7 +523,7 @@ header.header,
 
 .m3-appearance__row { display: grid; gap: 8px; }
 .m3-appearance__label {
-  font-size: var(--t-label-m, 12px);
+  font-size: var(--t-label-m);
   font-weight: 600;
   letter-spacing: 0.4px;
   text-transform: uppercase;
@@ -252,11 +535,11 @@ header.header,
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--m3-on-surface);
   font: inherit;
-  font-size: var(--t-label-l, 14px);
+  font-size: var(--t-label-l);
   cursor: pointer;
 }
 .m3-appearance__chips button[aria-pressed='true'] {
@@ -265,13 +548,13 @@ header.header,
   border-color: transparent;
 }
 
-/* Swatches are 28px so the touch target clears the 24px minimum with its ring. */
+/* 28px so the swatch plus its selection ring clears the minimum hit target. */
 .m3-appearance__swatch {
   width: 28px;
   height: 28px;
   min-height: 28px;
   padding: 0;
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-pill);
   border: 1px solid var(--m3-outline-variant);
 }
 .m3-appearance__swatch[aria-pressed='true'] {
@@ -280,29 +563,45 @@ header.header,
 }
 
 .m3-appearance__panel input[type='color'] {
-  width: 32px;
-  height: 28px;
+  width: 44px;
+  height: 32px;
   padding: 0;
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-s, 8px);
+  border-radius: var(--r-s);
   background: transparent;
   cursor: pointer;
 }
-.m3-appearance__panel input[type='range'] { width: 100%; accent-color: var(--m3-primary); }
+.m3-appearance__panel input[type='range'] { width: 100%; height: 32px; accent-color: var(--m3-primary); }
 .m3-appearance__panel select {
   width: 100%;
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 10px;
   border: 1px solid var(--m3-outline);
-  border-radius: var(--r-s, 8px);
+  border-radius: var(--r-s);
   background: var(--m3-surface);
   color: var(--m3-on-surface);
   font: inherit;
 }
+.m3-appearance__value {
+  font-family: var(--mono);
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+.m3-appearance__preview {
+  padding: var(--sp-2);
+  border: 1px dashed var(--m3-outline-variant);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-low);
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font, inherit);
+  font-weight: var(--m3-fw, 400);
+  font-size: var(--t-body-m);
+}
 .m3-appearance__reset {
-  min-height: 36px;
+  min-height: 40px;
   border: 1px solid var(--m3-outline);
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--m3-on-surface);
   font: inherit;
@@ -310,18 +609,24 @@ header.header,
 }
 .m3-appearance__reset:hover { background: var(--m3-surface-container-highest); }
 
-/* ---- landing page ------------------------------------------------------- */
+/* ==========================================================================
+   6. Landing page
+   ========================================================================== */
+
+/* The landing is wider than a documentation column and owns its own padding. */
+.sl-markdown-content:has(.m3-lp) { max-width: none; }
+main:has(.m3-lp) .content-panel { border: 0; padding-block: 0; }
 
 .m3-lp {
   max-width: 1120px;
   margin-inline: auto;
-  padding: var(--sp-5, 32px) var(--sp-4, 24px) var(--sp-6, 48px);
+  padding: var(--sp-5) var(--sp-4) calc(var(--sp-5) * 1.5);
 }
 
-.m3-lp__hero { text-align: center; padding-block: var(--sp-5, 32px) var(--sp-4, 24px); }
+.m3-lp__hero { text-align: center; padding-block: var(--sp-5) var(--sp-4); }
 .m3-lp__eyebrow {
   margin: 0 0 8px;
-  font-size: var(--t-label-m, 12px);
+  font-size: var(--t-label-m);
   font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -341,22 +646,23 @@ header.header,
   max-width: 62ch;
   margin: 0 auto;
   color: var(--m3-on-surface-variant);
-  font-size: var(--t-body-l, 16px);
+  font-size: var(--t-body-l);
 }
+:lang(ko) .m3-lp__title, :lang(zh-CN) .m3-lp__title { word-break: keep-all; }
 
 .m3-lp__cta {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: var(--sp-2, 12px);
-  margin-block: var(--sp-4, 24px);
+  gap: var(--sp-2);
+  margin-block: var(--sp-4);
 }
 .m3-lp__btn {
   display: inline-flex;
   align-items: center;
   min-height: 44px; /* touch target */
   padding: 0 24px;
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-pill);
   font-weight: 600;
   text-decoration: none;
 }
@@ -381,22 +687,21 @@ header.header,
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-pill);
   background: var(--m3-surface-container-low);
   color: var(--m3-on-surface-variant);
-  font-size: var(--t-label-l, 14px);
+  font-size: var(--t-label-l);
 }
 
-/* Browser-style strip, same anatomy as the dashboard's. */
+/* In-page section tabs. Distinct from the browser strip in the app bar: those
+   navigate between documents, these switch panels inside one. */
 .m3-lp__tablist {
   display: flex;
   gap: 4px;
-  /* Overflow scrolls rather than clipping — a tab the visitor cannot reach is
-     a section that does not exist to them. */
   overflow-x: auto;
   scrollbar-width: thin;
   padding-bottom: 2px;
-  margin-bottom: var(--sp-4, 24px);
+  margin-bottom: var(--sp-4);
   border-bottom: 1px solid var(--m3-outline-variant);
 }
 .m3-lp__tab {
@@ -405,11 +710,11 @@ header.header,
   padding: 0 18px;
   border: none;
   border-bottom: 2px solid transparent;
-  border-radius: var(--r-s, 8px) var(--r-s, 8px) 0 0;
+  border-radius: var(--r-s) var(--r-s) 0 0;
   background: transparent;
   color: var(--m3-on-surface-variant);
   font: inherit;
-  font-size: var(--t-label-l, 14px);
+  font-size: var(--t-label-l);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -420,7 +725,7 @@ header.header,
   border-bottom-color: var(--m3-primary);
 }
 
-.m3-lp__panel { display: grid; gap: var(--sp-4, 24px); }
+.m3-lp__panel { display: grid; gap: var(--sp-4); }
 .m3-lp__panel[hidden] { display: none; }
 
 .m3-lp__figure { margin: 0; }
@@ -430,95 +735,101 @@ header.header,
   width: 100%;
   height: auto;
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-l, 16px);
+  border-radius: var(--r-l);
   box-shadow: var(--e1);
 }
 
 .m3-lp__grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--sp-3, 16px);
+  gap: var(--sp-3);
 }
 .m3-lp__card {
-  padding: var(--sp-3, 16px);
+  padding: var(--sp-3);
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-l, 16px);
+  border-radius: var(--r-l);
   background: var(--m3-surface-container-low);
 }
 .m3-lp__card h3 {
   margin: 0 0 6px;
-  font-size: var(--t-title-m, 16px);
+  font-size: var(--t-title-m);
   color: var(--m3-on-surface);
 }
-.m3-lp__card p { margin: 0; color: var(--m3-on-surface-variant); font-size: var(--t-body-m, 14px); }
+.m3-lp__card p { margin: 0; color: var(--m3-on-surface-variant); font-size: var(--t-body-m); }
 .m3-lp__card--link { display: block; text-decoration: none; }
 .m3-lp__card--link:hover { background: var(--m3-surface-container-high); border-color: var(--m3-outline); }
 
-.m3-lp__featgroup { display: grid; gap: var(--sp-2, 12px); }
+.m3-lp__featgroup { display: grid; gap: var(--sp-2); }
 .m3-lp__grouptitle {
   margin: 0;
-  font-size: var(--t-label-m, 12px);
+  font-size: var(--t-label-m);
   font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--m3-on-surface-variant);
 }
 
-.m3-lp__shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--sp-4, 24px); }
+.m3-lp__shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--sp-4); }
 .m3-lp__shot { margin: 0; display: grid; gap: 8px; }
 .m3-lp__shot figcaption { display: grid; gap: 2px; }
 .m3-lp__shot strong { color: var(--m3-on-surface); }
-.m3-lp__shot span { color: var(--m3-on-surface-variant); font-size: var(--t-body-s, 13px); }
+.m3-lp__shot span { color: var(--m3-on-surface-variant); font-size: var(--t-body-s); }
 
-.m3-lp__steps { display: grid; gap: var(--sp-2, 12px); margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.m3-lp__steps { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
 .m3-lp__steps li {
   display: flex;
   align-items: flex-start;
-  gap: var(--sp-2, 12px);
-  padding: var(--sp-2, 12px) var(--sp-3, 16px);
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-m, 12px);
+  border-radius: var(--r-m);
   background: var(--m3-surface-container-low);
+  min-width: 0;
 }
+.m3-lp__steps li > div { min-width: 0; }
 .m3-lp__stepnum {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
   width: 28px;
   height: 28px;
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-pill);
   background: var(--m3-secondary-container);
   color: var(--m3-on-secondary-container);
-  font-size: var(--t-label-m, 12px);
+  font-size: var(--t-label-m);
   font-weight: 700;
 }
 .m3-lp__steps code {
   display: block;
   font-family: var(--sl-font-mono);
-  font-size: var(--t-body-s, 13px);
+  font-size: var(--t-body-s);
   color: var(--m3-on-surface);
   /* A long command scrolls inside its row rather than widening the page. */
   overflow-x: auto;
   white-space: pre;
 }
-.m3-lp__stepnote { display: block; margin-top: 2px; color: var(--m3-on-surface-variant); font-size: var(--t-label-l, 14px); }
+.m3-lp__stepnote { display: block; margin-top: 2px; color: var(--m3-on-surface-variant); font-size: var(--t-label-l); }
 .m3-lp__footnote { margin: 0; }
 
 .m3-lp__links { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .m3-lp__links a { color: var(--m3-primary); text-decoration: none; }
 .m3-lp__links a:hover { text-decoration: underline; }
 
-/* Without JavaScript every panel stays visible, so the tab strip is hidden
+/* Without JavaScript every panel stays visible, so the section tabs are hidden
    rather than left as five controls that do nothing. */
 @media (scripting: none) {
   .m3-lp__tablist { display: none; }
   .m3-lp__panel[hidden] { display: grid; }
 }
 
+/* ==========================================================================
+   7. Motion
+   ========================================================================== */
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
   }
 }

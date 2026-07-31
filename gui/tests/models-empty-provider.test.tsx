@@ -6,6 +6,7 @@ import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LanguageProvider } from "../src/i18n/provider";
 import { NotificationsProvider } from "../src/shell/notifications";
+import { ConfirmProvider } from "../src/shell/confirm";
 import SnackbarHost from "../src/shell/SnackbarHost";
 import Models from "../src/pages/Models";
 import { EmptyProviderHint } from "../src/pages/models-provider-hints";
@@ -152,10 +153,12 @@ test("Models page combines final visibility, atomic actions, discovery status, a
       root.render(
         <LanguageProvider>
           <NotificationsProvider>
-            <Models apiBase="http://localhost" />
-            {/* Action outcomes are snackbars now, so the host has to be in the tree for
-                this test to still see a failed save reported to the user. */}
-            <SnackbarHost />
+            <ConfirmProvider>
+              <Models apiBase="http://localhost" />
+              {/* Action outcomes are snackbars now, so the host has to be in the tree for
+                  this test to still see a failed save reported to the user. */}
+              <SnackbarHost />
+            </ConfirmProvider>
           </NotificationsProvider>
         </LanguageProvider>,
       );
@@ -183,10 +186,13 @@ test("Models page combines final visibility, atomic actions, discovery status, a
     expect(container.querySelector(".badge.badge-amber")?.textContent).toContain("Discovery failed");
     expect(container.textContent).not.toContain("Not selected");
 
-    await act(async () => container.querySelector<HTMLButtonElement>('button.select-trigger[aria-label="Shadow Call Intercept"]')?.click());
-    // The workspace Select portals its listbox to document.body, so the options are not inside
-    // `container`. Query the document instead of the mount node.
-    const shadowOptions = [...testWindow.document.querySelectorAll('[role="option"]')].map(option => option.textContent);
+    // Supersession: the shadow-call picker is a native <select> now, so its options
+    // live in the element itself rather than in a listbox portaled to document.body.
+    // The invariant is unchanged — the picker offers only the models that are
+    // actually visible to Codex, never a disabled or unselected one.
+    const shadowPicker = container.querySelector<HTMLSelectElement>('select[aria-label="Shadow Call Intercept"]');
+    expect(shadowPicker).toBeTruthy();
+    const shadowOptions = [...shadowPicker!.options].map(option => option.textContent);
     expect(shadowOptions).toContain(`${provider}/gemini-pro`);
     expect(shadowOptions).not.toContain(`${provider}/claude-opus`);
 
@@ -556,10 +562,12 @@ test("a poll that resolves after a forced refresh cannot overwrite newer models"
       root.render(
         <LanguageProvider>
           <NotificationsProvider>
-            <Models apiBase="http://localhost" />
-            {/* Action outcomes are snackbars now, so the host has to be in the tree for
-                this test to still see a failed save reported to the user. */}
-            <SnackbarHost />
+            <ConfirmProvider>
+              <Models apiBase="http://localhost" />
+              {/* Action outcomes are snackbars now, so the host has to be in the tree for
+                  this test to still see a failed save reported to the user. */}
+              <SnackbarHost />
+            </ConfirmProvider>
           </NotificationsProvider>
         </LanguageProvider>,
       );

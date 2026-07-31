@@ -49,6 +49,25 @@ afterEach(async () => {
   }
 });
 
+/**
+ * The two pickers this panel owns, by accessible name. They are native
+ * `<select>` elements now — the hand-rolled listbox button is gone — so a choice
+ * is made by setting `.value` and firing `change` rather than by opening a menu
+ * and clicking an option element.
+ */
+function selectByLabel(label: string): HTMLSelectElement | null {
+  return host.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`);
+}
+
+async function choose(select: HTMLSelectElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value")!
+      .set!.call(select, value);
+    select.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
 function dash(overrides: Partial<Dash> = {}): Dash {
   return {
     t: (key: keyof typeof en) => en[key],
@@ -77,8 +96,8 @@ async function mount(d: Dash) {
 test("renders independent guidance and native-default controls with editable selection", async () => {
   await mount(dash());
 
-  const model = host.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="Sub-agent delegation"]')!;
-  const effort = host.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="Reasoning effort"]')!;
+  const model = selectByLabel("Sub-agent delegation")!;
+  const effort = selectByLabel("Reasoning effort")!;
   const defaults = host.querySelector<HTMLButtonElement>('button[aria-label="Use as native Codex subagent defaults"]')!;
   const guidance = host.querySelector<HTMLButtonElement>('button[aria-label="OpenCodex multi-agent guidance"]')!;
 
@@ -102,7 +121,7 @@ test("requires a selected model before enabling native Codex subagent defaults",
     syncCodexSubagentDefaults: false,
   }));
 
-  const model = host.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="Sub-agent delegation"]')!;
+  const model = selectByLabel("Sub-agent delegation")!;
   const defaults = host.querySelector<HTMLButtonElement>('button[aria-label="Use as native Codex subagent defaults"]')!;
   expect(model.disabled).toBe(false);
   expect(defaults.disabled).toBe(true);
@@ -124,14 +143,11 @@ test("sends the native-default opt-in independently from guidance", async () => 
 test("sends model clearing through the shared save path", async () => {
   await mount(dash());
 
-  const model = host.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="Sub-agent delegation"]')!;
-  await act(async () => { model.click(); });
-  const none = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]'))
-    .find(option => option.textContent === "None")!;
-  await act(async () => {
-    none.click();
-    await Promise.resolve();
-  });
+  const model = selectByLabel("Sub-agent delegation")!;
+  // "None" is still the empty-valued entry it was in the legacy listbox, so
+  // choosing it still means "clear the model" rather than "pick a model named None".
+  expect([...model.options].find(option => option.textContent === "None")?.value).toBe("");
+  await choose(model, "");
 
   expect(requests).toEqual([{ model: null, effort: "high" }]);
 });

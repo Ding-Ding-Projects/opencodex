@@ -3,11 +3,11 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
 import MemoryObservabilityCard from "../src/components/MemoryObservabilityCard";
 
 const originalFetch = globalThis.fetch;
 let restoreGlobals: (() => void) | undefined;
-let originalConfirm: typeof window.confirm | undefined;
 
 beforeEach(() => {
   Object.defineProperty(globalThis.navigator, "language", { configurable: true, value: "en-US" });
@@ -32,8 +32,6 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  if (originalConfirm && typeof window !== "undefined") window.confirm = originalConfirm;
-  originalConfirm = undefined;
   restoreGlobals?.();
 });
 
@@ -73,6 +71,15 @@ async function mountCard(respond: (url: string) => Promise<Response> | Response)
     localStorage: { configurable: true, value: testWindow.localStorage },
     IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
   });
+  // Drain & restart asks through the M3 confirmation now, not `window.confirm`.
+  // happy-dom has no top layer, so the native modal methods are stubbed to the
+  // one thing a test can observe: the `open` attribute.
+  const dialogProto = testWindow.HTMLDialogElement?.prototype as unknown as Record<string, unknown> | undefined;
+  if (dialogProto) {
+    dialogProto.showModal = function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+    dialogProto.show = function show(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+    dialogProto.close = function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
+  }
 
   const calls: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -87,7 +94,9 @@ async function mountCard(respond: (url: string) => Promise<Response> | Response)
     root = createRoot(container);
     root.render(
       <LanguageProvider>
-        <MemoryObservabilityCard apiBase="http://localhost" />
+        <ConfirmProvider>
+          <MemoryObservabilityCard apiBase="http://localhost" />
+        </ConfirmProvider>
       </LanguageProvider>,
     );
   });
@@ -167,9 +176,6 @@ test("Drain & restart posts /api/system/restart after confirm", async () => {
     return defaultRespond(url);
   });
 
-  originalConfirm = window.confirm;
-  window.confirm = () => true;
-
   const button = Array.from(container.querySelectorAll("button")).find(
     (el) => (el.textContent ?? "").includes("Drain & restart"),
   );
@@ -177,6 +183,20 @@ test("Drain & restart posts /api/system/restart after confirm", async () => {
 
   await act(async () => {
     button!.dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true }));
+    await new Promise(resolve => testWindow.setTimeout(resolve, 0));
+  });
+
+  // Cutting off in-flight turns is a decision, so nothing is posted until the
+  // user agrees — and the button they press names the action rather than "OK".
+  expect(restartPosts).toBe(0);
+  const dialog = container.querySelector("dialog");
+  expect(dialog).toBeTruthy();
+  expect(dialog!.textContent ?? "").toContain("Wait for 2 in-flight request(s)");
+  const agree = Array.from(dialog!.querySelectorAll("button")).find(el => el.textContent === "Restart");
+  expect(agree).toBeTruthy();
+
+  await act(async () => {
+    agree!.dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true }));
     await new Promise(resolve => testWindow.setTimeout(resolve, 0));
   });
 

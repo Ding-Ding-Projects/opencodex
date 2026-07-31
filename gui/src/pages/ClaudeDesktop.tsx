@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
 import { IconChevron, IconSearch } from "../icons";
-import { Notice } from "../ui";
-import { Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { Banner, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { useNotifications } from "../shell/notifications-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { makeMatcher } from "./models-shared";
 import { claudeSettingLabels } from "./claude-settings-search";
@@ -307,6 +307,7 @@ function formatContextWindow(value: number | undefined, t: TFn): string | null {
 
 export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   const t = useT();
+  const { notify } = useNotifications();
   const [status, setStatus] = useState<DesktopStatus | null>(null);
   const [data, setData] = useState<DesktopResponse | null>(null);
   const [profile, setProfile] = useState<DesktopProfile | null>(null);
@@ -314,7 +315,6 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   const [destinations, setDestinations] = useState<Record<string, Family>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [pending, setPending] = useState<PendingAction>(null);
   // Lane density: search and paging are RENDER-ONLY. modelsByFamily and effectiveDefaults must
@@ -463,7 +463,6 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   const save = async (applyAfter: boolean) => {
     if (!profile || pending) return;
     setPending("save");
-    setMessage(null);
     try {
       const response = await fetch(`${apiBase}/api/claude-desktop`, {
         method: "PUT",
@@ -477,15 +476,15 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
         setPending("apply");
         const applyResponse = await fetch(`${apiBase}/api/claude-desktop/apply`, { method: "POST" });
         await readJsonOrThrow<{ error?: string }>(applyResponse, t("claudeDesktop.applyFailed"));
-        setMessage({ tone: "ok", text: t("claudeDesktop.savedApplied") });
+        notify({ tone: "success", title: t("claudeDesktop.savedApplied") });
         setAnnouncement(t("claudeDesktop.savedAppliedAnnounce"));
       } else {
-        setMessage({ tone: "ok", text: t("claudeDesktop.saved") });
+        notify({ tone: "success", title: t("claudeDesktop.saved") });
         setAnnouncement(t("claudeDesktop.savedAnnounce"));
       }
     } catch (error) {
       const text = error instanceof Error ? error.message : t("claudeDesktop.updateFailed");
-      setMessage({ tone: "err", text });
+      notify({ tone: "error", title: text });
       setAnnouncement(text);
     } finally {
       setPending(null);
@@ -513,11 +512,11 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
       if (candidate.version !== 1 || !candidate.assignments || !candidate.defaults) throw new Error(t("claudeDesktop.importExpected"));
       const imported = normalizeProfile({ ...data!, profile: candidate as DesktopProfile });
       setProfile(imported);
-      setMessage({ tone: "ok", text: t("claudeDesktop.importReady") });
+      notify({ tone: "success", title: t("claudeDesktop.importReady") });
       setAnnouncement(t("claudeDesktop.importedAnnounce"));
     } catch (error) {
       const text = error instanceof Error ? error.message : t("claudeDesktop.importInvalid");
-      setMessage({ tone: "err", text });
+      notify({ tone: "error", title: text });
       setAnnouncement(t("claudeDesktop.importFailed", { error: text }));
     }
   };
@@ -532,8 +531,14 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   if (loadError || !data || !profile) {
     return (
       <div className="claude-desktop-error">
-        <Notice tone="err">{loadError || t("claudeDesktop.loadFail")}</Notice>
-        <Button variant="outlined" onClick={() => void load()}>{t("claudeDesktop.retry")}</Button>
+        {/* Inline and permanent: the condition is "this screen has no data", which
+            only clears when a retry succeeds — not on a snackbar's timer. */}
+        <Banner
+          tone="error"
+          action={<Button variant="outlined" onClick={() => void load()}>{t("claudeDesktop.retry")}</Button>}
+        >
+          {loadError || t("claudeDesktop.loadFail")}
+        </Banner>
       </div>
     );
   }
@@ -606,7 +611,6 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
       )}
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
-      {message && <Notice tone={message.tone}>{message.text}</Notice>}
 
       {/* This tab's own settings search, above the controls it describes: plain text by
           default, `.*` as an explicit opt-in, and the full builder one click away anchored

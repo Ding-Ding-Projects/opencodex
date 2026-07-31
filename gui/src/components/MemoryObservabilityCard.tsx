@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatUptime } from "../formatUptime";
 import { IconActivity } from "../icons";
 import { useI18n, type Locale } from "../i18n/shared";
+import { useConfirm } from "../shell/confirm-context";
 import { createBoundedFetch, type BoundedFetch } from "../bounded-fetch";
 
 /**
@@ -138,6 +139,9 @@ const RECONNECT_GIVE_UP_MS = 120_000;
 
 export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }) {
   const { locale, t } = useI18n();
+  // Shadows the global `confirm` deliberately: an accidental native call in this
+  // file is now a type error rather than a grey Windows box at runtime.
+  const confirm = useConfirm();
   const [data, setData] = useState<SystemMemory | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [restartPhase, setRestartPhase] = useState<RestartPhase>("idle");
@@ -284,27 +288,34 @@ export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }
     };
   }, [apiBase, restartPhase, restartFromPid, t]);
 
-  const confirmRestart = () => {
+  const confirmRestart = async () => {
     const count = data?.activeTurnCount ?? 0;
     const lines = [
       t("dash.mem.restartConfirm", { count, seconds: DRAIN_TIMEOUT_S }),
     ];
     if (noSupervisor) lines.push(t("dash.mem.restartNoSupervisor"));
-    if (!window.confirm(lines.join("\n\n"))) return;
-    void (async () => {
-      setRestartError(null);
-      setRestartFromPid(typeof data?.pid === "number" ? data.pid : null);
-      setRestartPhase("draining");
-      try {
-        const res = await fetch(`${apiBase}/api/system/restart`, { method: "POST" });
-        if (!res.ok) throw new Error("restart_failed");
-        // Proxy will drain then exit; memory poll will trip reconnecting or pid change.
-      } catch {
-        setRestartPhase("error");
-        setRestartFromPid(null);
-        setRestartError(t("dash.mem.restartFailed"));
-      }
-    })();
+    // The blank line between the two sentences survives: the dialog renders its
+    // body `pre-line`, so "no restart protection detected" stays a paragraph of
+    // its own rather than running into the drain warning.
+    const confirmed = await confirm({
+      title: t("confirm.restartTitle"),
+      body: lines.join("\n\n"),
+      confirmLabel: t("confirm.restartAction"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    setRestartError(null);
+    setRestartFromPid(typeof data?.pid === "number" ? data.pid : null);
+    setRestartPhase("draining");
+    try {
+      const res = await fetch(`${apiBase}/api/system/restart`, { method: "POST" });
+      if (!res.ok) throw new Error("restart_failed");
+      // Proxy will drain then exit; memory poll will trip reconnecting or pid change.
+    } catch {
+      setRestartPhase("error");
+      setRestartFromPid(null);
+      setRestartError(t("dash.mem.restartFailed"));
+    }
   };
 
   if (unavailable && !data && restartPhase === "idle") {
@@ -390,7 +401,7 @@ export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }
             type="button"
             className="btn btn-ghost btn-sm"
             disabled={busy}
-            onClick={confirmRestart}
+            onClick={() => { void confirmRestart(); }}
           >
             {t("dash.mem.restart")}
           </button>

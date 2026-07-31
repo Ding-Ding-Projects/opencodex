@@ -1,6 +1,5 @@
 import { IconAlert, IconRefresh, IconX } from "../icons";
-import { Select } from "../ui";
-import { Dialog, Empty, Toggle } from "../shell/m3-ui";
+import { Dialog, Empty, SelectField, Toggle } from "../shell/m3-ui";
 import {
   updateReasonLabel,
   type UpdateChannel,
@@ -56,17 +55,17 @@ export function DashboardDialogs(d: Dash) {
         }
       >
         <div className="update-row">
-          {/* A span, not a <label htmlFor>: `Select` renders a listbox button with its
-              own aria-label, and nothing on this screen has ever carried the id the
-              htmlFor pointed at — a dangling association names nothing. */}
-          <span className="m3-field-label">{t("dash.updateChannel")}</span>
-          <Select
+          {/* A real <label htmlFor> now that the control is a native <select> with an
+              id: the legacy listbox was a button, so the association had nowhere to
+              point and this had to be an inert span. */}
+          <label className="m3-field-label" htmlFor="dash-update-channel">{t("dash.updateChannel")}</label>
+          <SelectField
+            id="dash-update-channel"
             value={updateChannel}
             options={[{ value: "latest", label: "latest" }, { value: "preview", label: "preview" }]}
             onChange={v => changeUpdateChannel(v as UpdateChannel)}
             disabled={updateLoading}
             label={t("dash.updateChannel")}
-            portal={false}
           />
         </div>
         {updateLoading && (

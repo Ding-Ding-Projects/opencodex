@@ -1,0 +1,39 @@
+---
+/**
+ * Starlight's `<head>`, plus the client-side router.
+ *
+ * `Head` is the supported injection point for `<ClientRouter />` — Starlight
+ * renders the whole `<html>` element from `Page.astro`, so there is nowhere
+ * else in the theme a document-level component can be added.
+ *
+ * Why the router is here at all: the tab strip has to survive navigation. It is
+ * a persisted island, and Astro's swap moves the live DOM node into the new
+ * document rather than rebuilding it, so the tab set, an open menu and focus all
+ * outlive a page change. Without the router every navigation would tear the
+ * strip down and mount a fresh one — which is not a tab strip, it is a row of
+ * buttons that resets whenever you use it. It is also the only arrangement in
+ * which an anchored popover (the appearance panel, and the regex builder and
+ * appearance editors that mount beside it) can stay open across a navigation
+ * instead of being destroyed mid-interaction.
+ *
+ * What this costs, stated plainly rather than discovered later:
+ *  - Every module `<script>` in the tree now runs once for the whole session,
+ *    not once per page. Astro keys executed scripts by src/text and skips the
+ *    ones it has already run, so any component script doing one-time DOM setup
+ *    must re-bind on `astro:page-load` or it is dead from the second page on.
+ *    All four of this site's scripts were converted for that reason.
+ *  - The swap replaces `<html>`'s attributes wholesale, taking `data-theme` and
+ *    the inline `--m3-*` tokens with them. `installAppearanceRuntime` repaints
+ *    in `astro:after-swap`; see the comment there.
+ *  - Starlight does not ship or bless view-transition support, so the
+ *    interaction with its sidebar persister is verified rather than guaranteed
+ *    and is worth re-checking at each Starlight upgrade.
+ *
+ * Starlight's own `Head` takes no slot, so nothing is forwarded into it.
+ */
+import Default from '@astrojs/starlight/components/Head.astro';
+import { ClientRouter } from 'astro:transitions';
+---
+
+<Default />
+<ClientRouter />

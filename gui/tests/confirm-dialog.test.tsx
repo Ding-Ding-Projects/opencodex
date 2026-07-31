@@ -1,12 +1,14 @@
 /**
- * The promise-based Material 3 confirmation that replaced `window.confirm()`.
+ * The promise-based Material 3 confirmation and prompt that replaced
+ * `window.confirm()` and `window.prompt()`.
  *
  * The defect this file exists to prevent is not a wrong answer — it is *no*
- * answer. Every call site is written `if (!(await confirm(...))) return;`, so a
- * promise that never settles does not throw, log, or fail a build: the handler
- * simply stops mid-way, the spinner it set stays up, and its `finally` never
- * runs. That is indistinguishable from a hang. So every dismissal route below
- * asserts the promise *resolved*, not merely that the dialog went away.
+ * answer. Every call site is written `if (!(await confirm(...))) return;` or
+ * `if (value === null) return;`, so a promise that never settles does not throw,
+ * log, or fail a build: the handler simply stops mid-way, the spinner it set
+ * stays up, and its `finally` never runs. That is indistinguishable from a hang.
+ * So every dismissal route below asserts the promise *resolved*, not merely that
+ * the dialog went away.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -15,7 +17,7 @@ import { act, useEffect, useState } from "react";
 import type { Root } from "react-dom/client";
 
 import { ConfirmProvider } from "../src/shell/confirm";
-import { useConfirm, type ConfirmRequest } from "../src/shell/confirm-context";
+import { useConfirm, usePrompt, type ConfirmRequest, type PromptRequest } from "../src/shell/confirm-context";
 import { LanguageProvider } from "../src/i18n/provider";
 
 const globals = ["document", "window", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -110,6 +112,52 @@ function buttonLabelled(container: HTMLElement, text: string): HTMLButtonElement
 
 async function click(node: HTMLElement): Promise<void> {
   await act(async () => { node.click(); });
+}
+
+const ALIAS: PromptRequest = {
+  title: "Set a display name",
+  label: "Display name (leave empty to clear)",
+  initialValue: "work laptop",
+  confirmLabel: "Save",
+};
+
+/**
+ * The prompt's equivalent of `Opener`: a control that asks for text and records
+ * what came back. `"pending"` in the slot means the promise has not settled,
+ * which is the state every case here is really testing against.
+ */
+function TextOpener({ answers, request = ALIAS, label = "Rename" }: {
+  answers: (string | null | "pending")[];
+  request?: PromptRequest;
+  label?: string;
+}) {
+  const prompt = usePrompt();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const slot = answers.push("pending") - 1;
+        void prompt(request).then(answer => { answers[slot] = answer; });
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function promptField(container: HTMLElement): HTMLInputElement {
+  const input = container.querySelector<HTMLInputElement>("dialog input");
+  if (!input) throw new Error("no prompt field");
+  return input;
+}
+
+/** Types through the value setter React tracks, so state actually updates. */
+async function type(container: HTMLElement, value: string): Promise<void> {
+  const input = promptField(container);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new testWindow.Event("input", { bubbles: true }) as unknown as Event);
+  });
 }
 
 test("confirming resolves true and cancelling resolves false", async () => {
@@ -320,6 +368,243 @@ test("useConfirm outside the provider fails loudly instead of returning undefine
     useEffect(() => setState(1), []);
     try {
       useConfirm();
+    } catch (err) {
+      caught = err;
+    }
+    return null;
+  }
+  const { root } = await mount(<Bare />);
+  expect(caught).toBeInstanceOf(Error);
+  await act(async () => { root.unmount(); });
+});
+
+/* ------------------------------------------------------------------ prompt -- */
+
+test("the typed value is what resolves", async () => {
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+
+  await click(container.querySelector("button")!);
+  // An edit starts from the current value rather than from an empty box — the
+  // native prompt's second argument, which is the whole reason it had one.
+  expect(promptField(container).value).toBe("work laptop");
+
+  await type(container, "home desktop");
+  await click(buttonLabelled(container, "Save"));
+
+  expect(answers).toEqual(["home desktop"]);
+  expect(dialogOf(container)).toBeNull();
+  await act(async () => { root.unmount(); });
+});
+
+test("an empty string resolves as an answer, not as a cancellation", async () => {
+  // `""` and `null` mean different things at every call site: the alias prompts
+  // read `=== null` to bail and otherwise send what came back, so folding an
+  // emptied field into "cancelled" would make clearing an alias impossible.
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+
+  await click(container.querySelector("button")!);
+  await type(container, "");
+  await click(buttonLabelled(container, "Save"));
+
+  expect(answers).toEqual([""]);
+  await act(async () => { root.unmount(); });
+});
+
+test("Enter submits the field, as the native prompt did", async () => {
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+
+  await click(container.querySelector("button")!);
+  await type(container, "typed then Entered");
+  await act(async () => {
+    promptField(container).dispatchEvent(
+      new testWindow.KeyboardEvent("keydown", { key: "Enter", bubbles: true }) as unknown as Event,
+    );
+  });
+
+  expect(answers).toEqual(["typed then Entered"]);
+  expect(dialogOf(container)).toBeNull();
+  await act(async () => { root.unmount(); });
+});
+
+test("Cancel resolves null rather than the draft text", async () => {
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+
+  await click(container.querySelector("button")!);
+  await type(container, "half-typed, then thought better of it");
+  await click(buttonLabelled(container, "Cancel"));
+
+  expect(answers).toEqual([null]);
+  expect(dialogOf(container)).toBeNull();
+  await act(async () => { root.unmount(); });
+});
+
+test("Escape on a prompt resolves null rather than leaving the promise hanging", async () => {
+  // The native prompt answered null on Escape; a React dialog that only hides
+  // itself leaves the awaiting handler parked forever, which reads as a hang
+  // rather than as a cancellation.
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+  await click(container.querySelector("button")!);
+
+  const dialog = dialogOf(container)!;
+  await act(async () => {
+    dialog.dispatchEvent(new testWindow.Event("cancel", { bubbles: false, cancelable: true }) as unknown as Event);
+  });
+
+  expect(answers).toEqual([null]);
+  expect(dialogOf(container)).toBeNull();
+  await act(async () => { root.unmount(); });
+});
+
+test("the scrim does not discard what was typed", async () => {
+  // The one difference from the confirmation, which does dismiss on the scrim: a
+  // stray click outside a box the user has been typing into is never deliberate,
+  // and losing the draft to it is not recoverable.
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+  await click(container.querySelector("button")!);
+  await type(container, "still writing this");
+
+  await click(dialogOf(container)!);
+
+  expect(answers).toEqual(["pending"]);
+  expect(dialogOf(container)).not.toBeNull();
+  expect(promptField(container).value).toBe("still writing this");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a prompt still open when the provider unmounts settles null", async () => {
+  // Nothing is left to press Escape on, and the caller is still parked on its
+  // await. Answering null is the safe outcome and the one Cancel already gives.
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+  await click(container.querySelector("button")!);
+  expect(answers).toEqual(["pending"]);
+
+  await act(async () => { root.unmount(); });
+  await act(async () => { await Promise.resolve(); });
+
+  expect(answers).toEqual([null]);
+});
+
+test("two racing prompts both settle, and neither inherits the other's draft", async () => {
+  // Overwriting the open request with the new one would drop the first promise
+  // on the floor. Worse for a prompt than for a confirmation: if the second
+  // dialog were the same element relabelled, it would open holding the text
+  // typed into the first, and saving would write it to the wrong credential.
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(
+    <>
+      <TextOpener answers={answers} label="First" />
+      <TextOpener
+        answers={answers}
+        request={{ title: "Name this key", label: "Key label", initialValue: "", confirmLabel: "Save" }}
+        label="Second"
+      />
+    </>,
+  );
+  const [first, second] = [...container.querySelectorAll("button")] as HTMLButtonElement[];
+
+  await click(first);
+  await click(second);
+
+  // Only one dialog is ever on screen: two stacked modals fight over the focus
+  // trap, and the user cannot tell which field the Save button belongs to.
+  expect(container.querySelectorAll("dialog").length).toBe(1);
+  expect(answers).toEqual(["pending", "pending"]);
+
+  await type(container, "first answer");
+  await click(buttonLabelled(container, "Save"));
+  expect(answers).toEqual(["first answer", "pending"]);
+
+  // The queued one takes its place with its own initial value, not the first's text.
+  expect(promptField(container).value).toBe("");
+  await type(container, "second answer");
+  await click(buttonLabelled(container, "Save"));
+
+  expect(answers).toEqual(["first answer", "second answer"]);
+  expect(dialogOf(container)).toBeNull();
+  await act(async () => { root.unmount(); });
+});
+
+test("a confirmation and a prompt queue against each other rather than stacking", async () => {
+  // They share one queue precisely so this cannot happen: two independent queues
+  // would each decide to show a modal and put two on screen at once.
+  const confirmAnswers: (boolean | "pending")[] = [];
+  const textAnswers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(
+    <>
+      <Opener answers={confirmAnswers} label="Confirm" />
+      <TextOpener answers={textAnswers} label="Prompt" />
+    </>,
+  );
+  const [confirmBtn, promptBtn] = [...container.querySelectorAll("button")] as HTMLButtonElement[];
+
+  await click(confirmBtn);
+  await click(promptBtn);
+  expect(container.querySelectorAll("dialog").length).toBe(1);
+
+  await click(buttonLabelled(container, "Exit"));
+  expect(confirmAnswers).toEqual([true]);
+
+  // The prompt is now the one on screen, with a real field rather than a second
+  // pair of confirmation buttons.
+  expect(promptField(container).value).toBe("work laptop");
+  await click(buttonLabelled(container, "Cancel"));
+  expect(textAnswers).toEqual([null]);
+
+  await act(async () => { root.unmount(); });
+});
+
+test("the field is labelled and holds focus, and a secret one is masked", async () => {
+  // `window.prompt()` gave the box no accessible name at all, so a screen reader
+  // announced the most sensitive input in the app as "edit, blank".
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(
+    <TextOpener
+      answers={answers}
+      request={{ title: "Admin token needed", label: "Admin token", secret: true, confirmLabel: "Use this token" }}
+    />,
+  );
+  await click(container.querySelector("button")!);
+
+  const input = promptField(container);
+  const labelled = container.querySelector<HTMLLabelElement>(`label[for="${input.id}"]`);
+  expect(labelled?.textContent).toBe("Admin token");
+  // A credential is masked and kept out of autofill; an ordinary value is not.
+  expect(input.getAttribute("type")).toBe("password");
+  expect(input.getAttribute("autocomplete")).toBe("off");
+  // The user opened this to type, so the field takes focus rather than the
+  // Cancel button `showModal()` would otherwise land on.
+  expect(document.activeElement).toBe(input);
+
+  await click(buttonLabelled(container, "Cancel"));
+  await act(async () => { root.unmount(); });
+});
+
+test("an ordinary prompt field stays readable", async () => {
+  const answers: (string | null | "pending")[] = [];
+  const { container, root } = await mountProvider(<TextOpener answers={answers} />);
+  await click(container.querySelector("button")!);
+
+  expect(promptField(container).getAttribute("type")).toBe("text");
+
+  await click(buttonLabelled(container, "Cancel"));
+  await act(async () => { root.unmount(); });
+});
+
+test("usePrompt outside the provider fails loudly instead of returning undefined", async () => {
+  let caught: unknown = null;
+  function Bare() {
+    const [, setState] = useState(0);
+    useEffect(() => setState(1), []);
+    try {
+      usePrompt();
     } catch (err) {
       caught = err;
     }

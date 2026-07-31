@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ComboItem } from "../src/combo-workspace-data";
 import ComboWorkspace from "../src/components/ComboWorkspace";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -59,21 +60,25 @@ afterEach(() => {
 
 function workspace(extra: Partial<Parameters<typeof ComboWorkspace>[0]> = {}) {
   return (
+    // The detail panel reports a successful save through the notification system,
+    // so the provider it reads has to exist even in the tests that never save.
     <LanguageProvider>
-      <ComboWorkspace
-        combos={combos}
-        providers={[{ name: "openai" }, { name: "anthropic" }]}
-        models={[{ provider: "openai", id: "gpt-5" }, { provider: "anthropic", id: "claude-4" }]}
-        loading={false}
-        onRefresh={() => {}}
-        onSave={async () => ({ ok: true })}
-        onRemove={async () => ({ ok: true })}
-        onAdd={() => {}}
-        adding={false}
-        onCloseAdd={() => {}}
-        onCreated={() => {}}
-        {...extra}
-      />
+      <NotificationsProvider>
+        <ComboWorkspace
+          combos={combos}
+          providers={[{ name: "openai" }, { name: "anthropic" }]}
+          models={[{ provider: "openai", id: "gpt-5" }, { provider: "anthropic", id: "claude-4" }]}
+          loading={false}
+          onRefresh={() => {}}
+          onSave={async () => ({ ok: true })}
+          onRemove={async () => ({ ok: true })}
+          onAdd={() => {}}
+          adding={false}
+          onCloseAdd={() => {}}
+          onCreated={() => {}}
+          {...extra}
+        />
+      </NotificationsProvider>
     </LanguageProvider>
   );
 }

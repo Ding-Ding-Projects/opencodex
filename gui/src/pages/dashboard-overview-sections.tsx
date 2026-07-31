@@ -1,6 +1,5 @@
 import { IconDownload, IconInfo, IconRefresh } from "../icons";
-import { Select } from "../ui";
-import { Button, Card, Toggle } from "../shell/m3-ui";
+import { Button, Card, SelectField, Toggle } from "../shell/m3-ui";
 import { EFFORT_CAP_LEVELS, requireJson, sidecarBackendForModel } from "./dashboard-shared";
 import type { useDashboardData } from "./use-dashboard-data";
 
@@ -50,7 +49,7 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
             <IconInfo width={13} height={13} aria-hidden="true" />
           </button>
         </span>
-        <Select
+        <SelectField
           value={effortCap}
           options={[
             { value: "", label: t("dash.effortCapNone") },
@@ -74,7 +73,7 @@ export function DashboardEffortCapPanel({ apiBase, d }: { apiBase: string; d: Da
           disabled={effortCapSaving}
           label={t("dash.effortCapLabel")}
         />
-        <Select
+        <SelectField
           value={subagentEffortCap}
           options={[
             { value: "", label: t("dash.effortCapNone") },
@@ -114,7 +113,7 @@ export function DashboardInjectionPanel({ d }: { apiBase: string; d: Dash }) {
     <Card>
       <div className="injection-head">
         <span className="injection-label dash-stat-card__label">{t("dash.injectionLabel")}</span>
-        <Select
+        <SelectField
           value={injectionModel}
           options={[
             { value: "", label: t("dash.injectionNone") },
@@ -125,7 +124,7 @@ export function DashboardInjectionPanel({ d }: { apiBase: string; d: Dash }) {
           label={t("dash.injectionLabel")}
         />
         {injectionModel && injectionEfforts.length > 0 && (
-          <Select
+          <SelectField
             value={injectionEffort}
             options={[
               { value: "", label: t("dash.injectionEffortNone") },
@@ -229,7 +228,7 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
         {showWebSearch && <div className="m3-card dash-sidecar-card">
           <div className="dash-sidecar-card__row">
             <div className="font-semibold">{t("dash.webSearchSidecar")}</div>
-            <Select
+            <SelectField
               value={sidecar?.webSearch.model ?? "gpt-5.6-luna"}
               options={sidecarModels}
               onChange={model => { void saveSidecar({ webSearch: { model, backend: sidecarBackendForModel(models, model) } }); }}
@@ -243,7 +242,7 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
         {showVision && <div className="m3-card dash-sidecar-card">
           <div className="dash-sidecar-card__row">
             <div className="font-semibold">{t("dash.visionSidecar")}</div>
-            <Select
+            <SelectField
               value={sidecar?.vision.model ?? "gpt-5.6-luna"}
               options={sidecarModels}
               onChange={model => { void saveSidecar({ vision: { model, backend: sidecarBackendForModel(models, model) } }); }}
@@ -280,13 +279,12 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
               disabled={!shadowCall || shadowCallSaving}
               label={t("dash.shadowCallIntercept")}
             />
-            <Select
+            <SelectField
               value={shadowCall?.model ?? ""}
               options={[{ value: "", label: "—" }, ...models.map(m => ({ value: m.id, label: `${m.provider}/${m.id}` }))]}
               onChange={v => { void saveShadowCall({ model: v }); }}
               disabled={!shadowCall || shadowCallSaving || !shadowCall?.enabled}
               label={t("dash.shadowCallModel")}
-              align="right"
             />
           </div>
         </div>

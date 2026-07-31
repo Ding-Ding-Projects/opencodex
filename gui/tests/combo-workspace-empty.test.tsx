@@ -5,6 +5,8 @@ import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import ComboWorkspace from "../src/components/ComboWorkspace";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
+import SnackbarHost from "../src/shell/SnackbarHost";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -34,19 +36,21 @@ afterEach(() => {
 test("an empty combo list renders the first-combo editor inline", () => {
   const html = renderToStaticMarkup(
     <LanguageProvider>
-      <ComboWorkspace
-        combos={[]}
-        providers={[{ name: "openai" }]}
-        models={[{ provider: "openai", id: "gpt-5" }]}
-        loading={false}
-        onRefresh={() => {}}
-        onSave={async () => ({ ok: true })}
-        onRemove={async () => ({ ok: true })}
-        onAdd={() => {}}
-        adding={false}
-        onCloseAdd={() => {}}
-        onCreated={() => {}}
-      />
+      <NotificationsProvider>
+        <ComboWorkspace
+          combos={[]}
+          providers={[{ name: "openai" }]}
+          models={[{ provider: "openai", id: "gpt-5" }]}
+          loading={false}
+          onRefresh={() => {}}
+          onSave={async () => ({ ok: true })}
+          onRemove={async () => ({ ok: true })}
+          onAdd={() => {}}
+          adding={false}
+          onCloseAdd={() => {}}
+          onCreated={() => {}}
+        />
+      </NotificationsProvider>
     </LanguageProvider>,
   );
 
@@ -69,23 +73,29 @@ test("an empty combo list creates the first combo and shows confirmation", async
   await act(async () => {
     root = createRoot(container);
     root.render(
+      // "Created combo/first." lands as a snackbar now rather than an inline
+      // notice, so the host that renders snackbars is mounted inside the same
+      // container the assertion reads. What the user is told is unchanged.
       <LanguageProvider>
-        <ComboWorkspace
-          combos={[]}
-          providers={[{ name: "openai" }]}
-          models={[{ provider: "openai", id: "gpt-5" }]}
-          loading={false}
-          onRefresh={() => {}}
-          onSave={async (item, isCreate) => {
-            saved.push({ id: item.id, isCreate });
-            return { ok: true };
-          }}
-          onRemove={async () => ({ ok: true })}
-          onAdd={() => {}}
-          adding={false}
-          onCloseAdd={() => {}}
-          onCreated={(id) => { createdId = id; }}
-        />
+        <NotificationsProvider>
+          <ComboWorkspace
+            combos={[]}
+            providers={[{ name: "openai" }]}
+            models={[{ provider: "openai", id: "gpt-5" }]}
+            loading={false}
+            onRefresh={() => {}}
+            onSave={async (item, isCreate) => {
+              saved.push({ id: item.id, isCreate });
+              return { ok: true };
+            }}
+            onRemove={async () => ({ ok: true })}
+            onAdd={() => {}}
+            adding={false}
+            onCloseAdd={() => {}}
+            onCreated={(id) => { createdId = id; }}
+          />
+          <SnackbarHost />
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });

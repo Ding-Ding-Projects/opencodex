@@ -4,6 +4,8 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import CodexAccountPool from "../src/components/CodexAccountPool";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = [
   "document",
@@ -172,7 +174,11 @@ async function mountHarness(): Promise<Harness> {
   await act(async () => {
     root.render(
       <LanguageProvider>
-        <CodexAccountPool apiBase="http://localhost" />
+        <NotificationsProvider>
+          <ConfirmProvider>
+            <CodexAccountPool apiBase="http://localhost" />
+          </ConfirmProvider>
+        </NotificationsProvider>
       </LanguageProvider>,
     );
     await flush();

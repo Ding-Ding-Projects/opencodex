@@ -1,8 +1,7 @@
 import { IconPlus, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { Trans } from "../i18n/provider";
-import { Select } from "../ui";
-import { Button, Card, Empty, Segmented } from "../shell/m3-ui";
+import { Button, Card, Empty, Segmented, SelectField } from "../shell/m3-ui";
 import {
   applySidecarBackendChange,
   applySidecarModelChange,
@@ -161,13 +160,12 @@ export function ClaudeCodeSettingsCard({
             </>
           }
           control={
-            <Select
+            <SelectField
               value={state.autoCompactWindow === null ? "" : String(state.autoCompactWindow)}
               options={autoCompactOptions}
               onChange={v => onStateChange({ ...state, autoCompactWindow: v === "" ? null : Number(v) })}
               label={t("claude.autoCompactWindow")}
               style={{ minWidth: 130 }}
-              portal
             />
           }
         />
@@ -204,7 +202,7 @@ export function ClaudeCodeSettingsCard({
             last={isLast(behaviourRows, key)}
             control={
               <>
-                <Select
+                <SelectField
                   value={sidecarSelectValue(override)}
                   options={[
                     { value: "inherit", label: t("claude.useMainSetting") },
@@ -221,7 +219,6 @@ export function ClaudeCodeSettingsCard({
                     });
                   }}
                   label={t("dash.sidecarBackend")}
-                  portal
                 />
                 <input
                   className="m3-input mono"

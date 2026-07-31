@@ -4,6 +4,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import ClaudeDesktop from "../src/pages/ClaudeDesktop";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 /**
  * The Desktop tab is a settings surface, so it owes its user its own settings search:
@@ -96,7 +97,12 @@ async function mount() {
   const { createRoot } = await import("react-dom/client");
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider><ClaudeDesktop apiBase="" /></LanguageProvider>);
+    root.render(
+      // The screen reports save/import outcomes through the notification system
+      // now, so the provider it reads has to exist even when a test never
+      // triggers one — without it the whole screen throws on mount.
+      <LanguageProvider><NotificationsProvider><ClaudeDesktop apiBase="" /></NotificationsProvider></LanguageProvider>,
+    );
   });
   await act(async () => { await new Promise(r => setTimeout(r, 50)); });
 }

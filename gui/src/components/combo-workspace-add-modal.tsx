@@ -8,8 +8,7 @@ import {
 } from "../combo-workspace-data";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
-import { Notice } from "../ui";
-import { Button, Dialog, TextInput } from "../shell/m3-ui";
+import { Banner, Button, Dialog, TextInput } from "../shell/m3-ui";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
 import { clampedNumberInput } from "./combo-workspace-utils";
@@ -110,7 +109,10 @@ export function AddComboModal({
         </div>
         <p className="m3-dialog__desc">{t("cws.addSubtitle")}</p>
       </header>
-      {error && <Notice tone="err">{error}</Notice>}
+      {/* Inline, not a snackbar: it says why THIS form was refused, it sits above the
+          fields that have to change, and it clears only when the next submit gets
+          further than validation. */}
+      {error && <Banner tone="error">{error}</Banner>}
       {/* The fields keep their own scroll region so the headline and the action
           row stay put while a long target list scrolls underneath them. */}
       <div className="cwi-modal-form">

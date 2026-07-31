@@ -104,8 +104,10 @@ function adminTokenPromptMessage(): string {
  *
  * `installApiAuthFetch()` runs before React mounts, so this module cannot render
  * a dialog itself — it can only call whatever the app has registered by the time
- * a 401 actually arrives. The React tree registers an M3 dialog; anything that
- * has not registered one falls back to `window.prompt`.
+ * a 401 actually arrives. `shell/api-token-prompt.tsx` registers the M3 prompt
+ * from inside the provider tree; anything that has not registered one — a
+ * script importing this module, a test, a 401 landing in the gap before React
+ * mounts — falls back to `window.prompt`.
  */
 type TokenRequester = (message: string) => Promise<string | null>;
 

@@ -153,24 +153,10 @@
   max-width: 12.5rem;
 }
 
-.models-shadow-model-slot .custom-select {
+.models-shadow-model-slot .m3-select {
   width: auto;
   min-width: 100%;
   max-width: 100%;
-}
-
-.models-shadow-model-slot .select-trigger {
-  width: auto;
-  min-width: 100%;
-  max-width: 100%;
-  justify-content: space-between;
-}
-
-.models-shadow-model-slot .select-trigger > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .models-v2-mode-row {

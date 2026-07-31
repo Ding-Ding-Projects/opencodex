@@ -11,8 +11,7 @@ import {
   IconSearch,
   IconSwapVert,
 } from "../icons";
-import { Notice } from "../ui";
-import { Button, Chip, Empty } from "../shell/m3-ui";
+import { Banner, Button, Chip, Empty } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { modelLabel } from "../model-display";
 
@@ -967,16 +966,22 @@ export default function Usage({ apiBase }: { apiBase: string }) {
       </div>
 
       {error ? (
-        <Notice tone="err">
-          {error}{" "}
-          <Button
-            variant="text"
-            onClick={() => void fetchUsage(range, surface, new AbortController().signal)}
-            disabled={loading}
-          >
-            {t("common.retry")}
-          </Button>
-        </Notice>
+        /* A page-level state: it stays until a fetch succeeds, so the retry that
+           clears it is the banner's action rather than a link inside the message. */
+        <Banner
+          tone="error"
+          action={(
+            <Button
+              variant="text"
+              onClick={() => void fetchUsage(range, surface, new AbortController().signal)}
+              disabled={loading}
+            >
+              {t("common.retry")}
+            </Button>
+          )}
+        >
+          {error}
+        </Banner>
       ) : loading && !data ? (
         <Empty title={t("usage.loading")} />
       ) : data?.summary.requests === 0 ? (

@@ -162,7 +162,7 @@ test("rapid Claude toggle clicks issue only one PUT until the first settles", as
 
   const sw = claudeSwitch();
   expect(sw.disabled).toBe(false);
-  expect(sw.getAttribute("aria-pressed")).toBe("false");
+  expect(sw.getAttribute("aria-checked")).toBe("false");
 
   await act(async () => {
     sw.click();

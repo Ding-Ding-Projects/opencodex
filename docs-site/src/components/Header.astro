@@ -1,16 +1,39 @@
 ---
-// Custom Starlight header: default chrome (title / search / social) plus a
-// desktop-only hover-dropdown nav and custom preference controls in the
-// liquid-glass grammar.
-// Mobile (<72rem) hides the nav; the built-in hamburger flow is untouched.
+/**
+ * The site's top app bar — two rows.
+ *
+ * Row one is the Material 3 top app bar: wordmark, a desktop dropdown nav,
+ * search, social links, and the preference controls. Row two is the persistent
+ * browser-style tab strip.
+ *
+ * The strip lives here rather than in the page body for one reason: this is the
+ * only component Starlight renders on all 156 pages, and a `transition:persist`
+ * island only survives a swap if the incoming document also contains it. Put it
+ * in a layout that some route skips and the first visit to that route silently
+ * destroys the reader's tabs.
+ *
+ * `client:only="react"` and not `client:load`: the strip's contents come out of
+ * localStorage, which the server cannot know, so server-rendering one tab and
+ * hydrating eight is a mismatch — and React 19 answers a mismatch by throwing
+ * the tree away. The host `<div>` reserves the strip's exact height in CSS
+ * (`--ocx-tabstrip-h`, the same expression the header sums), so nothing shifts
+ * while it mounts.
+ *
+ * Every rule here resolves to an `--m3-*` role. The version this replaces was
+ * authored in a separate "liquid glass" vocabulary — `--ocx-glass-rail`,
+ * `--ocx-radius-pill`, `backdrop-filter` on four surfaces — whose variables
+ * lived in a stylesheet that no longer exists; each of those `var()` calls was
+ * one deleted file away from silently falling back to its second argument.
+ */
 import { Icon } from '@astrojs/starlight/components';
 import Search from '@astrojs/starlight/components/Search.astro';
 import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
 import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
 import Appearance from './Appearance.astro';
+import TabStrip from './TabStrip.tsx';
 
 const { locale } = Astro.locals.starlightRoute;
-// Splash pages have no Starlight sidebar/hamburger, so the pill carries its own
+// Splash pages have no Starlight sidebar/hamburger, so the bar carries its own
 // menu below the desktop-nav breakpoint.
 const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
 // Root locale is `undefined`; BASE_URL already ends with a slash.
@@ -94,11 +117,11 @@ const contributing: NavLink = {
 };
 ---
 
-<div class="header">
+<div class="ocx-appbar">
 	<div class="title-wrapper sl-flex">
 		<SiteTitle />
 	</div>
-	<nav class="glass-nav print:hidden" aria-label={t('Main', '주 메뉴', '主导航', 'Основная навигация', 'メイン')}>
+	<nav class="ocx-nav print:hidden" aria-label={t('Main', '주 메뉴', '主导航', 'Основная навигация', 'メイン')}>
 		<ul>
 			{
 				groups.map((group, i) => (
@@ -136,13 +159,10 @@ const contributing: NavLink = {
 		<Appearance />
 		<div class="sl-flex header-preferences">
 			{/*
-				[Decision Log]
-				- 목적과 의도: Keep theme switching one click away and make locale navigation visually consistent with the site's custom menus.
-				- 기존 구현 및 제약 조건: Starlight's native selects inherit browser/OS popup styling and mouse focus borders that cannot match the glass design system.
-				- 검토한 주요 대안: Restyle the native selects; replace both with popovers; cycle theme while keeping language as a popover.
-				- 선택한 방식: Auto -> Light -> Dark theme cycle button plus a server-rendered language popover.
-				- 다른 대안 대신 이 방식을 선택한 이유: Native option popups are not fully styleable, and theme has only three predictable states that do not need a menu.
-				- 장점, 단점 및 영향: Consistent chrome and faster theme changes; the cycle order must remain stable and keyboard focus must remain visible.
+				The theme has three predictable states, so each activation advances the
+				stable Auto -> Light -> Dark order instead of opening a menu. The
+				appearance panel beside it owns the same setting; both write the same
+				two stores, which is what makes them one setting with two front doors.
 			*/}
 			<button
 				type="button"
@@ -194,22 +214,22 @@ const contributing: NavLink = {
 		</div>
 	</div>
 	{isSplash && (
-		<div class="lp-menu print:hidden">
+		<div class="ocx-menu print:hidden">
 			<button
 				type="button"
-				class="lp-menu-btn"
+				class="ocx-menu-btn"
 				aria-haspopup="true"
 				aria-expanded="false"
-				aria-controls="lp-menu-panel"
+				aria-controls="ocx-menu-panel"
 				aria-label={t('Menu', '메뉴', '菜单', 'Меню', 'メニュー')}
 			>
 				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
 					<path d="M4 6h16M4 12h16M4 18h16" />
 				</svg>
 			</button>
-			<div class="lp-menu-panel" id="lp-menu-panel">
+			<div class="ocx-menu-panel" id="ocx-menu-panel">
 				{groups.map((group) => (
-					<div class="lp-menu-group">
+					<div class="ocx-menu-group">
 						<span>{group.label}</span>
 						<ul>
 							{group.links.map((link) => (
@@ -218,42 +238,41 @@ const contributing: NavLink = {
 						</ul>
 					</div>
 				))}
-				<a class="lp-menu-contrib" href={contributing.href}>{contributing.label}</a>
+				<a class="ocx-menu-contrib" href={contributing.href}>{contributing.label}</a>
 			</div>
 		</div>
 	)}
 </div>
 
-<style>
-	.header {
-		display: flex;
-		gap: var(--sl-nav-gap);
-		justify-content: space-between;
-		align-items: center;
-		height: 100%;
-		/* floating glass pill, detached from the viewport edges */
-		border-radius: var(--ocx-radius-pill, 999px);
-		border: 1px solid var(--sl-color-hairline-light);
-		background-color: var(--ocx-glass-rail, canvas);
-		backdrop-filter: var(--ocx-glass-blur, blur(22px));
-		-webkit-backdrop-filter: var(--ocx-glass-blur, blur(22px));
-		box-shadow: 0 4px 24px rgb(0 0 0 / 0.07);
-		padding-inline: 1rem;
-	}
+<div class="ocx-tabhost print:hidden">
+	{/*
+		`transition:persist-props` is load-bearing, not a tidy-up.
 
+		Astro's swap copies the incoming island's `props` attribute onto the
+		persisted one whenever the two differ, and `astro-island`'s
+		`attributeChangedCallback` answers a `props` change by calling
+		`hydrate()` again. `initialPath` differs on every page by definition, so
+		without this the strip would be torn down and rebuilt on *every*
+		navigation — the exact thing persisting it exists to prevent, and
+		invisible in a build. Keeping the original props is also correct: they
+		describe the document the strip first mounted in, and the strip tracks
+		the current one from `location` and `document.title` in `astro:page-load`.
+	*/}
+	<TabStrip
+		client:only="react"
+		transition:persist="ocx-tabstrip"
+		transition:persist-props
+		initialPath={Astro.url.pathname}
+		initialTitle={Astro.locals.starlightRoute.entry.data.title}
+	/>
+</div>
+
+<style>
 	.title-wrapper {
 		overflow: clip;
 		padding: 0.25rem;
 		margin: -0.25rem;
 		min-width: 0;
-	}
-
-	/* below the sidebar breakpoint the fixed hamburger overlays the pill's right
-	   end — reserve room so search and the menu button never collide */
-	@media (max-width: 49.99rem) {
-		:global([data-has-sidebar]) .header {
-			padding-inline-end: calc(var(--sl-menu-button-size) + 0.75rem);
-		}
 	}
 
 	.right-group,
@@ -268,7 +287,7 @@ const contributing: NavLink = {
 	.social-icons::after {
 		content: '';
 		height: 2rem;
-		border-inline-end: 1px solid var(--sl-color-gray-5);
+		border-inline-end: 1px solid var(--m3-outline-variant);
 	}
 
 	/* ---- theme cycle + language popover -------------------------------- */
@@ -283,11 +302,11 @@ const contributing: NavLink = {
 		min-height: 2.25rem;
 		padding: 0.375rem 0.75rem;
 		border: 0;
-		border-radius: var(--ocx-radius-pill, 999px);
+		border-radius: var(--r-pill);
 		background: transparent;
-		color: var(--sl-color-gray-2);
+		color: var(--m3-on-surface-variant);
 		font: inherit;
-		font-size: var(--sl-text-sm);
+		font-size: var(--t-label-l);
 		font-weight: 500;
 		line-height: 1;
 		white-space: nowrap;
@@ -296,16 +315,12 @@ const contributing: NavLink = {
 	}
 	.preference-control:hover,
 	.preference-control[aria-expanded='true'] {
-		background-color: var(--ocx-hover, rgba(128, 128, 128, 0.1));
-		color: var(--sl-color-white);
+		background-color: var(--m3-surface-container-highest);
+		color: var(--m3-on-surface);
 	}
 	.preference-control:focus:not(:focus-visible) {
 		outline: none;
 		box-shadow: none;
-	}
-	.preference-control:focus-visible {
-		outline: 2px solid color-mix(in srgb, var(--sl-color-accent) 55%, transparent);
-		outline-offset: 2px;
 	}
 	.preference-icon {
 		display: inline-flex;
@@ -328,12 +343,10 @@ const contributing: NavLink = {
 		inset-inline-end: 0;
 		min-width: 12rem;
 		padding: 0.375rem;
-		border: 1px solid var(--sl-color-gray-5);
-		border-radius: var(--ocx-radius, 12px);
-		background-color: var(--ocx-glass-panel, canvas);
-		backdrop-filter: var(--ocx-glass-blur, blur(22px));
-		-webkit-backdrop-filter: var(--ocx-glass-blur, blur(22px));
-		box-shadow: var(--ocx-shadow, 0 10px 28px rgba(0, 0, 0, 0.2));
+		border: 1px solid var(--m3-outline-variant);
+		border-radius: var(--r-m);
+		background-color: var(--m3-surface-container-high);
+		box-shadow: var(--e3);
 		opacity: 0;
 		visibility: hidden;
 		translate: 0 -0.25rem;
@@ -352,18 +365,18 @@ const contributing: NavLink = {
 	}
 	.language-menu a {
 		display: block;
-		padding: 0.5rem 0.75rem;
-		border-radius: var(--ocx-radius-sm, 8px);
-		color: var(--sl-color-gray-2);
-		font-size: var(--sl-text-sm);
+		padding: 0.625rem 0.75rem;
+		border-radius: var(--r-s);
+		color: var(--m3-on-surface-variant);
+		font-size: var(--t-body-m);
 		text-decoration: none;
 		transition: background-color 0.12s, color 0.12s;
 	}
 	.language-menu a:hover,
 	.language-menu a:focus-visible,
 	.language-menu a[aria-checked='true'] {
-		background-color: var(--ocx-hover, rgba(128, 128, 128, 0.1));
-		color: var(--sl-color-white);
+		background-color: var(--m3-surface-container-highest);
+		color: var(--m3-on-surface);
 	}
 	.language-menu a:focus:not(:focus-visible) {
 		outline: none;
@@ -378,15 +391,15 @@ const contributing: NavLink = {
 	}
 
 	/* ---- hover-dropdown nav (desktop only) ---- */
-	.glass-nav {
+	.ocx-nav {
 		display: none;
 	}
 
 	@media (min-width: 72rem) {
-		.glass-nav {
+		.ocx-nav {
 			display: block;
 		}
-		.glass-nav > ul {
+		.ocx-nav > ul {
 			display: flex;
 			align-items: center;
 			gap: 0.125rem;
@@ -401,13 +414,13 @@ const contributing: NavLink = {
 			display: inline-flex;
 			align-items: center;
 			gap: 0.375rem;
-			padding: 0.375rem 0.875rem;
+			padding: 0.5rem 0.875rem;
 			border: 0;
-			border-radius: var(--ocx-radius-pill, 999px);
+			border-radius: var(--r-pill);
 			background: transparent;
-			color: var(--sl-color-gray-2);
+			color: var(--m3-on-surface-variant);
 			font: inherit;
-			font-size: var(--sl-text-sm);
+			font-size: var(--t-label-l);
 			font-weight: 500;
 			line-height: 1;
 			text-decoration: none;
@@ -418,8 +431,8 @@ const contributing: NavLink = {
 		.nav-link svg { opacity: 0.55; transition: transform 0.15s; }
 		.nav-item:hover .nav-link,
 		.nav-item:focus-within .nav-link {
-			background-color: var(--ocx-hover, rgba(128, 128, 128, 0.1));
-			color: var(--sl-color-white);
+			background-color: var(--m3-surface-container-highest);
+			color: var(--m3-on-surface);
 		}
 		.nav-item:hover .nav-link svg,
 		.nav-item:focus-within .nav-link svg { transform: rotate(180deg); }
@@ -447,26 +460,24 @@ const contributing: NavLink = {
 			margin: 0;
 			padding: 0.375rem;
 			min-width: 15rem;
-			border: 1px solid var(--sl-color-gray-5);
-			border-radius: var(--ocx-radius, 12px);
-			background-color: var(--ocx-glass-panel, canvas);
-			backdrop-filter: var(--ocx-glass-blur, blur(22px));
-			-webkit-backdrop-filter: var(--ocx-glass-blur, blur(22px));
-			box-shadow: var(--ocx-shadow, 0 10px 28px rgba(0, 0, 0, 0.2));
+			border: 1px solid var(--m3-outline-variant);
+			border-radius: var(--r-m);
+			background-color: var(--m3-surface-container-high);
+			box-shadow: var(--e3);
 		}
 		.nav-drop a {
 			display: block;
-			padding: 0.5rem 0.75rem;
-			border-radius: var(--ocx-radius-sm, 8px);
-			color: var(--sl-color-gray-2);
-			font-size: var(--sl-text-sm);
+			padding: 0.625rem 0.75rem;
+			border-radius: var(--r-s);
+			color: var(--m3-on-surface-variant);
+			font-size: var(--t-body-m);
 			text-decoration: none;
 			transition: background-color 0.12s, color 0.12s;
 		}
 		.nav-drop a:hover,
 		.nav-drop a:focus-visible {
-			background-color: var(--ocx-hover, rgba(128, 128, 128, 0.1));
-			color: var(--sl-color-white);
+			background-color: var(--m3-surface-container-highest);
+			color: var(--m3-on-surface);
 		}
 	}
 
@@ -478,115 +489,103 @@ const contributing: NavLink = {
 	}
 
 	/* ---- splash hamburger (below the desktop-nav breakpoint) ---- */
-	.lp-menu { display: none; position: relative; }
+	.ocx-menu { display: none; position: relative; }
 	@media (max-width: 71.99rem) {
-		.lp-menu { display: block; }
+		.ocx-menu { display: block; }
 	}
-	.lp-menu-btn {
+	.ocx-menu-btn {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 2.25rem;
-		height: 2.25rem;
+		width: 2.75rem;
+		height: 2.75rem;
 		border: 0;
-		border-radius: var(--ocx-radius-pill, 999px);
+		border-radius: var(--r-pill);
 		background: transparent;
-		color: var(--sl-color-gray-2);
+		color: var(--m3-on-surface-variant);
 		cursor: pointer;
 		transition: background-color 0.12s, color 0.12s;
 	}
-	.lp-menu-btn:hover,
-	.lp-menu-btn[aria-expanded='true'] {
-		background-color: var(--ocx-hover, rgba(128, 128, 128, 0.1));
-		color: var(--sl-color-white);
+	.ocx-menu-btn:hover,
+	.ocx-menu-btn[aria-expanded='true'] {
+		background-color: var(--m3-surface-container-highest);
+		color: var(--m3-on-surface);
 	}
-	.lp-menu-panel {
+	.ocx-menu-panel {
 		position: absolute;
 		top: calc(100% + 0.75rem);
 		inset-inline-end: 0;
 		min-width: 17rem;
+		max-width: calc(100vw - 2rem);
 		max-height: min(72dvh, 34rem);
 		overflow-y: auto;
 		padding: 0.875rem;
-		border: 1px solid var(--sl-color-gray-5);
-		border-radius: var(--ocx-radius, 12px);
-		background-color: var(--ocx-glass-panel, canvas);
-		backdrop-filter: var(--ocx-glass-blur, blur(40px));
-		-webkit-backdrop-filter: var(--ocx-glass-blur, blur(40px));
-		box-shadow: var(--ocx-shadow, 0 10px 28px rgb(0 0 0 / 0.2));
+		border: 1px solid var(--m3-outline-variant);
+		border-radius: var(--r-m);
+		background-color: var(--m3-surface-container-high);
+		box-shadow: var(--e3);
 		opacity: 0;
 		visibility: hidden;
 		translate: 0 -4px;
 		transition: opacity 0.16s ease, visibility 0.16s, translate 0.16s ease;
 		z-index: var(--sl-z-index-navbar);
 	}
-	.lp-menu:has(> .lp-menu-btn[aria-expanded='true']) .lp-menu-panel {
+	.ocx-menu:has(> .ocx-menu-btn[aria-expanded='true']) .ocx-menu-panel {
 		opacity: 1;
 		visibility: visible;
 		translate: 0 0;
 	}
-	.lp-menu-group + .lp-menu-group { margin-top: 0.75rem; }
-	.lp-menu-group > span {
+	.ocx-menu-group + .ocx-menu-group { margin-top: 0.75rem; }
+	.ocx-menu-group > span {
 		display: block;
 		margin-bottom: 0.25rem;
-		font-size: var(--sl-text-2xs);
+		font-size: var(--t-label-m);
 		font-weight: 650;
-		color: var(--sl-color-gray-3);
+		color: var(--m3-on-surface-variant);
 	}
-	.lp-menu-group ul { list-style: none; margin: 0; padding: 0; }
-	.lp-menu-group a,
-	.lp-menu-contrib {
+	.ocx-menu-group ul { list-style: none; margin: 0; padding: 0; }
+	.ocx-menu-group a,
+	.ocx-menu-contrib {
 		display: block;
-		padding: 0.4rem 0.5rem;
-		border-radius: var(--ocx-radius-sm, 8px);
-		color: var(--sl-color-gray-2);
-		font-size: var(--sl-text-sm);
+		padding: 0.625rem 0.5rem;
+		border-radius: var(--r-s);
+		color: var(--m3-on-surface-variant);
+		font-size: var(--t-body-m);
 		text-decoration: none;
 		transition: background-color 0.12s, color 0.12s;
 	}
-	.lp-menu-contrib { margin-top: 0.75rem; font-weight: 600; color: var(--sl-color-white); }
-	.lp-menu-group a:hover,
-	.lp-menu-group a:focus-visible,
-	.lp-menu-contrib:hover,
-	.lp-menu-contrib:focus-visible {
-		background-color: var(--ocx-hover, rgba(128, 128, 128, 0.1));
-		color: var(--sl-color-white);
+	.ocx-menu-contrib { margin-top: 0.75rem; font-weight: 600; color: var(--m3-on-surface); }
+	.ocx-menu-group a:hover,
+	.ocx-menu-group a:focus-visible,
+	.ocx-menu-contrib:hover,
+	.ocx-menu-contrib:focus-visible {
+		background-color: var(--m3-surface-container-highest);
+		color: var(--m3-on-surface);
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.lp-menu-panel { transition: none; }
+		.ocx-menu-panel { transition: none; }
 	}
 </style>
 
 <script>
-	// Click/Enter/Space toggles the dropdowns (hover and focus-within still work
-	// via CSS); Escape or an outside click closes any open menu.
-	const buttons = Array.from(
-		document.querySelectorAll<HTMLButtonElement>(
-			'.glass-nav .nav-link[aria-haspopup], .lp-menu-btn, .language-trigger',
-		),
-	);
-	const closeAll = (except?: HTMLButtonElement) => {
-		for (const b of buttons) if (b !== except) b.setAttribute('aria-expanded', 'false');
-	};
-	for (const btn of buttons) {
-		btn.addEventListener('click', () => {
-			const open = btn.getAttribute('aria-expanded') === 'true';
-			closeAll(btn);
-			btn.setAttribute('aria-expanded', String(!open));
-		});
-	}
-	document.addEventListener('click', (e) => {
-		if (!(e.target instanceof Element) || !e.target.closest('.glass-nav, .lp-menu, .header-preference')) closeAll();
-	});
-	document.addEventListener('keydown', (e) => {
-		if (e.key === 'Escape') closeAll();
-	});
-
-	// The theme has three predictable states, so each activation advances the
-	// stable Auto -> Light -> Dark order instead of opening another menu.
+	/**
+	 * Header behaviour, re-bound on every navigation.
+	 *
+	 * With the client-side router in place a module script runs once for the
+	 * whole session, and the header it wired up is replaced on the next swap. So
+	 * every binding below happens inside `init`, which `astro:page-load` calls on
+	 * the first load and after each navigation. The one thing that must NOT be
+	 * re-registered is a `document`-level listener, so those are guarded.
+	 */
 	type Theme = 'auto' | 'light' | 'dark';
 	const themeOrder: Theme[] = ['auto', 'light', 'dark'];
 	const storageKey = 'starlight-theme';
+
+	let buttons: HTMLButtonElement[] = [];
+	const closeAll = (except?: HTMLButtonElement) => {
+		for (const b of buttons) if (b !== except) b.setAttribute('aria-expanded', 'false');
+	};
+
 	const preferredTheme = () =>
 		window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 	const loadTheme = (): Theme => {
@@ -609,14 +608,81 @@ const contributing: NavLink = {
 		localStorage.setItem(storageKey, theme === 'auto' ? '' : theme);
 		updateThemeButton(button, theme);
 	};
-	for (const button of document.querySelectorAll<HTMLButtonElement>('.theme-cycle')) {
-		applyTheme(button, loadTheme());
-		button.addEventListener('click', () => {
-			const current = (button.dataset.themeValue as Theme | undefined) ?? 'auto';
-			const next = themeOrder[(themeOrder.indexOf(current) + 1) % themeOrder.length] ?? 'auto';
-			applyTheme(button, next);
-		});
+
+	function init(): void {
+		buttons = Array.from(
+			document.querySelectorAll<HTMLButtonElement>(
+				'.ocx-nav .nav-link[aria-haspopup], .ocx-menu-btn, .language-trigger',
+			),
+		);
+		for (const btn of buttons) {
+			btn.addEventListener('click', () => {
+				const open = btn.getAttribute('aria-expanded') === 'true';
+				closeAll(btn);
+				btn.setAttribute('aria-expanded', String(!open));
+			});
+		}
+
+		for (const button of document.querySelectorAll<HTMLButtonElement>('.theme-cycle')) {
+			applyTheme(button, loadTheme());
+			button.addEventListener('click', () => {
+				const current = (button.dataset.themeValue as Theme | undefined) ?? 'auto';
+				const next = themeOrder[(themeOrder.indexOf(current) + 1) % themeOrder.length] ?? 'auto';
+				applyTheme(button, next);
+			});
+		}
+
+		// Arrow keys move directly through language links; Escape returns focus to
+		// the trigger so keyboard navigation behaves like the other header menus.
+		for (const trigger of document.querySelectorAll<HTMLButtonElement>('.language-trigger')) {
+			const menu = trigger.parentElement?.querySelector<HTMLElement>('.language-menu');
+			const items = Array.from(menu?.querySelectorAll<HTMLAnchorElement>('a[role^="menuitem"]') ?? []);
+			trigger.addEventListener('keydown', (event) => {
+				if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+				event.preventDefault();
+				closeAll(trigger);
+				trigger.setAttribute('aria-expanded', 'true');
+				const target = items[event.key === 'ArrowDown' ? 0 : items.length - 1];
+				// The popover intentionally transitions `visibility`; Chromium refuses
+				// to focus descendants until that transition has made them visible.
+				const focusWhenVisible = (attempt = 0) => {
+					if (!target || !menu || trigger.getAttribute('aria-expanded') !== 'true') return;
+					if (getComputedStyle(menu).visibility === 'visible') {
+						target.focus();
+						return;
+					}
+					if (attempt < 20) requestAnimationFrame(() => focusWhenVisible(attempt + 1));
+				};
+				focusWhenVisible();
+			});
+			menu?.addEventListener('keydown', (event) => {
+				const activeIndex = items.indexOf(document.activeElement as HTMLAnchorElement);
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					trigger.setAttribute('aria-expanded', 'false');
+					trigger.focus();
+					return;
+				}
+				if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+				event.preventDefault();
+				const nextIndex =
+					event.key === 'Home' ? 0 :
+					event.key === 'End' ? items.length - 1 :
+					event.key === 'ArrowDown' ? (activeIndex + 1) % items.length :
+					(activeIndex - 1 + items.length) % items.length;
+				items[nextIndex]?.focus();
+			});
+		}
 	}
+
+	// Registered once. `buttons` is refreshed by `init`, so these close whatever
+	// menus are currently in the document rather than a set captured on page one.
+	document.addEventListener('click', (e) => {
+		if (!(e.target instanceof Element) || !e.target.closest('.ocx-nav, .ocx-menu, .header-preference')) closeAll();
+	});
+	document.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape') closeAll();
+	});
 	window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
 		if (loadTheme() !== 'auto') return;
 		for (const button of document.querySelectorAll<HTMLButtonElement>('.theme-cycle')) {
@@ -624,45 +690,5 @@ const contributing: NavLink = {
 		}
 	});
 
-	// Arrow keys move directly through language links; Escape returns focus to
-	// the trigger so keyboard navigation behaves like the other header menus.
-	for (const trigger of document.querySelectorAll<HTMLButtonElement>('.language-trigger')) {
-		const menu = trigger.parentElement?.querySelector<HTMLElement>('.language-menu');
-		const items = Array.from(menu?.querySelectorAll<HTMLAnchorElement>('a[role^="menuitem"]') ?? []);
-		trigger.addEventListener('keydown', (event) => {
-			if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-			event.preventDefault();
-			closeAll(trigger);
-			trigger.setAttribute('aria-expanded', 'true');
-			const target = items[event.key === 'ArrowDown' ? 0 : items.length - 1];
-			// The popover intentionally transitions `visibility`; Chromium refuses
-			// to focus descendants until that transition has made them visible.
-			const focusWhenVisible = (attempt = 0) => {
-				if (!target || !menu || trigger.getAttribute('aria-expanded') !== 'true') return;
-				if (getComputedStyle(menu).visibility === 'visible') {
-					target.focus();
-					return;
-				}
-				if (attempt < 20) requestAnimationFrame(() => focusWhenVisible(attempt + 1));
-			};
-			focusWhenVisible();
-		});
-		menu?.addEventListener('keydown', (event) => {
-			const activeIndex = items.indexOf(document.activeElement as HTMLAnchorElement);
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				trigger.setAttribute('aria-expanded', 'false');
-				trigger.focus();
-				return;
-			}
-			if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-			event.preventDefault();
-			const nextIndex =
-				event.key === 'Home' ? 0 :
-				event.key === 'End' ? items.length - 1 :
-				event.key === 'ArrowDown' ? (activeIndex + 1) % items.length :
-				(activeIndex - 1 + items.length) % items.length;
-			items[nextIndex]?.focus();
-		});
-	}
+	document.addEventListener('astro:page-load', init);
 </script>

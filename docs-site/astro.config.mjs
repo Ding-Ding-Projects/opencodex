@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import react from "@astrojs/react";
 
 // Canonical GitHub Pages custom domain. The site is served at the domain root,
 // so Starlight must not emit the former /opencodex project-site prefix.
@@ -67,11 +68,25 @@ export default defineConfig({
   // which Chrome cannot parse — the scroll-driven animations die silently.
   vite: {
     build: { cssMinify: "esbuild" },
-    // The appearance engine is imported from `gui/`, one level above this
-    // package, so the dev server has to be allowed to serve it.
+    // The shared M3 modules live one level above this package, so the dev
+    // server has to be allowed to serve them.
     server: { fs: { allow: [".", ".."] } },
+    resolve: {
+      /**
+       * One React, not two.
+       *
+       * `shared/m3/tabs.ts` sits outside this package, so Vite resolves its bare
+       * `react` specifier by walking up from *its* directory — which reaches the
+       * repository root, not `docs-site/node_modules`. The island runtime
+       * resolves its own React from here. Two copies means two dispatchers, and
+       * every hook in every shared component throws "Invalid hook call" — at
+       * runtime only, after a build that reported success.
+       */
+      dedupe: ["react", "react-dom"],
+    },
   },
   integrations: [
+    react(),
     starlight({
       title: "opencodex",
       description:
@@ -86,17 +101,25 @@ export default defineConfig({
       // the base to this option itself, and prefixing it produced
       // `/opencodex/opencodex/favicon.ico`.
       favicon: "/favicon.ico",
+      // Two sheets, and the second is this site's only one.
+      //
+      // What was here before was three, in an order that needed a paragraph to
+      // justify: generated tokens, then a retired skin kept for the layout
+      // rules still worth having, then a Material 3 skin loaded LAST so it
+      // would win every colour conflict with the thing it was replacing. That
+      // is a precedence war, not a design system. `components.css` is the
+      // shared M3 component anatomy both this site and the dashboard render
+      // against; `m3.css` is the site — its generated token block, Starlight's
+      // variables expressed as M3 roles, and its own layout.
       customCss: [
         "@fontsource-variable/geist",
         "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css",
-        // Order matters. Tokens first, then the retired liquid-glass sheet for
-        // the layout rules still worth keeping, then the M3 skin LAST so it
-        // wins every colour conflict with what it is replacing.
-        "./src/styles/m3-tokens.css",
-        "./src/styles/custom.css",
+        "../shared/m3/components.css",
         "./src/styles/m3.css",
       ],
       components: {
+        // Renders Starlight's own head plus `<ClientRouter />`; see the file.
+        Head: "./src/components/Head.astro",
         Header: "./src/components/Header.astro",
         PageTitle: "./src/components/PageTitle.astro",
       },

@@ -1,16 +1,30 @@
 /**
  * First-run onboarding wizard.
  *
- * Three steps — language, connect a provider, done — shown once on a brand new
- * install and never again. It is mounted unconditionally in `App.tsx` beside the
- * snackbar host and decides for itself whether to appear; `onboarding-state.ts`
- * owns that decision and biases every ambiguous signal towards staying hidden.
+ * Four steps — language, connect a provider, remote access, done — shown once on
+ * a brand new install and never again. It is mounted unconditionally in
+ * `App.tsx` beside the snackbar host and decides for itself whether to appear;
+ * `onboarding-state.ts` owns that decision and biases every ambiguous signal
+ * towards staying hidden.
  *
  * This is one of the few legitimately blocking surfaces in the dashboard, so it
- * is a real modal: `role="dialog"` + `aria-modal`, a labelled title, focus moved
- * in on open and trapped while open, Escape closing it as a skip, and focus
- * returned to whatever had it before. Everything else the app says stays
- * non-blocking — the exit itself reports through the snackbar host.
+ * is a real modal — and it gets there through the shared `Dialog`, not through
+ * chrome of its own. It used to paint `.modal-overlay` / `.modal-card`, whose
+ * surface colour was `color-mix(in oklab, canvas 92%, transparent)`: `canvas` is
+ * a *UA system colour*, so the one screen a new user meets first was the one
+ * screen that ignored their seed colour entirely, behind 40px of backdrop blur
+ * nothing else in the app uses.
+ *
+ * What went with those classes is a hand-rolled focus trap — a Tab/Shift+Tab
+ * key handler, a `focusin` listener dragging focus back, and a pair of refs
+ * restoring it on close. `Dialog` opens with `showModal()`, and the native
+ * modal gives all three: focus confined to the dialog, the page behind inert,
+ * and focus restored to the opener. Reimplementing that on top of it is how a
+ * trap ends up fighting the browser's own.
+ *
+ * What this still owns is the *step* announcement: focus moves to the step
+ * heading whenever the step changes, so a screen reader reads the new step
+ * rather than staying on a button that has just been replaced.
  *
  * It never gates the app. The wizard only opens after the provider probe has
  * answered; a proxy that is down, a refused request or an unexpected payload all
@@ -20,7 +34,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IconCheck, IconDevices, IconServer, IconTranslate, IconX } from "../icons";
 import { LOCALES, useI18n, useT, type Locale } from "../i18n/shared";
-import { Button, Chip, TextInput, Toggle } from "./m3-ui";
+import { Button, Chip, Dialog, TextInput, Toggle } from "./m3-ui";
 import { useNotifications } from "./notifications-context";
 import { recordRevision } from "./revisions";
 import {
@@ -36,28 +50,10 @@ const TOTAL_STEPS = 4;
 /** Shortest key `/api/host` will store. Stated up front rather than after a rejection. */
 const MIN_KEY_LENGTH = 12;
 
-const TITLE_ID = "ocx-onboard-title";
-const SUB_ID = "ocx-onboard-sub";
 const LANG_LABEL_ID = "ocx-onboard-lang-label";
-
-const FOCUSABLE = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  '[tabindex]:not([tabindex="-1"])',
-].join(",");
+const STEP_TITLE_ID = "ocx-onboard-step-title";
 
 type ExitReason = "finish" | "skip" | "provider";
-
-function focusablesIn(root: HTMLElement | null): HTMLElement[] {
-  if (!root) return [];
-  // No visibility filtering: the dialog renders one step at a time, so
-  // everything matched here is on screen. `offsetParent` probing would only add
-  // a layout-dependent way for the trap to end up with an empty list.
-  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)];
-}
 
 export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
   const t = useT();
@@ -77,9 +73,7 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
   // can mean anything without risking the every-launch failure mode.
   const [dontShow, setDontShow] = useState(true);
 
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
-  const restorePendingRef = useRef(false);
+  const stepHeadingRef = useRef<HTMLHeadingElement | null>(null);
 
   // The latch in `onboarding-state` is what makes this robust against
   // StrictMode's double mount and any later remount of the shell: once the
@@ -92,44 +86,22 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
       const show = await decideFirstRun(apiBase, controller.signal);
       if (cancelled) return;
       if (!show) { closeForLaunch(); return; }
-      returnFocusRef.current = document.activeElement as HTMLElement | null;
       setOpen(true);
     })();
     return () => { cancelled = true; controller.abort(); };
   }, [apiBase]);
 
-  // Move focus into the dialog on open and on every step change, so a screen
-  // reader announces the new step's heading rather than staying on a button
-  // that just disappeared.
+  // Focus lands on the step heading on open and on every step change, so a
+  // screen reader announces the step the user has just arrived at rather than
+  // staying on a button that has been replaced underneath it.
+  //
+  // Effects run children-first, so `Dialog` has already recorded the opener and
+  // called `showModal()` by the time this runs — this only moves focus *within*
+  // the dialog, never out of it, and never overwrites what the restore target is.
   useEffect(() => {
     if (!open) return;
-    cardRef.current?.focus();
+    stepHeadingRef.current?.focus();
   }, [open, step]);
-
-  // Belt to the Tab handler's braces: anything that lands focus outside the
-  // dialog while it is open (a click on the page behind, a browser-supplied
-  // focus move) is pulled straight back in.
-  useEffect(() => {
-    if (!open) return;
-    const onFocusIn = (event: FocusEvent) => {
-      const card = cardRef.current;
-      if (!card) return;
-      const target = event.target as Node | null;
-      if (target && !card.contains(target)) card.focus();
-    };
-    document.addEventListener("focusin", onFocusIn);
-    return () => document.removeEventListener("focusin", onFocusIn);
-  }, [open]);
-
-  // Focus goes back where it came from — after the close has committed, so the
-  // trap above has already been torn down and cannot snatch it back to a card
-  // that is on its way out.
-  useEffect(() => {
-    if (open || !restorePendingRef.current) return;
-    restorePendingRef.current = false;
-    const target = returnFocusRef.current;
-    if (target && document.contains(target) && typeof target.focus === "function") target.focus();
-  }, [open]);
 
   const close = useCallback((reason: ExitReason) => {
     closeForLaunch();
@@ -144,7 +116,8 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
     // been onboarded, whatever the box says.
     if (reason === "finish" || dontShow) completeOnboarding();
     else deferOnboarding();
-    restorePendingRef.current = true;
+    // Unmounting the Dialog is what hands focus back to the opener; there is no
+    // restore of our own left to arm.
     setOpen(false);
 
     if (reason === "finish") {
@@ -167,27 +140,6 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
     });
   }, [locale, setLocale, t]);
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close("skip");
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const items = focusablesIn(cardRef.current);
-    if (!items.length) { event.preventDefault(); return; }
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement;
-    if (event.shiftKey && (active === first || active === cardRef.current)) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
   if (!open) return null;
 
   const heading = step === 0 ? t("onboard.langTitle")
@@ -200,204 +152,29 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
     : t("onboard.doneSub");
 
   return (
-    <div className="modal-overlay">
-      <div
-        ref={cardRef}
-        className="modal-card"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={TITLE_ID}
-        aria-describedby={SUB_ID}
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-      >
-        <div className="modal-head">
-          <h3 id={TITLE_ID}>{t("onboard.title")}</h3>
-          <button
-            type="button"
-            className="m3-icon-btn"
-            aria-label={t("onboard.skip")}
-            title={t("onboard.skip")}
-            onClick={() => close("skip")}
-          >
-            <IconX aria-hidden="true" width={18} height={18} />
-          </button>
-        </div>
-        <p id={SUB_ID} className="modal-desc">{t("onboard.sub")}</p>
-
-        <section aria-labelledby="ocx-onboard-step-title">
-          <h4
-            id="ocx-onboard-step-title"
-            style={{ margin: "0 0 4px", fontSize: "var(--t-title-m)", display: "flex", alignItems: "center", gap: 8 }}
-          >
-            {step === 0 && <IconTranslate aria-hidden="true" width={20} height={20} />}
-            {step === 1 && <IconServer aria-hidden="true" width={20} height={20} />}
-            {step === 2 && <IconDevices aria-hidden="true" width={20} height={20} />}
-            {step === 3 && <IconCheck aria-hidden="true" width={20} height={20} />}
-            {heading}
-          </h4>
-          <p style={{ margin: "0 0 var(--sp-3)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
-            {body}
-          </p>
-
-          {step === 0 && (
-            <div className="m3-field">
-              <div className="m3-field-label" id={LANG_LABEL_ID}>{t("lang.mode")}</div>
-              <div className="m3-row" role="group" aria-labelledby={LANG_LABEL_ID} style={{ gap: 8, flexWrap: "wrap" }}>
-                {LOCALES.map(l => (
-                  <Chip
-                    key={l.code}
-                    lang={l.htmlLang}
-                    selected={locale === l.code}
-                    onClick={() => pickLocale(l.code, l.name)}
-                  >
-                    {l.name}
-                  </Chip>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {step === 1 && (
-            <div className="m3-row" style={{ gap: 8, flexWrap: "wrap" }}>
-              {/* A hash link, not a router call: the wizard sits outside the tab
-                  strip, and `#providers` is the same deep link the nav writes. */}
-              <a
-                className="m3-btn m3-btn--filled"
-                href="#providers"
-                onClick={() => close("provider")}
-              >
-                <IconServer aria-hidden="true" width={18} height={18} />
-                {t("settings.jumpTo", { page: t("nav.providers") })}
-              </a>
-              {/* Never a dead end: "later" moves on to the network step rather
-                  than closing, so skipping a provider still reaches the rest. */}
-              <Button variant="text" onClick={() => setStep(2)}>{t("onboard.providerSkip")}</Button>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="m3-stack" style={{ gap: "var(--sp-3)" }}>
-              {/* Discovery is a button, never automatic. A first-run wizard that
-                  silently sweeps the subnet is indistinguishable from the thing
-                  security tooling exists to catch. */}
-              <div className="m3-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <Button
-                  variant="outlined"
-                  disabled={scanning}
-                  onClick={async () => {
-                    setScanning(true);
-                    try {
-                      const res = await fetch(`${apiBase}/api/host/discover`, { method: "POST" });
-                      const data = await res.json().catch(() => null) as { found?: typeof found } | null;
-                      setFound(data?.found ?? []);
-                    } catch {
-                      setFound([]);
-                    } finally {
-                      setScanning(false);
-                    }
-                  }}
-                >
-                  <IconDevices aria-hidden="true" width={18} height={18} />
-                  {scanning ? t("onboard.netScanning") : t("onboard.netScan")}
-                </Button>
-              </div>
-
-              {found !== null && (
-                found.length === 0 ? (
-                  <p className="m3-dialog__desc">{t("onboard.netNone")}</p>
-                ) : (
-                  <ul className="m3-stack" style={{ listStyle: "none", margin: 0, padding: 0, gap: 6 }}>
-                    {found.map(hit => (
-                      <li key={hit.url} className="m3-row m3-row--split">
-                        <span style={{ fontFamily: "var(--mono)", fontSize: "var(--t-body-s)" }}>
-                          {hit.url}
-                          {hit.self && ` · ${t("onboard.netThisMachine")}`}
-                        </span>
-                        {!hit.self && (
-                          <a className="m3-btn m3-btn--text" href={hit.url} target="_blank" rel="noreferrer noopener">
-                            {t("onboard.netConnect")}
-                          </a>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )
-              )}
-
-              <div className="m3-row m3-row--split">
-                <div>
-                  <div style={{ fontWeight: 500 }}>{t("onboard.netExpose")}</div>
-                  <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
-                    {t("onboard.netExposeHint")}
-                  </div>
-                </div>
-                <Toggle on={expose} onChange={setExpose} label={t("onboard.netExpose")} />
-              </div>
-
-              {expose && (
-                <div className="m3-stack" style={{ gap: 8 }}>
-                  {/* Said before they type, not after the server refuses: exposing
-                      the proxy publishes the dashboard too, and the password is
-                      the only thing between the two. */}
-                  <p className="m3-banner m3-banner--warn" role="note">{t("onboard.netExposeWarn")}</p>
-                  <TextInput
-                    type="password"
-                    value={key}
-                    onChange={e => setKey(e.target.value)}
-                    placeholder={t("onboard.netKeyPlaceholder")}
-                    aria-label={t("onboard.netKey")}
-                    autoComplete="new-password"
-                  />
-                  <Button
-                    variant="filled"
-                    disabled={exposeBusy || key.trim().length < MIN_KEY_LENGTH}
-                    onClick={async () => {
-                      setExposeBusy(true);
-                      try {
-                        const res = await fetch(`${apiBase}/api/host`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ exposed: true, customKeyValue: key, newKeyName: "onboarding" }),
-                        });
-                        const body = await res.json().catch(() => null) as { error?: string } | null;
-                        if (!res.ok) {
-                          notify({ tone: "error", title: t("onboard.netExposeFailed"), body: body?.error });
-                          return;
-                        }
-                        notify({ tone: "success", title: t("onboard.netExposed"), body: t("network.restartHint") });
-                        setStep(3);
-                      } catch {
-                        notify({ tone: "error", title: t("onboard.netExposeFailed") });
-                      } finally {
-                        setExposeBusy(false);
-                      }
-                    }}
-                  >
-                    {t("onboard.netExposeAction")}
-                  </Button>
-                  <p style={{ fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", margin: 0 }}>
-                    {t("onboard.netKeyRule", { n: MIN_KEY_LENGTH })}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
-        <div
-          className="m3-row"
-          style={{ gap: 8, marginTop: "var(--sp-3)", flexWrap: "wrap", alignItems: "center" }}
+    <Dialog
+      title={t("onboard.title")}
+      description={t("onboard.sub")}
+      // Escape is the only key handled, and the native `<dialog>` raises it as
+      // `cancel` — so it arrives here without a key listener of our own.
+      onClose={() => close("skip")}
+      // A first-run wizard is shown exactly once. A stray click on the scrim
+      // would dismiss it for good, and step 3 holds an unsaved network key while
+      // it is open, so dismissal stays deliberate: the X, Skip, or Escape.
+      dismissOnScrim={false}
+      headAction={
+        <button
+          type="button"
+          className="m3-icon-btn"
+          aria-label={t("onboard.skip")}
+          title={t("onboard.skip")}
+          onClick={() => close("skip")}
         >
-          <Toggle on={dontShow} label={t("onboard.dontShow")} onChange={setDontShow} />
-          {/* The switch already carries this exact text as its accessible name,
-              so the visible copy beside it is decoration to assistive tech. */}
-          <span aria-hidden="true" style={{ fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
-            {t("onboard.dontShow")}
-          </span>
-        </div>
-
-        <div className="modal-actions" style={{ alignItems: "center" }}>
+          <IconX aria-hidden="true" width={18} height={18} />
+        </button>
+      }
+      actions={
+        <>
           <span
             aria-live="polite"
             style={{ marginRight: "auto", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}
@@ -415,8 +192,184 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
           ) : (
             <Button variant="filled" onClick={() => close("finish")}>{t("onboard.finish")}</Button>
           )}
-        </div>
+        </>
+      }
+    >
+      <section aria-labelledby={STEP_TITLE_ID}>
+        {/* tabIndex -1 so the step-change effect can move focus here. It is a
+            programmatic target only — never in the Tab order. */}
+        <h4
+          id={STEP_TITLE_ID}
+          ref={stepHeadingRef}
+          tabIndex={-1}
+          style={{ margin: "0 0 4px", fontSize: "var(--t-title-m)", display: "flex", alignItems: "center", gap: 8 }}
+        >
+          {step === 0 && <IconTranslate aria-hidden="true" width={20} height={20} />}
+          {step === 1 && <IconServer aria-hidden="true" width={20} height={20} />}
+          {step === 2 && <IconDevices aria-hidden="true" width={20} height={20} />}
+          {step === 3 && <IconCheck aria-hidden="true" width={20} height={20} />}
+          {heading}
+        </h4>
+        <p style={{ margin: "0 0 var(--sp-3)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+          {body}
+        </p>
+
+        {step === 0 && (
+          <div className="m3-field">
+            <div className="m3-field-label" id={LANG_LABEL_ID}>{t("lang.mode")}</div>
+            <div className="m3-row" role="group" aria-labelledby={LANG_LABEL_ID} style={{ gap: 8, flexWrap: "wrap" }}>
+              {LOCALES.map(l => (
+                <Chip
+                  key={l.code}
+                  lang={l.htmlLang}
+                  selected={locale === l.code}
+                  onClick={() => pickLocale(l.code, l.name)}
+                >
+                  {l.name}
+                </Chip>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="m3-row" style={{ gap: 8, flexWrap: "wrap" }}>
+            {/* A hash link, not a router call: the wizard sits outside the tab
+                strip, and `#providers` is the same deep link the nav writes. */}
+            <a
+              className="m3-btn m3-btn--filled"
+              href="#providers"
+              onClick={() => close("provider")}
+            >
+              <IconServer aria-hidden="true" width={18} height={18} />
+              {t("settings.jumpTo", { page: t("nav.providers") })}
+            </a>
+            {/* Never a dead end: "later" moves on to the network step rather
+                than closing, so skipping a provider still reaches the rest. */}
+            <Button variant="text" onClick={() => setStep(2)}>{t("onboard.providerSkip")}</Button>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="m3-stack" style={{ gap: "var(--sp-3)" }}>
+            {/* Discovery is a button, never automatic. A first-run wizard that
+                silently sweeps the subnet is indistinguishable from the thing
+                security tooling exists to catch. */}
+            <div className="m3-row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <Button
+                variant="outlined"
+                disabled={scanning}
+                onClick={async () => {
+                  setScanning(true);
+                  try {
+                    const res = await fetch(`${apiBase}/api/host/discover`, { method: "POST" });
+                    const data = await res.json().catch(() => null) as { found?: typeof found } | null;
+                    setFound(data?.found ?? []);
+                  } catch {
+                    setFound([]);
+                  } finally {
+                    setScanning(false);
+                  }
+                }}
+              >
+                <IconDevices aria-hidden="true" width={18} height={18} />
+                {scanning ? t("onboard.netScanning") : t("onboard.netScan")}
+              </Button>
+            </div>
+
+            {found !== null && (
+              found.length === 0 ? (
+                <p className="m3-dialog__desc">{t("onboard.netNone")}</p>
+              ) : (
+                <ul className="m3-stack" style={{ listStyle: "none", margin: 0, padding: 0, gap: 6 }}>
+                  {found.map(hit => (
+                    <li key={hit.url} className="m3-row m3-row--split">
+                      <span style={{ fontFamily: "var(--mono)", fontSize: "var(--t-body-s)" }}>
+                        {hit.url}
+                        {hit.self && ` · ${t("onboard.netThisMachine")}`}
+                      </span>
+                      {!hit.self && (
+                        <a className="m3-btn m3-btn--text" href={hit.url} target="_blank" rel="noreferrer noopener">
+                          {t("onboard.netConnect")}
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+
+            <div className="m3-row m3-row--split">
+              <div>
+                <div style={{ fontWeight: 500 }}>{t("onboard.netExpose")}</div>
+                <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
+                  {t("onboard.netExposeHint")}
+                </div>
+              </div>
+              <Toggle on={expose} onChange={setExpose} label={t("onboard.netExpose")} />
+            </div>
+
+            {expose && (
+              <div className="m3-stack" style={{ gap: 8 }}>
+                {/* Said before they type, not after the server refuses: exposing
+                    the proxy publishes the dashboard too, and the password is
+                    the only thing between the two. */}
+                <p className="m3-banner m3-banner--warn" role="note">{t("onboard.netExposeWarn")}</p>
+                <TextInput
+                  type="password"
+                  value={key}
+                  onChange={e => setKey(e.target.value)}
+                  placeholder={t("onboard.netKeyPlaceholder")}
+                  aria-label={t("onboard.netKey")}
+                  autoComplete="new-password"
+                />
+                <Button
+                  variant="filled"
+                  disabled={exposeBusy || key.trim().length < MIN_KEY_LENGTH}
+                  onClick={async () => {
+                    setExposeBusy(true);
+                    try {
+                      const res = await fetch(`${apiBase}/api/host`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ exposed: true, customKeyValue: key, newKeyName: "onboarding" }),
+                      });
+                      const body = await res.json().catch(() => null) as { error?: string } | null;
+                      if (!res.ok) {
+                        notify({ tone: "error", title: t("onboard.netExposeFailed"), body: body?.error });
+                        return;
+                      }
+                      notify({ tone: "success", title: t("onboard.netExposed"), body: t("network.restartHint") });
+                      setStep(3);
+                    } catch {
+                      notify({ tone: "error", title: t("onboard.netExposeFailed") });
+                    } finally {
+                      setExposeBusy(false);
+                    }
+                  }}
+                >
+                  {t("onboard.netExposeAction")}
+                </Button>
+                <p style={{ fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", margin: 0 }}>
+                  {t("onboard.netKeyRule", { n: MIN_KEY_LENGTH })}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <div
+        className="m3-row"
+        style={{ gap: 8, marginTop: "var(--sp-3)", flexWrap: "wrap", alignItems: "center" }}
+      >
+        <Toggle on={dontShow} label={t("onboard.dontShow")} onChange={setDontShow} />
+        {/* The switch already carries this exact text as its accessible name,
+            so the visible copy beside it is decoration to assistive tech. */}
+        <span aria-hidden="true" style={{ fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
+          {t("onboard.dontShow")}
+        </span>
       </div>
-    </div>
+    </Dialog>
   );
 }

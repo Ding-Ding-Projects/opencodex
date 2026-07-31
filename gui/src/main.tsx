@@ -5,6 +5,7 @@ import { LanguageProvider } from "./i18n/provider";
 import { PrefsProvider } from "./theme/prefs";
 import { NotificationsProvider } from "./shell/notifications";
 import { ConfirmProvider } from "./shell/confirm";
+import ApiTokenPrompt from "./shell/api-token-prompt";
 import "./styles.css";
 
 // Inside the desktop shell the native title bar is hidden and the M3 app bar is
@@ -23,6 +24,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               live snackbar rather than under it — the dialog is the thing the
               user has to answer before anything else continues. */}
           <ConfirmProvider>
+            {/* Renders nothing — it hands `api.ts` the M3 prompt to ask for an
+                admin token with, so a 401 inside the desktop shell asks instead
+                of quietly failing every call that follows it. */}
+            <ApiTokenPrompt />
             <App />
           </ConfirmProvider>
         </NotificationsProvider>
