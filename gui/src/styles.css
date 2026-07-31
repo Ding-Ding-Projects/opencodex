@@ -70,18 +70,26 @@
   --amber-soft: var(--m3-warn-container, light-dark(rgba(180, 83, 9, 0.10), rgba(251, 191, 36, 0.13)));
 
   /* geometry: 4px base grid, three surface radii, and one pill radius */
+
+  /* Aliased onto the density ramp the same way the radii below are aliased onto
+     the shape tokens. These were fixed pixels, so the density control moved
+     `--sp-*` while every rule in this sheet stayed put — the slider silently did
+     nothing on any screen that had not been migrated. The mapping is exact at
+     density 1, so nothing moves at the loosest setting; the tighter levels now
+     actually tighten. The three hairline steps stay fixed: a 2px rule is a
+     hairline at every density, not a spacing decision. */
   --space-0-5: 2px;
   --space-1: 4px;
   --space-1-5: 6px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
-  --space-12: 48px;
-  --space-16: 64px;
+  --space-2: var(--sp-1, 8px);
+  --space-3: var(--sp-2, 12px);
+  --space-4: var(--sp-3, 16px);
+  --space-5: calc(var(--sp-3, 16px) * 1.25);
+  --space-6: var(--sp-4, 24px);
+  --space-8: var(--sp-5, 32px);
+  --space-10: calc(var(--sp-5, 32px) * 1.25);
+  --space-12: calc(var(--sp-5, 32px) * 1.5);
+  --space-16: calc(var(--sp-5, 32px) * 2);
 
   --radius-2xs: 4px;
   --radius: var(--r-m, 12px);
@@ -98,14 +106,18 @@
   --font: var(--font-ui);
   --mono: var(--font-code);
 
-  --text-micro: 10px;
-  --text-caption: 11px;
-  --text-label: 12px;
-  --text-control: 13px;
-  --text-body: 14px;
-  --text-subtitle: 16px;
-  --text-title: 20px;
-  --text-display: 24px;
+  /* Multiplied by the font-size scale the Appearance screen writes. These were
+     fixed pixels with no link to `typeTokens()`, so the slider moved `--t-*`
+     and left all 83 legacy `.text-*` elements exactly where they were. At the
+     default scale of 1 every value below is identical to what it was. */
+  --text-micro: calc(10px * var(--m3-type-scale, 1));
+  --text-caption: calc(11px * var(--m3-type-scale, 1));
+  --text-label: calc(12px * var(--m3-type-scale, 1));
+  --text-control: calc(13px * var(--m3-type-scale, 1));
+  --text-body: calc(14px * var(--m3-type-scale, 1));
+  --text-subtitle: calc(16px * var(--m3-type-scale, 1));
+  --text-title: calc(20px * var(--m3-type-scale, 1));
+  --text-display: calc(24px * var(--m3-type-scale, 1));
 
   --weight-regular: 400;
   --weight-medium: 500;

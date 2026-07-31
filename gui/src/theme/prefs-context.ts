@@ -45,7 +45,12 @@ export interface Prefs {
 export const DEFAULT_PREFS: Prefs = {
   theme: "system",
   seed: DEFAULT_SEED,
-  density: 4,
+  // 3, matching the prototype's `density: p.density ?? 3`. This shipped as 4,
+  // which put every fresh install one step tighter than the design it was ported
+  // from — and because the density ramp was severed from `styles.css` until now,
+  // the difference was invisible on any unmigrated screen rather than obviously
+  // wrong. An existing profile keeps whatever it has stored.
+  density: 3,
   fontId: "roboto-flex",
   fontScale: 1,
   fontWeight: 400,

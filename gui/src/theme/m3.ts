@@ -200,6 +200,16 @@ export function applyTokens(el: HTMLElement, opts: ApplyTokensOptions): void {
 
   for (const [key, value] of Object.entries(densityTokens(density))) el.style.setProperty(key, value)
   for (const [key, value] of Object.entries(typeTokens(fontScale))) el.style.setProperty(key, value)
+  // The raw multiplier, not just the derived `--t-*` roles.
+  //
+  // `styles.css` carries its own eight-step type scale in fixed pixels, and 83
+  // live elements still render through it. Those sizes were aliased onto
+  // nothing, so the font-size slider moved `--t-*` while every legacy `.text-*`
+  // element stayed exactly where it was — the control appeared to do nothing on
+  // any screen that had not been migrated. Exporting the multiplier lets that
+  // scale multiply itself without restating the M3 ramp, and without changing
+  // any size at the default scale of 1.
+  el.style.setProperty('--m3-type-scale', String(fontScale))
   for (const [key, value] of Object.entries(SHAPE_TOKENS)) el.style.setProperty(key, value)
   for (const [key, value] of Object.entries(elevationTokens(dark))) el.style.setProperty(key, value)
 
