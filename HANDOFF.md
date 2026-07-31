@@ -122,13 +122,17 @@ on checkout, so restored files came back with different bytes than were committe
 `.gitattributes` carrying `* -text`, written at init and refreshed on every `ensureRepo` so repos
 created by older builds are repaired. `tests/log-store.test.ts` guards it with mixed line endings.
 
-Verified on the merged tree (`b7003d8e`, after `git merge origin/main`):
+Verified on the merged tree (`0095125e`, after two `git merge origin/main` passes):
 
 ```
 bun run typecheck                         → clean (tsc --noEmit, no diagnostics)
 cd gui && npx tsc --noEmit                → clean
 cd gui && npx eslint src --max-warnings=0 → clean
 cd gui && bun test                        → 692 pass, 0 fail, 9518 expect() calls (116 files)
+bun run test <every tests/ file that references state-history, the debug log buffer,
+  or the /api/host history+restore routes, plus the three new files>
+                                          → 105 pass, 0 fail, 370 expect() calls (9 files)
+                                             — run twice, identical both times
 bun run test tests/log-store.test.ts tests/app-log-file.test.ts \
   tests/management-api-logs-clear.test.ts tests/usage-log.test.ts tests/request-log.test.ts \
   tests/management-api-logs-metrics.test.ts tests/api-usage.test.ts \
@@ -138,11 +142,24 @@ cd docs-site && bun install && bun run build
                                           → 161 pages built, Complete!
 ```
 
-**Known environment flake:** a full `bun run test` (which is `bun test --isolate ./tests/`) panicked
-after ~74 s inside `tests/api-storage-policy.test.ts` with `panic: Internal assertion failure` —
-Bun 1.3.14 crashing, not a test failing; zero `(fail)` lines were recorded before it went. It is not
-deterministic: an earlier run of the same command got roughly 60 files further without it. The
-targeted runs above are what has actually been proven green.
+**The full `bun run test` was NOT completed, and here is exactly why.** `bun run test` is
+`bun test --isolate ./tests/`, and on this host it dies two different ways, neither of them a test
+failing:
+
+1. **Bun panics.** Two consecutive runs died at ~73 s inside `tests/api-storage-policy.test.ts` with
+   `panic(thread N): Internal assertion failure` — `oh no: Bun has crashed`, Bun 1.3.14 Windows x64.
+   Zero `(fail)` lines were recorded before either crash, and that file passes on its own
+   (`bun run test tests/api-storage-policy.test.ts` → 7 pass, 0 fail).
+2. **Spawn exhaustion under contention.** Splitting the suite into chunks got further but produced
+   large blocks of failures whose every assertion is `expect(result.status).toBe(0)` receiving `66`
+   — `Bun.spawnSync(["bun", …])` failing to start a child. `Get-Process bun` reported **22** live bun
+   processes (this host runs several agents at once). Every implicated file passes standalone:
+   `tests/ci-workflows.test.ts` → 65 pass, `tests/cli-help.test.ts` + `tests/cli-models.test.ts` +
+   `tests/ci-workflows.test.ts` + `tests/claude-desktop-cli.test.ts` → 89 pass, 0 fail.
+
+So: nothing in the suite has been observed failing on its merits, and the targeted runs above are
+what has actually been proven green. A successor on a quiet machine should run the whole suite once
+and confirm, rather than treating this note as a pass.
 
 ## Verification actually performed
 
