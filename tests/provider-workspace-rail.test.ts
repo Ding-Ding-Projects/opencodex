@@ -90,11 +90,19 @@ describe("provider rail source contract", () => {
     const routing = await Bun.file("gui/src/app-routing.ts").text();
     const routeState = await Bun.file("gui/src/use-app-route-state.ts").text();
     const app = await Bun.file("gui/src/App.tsx").text();
+    const tabRouting = await Bun.file("gui/src/shell/use-tab-routing.ts").text();
     expect(routing).toContain('rawHash === "providers/workspace"');
     expect(routing).toContain("hashBelongsToPage(rawHash, nextPage)");
     expect(routeState).toContain('rawHash === "providers/workspace"');
     expect(routeState).toContain("hashBelongsToPage(rawHash, page)");
-    expect(app).toContain("useAppRouteState");
-    expect(`${routing}\n${routeState}\n${app}`).not.toContain("window.location.hash !== nextHash");
+    // What matters is that App still reaches the hash router, not which file it
+    // imports it from. It goes through `useTabRouting` now, because binding the
+    // tab strip and the router as a pair of loose effects in App was a cycle
+    // with no fixed point — the app flipped between two tabs forever. Assert the
+    // chain rather than one import, so moving the wiring again does not read as
+    // App having stopped routing.
+    expect(app).toContain("useTabRouting");
+    expect(tabRouting).toContain("useAppRouteState");
+    expect(`${routing}\n${routeState}\n${app}\n${tabRouting}`).not.toContain("window.location.hash !== nextHash");
   });
 });
