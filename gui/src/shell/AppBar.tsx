@@ -12,6 +12,7 @@ import CostMeter from "./CostMeter";
 import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
 import { usePrefs } from "../theme/prefs-context";
+import { useAppearanceTarget } from "./use-appearance-target";
 import type { Page } from "../app-routing";
 
 interface AppBarProps {
@@ -31,6 +32,8 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, onOpen
   const { history, unreadCount, markAllRead } = useNotifications();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  // Right-click, press-and-hold or Shift+F10 on the bar restyles it in place.
+  const barAppearance = useAppearanceTarget("appBar");
 
   useEffect(() => {
     if (!notifOpen) return;
@@ -48,7 +51,7 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, onOpen
   }, [notifOpen, markAllRead]);
 
   return (
-    <header className="m3-appbar">
+    <header className="m3-appbar" {...barAppearance}>
       {windowClass === "compact" && (
         <button type="button" className="m3-icon-btn" onClick={onOpenDrawer}
           aria-label={t("nav.openMenu")} aria-expanded={drawerOpen} aria-controls="app-sidebar">

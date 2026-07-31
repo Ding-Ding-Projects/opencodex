@@ -36,6 +36,7 @@ import { useTabRouting } from "./shell/use-tab-routing";
 import { fullBuildLabel, readBuildInfo, shortBuildLabel } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
+import ElementAppearanceHost from "./shell/ElementAppearanceHost";
 import TabStrip from "./shell/TabStrip";
 import SnackbarHost from "./shell/SnackbarHost";
 import DimSumCard from "./shell/DimSumCard";
@@ -219,6 +220,11 @@ export default function App() {
   // surfaces start disagreeing about what a pin protects.
 
   return (
+    // The appearance host wraps the shell rather than sitting inside it: every
+    // surface that offers "Edit appearance…" — the rail, the app bar, the tab
+    // strip — has to be a descendant of the provider, and those three have no
+    // common ancestor further down.
+    <ElementAppearanceHost>
     <div className={`m3-app${compact ? " m3-app--compact" : ""}`}>
       <AdaptiveNav
         activePage={activePage}
@@ -282,5 +288,6 @@ export default function App() {
       {/* Decides for itself whether this is a first run; renders nothing otherwise. */}
       <OnboardingWizard apiBase={API_BASE} />
     </div>
+    </ElementAppearanceHost>
   );
 }

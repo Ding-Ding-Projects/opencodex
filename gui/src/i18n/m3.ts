@@ -173,6 +173,21 @@ export const M3_EN = {
   "tabs.searchNone": "No page matches “{query}”.",
   "tabs.searchInvalid": "Invalid pattern: {error}",
 
+  // ---- the four tab-discovery searches ----
+  // Four searches, four fields, four independent queries. They are named for
+  // their scope rather than numbered, because a user reading "Search" four times
+  // has no way to tell which list they are about to filter.
+  "tabs.searchAll": "Find a tab",
+  "tabs.searchClose": "Close the tab search",
+  "tabs.searchStrip": "Tabs in this window",
+  "tabs.searchStripPlaceholder": "Text in the tab label",
+  "tabs.searchInGroup": "Tabs in {name}",
+  "tabs.searchGroups": "Groups by name",
+  "tabs.searchGroupsPlaceholder": "Text in the group name",
+  "tabs.noGroups": "No groups yet. Right-click a tab — or press and hold it — to start one.",
+  "tabs.searchEverywhere": "Every open tab",
+  "tabs.windowN": "Window {n}",
+
   // ---- the per-tab appearance editor ----
   "tabs.styleFor": "Appearance for {name}",
   "tabs.styleClose": "Close the appearance editor",
@@ -297,6 +312,11 @@ export const M3_EN = {
   "appearance.elPad": "Padding",
   "appearance.elInherit": "inherits theme",
   "appearance.elReset": "Reset this element",
+  // The in-place editor's name. It says which surface it is editing, because
+  // the panel is anchored beside one and a bare "Edit appearance" beside a
+  // second one open elsewhere would be two dialogs with the same name.
+  "appearance.editElement": "Edit appearance: {name}",
+  "appearance.editElementHint": "Press and hold, right-click, or press Shift+F10 on any part of the app chrome to restyle it in place.",
   "appearance.pxValue": "{n}px",
   "appearance.motionTitle": "Motion",
   "appearance.motionSub": "Transitions collapse automatically when your system asks for reduced motion.",

@@ -1417,7 +1417,15 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
 .m3-rxpop-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
 
 .m3-rxpop {
-  position: absolute;
+  /* `fixed`, not `absolute`. This panel opens from search bars that live inside
+     `.m3-page` (a scroll container) and inside the tab strip's own menus (also
+     scroll containers), and an absolutely positioned descendant is clipped at
+     its scrolling ancestor's edge rather than the viewport's — which at 320px,
+     where the horizontal clamp resolves to a large negative offset, cut the
+     builder off on the left every time it was opened. `fixed` escapes every
+     ancestor's clip; the component supplies viewport coordinates and already
+     repositions on scroll and resize, so nothing detaches. */
+  position: fixed;
   z-index: 75;
   display: flex;
   flex-direction: column;
@@ -1428,8 +1436,10 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   box-shadow: var(--e3);
   animation: m3-rxpop-in 160ms cubic-bezier(0.2, 0, 0, 1);
 }
-.m3-rxpop--below { top: calc(100% + 8px); }
-.m3-rxpop--above { bottom: calc(100% + 8px); }
+/* The offsets are inline now, from `fixedPanelStyle`: a class-driven
+   `top: calc(100% + 8px)` is measured from the 48px wrapper, which cannot follow
+   a viewport clamp — a trigger partly off-screen dragged the panel off with it.
+   The modifier classes stay for the entry animation's direction. */
 
 @keyframes m3-rxpop-in {
   from { opacity: 0; transform: translateY(-4px) scale(0.98); }

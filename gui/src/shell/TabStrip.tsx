@@ -29,10 +29,13 @@
  * what the strip loses.
  */
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
+import { useAppearanceTarget } from "./use-appearance-target";
+import TabSearchPanel from "./TabSearchPanel";
+import { useTabRegistry } from "./use-tab-registry";
 import {
-  IconChevron, IconCopy, IconFilter, IconPalette, IconPin, IconPlus, IconTrash, IconX,
+  IconChevron, IconCopy, IconFilter, IconPalette, IconPin, IconPlus, IconSearch, IconTrash, IconX,
 } from "../icons";
 import { useT } from "../i18n/shared";
 import { PAGE_META, PAGE_META_BY_ID } from "./page-meta";
@@ -140,6 +143,10 @@ const wrap = (n: number, count: number) => ((n % count) + count) % count;
 
 export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const t = useT();
+  // The strip as a whole is an appearance target. Individual tabs have their own
+  // editor reached from the tab menu, so this one is bound to the strip element
+  // rather than to a tab — a press that lands on the empty part of the strip.
+  const stripAppearance = useAppearanceTarget("tabStrip");
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -168,6 +175,11 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const [groupMenuSize, setGroupMenuSize] = useState({ width: 0, height: 0 });
   /** Non-null while a group name is being typed — new group, or a rename. */
   const [naming, setNaming] = useState<{ groupId: string | null; tabId: string | null; value: string } | null>(null);
+  /* The anchor is captured when the panel opens, not read from the ref during
+     render: a ref read at render time is a value React has no reason to have
+     settled yet, and the first frame would place the panel against `null`. */
+  const [search, setSearch] = useState<{ anchor: HTMLElement | null } | null>(null);
+  const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const [pageQuery, setPageQuery] = useState("");
   const [pageRegex, setPageRegex] = useState(false);
 
@@ -245,7 +257,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   // missing from a list that never claimed them.
   const hiddenLabel = t("tabs.hidden", { count: String(overflow.length) });
 
-  const labelOf = (tab: Tab) => t(PAGE_META_BY_ID[tab.page].tkey);
+  const labelOf = useCallback((tab: Tab) => t(PAGE_META_BY_ID[tab.page].tkey), [t]);
+  // Announces this window's strip to any other window with the app open, and
+  // collects theirs — the master tab search unions the two.
+  const registry = useTabRegistry(tabs, labelOf);
   const focusTab = (id: string) => tabButtons.current.get(id)?.focus();
 
   /**
@@ -901,7 +916,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   };
 
   return (
-    <div className="m3-tabstrip">
+    <div className="m3-tabstrip" {...stripAppearance}>
       <div
         className="m3-tablist"
         role="tablist"
@@ -1040,6 +1055,19 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           )}
         </div>
       )}
+
+      <button
+        type="button"
+        ref={searchTriggerRef}
+        className="m3-tabstrip-btn"
+        onClick={event => setSearch(open => (open ? null : { anchor: event.currentTarget }))}
+        aria-haspopup="dialog"
+        aria-expanded={!!search}
+        aria-label={t("tabs.searchAll")}
+        title={t("tabs.searchAll")}
+      >
+        <IconSearch aria-hidden />
+      </button>
 
       <div ref={newMenuWrapRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
         <button
@@ -1279,6 +1307,18 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
             </button>
           ))}
         </div>
+      )}
+
+      {search && (
+        <TabSearchPanel
+          tabs={tabs}
+          labelOf={labelOf}
+          peers={registry.peers}
+          self={registry.self}
+          send={registry.send}
+          anchor={search.anchor}
+          onClose={() => { setSearch(null); searchTriggerRef.current?.focus(); }}
+        />
       )}
 
       {naming && (

@@ -11,7 +11,7 @@
  *  3. **Groups by name** — the group-management surface's own search, separate
  *     from every tab search above it.
  *  4. **Every open tab** — the master search, unioning this window's strip with
- *     every peer window's announced snapshot (see `lib/tab-registry.ts`). Each
+ *     every peer window's announced snapshot (see `shared/m3/tab-registry.ts`). Each
  *     result says which window, which group, and whether it is pinned.
  *
  * And the two bulk closes, which are one predicate and its negation. The preview
@@ -54,8 +54,8 @@ import type {
   SelfWindow,
   TabCommand,
   WindowSnapshot,
-} from "../lib/tab-registry";
-import { numberWindows } from "../lib/tab-registry";
+} from "../../../shared/m3/tab-registry";
+import { numberWindows } from "../../../shared/m3/tab-registry";
 import { SearchBar } from "./RegexBuilder";
 import { Button, Chip, Icon, IconButton } from "./ui";
 

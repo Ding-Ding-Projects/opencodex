@@ -1,9 +1,16 @@
 /**
- * Who else has this site open, and what is in their tab strips.
+ * Who else has this app open, and what is in their tab strips.
+ *
+ * Lives in `shared/m3` rather than in either consumer because both the docs site
+ * and the dashboard need the same answer to "what tabs exist anywhere", and a
+ * presence protocol implemented twice is two protocols that will disagree about
+ * when a window is gone. Callers pass their own `channelName`, so the two apps
+ * announce on separate channels and never see each other's strips.
  *
  * The master tab search is required to cover "every open tab across all windows,
- * workspaces, strips, and groups the app owns". On a website, a *window* is a
- * browser tab or window with this site loaded, each running its own strip island.
+ * workspaces, strips, and groups the app owns". A *window* here is a document
+ * with this app loaded — a browser tab, or a second Electron window — each
+ * running its own strip island.
  * They already share one persisted strip in `localStorage`, but that is the last
  * writer's copy, not a live view — a window that has been open for ten minutes
  * holds a strip that storage has not heard about. So the live picture is

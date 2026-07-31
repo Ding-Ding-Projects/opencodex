@@ -29,7 +29,7 @@
  *    `TabSearchPanel`, behind a `lazy()` boundary. They are a large surface with
  *    a regex builder in it, and nobody opens them on the way to reading a page;
  *    splitting them out keeps that weight off the first paint of a phone.
- *  - Cross-window awareness comes from `lib/tab-registry.ts`. The master search
+ *  - Cross-window awareness comes from `shared/m3/tab-registry.ts`. The master search
  *    has to cover every window with this site open, and `localStorage` only ever
  *    holds the last writer's strip, so the live picture is announced rather than
  *    read.
@@ -59,7 +59,7 @@ import {
   type TabCommand,
   type TabRegistry,
   type WindowSnapshot,
-} from "../lib/tab-registry";
+} from "../../../shared/m3/tab-registry";
 import { Icon as UiIcon } from "./ui";
 
 /**
