@@ -15,9 +15,15 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { npmInvocation } from "../src/update/npm-invocation.mjs";
+import { checkNpmCacheOwnership, formatNpmCacheOwnershipFailure } from "../src/update/npm-cache-preflight.mjs";
+import {
+  INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE,
+  runProcessTreeCommand,
+} from "../src/update/install-process.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
 
 const PKG = "@bitkyc08/opencodex";
+const NPM_INSTALL_TIMEOUT_MS = 180_000;
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 const cliPath = join(here, "..", "src", "cli", "index.ts");
@@ -39,8 +45,8 @@ function currentPackageVersion() {
 }
 
 function updateTag(currentVersion) {
-  // Allowlist the tag: the value is argv-controlled and (on Windows) flows into a
-  // shell-joined spawnSync — never forward arbitrary strings.
+  // Allowlist the tag: the value is argv-controlled and (on Windows) still ends up in a
+  // cmd.exe command line built by npmInvocation — never forward arbitrary strings.
   const tagIndex = process.argv.indexOf("--tag");
   const explicit = tagIndex !== -1 ? process.argv[tagIndex + 1] : undefined;
   if (explicit === "preview" || explicit === "latest") return explicit;
@@ -109,7 +115,7 @@ function runTrayLifecycle(launcher, action) {
   });
 }
 
-function runNpmSelfUpdate() {
+async function runNpmSelfUpdate() {
   const current = currentPackageVersion();
   const tag = updateTag(current);
   const latestInvocation = npmInvocation(["view", `${PKG}@${tag}`, "version"]);
@@ -130,6 +136,19 @@ function runNpmSelfUpdate() {
   if (latest && latest === current) {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     process.exit(0);
+  }
+
+  // No npmBin/shell overrides: the trusted resolution can return cmd.exe on Windows,
+  // which is not something this pre-flight could run `config get cache` through, and
+  // uid ownership does not apply there anyway. On POSIX the default `npm` is exactly
+  // what the trusted resolution yields, so the two paths still measure the same npm.
+  const cacheOwnership = checkNpmCacheOwnership();
+  if (cacheOwnership.ok === false) {
+    console.error(`opencodex: ${formatNpmCacheOwnershipFailure(cacheOwnership)}`);
+    process.exit(1);
+  }
+  if (cacheOwnership.ok === "skipped") {
+    console.warn(`opencodex: npm cache ownership pre-flight skipped: ${cacheOwnership.reason}. Proceeding best-effort.`);
   }
 
   // Remember whether a background service manages the proxy BEFORE stopping — `ocx stop`
@@ -221,12 +240,35 @@ function runNpmSelfUpdate() {
   }
 
   console.log(`Updating${latest ? ` to v${latest}` : ""}...\n$ npm install -g ${PKG}@${tag}`);
-  const res = spawnSync(installInvocation.file, installInvocation.args, {
+  // The trusted absolute invocation decides WHAT runs; the process-tree runner decides
+  // HOW it is supervised. Both hardenings apply: no shell lookup can be hijacked, and
+  // a failed install cannot leave unsupervised installer descendants behind.
+  const res = await runProcessTreeCommand(installInvocation.file, installInvocation.args, {
     stdio: "inherit",
-    timeout: 180000,
+    timeoutMs: NPM_INSTALL_TIMEOUT_MS,
     windowsHide: true,
     ...installInvocation.options,
   });
+  if (!res.treeExited) {
+    console.error("\nopencodex: installer process-tree cleanup could not be confirmed; automatic recovery is unsafe until those processes exit.");
+    console.error(`  The proxy is stopped. Once no 'npm' installer processes remain, run 'ocx start' or re-run 'ocx update'.${trayBeforeUpdate.restoreOnFailure ? " The Windows tray also remains stopped; run 'ocx tray start' after the installer processes exit." : ""}`);
+    process.exit(INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE);
+  }
+  if (res.interruptedSignal) {
+    if (trayBeforeUpdate.restoreOnFailure) runTrayLifecycle(launcher, "start");
+    console.error(`\nopencodex: update interrupted (${res.interruptedSignal}); the proxy is still stopped. Run 'ocx start' or re-run 'ocx update'.`);
+    const exitCode = res.interruptedSignal === "SIGINT"
+      ? 130
+      : res.interruptedSignal === "SIGHUP"
+        ? 129
+        : 143;
+    if (process.platform === "win32") {
+      process.exit(exitCode);
+    }
+    process.kill(process.pid, res.interruptedSignal);
+    // Do not return to the update call site while fatal signal delivery is pending.
+    process.exit(exitCode);
+  }
   if (res.status === 0) {
     console.log(`\nUpdated${latest ? ` to v${latest}` : ""}.`);
     repairCodexShimIfNeeded();
@@ -277,7 +319,14 @@ function runNpmSelfUpdate() {
     process.exit(0);
   }
   if (trayBeforeUpdate.restoreOnFailure) runTrayLifecycle(launcher, "start");
-  console.error(`\nUpdate failed (npm exit ${res.status ?? "?"}). Try manually:  npm install -g ${PKG}@${tag}`);
+  // "exit ?" alone cannot tell a user whether npm rejected the install, ran out of
+  // time, or never started; the runner distinguishes all three, so report which.
+  const failure = res.timedOut
+    ? `timed out after ${Math.trunc(NPM_INSTALL_TIMEOUT_MS / 1000)}s`
+    : res.error
+      ? `could not run: ${res.error.message}`
+      : `exit ${res.status ?? "?"}`;
+  console.error(`\nUpdate failed (npm ${failure}). Try manually:  npm install -g ${PKG}@${tag}`);
   process.exit(1);
 }
 
@@ -350,7 +399,7 @@ if (updateHelpRequested) {
 }
 
 if (process.argv[2] === "update" && isNodeModulesInstall() && !isBunGlobalInstall()) {
-  runNpmSelfUpdate();
+  await runNpmSelfUpdate();
 }
 
 const bun = resolveBun();

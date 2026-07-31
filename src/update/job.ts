@@ -1,11 +1,33 @@
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { atomicWriteFile, getConfigDir, loadConfig, readPid, readRuntimePort } from "../config";
+// Two liveness checks live in this file because they answer questions about two
+// different processes. verifyPidIdentityFresh proves a PID is really an `ocx start`
+// proxy, which is what the recovery paths need before they kill or trust one. It
+// cannot be used on the update worker: that process runs `__gui-update-worker`, so
+// an identity check would reject every healthy worker and unlock concurrent installs.
+// Bare isProcessAlive is the right signal there, with the age window below covering
+// the legacy records that never recorded a worker PID at all.
+import {
+  atomicWriteFile,
+  getConfigDir,
+  loadConfig,
+  readAlivePid,
+  readPid,
+  readRuntimePort,
+  verifyPidIdentityFresh,
+} from "../config";
 import { isProcessAlive, killProxy } from "../lib/process-control";
 import { reclaimListenPort } from "../server/port-reclaim";
-import { isOpencodexHealthz, probeHostname, proxyIdentityAt, type HealthzIdentity } from "../server/proxy-liveness";
+import {
+  findLiveProxy,
+  isOpencodexHealthz,
+  probeHostname,
+  proxyIdentityAt,
+  type HealthzIdentity,
+  type LiveProxy,
+} from "../server/proxy-liveness";
 import { isServiceInstalled } from "../service";
 import {
   type Channel,
@@ -20,16 +42,26 @@ import {
   updateCommandStr,
 } from "./index";
 import { isNewer } from "./notify";
+import {
+  INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE,
+  runProcessTreeCommand,
+} from "./install-process.mjs";
+import { RECOVERY_TREE_SCAN_WORKER_ARG } from "./recovery-tree-scan.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "./tray-update-plan.mjs";
 
 const RELEASE_NOTES_URL = "https://github.com/lidge-jun/opencodex/releases/latest";
 const UPDATE_JOB_FILENAME = "update-job.json";
-const UPDATE_TIMEOUT_MS = 180_000;
+const UPDATE_TIMEOUT_MS = 360_000;
 const RESTART_TIMEOUT_MS = 60_000;
 const RESTART_HEALTH_TIMEOUT_MS = 15_000;
 const RESTART_STABILITY_WINDOW_MS = 15_000;
 /** Legacy active records did not persist a worker PID, so age is their only safe recovery signal. */
 export const UPDATE_JOB_LEGACY_STALE_MS = 10 * 60_000;
+const UPDATE_LIVENESS_PROBE_ATTEMPTS = 3;
+const UPDATE_LIVENESS_PROBE_DELAY_MS = 250;
+const MAX_NPM_RECOVERY_CANDIDATES = 2;
+const MAX_NPM_RECOVERY_TREE_ENTRIES = 50_000;
+const MAX_NPM_RECOVERY_TREE_SCAN_MS = 5_000;
 /** How long update restart waits for the captured port to become bindable after stop. */
 export const RESTART_PORT_RECLAIM_MS = 30_000;
 
@@ -107,6 +139,173 @@ function packageLauncherPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "bin", "ocx.mjs");
 }
 
+interface ValidatedNpmLauncher {
+  launcher: string;
+  mtimeMs: number;
+}
+
+type RecoveryLauncherProbe = (launcher: string) => Promise<boolean>;
+
+function isPathInside(parent: string, child: string): boolean {
+  const fromParent = relative(parent, child);
+  return fromParent !== ""
+    && fromParent !== ".."
+    && !fromParent.startsWith(`..${sep}`)
+    && !isAbsolute(fromParent);
+}
+
+function hasTrustedRecoveryOwner(uid: number): boolean {
+  const currentUid = process.getuid?.();
+  // Root-owned global installations are trusted and otherwise unrecoverable by
+  // an unprivileged GUI process; reject packages planted by every other account.
+  return currentUid === undefined || uid === currentUid || uid === 0;
+}
+
+function hasTrustedRecoveryPermissions(stat: { uid: number; mode: number }): boolean {
+  if (!hasTrustedRecoveryOwner(stat.uid)) return false;
+  // POSIX group/other write bits make even a trusted-owner entry mutable by a
+  // different local account. Windows ACLs are not represented by these bits;
+  // npm failed-root recovery is already disabled there when tree exit is unknown.
+  return process.getuid === undefined || (stat.mode & 0o022) === 0;
+}
+
+interface RecoveryTreeScanOptions {
+  scanSpawn?: typeof spawnSync;
+  scanBin?: string;
+  scanScript?: string;
+  timeoutMs?: number;
+}
+
+function hasTrustedRecoveryTree(packageRoot: string, options: RecoveryTreeScanOptions = {}): boolean {
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs! > 0
+    ? Math.trunc(options.timeoutMs!)
+    : MAX_NPM_RECOVERY_TREE_SCAN_MS;
+  const scanSpawn = options.scanSpawn ?? spawnSync;
+  try {
+    const result = scanSpawn(
+      options.scanBin ?? process.execPath,
+      [
+        options.scanScript ?? fileURLToPath(new URL("./recovery-tree-scan.mjs", import.meta.url)),
+        RECOVERY_TREE_SCAN_WORKER_ARG,
+      ],
+      {
+        encoding: "utf8",
+        input: JSON.stringify({
+          packageRoot,
+          maxEntries: MAX_NPM_RECOVERY_TREE_ENTRIES,
+          maxDurationMs: timeoutMs,
+        }),
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+        windowsHide: true,
+        shell: false,
+      },
+    );
+    return result.status === 0 && String(result.stdout ?? "").trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function scanTrustedRecoveryTreeForTests(
+  packageRoot: string,
+  options: RecoveryTreeScanOptions = {},
+): boolean {
+  return hasTrustedRecoveryTree(packageRoot, options);
+}
+
+/** Validate the on-disk identity before any candidate code is executed. */
+function inspectNpmRecoveryPackage(packageRoot: string, expectedVersion: string): ValidatedNpmLauncher | null {
+  try {
+    const rootStat = lstatSync(packageRoot);
+    if (
+      !rootStat.isDirectory()
+      || rootStat.isSymbolicLink()
+      || !hasTrustedRecoveryPermissions(rootStat)
+    ) return null;
+    if (!hasTrustedRecoveryTree(packageRoot)) return null;
+
+    const canonicalRoot = realpathSync(packageRoot);
+    const manifestPath = join(canonicalRoot, "package.json");
+    const manifestStat = lstatSync(manifestPath);
+    if (
+      !manifestStat.isFile()
+      || manifestStat.isSymbolicLink()
+      || !hasTrustedRecoveryPermissions(manifestStat)
+    ) return null;
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { name?: unknown; version?: unknown };
+    if (manifest.name !== PKG || manifest.version !== expectedVersion) return null;
+
+    const launcherPath = join(canonicalRoot, "bin", "ocx.mjs");
+    const launcherStat = lstatSync(launcherPath);
+    if (
+      !launcherStat.isFile()
+      || launcherStat.isSymbolicLink()
+      || !hasTrustedRecoveryPermissions(launcherStat)
+    ) return null;
+    const canonicalLauncher = realpathSync(launcherPath);
+    if (!isPathInside(canonicalRoot, canonicalLauncher)) return null;
+    return { launcher: canonicalLauncher, mtimeMs: rootStat.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+async function probeNpmRecoveryLauncher(launcher: string): Promise<boolean> {
+  const result = await runProcessTreeCommand(nodeBin(), [launcher, "--version"], {
+    stdio: "ignore",
+    timeoutMs: 10_000,
+  });
+  return result.status === 0 && result.treeExited;
+}
+
+/**
+ * npm retires a package to a hidden sibling such as `.opencodex-Ab12Cd34`
+ * before replacing it. On a late install failure, prefer an intact current root;
+ * otherwise recover through the validated retired copy of the pre-update version.
+ */
+export async function findNpmRecoveryLaunchers(
+  currentLauncher: string,
+  expectedVersion: string,
+  probeLauncher: RecoveryLauncherProbe = probeNpmRecoveryLauncher,
+): Promise<string[]> {
+  const packageRoot = dirname(dirname(resolve(currentLauncher)));
+  const scopeRoot = dirname(packageRoot);
+  const prefix = `.${basename(packageRoot)}-`;
+  const candidates: ValidatedNpmLauncher[] = [];
+  const current = inspectNpmRecoveryPackage(packageRoot, expectedVersion);
+  if (current) candidates.push(current);
+  try {
+    const retired = readdirSync(scopeRoot, { encoding: "utf8" })
+      .filter(name => name.startsWith(prefix) && /^[A-Za-z0-9]{8}$/.test(name.slice(prefix.length)))
+      .map(name => inspectNpmRecoveryPackage(join(scopeRoot, name), expectedVersion))
+      .filter((candidate): candidate is ValidatedNpmLauncher => candidate !== null)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    candidates.push(...retired);
+  } catch {
+    // The current package can still be a valid recovery candidate when the scope
+    // directory itself cannot be enumerated.
+  }
+
+  const launchers: string[] = [];
+  for (const candidate of candidates.slice(0, MAX_NPM_RECOVERY_CANDIDATES)) {
+    try {
+      // `--version` loads the launcher's static imports, resolves the bundled Bun
+      // binary, and imports the complete CLI graph without starting or stopping a proxy.
+      if (await probeLauncher(candidate.launcher)) launchers.push(candidate.launcher);
+    } catch { /* an un-runnable candidate is equivalent to a partial package */ }
+  }
+  return launchers;
+}
+
+export async function findNpmRecoveryLauncher(
+  currentLauncher: string,
+  expectedVersion: string,
+  probeLauncher?: RecoveryLauncherProbe,
+): Promise<string | null> {
+  return (await findNpmRecoveryLaunchers(currentLauncher, expectedVersion, probeLauncher))[0] ?? null;
+}
+
 function formatCommand(bin: string, args: string[]): string {
   return `${bin} ${args.join(" ")}`;
 }
@@ -130,7 +329,7 @@ function ensureJobDir(): void {
 
 function writeJob(job: UpdateJobState): void {
   ensureJobDir();
-  atomicWriteFile(updateJobPath(), `${JSON.stringify(job, null, 2)}\n`);
+  atomicWriteFile(updateJobPath(), `${JSON.stringify(sanitizeUpdateJobState(job), null, 2)}\n`);
 }
 
 export function readUpdateJob(jobId?: string | null): UpdateJobState | null {
@@ -144,14 +343,32 @@ export function readUpdateJob(jobId?: string | null): UpdateJobState | null {
   }
 }
 
+function sanitizeUpdateJobText(value: string): string {
+  return value
+    .replace(/(?:[A-Za-z]:\\|\/)[^\s"'<>]*ocx\.mjs\b/g, "ocx.mjs")
+    .replace(/(?:[A-Za-z]:\\|\/)[^\s"'<>]*(?:\.npm|_cacache|_npx|\.opencodex-)[^\s"'<>]*/g, "[redacted npm path]")
+    .replace(/\/(?:Users|home)\/[^/\s"'<>]+(?:\/[^\s"'<>]*)*/g, "[redacted user path]")
+    .replace(/\b(uid|gid)\s*[:=]\s*\d+\b/gi, "$1=[redacted]")
+    .replace(/\b(UID|GID)\s+\d+\b/g, "$1 [redacted]");
+}
+
+function sanitizeUpdateJobState(job: UpdateJobState): UpdateJobState {
+  return {
+    ...job,
+    command: sanitizeUpdateJobText(job.command),
+    log: job.log.map(sanitizeUpdateJobText),
+    ...(job.error ? { error: sanitizeUpdateJobText(job.error) } : {}),
+  };
+}
+
 function updateJob(job: UpdateJobState, patch: Partial<UpdateJobState>, logLine?: string): UpdateJobState {
   const current = readUpdateJob(job.id) ?? job;
-  const next = {
+  const next = sanitizeUpdateJobState({
     ...current,
     ...patch,
     updatedAt: new Date().toISOString(),
-    log: logLine ? [...current.log, logLine] : current.log,
-  };
+    log: logLine ? [...current.log, sanitizeUpdateJobText(logLine)] : current.log,
+  });
   writeJob(next);
   return next;
 }
@@ -232,7 +449,7 @@ export function checkForUpdate(
     installer,
     updateAvailable,
     canUpdate: installer !== "source" && updateAvailable,
-    command,
+    command: sanitizeUpdateJobText(command),
     releaseNotesUrl: RELEASE_NOTES_URL,
     ...(reason ? { reason } : {}),
   };
@@ -355,7 +572,17 @@ export function startUpdateJob(
   return startedJob;
 }
 
-function runLoggedCommand(job: UpdateJobState, bin: string, args: string[], timeout: number): { status: number | null; signal: NodeJS.Signals | null } {
+interface LoggedCommandResult {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+}
+
+interface InstallerCommandResult extends LoggedCommandResult {
+  treeExited: boolean;
+}
+
+function runLoggedCommand(job: UpdateJobState, bin: string, args: string[], timeout: number): LoggedCommandResult {
   job = updateJob(job, {}, `$ ${formatCommand(bin, args)}`);
   const result = spawnSync(bin, args, {
     encoding: "utf8",
@@ -366,21 +593,100 @@ function runLoggedCommand(job: UpdateJobState, bin: string, args: string[], time
   const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
   if (stdout) job = updateJob(job, {}, stdout.slice(-4000));
   if (stderr) updateJob(job, {}, stderr.slice(-4000));
-  return { status: result.status, signal: result.signal };
+  return {
+    status: result.status,
+    signal: result.signal,
+    timedOut: (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT",
+  };
 }
 
-function spawnDetachedStart(job: UpdateJobState, installer: Installer, port?: number): void {
-  const cmd = restartCommand(false, installer, packageLauncherPath(), port);
+async function runLoggedProcessTreeCommand(
+  job: UpdateJobState,
+  bin: string,
+  args: string[],
+  timeout: number,
+): Promise<InstallerCommandResult> {
+  job = updateJob(job, {}, `$ ${formatCommand(bin, args)}`);
+  const result = await runProcessTreeCommand(bin, args, {
+    stdio: "pipe",
+    timeoutMs: timeout,
+    windowsHide: true,
+    shell: false,
+  });
+  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
+  if (stdout) job = updateJob(job, {}, stdout.slice(-4000));
+  if (stderr) job = updateJob(job, {}, stderr.slice(-4000));
+  return {
+    status: result.status,
+    signal: result.signal,
+    timedOut: result.timedOut,
+    treeExited: result.treeExited,
+  };
+}
+
+export function installerFailureAllowsRecovery(installer: Installer, result: InstallerCommandResult): boolean {
+  return result.treeExited
+    && !result.timedOut
+    && result.signal === null
+    && (installer !== "npm" || result.status !== INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE);
+}
+
+interface StartedRecoveryProcess {
+  pid: number;
+  /** True only while the detached ChildProcess handle still represents this start. */
+  sameGeneration: () => boolean;
+}
+
+type RestartStartResult = StartedRecoveryProcess | number | null | void;
+
+function normalizeStartedRecoveryProcess(result: RestartStartResult): StartedRecoveryProcess | null {
+  if (typeof result === "number") {
+    if (!Number.isSafeInteger(result) || result <= 0) return null;
+    // Numeric results are retained for test seams and older callers, but carry no
+    // generation proof. Recovery therefore fails closed before attempting a kill.
+    return { pid: result, sameGeneration: () => false };
+  }
+  if (!result || !Number.isSafeInteger(result.pid) || result.pid <= 0) return null;
+  return typeof result.sameGeneration === "function" ? result : null;
+}
+
+export function formatProxyStartLog(installer: Installer, launcher: string, port?: number): string {
+  const candidateLabel = launcher === packageLauncherPath() ? "current package" : "validated recovery candidate";
+  const portLabel = typeof port === "number" && Number.isFinite(port) && port > 0
+    ? ` on port ${Math.trunc(port)}`
+    : "";
+  return `Starting ${installer} proxy from ${candidateLabel}${portLabel}.`;
+}
+
+function spawnDetachedStart(
+  job: UpdateJobState,
+  installer: Installer,
+  port?: number,
+  launcher = packageLauncherPath(),
+): StartedRecoveryProcess | null {
+  const cmd = restartCommand(false, installer, launcher, port);
   const env = { ...process.env };
   delete env.OCX_SERVICE;
-  updateJob(job, {}, `$ ${cmd.display}`);
-  const child = spawn(cmd.bin, cmd.args, {
+  // Do not persist cmd.display here: a retired npm launcher contains the absolute
+  // user home path and update-job.json is returned by the management API.
+  updateJob(job, {}, formatProxyStartLog(installer, launcher, port));
+  const child: ChildProcess = spawn(cmd.bin, cmd.args, {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
     env,
   });
+  const pid = child.pid;
+  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return null;
+  let exited = false;
+  child.once("exit", () => { exited = true; });
+  child.once("error", () => { exited = true; });
   child.unref();
+  return {
+    pid,
+    sameGeneration: () => !exited && child.exitCode === null && child.signalCode === null,
+  };
 }
 
 /** Identity snapshot used to prove an npm self-update actually replaced the pre-update process. */
@@ -389,14 +695,20 @@ export interface RestartProxyIdentity {
   version?: string;
 }
 
+export type FailedUpdateRecovery = "not-needed" | "still-running" | "restarted" | "failed";
+
 /** Test seam: the wait/spawn pair is injectable so the restart path is verifiable. */
 export interface RestartIo {
   waitForPort?: typeof reclaimListenPort;
-  spawnStart?: (job: UpdateJobState, installer: Installer, port?: number) => void;
+  spawnStart?: (job: UpdateJobState, installer: Installer, port?: number, launcher?: string) => RestartStartResult;
   serviceInstalledFn?: () => boolean;
+  readPidFn?: () => number | null;
   probeProxy?: (port: number, hostname?: string) => Promise<boolean>;
   /** Richer /healthz read for update-correlated restart evidence (pid + version). */
   probeProxyIdentity?: (port: number, hostname?: string) => Promise<RestartProxyIdentity | null>;
+  verifyPidIdentityFn?: (pid: number) => number | null;
+  recoveryLaunchersFn?: (currentLauncher: string, expectedVersion: string) => Promise<string[]> | string[];
+  killProxyFn?: (pid: number) => void;
   sleepMs?: (ms: number) => Promise<void>;
   now?: () => number;
   /** Service-mode install/reinstall command (defaults to spawnSync via runLoggedCommand). */
@@ -408,17 +720,23 @@ export interface RestartIo {
   /** Override the explicit restart path (used by finishGuiUpdateRestart tests). */
   restartAfterUpdateFn?: (
     job: UpdateJobState,
-    captured?: { port: number; hostname: string; oldPid?: number },
+    captured?: { port: number; hostname: string; oldPid?: number; recoveryLauncher?: string },
     io?: RestartIo,
-  ) => Promise<void>;
+  ) => Promise<RestartStartResult>;
 }
 
 async function restartAfterUpdate(
   job: UpdateJobState,
-  captured?: { port: number; hostname: string; oldPid?: number },
+  captured?: { port: number; hostname: string; oldPid?: number; recoveryLauncher?: string },
   io: RestartIo = {},
-): Promise<void> {
+): Promise<StartedRecoveryProcess | null> {
   const serviceInstalled = (io.serviceInstalledFn ?? isServiceInstalled)();
+  // A failed npm install may leave only a hidden, npm-retired package runnable.
+  // It can restore availability, but must never be baked into launchd/systemd.
+  const persistentServiceRestart = serviceInstalled && captured?.recoveryLauncher === undefined;
+  if (serviceInstalled && !persistentServiceRestart) {
+    updateJob(job, {}, "Recovery launcher is temporary; starting the proxy directly and leaving the installed service stopped until the package is repaired.");
+  }
   const config = loadConfig();
   // The stop-first update flow has already cleared pid/runtime state by the time we run,
   // so the pre-update capture (taken before the update command) is the authoritative
@@ -428,14 +746,27 @@ async function restartAfterUpdate(
   const oldPid = typeof captured?.oldPid === "number" && captured.oldPid > 0
     ? captured.oldPid
     : undefined;
+  const readCurrentPid = io.readPidFn ?? readPid;
+  const verifyCurrentPid = io.verifyPidIdentityFn ?? verifyPidIdentityFresh;
+  const readPidForRestart = (context: string): { pid: number | null; refused: boolean } => {
+    const rawPid = readCurrentPid();
+    const currentPid = rawPid !== null && verifyCurrentPid(rawPid) === rawPid
+      ? rawPid
+      : null;
+    if (currentPid === null || currentPid === oldPid) return { pid: currentPid, refused: false };
+    updateJob(job, {}, `A different identity-checked proxy PID appeared ${context}; leaving it untouched.`);
+    return { pid: null, refused: true };
+  };
+  if (readPidForRestart("during restart handoff").refused) return null;
   let svcArgs: string[] | undefined;
-  if (serviceInstalled) {
+  if (persistentServiceRestart) {
     try {
       const { serviceReinstallArgs } = await import("../service");
       svcArgs = serviceReinstallArgs();
     } catch { /* fallback to default service install */ }
   }
-  const cmd = restartCommand(serviceInstalled, job.installer, packageLauncherPath(), port, svcArgs);
+  const launcher = captured?.recoveryLauncher ?? packageLauncherPath();
+  const cmd = restartCommand(persistentServiceRestart, job.installer, launcher, port, svcArgs);
   const waitFn = io.waitForPort ?? reclaimListenPort;
   const reclaimOpts = {
     timeoutMs: RESTART_PORT_RECLAIM_MS,
@@ -445,13 +776,14 @@ async function restartAfterUpdate(
     onlyKillPids: oldPid != null ? [oldPid] : [],
   };
 
-  if (serviceInstalled) {
+  if (persistentServiceRestart) {
     // Stop-first update already unloaded the service; reclaim the socket (only the
     // captured old PID when trusted), then reinstall wrappers that bake `--port`.
     const freed = await waitFn(port, hostname, reclaimOpts);
     if (!freed) {
       updateJob(job, {}, `Port ${port} still busy after ${Math.trunc(RESTART_PORT_RECLAIM_MS / 1000)}s; refusing to hop — reinstall may fail until the port is free.`);
     }
+    if (readPidForRestart("after service port reclaim").refused) return null;
     const prevBake = process.env.OCX_BAKE_PORT;
     process.env.OCX_BAKE_PORT = String(Math.trunc(port));
     let serviceOk = false;
@@ -472,13 +804,15 @@ async function restartAfterUpdate(
       if (prevBake === undefined) delete process.env.OCX_BAKE_PORT;
       else process.env.OCX_BAKE_PORT = prevBake;
     }
-    if (serviceOk) return;
+    if (serviceOk) return null;
     // Fall through to the direct proxy start below so the update never leaves the
     // proxy stopped when the service reinstall could not run.
   }
 
-  const pid = readPid();
-  if (pid) {
+  const directPid = readPidForRestart("before direct restart");
+  if (directPid.refused) return null;
+  const pid = directPid.pid;
+  if (pid !== null) {
     updateJob(job, {}, `Stopping current proxy PID ${pid}.`);
     killProxy(pid);
   }
@@ -488,18 +822,21 @@ async function restartAfterUpdate(
   const freed = await waitFn(port, hostname, reclaimOpts);
   if (!freed) {
     updateJob(job, {}, `Port ${port} still busy after ${Math.trunc(RESTART_PORT_RECLAIM_MS / 1000)}s (reclaim could not free the socket); not starting on another port. Retry 'ocx start --port ${port}'.`);
-    return;
+    return null;
   }
-  (io.spawnStart ?? spawnDetachedStart)(job, job.installer, port);
+  if (readPidForRestart("after direct port reclaim").refused) return null;
+  return normalizeStartedRecoveryProcess(
+    (io.spawnStart ?? spawnDetachedStart)(job, job.installer, port, launcher),
+  );
 }
 
 /** Exposed for tests: drives the non-service restart path with injected io. */
 export function restartAfterUpdateForTests(
   job: UpdateJobState,
-  captured: { port: number; hostname: string; oldPid?: number },
+  captured: { port: number; hostname: string; oldPid?: number; recoveryLauncher?: string },
   io: RestartIo,
-): Promise<void> {
-  return restartAfterUpdate(job, captured, io);
+): Promise<number | null> {
+  return restartAfterUpdate(job, captured, io).then(started => started?.pid ?? null);
 }
 
 function restartFailureHint(port: number): string {
@@ -613,6 +950,156 @@ async function defaultProbeProxyIdentity(
   } catch {
     return null;
   }
+}
+
+/** Retry identity-aware health checks before considering a recovery restart. */
+async function probeFailedUpdateProxy(
+  captured: { port: number; hostname: string },
+  io: RestartIo,
+): Promise<RestartProxyIdentity | null> {
+  const probeIdentity = io.probeProxyIdentity ?? defaultProbeProxyIdentity;
+  const sleep = io.sleepMs ?? (async (ms: number) => {
+    await new Promise(resolve => setTimeout(resolve, ms));
+  });
+  for (let attempt = 0; attempt < UPDATE_LIVENESS_PROBE_ATTEMPTS; attempt += 1) {
+    try {
+      const identity = await probeIdentity(captured.port, captured.hostname);
+      if (identity) return identity;
+    } catch { /* a custom probe failure is equivalent to no health response */ }
+    if (attempt + 1 < UPDATE_LIVENESS_PROBE_ATTEMPTS) await sleep(UPDATE_LIVENESS_PROBE_DELAY_MS);
+  }
+  return null;
+}
+
+export interface UpdateLivenessIo {
+  findLiveProxyFn?: () => Promise<LiveProxy | null>;
+  sleepMs?: (ms: number) => Promise<void>;
+  readAlivePidFn?: () => number | null;
+  verifyPidIdentityFn?: (pid: number) => number | null;
+  readRuntimePortFn?: (expectedPid?: number) => { pid?: number; port: number; hostname?: string } | null;
+}
+
+/** Retry health first, then retain a PID-verified runtime target as active evidence. */
+export async function findLiveProxyForUpdate(io: UpdateLivenessIo = {}): Promise<LiveProxy | null> {
+  const probe = io.findLiveProxyFn ?? findLiveProxy;
+  const sleep = io.sleepMs ?? (async (ms: number) => {
+    await new Promise(resolve => setTimeout(resolve, ms));
+  });
+  for (let attempt = 0; attempt < UPDATE_LIVENESS_PROBE_ATTEMPTS; attempt += 1) {
+    try {
+      const live = await probe();
+      if (live) return live;
+    } catch { /* retry a transient liveness lookup failure */ }
+    if (attempt + 1 < UPDATE_LIVENESS_PROBE_ATTEMPTS) await sleep(UPDATE_LIVENESS_PROBE_DELAY_MS);
+  }
+
+  const candidatePid = (io.readAlivePidFn ?? readAlivePid)();
+  if (candidatePid === null) return null;
+  const verifiedPid = (io.verifyPidIdentityFn ?? verifyPidIdentityFresh)(candidatePid);
+  if (verifiedPid !== candidatePid) return null;
+  const runtime = (io.readRuntimePortFn ?? readRuntimePort)(candidatePid);
+  if (!runtime) return null;
+  // "runtime": this fallback only ever reports a port that runtime-port.json recorded
+  // for the verified PID. It never falls back to the configured listen port, because a
+  // configured port proves nothing about whether that proxy was actually up.
+  return { pid: candidatePid, port: runtime.port, hostname: runtime.hostname, source: "runtime" };
+}
+
+/** Keep a failed GUI install from also leaving a previously-active proxy offline. */
+async function recoverFailedGuiUpdate(
+  job: UpdateJobState,
+  captured: { port: number; hostname: string; oldPid?: number },
+  proxyWasActive: boolean,
+  io: RestartIo = {},
+): Promise<FailedUpdateRecovery> {
+  if (!proxyWasActive) return "not-needed";
+
+  if (await probeFailedUpdateProxy(captured, io)) {
+    updateJob(job, {}, `Update command failed, but the existing proxy remains healthy on ${captured.hostname}:${captured.port}.`);
+    return "still-running";
+  }
+
+  const oldPidIdentityMatches = captured.oldPid != null
+    && (io.verifyPidIdentityFn ?? verifyPidIdentityFresh)(captured.oldPid) === captured.oldPid;
+  if (oldPidIdentityMatches) {
+    updateJob(job, {}, `Update command failed and health probes timed out, but pre-update PID ${captured.oldPid} still identifies as OpenCodex; refusing an automatic restart.`);
+    return "still-running";
+  }
+
+  if (await probeFailedUpdateProxy(captured, io)) {
+    updateJob(job, {}, `A replacement proxy became healthy on ${captured.hostname}:${captured.port} before recovery; leaving it untouched.`);
+    return "still-running";
+  }
+
+  updateJob(job, {}, "Update command failed after the proxy stopped; attempting to restore the proxy...");
+  try {
+    let recoveryLaunchers: Array<string | undefined> = [undefined];
+    if (job.installer === "npm") {
+      const currentLauncher = packageLauncherPath();
+      const resolveRecoveryLaunchers = io.recoveryLaunchersFn ?? findNpmRecoveryLaunchers;
+      recoveryLaunchers = await resolveRecoveryLaunchers(currentLauncher, job.currentVersion);
+      if (recoveryLaunchers.length === 0) {
+        updateJob(job, {}, "Could not find a runnable current or npm-retired launcher for the pre-update package.");
+        updateJob(job, {}, `Automatic proxy recovery failed. Restore the package, then run 'ocx service install' or 'ocx start --port ${captured.port}'.`);
+        return "failed";
+      }
+    }
+
+    const restartFn = io.restartAfterUpdateFn ?? restartAfterUpdate;
+    for (let index = 0; index < recoveryLaunchers.length; index += 1) {
+      const recoveryLauncher = recoveryLaunchers[index];
+      const recoveryCaptured = recoveryLauncher === undefined
+        ? captured
+        : { ...captured, recoveryLauncher };
+      if (index > 0) {
+        updateJob(job, {}, `Recovery candidate ${index} did not restore the proxy; trying candidate ${index + 1} of ${recoveryLaunchers.length}.`);
+      }
+      try {
+        const started = normalizeStartedRecoveryProcess(await restartFn(job, recoveryCaptured, io));
+        const healthy = await awaitRestartedProxyHealthy(job, recoveryCaptured, io);
+        if (healthy.ok) {
+          updateJob(job, {}, `Previous proxy availability restored on ${captured.hostname}:${captured.port}; the update itself still failed.`);
+          return "restarted";
+        }
+        if (started) {
+          let sameGeneration = false;
+          try { sameGeneration = started.sameGeneration(); } catch { /* fail closed */ }
+          if (!sameGeneration) {
+            updateJob(job, {}, `Recovery candidate ${index + 1} PID ${started.pid} no longer matches the spawned process generation; refusing to kill or try another candidate.`);
+            break;
+          }
+          const verifyStartedPid = io.verifyPidIdentityFn ?? verifyPidIdentityFresh;
+          if (verifyStartedPid(started.pid) !== started.pid) {
+            updateJob(job, {}, `Recovery candidate ${index + 1} left PID ${started.pid} without a matching OpenCodex identity; refusing to kill or try another candidate.`);
+            break;
+          }
+          try {
+            (io.killProxyFn ?? killProxy)(started.pid);
+            updateJob(job, {}, `Stopped unhealthy recovery candidate ${index + 1} PID ${started.pid}.`);
+          } catch (error) {
+            updateJob(job, {}, `Could not stop unhealthy recovery candidate ${index + 1} PID ${started.pid}: ${error instanceof Error ? error.message : String(error)}`);
+            break;
+          }
+        }
+      } catch {
+        updateJob(job, {}, `Recovery candidate ${index + 1} failed before health confirmation.`);
+      }
+    }
+  } catch (error) {
+    updateJob(job, {}, `Automatic proxy recovery threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  updateJob(job, {}, `Automatic proxy recovery failed. Restore the package, then run 'ocx service install' or 'ocx start --port ${captured.port}'.`);
+  return "failed";
+}
+
+export function recoverFailedGuiUpdateForTests(
+  job: UpdateJobState,
+  captured: { port: number; hostname: string; oldPid?: number },
+  proxyWasActive: boolean,
+  io: RestartIo,
+): Promise<FailedUpdateRecovery> {
+  return recoverFailedGuiUpdate(job, captured, proxyWasActive, io);
 }
 
 /**
@@ -771,20 +1258,18 @@ export async function runGuiUpdateWorker(jobId: string, channel: Channel, restar
   let job = readUpdateJob(jobId);
   const check = checkForUpdate(channel);
   const now = new Date().toISOString();
-  // Capture the live listen target BEFORE the update command runs: the stop-first update
-  // flow clears pid/runtime state, so this is the last moment the real port is knowable.
-  // Only trust runtime-port.json when its pid matches the live pidfile process.
-  const rt = readRuntimePort();
-  const livePid = readPid();
+  // Capture identity-checked liveness BEFORE the update command runs. Installation or
+  // runtime metadata alone must not turn an intentionally stopped service back on.
   const preUpdateConfig = loadConfig();
-  const runtimeTrusted = !!(rt && livePid && rt.pid === livePid);
+  const liveBeforeUpdate = await findLiveProxyForUpdate();
+  const proxyWasActive = liveBeforeUpdate !== null;
   const configPort = typeof preUpdateConfig.port === "number" && preUpdateConfig.port > 0
     ? preUpdateConfig.port
     : 10100;
   const captured = {
-    port: runtimeTrusted ? rt.port : configPort,
-    hostname: (runtimeTrusted ? rt.hostname : undefined) ?? preUpdateConfig.hostname ?? "127.0.0.1",
-    ...(runtimeTrusted && livePid ? { oldPid: livePid } : {}),
+    port: liveBeforeUpdate?.port ?? configPort,
+    hostname: liveBeforeUpdate?.hostname ?? preUpdateConfig.hostname ?? "127.0.0.1",
+    ...(liveBeforeUpdate?.pid ? { oldPid: liveBeforeUpdate.pid } : {}),
   };
   let trayWasInstalled = false;
   let trayWasRunning = false;
@@ -858,19 +1343,27 @@ export async function runGuiUpdateWorker(jobId: string, channel: Channel, restar
     - 대안 분석: (1) 서버에서 runUpdate 직접 호출: process.exit/stdio/실행 파일 교체 위험. (2) GUI에서 CLI 명령 안내만 제공: 자동 업데이트 UX 부족. (3) 숨은 worker가 Node launcher/Bun 전역 명령을 실행: 상태 추적과 안전한 재시작이 가능.
     - 선택 근거: 현재 CLI의 npm self-update 우회를 재사용하면서도 GUI 서버 요청 생명주기와 설치 작업을 분리할 수 있어 가장 안정적이다.
     */
-    const result = runLoggedCommand(job, cmd.bin, cmd.args, UPDATE_TIMEOUT_MS);
-    if (result.status !== 0) {
-      if (trayWasRunning) {
+    const result = await runLoggedProcessTreeCommand(job, cmd.bin, cmd.args, UPDATE_TIMEOUT_MS);
+    if (result.status !== 0 || !result.treeExited) {
+      const mayRecover = installerFailureAllowsRecovery(check.installer, result);
+      if (trayWasRunning && mayRecover) {
         try {
           const { startWindowsTray } = await import("../tray/windows");
           startWindowsTray();
         } catch { /* retain the primary update failure */ }
+      }
+      let recovery: FailedUpdateRecovery | null = null;
+      if (!mayRecover) {
+        updateJob(job, {}, `Automatic proxy recovery was skipped because installer process-tree shutdown was not confirmed. Wait for installer processes to exit before restoring the package or proxy.${trayWasRunning ? " The Windows tray also remains stopped; run 'ocx tray start' after the installer processes exit." : ""}`);
+      } else {
+        recovery = await recoverFailedGuiUpdate(job, captured, proxyWasActive);
       }
       updateJob(job, {
         status: "failed",
         exitCode: result.status,
         signal: result.signal,
         error: `update command failed (${result.status ?? "?"})`,
+        ...(recovery === "restarted" ? { restarted: true } : {}),
       });
       return;
     }

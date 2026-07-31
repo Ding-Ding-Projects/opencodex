@@ -17,10 +17,78 @@ GUI self-update is not executed directly in the request handler. The dashboard c
 API endpoints that create an update job in `OPENCODEX_HOME/update-job.json`. The proxy starts a
 detached hidden CLI worker, and the worker performs the install command and optional restart.
 
+The job record stores the worker's PID, so a new update request can tell a genuinely running install
+from one whose worker died without ever writing a terminal status. An active record is refused while
+its PID is alive and recovered as soon as it is not; a legacy record from before the PID was
+persisted has no such signal, so it is recovered on age alone after ten minutes. Note that this
+liveness check is deliberately NOT the OpenCodex PID identity check used by the recovery paths
+below: the worker runs `__gui-update-worker`, not `ocx start`, so an identity check would reject
+every healthy worker and let two installers run at once. Age is the fallback for the legacy records
+that carry no PID at all, never a cap on a live one — a slow but healthy install must stay locked.
+
 For npm installs, the worker runs the Node launcher path (`node bin/ocx.mjs update --tag <tag>`) so
 the existing npm self-update guard is reused. For Bun global installs, it runs the existing Bun
-global update command. Source checkouts remain manual-only and show `git pull && bun install &&
-bun run build:gui`.
+global update command. The outer GUI installer command also runs through the shared process-tree
+runner; a failed npm or Bun update is recoverable only when that runner confirms the installer tree
+has exited. Source checkouts remain manual-only and show `git pull && bun install && bun run build:gui`.
+
+Neither updater path spawns a bare `npm`. Both resolve npm to an absolute file from a trusted PATH
+entry, skipping the launch directory so an untrusted `npm.cmd` sitting in the current working
+directory cannot be picked up by an implicit cwd-first search. On Windows a `.cmd`/`.bat` npm is
+invoked as an explicit `cmd.exe /d /s /c` line built and escaped by the resolver, with
+`windowsVerbatimArguments`, rather than through `shell: true`. Both gates run before the stop, and
+resolution runs first: when npm cannot be resolved at all, the update aborts with the proxy and
+service still running, and no cache scan is attempted.
+
+Before an npm updater stops the proxy, it resolves the configured npm cache and checks that every
+entry is owned by the current Unix user. A foreign-owned entry (commonly left by an older `sudo npm`
+invocation) aborts the update with an actionable error while the existing proxy and service remain
+running. The scan fails closed when the cache root is absent, an entry cannot be inspected, or its
+50,000-entry / 10-second traversal budget is exhausted. Only the configured cache-root symlink is
+canonicalized; nested cache symlinks are rejected fail-closed so a foreign-owned target cannot be
+hidden behind one. The blocking filesystem walk runs in a child process so the parent can enforce
+the deadline even when a filesystem call itself stalls.
+Failure logs omit both cache and entry paths; users can locate the cache explicitly with
+`npm config get cache`. Platforms without Unix uid ownership skip this gate.
+
+The GUI worker retries its identity-checked pre-update liveness capture before deciding a service
+was inactive. If health remains unavailable, a matching runtime-port record plus an identity-checked
+live PID still preserves the pre-update activity evidence. If the installer exits nonzero, the worker
+probes again immediately before recovery and leaves any old or concurrently replaced process alone
+when health or PID identity proves it is OpenCodex. When npm already stopped the proxy and retired
+the old package, the worker validates each candidate's trusted ownership, name, version, path
+containment, and complete launcher runtime with a side-effect-free `--version` probe. On UID-capable
+platforms, the scope and complete package tree must also reject foreign owners, group/world-writable
+entries, and symlinks that leave the candidate tree before any code executes. Trusted npm-generated
+links whose immediate and final targets remain inside the candidate tree are allowed. The tree walk
+is bounded by entry count and elapsed time. Candidate inspection and restart are bounded to at most
+two candidates, preferring the current package and then the newest retired copies, and it tries those runnable
+candidates in order until one restores health. The recovery-tree walk runs in its own short-lived
+worker, and the GUI worker force-kills that child at the wall-clock deadline even if one filesystem
+call blocks. A recovery launcher is always started directly: it
+may restore availability, but its potentially temporary path is never persisted into launchd,
+systemd, Task Scheduler, or the update job log; the log stores only a path-free candidate label.
+If a candidate starts but does not become healthy, the worker retains the detached child handle,
+then requires both the same process generation and a fresh OpenCodex identity before stopping that
+PID and trying the next candidate. An exited child or missing generation proof fails closed so PID
+reuse can never terminate a concurrent replacement proxy.
+Service and direct restart paths also stop when the pidfile has changed to a different identity-checked
+proxy, and every such identity decision re-reads the process command line instead of trusting a
+PID-only cache across the update boundary. The update job remains failed either way because restoring
+availability is not the same as installing the new version.
+
+The npm launcher and the Bun/source CLI installer paths run in an isolated process tree. On timeout,
+the updater terminates and awaits the known POSIX process group or a Windows `taskkill /T /F` tree;
+piped CLI output is drained and bounded before it is replayed. A POSIX process group is not an OS
+containment boundary because a lifecycle child can leave it with `setsid` or `setpgid`. Therefore a
+timeout, interruption, or nonzero POSIX root exit is always reported as unconfirmed even when the
+known group was successfully stopped, and automatic recovery stays disabled. Once a POSIX root has
+exited, the updater also refuses to signal its leaderless group by a reusable numeric PGID. While the
+root is live, cleanup treats zombie-only groups as stopped and revalidates group membership and the
+original leader immediately before each signal; uninspectable or replacement-led groups are refused.
+Windows has no retained job-object handle after a normally failed installer root exits, so that case
+likewise remains explicitly unconfirmed. The outer worker timeout remains longer than the nested deadline, and
+recovery is skipped whenever either layer cannot prove installer-tree shutdown.
 
 After an update requests a restart, the worker now waits for an identity-checked `/healthz` to
 return and remain healthy for a short stability window before marking the job successful. This
@@ -45,6 +113,12 @@ restart path because `bun add -g` does not restart the proxy.
 - The GUI request handler stays responsive and does not overwrite its own running module graph.
 - Update status survives a proxy restart because it is stored in the opencodex config directory.
 - Restart handling can branch between service-managed installs and direct detached proxy starts.
+- A dead update worker no longer blocks the dashboard forever, and a live one still cannot be raced.
+- An untrusted `npm` in the launch directory cannot hijack either update path on Windows.
+- npm cache ownership failures are detected before service or proxy shutdown.
+- Automatic recovery starts only when installer shutdown is confirmed; ambiguous POSIX failures and
+  escaped descendants remain fail-closed with manual remediation.
+- A failed install best-effort restores a previously-active proxy without claiming update success.
 - A completed install can still finish with `status: "failed"` when the replacement proxy never
   becomes healthy or flaps during the stability window; the job log then points the user at
   `ocx start` and the Bun `--allow-scripts` reinstall path.

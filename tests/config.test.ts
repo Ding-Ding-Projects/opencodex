@@ -13,6 +13,7 @@ import {
   isValidProviderName,
   isOcxStartCommandLine,
   loadConfig,
+  lookupOcxStartProcessForTests,
   multiAgentGuidanceEnabled,
   parsePidFile,
   positiveIntegerConfigError,
@@ -1326,6 +1327,27 @@ describe("opencodex config defaults", () => {
     expect(isOcxStartCommandLine("bun run src/cli.ts status")).toBe(false);
     expect(isOcxStartCommandLine("bun test C:/work/opencodex/tests/config.test.ts")).toBe(false);
     expect(isOcxStartCommandLine("notepad.exe")).toBe(false);
+  });
+
+  test("exposes a fresh process identity path for lifecycle boundaries", () => {
+    const source = readFileSync(join(import.meta.dir, "..", "src", "config.ts"), "utf8");
+    const freshCheck = /export function verifyPidIdentityFresh[\s\S]*?\n}/.exec(source)?.[0] ?? "";
+    expect(freshCheck).toContain("isLikelyOcxStartProcessUncached(candidatePid)");
+    expect(freshCheck).not.toContain("isLikelyOcxStartProcess(candidatePid)");
+    expect(freshCheck).toContain("ocxStartProcessCache.set(candidatePid, isOcx)");
+    expect(freshCheck).toContain("ocxStartProcessCache.delete(candidatePid)");
+  });
+
+  test("retries a transient command-line lookup instead of caching unknown as false", () => {
+    const cache = new Map<number, boolean>();
+    let reads = 0;
+    const readCommandLine = () => (++reads === 1 ? undefined : "opencodex start");
+
+    expect(lookupOcxStartProcessForTests(4242, readCommandLine, cache)).toBeUndefined();
+    expect(cache.has(4242)).toBe(false);
+    expect(lookupOcxStartProcessForTests(4242, readCommandLine, cache)).toBe(true);
+    expect(reads).toBe(2);
+    expect(cache.get(4242)).toBe(true);
   });
 
   test("writes pid file as a numeric pid", () => {

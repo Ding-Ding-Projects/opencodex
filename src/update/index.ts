@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getConfigDir, loadConfig, readPid, readRuntimePort } from "../config";
 import { npmInvocation } from "./npm-invocation.mjs";
+import { checkNpmCacheOwnership, formatNpmCacheOwnershipFailure } from "./npm-cache-preflight.mjs";
+import {
+  INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE,
+  runProcessTreeCommand,
+} from "./install-process.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "./tray-update-plan.mjs";
 
 /**
@@ -177,11 +182,24 @@ export async function runUpdate(): Promise<void> {
     console.log(`Verified ${PKG}@${latest} integrity metadata ${integrity.integrity.slice(0, 24)}…`);
   }
 
+  // Both gates run BEFORE the stop, and resolution comes first: there is no point
+  // scanning an npm cache when npm itself cannot be resolved from a trusted path.
   const { bin, args: cmdArgs } = updateCommand(installer, tag, latest);
   const target = updateSpawnTarget(bin, cmdArgs);
   if (!target) {
     console.error("⚠️  Could not resolve npm from a trusted absolute PATH entry; aborting before stopping the proxy.");
     process.exit(1);
+  }
+
+  if (installer === "npm") {
+    const cacheOwnership = checkNpmCacheOwnership();
+    if (cacheOwnership.ok === false) {
+      console.error(`⚠️  ${formatNpmCacheOwnershipFailure(cacheOwnership)}`);
+      process.exit(1);
+    }
+    if (cacheOwnership.ok === "skipped") {
+      console.warn(`⚠️  npm cache ownership pre-flight skipped: ${cacheOwnership.reason}. Proceeding best-effort.`);
+    }
   }
 
   // Remember whether a background service manages the proxy BEFORE stopping — `ocx stop`
@@ -263,14 +281,31 @@ export async function runUpdate(): Promise<void> {
   console.log(`Updating${latest ? ` to v${latest}` : ""}…\n$ ${bin} ${cmdArgs.join(" ")}`);
 
   const installStdio = updateChildStdio();
-  const r = spawnSync(target.bin, target.args, {
+  // target.args, not cmdArgs: on Windows the trusted invocation rewrites the whole
+  // command line into `cmd.exe /d /s /c "..."`, so the raw args no longer match the bin.
+  const r = await runProcessTreeCommand(target.bin, target.args, {
     stdio: installStdio,
-    encoding: installStdio === "pipe" ? "utf8" : undefined,
-    timeout: 180000,
+    timeoutMs: 180000,
     windowsHide: true,
     ...target.options,
   });
   if (installStdio === "pipe") logSpawnOutput("", r);
+  if (!r.treeExited) {
+    console.error("\nopencodex: installer process-tree cleanup could not be confirmed; automatic recovery is unsafe until those processes exit.");
+    console.error(`  The proxy is stopped. Once no '${bin}' installer processes remain, run 'ocx start' or re-run 'ocx update'.${trayWasRunning ? " The Windows tray also remains stopped; run 'ocx tray start' after the installer processes exit." : ""}`);
+    process.exit(INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE);
+  }
+  if (r.interruptedSignal) {
+    if (trayWasRunning) {
+      try {
+        const { startWindowsTray } = await import("../tray/windows");
+        startWindowsTray();
+      } catch { /* preserve the primary interruption */ }
+    }
+    const signalExitCode = r.interruptedSignal === "SIGINT" ? 130 : r.interruptedSignal === "SIGHUP" ? 129 : 143;
+    console.error(`\nopencodex: update interrupted (${r.interruptedSignal}); the proxy is still stopped. Run 'ocx start' or re-run 'ocx update'.`);
+    process.exit(signalExitCode);
+  }
   if (r.status === 0) {
     console.log(`\n✅ Updated${latest ? ` to v${latest}` : ""}.`);
     // Re-bake the bundled Bun path into the Codex autostart shim on every
@@ -358,7 +393,12 @@ export async function runUpdate(): Promise<void> {
         startWindowsTray();
       } catch { /* keep the primary update failure */ }
     }
-    console.error(`\n⚠️  Update failed (${bin} exit ${r.status ?? "?"}). Try manually:  ${bin} ${cmdArgs.join(" ")}`);
+    const failure = r.timedOut
+      ? "timed out after 180s"
+      : r.error
+        ? `could not run: ${r.error.message}`
+        : `exit ${r.status ?? "?"}`;
+    console.error(`\n⚠️  Update failed (${bin} ${failure}). Try manually:  ${bin} ${cmdArgs.join(" ")}`);
     process.exit(1);
   }
 }
