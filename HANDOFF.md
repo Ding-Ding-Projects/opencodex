@@ -24,9 +24,39 @@ Two other things exist in the repository and were **not** inspected or integrate
 
 ## In flight
 
-### The phone surface is the shell now, not a separate screen (`d15c7423`, `1542b440`)
+### The phone surface is the shell now, not a separate screen — **landed, not in flight**
 
-Branch `claude/unruffled-tesla-3994a7`. `App.tsx` no longer short-circuits to
+**Status: merged to `main` and dewed.** `origin/main` is `f08c9ded`. The work is
+four commits on `claude/unruffled-tesla-3994a7` (`d15c7423`, `1542b440`,
+`48781f81`, `b0c4ec75`), merged via `f098416b` and `f08c9ded`. The branch tip
+`b0c4ec75` is a proven ancestor of `origin/main`.
+
+Verified locally before each merge, from `gui/`:
+
+| Command | Result |
+| --- | --- |
+| `./node_modules/.bin/tsc --noEmit` | clean |
+| `./node_modules/.bin/eslint src --max-warnings=0` | clean |
+| `bun test tests` | **711 pass, 0 fail** across 115 files (21 new) |
+| `bun x tsc --noEmit` (repo root) | clean |
+| `cd docs-site && bun test tests/tab-search.test.ts` | 21 pass, 0 fail |
+
+> `npx tsc` does **not** work in `gui/` — `bun install` writes a layout npx does
+> not recognise, so it tries the registry and refuses. Call the `.bin` shims.
+> A fresh worktree needs `bun install` at the root **and** again in `gui/`.
+
+CI on `f08c9ded`, all push-triggered workflows **green**: `CI`, `Auto release`,
+`Dashboard preview build`, `React Doctor`, `Deploy Docs to GitHub Pages`,
+`Cheap LFS cloud compression`.
+
+One workflow is red and it is **not** from this work: `Enforce issue quality`,
+job `Translate non-English issue comments`, triggered by `issue_comment` (not
+`push`). It fires on bilingual issue comments — including the one left on #2
+during this session — and its `actions/ai-inference` step returns an empty
+`DETECTED_LANG`/`SOURCE_COMPLETE`. It was already failing before this session.
+Nobody has diagnosed it; it needs an owner.
+
+`App.tsx` no longer short-circuits to
 `pages/Mobile.tsx` for `#/mobile`: the remote is a route like any other, and the
 shell adapts its layout at `windowClass === "compact"` instead. Before this, a
 phone could reach the chat, the session list and an API-key field and **none** of
@@ -64,6 +94,33 @@ work did not need — `Usage`'s heatmap opens scrolled to its own right edge, th
 7-day bar chart's weekday labels collide under ~25px columns, and `.page-head` on
 Providers/Models cannot wrap at 320px. They are contained (no body overflow), so
 they are ugly rather than broken.
+
+#### For whoever picks this up next
+
+Ordered by how much they would annoy a user, most first:
+
+1. **No screenshots were taken.** Everything here is verified by test and by
+   reading the rules that decide layout — *not* by looking at the app on a
+   phone-sized viewport. happy-dom has no layout engine, so the 44px floor and
+   the no-sideways-scroll invariant are asserted against `m3-shell.css` rather
+   than measured. Those assertions are real (they fail if the block is deleted)
+   but they are not the same as seeing it. **Capture the compact shell at 320,
+   360 and 430px, in English and in bilingual mode, at 100/125/150/200% scale.**
+   Bilingual is the worst case for label width and nothing here has proven it.
+2. **Bulk close is not in the search panel.** It is on the tab context menu with
+   the full preview, honest count and pinned-excluded default. The rule asks for
+   it on "every tab strip and searchable tab list". Add it by lifting the
+   existing `bulk` state in `TabStrip` so the panel triggers *that* surface —
+   not by writing a second confirmation, because two of them is how a preview
+   starts disagreeing with what a close actually removes.
+3. **The three page-level layout defects above**, if anyone cares about polish
+   on `Usage` and the two `.page-head` rows.
+4. **`Enforce issue quality` is red** and has been for a while. Not this work's,
+   but it is the only red thing on the board.
+
+Nothing is half-applied. The tree is clean, `main` and the branch agree, and the
+branch can be deleted whenever someone wants to — `b0c4ec75` is an ancestor of
+`origin/main`.
 
 ### Provider-agnostic OAuth account pool
 
