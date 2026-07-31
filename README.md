@@ -396,7 +396,14 @@ Everything is on the docs site: **<https://ding-ding-projects.github.io/opencode
 
 In the repository: [`ROADMAP.md`](./ROADMAP.md) for what is done and what is missing,
 [`HANDOFF.md`](./HANDOFF.md) for work in flight, and [`AGENTS.md`](./AGENTS.md) for the conventions
-this codebase is built to.
+this codebase is built to. Maintainer source-of-truth notes live under [`structure/`](./structure),
+historical investigations under [`docs/`](./docs), and contributor setup in
+[`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
+Security reporting guidance lives in [`SECURITY.md`](./SECURITY.md). Report undisclosed
+vulnerabilities privately through
+[GitHub private vulnerability reporting](https://github.com/Ding-Ding-Projects/opencodex/security/advisories/new),
+never a public issue.
 
 ---
 
