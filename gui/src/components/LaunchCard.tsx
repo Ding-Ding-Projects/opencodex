@@ -9,6 +9,12 @@
  * The click sends only a catalog id. No path and no argument travels from here to
  * a process, which is what keeps a "launch this program" button from being a
  * remote code execution surface on an exposed dashboard.
+ *
+ * A failed launch that has a fix carries an action rather than only a sentence.
+ * Opening a CLI needs Windows Terminal, and the proxy refuses to fall back to a
+ * legacy console — so the error used to name the fix and leave the user to go
+ * and do it by hand, in an app whose standing rule is that "Get it" installs the
+ * thing. The reason code the route now returns is what makes that offerable.
  */
 
 import { useState } from "react";
@@ -39,6 +45,26 @@ interface InstallJob {
   verified?: boolean;
   note?: string;
 }
+
+interface InstallStartResponse {
+  ok?: boolean;
+  job?: InstallJob;
+  error?: string;
+  manual?: boolean;
+  /** Already present — a refusal to install, but a green light to retry. */
+  installed?: boolean;
+  installUrl?: string;
+}
+
+/**
+ * The launcher's catalog id for Windows Terminal (src/lib/app-launcher.ts).
+ *
+ * It is not one of the rows: `GET /api/launch` lists the agent apps, and the
+ * terminal is the window they are drawn into. It is still installable by id,
+ * which is exactly what this card needs.
+ */
+const WINDOWS_TERMINAL_ID = "windows-terminal";
+const WINDOWS_TERMINAL_LABEL = "Windows Terminal";
 
 /**
  * Follow a running install to completion, reporting each poll.
@@ -82,7 +108,74 @@ export default function LaunchCard({ apiBase }: { apiBase: string }) {
     },
   );
 
-  const launch = async (target: LaunchTarget) => {
+  /**
+   * Install Windows Terminal so a CLI has somewhere to open.
+   *
+   * `logKey` is the row the installer output is shown under: the terminal has no
+   * row of its own, and hiding the transcript of an install the user just
+   * authorised would be the same dead end in a smaller form.
+   *
+   * Resolves true when the launch is worth retrying: the terminal was installed,
+   * or turned out to be installed already. An install the proxy cannot yet see
+   * still counts — the retry is what turns that into an accurate "restart me"
+   * rather than a guess made here.
+   */
+  const installWindowsTerminal = async (logKey: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`${apiBase}/api/launch/install`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: WINDOWS_TERMINAL_ID }),
+      });
+      const body = await res.json().catch(() => null) as InstallStartResponse | null;
+
+      if (!body?.ok) {
+        if (body?.installed) return true;
+        if (body?.manual && body.installUrl) {
+          notify({ tone: "info", title: t("launch.installManual"), body: body.error });
+          window.open(body.installUrl, "_blank", "noreferrer,noopener");
+          return false;
+        }
+        notify({
+          tone: "error",
+          title: t("launch.installFailed", { label: WINDOWS_TERMINAL_LABEL }),
+          body: body?.error,
+        });
+        return false;
+      }
+
+      const started = body.job!;
+      setInstalling(prev => ({ ...prev, [logKey]: started }));
+      notify({ tone: "info", title: t("launch.installing", { label: WINDOWS_TERMINAL_LABEL }) });
+      const job = await followInstall(apiBase, started, next => {
+        setInstalling(prev => ({ ...prev, [logKey]: next }));
+      });
+
+      if (job.state !== "done") {
+        notify({
+          tone: "error",
+          title: t("launch.installFailed", { label: WINDOWS_TERMINAL_LABEL }),
+          body: job.error,
+        });
+        return false;
+      }
+      // `verified` is the proxy's own re-probe after the install, not an
+      // assumption that the package manager's exit code means the program is
+      // reachable: an installer extends the machine PATH, and a running process
+      // keeps the environment it started with.
+      notify({
+        tone: job.verified ? "success" : "warn",
+        title: t("launch.installed", { label: WINDOWS_TERMINAL_LABEL }),
+        body: job.verified ? undefined : t("launch.wtRestart"),
+      });
+      return true;
+    } catch {
+      notify({ tone: "error", title: t("launch.installFailed", { label: WINDOWS_TERMINAL_LABEL }) });
+      return false;
+    }
+  };
+
+  const launch = async (target: LaunchTarget, afterInstall = false) => {
     setBusyId(target.id);
     notify({ tone: "info", title: t("launch.opening", { label: target.label }) });
     try {
@@ -91,8 +184,31 @@ export default function LaunchCard({ apiBase }: { apiBase: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: target.id }),
       });
-      const body = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      const body = await res.json().catch(() => null) as
+        { ok?: boolean; error?: string; reason?: string } | null;
       if (!res.ok || !body?.ok) {
+        if (body?.reason === "needs-windows-terminal") {
+          // An error notice, so it stays until dismissed — and it carries the
+          // fix. `afterInstall` stops the offer from repeating: a second failure
+          // means the terminal is on disk but not visible to the proxy yet, and
+          // the answer to that is a restart, not another install.
+          notify({
+            tone: "error",
+            title: t("launch.failed", { label: target.label }),
+            body: afterInstall ? t("launch.wtRestart") : body.error,
+            action: afterInstall ? undefined : {
+              label: t("launch.wtInstall"),
+              onAction: () => {
+                void (async () => {
+                  setBusyId(target.id);
+                  const ready = await installWindowsTerminal(target.id).finally(() => setBusyId(null));
+                  if (ready) await launch(target, true);
+                })();
+              },
+            },
+          });
+          return;
+        }
         notify({ tone: "error", title: t("launch.failed", { label: target.label }), body: body?.error });
         return;
       }
@@ -119,8 +235,7 @@ export default function LaunchCard({ apiBase }: { apiBase: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: target.id }),
       });
-      const body = await res.json().catch(() => null) as
-        { ok?: boolean; job?: InstallJob; error?: string; manual?: boolean; installUrl?: string } | null;
+      const body = await res.json().catch(() => null) as InstallStartResponse | null;
 
       if (!body?.ok) {
         // No automatic route: fall back to the page rather than dead-ending.

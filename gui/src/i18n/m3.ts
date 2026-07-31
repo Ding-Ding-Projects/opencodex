@@ -385,6 +385,11 @@ export const M3_EN = {
   "launch.installManual": "No official package — opens the download page",
   "launch.installRestart": "Installed. Restart opencodex so it appears on PATH.",
   "launch.installLog": "Installer output",
+  // The action on the one launch failure that has a fix. Opening a CLI needs a
+  // terminal window, opencodex will not open a legacy console, and Windows
+  // Terminal is missing on Windows 10 and on trimmed images.
+  "launch.wtInstall": "Install Windows Terminal",
+  "launch.wtRestart": "Windows Terminal is installed, but this opencodex session cannot see it yet. Restart opencodex, then open the CLI again.",
 
   "terminal.title": "Terminal",
   "terminal.subtitle": "Run commands without leaving opencodex. Sessions start in your home directory.",
@@ -420,6 +425,24 @@ export const M3_EN = {
   "window.exitBusyConfirm": "{count} request(s) are still running and did not finish in time. Exit anyway? Those requests will be cut off.",
   "window.exiting": "Finishing in-flight work, then closing…",
   "window.exitFailed": "Could not exit cleanly",
+
+  // ---- confirmation dialogs ----
+  // Headlines and action labels for the seven decisions that used to be drawn by
+  // `window.confirm()`. The bodies are not here: each one already existed beside
+  // the feature it guards, and duplicating them under a `confirm.*` name would be
+  // two strings to keep in step. What the native dialog could not express was a
+  // title and a labelled button — "OK" on a dialog about dumping every credential
+  // in plaintext told the reader nothing — so only those are new.
+  "confirm.stopTitle": "Stop the proxy",
+  "confirm.exitTitle": "Exit OpenCodex",
+  "confirm.exitAction": "Exit",
+  // Separate from "Exit" because it agrees to something more: cutting off work
+  // that is still running. Same wording rule for the restore pair below.
+  "confirm.exitForceAction": "Exit anyway",
+  "confirm.restoreTitle": "Restore this snapshot",
+  "confirm.restoreForceAction": "Restore anyway",
+  "confirm.exposeTitle": "Expose the proxy to your network",
+  "confirm.exposeAction": "Expose",
 
   // ---- app-bar account switcher ----
   "switcher.title": "Codex accounts",

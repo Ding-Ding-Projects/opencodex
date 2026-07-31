@@ -11,6 +11,7 @@ import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
+import { useConfirm } from "../shell/confirm-context";
 import { useCopyFeedback } from "../components/use-copy-feedback";
 import QrCode from "../components/QrCode";
 import { hashRouteFor } from "../app-routing";
@@ -34,6 +35,9 @@ interface StateHistoryEntry {
 export default function Network({ apiBase }: { apiBase: string }) {
   const t = useT();
   const { notify } = useNotifications();
+  // Shadows the global `confirm` deliberately: an accidental native call in this
+  // file is now a type error rather than a grey Windows box at runtime.
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
@@ -84,7 +88,15 @@ export default function Network({ apiBase }: { apiBase: string }) {
    */
   const restore = async (entry: StateHistoryEntry, force: boolean): Promise<void> => {
     const label = `${entry.short} ${entry.subject}`;
-    if (!force && !confirm(t("network.restoreConfirm", { label }))) return;
+    if (!force) {
+      const confirmed = await confirm({
+        title: t("confirm.restoreTitle"),
+        body: t("network.restoreConfirm", { label }),
+        confirmLabel: t("network.restore"),
+        tone: "danger",
+      });
+      if (!confirmed) return;
+    }
     setBusy(true);
     try {
       const res = await fetch(`${apiBase}/api/host/restore`, {
@@ -99,7 +111,15 @@ export default function Network({ apiBase }: { apiBase: string }) {
 
       if (res.status === 409 && body?.reason === "sessions-in-progress") {
         const count = String(body.activeTurnCount ?? 0);
-        if (confirm(t("network.restoreForceConfirm", { count }))) {
+        // `busy` stays true while this dialog is open, which is what keeps the
+        // restore buttons disabled behind it; the recursive call resets it.
+        const forced = await confirm({
+          title: t("confirm.restoreTitle"),
+          body: t("network.restoreForceConfirm", { count }),
+          confirmLabel: t("confirm.restoreForceAction"),
+          tone: "danger",
+        });
+        if (forced) {
           setBusy(false);
           await restore(entry, true);
         }
@@ -125,8 +145,15 @@ export default function Network({ apiBase }: { apiBase: string }) {
   };
 
   const setExposed = async (exposed: boolean) => {
-    // Exposing the proxy is a decision — blocking confirm, like the CLI's --yes.
-    if (exposed && !confirm(t("network.enableConfirm"))) return;
+    // Exposing the proxy is a decision — blocking dialog, like the CLI's --yes.
+    if (exposed) {
+      const confirmed = await confirm({
+        title: t("confirm.exposeTitle"),
+        body: t("network.enableConfirm"),
+        confirmLabel: t("confirm.exposeAction"),
+      });
+      if (!confirmed) return;
+    }
     setBusy(true);
     try {
       const needsKey = exposed && host.data && !host.data.credentialConfigured;
@@ -162,8 +189,15 @@ export default function Network({ apiBase }: { apiBase: string }) {
   };
 
   const downloadExport = async () => {
-    // The export is a credential dump; the confirm carries the same warning as the CLI.
-    if (!confirm(t("network.exportConfirm"))) return;
+    // The export is a credential dump; the dialog carries the same warning as the
+    // CLI, and its button says "Download export" rather than "OK".
+    const confirmed = await confirm({
+      title: t("network.exportTitle"),
+      body: t("network.exportConfirm"),
+      confirmLabel: t("network.exportButton"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       const res = await fetch(`${apiBase}/api/host/export`);
       if (!res.ok) throw new Error(String(res.status));

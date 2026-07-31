@@ -34,7 +34,10 @@
  *                                    each with whether it is installed on this machine.
  * - POST /api/launch               → { id } launch one catalog target. The id is matched
  *                                    against a fixed catalog, so no caller-supplied path
- *                                    or argument ever reaches a process.
+ *                                    or argument ever reaches a process. A failure carries
+ *                                    a `reason` code as well as a sentence, so the
+ *                                    dashboard can offer the fix (install Windows
+ *                                    Terminal) instead of only printing the problem.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -206,7 +209,15 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
     // A target with no automatic route is not an error the user can act on by
     // retrying, so hand back the page to open instead of only saying "no".
     return jsonResponse(
-      { ok: false, error: result.error, manual: result.manual === true, installUrl: launchTargetInstallUrl(id) },
+      {
+        ok: false,
+        error: result.error,
+        manual: result.manual === true,
+        // "already there" is not a failure for a caller that is installing in
+        // order to retry something else; it is the go-ahead.
+        installed: result.installed === true,
+        installUrl: launchTargetInstallUrl(id),
+      },
       result.manual ? 200 : 409,
       req,
       config,

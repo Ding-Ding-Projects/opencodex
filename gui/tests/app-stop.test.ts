@@ -74,7 +74,12 @@ describe("App proxy stop", () => {
     // The server's message is surfaced verbatim, and as an error so it persists.
     expect(handler).toContain("body: outcome.message");
     expect(handler).toContain('tone: "error"');
-    // A stop is a decision, so the confirm stays blocking.
-    expect(handler).toContain('confirm(t("dash.stopConfirm"))');
+    // A stop is a decision, so the confirmation stays blocking — but it is the
+    // app's own M3 dialog now. The native `confirm()` drew a grey OS box whose
+    // buttons the app could neither theme nor label, so this asserts both halves:
+    // the awaited promise API, and the message still coming from the dictionary.
+    expect(handler).toContain("await confirm({");
+    expect(handler).toContain('body: t("dash.stopConfirm")');
+    expect(handler).toContain("if (!confirmed) return;");
   });
 });

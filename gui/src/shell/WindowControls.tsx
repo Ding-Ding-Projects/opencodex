@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { IconPower, IconWinMaximize, IconWinMinimize, IconWinRestore, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
+import { useConfirm } from "./confirm-context";
 
 /** Matches POST /api/host/exit. */
 interface ExitResponse {
@@ -31,6 +32,10 @@ interface ExitResponse {
 export default function WindowControls({ apiBase }: { apiBase: string }) {
   const t = useT();
   const { notify } = useNotifications();
+  // Shadows the global `confirm` deliberately: an accidental native call in this
+  // file is now a type error rather than a grey Windows box at runtime. Called
+  // before the `customWindowControls` early return, because hooks are.
+  const confirm = useConfirm();
   const desktop = window.opencodexDesktop;
   const controls = desktop?.window;
   const [maximized, setMaximized] = useState(false);
@@ -59,7 +64,13 @@ export default function WindowControls({ apiBase }: { apiBase: string }) {
   };
 
   const exitApp = async () => {
-    if (!confirm(t("window.exitConfirm"))) return;
+    const confirmed = await confirm({
+      title: t("confirm.exitTitle"),
+      body: t("window.exitConfirm"),
+      confirmLabel: t("confirm.exitAction"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setExiting(true);
     notify({ tone: "info", title: t("window.exiting") });
     try {
@@ -68,7 +79,13 @@ export default function WindowControls({ apiBase }: { apiBase: string }) {
         // Sessions outlived the hand-off window. The proxy is still serving them;
         // forcing is the user's call, and the count makes it an informed one.
         const count = String(busy.activeTurnCount ?? 0);
-        if (!confirm(t("window.exitBusyConfirm", { count }))) {
+        const forced = await confirm({
+          title: t("confirm.exitTitle"),
+          body: t("window.exitBusyConfirm", { count }),
+          confirmLabel: t("confirm.exitForceAction"),
+          tone: "danger",
+        });
+        if (!forced) {
           setExiting(false);
           return;
         }

@@ -246,10 +246,18 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const generatedTitleId = useId();
+  const generatedDescId = useId();
   // A dialog with a visible headline is named by it. Requiring every caller to
   // wire `labelledBy` by hand made "forgot to pass it" the default, and a
   // dialog with no accessible name is announced as just "dialog".
   const titleId = labelledBy ?? (title ? generatedTitleId : undefined);
+  // The supporting text is the substance of a confirmation — which credentials
+  // are about to be written, which requests are about to be cut off. Focus lands
+  // on a button inside the dialog, and a screen reader announces the dialog's
+  // *name* plus that button; without this the paragraph carrying the actual
+  // consequence is never read out, and the user agrees to a sentence they were
+  // not told.
+  const descId = description ? generatedDescId : undefined;
 
   const openerRef = useRef<Element | null>(null);
 
@@ -301,6 +309,7 @@ export function Dialog({
       aria-modal={modal ? "true" : undefined}
       onKeyDown={onKeyDown}
       aria-labelledby={titleId}
+      aria-describedby={descId}
       // `cancel` is Escape. Prevent the default close so React state stays the
       // single source of truth for whether this is open — otherwise the element
       // closes itself and the caller still believes it is showing.
@@ -316,7 +325,7 @@ export function Dialog({
           <header className="m3-dialog__head">
             <div className="m3-dialog__headtext">
               {title && <h2 className="m3-dialog__title" id={labelledBy ? undefined : generatedTitleId}>{title}</h2>}
-              {description && <p className="m3-dialog__desc">{description}</p>}
+              {description && <p className="m3-dialog__desc" id={descId}>{description}</p>}
             </div>
             {headAction && <div className="m3-dialog__headaction">{headAction}</div>}
           </header>

@@ -28,14 +28,14 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
-import { launchTargetIds, resolveLaunchTarget, type LaunchKind } from "./app-launcher.js";
-import { commandInvocation, type SpawnInvocation } from "./win-exec.js";
+import { launchTargetIds, resolveLaunchTarget, WINDOWS_TERMINAL_ID, type LaunchKind } from "./app-launcher.js";
+import { appExecutionAliasExists, commandInvocation, type SpawnInvocation } from "./win-exec.js";
 
 export type InstallMethod = "winget" | "npm";
 
 type PlatformKey = "win32" | "darwin" | "linux";
 
-interface InstallRecipe {
+export interface InstallRecipe {
   method: InstallMethod;
   /** winget package id, or npm package name. Constant — never from a request. */
   pkg: string;
@@ -66,6 +66,19 @@ const RECIPES: Record<string, InstallRecipe[]> = {
   ],
   "claude-desktop": [
     { method: "winget", pkg: "Anthropic.Claude", platforms: ["win32"] },
+  ],
+  // Not an agent app: the terminal a CLI target is opened in. Without it the
+  // launcher refuses to open a CLI at all (it will not fall back to a legacy
+  // console), so "install the thing" has to cover the window as well as the
+  // program that draws in it.
+  //
+  // Verified against the live catalogue like every other id here —
+  // `winget show Microsoft.WindowsTerminal` reports "Windows Terminal",
+  // publisher "Microsoft Corporation", installer type msix, served from
+  // github.com/microsoft/terminal/releases. winget-only on purpose: there is no
+  // npm route to an MSIX package, and it is a Windows-only need anyway.
+  [WINDOWS_TERMINAL_ID]: [
+    { method: "winget", pkg: "Microsoft.WindowsTerminal", platforms: ["win32"] },
   ],
   // chatgpt-desktop and grok-desktop deliberately have no recipe: no official
   // package is published for either. They stay manual links.
@@ -117,12 +130,21 @@ function platformKey(): PlatformKey {
   return "linux";
 }
 
+/**
+ * Find a package manager on PATH.
+ *
+ * `existsSync` is not enough on Windows. winget ships as an MSIX app execution
+ * alias, and those are invisible to stat (see `appExecutionAliasExists`) — so
+ * this answered "winget is not installed" on every ordinary Windows machine, and
+ * every winget recipe in this file was unreachable as a result. The symptom was
+ * not an error: "Get it" quietly downgraded to opening a download page.
+ */
 function onPath(names: string[]): string | null {
   const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   for (const name of names) {
     for (const dir of dirs) {
       const full = join(dir, name);
-      if (existsSync(full)) return full;
+      if (existsSync(full) || appExecutionAliasExists(full)) return full;
     }
   }
   return null;
@@ -143,6 +165,19 @@ export function chooseRecipe(targetId: string): InstallRecipe | null {
   const platform = platformKey();
   const methods = availableMethods();
   return recipes.find(r => r.platforms.includes(platform) && methods.includes(r.method)) ?? null;
+}
+
+/**
+ * Every recipe declared for a target, regardless of what this host has.
+ *
+ * `chooseRecipe` answers "what will run here", which is null on a machine
+ * without the package manager — so it cannot be used to pin down *which package*
+ * a target names. That distinction is the point: the package id is the security
+ * claim in this file, and it has to be assertable on any machine the tests run
+ * on, not only one with winget.
+ */
+export function installRecipesFor(targetId: string): readonly InstallRecipe[] {
+  return RECIPES[targetId] ?? [];
 }
 
 /** Whether a target could be installed automatically right now. */
@@ -174,8 +209,10 @@ export function hasInstallRoute(targetId: string): boolean {
  * `win-exec` resolves the target through PATH×PATHEXT and wraps `.cmd`/`.bat`
  * in `cmd.exe /d /s /c` with verbatim arguments, which is the same approach
  * cross-spawn uses and what every other spawn site in this repo already does.
+ * It also carries the app-execution-alias case, which is the only reason a
+ * winget recipe runs at all: winget itself is an alias.
  */
-function commandFor(recipe: InstallRecipe): SpawnInvocation {
+export function installInvocation(recipe: InstallRecipe): SpawnInvocation {
   if (recipe.method === "winget") {
     return commandInvocation("winget", [
       "install", "--id", recipe.pkg, "--source", "winget", "--exact",
@@ -230,7 +267,14 @@ function prune(): void {
 
 export type StartInstallResult =
   | { ok: true; job: InstallJob }
-  | { ok: false; error: string; manual?: boolean };
+  /**
+   * `manual` means there is no automatic route; `installed` means there is
+   * nothing left to do. Both are refusals, and a caller that could only read the
+   * sentence had to match on English prose to tell them apart — so a dashboard
+   * retrying after an install would have treated "already installed" as a
+   * failure and stopped.
+   */
+  | { ok: false; error: string; manual?: boolean; installed?: boolean };
 
 /**
  * Begin installing a catalog target. Returns as soon as the process is spawned;
@@ -240,7 +284,7 @@ export function startInstall(targetId: string): StartInstallResult {
   const known = launchTargetIds().find(t => t.id === targetId);
   if (!known) return { ok: false, error: "unknown launch target" };
   if (resolveLaunchTarget(targetId) !== null) {
-    return { ok: false, error: `${known.label} is already installed` };
+    return { ok: false, installed: true, error: `${known.label} is already installed` };
   }
 
   // A job still running is reported back rather than started twice — but only
@@ -290,7 +334,7 @@ export function startInstall(targetId: string): StartInstallResult {
   jobs.set(job.id, job);
   prune();
 
-  const { file, args, options } = commandFor(recipe);
+  const { file, args, options } = installInvocation(recipe);
   // The transcript names the package manager and package, not the cmd.exe
   // wrapper win-exec may have produced — the wrapper is an implementation
   // detail and printing it would make a normal install look alarming.

@@ -349,5 +349,20 @@ typechecks, lint, build, privacy, parity).
   far. Every provider/account/key/combo mutation should call it as its screen is
   rewritten — that is what fills the Version history screen.
 - `notify()` from `shell/notifications-context.ts` replaces `alert()` for
-  informational messages. `confirm()` is still correct for decisions
-  (stop proxy, remove provider, permanent delete, reset credit, restore).
+  informational messages. A *decision* (stop proxy, remove provider, permanent
+  delete, reset credit, restore, exit) is still blocking — but it goes through
+  `useConfirm()` from `shell/confirm-context.ts`, never the native
+  `window.confirm()`. That one drew an OS box the app could neither theme nor
+  label, so every decision in the product read "OK".
+
+  ```ts
+  const confirm = useConfirm();
+  if (!(await confirm({ title, body, confirmLabel, tone: "danger" }))) return;
+  ```
+
+  The promise resolves `false` for Cancel, Escape, the scrim and the provider
+  unmounting, so an awaiting handler always continues. `confirmLabel` names the
+  action ("Exit", "Restore", "Download export"); `tone: "danger"` is for the ones
+  that cannot be taken back. `ConfirmProvider` is mounted in `main.tsx` inside
+  `NotificationsProvider`, so a confirmation renders above a live snackbar.
+  Nothing in `gui/src` may call the global `confirm`, `alert` or `prompt`.

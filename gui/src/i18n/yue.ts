@@ -49,6 +49,21 @@ export const yue: Partial<Record<TKey, string>> = {
   // ---- common ----
   "common.loading": "載入緊…",
   "common.settings": "設定",
+  // The confirmation dialogs default their dismiss button to this key, so an
+  // untranslated one used to render a lone English "Cancel" beside Cantonese copy.
+  "common.cancel": "算數",
+
+  // ---- 確認對話框 ----
+  // 之前用瀏覽器嗰個 confirm() 畫，所以連個掣寫乜都改唔到 —— 一律「OK」。
+  // 而家個標題同個掣都講明撳落去會做乜。
+  "confirm.stopTitle": "停咗個 proxy",
+  "confirm.exitTitle": "關閉 OpenCodex",
+  "confirm.exitAction": "關閉",
+  "confirm.exitForceAction": "照關",
+  "confirm.restoreTitle": "還原去呢個快照",
+  "confirm.restoreForceAction": "照還原",
+  "confirm.exposeTitle": "將個 proxy 公開畀你個網絡",
+  "confirm.exposeAction": "公開",
 
   // ---- launch card ----
   "launch.title": "開啟",
@@ -68,6 +83,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "launch.installManual": "冇官方套件 —— 會開下載頁",
   "launch.installRestart": "已安裝。重開 opencodex 佢先會出現喺 PATH。",
   "launch.installLog": "安裝程式輸出",
+  "launch.wtInstall": "裝 Windows Terminal",
+  "launch.wtRestart": "Windows Terminal 裝咗喇，不過今次開住嘅 opencodex 仲未見到佢。重開 opencodex，然後再開返個 CLI。",
   "launch.emptyTitle": "暫時冇嘢可以開",
   "launch.emptyBody": "喺呢部機搵唔到任何 agent CLI 或者桌面 app。裝咗其中一個就會喺呢度出現。",
   "launch.loadFailed": "讀唔到啟動目標",

@@ -4,6 +4,7 @@ import App from "./App";
 import { LanguageProvider } from "./i18n/provider";
 import { PrefsProvider } from "./theme/prefs";
 import { NotificationsProvider } from "./shell/notifications";
+import { ConfirmProvider } from "./shell/confirm";
 import "./styles.css";
 
 // Inside the desktop shell the native title bar is hidden and the M3 app bar is
@@ -18,7 +19,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <LanguageProvider>
       <PrefsProvider>
         <NotificationsProvider>
-          <App />
+          {/* Inside the notifications provider so a confirmation renders above a
+              live snackbar rather than under it — the dialog is the thing the
+              user has to answer before anything else continues. */}
+          <ConfirmProvider>
+            <App />
+          </ConfirmProvider>
         </NotificationsProvider>
       </PrefsProvider>
     </LanguageProvider>

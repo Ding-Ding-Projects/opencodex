@@ -31,6 +31,7 @@ import { type Page } from "./app-routing";
 import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
 import { useNotifications } from "./shell/notifications-context";
+import { useConfirm } from "./shell/confirm-context";
 import { useTabRouting } from "./shell/use-tab-routing";
 import { fullBuildLabel, readBuildInfo, shortBuildLabel } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
@@ -96,6 +97,9 @@ function renderPage(page: Page): ReactNode {
 export default function App() {
   const { windowClass } = usePrefs();
   const { notify } = useNotifications();
+  // Shadows the global `confirm` deliberately: an accidental native call in this
+  // file is now a type error rather than a grey Windows box at runtime.
+  const confirm = useConfirm();
   const t = useT();
 
   // The tab strip owns the active page and the hash follows it. Both directions
@@ -172,8 +176,14 @@ export default function App() {
   }, [tabs]);
 
   const handleStop = async () => {
-    // A stop is a decision, so it keeps a blocking confirm rather than a snackbar.
-    if (!confirm(t("dash.stopConfirm"))) return;
+    // A stop is a decision, so it keeps a blocking dialog rather than a snackbar
+    // — an M3 one the app owns, not the browser's untranslatable OK/Cancel box.
+    const confirmed = await confirm({
+      title: t("confirm.stopTitle"),
+      body: t("dash.stopConfirm"),
+      confirmLabel: t("dash.stop"),
+    });
+    if (!confirmed) return;
     setStopping(true);
     const outcome = await requestProxyStop(API_BASE, {
       formatFailure: status => t("dash.stopFailed", { status: String(status) }),

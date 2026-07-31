@@ -9,11 +9,13 @@ import {
   canInstall,
   chooseRecipe,
   hasInstallRoute,
+  installInvocation,
+  installRecipesFor,
   listInstallJobs,
   resetInstallJobs,
   startInstall,
 } from "../src/lib/app-installer";
-import { launchTargetIds, launchTargetInstallUrl } from "../src/lib/app-launcher";
+import { launchTargetIds, launchTargetInstallUrl, WINDOWS_TERMINAL_ID } from "../src/lib/app-launcher";
 
 beforeEach(() => resetInstallJobs());
 
@@ -66,6 +68,30 @@ describe("install routes", () => {
     }
   });
 
+  test("Windows Terminal resolves to Microsoft's own winget package", () => {
+    // The launcher will not open a CLI without a terminal and will not fall back
+    // to a legacy console, so this package is what turns that refusal into an
+    // offer. Pinned by id because the id is the security claim: verified against
+    // the live catalogue as "Windows Terminal", publisher "Microsoft
+    // Corporation". A near-miss id is how a friendly button installs someone
+    // else's package.
+    const recipes = installRecipesFor(WINDOWS_TERMINAL_ID);
+    expect(recipes).toHaveLength(1);
+    expect(recipes[0]!.method).toBe("winget");
+    expect(recipes[0]!.pkg).toBe("Microsoft.WindowsTerminal");
+    expect(recipes[0]!.platforms).toEqual(["win32"]);
+  });
+
+  test("the Windows Terminal install runs winget directly, never through a shell", () => {
+    const invocation = installInvocation(installRecipesFor(WINDOWS_TERMINAL_ID)[0]!);
+    expect(invocation.args.join(" ")).toContain("install --id Microsoft.WindowsTerminal --source winget");
+    // Unattended, or a licence prompt would hang forever behind a hidden window.
+    expect(invocation.args).toContain("--disable-interactivity");
+    // The one thing this must never become: a shell, or a console interpreter
+    // wrapping the package manager.
+    expect(invocation.file).not.toMatch(/cmd\.exe|powershell|sh$/i);
+  });
+
   test("a target already installed is refused rather than reinstalled", () => {
     // Whichever target happens to exist on this machine, asking to install it
     // must say so instead of running a package manager for nothing.
@@ -75,6 +101,13 @@ describe("install routes", () => {
     if (!present) return; // Nothing installed here; nothing to assert.
     const result = startInstall(present.id);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("already installed");
+    if (!result.ok) {
+      expect(result.error).toContain("already installed");
+      // Flagged, not just worded. A dashboard installing Windows Terminal in
+      // order to retry a launch has to tell "nothing to do, go ahead" apart from
+      // "that failed", and matching on English prose to do it would break the
+      // retry the moment the sentence changed.
+      expect(result.installed).toBe(true);
+    }
   });
 });
