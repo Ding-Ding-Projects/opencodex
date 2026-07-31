@@ -25,12 +25,12 @@
  * stored copy stops following a theme the user later changes.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
+import { onOutsidePress } from "./outside-press";
 import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
-import { PAGE_META_BY_ID } from "./page-meta";
-import { clampToViewport, tabStyleProps, type Tab, type TabStyle } from "./use-tabs";
+import { clampToViewport, tabStyleProps, type TabStyle } from "./use-tabs";
 import { FONT_CHOICES } from "../theme/m3";
 
 /** `<input type="color">` refuses a CSS variable, so a token-valued or unset
@@ -67,7 +67,12 @@ const SWATCH: React.CSSProperties = {
 const PANEL: React.CSSProperties = {
   position: "fixed",
   zIndex: 80,
-  width: 340,
+  // `min()` rather than a flat 340: a fixed panel wider than the viewport hangs
+  // off the right edge and, because a fixed box still counts toward the
+  // document's scrollable overflow, takes the whole page's horizontal scrollbar
+  // with it. `clampToViewport` cannot rescue that — it pins the left edge, which
+  // on a 320px phone just moves the overflow rather than removing it.
+  width: "min(340px, calc(100vw - 16px))",
   maxHeight: "min(70vh, 560px)",
   overflowY: "auto",
   padding: 16,
@@ -99,17 +104,39 @@ function ResetButton({ on, name, clear }: { on: boolean; name: string; clear: ()
 }
 
 export interface TabAppearanceEditorProps {
-  tab: Tab;
-  /** The tab's visible label — the editor's accessible name, and its preview text. */
+  /**
+   * What is being styled.
+   *
+   * A tab and a group header carry the same `TabStyle` and want the same
+   * controls, so they share this editor rather than getting a near-identical
+   * second one — the alternative is two panels that drift the moment either
+   * gains a property. Only the preview and the accent differ, and both are
+   * driven from here.
+   */
+  kind: "tab" | "group";
+  /** The styled record's id, exposed as a data attribute so tests can find it. */
+  id: string;
+  style: TabStyle | undefined;
+  /** The tab's page icon. A group header has none, so the preview omits it. */
+  Icon?: ComponentType<SVGProps<SVGSVGElement>>;
+  /** The visible label — the editor's accessible name, and its preview text. */
   label: string;
-  /** The tab button this panel sits beside; it is measured, never mutated. */
+  /**
+   * A group's accent colour, which lives on the group record rather than in its
+   * `TabStyle` because it tints the whole run, not just the header's text.
+   * Absent for a tab, and the row is not rendered then.
+   */
+  accent?: string;
+  onAccentChange?: (color: string | undefined) => void;
+  /** The button this panel sits beside; it is measured, never mutated. */
   anchor: HTMLElement | null;
-  /** Merges a patch into the tab's style. `undefined` clears a property. */
+  /** Merges a patch into the record's style. `undefined` clears a property. */
   onChange: (patch: TabStyle) => void;
   onClose: () => void;
 }
 
-export default function TabAppearanceEditor({ tab, label, anchor, onChange, onClose }: TabAppearanceEditorProps) {
+export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
+  const { kind, id, Icon, label, accent, onAccentChange, anchor, onChange, onClose } = props;
   const t = useT();
   const panelRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
@@ -117,9 +144,8 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
   const titleId = `${baseId}-title`;
   const [position, setPosition] = useState<{ left: number; top: number }>({ left: -9999, top: -9999 });
 
-  const style = tab.style ?? {};
-  const preview = tabStyleProps(tab.style);
-  const meta = PAGE_META_BY_ID[tab.page];
+  const style = props.style ?? {};
+  const preview = tabStyleProps(props.style);
 
   // Measured after paint and re-measured when the page moves under it, so the
   // panel stays beside a tab that scrolled or a window that was resized. Off
@@ -163,10 +189,10 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
     // trap focus, so the focused element may legitimately be outside it by the
     // time Escape is pressed, and a handler on the panel would never see it.
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
@@ -178,12 +204,13 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
       // otherwise tells a screen reader the rest of the page is unavailable.
       role="dialog"
       aria-labelledby={titleId}
-      data-tab-style-editor={tab.id}
+      data-tab-style-editor={kind === "tab" ? id : undefined}
+      data-group-style-editor={kind === "group" ? id : undefined}
       style={{ ...PANEL, left: position.left, top: position.top }}
     >
       <header className="m3-row" style={{ justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
         <h2 id={titleId} className="m3-card-title" style={{ fontSize: "var(--t-title-s)" }}>
-          {t("tabs.styleFor", { name: label })}
+          {t(kind === "group" ? "tabs.groupStyleFor" : "tabs.styleFor", { name: label })}
         </h2>
         <button
           type="button"
@@ -197,22 +224,58 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
       </header>
 
       <Field label={t("tabs.stylePreview")}>
-        <div className="m3-tab selected" style={{ ...preview.surface, maxWidth: "none", borderRadius: "var(--r-s)" }}>
-          <span className="m3-tab-btn" style={{ ...preview.label, cursor: "default" }}>
-            <meta.Icon aria-hidden />
-            <span className="m3-tab-label">{label}</span>
-            {style.badge && (
-              <span style={{
-                padding: "0 6px",
-                borderRadius: "var(--r-pill)",
-                background: "var(--m3-secondary-container)",
-                color: "var(--m3-on-secondary-container)",
-                fontSize: "var(--t-label-s)",
-              }}>{style.badge}</span>
-            )}
-          </span>
-        </div>
+        {/* Rendered with the same classes and the same `tabStyleProps` the strip
+            uses, so the preview cannot show one thing and the strip another. */}
+        {kind === "group" ? (
+          <div className="m3-tabgroup" style={{ ["--m3-group-color" as string]: accent ?? "var(--m3-tertiary)" }}>
+            <span className="m3-tabgroup-head" style={{ ...preview.label, cursor: "default" }}>
+              <span className="m3-tabgroup-name">{label}</span>
+              {style.badge && <span className="m3-tabgroup-count">{style.badge}</span>}
+            </span>
+          </div>
+        ) : (
+          <div className="m3-tab selected" style={{ ...preview.surface, maxWidth: "none", borderRadius: "var(--r-s)" }}>
+            <span className="m3-tab-btn" style={{ ...preview.label, cursor: "default" }}>
+              {Icon && <Icon aria-hidden />}
+              <span className="m3-tab-label">{label}</span>
+              {style.badge && (
+                <span style={{
+                  padding: "0 6px",
+                  borderRadius: "var(--r-pill)",
+                  background: "var(--m3-secondary-container)",
+                  color: "var(--m3-on-secondary-container)",
+                  fontSize: "var(--t-label-s)",
+                }}>{style.badge}</span>
+              )}
+            </span>
+          </div>
+        )}
       </Field>
+
+      {/* A group's accent tints its whole run, so it is edited here beside the
+          rest of the group's appearance rather than from a separate surface. */}
+      {onAccentChange && (
+        <Field label={t("tabs.groupAccent")} hint={accent && !HEX.test(accent) ? t("tabs.styleSwatchFallback") : undefined}>
+          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+            <input
+              type="color"
+              value={accent && HEX.test(accent) ? accent : COLOR_FALLBACK}
+              aria-label={t("tabs.groupAccentPicker")}
+              onChange={event => onAccentChange(event.target.value)}
+              style={SWATCH}
+            />
+            <TextInput
+              value={accent ?? ""}
+              spellCheck={false}
+              placeholder={t("tabs.styleInherits")}
+              aria-label={t("tabs.groupAccent")}
+              onChange={event => onAccentChange(event.target.value || undefined)}
+              style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
+            />
+            <ResetButton on={!!accent} name={t("tabs.groupAccent")} clear={() => onAccentChange(undefined)} />
+          </div>
+        </Field>
+      )}
 
       <Field id={colorId} label={t("tabs.styleColor")} hint={style.color && !HEX.test(style.color) ? t("tabs.styleSwatchFallback") : undefined}>
         <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
@@ -318,7 +381,7 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
       <div className="m3-row" style={{ justifyContent: "end", marginTop: 8 }}>
         <Button
           variant="outlined"
-          disabled={!tab.style}
+          disabled={!props.style}
           onClick={() => onChange({ color: undefined, bg: undefined, font: undefined, size: undefined, weight: undefined, badge: undefined })}
         >
           {t("tabs.styleResetAll")}

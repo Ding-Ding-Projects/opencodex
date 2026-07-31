@@ -9,6 +9,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { IconMoon, IconPower, IconSun, IconMonitor, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
+import { useAppearanceTarget } from "./use-appearance-target";
 import { Toggle } from "./m3-ui";
 import { BOTTOM_NAV_PAGES, PAGE_META, PAGE_META_BY_ID, type PageMeta } from "./page-meta";
 import type { Page } from "../app-routing";
@@ -71,6 +72,8 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
   const { windowClass, prefs, setPrefs } = usePrefs();
   const t = useT();
   const drawerRef = useRef<HTMLElement>(null);
+  // Right-click, press-and-hold or Shift+F10 anywhere on the rail restyles it.
+  const navAppearance = useAppearanceTarget("navRail");
 
   const compact = windowClass === "compact";
   const expanded = windowClass === "expanded" || (compact && drawerOpen);
@@ -109,6 +112,7 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
       ref={drawerRef}
       tabIndex={compact && drawerOpen ? -1 : undefined}
       aria-label={t("nav.primaryAria")}
+      {...navAppearance}
     >
       <div className="m3-nav-brand">
         <img src="/logo.png" alt="" aria-hidden="true" />

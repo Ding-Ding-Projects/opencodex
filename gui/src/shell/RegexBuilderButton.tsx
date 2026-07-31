@@ -10,10 +10,12 @@
  * place in the row, but it opens the builder *beside* the field instead of
  * replacing the screen, and hands the finished pattern straight back.
  *
- * Anchored, not modal. The panel is absolutely positioned inside the trigger's
- * own wrapper, so it moves with the button and can never visually detach from
- * it; a portal to `<body>` would have needed a scroll listener to stay attached
- * and would have drifted the moment one was forgotten. `showModal()` is
+ * Anchored, not modal. The panel is `position: fixed` and placed from the
+ * trigger's measured rect, repositioning on scroll and resize so it moves with
+ * the button and can never visually detach from it. It was `absolute` inside the
+ * trigger's wrapper, which needed no listener but was clipped by every scrolling
+ * ancestor between the two — and this opens from search bars inside two of them.
+ * `showModal()` is
  * deliberately not used: the user opened this to build a pattern for the field
  * behind it, so inerting that field and trapping focus would be exactly wrong.
  * What it does keep from the dialog contract is the part that is not about
@@ -30,6 +32,8 @@
  */
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { onOutsidePress } from "./outside-press";
+import { INITIAL_PLACEMENT, computePlacement, fixedPanelStyle, type Placement } from "../../../shared/m3/anchor";
 import { Button, Chip, Field, TextArea, TextInput } from "./m3-ui";
 import { IconRegex, IconX } from "../icons";
 import { useT } from "../i18n/shared";
@@ -47,52 +51,23 @@ import type { TFn } from "../i18n/shared";
  */
 const DEFAULT_FLAGS = "i";
 
-/** Gap between the trigger and the panel, and the margin the panel keeps from the viewport edge. */
-const GAP_PX = 8;
-const EDGE_PAD_PX = 8;
-/** Below this the panel is not worth showing at all, so a cramped viewport scrolls it instead. */
-const MIN_PANEL_HEIGHT_PX = 220;
-
-interface Placement {
-  side: "below" | "above";
-  /** Wrapper-relative, because the panel is positioned inside the wrapper. */
-  left: number;
-  maxHeight: number;
-}
-
-interface Box { top: number; bottom: number; left: number; right: number }
-
 /**
- * Where the panel goes, in the wrapper's own coordinate space.
+ * Placement comes from `shared/m3/anchor.ts`.
  *
- * The panel is right-aligned to the trigger by default, because these triggers
- * sit at the end of a search row and a left-aligned panel would hang off the
- * right of the page. Everything after that is collision handling: the horizontal
- * position is clamped into the viewport, so a trigger near either edge shifts
- * the panel rather than letting it render off-screen, and the panel flips above
- * the trigger when there is more room there than below.
+ * It used to be a file-local `computePlacement` here — and that function is
+ * literally where the shared one was ported *from*, so for a while the
+ * repository had the original and the extraction sitting side by side. They had
+ * already diverged in the way that matters on a phone: the local copy returned
+ * only a wrapper-relative `left`, for a panel positioned `absolute` inside the
+ * trigger's wrapper, and an `overflow` ancestor clips an absolutely positioned
+ * descendant at the container's edge rather than the viewport's. This panel
+ * opens from search bars inside two of them — `.m3-page` scrolls, and the tab
+ * strip's own menus scroll — so at 320px, where the horizontal clamp produces a
+ * large negative offset, the builder was cut off on the left every time.
  *
- * Pure and rect-driven so it behaves identically in a test with a stubbed layout
- * as in a browser — the alternative, reading the DOM inside the component, is
- * untestable and was how the old select menu grew its own drift bugs.
+ * `position: fixed` plus the shared module's viewport coordinates is the only
+ * thing that escapes that, which is why the shared version returns both spaces.
  */
-function computePlacement(anchor: Box, panel: { width: number; height: number }, viewport: { width: number; height: number }): Placement {
-  const spaceBelow = viewport.height - anchor.bottom - EDGE_PAD_PX;
-  const spaceAbove = anchor.top - EDGE_PAD_PX;
-  const above = panel.height + GAP_PX > spaceBelow && spaceAbove > spaceBelow;
-
-  const rightAligned = anchor.right - panel.width;
-  const furthestLeft = viewport.width - panel.width - EDGE_PAD_PX;
-  // The outer max wins when the panel is wider than the viewport: it is then
-  // pinned to the left edge and scrolls, rather than being pushed off both.
-  const viewportLeft = Math.max(EDGE_PAD_PX, Math.min(rightAligned, Math.max(EDGE_PAD_PX, furthestLeft)));
-
-  return {
-    side: above ? "above" : "below",
-    left: viewportLeft - anchor.left,
-    maxHeight: Math.max(MIN_PANEL_HEIGHT_PX, (above ? spaceAbove : spaceBelow) - GAP_PX),
-  };
-}
 
 export interface RegexBuilderButtonProps {
   /** The host search field's current text. Seeds the pattern when the panel opens. */
@@ -147,10 +122,10 @@ export function RegexBuilderButton({ value, onApply, regex, onRegexChange, flags
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeAndRestore();
     };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [open, closeAndRestore]);
@@ -222,7 +197,7 @@ function RegexPopover({
   const [pattern, setPattern] = useState(() => capPattern(seedPattern));
   const [flags, setFlags] = useState(seedFlags);
   const [sample, setSample] = useState(() => capSample(seedSample));
-  const [placement, setPlacement] = useState<Placement>({ side: "below", left: 0, maxHeight: 520 });
+  const [placement, setPlacement] = useState<Placement>(INITIAL_PLACEMENT);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = `${id}-title`;
@@ -284,7 +259,7 @@ function RegexPopover({
       // otherwise tells a screen reader the rest of the page is unavailable.
       aria-labelledby={titleId}
       className={`m3-rxpop m3-rxpop--${placement.side}`}
-      style={{ left: placement.left, maxHeight: placement.maxHeight }}
+      style={fixedPanelStyle(placement)}
     >
       <header className="m3-rxpop-head">
         <h2 className="m3-rxpop-title" id={titleId}>{t("regex.title")}</h2>

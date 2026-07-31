@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { onOutsidePress } from "./outside-press";
 import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
 import { useT, type TKey } from "../i18n/shared";
@@ -46,10 +47,10 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
       if (!wrapRef.current?.contains(e.target as Node)) setMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [menuOpen]);

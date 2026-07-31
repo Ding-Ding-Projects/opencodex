@@ -1730,6 +1730,20 @@ export const yue: Partial<Record<TKey, string>> = {
   "tabs.searchBuilder": "砌個 pattern 嚟篩啲頁",
   "tabs.searchNone": "冇一頁夾到「{query}」。",
   "tabs.searchInvalid": "Pattern 有問題：{error}",
+
+  // ----四個搵分頁嘅搜尋 ----
+  // 四個搜尋、四格、四條各自獨立嘅 query。用範圍嚟改名唔用數字,
+  // 因為連續睇到四次「搜尋」,根本分唔清撳邊格會篩邊個 list。
+  "tabs.searchAll": "搵分頁",
+  "tabs.searchClose": "閂咗個分頁搜尋",
+  "tabs.searchStrip": "呢個視窗嘅分頁",
+  "tabs.searchStripPlaceholder": "分頁名入面嘅字",
+  "tabs.searchInGroup": "「{name}」入面嘅分頁",
+  "tabs.searchGroups": "用名搵群組",
+  "tabs.searchGroupsPlaceholder": "群組名入面嘅字",
+  "tabs.noGroups": "重未有群組。喺分頁度右撳 —— 或者長撳 —— 就開得一個。",
+  "tabs.searchEverywhere": "所有開住嘅分頁",
+  "tabs.windowN": "視窗 {n}",
   "tabs.styleFor": "{name} 嘅外觀",
   "tabs.styleClose": "閂咗個外觀編輯器",
   "tabs.stylePreview": "預覽",
@@ -1748,6 +1762,27 @@ export const yue: Partial<Record<TKey, string>> = {
   "tabs.styleResetAll": "全部還原",
   "tabs.styleInherits": "跟主題",
   "tabs.styleSwatchFallback": "個色板顯示唔到呢個值 —— 真正用緊嘅係隔籬個欄入面嗰個。",
+
+  // ---- 分頁群組 ----
+  // 個名同數量寫晒喺無障礙名度，唔淨係靠顏色分。分唔到色嘅人如果淨係得個顏色,
+  // 兩個群組就變咗兩個冇名嘅嘢。
+  "tabs.groupAria": "{name}，{count} 個分頁",
+  "tabs.groupMenuAria": "「{name}」群組嘅操作",
+  "tabs.group": "群組",
+  "tabs.newGroup": "開個新群組…",
+  "tabs.addTo": "加入「{name}」",
+  "tabs.removeFromGroup": "拎返出嚟",
+  "tabs.collapse": "摺埋個群組",
+  "tabs.expand": "打開個群組",
+  "tabs.renameGroup": "改個群組名…",
+  "tabs.ungroup": "解散呢個群組",
+  "tabs.groupName": "群組名",
+  "tabs.groupNamePlaceholder": "呢堆分頁係做乜嘅",
+  "tabs.groupSave": "儲存",
+  "tabs.editGroupAppearance": "改群組外觀…",
+  "tabs.groupStyleFor": "「{name}」群組嘅外觀",
+  "tabs.groupAccent": "群組顏色",
+  "tabs.groupAccentPicker": "揀群組顏色",
 
   // ---- 紀錄檔同刪咗之後點救 ----
   // 講到明幾多行、擺喺邊、留幾耐。刪嘢之前唔講清楚會冇咗啲乜,
@@ -1857,6 +1892,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "appearance.elPad": "內距",
   "appearance.elInherit": "跟主題",
   "appearance.elReset": "還原呢個元素",
+  "appearance.editElement": "改外觀：{name}",
+  "appearance.editElementHint": "喺個殼任何一橛長撳、右撳、或者撳 Shift+F10，就可以即場改佢個樣。",
   "appearance.pxValue": "{n}px",
   "appearance.motionTitle": "動態",
   "appearance.motionSub": "如果你系統要求減少動態效果，過場動畫會自動收起。",

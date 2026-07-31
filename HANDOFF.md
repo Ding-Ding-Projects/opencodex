@@ -24,6 +24,47 @@ Two other things exist in the repository and were **not** inspected or integrate
 
 ## In flight
 
+### The phone surface is the shell now, not a separate screen (`d15c7423`, `1542b440`)
+
+Branch `claude/unruffled-tesla-3994a7`. `App.tsx` no longer short-circuits to
+`pages/Mobile.tsx` for `#/mobile`: the remote is a route like any other, and the
+shell adapts its layout at `windowClass === "compact"` instead. Before this, a
+phone could reach the chat, the session list and an API-key field and **none** of
+the other twenty-one routes.
+
+Written up in full at [`docs/design-system/mobile-shell.md`](docs/design-system/mobile-shell.md).
+The parts a successor is most likely to trip over:
+
+- **`gui/src/shell/use-tabs.ts` no longer implements the tab rules.** It imports
+  them from `shared/m3/tabs.ts`, which already had the grouped model the
+  dashboard's private copy never grew. Twenty reducers and eight group ops
+  arrived by deletion. One behaviour changed deliberately: a strip read back out
+  of storage is now normalised pinned-first by `reviveTabs`, where the old reader
+  left whatever order was stored. `tab-context-menu.test.tsx` encoded the old
+  laxness and was updated with a note saying why.
+- **`shared/m3/tab-registry.ts` moved out of `docs-site/src/lib/`.** Both
+  surfaces now share one cross-window presence protocol. `docs-site` imports and
+  its own `tests/tab-search.test.ts` were repointed; that file passes (21/21).
+- **Every anchored panel is `position: fixed`** and places through
+  `shared/m3/anchor.ts`. `RegexBuilderButton`'s private `computePlacement` — the
+  function the shared one was ported *from* — is deleted.
+- **Outside-dismiss moved to `pointerdown` + `mousedown`** via
+  `shell/outside-press.ts`. It was `mousedown`-only everywhere, i.e. mouse-only.
+
+**Not done, and deliberately so:** the bulk-close actions are reachable from the
+tab context menu (with the full preview, honest count and pinned-excluded
+default) but are **not** duplicated into `TabSearchPanel`. The rule asks for them
+on "every tab strip and searchable tab list"; the strip has them, the panel does
+not. Adding them means lifting the existing bulk state so the panel triggers the
+same surface rather than growing a second one — do it that way, not by writing a
+second confirmation.
+
+Also untouched: the page-level layout defects the survey turned up but that this
+work did not need — `Usage`'s heatmap opens scrolled to its own right edge, the
+7-day bar chart's weekday labels collide under ~25px columns, and `.page-head` on
+Providers/Models cannot wrap at 320px. They are contained (no body overflow), so
+they are ugly rather than broken.
+
 ### Provider-agnostic OAuth account pool
 
 `src/oauth/provider-pool.ts` generalizes the Anthropic-only pool engine (#294) to every OAuth

@@ -257,6 +257,8 @@ test("right-clicking a tab opens the menu and suppresses the browser's own", asy
     "Close tabs containing text…",
     "Close tabs not containing text…",
     "Edit tab appearance…",
+    "New group…",
+    "Remove from group",
   ]);
   // Opening a menu moves focus into it, or the entries are unreachable by keyboard.
   expect(document.activeElement).toBe(ctxItems()[0]);
@@ -350,8 +352,9 @@ test("the keyboard opens the menu too, by ContextMenu and by Shift+F10", async (
 });
 
 test("arrows rove the menu and skip past a disabled entry", async () => {
-  // One tab: every close entry is disabled, so Down from the first enabled item
-  // has to jump the four of them rather than parking on one.
+  // One tab, ungrouped: every close entry is disabled, and so is "Remove from
+  // group" — so roving has to jump both the block at the top and the one at the
+  // bottom rather than parking on either.
   seedTabs([tab(1)], "t1");
   const { container, root } = await mount();
 
@@ -362,9 +365,11 @@ test("arrows rove the menu and skip past a disabled entry", async () => {
   expect(items[2].disabled).toBe(true);
   expect(items[5].disabled).toBe(true);
   expect(items[6].disabled).toBe(true);
+  // The tab is in no group, so there is nothing to remove it from.
+  expect(items[9].disabled).toBe(true);
   // Disabled, not hidden: the menu keeps one shape, so its entries do not move
   // between openings.
-  expect(items).toHaveLength(8);
+  expect(items).toHaveLength(10);
 
   // Focus opens on the first *enabled* entry. Landing on a disabled one would
   // leave focus outside the menu, and every arrow key after that would miss it.
@@ -375,11 +380,13 @@ test("arrows rove the menu and skip past a disabled entry", async () => {
   expect(focused()).toBe("Duplicate tab");
   await act(async () => { key(document.activeElement, "ArrowDown"); });
   expect(focused()).toBe("Edit tab appearance…");
-  // Wrapping skips the disabled block at the top rather than stopping in it.
+  await act(async () => { key(document.activeElement, "ArrowDown"); });
+  expect(focused()).toBe("New group…");
+  // Wrapping skips the disabled entry at the end and the block at the top.
   await act(async () => { key(document.activeElement, "ArrowDown"); });
   expect(focused()).toBe("Pin tab");
   await act(async () => { key(document.activeElement, "ArrowUp"); });
-  expect(focused()).toBe("Edit tab appearance…");
+  expect(focused()).toBe("New group…");
 
   await act(async () => { root.unmount(); });
 });
@@ -401,19 +408,24 @@ test("an outside click closes the menu", async () => {
 /* ------------------------------------------------------- menu commands ---- */
 
 test("close others and close to the right leave the pinned tabs alone", async () => {
+  // Seeded with the pinned tab second, and restored with it first: a strip read
+  // back out of storage is normalised to the same pinned-first order every
+  // mutation maintains, so it cannot come back in an arrangement no command
+  // could ever have produced. That matters beyond tidiness — `splitTabs` never
+  // overflows a pinned tab, which is only a promise it can keep if the pinned
+  // run is contiguous at the front.
   seedTabs([tab(1), tab(2, { pinned: true }), tab(3), tab(4)], "t1");
   const { container, root } = await mount();
-  expect(labels(container)).toEqual(["Dashboard", "Providers", "Models", "Combos"]);
+  expect(labels(container)).toEqual(["Providers", "Dashboard", "Models", "Combos"]);
 
   await act(async () => { rightClick(tabButton(container, "t1")); });
   await act(async () => { ctxItem("Close tabs to the right").click(); });
-  // Models and Combos go; Providers is pinned and stays even though it is to
-  // the right of the tab the command was run from.
-  expect(labels(container)).toEqual(["Dashboard", "Providers"]);
+  // Models and Combos go; Providers is pinned and stays.
+  expect(labels(container)).toEqual(["Providers", "Dashboard"]);
 
   await act(async () => { rightClick(tabButton(container, "t1")); });
   await act(async () => { ctxItem("Close other tabs").click(); });
-  expect(labels(container)).toEqual(["Dashboard", "Providers"]);
+  expect(labels(container)).toEqual(["Providers", "Dashboard"]);
 
   await act(async () => { root.unmount(); });
 });

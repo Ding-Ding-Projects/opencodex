@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { onOutsidePress } from "./outside-press";
 import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
 import { useT } from "../i18n/shared";
@@ -89,10 +90,10 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
       // the document leaves a keyboard user at the top of the page.
       if (e.key === "Escape") { setMenuOpen(false); triggerRef.current?.focus(); }
     };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [menuOpen]);

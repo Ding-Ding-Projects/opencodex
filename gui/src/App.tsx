@@ -36,6 +36,7 @@ import { useTabRouting } from "./shell/use-tab-routing";
 import { fullBuildLabel, readBuildInfo, shortBuildLabel } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
+import ElementAppearanceHost from "./shell/ElementAppearanceHost";
 import TabStrip from "./shell/TabStrip";
 import SnackbarHost from "./shell/SnackbarHost";
 import DimSumCard from "./shell/DimSumCard";
@@ -91,6 +92,7 @@ function renderPage(page: Page): ReactNode {
     case "network": return <Network apiBase={API_BASE} />;
     case "settings": return <SettingsPage apiBase={API_BASE} />;
     case "terminal": return <Terminal apiBase={API_BASE} />;
+    case "mobile": return <MobileRemote apiBase={API_BASE} />;
   }
 }
 
@@ -106,7 +108,6 @@ export default function App() {
   // live in one hook because wiring them as a pair of effects here is a cycle
   // with no fixed point — see the note in `use-tab-routing.ts`.
   const tabs = useTabRouting();
-  const page = tabs.activePage;
   // Held rather than derived so growing past the compact breakpoint closes the
   // drawer without an effect that would cascade a second render.
   const [drawerRequested, setDrawerRequested] = useState(false);
@@ -204,12 +205,26 @@ export default function App() {
   const statusLine = shortBuildLabel(buildInfo, health?.port ?? null);
   const statusTitle = fullBuildLabel(buildInfo);
 
-  // The remote control is its own product surface, not a page inside the admin
-  // shell: it takes the whole viewport with a bottom bar, because a nav rail and
-  // a tab strip are the wrong furniture for a thumb on a phone.
-  if (page === "mobile") return <MobileRemote apiBase={API_BASE} />;
+  // The remote control used to short-circuit the whole shell here, on the
+  // reasoning that a nav rail and a tab strip are the wrong furniture for a
+  // thumb on a phone. The furniture was the wrong thing to argue about: what it
+  // actually did was make `#/mobile` a dead end with three panels behind it, so
+  // a phone could reach the chat and nothing else — no settings, no appearance,
+  // no logs, no changelog, none of the other twenty-one pages.
+  //
+  // So the remote is a page like any other now, and the *shell* is what adapts:
+  // `windowClass === "compact"` already swaps the rail for a drawer and adds a
+  // bottom bar, and the strip, the menus and the anchored editors below now hold
+  // up at 320px. One shell, one set of components, one place a fix lands — the
+  // alternative was a second implementation of everything, which is how two
+  // surfaces start disagreeing about what a pin protects.
 
   return (
+    // The appearance host wraps the shell rather than sitting inside it: every
+    // surface that offers "Edit appearance…" — the rail, the app bar, the tab
+    // strip — has to be a descendant of the provider, and those three have no
+    // common ancestor further down.
+    <ElementAppearanceHost>
     <div className={`m3-app${compact ? " m3-app--compact" : ""}`}>
       <AdaptiveNav
         activePage={activePage}
@@ -273,5 +288,6 @@ export default function App() {
       {/* Decides for itself whether this is a first run; renders nothing otherwise. */}
       <OnboardingWizard apiBase={API_BASE} />
     </div>
+    </ElementAppearanceHost>
   );
 }

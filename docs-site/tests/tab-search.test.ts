@@ -25,7 +25,7 @@ import {
   type TabRow,
 } from "../../shared/m3/tabs";
 import { computePlacement, fixedPanelStyle } from "../../shared/m3/anchor";
-import { livePeers, numberWindows, type WindowSnapshot } from "../src/lib/tab-registry";
+import { livePeers, numberWindows, type WindowSnapshot } from "../../shared/m3/tab-registry";
 
 const rows: TabRow[] = [
   { id: "a", label: "Docker", pinned: false },

@@ -64,6 +64,8 @@ docs/design-system/
 - [Foundations](./foundations.md): 색상, 폰트, 크기, 간격, 반경, 모션
 - [Components](./components.md): 버튼, 입력, 패널, 표, 배지, 토글, 내비게이션
 - [Contributing](./contributing.md): 새 화면/컴포넌트 추가 규칙과 QA 체크리스트
+- [Mobile shell](./mobile-shell.md): 좁은 화면과 터치 입력에서의 레이아웃 —
+  앵커 패널 배치, 길게 누르기, 44px 터치 목표, 탭 그룹과 네 가지 탭 검색
 
 ## 관련 결정 기록
 
