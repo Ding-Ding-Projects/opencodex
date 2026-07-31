@@ -75,7 +75,7 @@ Codex CLI / App / SDK ──/v1/responses──▶ opencodex ──▶ Any provi
 build in a frameless shell — the app bar *is* the window chrome, minimise/maximise/close included.
 
 <p align="center">
-  <img src="assets/shots/dashboard.png" alt="opencodex dashboard showing the Launch card with Codex CLI and Claude Code detected as installed, live status tiles, and the Material 3 app bar with custom window controls" width="900">
+  <img src="assets/shots/dashboard.png" alt="opencodex dashboard showing the Launch card with Codex CLI, Claude Code and Grok CLI detected as installed, live status tiles, and the Material 3 app bar with custom window controls" width="900">
 </p>
 
 Everything there is live: the cost meter in the app bar, proxy status, provider counts, and the

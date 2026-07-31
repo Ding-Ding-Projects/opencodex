@@ -24,9 +24,105 @@ Two other things exist in the repository and were **not** inspected or integrate
 
 ## In flight
 
+### Icons are generated from Material Symbols, and every screenshot was retaken (`ce26db90`, `fc661370`)
+
+Written **2026-07-31**. Both commits are on `main` and on the remote —
+`git merge-base --is-ancestor fc661370 origin/main` succeeds. Note that `d15c7423`, `1542b440`,
+`f098416b` and `f08c9ded` landed *after* them, so `main` has moved on since.
+
+**`gui/src/icons.tsx` is generated. Do not hand-edit it.** `scripts/gen-icons.ts` fetches the
+geometry from `google/material-design-icons` and rewrites the file; re-run it to pick up upstream
+corrections. Four icons stay hand-drawn and say why in the generator: three Windows title-bar marks
+(OS chrome, not app iconography) and the GitHub logo (a brand mark Material Symbols does not carry).
+
+Two traps cost most of a session to find. Both are now held by `tests/icon-contract.test.ts`
+(7 tests), and each assertion was mutation-checked — the contract was deliberately broken to confirm
+the test goes red, rather than assumed to work because it was green:
+
+- **Glyph names belong to the prototype, not to the component name.** `design/OpenCodex M3.dc.html`
+  around line 2153 has a `PAGES` table naming the glyph for every page. Reading `IconRegex` and
+  reaching for `regular_expression` is wrong — the prototype says `rule`; `IconChangelog` wants
+  `history_edu`, not `receipt_long`. Five of nineteen nav rows were mapped by intuition and all five
+  were wrong while looking entirely plausible. One test now compares the prototype's table, the
+  dashboard's `ICONS` table in `gui/src/shell/page-meta.ts`, and the generated glyph comments.
+- **Material Symbols ships two coordinate grids.** Most glyphs use `viewBox="0 -960 960 960"`; some
+  older files (`auto_awesome`, `push_pin`) declare **no viewBox at all** and are implicitly
+  `0 0 24 24`. Stamping the 960 grid onto 24-unit data draws the shape at one-fortieth scale in the
+  corner, so it renders as *nothing at all* — no error, no broken layout. The Claude nav row shipped
+  as a blank space between two correct icons, and was only caught by cropping the nav and looking.
+
+### Retaking the screenshots
+
+`scripts/capture-shots.ts` drives the real Electron app over the DevTools protocol and rewrites all
+23 files in `assets/shots/`. Six of them are also copied into `docs-site/src/assets/shots/` by hand —
+`dashboard`, `history`, `models`, `providers`, `regex`, `terminal`.
+
+```
+npx --yes electron@43.2.0 electron/main.mjs \
+  --remote-debugging-port=9222 --user-data-dir=<a scratch directory>
+bun run scripts/capture-shots.ts          # or: bun run scripts/capture-shots.ts logs usage
+```
+
+Both arguments are load-bearing and neither is obvious:
+
+- **`electron/main.mjs`, not `electron .`.** This repo's `package.json` `main` is
+  `./bin/package-main.mjs` — the npm CLI entry — and `electron-builder.yml` substitutes the desktop
+  entry only when packaging. `electron .` therefore starts the CLI module: the process runs, the
+  debugging port answers, and there is never a window or a page target to attach to.
+- **`--user-data-dir`** whenever the installed opencodex is running. It holds Electron's
+  single-instance lock, and a second instance calls `app.quit()` during module load, before
+  `whenReady` ever fires. A separate profile means captures never require closing the user's app.
+
+The harness waits for each panel to finish fetching instead of sleeping a fixed interval — the Claude
+page was first captured mid-load, showing "Loading" where the feature should be — and it drives the
+Terminal into a real `ocx --version` session so that shot matches its caption. If a page never
+settles it prints a warning naming it; check that shot by eye rather than trusting the byte count,
+because a stale file and a fresh one look identical in `ls`.
+
+### What this session did **not** prove
+
+- **The full `bun test tests/` suite never produced a totals line.** Three attempts: two were killed
+  by my own `Stop-Process` sweep while clearing stuck processes, and the third was still running when
+  the session ended. **Treat the root suite as unproven.** It was passing before these changes, and
+  the changes are a generated icon file, a nav icon table, two scripts and one new test file — but
+  nobody has seen it green.
+- Proven instead: `cd gui && bun test` → **690 pass, 0 fail**; `cd gui && npx tsc -b --force` →
+  clean; and the root tests touching this change → **70 pass, 0 fail**
+  (`icon-contract`, `provider-workspace-data`, `tencent-siliconflow-providers`, `windows-tray`).
+- **`npx tsc --noEmit` in `gui/` checks zero files** — the tsconfig there is a solution file with
+  `"files": []`. The real check is `npx tsc -b --force`. Any past claim of "tsc clean" made with
+  `--noEmit` in that directory proved nothing.
+
+### A change that was made and then reverted — `electron/main.mjs` is untouched
+
+`buildTray()` was wrapped in a `try`/`catch` on the theory that a tray failure was preventing window
+creation on a headless desktop. That theory was wrong; the cause was the `main` entry described
+above. Removing the guard and relaunching showed the window appears fine without it, so `new Tray()`
+does **not** throw on an off-screen desktop, and the failure mode the guard defended against has no
+evidence behind it. It was reverted rather than kept. If someone wants that defensiveness later it
+needs a real reproducing case first — as written it also changed `--hidden` auto-start behaviour with
+no test covering it.
+
+### The remaining-gap audit returned nothing — do not read that as "no gaps"
+
+A seven-agent audit was launched over the remaining rule gaps: infinite colour picker and colour
+translator, Word-depth typography, the per-element "Edit appearance…" editor, tab grouping and the
+four tab searches, settings search on every surface, mobile remote parity, and QR pairing.
+**All eight agents failed on a session limit and it returned zero findings.** The script is saved and
+resumable:
+
+```
+Workflow({ scriptPath: '<session>/workflows/scripts/opencodex-ship-gap-audit-wf_3a206bb2-db4.js',
+           resumeFromRunId: 'wf_3a206bb2-db4' })
+```
+
+Before acting on it, re-scope: the four commits listed at the top of this section landed *after* it
+was written and already cover the mobile shell, tab groups and the four tab searches. An audit list
+from yesterday is the wrong input for today's tree.
+
 ### The phone surface is the shell now, not a separate screen — **landed, not in flight**
 
-**Status: merged to `main` and dewed.** `origin/main` is `f08c9ded`. The work is
+**Status: merged to `main` and pushed.** `origin/main` is `f08c9ded`. The work is
 four commits on `claude/unruffled-tesla-3994a7` (`d15c7423`, `1542b440`,
 `48781f81`, `b0c4ec75`), merged via `f098416b` and `f08c9ded`. The branch tip
 `b0c4ec75` is a proven ancestor of `origin/main`.
