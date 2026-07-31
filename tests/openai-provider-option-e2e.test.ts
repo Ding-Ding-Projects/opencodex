@@ -62,6 +62,163 @@ function hashTree(path: string): string {
   return hash.digest("hex");
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * Guard scope for the user's REAL Claude config dir (`~/.claude`).
+ *
+ * This test drives routes that legitimately write into `claudeConfigDir()`:
+ * `PUT /api/subagent-models` runs `syncClaudeAgentDefsBestEffort()`, which writes
+ * `agents/ocx-*.md` (src/claude/agents-inject.ts), and the launch path writes
+ * `cache/gateway-models.json` (src/claude/gateway-cache.ts). The guard exists to
+ * prove CLAUDE_CONFIG_DIR redirection sent every one of those writes to the temp
+ * dir instead of the user's own config.
+ *
+ * Hashing the whole tree cannot do that job. `projects/`, `sessions/`,
+ * `session-env/`, `shell-snapshots/` and `backups/` are appended to continuously
+ * by the running Claude Code harness — including the very session running this
+ * test — so a whole-tree hash changes for reasons unrelated to opencodex, and the
+ * ~700MB transcript tree also has to be read twice, which on its own can exhaust
+ * the test's time budget. Scope to the paths opencodex can actually write, and
+ * add a top-level census so an unexpected NEW entry still fails.
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * agents/ is shared: opencodex owns `ocx-*`, the harness and the user own the rest.
+ * Matched by NAME PREFIX ONLY — never by the `generated-by: opencodex` body marker,
+ * which would let the guard derive its scope from the very bytes a regression
+ * controls, and never with a `.md` filter, because the atomic-write staging file is
+ * `ocx-<name>.md.tmp-<pid>` (agents-inject.ts:217). agents-inject's own prune loop
+ * skips that name, so a crash between write and rename would otherwise strand it in
+ * the user's dir permanently and invisibly.
+ */
+const OPENCODEX_AGENT_PREFIX = "ocx-";
+
+/**
+ * Top-level entries owned by the Claude Code harness, excluded from the census
+ * because the harness may create one mid-run. Their contents are never hashed.
+ */
+const HARNESS_OWNED_ENTRIES = new Set([
+  ".credentials.json", ".DS_Store", ".last-cleanup", "backups", "cache", "debug",
+  "desktop.ini", "file-history", "history.jsonl", "ide", "logs", "plugins", "projects",
+  "session-env", "sessions", "settings.local.json", "shell-snapshots", "statsig",
+  "tasks", "telemetry", "Thumbs.db", "todos", "uploads",
+]);
+
+type ClaudeSurface = {
+  /** the config dir itself — both opencodex writers mkdir it recursively */
+  exists: boolean;
+  /** relative path -> hash, fingerprint or metadata token */
+  files: Record<string, string>;
+  /** top-level entry names, excluding harness-owned ones */
+  topLevel: string[];
+  /** opencodex-owned agent names, so an added or pruned one is caught */
+  agents: string[];
+  /** foreign agent names — compared for DELETIONS only, see assertClaudeSurfaceUnchanged */
+  otherAgents: string[];
+};
+
+function hashPath(path: string): string {
+  const hash = createHash("sha256");
+  if (!existsSync(path)) return hash.update("absent").digest("hex");
+  const stat = lstatSync(path);
+  hash.update(`${stat.mode & 0o777}\0`);
+  if (stat.isSymbolicLink()) return hash.update(`link\0${readlinkSync(path)}`).digest("hex");
+  if (stat.isDirectory()) return hash.update("dir").digest("hex");
+  return hash.update(readFileSync(path)).digest("hex");
+}
+
+/**
+ * Existence and mode only. `.credentials.json` is never written by opencodex (it is
+ * read at oauth/local-token-detect.ts:89), the harness rewrites it on every OAuth
+ * token refresh so a byte hash would be this guard's largest remaining flake source,
+ * and it is the most sensitive file in the tree — a test has no business pulling an
+ * OAuth token store into its own memory. Creation and a mode change are still caught.
+ */
+function fileMetadata(path: string): string {
+  return existsSync(path) ? `present\0${lstatSync(path).mode & 0o777}` : "absent";
+}
+
+/**
+ * `cache/gateway-models.json` is the one path where the two writers collide:
+ * opencodex overwrites it unconditionally (gateway-cache.ts:41) and Claude Code
+ * refreshes the same file whenever it holds a credential (gateway-cache.ts:4-6), so
+ * a byte hash would fail for reasons unrelated to the code under test. Classify the
+ * shape instead. opencodex can only ever produce a loopback baseUrl, because
+ * writeGatewayModelCache is reached solely through refreshGatewayModelCacheFromProxy,
+ * which hardcodes `http://127.0.0.1:${port}` (gateway-cache.ts:66).
+ *
+ * Every non-opencodex shape collapses to one token, so the harness creating or
+ * refreshing its own cache is invisible here, while any opencodex-shaped content —
+ * appearing, or changing once present — fails.
+ */
+function gatewayCacheFingerprint(path: string): string {
+  if (!existsSync(path)) return "not-opencodex";
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw) as { baseUrl?: unknown; models?: unknown };
+    const loopback = typeof parsed.baseUrl === "string"
+      && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/.test(parsed.baseUrl);
+    const ocxIds = Array.isArray(parsed.models) && parsed.models.some(entry => {
+      const id = (entry as { id?: unknown } | null)?.id;
+      return typeof id === "string" && id.startsWith("claude-ocx");
+    });
+    if (!loopback && !ocxIds) return "not-opencodex";
+    return `opencodex:${createHash("sha256").update(raw).digest("hex")}`;
+  } catch {
+    return "not-opencodex";
+  }
+}
+
+function listDir(path: string): string[] {
+  try {
+    return readdirSync(path).sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Snapshot only what opencodex could touch. A write to a known path changes a hash
+ * or fingerprint; a new or pruned agent definition changes `agents`; and a brand-new
+ * file or directory nobody predicted changes `topLevel`. That last one is what makes
+ * this more than an allowlist — a future opencodex writer dropping, say,
+ * `~/.claude/ocx-state.json` is covered by no hash, but still fails the census.
+ */
+function claudeSurface(dir: string): ClaudeSurface {
+  const agentEntries = listDir(join(dir, "agents"));
+  const agents = agentEntries.filter(entry => entry.startsWith(OPENCODEX_AGENT_PREFIX));
+  const files: Record<string, string> = {
+    // Read by agents-inject pickerDefaultModel() (agents-inject.ts:51); never written.
+    "settings.json": hashPath(join(dir, "settings.json")),
+    ".credentials.json": fileMetadata(join(dir, ".credentials.json")),
+    "cache/gateway-models.json": gatewayCacheFingerprint(join(dir, "cache/gateway-models.json")),
+  };
+  for (const entry of agents) files[`agents/${entry}`] = hashPath(join(dir, "agents", entry));
+  return {
+    exists: existsSync(dir),
+    files,
+    topLevel: listDir(dir).filter(entry => !HARNESS_OWNED_ENTRIES.has(entry)),
+    agents,
+    otherAgents: agentEntries.filter(entry => !entry.startsWith(OPENCODEX_AGENT_PREFIX)),
+  };
+}
+
+/** True when nothing opencodex could have written actually changed. */
+function claudeSurfaceUnchanged(before: ClaudeSurface, after: ClaudeSurface): boolean {
+  return JSON.stringify({ ...before, otherAgents: [] }) === JSON.stringify({ ...after, otherAgents: [] })
+    && before.otherAgents.every(name => after.otherAgents.includes(name));
+}
+
+function assertClaudeSurfaceUnchanged(before: ClaudeSurface, after: ClaudeSurface): void {
+  expect({ ...after, otherAgents: [] }).toEqual({ ...before, otherAgents: [] });
+  // Foreign agents are checked for DELETIONS only. opencodex can never unlink one —
+  // agents-inject.ts:204-206 gates unlink on the ocx- prefix, a .md suffix and a
+  // marker proof — so a vanished foreign agent is an ownership-boundary regression,
+  // while the user installing an agent mid-run is expected and must not fail.
+  expect(before.otherAgents.filter(name => !after.otherAgents.includes(name))).toEqual([]);
+}
+
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
@@ -103,7 +260,7 @@ describe("OpenAI provider-option integration spine", () => {
     const codexHome = join(root, "codex");
     const claudeConfigDir = join(root, "claude");
     const realClaudeDir = join(homedir(), ".claude");
-    const realClaudeHashBefore = hashTree(realClaudeDir);
+    const realClaudeSurfaceBefore = claudeSurface(realClaudeDir);
     const previousEnv = {
       OPENCODEX_HOME: process.env.OPENCODEX_HOME,
       CODEX_HOME: process.env.CODEX_HOME,
@@ -473,6 +630,11 @@ describe("OpenAI provider-option integration spine", () => {
       expect(modelRows.some(row => row.namespaced.startsWith("openai-multi/"))).toBe(false);
       expect((await put("/api/subagent-models", { models: [selected] })).status).toBe(200);
       expect(await local("/api/subagent-models").then(response => response.json())).toMatchObject({ chosen: [selected] });
+      // Positive half of the real-config guard: that PUT runs the agent-def sync,
+      // so the definitions must exist under the REDIRECTED dir. Without this, an
+      // agent sync that silently no-ops would satisfy the unchanged-real-dir
+      // assertion below while proving nothing about the redirection.
+      expect(listDir(join(claudeConfigDir, "agents")).filter(file => file.startsWith(OPENCODEX_AGENT_PREFIX))).not.toEqual([]);
       expect((await put("/api/injection-model", { model: selected, effort: "high" })).status).toBe(200);
       expect(await local("/api/injection-model").then(response => response.json())).toMatchObject({ model: selected, effort: "high" });
 
@@ -559,7 +721,9 @@ describe("OpenAI provider-option integration spine", () => {
           apiProIsolation: "PASS",
           migrationRestore: "PASS",
           oneOpenAiModelGroup: "PASS",
-          realClaudeStateUnchanged: true,
+          // Measured, not assumed: the teardown assertion is the authority, but
+          // recording a hardcoded `true` here would claim a result nothing checked.
+          realClaudeStateUnchanged: claudeSurfaceUnchanged(realClaudeSurfaceBefore, claudeSurface(realClaudeDir)),
         }, null, 2) + "\n", { mode: 0o600 });
       }
     } finally {
@@ -572,7 +736,10 @@ describe("OpenAI provider-option integration spine", () => {
         restoreEnv("CODEX_HOME", previousEnv.CODEX_HOME);
         restoreEnv("CLAUDE_CONFIG_DIR", previousEnv.CLAUDE_CONFIG_DIR);
         removeTempDir(root);
-        expect(hashTree(realClaudeDir)).toBe(realClaudeHashBefore);
+        // Scoped to what opencodex can write (see claudeSurface): a leaked
+        // agents/ocx-*, gateway cache, settings or credentials write fails here,
+        // while harness transcript churn does not.
+        assertClaudeSurfaceUnchanged(realClaudeSurfaceBefore, claudeSurface(realClaudeDir));
       }
     }
   }, 30_000);
