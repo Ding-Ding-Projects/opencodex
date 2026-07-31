@@ -12,15 +12,21 @@ name: Auto release
 # does not touch it.
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  # Every push to main builds an installer, full stop. This used to hang off
+  # `workflow_run: ["CI"]`, which meant a commit only ever got a build if a
+  # second workflow completed, matched by *name*, and reported success — three
+  # ways to get nothing, and all three happened in one evening: CI cancelled by
+  # a newer push, CI red on a stale assertion, and the name matched but the
+  # publish token was refused. Building on the push itself removes the
+  # dependency; the CI check moves to where it belongs, in front of the publish
+  # step alone.
+  push:
     branches: [main]
-  # The manual door. When the automatic path is broken — a refused token, a
-  # transient API failure, a commit whose CI went red for an unrelated reason —
-  # this builds the installer anyway and leaves it as an artifact. Waiting for
-  # the pipeline to be fixed before anyone can get a build is how a working
-  # installer sits unbuilt for hours.
+  # The manual door. When something is broken — a refused token, a transient API
+  # failure, a commit whose CI went red for an unrelated reason — this builds the
+  # installer anyway and leaves it as an artifact. Waiting for the pipeline to be
+  # fixed before anyone can get a build is how a working installer sits unbuilt
+  # for hours.
   workflow_dispatch:
     inputs:
       ref:
@@ -41,29 +47,23 @@ concurrency:
   # newer push must not abort a publish that is already uploading an
   # installer. Releases are tagged build-<run>, so two in flight cannot
   # collide on a tag.
-  group: auto-release-${{ github.event.workflow_run.head_sha || inputs.ref || github.sha }}
+  group: auto-release-${{ inputs.ref || github.sha }}
   cancel-in-progress: false
 
 jobs:
   release:
-    # Green CI on a push, or an explicit manual request. `workflow_run` also
-    # fires for PR CI runs, which must never publish.
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout the exact commit CI validated
+      - name: Checkout the commit being built
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
-      # One resolved SHA for every step below. The manual path has no
-      # `workflow_run.head_sha`, and a branch name is not a commit — the release
-      # target, the codename and the notes must all name the same thing or the
-      # release says it is one commit while carrying another.
+      # One resolved SHA for every step below. A branch name is not a commit,
+      # and the release target, the codename and the notes must all name the
+      # same thing — otherwise a release claims one commit while carrying
+      # another.
       - name: Resolve the commit being released
         shell: bash
         run: echo "SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
@@ -132,9 +132,51 @@ jobs:
           retention-days: 30
           compression-level: 0 # An NSIS installer is already compressed.
 
+      # Building on every push must not mean publishing on every push. The
+      # invariant that a red commit never becomes a release is unchanged; the
+      # check simply moved from "what triggered this job" to "may this job
+      # publish", which is where it was always doing its real work.
+      #
+      # Bounded on purpose. A CI run that hangs must not hold this job to its
+      # 45-minute ceiling, and a commit whose CI has already concluded without
+      # success is a definite no that there is no point waiting out.
+      - name: Require successful CI for this commit
+        id: ci
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 40); do
+            url=$(gh run list --workflow ci.yml --commit "$SHA" --status success --limit 5 \
+                    --json url --jq '.[0].url // ""' 2>/dev/null || echo "")
+            if [ -n "$url" ]; then
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+              echo "CI passed for ${SHA}: ${url}"
+              exit 0
+            fi
+
+            total=$(gh run list --workflow ci.yml --commit "$SHA" --limit 5 \
+                      --json status --jq 'length' 2>/dev/null || echo 0)
+            running=$(gh run list --workflow ci.yml --commit "$SHA" --limit 5 \
+                        --json status --jq '[.[]|select(.status != "completed")]|length' 2>/dev/null || echo 0)
+
+            # `total == 0` means CI has not registered a run yet, not that it
+            # failed — the push that started this job may still be propagating.
+            # Only a run that exists and has finished unsuccessfully is a no.
+            if [ "$total" != "0" ] && [ "$running" = "0" ]; then
+              echo "::warning::CI concluded without success for ${SHA} — building the artifact, but not publishing a release."
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::warning::Timed out waiting for CI on ${SHA} — the installer is attached to this run as an artifact."
+          exit 1
+
       - name: Create the release
-        # Skipped only when a manual run asked for the artifact alone.
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
+        id: publish
+        # Green CI, and not a manual run that asked for the artifact alone.
+        if: ${{ steps.ci.outputs.ok == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
         shell: bash
         env:
           # The workflow token is refused for release creation on this
@@ -191,19 +233,20 @@ jobs:
             "$installer#opencodex-setup.exe" \
             "opencodex-dashboard.zip"
 
-      # A red run is not self-explanatory when the thing that failed was the
-      # last API call. Say plainly that the installer exists and where, so the
-      # answer to "can I get a build?" is on the run that failed rather than
+      # Neither a red run nor a skipped publish is self-explanatory when the
+      # build itself succeeded. Say plainly that the installer exists and where,
+      # so the answer to "can I get a build?" is on the run itself rather than
       # somewhere the reader has to know to look.
-      - name: Point at the artifact when publishing failed
-        if: failure()
+      - name: Point at the artifact when no release was published
+        if: ${{ always() && steps.publish.outcome != 'success' }}
         shell: bash
         run: |
-          echo "::warning::Publishing failed, but the installer was built and is attached to this run as the artifact 'opencodex-setup-${{ github.run_number }}'. Download it from ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "::warning::No release was published, but the installer was built and is attached to this run as the artifact 'opencodex-setup-${{ github.run_number }}'. Download it from ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Prune old automated builds (keep 10)
-        # Never let tidying delete a release when the publish above did not run.
-        if: success()
+        # Only after a release actually published. Tidying old builds while the
+        # new one did not publish is how "keep the last 10" becomes "keep 9".
+        if: ${{ steps.publish.outcome == 'success' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || github.token }}
