@@ -185,6 +185,40 @@ function registerWindowIpc() {
   // Close, not quit: the tray keeps the app running, exactly as the native button did.
   ipcMain.handle("window:close", (event) => { windowFor(event)?.close(); });
   ipcMain.handle("app:exit", () => { quitting = true; app.quit(); });
+
+  /**
+   * Is it running, and start it if not.
+   *
+   * The dashboard's offline screen used to say "Cannot connect to proxy. Is it
+   * running? Run `ocx start`" — which names the fix and then leaves the user to
+   * go and do it, in the one place that already has everything needed to do it
+   * for them. Inside the desktop shell this window IS the app: there is no
+   * terminal in front of the user, and telling them to open one is the whole
+   * reason the desktop build exists.
+   *
+   * `ensureProxy` is reused rather than reimplemented, so the button behaves
+   * exactly like startup: an opencodex already listening is *adopted* rather
+   * than raced with, and the call only resolves once /healthz actually answers.
+   * Reporting "started" the moment a process was spawned would hand the
+   * dashboard a green light while the port was still closed.
+   */
+  ipcMain.handle("proxy:status", async () => {
+    const health = await probeHealth(proxyPort);
+    return { running: !!health, port: proxyPort, pid: health?.pid ?? null, managed: proxy !== null };
+  });
+
+  ipcMain.handle("proxy:start", async () => {
+    const already = await probeHealth(proxyPort);
+    if (already) return { ok: true, port: proxyPort, adopted: true };
+    try {
+      const result = await ensureProxy(proxyPort);
+      return { ok: true, port: result.port, adopted: result.adopted };
+    } catch (error) {
+      // The renderer shows this verbatim, so it has to be a sentence a user can
+      // act on rather than a stack frame.
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
 }
 
 /* ----------------------------------------------------------------- window -- */

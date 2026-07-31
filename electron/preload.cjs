@@ -52,4 +52,24 @@ contextBridge.exposeInMainWorld("opencodexDesktop", {
       return () => ipcRenderer.off("window:maximized-changed", listener);
     },
   },
+  /**
+   * Starting the proxy, for the one screen that cannot reach it over http.
+   *
+   * This is the exception to "no Node API is bridged across" above, and it is
+   * narrow on purpose: two fixed channels, no caller-supplied arguments, and
+   * neither can name a command, a path or a port. The renderer can ask "is it
+   * up?" and "bring it up on the port this app already chose" — nothing else.
+   * It cannot spawn anything of its own choosing, which is what would make this
+   * an arbitrary-execution bridge rather than a button.
+   */
+  proxy: {
+    /** `{ running, port, pid, managed }` — cheap enough to poll. */
+    status: () => ipcRenderer.invoke("proxy:status"),
+    /**
+     * Resolves only once the proxy actually answers `/healthz`, or with
+     * `{ ok: false, error }` explaining why it did not. An already-running
+     * proxy is adopted rather than raced with.
+     */
+    start: () => ipcRenderer.invoke("proxy:start"),
+  },
 });
