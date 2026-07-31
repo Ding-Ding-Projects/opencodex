@@ -7,6 +7,107 @@ produced — where something was not run, it says so rather than implying a pass
 `ROADMAP.md` says what is done and what is missing. This file says what is *in progress right now*,
 what has been proven, and what a successor still has to do.
 
+---
+
+# Screenshot harness — 2026-07-31, branch `claude/priceless-benz-5f0696`
+
+**Everything below this heading is the current session. The older sections start at
+"Where the work is" and were written on 2026-07-30 against `main`; several of the commits they call
+uncommitted have since landed, so read them as history rather than as current state.**
+
+## What this session did
+
+Replaced `assets/shots/` with 35 captures taken from the **real desktop window** and verified against
+a reference before each file was written, and rewrote the README image blocks around them.
+
+Captured from commit `fc661370`, GUI rebuilt with `bun run build:gui`, plus the one GUI fix below.
+Capture method: Electron 43.2.0 (the version pinned in `electron-builder.yml`) launched by the
+harness itself on an off-screen Win32 desktop, window fitted to exactly 2880x1800 (1440x900 at a
+forced device scale factor of 2), photographed with Win32 `PrintWindow` — **not** the DevTools
+screenshot API. The phone surface is 1179x2556 (393x852 at 3x). All 35 verified 2880x1800 or
+1179x2556; `bun run typecheck` and `bun run privacy:scan` both pass.
+
+## The files
+
+- `scripts/capture-shots.ts` — rewritten. Owns the whole lifecycle: resolves Electron, launches it,
+  sizes the window, prepares each surface, **verifies, then captures**, and kills what it started.
+- `scripts/window-tools.ps1` — new. `find` / `fit` / `capture` verbs over Win32.
+- `gui/src/pages/Usage.tsx` — one-line fix, see below.
+- `README.md` — 12 new images in two new `<details>` sections, plus three corrected alt texts.
+
+## Why it verifies the way it does
+
+The brief was to stop six shots being committed under the wrong names again. Three traps were found
+in practice, and each one is a rule in the harness now:
+
+1. **Closed dialogs stay mounted.** With the onboarding wizard open there are five
+   `.m3-dialog__title` elements in the document and four are invisible; a plain `querySelector`
+   reads "Update opencodex" off one nobody can see. Every check walks ancestors for `display`,
+   `visibility`, `opacity`, `aria-hidden`, `hidden` and `inert`.
+2. **A modal rides along.** Visiting `#claude` on a fresh profile raises an admin-token prompt that
+   then sits on top of every page navigated to afterwards. Route targets assert *zero* visible
+   overlays; without that rule twelve shots would each carry a modal belonging to none of them.
+3. **A toast rides along.** Dismissing the wizard raises a "Skip setup" snackbar that outlived two
+   navigations and settled into the corner of `startup.png` and `dashboard.png`, clipping a button.
+   It was missed on the first pass precisely because a toast is not a dialog, so corner surfaces
+   (`.m3-snack`, fixed `[role=status]`) are now counted separately and also asserted absent.
+
+Two capture-time subtleties are worth keeping: `PrintWindow` needs `PW_RENDERFULLCONTENT` or a
+GPU-composited window paints a plausible all-black PNG, and the PowerShell side must set DPI
+awareness *before* touching a window or Windows hands it virtualised coordinates and the shots come
+out silently soft.
+
+## The GUI fix that came out of it
+
+`gui/src/pages/Usage.tsx:688` was the only one of 22 `<IconSearch>` call sites with no
+`width`/`height`. `icons.tsx` emits a viewBox and no intrinsic size, and the nearby CSS rule is
+`.m3-card-actions .m3-icon-btn svg` — which does not match an icon sitting beside the input rather
+than inside a button. It rendered as a ~300px magnifier across the middle of the Models card on the
+Usage page. Found by looking at the screenshot, not by any test.
+
+## Verified
+
+- Harness self-check: full sweep, 35/35 captured, 0 failures.
+- Independent audit: 35 agents each read one PNG and judged it against a written requirement without
+  seeing the harness. Result after the fixes above: the three flagged images were `startup` (the
+  toast — fixed), and `models` / `language`, which are the correct screens but framed at the top of a
+  page whose content continues below the fold.
+
+## What a successor should pick up
+
+- **`models.png` and `language.png` are framed above the fold.** They are genuinely the right
+  screens, but `models.png` shows no model rows and `language.png` shows no narrator or dim sum
+  controls, because both pages are taller than the window. The captions describe the *page*, the alt
+  text describes the *image*, so nothing committed is untrue — but if you want those controls in
+  frame, scroll the panel before capture rather than rewording the caption.
+- **The alt text of the other 20 route images was inherited, not re-derived.** Three were corrected
+  against the new captures (`models`, `mobile`, `tab-menu`); the rest were read but not rewritten
+  line by line. If a detail in one looks oddly specific, check it against the PNG.
+- **`prompt.png` costs five minutes.** The GUI session has a hard five-minute TTL
+  (`GUI_SESSION_TTL_MS`, `src/server/management-auth.ts`) and loading the page mints a new one, so
+  the dialog cannot be summoned — the harness waits it out deliberately. A long sweep does *not*
+  produce it by itself, because clearing a stuck overlay reloads and restarts the clock.
+- **One sweep exited silently during that wait** and had to be re-run for `prompt` and `mobile`
+  (`bun run scripts/capture-shots.ts dashboard prompt mobile`). Not diagnosed. If it recurs, that
+  wait loop is where to look.
+
+## Deliberately not done
+
+- **The four GIFs in `assets/` were not re-recorded.** All four show third-party clients (Claude Code
+  TUI, the Codex app, Claude Desktop, Grok Build), verified by extracting frame 0 of each — none
+  shows the opencodex dashboard, so the icon rewrite cannot have staled them. Re-recording needs
+  those apps installed and live, paid provider calls.
+- **`assets/banner.png` was not regenerated.** It is a designed brand graphic, not a capture, so it
+  cannot go stale against the GUI. Its tagline ("Universal provider proxy for Codex") is narrower
+  than the README's current framing, which now names four clients — worth a redesign by whoever owns
+  the brand assets, but not something to generate.
+- **Dialogs needing a real account were left out rather than faked**: the Codex OAuth login flow,
+  Reset Credits, the account-switch confirm, and the Logs request-detail dialog (needs a real proxied
+  request). The only other `usePrompt()` caller in the app is the Codex account pool, which is why
+  the admin-token prompt is the prompt that got captured.
+
+---
+
 ## Where the work is
 
 `main`, uncommitted, in the single checkout — `git worktree list` shows no linked worktree. The last

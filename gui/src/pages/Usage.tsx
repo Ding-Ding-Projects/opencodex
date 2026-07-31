@@ -685,7 +685,14 @@ function UsageModelsTable({
   const titleId = "usage-models-title";
   const searchInput = (
     <div className="m3-row" role="search" style={{ gap: 8 }}>
-      <IconSearch aria-hidden="true" />
+      {/* The size is not optional. `icons.tsx` emits a viewBox and no width or
+          height, so an unsized glyph resolves to `width: auto` and fills its
+          flex line: this one rendered as a 300px magnifier across the middle of
+          the Models card. The nearby CSS does not save it either -- the rule is
+          `.m3-card-actions .m3-icon-btn svg`, and this icon sits beside the
+          input rather than inside a button. Every other IconSearch in the app
+          passes a size for the same reason. */}
+      <IconSearch width={20} height={20} aria-hidden="true" />
       <input
         className="m3-input"
         style={SEARCH_INPUT}
