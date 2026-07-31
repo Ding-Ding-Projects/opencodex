@@ -477,7 +477,12 @@ export function parseColor(input: string): Color | null {
   const text = String(input ?? "").trim().toLowerCase();
   if (!text) return null;
   if (text === "transparent") return { l: 0, c: 0, h: 0, alpha: 0 };
-  if (NAMED_COLORS[text]) return parseHex(NAMED_COLORS[text]);
+  // `hasOwnProperty`, not a bare index. `NAMED_COLORS` is an object literal, so
+  // it inherits `Object.prototype` — and a plain index for "constructor" returns
+  // a *function*, which is truthy, so `parseHex` was then handed something with
+  // no `.trim()` and threw. The picker's free-text field parses on every
+  // keystroke, so typing the word "constructor" took the whole editor down.
+  if (Object.prototype.hasOwnProperty.call(NAMED_COLORS, text)) return parseHex(NAMED_COLORS[text]);
   if (text.startsWith("#")) return parseHex(text);
 
   const fn = /^([a-z-]+)\(([^)]*)\)$/.exec(text);

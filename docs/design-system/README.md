@@ -63,6 +63,7 @@ docs/design-system/
 
 - [Foundations](./foundations.md): 색상, 폰트, 크기, 간격, 반경, 모션
 - [Components](./components.md): 버튼, 입력, 패널, 표, 배지, 토글, 내비게이션
+- [Appearance editors](./appearance-editors.md): 무한 색상 선택기, 워드 수준 타이포그래피, 설치된 폰트 선택기
 - [Contributing](./contributing.md): 새 화면/컴포넌트 추가 규칙과 QA 체크리스트
 
 ## 관련 결정 기록

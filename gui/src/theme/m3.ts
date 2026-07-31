@@ -8,6 +8,8 @@
    that we do not have to ship a colour-science dependency.
    ============================================================================ */
 
+import { cssText, typographyCss, type TypographyStyle } from '../../../shared/m3/typography'
+
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type DensityLevel = 1 | 2 | 3 | 4 | 5
 
@@ -19,6 +21,20 @@ export interface ElementStyle {
   radius?: number
   size?: number
   pad?: number
+  /**
+   * The full word-processor typography for this target.
+   *
+   * Kept apart from the six fields above because it cannot travel the same way.
+   * Those are single values a stylesheet reads back through `var()`, and adding
+   * twenty-eight more would mean twenty-eight new `var()` calls hand-written
+   * into every rule — a surface nobody could keep in step. This one is compiled
+   * to a real CSS rule instead (see `applyElementTypography`).
+   *
+   * `typography.family` wins over `font` when both are set. `font` predates this
+   * and is still honoured so a profile saved by an older build keeps its face,
+   * but the editor writes only `typography` now.
+   */
+  typography?: TypographyStyle
 }
 
 export interface ApplyTokensOptions {
@@ -234,6 +250,82 @@ export function clearElementStyle(el: HTMLElement, id: string): void {
   for (const prop of ['font', 'color', 'bg', 'radius', 'size', 'pad']) {
     el.style.removeProperty(`--el-${id}-${prop}`)
   }
+}
+
+/* --------------------------------------------------- element typography -- */
+
+/**
+ * The CSS selector each editable target actually renders as.
+ *
+ * The `--el-<id>-*` channel needs no such map — a stylesheet names its own
+ * variables — but a compiled typography rule has to be *written*, so it needs to
+ * know what to write it against. Keys match `ELEMENT_TARGETS` in
+ * `prefs-context.ts`; a target with no entry here simply gets no typography rule
+ * rather than a rule against a selector that matches nothing.
+ */
+export const ELEMENT_SELECTORS: Record<string, string> = {
+  navRail: '.m3-nav',
+  tabStrip: '.m3-tabstrip',
+  appBar: '.m3-appbar',
+  card: '.m3-card',
+  table: '.m3-table',
+  button: '.m3-btn',
+}
+
+/** The id of the single generated `<style>` element. */
+export const ELEMENT_TYPE_STYLE_ID = 'ocx-element-typography'
+
+/**
+ * Compile every target's typography into one stylesheet.
+ *
+ * Returned as text rather than written, so the whole mapping can be asserted in
+ * a test with no DOM at all — which matters because the failure mode here is
+ * silent: a rule against the wrong selector applies to nothing and looks exactly
+ * like a control that does not work.
+ *
+ * Each rule is prefixed with `:root ` purely for specificity. The base rules it
+ * has to beat (`.m3-card { font-family: var(--el-card-font, inherit) }`) are
+ * single-class, and so is `.m3-card` — leaving which one wins to stylesheet
+ * order, which is a bundler's decision and not ours to rely on. `:root .m3-card`
+ * outranks them without reaching for `!important`, which would in turn be
+ * unbeatable by anything downstream.
+ */
+export function elementTypographyCss(elementStyles: Record<string, ElementStyle | undefined> | undefined): string {
+  if (!elementStyles) return ''
+  const rules: string[] = []
+  for (const id of Object.keys(elementStyles)) {
+    const selector = ELEMENT_SELECTORS[id]
+    const typography = elementStyles[id]?.typography
+    if (!selector || !typography) continue
+    const declarations = cssText(typographyCss(typography))
+    if (declarations) rules.push(`:root ${selector} { ${declarations} }`)
+  }
+  return rules.join('\n')
+}
+
+/**
+ * Put that stylesheet into the document, creating or clearing the one node.
+ *
+ * One node reused rather than one per target: a node per target leaks a `<style>`
+ * every time a target is edited and then reset, and the order they end up in
+ * decides which of two overlapping rules wins.
+ */
+export function applyElementTypography(
+  doc: Document,
+  elementStyles: Record<string, ElementStyle | undefined> | undefined,
+): void {
+  const css = elementTypographyCss(elementStyles)
+  let node = doc.getElementById(ELEMENT_TYPE_STYLE_ID)
+  if (!css) {
+    node?.remove()
+    return
+  }
+  if (!node) {
+    node = doc.createElement('style')
+    node.id = ELEMENT_TYPE_STYLE_ID
+    doc.head.appendChild(node)
+  }
+  if (node.textContent !== css) node.textContent = css
 }
 
 /* --------------------------------------------------------------- layout -- */

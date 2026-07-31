@@ -7,6 +7,8 @@
  */
 
 import { createContext, useContext } from "react";
+import { readTypography } from "../../../shared/m3/typography";
+import type { TypographyStyle } from "../../../shared/m3/typography";
 import type { DensityLevel, ElementStyle, ThemeMode, WindowClass } from "./m3";
 
 /** Range for the app-bar cost meter; mirrors the ranges /api/usage accepts. */
@@ -30,6 +32,16 @@ export interface Prefs {
   seed: string;
   density: DensityLevel;
   fontId: string;
+  /**
+   * A full stack chosen from the font picker, which can reach any installed
+   * family. Overrides `fontId` when set.
+   *
+   * Both are kept rather than one replacing the other: `fontId` is what every
+   * already-saved profile holds, and rewriting it on load would silently
+   * reinterpret a stored preference. Absent here means "whatever `fontId` says",
+   * which is exactly what an older profile means.
+   */
+  fontStack?: string;
   fontScale: number;
   fontWeight: number;
   /** Narrator (speech synthesis) is off by default and never auto-enables. */
@@ -66,6 +78,13 @@ export interface PrefsContextValue {
   /** Shallow-merge a patch; persists and re-applies tokens. */
   setPrefs: (patch: Partial<Prefs>) => void;
   setElementStyle: (id: string, patch: ElementStyle) => void;
+  /**
+   * Merge a typography patch for one target. A key set to `undefined` clears
+   * that one property — which a plain object spread cannot express, because the
+   * spread keeps the key with an undefined value and `typographyCss` would then
+   * still see it.
+   */
+  setElementTypography: (id: string, patch: Partial<TypographyStyle>) => void;
   resetElementStyle: (id: string) => void;
   resetAppearance: () => void;
   /** Resolved dark-mode flag, tracking the OS when `theme === "system"`. */
@@ -97,9 +116,37 @@ export function readPrefs(): Prefs {
       fontWeight: Number.isFinite(Number(raw.fontWeight)) ? Math.min(700, Math.max(300, Number(raw.fontWeight))) : 400,
       dimsum: typeof raw.dimsum === "boolean" ? raw.dimsum : true,
       costRange: raw.costRange === "7d" || raw.costRange === "30d" || raw.costRange === "all" ? raw.costRange : "all",
-      elementStyles: raw.elementStyles && typeof raw.elementStyles === "object" ? raw.elementStyles : {},
+      fontStack: typeof raw.fontStack === "string" && raw.fontStack.trim() ? raw.fontStack.trim().slice(0, 400) : undefined,
+      elementStyles: readElementStyles(raw.elementStyles),
     };
   } catch {
     return DEFAULT_PREFS;
   }
+}
+
+/**
+ * Everything in the stored per-element overrides that is still renderable.
+ *
+ * The six flat fields were previously trusted wholesale, which was survivable
+ * while they were six strings and numbers feeding `var()`. Typography is not:
+ * `typographyCss` writes its values straight into a real CSS rule, so a
+ * hand-edited or corrupted entry could set `font-size: 1e9px` on every card and
+ * leave the user with a screen they cannot navigate back from. `readTypography`
+ * clamps every number and checks every enum, and drops keys it does not know.
+ *
+ * An entry that validates down to nothing is dropped rather than kept as `{}`,
+ * so "has an override" stays a truthful question to ask of this map.
+ */
+function readElementStyles(raw: unknown): Record<string, ElementStyle> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, ElementStyle> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as ElementStyle & { typography?: unknown };
+    const typography = readTypography(entry.typography);
+    const next: ElementStyle = { ...entry, typography };
+    if (!typography) delete next.typography;
+    out[id] = next;
+  }
+  return out;
 }
