@@ -418,6 +418,21 @@ package's bundled Bun runtime, which is used only by installed `ocx` commands.
 The GUI has its own dependency tree; installing only one of the two leaves the suite erroring on
 missing modules.
 
+On Windows, [`run.bat`](./run.bat) in the repository root does all of that from one file — double-click
+it in Explorer, or call it from any terminal:
+
+```bat
+run.bat            :: build the dashboard if it is out of date, then start the proxy
+run.bat build      :: build the dashboard
+run.bat dev        :: proxy plus the Vite dev server, no production build
+run.bat test       :: typechecks and both test suites
+run.bat help
+```
+
+Every step is one of the scripts above. It checks for `bun` before it starts anything, stops at the
+first step that fails and exits with that step's code, and skips the dashboard build while `gui/dist`
+is newer than `gui/src` — `run.bat build` and `--force` rebuild regardless.
+
 ---
 
 <details>

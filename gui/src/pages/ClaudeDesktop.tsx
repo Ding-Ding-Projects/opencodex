@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
-import { IconChevron, IconRegex, IconSearch } from "../icons";
+import { IconChevron, IconSearch } from "../icons";
 import { Notice } from "../ui";
 import { Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { makeMatcher } from "./models-shared";
 import { claudeSettingLabels } from "./claude-settings-search";
 import { useT, type TFn, type TKey } from "../i18n/shared";
@@ -12,6 +13,13 @@ import { createBoundedFetch } from "../bounded-fetch";
 
 const FAMILIES = ["opus", "fable", "sonnet", "haiku"] as const;
 type Family = typeof FAMILIES[number];
+
+/**
+ * How many of a lane's models are handed to its anchored builder as sample text.
+ * Built on every render of the lane, so it is bounded: a catalogue of hundreds of
+ * models would otherwise be joined into a string for a panel that is usually shut.
+ */
+const LANE_SAMPLE_ROWS = 40;
 
 /**
  * Family collapse lives under its own key: the Models page collapses PROVIDERS, and a
@@ -539,7 +547,10 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // nothing and says so, rather than silently reverting to substring search.
   const settingsActive = settingsQuery.trim().length > 0;
   const settingsMatcher = makeMatcher(settingsQuery, settingsRegex);
-  const settingsHits = desktopSettingsIndex(t).filter(row => settingsMatcher.test(row.haystack));
+  // Held rather than rebuilt per use: the anchored builder hands the same rows back
+  // as its sample, and two calls could drift into two different indexes.
+  const settingsIndex = desktopSettingsIndex(t);
+  const settingsHits = settingsIndex.filter(row => settingsMatcher.test(row.haystack));
   // Only claimed once something was typed: an untouched field has matched nothing, here
   // or on the Code tab.
   const settingsOtherHits = settingsActive
@@ -621,9 +632,13 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
         >
           <code style={MONO_STYLE}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={settingsQuery}
+          onApply={pattern => setSettingsQuery(pattern)}
+          regex={settingsRegex}
+          onRegexChange={setSettingsRegex}
+          sample={settingsIndex.map(row => row.haystack).join("\n")}
+        />
       </div>
       <p
         role={settingsMatcher.error ? "alert" : "status"}
@@ -749,9 +764,20 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                 >
                   <code style={{ fontFamily: "var(--mono)" }}>.*</code>
                 </Chip>
-                <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-                  <IconRegex width={20} height={20} aria-hidden="true" />
-                </a>
+                {/* One builder per lane, bound to that lane's own query: a shared
+                    instance would apply a pattern to whichever lane was touched last. */}
+                <RegexBuilderButton
+                  value={laneSearch[family] ?? ""}
+                  onApply={pattern => {
+                    setLaneSearch(current => ({ ...current, [family]: pattern }));
+                    // A new query starts from the first page, exactly as typing does —
+                    // otherwise an expanded lane hides the matches just asked for.
+                    setLaneLimit(current => ({ ...current, [family]: LANE_PAGE }));
+                  }}
+                  regex={laneRegex[family] ?? false}
+                  onRegexChange={next => setLaneRegex(current => ({ ...current, [family]: next }))}
+                  sample={all.slice(0, LANE_SAMPLE_ROWS).map(model => `${model.label} ${model.route}`).join("\n")}
+                />
               </div>
             )}
             {lane.regexError && (

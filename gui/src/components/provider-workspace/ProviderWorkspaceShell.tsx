@@ -6,8 +6,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n/shared";
-import { IconFilter, IconRegex, IconSearch, IconBoxes, IconGlobe, IconLock, IconKey, IconTrash } from "../../icons";
+import { IconFilter, IconSearch, IconBoxes, IconGlobe, IconLock, IconKey, IconTrash } from "../../icons";
 import { Chip } from "../../shell/m3-ui";
+import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
 import { makeMatcher } from "../../pages/models-shared";
 import {
   applyActiveAccountReauth,
@@ -46,6 +47,14 @@ interface RailSections {
 
 /** Live-auth failure, not missing configuration — set by `applyActiveAccountReauth`. */
 const needsAttentionItem = (item: WorkspaceItem): boolean => item.activeNeedsReauth === true;
+
+/**
+ * How many rail rows the anchored builder is handed as sample text. Bounded
+ * because a pattern only has to be tried against a representative slice, and a
+ * host with a hundred providers should not build a hundred-line string for a
+ * panel that is usually closed.
+ */
+const SAMPLE_ROWS = 40;
 
 /** Detail-slot data plumbed per selected provider (props-down; no shared hook). */
 export interface DetailSlotData {
@@ -290,6 +299,19 @@ export default function ProviderWorkspaceShell({
     };
   }, [sections, matchesQuery, statusFilter, pricingFilter, typeFilter, sortMode]);
 
+  // Built from the unfiltered sections on purpose: the sample exists to test a
+  // pattern, and seeding it from rows the current query already narrowed would
+  // hide every row the new pattern is meant to reach.
+  const searchSample = useMemo(
+    // `needsAttention` is not read here: the catalog bin it is carved out of is
+    // `needsSetup`, so those rows are already in this list once.
+    () => [...sections.ready, ...sections.needsSetup, ...sections.disabled]
+      .slice(0, SAMPLE_ROWS)
+      .map(p => `${p.name} ${p.adapter} ${p.baseUrl}`)
+      .join("\n"),
+    [sections],
+  );
+
   const filterActive =
     !statusFilter.ready || !statusFilter.needsSetup || !statusFilter.needsAttention || !statusFilter.disabled
     || !pricingFilter.free || !pricingFilter.paid
@@ -376,9 +398,13 @@ export default function ProviderWorkspaceShell({
           >
             <code style={{ fontFamily: "var(--mono)" }}>.*</code>
           </Chip>
-          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-            <IconRegex width={18} height={18} aria-hidden="true" />
-          </a>
+          <RegexBuilderButton
+            value={search}
+            onApply={pattern => setSearch(pattern)}
+            regex={searchRegex}
+            onRegexChange={setSearchRegex}
+            sample={searchSample}
+          />
           <div className="pws-filter-wrap" ref={filterWrapRef}>
             <button
               type="button"

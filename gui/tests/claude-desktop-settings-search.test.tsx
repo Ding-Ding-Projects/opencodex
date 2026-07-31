@@ -132,7 +132,11 @@ test("the Desktop tab heads its own settings search, above the controls it descr
   // Labelled, keyboard reachable, and carrying the builder shortcut beside it.
   expect(input.getAttribute("placeholder")).toBe("Search settings…");
   const row = input.closest('[role="search"]')!;
-  expect(row.querySelector('a[href="#regex"]')?.getAttribute("aria-label")).toBe("Open regex builder");
+  // A button that opens the builder beside this field, not a link to the builder
+  // page: navigating away abandoned the query the user was in the middle of typing.
+  const builder = row.querySelector('button[aria-haspopup="dialog"]');
+  expect(builder?.getAttribute("aria-label")).toBe("Open regex builder");
+  expect(row.querySelector('a[href="#regex"]')).toBeNull();
 
   // Above the assignments it describes, not buried under four families.
   const stack = container.querySelector(".ocx-group-stack")!;

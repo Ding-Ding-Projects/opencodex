@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Notice, Select, Tooltip } from "../ui";
 import { Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
-import { IconChevron, IconInfo, IconRegex, IconSearch, IconShuffle } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
 import { useT } from "../i18n/shared";
@@ -47,6 +48,15 @@ import {
   type V2Status,
 } from "./models-shared";
 import { EmptyProviderHint } from "./models-provider-hints";
+
+/**
+ * How much of the catalogue the anchored builder is handed as sample text. The
+ * string is built on every render of the search row, not only while the panel is
+ * open, and this page routinely lists thousands of models across dozens of
+ * providers — an unbounded join would be paid for on every keystroke.
+ */
+const SAMPLE_GROUPS = 8;
+const SAMPLE_ROWS_PER_GROUP = 8;
 
 export default function Models({ apiBase }: { apiBase: string }) {
   const t: TFn = useT();
@@ -873,6 +883,16 @@ export default function Models({ apiBase }: { apiBase: string }) {
     ? scopedGroups.filter(group => group.rows.some(row => rowMatches(group.provider, row)))
     : scopedGroups;
 
+  // Sample text for the anchored builder: the same haystack `rowMatches` tests, taken
+  // from the scoped groups rather than the visible ones — seeding it from what the
+  // current query already kept would hide the rows a new pattern is being written for.
+  // Bounded per group as well as overall, so one enormous provider cannot crowd out
+  // every other name a pattern might need to be tried against.
+  const modelSearchSample = scopedGroups
+    .slice(0, SAMPLE_GROUPS)
+    .flatMap(group => group.rows.slice(0, SAMPLE_ROWS_PER_GROUP).map(row => `${row.id} ${row.namespaced} ${group.provider}`))
+    .join("\n");
+
   const searchBlock = (
     <>
       <div className="m3-row" role="search" style={{ marginBottom: "var(--sp-2)" }}>
@@ -894,9 +914,16 @@ export default function Models({ apiBase }: { apiBase: string }) {
         >
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
-        <a className="models-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          className="models-icon-btn"
+          value={query}
+          onApply={pattern => setQuery(pattern)}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          // Real catalogue rows in the same shape the search matches them, taken
+          // from the groups in scope rather than from what the query already kept.
+          sample={modelSearchSample}
+        />
       </div>
       {/* The design reserves this line whether or not a pattern is broken, so typing an
           unfinished regex does not shunt the whole provider list up and down. */}
@@ -928,9 +955,17 @@ export default function Models({ apiBase }: { apiBase: string }) {
         >
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
-        <a className="models-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          className="models-icon-btn"
+          value={settingsQuery}
+          onApply={pattern => setSettingsQuery(pattern)}
+          regex={settingsRegex}
+          onRegexChange={setSettingsRegex}
+          // This screen's settings index, which is a different corpus from the
+          // model search above — the two builders never share a sample.
+          sample={settingsEntries.map(entry => entry.text).join("\n")}
+          label={t("settings.openBuilder")}
+        />
       </div>
       {/* One status line, as the prototype has it: the broken pattern wins over the
           no-match message, because an unusable pattern is why nothing matched. */}

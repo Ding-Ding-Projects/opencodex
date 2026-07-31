@@ -194,7 +194,10 @@ test("the settings search filters this surface and reports an honest no-match", 
 
   const search = container.querySelector('[role="search"] input') as unknown as HTMLInputElement;
   expect(search.placeholder).toBe("Search settings…");
-  expect(container.querySelector('[role="search"] a[href="#regex"]')).toBeTruthy();
+  // The builder opens beside this field; a link to the builder page would take the
+  // user off the settings they were filtering.
+  expect(container.querySelector('[role="search"] button[aria-haspopup="dialog"]')).toBeTruthy();
+  expect(container.querySelector('[role="search"] a[href="#regex"]')).toBeNull();
 
   await act(async () => { typeInto(search, "narrator"); });
   expect([...container.querySelectorAll(".m3-card-title")].map(n => n.textContent)).toEqual(["Narrator"]);

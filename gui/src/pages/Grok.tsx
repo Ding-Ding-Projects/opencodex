@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Button, Card, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
-import { IconRegex, IconSearch } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconSearch } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
 import { useT, type TKey } from "../i18n/shared";
@@ -42,6 +43,13 @@ const monoStyle: CSSProperties = { fontFamily: "var(--mono)" };
 /** Pattern cap, mirroring the regex builder: a pasted novel can never become a
  *  catastrophic-backtracking payload, and evaluation stays local to this page. */
 const PATTERN_CAP = 400;
+
+/**
+ * How many candidates the anchored builder is given as sample text. Bounded
+ * because the string is built on every render of the search row, not only when
+ * the panel is open.
+ */
+const SAMPLE_ROWS = 40;
 
 const spacerStyle: CSSProperties = { flex: "1 1 auto" };
 
@@ -334,9 +342,19 @@ export default function Grok({ apiBase }: { apiBase: string }) {
             <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
               <code style={monoStyle}>.*</code>
             </Chip>
-            <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-              <IconRegex width={20} height={20} aria-hidden="true" />
-            </a>
+            <RegexBuilderButton
+              value={query}
+              onApply={pattern => setQuery(pattern)}
+              regex={useRegex}
+              onRegexChange={setUseRegex}
+              // The candidate ids and aliases this screen searches, so the pattern
+              // is tried against real model names rather than an empty box.
+              sample={candidates
+                .slice(0, SAMPLE_ROWS)
+                .map(c => `${c.id} ${aliasById.get(c.id) ?? ""}`.trim())
+                .join("\n")}
+              label={t("settings.openBuilder")}
+            />
           </div>
           {regexError && (
             <p role="alert" style={regexErrorStyle}>{t("regex.invalid")}: {regexError}</p>

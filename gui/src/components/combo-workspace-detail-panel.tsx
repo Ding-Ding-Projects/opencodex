@@ -8,10 +8,11 @@ import {
   intersectComboEfforts,
   validateComboDraft,
 } from "../combo-workspace-data";
-import { IconAlert, IconChevron, IconRegex, IconSearch, IconTrash } from "../icons";
+import { IconAlert, IconChevron, IconSearch, IconTrash } from "../icons";
 import { useT } from "../i18n/shared";
 import { Notice } from "../ui";
 import { Button, Card, Chip, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
 import { attentionCopy } from "./combo-workspace-attention";
@@ -242,9 +243,13 @@ export function DetailPanel({
               >
                 <code style={{ fontFamily: "var(--mono)" }}>.*</code>
               </Chip>
-              <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-                <IconRegex width={20} height={20} aria-hidden="true" />
-              </a>
+              <RegexBuilderButton
+                value={settingsQuery}
+                onApply={(pattern) => setSettingsQuery(pattern)}
+                regex={settingsRegex}
+                onRegexChange={setSettingsRegex}
+                label={t("settings.openBuilder")}
+              />
             </div>
             {settingsNote && (
               <p

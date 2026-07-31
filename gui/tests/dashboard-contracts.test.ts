@@ -198,14 +198,19 @@ test("Dashboard search bars are wired to the regex builder", async () => {
   const panels = await Bun.file(new URL("../src/pages/dashboard-overview-panels.tsx", import.meta.url)).text();
   const modelsTab = await Bun.file(new URL("../src/pages/dashboard-models-section.tsx", import.meta.url)).text();
   for (const src of [panels, modelsTab]) {
-    expect(src).toContain('href="#regex"');
+    // Anchored beside the field, never a link to the builder page: navigating away
+    // is what made the shortcut useless to someone mid-query.
+    expect(src).toContain("<RegexBuilderButton");
+    expect(src).not.toContain('href="#regex"');
     expect(src).toContain('t("search.regexHint")');
   }
   expect(panels).toContain('t("settings.search")');
   expect(panels).toContain('t("settings.noMatch")');
   expect(panels).toContain('t("settings.openBuilder")');
   expect(panels).toContain("settingMatches(");
-  expect(modelsTab).toContain('t("search.openBuilder")');
+  // Each builder is bound to its own field's state, so one cannot rewrite the other's query.
+  expect(panels).toContain("value={settingsQuery}");
+  expect(modelsTab).toContain("value={modelQuery}");
   // Separate state per field: the settings query never drives the model list.
   const hook = await Bun.file(new URL("../src/pages/use-dashboard-data.ts", import.meta.url)).text();
   expect(hook).toContain("makeMatcher(modelQuery, modelRegex)");

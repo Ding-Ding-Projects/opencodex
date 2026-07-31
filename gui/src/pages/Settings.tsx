@@ -23,9 +23,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { IconRefresh, IconRegex, IconSearch } from "../icons";
+import { IconRefresh, IconSearch } from "../icons";
 import { LOCALES, useI18n, type TKey } from "../i18n/shared";
 import { Button, Card, Chip, Empty, Segmented, TextInput, Toggle } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { useNotifications } from "../shell/notifications-context";
 import { readRevisions, recordRevision } from "../shell/revisions";
 import { usePrefs } from "../theme/prefs-context";
@@ -833,9 +834,16 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
         <Chip selected={useRegex} onClick={() => setUseRegex(value => !value)} title={t("regex.regexMode")}>
           <code style={MONO}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={query}
+          onApply={pattern => setQuery(pattern)}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          // Every indexed setting, label, description and current value alike, so a
+          // pattern is tried against the same text this page searches.
+          sample={rows.map(row => `${row.label} ${row.desc ?? ""} ${row.value}`).join("\n")}
+          label={t("settings.openBuilder")}
+        />
       </div>
       <p role="status" style={STATUS}>{status}</p>
 

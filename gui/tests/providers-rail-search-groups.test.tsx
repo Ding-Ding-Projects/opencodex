@@ -208,13 +208,16 @@ test("the .* chip opts into regex, and an invalid pattern reports instead of mat
   expect(host.querySelector(".pws-rail-empty")).not.toBeNull();
 });
 
-test("the search bar carries a builder shortcut bound to the regex screen", async () => {
+test("the search bar carries a builder anchored to the field, not a link away from it", async () => {
   await mountShell();
 
   const row = host.querySelector(".pws-search-row")!;
-  const builder = row.querySelector('a[href="#regex"]');
+  const builder = row.querySelector('button[aria-haspopup="dialog"]');
   expect(builder).not.toBeNull();
   expect(builder!.getAttribute("aria-label")).toBe("Open regex builder");
+  // The regression: this used to be `<a href="#regex">`, so reaching for the
+  // builder navigated the window off the rail the pattern was being written for.
+  expect(row.querySelector('a[href="#regex"]')).toBeNull();
 });
 
 // ---------------------------------------------------------------------------
@@ -268,7 +271,10 @@ test("the settings surface carries its own search, regex opt-in and builder", as
   const row = host.querySelector('[role="search"]')!;
   expect(row.querySelector('input[type="search"]')?.getAttribute("aria-label")).toBe("Search settings…");
   expect(row.querySelector(".m3-chip")?.textContent).toBe(".*");
-  expect(row.querySelector('a[href="#regex"]')?.getAttribute("aria-label")).toBe("Open regex builder");
+  // This tab's builder is anchored to this field. It is a separate instance from the
+  // rail's, which is what keeps a pattern built here out of the rail's query.
+  expect(row.querySelector('button[aria-haspopup="dialog"]')?.getAttribute("aria-label")).toBe("Open regex builder");
+  expect(row.querySelector('a[href="#regex"]')).toBeNull();
 
   // An empty query is not a search: the whole form stays on screen.
   expect(fieldLabels().length).toBeGreaterThan(5);

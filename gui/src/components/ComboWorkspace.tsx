@@ -7,10 +7,11 @@ import {
   filterCombos,
   groupCombos,
 } from "../combo-workspace-data";
-import { IconAlert, IconChevron, IconPlus, IconRegex, IconSearch, IconShuffle } from "../icons";
+import { IconAlert, IconChevron, IconPlus, IconSearch, IconShuffle } from "../icons";
 import { useT } from "../i18n/shared";
 import { makeMatcher } from "../pages/models-shared";
 import { Button, Chip, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { AddComboModal } from "./combo-workspace-add-modal";
 import { DetailPanel } from "./combo-workspace-detail-panel";
 import { RemoveComboDialog, UnsavedLeaveDialog } from "./combo-workspace-dialogs";
@@ -18,6 +19,14 @@ import { OverviewPanel } from "./combo-workspace-overview-panel";
 import type { ComboWorkspaceProps } from "./combo-workspace-types";
 
 export type { ModelOption, ProviderOption, ComboWorkspaceProps } from "./combo-workspace-types";
+
+/**
+ * How many rail rows are handed to the anchored builder as sample text. Bounded
+ * because this is built on every render of the rail, not only when the panel is
+ * open, and a workspace with a thousand combos should not pay for a box the user
+ * may never look at.
+ */
+const SAMPLE_ROWS = 40;
 
 export default function ComboWorkspace({
   combos,
@@ -147,9 +156,18 @@ export default function ComboWorkspace({
           <Chip selected={useRegex} onClick={() => setUseRegex((on) => !on)} title={t("search.regexHint")}>
             <code style={{ fontFamily: "var(--mono)" }}>.*</code>
           </Chip>
-          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-            <IconRegex width={18} height={18} aria-hidden="true" />
-          </a>
+          <RegexBuilderButton
+            value={query}
+            onApply={(pattern) => setQuery(pattern)}
+            regex={useRegex}
+            onRegexChange={setUseRegex}
+            // The same text the rail search runs a pattern over, so what the panel
+            // reports as matching is what the rail will actually keep.
+            sample={combos
+              .slice(0, SAMPLE_ROWS)
+              .map((combo) => [combo.id, combo.model, ...combo.targets.map((target) => `${target.provider}/${target.model}`)].join(" "))
+              .join("\n")}
+          />
         </div>
         {regexError && (
           <p role="alert" className="cwi-rail-empty" style={{ color: "var(--m3-error)" }}>

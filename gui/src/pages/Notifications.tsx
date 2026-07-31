@@ -8,10 +8,18 @@
 
 import { useMemo, useState } from "react";
 import { Button, Chip, Empty, TextInput } from "../shell/m3-ui";
-import { IconAlert, IconCheck, IconInfo, IconRegex, IconSearch } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconAlert, IconCheck, IconInfo, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications, type NoticeTone } from "../shell/notifications-context";
 import type { TKey } from "../i18n/shared";
+
+/**
+ * How many history rows the anchored builder is handed as sample text. Bounded
+ * because the string is rebuilt on every render of the search row, and the
+ * history grows for as long as the app is open.
+ */
+const SAMPLE_ROWS = 40;
 
 const TONES: { tone: NoticeTone | "all"; tkey: TKey }[] = [
   { tone: "all", tkey: "notif.toneAll" },
@@ -118,9 +126,16 @@ export default function NotificationsPage() {
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
         {/* Every search bar reaches the full builder from an affordance beside it. */}
-        <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={query}
+          onApply={pattern => setQuery(pattern)}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          // The whole history, not the tone-filtered rows: the sample exists to
+          // test a pattern, and hiding half the notifications behind the active
+          // chip would make it test the wrong corpus.
+          sample={history.slice(0, SAMPLE_ROWS).map(n => `${n.title} ${n.body ?? ""}`.trim()).join("\n")}
+        />
       </div>
 
       {error && (

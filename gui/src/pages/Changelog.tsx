@@ -8,7 +8,8 @@
 
 import { useMemo, useState } from "react";
 import { Button, Card, Chip, Empty, Field, TextInput } from "../shell/m3-ui";
-import { IconRegex, IconSearch } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconSearch } from "../icons";
 import { useKeyedClientResource } from "../client-resource";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
@@ -25,6 +26,13 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Stands in for an open end of the range, so a half-open filter still reads as one. */
 const OPEN_END = "…";
+
+/**
+ * How many releases are handed to the anchored builder as sample text. A few
+ * releases are already hundreds of lines, and the sample only has to be
+ * representative — the engine caps what it evaluates anyway.
+ */
+const SAMPLE_RELEASES = 5;
 
 const MONO = { fontFamily: "var(--mono)" } as const;
 
@@ -146,6 +154,20 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
     return { rows: filtered, regexError: null as string | null };
   }, [releases, lo, hi, query, useRegex]);
 
+  /**
+   * Real changelog lines for the anchored builder to test a pattern against. Taken
+   * from the unfiltered releases, not from `rows`: seeding it from what the current
+   * query already matched would hide exactly the entries a new pattern is being
+   * written to reach.
+   */
+  const changelogSample = useMemo(
+    () => releases
+      .slice(0, SAMPLE_RELEASES)
+      .flatMap(r => [`${r.version} ${r.date ?? ""}`, ...r.entries])
+      .join("\n"),
+    [releases],
+  );
+
   /** What an export would cover: an open end falls back to the data's own bounds. */
   const rangeLabel = useMemo(() => {
     if (!lo && !hi) return t("changelog.exportAll");
@@ -259,9 +281,13 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
           <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")} aria-label={t("regex.regexMode")}>
             <code style={MONO}>.*</code>
           </Chip>
-          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-            <IconRegex width={20} height={20} aria-hidden="true" />
-          </a>
+          <RegexBuilderButton
+            value={query}
+            onApply={pattern => setQuery(pattern)}
+            regex={useRegex}
+            onRegexChange={setUseRegex}
+            sample={changelogSample}
+          />
         </div>
         {/* Reserved height for the same reason as the date hints above. */}
         <p id="cl-regex-error" role="alert" style={{ minHeight: 20, margin: "4px 0 0", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>

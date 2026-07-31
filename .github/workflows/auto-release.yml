@@ -107,8 +107,18 @@ jobs:
         working-directory: gui
         run: bun install --frozen-lockfile
 
+      # Stamp the build so the running app can say which one it is. Without
+      # these the dashboard reports the `package.json` version and nothing else,
+      # which reads identically across every installer between two npm releases
+      # — for a while that was a dozen builds all calling themselves 2.7.42.
+      # The dish codename is deliberately NOT passed: the app derives it from
+      # the commit with the same function that titles the release, so the two
+      # cannot be set to disagree.
       - name: Build the dashboard
         working-directory: gui
+        env:
+          OCX_BUILD: ${{ github.run_number }}
+          OCX_COMMIT: ${{ env.SHA }}
         run: bun run build
 
       - name: Pack the dashboard bundle

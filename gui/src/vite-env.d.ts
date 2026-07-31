@@ -2,6 +2,10 @@
 
 // Injected at build time by vite.config.ts `define` as the UI version fallback.
 declare const __APP_VERSION__: string;
+/** Run number that produced this build, or "dev" outside CI. */
+declare const __APP_BUILD__: string;
+/** Commit this build came from; empty outside CI. Names the dish codename too. */
+declare const __APP_COMMIT__: string;
 
 /** Injected by the desktop shell's preload (electron/preload.mjs). Absent in a browser. */
 interface Window {

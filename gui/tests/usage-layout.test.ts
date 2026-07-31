@@ -77,8 +77,10 @@ test("Usage model search offers regex opt-in and the anchored builder", async ()
 
   expect(src).toContain("useRegex");
   expect(src).toContain('t("search.regexHint")');
-  expect(src).toContain('t("search.openBuilder")');
-  expect(src).toContain('href="#regex"');
+  // Anchored beside the field rather than linked to the builder page: the old
+  // `<a href="#regex">` navigated away from the table the pattern was written for.
+  expect(src).toContain("<RegexBuilderButton");
+  expect(src).not.toContain('href="#regex"');
   expect(src).toContain("new RegExp(query.slice(0, 400)");
   // An invalid in-progress pattern reports itself instead of silently blanking the table.
   expect(src).toContain('role="alert"');

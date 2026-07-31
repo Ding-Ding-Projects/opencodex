@@ -32,6 +32,7 @@ import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
 import { useNotifications } from "./shell/notifications-context";
 import { useTabRouting } from "./shell/use-tab-routing";
+import { fullBuildLabel, readBuildInfo, shortBuildLabel } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
 import TabStrip from "./shell/TabStrip";
@@ -185,9 +186,13 @@ export default function App() {
 
   const activePage = tabs.activePage;
   const title = t(PAGE_META_BY_ID[activePage].tkey);
-  const statusLine = health?.port
-    ? `v${displayedVersion} · :${health.port}`
-    : `v${displayedVersion}`;
+  // The semantic version alone read the same across a dozen installers, so it
+  // could not answer "is the fix in the build I am running". Build number and
+  // dish codename come along now; the dish is derived from the commit with the
+  // same function that titles the release, so the line matches the release list.
+  const buildInfo = readBuildInfo(displayedVersion);
+  const statusLine = shortBuildLabel(buildInfo, health?.port ?? null);
+  const statusTitle = fullBuildLabel(buildInfo);
 
   // The remote control is its own product surface, not a page inside the admin
   // shell: it takes the whole viewport with a bottom bar, because a nav rail and
@@ -215,6 +220,7 @@ export default function App() {
           apiBase={API_BASE}
           title={title}
           statusLine={statusLine}
+          statusTitle={statusTitle}
           onOpenDrawer={() => setDrawerRequested(true)}
           drawerOpen={drawerOpen}
           onOpen={openPage}

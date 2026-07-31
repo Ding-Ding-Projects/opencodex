@@ -17,7 +17,8 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m3-ui";
-import { IconRegex, IconSearch, IconSparkle, IconVolume } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconSearch, IconSparkle, IconVolume } from "../icons";
 import { LOCALES, useI18n, useT, type Locale, type TFn } from "../i18n/shared";
 import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18n/voice";
 import { usePrefs } from "../theme/prefs-context";
@@ -361,9 +362,16 @@ export default function LanguageVoice() {
         <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")} aria-label={t("regex.regexMode")}>
           <code style={MONO}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={query}
+          onApply={pattern => setQuery(pattern)}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          // The searchable text of this screen's own sections, so a pattern is
+          // tried against the settings it will actually filter.
+          sample={sections.map(s => s.text).join("\n")}
+          label={t("settings.openBuilder")}
+        />
       </div>
       {matcher.error && (
         <p id="lang-regex-error" role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>

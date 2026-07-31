@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 import { Trans } from "../i18n/provider";
 import { useT } from "../i18n/shared";
-import { IconRegex, IconSearch } from "../icons";
+import { IconSearch } from "../icons";
 import { Card, Chip, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { Select, type SelectOption } from "../ui";
+import { claudeSettingLabels } from "./claude-settings-search";
 import type { ClaudeSettingsSearch } from "./claude-settings-search";
 
 /**
@@ -51,9 +53,16 @@ export function ClaudeSettingsSearchRow({
         <Chip selected={regexOn} onClick={() => onRegex(!regexOn)} title={t("regex.regexMode")} aria-label={t("regex.regexMode")}>
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={query}
+          onApply={pattern => onQuery(pattern)}
+          regex={regexOn}
+          onRegexChange={onRegex}
+          // The names of the settings this tab owns, so a pattern is tried against
+          // the same words the row above filters on.
+          sample={claudeSettingLabels(t).map(row => row.label).join("\n")}
+          label={t("settings.openBuilder")}
+        />
       </div>
       <p
         role={search.error ? "alert" : "status"}

@@ -48,7 +48,10 @@ test("the Grok page carries the settings search row wired to the regex builder",
   expect(page).toContain('role="search"');
   expect(page).toContain("search.regexHint");
   expect(page).toContain("settings.openBuilder");
-  expect(page).toContain('href="#regex"');
+  // The builder opens beside this field. The old `<a href="#regex">` navigated to
+  // the builder page, which is precisely where the user's query was not.
+  expect(page).toContain("<RegexBuilderButton");
+  expect(page).not.toContain('href="#regex"');
 });
 
 // The rows are models and aliases, so the field and its empty state say so. Borrowing

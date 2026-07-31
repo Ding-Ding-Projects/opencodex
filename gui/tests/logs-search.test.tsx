@@ -298,9 +298,13 @@ test("Logs: a hand-off addressed to another screen is left alone", async () => {
 test("Logs: the search bar carries a regex-builder shortcut", async () => {
   const { root, container } = await mountLogs();
 
-  const builder = container.querySelector<HTMLAnchorElement>('a[href="#regex"]');
+  // A button that opens the builder beside the field, not a link away to it: the
+  // table being filtered is the whole reason the pattern is being written, and the
+  // old `<a href="#regex">` replaced that table with another screen.
+  const builder = container.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]');
   expect(builder).not.toBeNull();
   expect(builder!.getAttribute("aria-label")).toBe("Open regex builder");
+  expect(container.querySelector('a[href="#regex"]')).toBeNull();
 
   await act(async () => { root.unmount(); });
 });

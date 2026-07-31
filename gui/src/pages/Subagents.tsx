@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readJsonOrThrow } from "../fetch-json";
 import { Button, Card, Chip, Empty, TextInput } from "../shell/m3-ui";
-import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconPlus, IconSearch, IconInfo, IconRegex } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconPlus, IconSearch, IconInfo } from "../icons";
 import { useT } from "../i18n/shared";
 import { Trans } from "../i18n/provider";
 import { modelLabel } from "../model-display";
@@ -61,17 +62,12 @@ const ICON_BTN: React.CSSProperties = {
   cursor: "pointer",
 };
 
-/** The builder shortcut every search bar owes: same 44px target, primary ink, no underline. */
-const BUILDER_LINK: React.CSSProperties = {
-  display: "grid",
-  placeItems: "center",
-  flex: "0 0 auto",
-  width: 44,
-  height: 44,
-  borderRadius: "var(--r-pill)",
-  color: "var(--m3-primary)",
-  textDecoration: "none",
-};
+/**
+ * How many model ids the anchored builder is handed as sample text. Bounded
+ * because the string is rebuilt on every render of the search row, and the
+ * catalogue this screen lists runs to hundreds of entries.
+ */
+const SAMPLE_ROWS = 40;
 
 const PROVIDER_LABEL: React.CSSProperties = {
   flex: "0 0 auto",
@@ -294,9 +290,19 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
           <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
             <code style={{ fontFamily: "var(--mono)" }}>.*</code>
           </Chip>
-          <a style={BUILDER_LINK} href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-            <IconRegex width={20} height={20} aria-hidden="true" />
-          </a>
+          <RegexBuilderButton
+            value={query}
+            onApply={pattern => setQuery(pattern)}
+            regex={useRegex}
+            onRegexChange={setUseRegex}
+            // Every available model, not the ones the current query kept: the
+            // sample exists to try a new pattern against, and pre-filtering it
+            // would hide exactly the rows that pattern is being written to reach.
+            sample={available
+              .slice(0, SAMPLE_ROWS)
+              .map(m => `${m} ${modelLabel(m)} ${providerPrefix(m) ?? ""}`.trim())
+              .join("\n")}
+          />
         </div>
         {regexError && (
           <p role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>

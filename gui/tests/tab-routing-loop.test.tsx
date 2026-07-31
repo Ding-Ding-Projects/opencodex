@@ -151,6 +151,71 @@ test("opening a page the strip does not have settles too", async () => {
   await act(async () => { h.root.unmount(); });
 });
 
+// Clicking through the nav used to append a tab for every page that was not
+// already open, so a few minutes of looking around left a strip of a dozen tabs
+// nobody asked for. Navigating is what clicking means; a new tab is something
+// the user requests.
+test("a plain nav click navigates the current tab instead of adding one", async () => {
+  seedTabs();
+  const h = await mountHarness();
+
+  await act(async () => { h.api().openPage("usage"); });
+
+  expect(h.api().tabs).toHaveLength(2);
+  expect(h.api().activePage).toBe("usage");
+  // The tab that was active is the one that moved — not a third one.
+  expect(h.api().activeTab).toBe("tb");
+
+  await act(async () => { h.api().openPage("storage"); });
+  expect(h.api().tabs).toHaveLength(2);
+  expect(h.api().activePage).toBe("storage");
+
+  await act(async () => { h.root.unmount(); });
+});
+
+test("ctrl-click still opens a new tab, because that is the ask", async () => {
+  seedTabs();
+  const h = await mountHarness();
+
+  await act(async () => { h.api().openPage("usage", true); });
+
+  expect(h.api().tabs).toHaveLength(3);
+  expect(h.api().activePage).toBe("usage");
+
+  await act(async () => { h.root.unmount(); });
+});
+
+test("a page already open is focused rather than opened twice", async () => {
+  seedTabs();
+  const h = await mountHarness();
+
+  await act(async () => { h.api().openPage("terminal"); });
+
+  expect(h.api().tabs).toHaveLength(2);
+  expect(h.api().activeTab).toBe("ta");
+
+  await act(async () => { h.root.unmount(); });
+});
+
+test("a pinned tab is never retargeted out from under the user", async () => {
+  // Pinning means "keep this tab where it is". Navigating it on a plain click
+  // would quietly move the thing that was pinned, so this opens a new tab —
+  // the same thing a browser does.
+  localStorage.setItem("ocx-m3:tabs", JSON.stringify({
+    tabs: [{ id: "ta", page: "appearance", pinned: true }],
+    activeTab: "ta",
+  }));
+  const h = await mountHarness();
+
+  await act(async () => { h.api().openPage("usage"); });
+
+  expect(h.api().tabs).toHaveLength(2);
+  expect(h.api().tabs.find(t => t.id === "ta")?.page).toBe("appearance");
+  expect(h.api().activePage).toBe("usage");
+
+  await act(async () => { h.root.unmount(); });
+});
+
 // Two tabs on the *same* page is reachable from the "+" menu, which opens a
 // duplicate deliberately. `setActivePage` resolves a page to the first tab
 // carrying it, so a duplicate is the case most likely to fight the selection.

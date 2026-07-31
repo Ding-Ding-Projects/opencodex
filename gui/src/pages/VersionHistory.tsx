@@ -28,8 +28,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Button, Card, Chip, Dialog, Empty, Field, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import {
-  IconFilter, IconGlobe, IconHistory, IconKey, IconRegex, IconSearch,
+  IconFilter, IconGlobe, IconHistory, IconKey, IconSearch,
   IconServer, IconShuffle, IconTag, IconUndo,
 } from "../icons";
 import { useT } from "../i18n/shared";
@@ -49,6 +50,13 @@ import type { TKey } from "../i18n/shared";
 
 const MONO: CSSProperties = { fontFamily: "var(--mono)" };
 const SEP = " · ";
+
+/**
+ * How many timeline entries the anchored builder is handed as sample text. The
+ * history is unbounded — it grows with every recorded change — so the sample is
+ * a fixed slice rather than the whole of it.
+ */
+const SAMPLE_ROWS = 40;
 
 const SCOPES: { scope: RevisionScope | "all"; tkey: TKey }[] = [
   { scope: "all", tkey: "history.scopeAll" },
@@ -168,6 +176,19 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
       useRegex,
     }),
     [entries, scope, origins, from, to, fromValid, toValid, query, useRegex],
+  );
+
+  /**
+   * Sample text for the anchored builder: the timeline as `filterTimeline` reads
+   * it. Built from `entries`, not `rows` — a sample narrowed by the pattern
+   * already in the box cannot show what a different pattern would find.
+   */
+  const historySample = useMemo(
+    () => entries
+      .slice(0, SAMPLE_ROWS)
+      .map(entry => `${entry.title} ${entry.summary} ${entry.ref}`.trim())
+      .join("\n"),
+    [entries],
   );
 
   // Derived rather than held: filtering away the selected entry must not leave an empty pane.
@@ -406,9 +427,15 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
         <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
           <code style={MONO}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={query}
+          onApply={pattern => setQuery(pattern)}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          // Real timeline lines in the exact shape `filterTimeline` matches them,
+          // taken from the whole timeline rather than the filtered rows.
+          sample={historySample}
+        />
       </div>
       {/* Reserved height so the error appearing does not shove the list down. */}
       <p id="history-regex-error" role="alert" style={{ minHeight: 20, margin: "4px 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>

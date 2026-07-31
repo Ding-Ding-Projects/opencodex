@@ -97,7 +97,10 @@ test("the search row offers the regex opt-in and the builder, anchored to the fi
   expect(html).toContain('role="search"');
   expect(html).toContain('aria-label="Search settings…"');
   expect(html).toContain(".*");
-  expect(html).toContain('href="#regex"');
+  // Anchored, not navigating: the affordance is a button that opens the builder
+  // beside this field, where `<a href="#regex">` used to replace the whole screen.
+  expect(html).not.toContain('href="#regex"');
+  expect(html).toContain('aria-haspopup="dialog"');
   expect(html).toContain('aria-label="Open regex builder"');
   expect(html).toContain('aria-pressed="false"');
 });

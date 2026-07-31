@@ -4,10 +4,11 @@ import { useI18n, LOCALES, type TFn } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { hashLogConversationQuery, matchesLogConversationId } from "../log-conversation-id";
 import { statusCodeInfo } from "../status-codes";
-import { IconRegex, IconSearch, IconX } from "../icons";
+import { IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
 import { Notice } from "../ui";
 import { Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import Debug from "./Debug";
 
 import { M3_TABLIST_STYLE, m3TabStyle } from "./debug-shared";
@@ -331,6 +332,13 @@ function logSearchText(log: LogEntry): string {
 /** Same bound every other search in the app applies before compiling a pattern. */
 const PATTERN_CAP = 400;
 
+/**
+ * How many log lines the anchored builder is handed as sample text. Bounded
+ * because the table holds thousands and the string is built on every render of
+ * the search row, whether or not the panel is open.
+ */
+const SAMPLE_ROWS = 40;
+
 const NUM_CELL: CSSProperties = { textAlign: "right" };
 
 /**
@@ -607,9 +615,16 @@ export default function Logs({ apiBase }: { apiBase: string }) {
           <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
             <code style={{ fontFamily: "var(--mono)" }}>.*</code>
           </Chip>
-          <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-            <IconRegex width={20} height={20} aria-hidden="true" />
-          </a>
+          <RegexBuilderButton
+            value={query}
+            onApply={pattern => setQuery(pattern)}
+            regex={useRegex}
+            onRegexChange={setUseRegex}
+            // The unfiltered log lines, exactly as the search matches them: a
+            // sample taken from `filteredLogs` would hide every row the pattern
+            // being written is meant to find.
+            sample={logs.slice(0, SAMPLE_ROWS).map(logSearchText).join("\n")}
+          />
         </div>
         {/* Filter chips, not a segmented button: the prototype paints the surface
             filter with `chipStyle`, and the segmented pills are spent on the

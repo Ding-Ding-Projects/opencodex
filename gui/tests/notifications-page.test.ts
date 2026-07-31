@@ -22,8 +22,11 @@ test("the notification search keeps plain text default and links the regex build
   const page = await read("../src/pages/Notifications.tsx");
   expect(page).toContain('useState(false)');
   expect(page).toContain("search.regexHint");
-  expect(page).toContain("search.openBuilder");
-  expect(page).toContain('href="#regex"');
+  // The affordance opens the builder beside the field. It used to be
+  // `<a href="#regex">`, which navigated the window to the builder page and left
+  // the search — and the history being searched — behind.
+  expect(page).toContain("<RegexBuilderButton");
+  expect(page).not.toContain('href="#regex"');
   expect(page).toContain('role="search"');
 });
 

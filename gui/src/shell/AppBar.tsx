@@ -17,12 +17,14 @@ interface AppBarProps {
   apiBase: string;
   title: string;
   statusLine: string;
+  /** The whole build identity, for hover — the line itself is abbreviated. */
+  statusTitle?: string;
   onOpenDrawer: () => void;
   drawerOpen: boolean;
   onOpen: (page: Page, newTab: boolean) => void;
 }
 
-export default function AppBar({ apiBase, title, statusLine, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
+export default function AppBar({ apiBase, title, statusLine, statusTitle, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
   const { history, unreadCount, markAllRead } = useNotifications();
@@ -55,7 +57,7 @@ export default function AppBar({ apiBase, title, statusLine, onOpenDrawer, drawe
 
       <div className="m3-appbar-title">
         <h1>{title}</h1>
-        <span className="m3-appbar-status">{statusLine}</span>
+        <span className="m3-appbar-status" title={statusTitle}>{statusLine}</span>
       </div>
 
       <CostMeter apiBase={apiBase} />

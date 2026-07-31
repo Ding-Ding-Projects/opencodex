@@ -8,12 +8,12 @@ import {
   IconCoin,
   IconDataUsage,
   IconGauge,
-  IconRegex,
   IconSearch,
   IconSwapVert,
 } from "../icons";
 import { Notice } from "../ui";
 import { Button, Chip, Empty } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { modelLabel } from "../model-display";
 
 type Range = "all" | "30d" | "7d";
@@ -95,6 +95,13 @@ interface UsageResponse {
 function formatPct(ratio: number): string {
   return `${Math.round(ratio * 100)}%`;
 }
+
+/**
+ * How many model rows the anchored builder is handed as sample text. Bounded
+ * because a busy install reports hundreds of models and the string would
+ * otherwise be rebuilt for a panel that is usually closed.
+ */
+const SAMPLE_ROWS = 40;
 
 // ---- Locale-aware calendar labels -------------------------------------------
 // The heatmap's month strip and the day tooltips are calendar labels, not product copy, so they
@@ -649,6 +656,7 @@ function UsageHeatmapPanel({
 
 function UsageModelsTable({
   models,
+  sample,
   modelQuery,
   onModelQuery,
   useRegex,
@@ -658,6 +666,13 @@ function UsageModelsTable({
   t,
 }: {
   models: UsageModel[];
+  /**
+   * Sample text for the anchored builder, built from the UNFILTERED model list.
+   * `models` here is already narrowed by the current query, and testing a new
+   * pattern against the old pattern's survivors is how a builder reports "no
+   * matches" for a pattern that would in fact have found something.
+   */
+  sample: string;
   modelQuery: string;
   onModelQuery: (query: string) => void;
   useRegex: boolean;
@@ -686,9 +701,13 @@ function UsageModelsTable({
         <code style={{ fontFamily: "var(--mono)" }}>.*</code>
       </Chip>
       {/* The builder sits beside the field it serves, not behind a menu. */}
-      <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-        <IconRegex width={20} height={20} aria-hidden="true" />
-      </a>
+      <RegexBuilderButton
+        value={modelQuery}
+        onApply={pattern => onModelQuery(pattern)}
+        regex={useRegex}
+        onRegexChange={onUseRegex}
+        sample={sample}
+      />
     </div>
   );
   const table = (
@@ -926,6 +945,15 @@ export default function Usage({ apiBase }: { apiBase: string }) {
     return { filteredModels: filtered.slice(0, 100), regexError: null as string | null };
   }, [data?.models, modelQuery, useRegex]);
 
+  // The same haystack `filteredModels` matches against, from the unfiltered list.
+  const modelSample = useMemo(
+    () => (data?.models ?? [])
+      .slice(0, SAMPLE_ROWS)
+      .map(m => `${m.model} ${m.provider} ${m.resolvedModel ?? ""}`.trim())
+      .join("\n"),
+    [data?.models],
+  );
+
   const sortedProviders = useMemo(() =>
     (data?.providers ?? []).toSorted((a, b) => b.totalTokens - a.totalTokens),
     [data?.providers],
@@ -959,6 +987,7 @@ export default function Usage({ apiBase }: { apiBase: string }) {
           <UsageHeatmapPanel range={range} heatmap={heatmap} weekBars={weekBars} locale={locale} t={t} />
           <UsageModelsTable
             models={filteredModels}
+            sample={modelSample}
             modelQuery={modelQuery}
             onModelQuery={setModelQuery}
             useRegex={useRegex}

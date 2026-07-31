@@ -31,33 +31,15 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { DISHES, type DimSumDish } from "../gui/src/shell/dimsum";
+// `codenameFor` lives with the dish table rather than here: the dashboard shows
+// the codename of the build it is running, and it has to reach the same answer
+// this script does for the same commit. One function, two callers, no drift.
+import { codenameFor, type DimSumDish } from "../gui/src/shell/dimsum";
+
+export { codenameFor };
 
 /** Where the bundled photos live, relative to the repository root. */
 export const PHOTO_DIR = join("gui", "public", "dimsum");
-
-/**
- * FNV-1a over the SHA.
- *
- * Any stable hash would do; this one is four lines and has no dependency. It
- * is not used for anything security-sensitive — it picks a dumpling.
- */
-function hash(input: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    // `Math.imul` keeps the multiply in 32 bits; a plain `*` loses precision
-    // past 2^53 and would make the result depend on how far the loop had run.
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-/** The dish naming a given commit. Deterministic: same SHA, same dish, always. */
-export function codenameFor(sha: string, dishes: DimSumDish[] = DISHES): DimSumDish {
-  if (dishes.length === 0) throw new Error("no dishes are available to name a release");
-  return dishes[hash(sha) % dishes.length];
-}
 
 /**
  * The photo URL for a dish, pinned to the commit being released.

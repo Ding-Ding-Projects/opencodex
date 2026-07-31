@@ -21,10 +21,16 @@ test("Models carries a settings search bound to its own field, plus a builder on
   expect(src).toContain("settings.search");
   expect(src).toContain("settings.noMatch");
   expect(src).toContain("settings.openBuilder");
-  expect(src).toContain("search.openBuilder");
+  // Two anchored builders, one per bar. A single shared instance would apply a
+  // pattern to whichever field happened to be touched last, and the builders are
+  // therefore counted rather than merely detected.
+  expect(src.split("<RegexBuilderButton").length - 1).toBe(2);
+  expect(src).not.toContain('href="#regex"');
   // Two independent fields: the settings query must never be fed by the model query.
   expect(src).toContain("setSettingsQuery(e.target.value)");
   expect(src).toContain("setQuery(e.target.value)");
+  expect(src).toContain("value={settingsQuery}");
+  expect(src).toContain("value={query}");
   expect(src).toMatch(/settingsRegex/);
   // Every settings row on the screen is gated by the settings matcher.
   for (const id of MODELS_SETTING_IDS) {

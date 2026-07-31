@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n/shared";
-import { IconPause, IconPlus, IconRefresh, IconRegex, IconSearch } from "../icons";
+import { IconPause, IconPlus, IconRefresh, IconSearch } from "../icons";
 import { Notice } from "../ui";
 import { Chip, Empty, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { makeMatcher } from "../pages/models-shared";
 import { POOL_GRID, SECTION_TITLE } from "./codex-account-pool-m3";
 import AddCodexAccountModal from "./AddCodexAccountModal";
@@ -460,9 +461,16 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
         >
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={settingsQuery}
+          onApply={pattern => setSettingsQuery(pattern)}
+          regex={settingsRegex}
+          onRegexChange={setSettingsRegex}
+          // The settings this surface indexes, so a pattern is tried against the
+          // rows it will actually be run over rather than against an empty box.
+          sample={settingsHere.map(row => row.haystack).join("\n")}
+          label={t("settings.openBuilder")}
+        />
       </div>
       <p
         role={settingsMatcher.error ? "alert" : "status"}

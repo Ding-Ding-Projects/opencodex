@@ -52,6 +52,43 @@ export const DISHES: DimSumDish[] = [
   { id: "sausage-turnip-pudding", name: "Turnip Pudding with Chinese Sausage", zh: "臘味蘿蔔糕", jyutping: "laap6 mei6 lo4 baak6 gou1", emoji: "🥟" },
 ];
 
+/**
+ * FNV-1a over a string.
+ *
+ * Any stable hash would do; this one is four lines and has no dependency. It is
+ * not used for anything security-sensitive — it picks a dumpling.
+ */
+function hash(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    // `Math.imul` keeps the multiply in 32 bits; a plain `*` loses precision
+    // past 2^53 and would make the result depend on how far the loop had run.
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * The dish naming a given commit. Deterministic: same SHA, same dish, always.
+ *
+ * Lives here rather than in the release script because both need it and they
+ * must never disagree. The release titles a build "叉燒包 Classic Char Siu Bao";
+ * the app, built from that same commit, works out the same name from the same
+ * table — so "which build am I running" is answerable by reading the About line
+ * and matching it against the release list. A second copy of this function
+ * would eventually name the same commit two different things, and the mismatch
+ * would look like the user had installed something other than what they did.
+ *
+ * Derived from the commit rather than a run number on purpose: a re-run
+ * publishes the same commit under a new number, and a build that renames itself
+ * on a re-run is one nobody can cite.
+ */
+export function codenameFor(sha: string, dishes: DimSumDish[] = DISHES): DimSumDish {
+  if (dishes.length === 0) throw new Error("no dishes are available to name a build");
+  return dishes[hash(sha) % dishes.length];
+}
+
 const LAUNCHED_KEY = "ocx-m3:launched";
 const LAST_VERSION_KEY = "ocx-m3:last-version";
 export const DRAW_CHANCE = 0.01;

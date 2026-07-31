@@ -9,7 +9,8 @@
 
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Button, Card, Chip, Segmented, Slider, TextInput } from "../shell/m3-ui";
-import { IconRegex, IconSearch } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
 import { FONT_CHOICES, SEED_SWATCHES, type DensityLevel, type ThemeMode } from "../theme/m3";
@@ -209,9 +210,16 @@ export default function Appearance() {
         <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("regex.regexMode")}>
           <code style={MONO}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={query}
+          onApply={pattern => setQuery(pattern)}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          // This screen's own settings rows, values included, so a pattern can be
+          // tried against the text the search actually runs over.
+          sample={here.map(row => `${row.label} ${row.desc} ${row.value}`).join("\n")}
+          label={t("settings.openBuilder")}
+        />
       </div>
       <p
         role="status"

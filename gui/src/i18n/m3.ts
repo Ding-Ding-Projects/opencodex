@@ -123,6 +123,70 @@ export const M3_EN = {
   "tabs.hidden": "Hidden tabs ({count})",
   "tabs.newTab": "New tab",
 
+  // ---- the tab context menu ----
+  // Named per tab, because several menus can have existed in one session and a
+  // screen reader announcing a bare "Tab actions" cannot say which tab it acts on.
+  "tabs.menuAria": "Actions for {name}",
+  "tabs.closeTab": "Close tab",
+  "tabs.closeOthers": "Close other tabs",
+  "tabs.closeRight": "Close tabs to the right",
+  "tabs.pin": "Pin tab",
+  "tabs.unpin": "Unpin tab",
+  "tabs.duplicate": "Duplicate tab",
+  "tabs.closeContaining": "Close tabs containing text…",
+  "tabs.closeNotContaining": "Close tabs not containing text…",
+  "tabs.editAppearance": "Edit tab appearance…",
+
+  // ---- the bulk closes ----
+  "tabs.bulkContainTitle": "Close tabs containing text",
+  "tabs.bulkNotContainTitle": "Close tabs not containing text",
+  // Said before the user types, not after they wonder why a tab survived: this
+  // matches the visible label only, and never reads what a page is showing.
+  "tabs.bulkScope": "Matched against each tab's visible label. Page contents are never read.",
+  "tabs.bulkQuery": "Text to match against tab labels",
+  "tabs.bulkQueryPlaceholder": "Text in the tab label",
+  "tabs.bulkBuilder": "Build a pattern for this bulk close",
+  "tabs.bulkMode": "Match mode",
+  "tabs.bulkModePlain": "Plain text",
+  "tabs.bulkModeRegex": "Regular expression",
+  "tabs.bulkEmpty": "Type something first. An empty query matches every tab, which would close the lot.",
+  "tabs.bulkInvalid": "Invalid pattern: {error}",
+  "tabs.bulkCount": "Would close {count} of {total} open tabs",
+  "tabs.bulkPreview": "Tabs that would close",
+  "tabs.bulkPinnedSpared": "Pinned tabs stay open: {count} of them.",
+  "tabs.bulkIncludePinned": "Close pinned tabs too",
+  "tabs.bulkConfirm": "Close {count}",
+  "tabs.cancel": "Cancel",
+
+  // ---- the new-tab search ----
+  "tabs.searchPages": "Search pages",
+  "tabs.searchPlaceholder": "Filter pages",
+  "tabs.searchBuilder": "Build a pattern to filter pages",
+  "tabs.searchNone": "No page matches “{query}”.",
+  "tabs.searchInvalid": "Invalid pattern: {error}",
+
+  // ---- the per-tab appearance editor ----
+  "tabs.styleFor": "Appearance for {name}",
+  "tabs.styleClose": "Close the appearance editor",
+  "tabs.stylePreview": "Preview",
+  "tabs.styleColor": "Label colour",
+  "tabs.styleColorPicker": "Pick a label colour",
+  "tabs.styleBg": "Background",
+  "tabs.styleBgPicker": "Pick a background colour",
+  "tabs.styleFont": "Font",
+  "tabs.styleFontInherit": "Inherit from the theme",
+  "tabs.styleSize": "Label size",
+  "tabs.styleWeight": "Label weight",
+  "tabs.styleBadge": "Badge",
+  "tabs.styleBadgeHint": "Up to {max} characters, shown after the label.",
+  "tabs.styleReset": "Reset",
+  "tabs.styleResetOne": "Reset {name} to the theme",
+  "tabs.styleResetAll": "Reset every property",
+  "tabs.styleInherits": "inherits the theme",
+  // The swatch only speaks hex. A token or a named colour is kept exactly as
+  // typed in the field beside it; the swatch is showing a stand-in, not the value.
+  "tabs.styleSwatchFallback": "The swatch cannot show this value — the field beside it holds what is applied.",
+
   "appbar.noAccount": "No account signed in",
 
   // Named exactly, because the two credentials are not interchangeable: the
@@ -635,6 +699,17 @@ export const M3_EN = {
   "grok.search": "Search models and aliases…",
   "grok.noMatch": "No models match your search.",
   "pws.groupNeedsAttention": "Needs attention ({count})",
+
+  // ---- anchored regex builder (shell/RegexBuilderButton.tsx) ----
+  // The builder that opens beside a search bar instead of navigating to its own
+  // page. Only the strings the popover adds live here; everything it renders in
+  // common with the full page reuses the `regex.*` keys above, because two
+  // wordings for one control is how the two surfaces start describing the same
+  // pattern differently.
+  "regexpop.apply": "Use this pattern",
+  "regexpop.applyHint": "Replaces the search text with this pattern and switches this field to regex mode.",
+  "regexpop.applyHintPlain": "Replaces the search text with this pattern.",
+  "regexpop.close": "Close the builder",
 } as const;
 
 export type M3Key = keyof typeof M3_EN;

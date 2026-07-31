@@ -83,9 +83,11 @@ test("the model catalog search keeps plain text default with a regex opt-in and 
   // The search bar is a landmark, offers `.*` as an opt-in, and hands off to the builder.
   expect(panels).toContain('role="search"');
   expect(panels).toContain('t("search.regexHint")');
-  expect(panels).toContain('t("search.openBuilder")');
-  expect(panels).toContain('href="#regex"');
   expect(panels).toContain('t("regex.invalid")');
+  // The builder is anchored beside this field, not a link to the builder page:
+  // `<a href="#regex">` navigated the whole window away from the query being typed.
+  expect(panels).toContain("<RegexBuilderButton");
+  expect(panels).not.toContain('href="#regex"');
 
   // Plain text is what an untouched search bar does.
   expect(page).toContain("useState(false)");

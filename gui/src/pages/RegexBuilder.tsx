@@ -1,12 +1,13 @@
 /**
- * Regex builder.
+ * Regex builder, the full-page surface.
  *
  * Engine: the **ECMAScript `RegExp`** built into this browser, evaluated
  * locally. No pattern ever leaves the page.
  *
- * Safety caps, all enforced below: 400-character pattern, 20 000-character
- * sample, 200 matches, and a forced index advance on a zero-width match so a
- * pattern like `(?:)` cannot spin forever.
+ * The evaluation, the caps, the flag list and the guided palette are not here —
+ * they live in `src/regex/engine.ts`, shared with the anchored builder popover
+ * that search bars open in place. Keeping a private copy for this page is what
+ * would let the two surfaces disagree about the same pattern.
  *
  * Layout follows the prototype's regex section: a body-large page lead and the
  * engine line, preset chips, the grouped guided-construction palette, the
@@ -21,23 +22,11 @@ import { Button, Card, Chip, Field, TextArea, TextInput } from "../shell/m3-ui";
 import { IconCopy } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
+import {
+  EMPTY_MARK, FLAGS, MATCH_CAP, NO_VALUE_MARK, PATTERN_CAP, SAMPLE_CAP, TOKEN_GROUPS,
+  capPattern, capSample, describeGroups, evaluate, groupNameMap, groupsLabel,
+} from "../regex/engine";
 import type { TKey } from "../i18n/shared";
-
-const PATTERN_CAP = 400;
-const SAMPLE_CAP = 20_000;
-const MATCH_CAP = 200;
-
-/** Shown when a group participated in no capture, and for a zero-width match. */
-const EMPTY_MARK = "∅";
-
-/**
- * Shown in the capture-groups panel for a declared group that no match in the
- * sample ever filled. Deliberately *not* `EMPTY_MARK`: the prototype keeps the
- * two apart, and they mean different things — `∅` beside a match says that group
- * did not participate in *that* match, while `—` says nothing in the whole
- * sample reached the group at all.
- */
-const NO_VALUE_MARK = "—";
 
 /**
  * Where "Use in search" leaves the pattern for the receiving screen. Written on
@@ -46,82 +35,6 @@ const NO_VALUE_MARK = "—";
  * the hand-off is never silent.
  */
 const SEARCH_HANDOFF_KEY = "ocx-m3:search-handoff";
-
-const FLAGS: { flag: string; tkey: TKey }[] = [
-  { flag: "g", tkey: "regex.flagG" },
-  { flag: "i", tkey: "regex.flagI" },
-  { flag: "m", tkey: "regex.flagM" },
-  { flag: "s", tkey: "regex.flagS" },
-  { flag: "u", tkey: "regex.flagU" },
-  { flag: "y", tkey: "regex.flagY" },
-];
-
-/**
- * Guided palette: insert a construct rather than remembering its syntax.
- *
- * Grouped exactly the way the prototype groups them — literals → character
- * classes → anchors → groups → alternation → quantifiers — so each section
- * carries its own heading and its own `role="group"` label.
- *
- * Every insert is a *complete* construct: `(?<name>)` and not `(?<name>…)`,
- * because the ellipsis is a literal character and silently broke the pattern
- * the moment it was inserted.
- */
-const TOKEN_GROUPS: { tkey: TKey; items: { insert: string; tkey: TKey }[] }[] = [
-  {
-    tkey: "regex.groupLiterals",
-    items: [
-      { insert: "abc", tkey: "regex.tokLiteral" },
-      { insert: "\\.", tkey: "regex.tokEscapedDot" },
-      { insert: "\\\\", tkey: "regex.tokBackslash" },
-    ],
-  },
-  {
-    tkey: "regex.groupClasses",
-    items: [
-      { insert: "\\d", tkey: "regex.tokDigit" },
-      { insert: "\\w", tkey: "regex.tokWord" },
-      { insert: "\\s", tkey: "regex.tokSpace" },
-      // `.` is not in the prototype's class list, but it is the construct users
-      // reach for beside `\d`/`\w`, and it already has its own description key.
-      { insert: ".", tkey: "regex.tokAny" },
-      { insert: "[a-z]", tkey: "regex.tokClass" },
-      { insert: "[^/]", tkey: "regex.tokNegated" },
-      { insert: "\\p{Script=Han}", tkey: "regex.tokUnicodeScript" },
-    ],
-  },
-  {
-    tkey: "regex.groupAnchors",
-    items: [
-      { insert: "^", tkey: "regex.tokStart" },
-      { insert: "$", tkey: "regex.tokEnd" },
-      { insert: "\\b", tkey: "regex.tokBoundary" },
-    ],
-  },
-  {
-    tkey: "regex.groupGroups",
-    items: [
-      { insert: "()", tkey: "regex.tokCapture" },
-      { insert: "(?<name>)", tkey: "regex.tokNamed" },
-      { insert: "(?:)", tkey: "regex.tokGroup" },
-      { insert: "(?=)", tkey: "regex.tokLookahead" },
-    ],
-  },
-  {
-    tkey: "regex.groupAlternation",
-    items: [{ insert: "|", tkey: "regex.tokAlt" }],
-  },
-  {
-    tkey: "regex.groupQuantifiers",
-    items: [
-      { insert: "*", tkey: "regex.tokStar" },
-      { insert: "+", tkey: "regex.tokPlus" },
-      { insert: "?", tkey: "regex.tokOpt" },
-      { insert: "{1,3}", tkey: "regex.tokRange" },
-      { insert: "+?", tkey: "regex.tokLazy" },
-    ],
-  },
-];
 
 /** A preset carries its own sample, or it would be tested against unrelated text. */
 /*
@@ -162,91 +75,6 @@ const PRESETS: { tkey: TKey; pattern: string; flags: string; sample: string }[] 
   },
 ];
 
-interface MatchRow {
-  index: number;
-  text: string;
-  /** Positional captures, `undefined` where the group did not participate. */
-  positional: (string | undefined)[];
-  groups: Record<string, string | undefined>;
-}
-
-interface Evaluation {
-  rows: MatchRow[];
-  error: string | null;
-  truncated: boolean;
-}
-
-function evaluate(pattern: string, flags: string, sample: string): Evaluation {
-  if (!pattern) return { rows: [], error: null, truncated: false };
-  let re: RegExp;
-  try {
-    // `g` is forced so the scan below can walk every match; the user's own `g` is harmless.
-    re = new RegExp(pattern, flags.includes("g") ? flags : flags + "g");
-  } catch (e) {
-    return { rows: [], error: e instanceof Error ? e.message : String(e), truncated: false };
-  }
-
-  const rows: MatchRow[] = [];
-  let truncated = false;
-  let guard = 0;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(sample)) !== null) {
-    rows.push({
-      index: match.index,
-      text: match[0],
-      positional: match.slice(1),
-      groups: { ...(match.groups ?? {}) } as Record<string, string | undefined>,
-    });
-    // Zero-width match: advance manually or exec() never moves and this loops forever.
-    if (match[0] === "") re.lastIndex += 1;
-    if (rows.length >= MATCH_CAP) { truncated = true; break; }
-    if (++guard > SAMPLE_CAP) { truncated = true; break; }
-  }
-  return { rows, error: null, truncated };
-}
-
-/**
- * Named capture groups in pattern order, each with the positional number the
- * engine actually assigns it.
- *
- * Counting matters: a named group that follows two unnamed ones is `$3`, not
- * `$1`, so the panel has to walk the pattern rather than number the names it
- * finds. Escapes and character classes are skipped — `\(` and `[(]` open no
- * group — and every `(?…` form except `(?<name>` is non-capturing, including
- * the `(?<=` / `(?<!` lookbehinds that otherwise read as a named group.
- */
-function namedGroups(pattern: string): { index: number; name: string }[] {
-  const found: { index: number; name: string }[] = [];
-  let captures = 0;
-  let inClass = false;
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
-    if (ch === "\\") { i += 1; continue; }
-    if (inClass) { if (ch === "]") inClass = false; continue; }
-    if (ch === "[") { inClass = true; continue; }
-    if (ch !== "(") continue;
-    const rest = pattern.slice(i + 1);
-    const named = /^\?<(?![=!])([A-Za-z_$][\w$]*)>/.exec(rest);
-    if (named) { found.push({ index: ++captures, name: named[1] }); continue; }
-    if (rest.startsWith("?")) continue;
-    captures += 1;
-  }
-  return found;
-}
-
-/**
- * `$1=… name=…` beside a match, so captures are readable without a second table.
- *
- * One entry per positional capture and no more: a named group *is* a positional
- * one, so listing `row.groups` as well printed `$1=9fa2c1  id=9fa2c1` — the same
- * capture twice. Named slots are labelled by their name, unnamed ones by `$n`.
- */
-function groupsLabel(row: MatchRow, names: Map<number, string>): string {
-  return row.positional
-    .map((value, i) => `${names.get(i + 1) ?? `$${i + 1}`}=${value ?? EMPTY_MARK}`)
-    .join("  ");
-}
-
 const MONO = { fontFamily: "var(--mono)" } as const;
 
 const GROUP_HEAD: React.CSSProperties = {
@@ -279,30 +107,15 @@ export default function RegexBuilder() {
   const [sample, setSample] = useState(PRESETS[0].sample);
 
   const result = useMemo(() => evaluate(pattern, flags, sample), [pattern, flags, sample]);
-  /**
-   * Read off the pattern, not off the matches: a group that captured nothing is
-   * still a group the user declared, and the panel has to say so.
-   */
-  const captureGroups = useMemo(() => {
-    if (result.error) return [];
-    return namedGroups(pattern).map(g => ({
-      ...g,
-      value: result.rows.find(row => row.groups[g.name] != null)?.groups[g.name],
-    }));
-  }, [pattern, result]);
-
-  /** Positional index → declared name, so a match row can label `$3` as `tail`. */
-  const groupNames = useMemo(
-    () => new Map(captureGroups.map(g => [g.index, g.name] as const)),
-    [captureGroups],
-  );
+  const captureGroups = useMemo(() => describeGroups(pattern, result), [pattern, result]);
+  const groupNames = useMemo(() => groupNameMap(captureGroups), [captureGroups]);
 
   const toggleFlag = (flag: string) => {
     setFlags(prev => (prev.includes(flag) ? prev.replace(flag, "") : prev + flag));
   };
 
   const insert = (token: string) => {
-    setPattern(prev => (prev + token).slice(0, PATTERN_CAP));
+    setPattern(prev => capPattern(prev + token));
   };
 
   const copy = async (text: string, title: string) => {
@@ -407,7 +220,7 @@ export default function RegexBuilder() {
               spellCheck={false}
               aria-invalid={!!result.error}
               aria-describedby="ocx-rx-error"
-              onChange={e => setPattern(e.target.value.slice(0, PATTERN_CAP))}
+              onChange={e => setPattern(capPattern(e.target.value))}
               style={{ ...MONO, flex: "1 1 auto", minWidth: 0, width: "auto" }}
             />
             <span aria-hidden="true" style={{ ...MONO, fontSize: "var(--t-title-m)", color: "var(--m3-on-surface-variant)" }}>/{flags}</span>
@@ -443,7 +256,7 @@ export default function RegexBuilder() {
             value={sample}
             spellCheck={false}
             rows={5}
-            onChange={e => setSample(e.target.value.slice(0, SAMPLE_CAP))}
+            onChange={e => setSample(capSample(e.target.value))}
           />
         </Field>
 

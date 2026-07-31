@@ -159,10 +159,12 @@ test("search offers plain text by default, a `.*` opt-in, and a builder shortcut
   const field = container.querySelector('input[aria-label="Search models (native gpt + routed)…"]') as HTMLInputElement;
   expect(field).toBeTruthy();
 
-  // The builder affordance sits beside the field, pointing at the regex screen.
-  const builder = Array.from(container.querySelectorAll("a")).find((a) => a.getAttribute("href") === "#regex");
+  // The builder affordance sits beside the field and opens there. It used to be a
+  // link to the builder screen, which meant reaching for it threw away the field.
+  const builder = container.querySelector('button[aria-haspopup="dialog"]');
   expect(builder).toBeTruthy();
   expect(builder!.getAttribute("aria-label")).toBe("Open regex builder");
+  expect(Array.from(container.querySelectorAll("a")).some((a) => a.getAttribute("href") === "#regex")).toBe(false);
 
   // Plain text is the default: a regex metacharacter matches nothing literally.
   await act(async () => { setInputValue(field, "^gpt"); });

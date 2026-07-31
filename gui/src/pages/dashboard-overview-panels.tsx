@@ -1,6 +1,7 @@
 import MemoryObservabilityCard from "../components/MemoryObservabilityCard";
-import { IconRegex, IconSearch } from "../icons";
+import { IconSearch } from "../icons";
 import { Chip, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import type { useDashboardData } from "./use-dashboard-data";
 import {
   DashboardEffortCapPanel,
@@ -39,9 +40,13 @@ export function DashboardOverviewPanels(props: Dash) {
           <Chip selected={settingsRegex} onClick={() => setSettingsRegex(v => !v)} title={t("search.regexHint")}>
             <code style={{ fontFamily: "var(--mono)" }}>.*</code>
           </Chip>
-          <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-            <IconRegex width={20} height={20} aria-hidden="true" />
-          </a>
+          <RegexBuilderButton
+            value={settingsQuery}
+            onApply={pattern => setSettingsQuery(pattern)}
+            regex={settingsRegex}
+            onRegexChange={setSettingsRegex}
+            label={t("settings.openBuilder")}
+          />
         </div>
         {settingsError && (
           <p role="alert" className="dash-hint" style={{ color: "var(--m3-error)" }}>

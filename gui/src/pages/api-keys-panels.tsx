@@ -1,7 +1,8 @@
 import type { CSSProperties } from "react";
-import { IconAlert, IconCheck, IconCopy, IconKey, IconRegex, IconSearch, IconTrash } from "../icons";
+import { IconAlert, IconCheck, IconCopy, IconKey, IconSearch, IconTrash } from "../icons";
 import { useI18n } from "../i18n/shared";
 import { Button, Card, Chip, Dialog, TextInput } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import type { CopyOutcome } from "../components/use-copy-feedback";
 import {
   externalModelId,
@@ -376,9 +377,15 @@ export function ApiKeysModelsPanel({
         <Chip selected={useRegex} onClick={() => onUseRegexChange(!useRegex)} title={t("search.regexHint")}>
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("nav.regex")} aria-label={t("search.openBuilder")}>
-          <IconRegex width={20} height={20} aria-hidden="true" />
-        </a>
+        {/* No `sample`: this panel is handed the models the query already kept, and
+            seeding the builder with those would test a new pattern against the old
+            pattern's survivors. An empty box is honest; a misleading one is not. */}
+        <RegexBuilderButton
+          value={modelQuery}
+          onApply={pattern => onModelQueryChange(pattern)}
+          regex={useRegex}
+          onRegexChange={onUseRegexChange}
+        />
       </div>
       <p
         id="api-models-regex-error"

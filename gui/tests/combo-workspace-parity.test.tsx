@@ -92,7 +92,11 @@ test("the page-level blurb and count strip are not duplicated inside the workspa
 test("the rail search offers a regex opt-in and the anchored builder", () => {
   const html = renderToStaticMarkup(workspace());
   expect(html).toContain('aria-label="Open regex builder"');
-  expect(html).toContain('href="#regex"');
+  // "Anchored" is the point of the test: the affordance opens a panel beside the
+  // rail search, where the old link navigated the window to the builder page and
+  // left the rail — and whatever had been typed into it — behind.
+  expect(html).toContain('aria-haspopup="dialog"');
+  expect(html).not.toContain('href="#regex"');
 });
 
 test("an invalid regex reports the engine error and matches nothing", async () => {

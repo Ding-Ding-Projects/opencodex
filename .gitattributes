@@ -1,5 +1,13 @@
 * text=auto eol=lf
 
+# Batch files are the one exception to eol=lf. cmd.exe parses `.bat` line by
+# line as it executes, and with LF endings a trailing label or a `goto` target
+# can be read with the newline attached — so the script runs until it reaches
+# the construct that breaks, rather than failing cleanly at the top. Checked out
+# with CRLF, always, on every platform.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 *.png binary
 *.jpg binary
 *.jpeg binary

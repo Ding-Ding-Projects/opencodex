@@ -11,8 +11,9 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { baseUrlForChoice, matchChoiceId, resolvedBaseUrlForChoice } from "../../base-url-choice";
 import { readJsonIfOk } from "../../fetch-json";
 import { useT } from "../../i18n/shared";
-import { IconLock, IconRegex, IconSearch } from "../../icons";
+import { IconLock, IconSearch } from "../../icons";
 import { Chip, TextInput } from "../../shell/m3-ui";
+import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
 import { makeMatcher } from "../../pages/models-shared";
 import { isCatalogProviderId } from "../../provider-icons";
 import type { CatalogPreset } from "../provider-catalog/provider-presets";
@@ -276,9 +277,16 @@ export default function ProviderSettings({
         >
           <code style={{ fontFamily: "var(--mono)" }}>.*</code>
         </Chip>
-        <a className="m3-icon-btn" href="#regex" title={t("settings.openBuilder")} aria-label={t("settings.openBuilder")}>
-          <IconRegex width={18} height={18} aria-hidden="true" />
-        </a>
+        <RegexBuilderButton
+          value={settingsQuery}
+          onApply={pattern => setSettingsQuery(pattern)}
+          regex={settingsRegex}
+          onRegexChange={setSettingsRegex}
+          // This provider's own settings index, so the sample is the text the
+          // pattern will be run over rather than an invented example.
+          sample={settingsEntries.map(entry => entry.text).join("\n")}
+          label={t("settings.openBuilder")}
+        />
       </div>
       {settingsError && (
         <p role="alert" style={SEARCH_ERROR}>{t("regex.invalid")}: {settingsError}</p>

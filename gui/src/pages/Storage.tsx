@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
 import { Button, Chip, Dialog, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
-import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh, IconRegex } from "../icons";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh } from "../icons";
 import { formatBytes } from "../format-bytes";
-import { navigateHash } from "../hash-routing";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
 
@@ -242,12 +242,14 @@ const SEARCH_NOTE: CSSProperties = {
  * default, an explicit `.*` regex opt-in, and the full builder one click away —
  * anchored to the field it belongs to rather than hidden behind a menu.
  */
-function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, t }: {
+function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, sample, t }: {
   query: string;
   onQuery: (next: string) => void;
   regexOn: boolean;
   onRegex: (next: boolean) => void;
   invalid: boolean;
+  /** The rows this row's query is run over, handed to the builder to test against. */
+  sample: string;
   t: TFn;
 }) {
   return (
@@ -270,15 +272,14 @@ function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, t }: {
       >
         .*
       </Chip>
-      <button
-        type="button"
-        className="m3-icon-btn"
-        title={t("settings.openBuilder")}
-        aria-label={t("settings.openBuilder")}
-        onClick={() => navigateHash("regex")}
-      >
-        <IconRegex aria-hidden="true" />
-      </button>
+      <RegexBuilderButton
+        value={query}
+        onApply={pattern => onQuery(pattern)}
+        regex={regexOn}
+        onRegexChange={onRegex}
+        sample={sample}
+        label={t("settings.openBuilder")}
+      />
     </div>
   );
 }
@@ -1229,6 +1230,8 @@ function AutoCleanupPolicyPanel({
         regexOn={regexOn}
         onRegex={setRegexOn}
         invalid={matcher.invalid}
+        // The unfiltered policy settings, in the same words the search indexes them.
+        sample={entries.map(settingText).join("\n")}
         t={t}
       />
       {matcher.invalid && <p style={SEARCH_NOTE} role="alert">{t("regex.invalid")}</p>}

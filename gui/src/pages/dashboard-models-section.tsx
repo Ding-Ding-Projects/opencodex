@@ -1,8 +1,16 @@
 import { type Dispatch, type SetStateAction } from "react";
-import { IconChevron, IconRegex, IconSearch } from "../icons";
+import { IconChevron, IconSearch } from "../icons";
 import type { TFn } from "../i18n/shared";
 import { Card, Chip, Empty } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { modelMetaLabel, type ModelInfo } from "./dashboard-shared";
+
+/**
+ * How many models the anchored builder is handed as sample text. Bounded because
+ * the string is rebuilt on every render of the search row, and this list is the
+ * whole catalogue rather than one provider's slice of it.
+ */
+const SAMPLE_ROWS = 40;
 
 export function DashboardModelsSection({
   t,
@@ -57,9 +65,16 @@ export function DashboardModelsSection({
             <Chip selected={modelRegex} onClick={() => setModelRegex(v => !v)} title={t("search.regexHint")}>
               <code style={{ fontFamily: "var(--mono)" }}>.*</code>
             </Chip>
-            <a className="m3-icon-btn" href="#regex" title={t("search.openBuilder")} aria-label={t("search.openBuilder")}>
-              <IconRegex width={18} height={18} aria-hidden="true" />
-            </a>
+            <RegexBuilderButton
+              value={modelQuery}
+              onApply={pattern => setModelQuery(pattern)}
+              regex={modelRegex}
+              onRegexChange={setModelRegex}
+              // The unfiltered catalogue in the same shape the search matches it —
+              // `filteredGroups` is what the current query already kept, and a
+              // pattern tested against those survivors proves nothing.
+              sample={models.slice(0, SAMPLE_ROWS).map(m => `${m.id} ${m.provider}`).join("\n")}
+            />
           </div>
           {modelRegexError && (
             <p role="alert" className="dash-hint" style={{ color: "var(--m3-error)" }}>
