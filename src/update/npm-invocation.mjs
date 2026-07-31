@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
 import { win32 } from "node:path";
+import { resolveOnTrustedPath } from "../lib/trusted-path.mjs";
 
 const CMD_META = /([()%!^"`<>&|;, *?])/g;
 
@@ -13,53 +13,17 @@ function escapeCmdCommand(command) {
 }
 
 /**
- * Whether a PATH entry *is* the current directory. The hijack this guards against is
- * cmd.exe resolving a bare `npm` out of the directory opencodex was launched from, so
- * only that exact directory has to be skipped — every candidate we hand to spawn is an
- * absolute path, which is what actually defeats the implicit cwd-first search.
- *
- * Deliberately not a subtree test: npm's default Windows global prefix is
- * `%AppData%\npm` (`C:\Users\x\AppData\Roaming\npm`), so excluding everything under the
- * cwd would fail closed for anyone whose shell sits in their home directory — a normal
- * setup, not the untrusted-project case this hardening is for.
+ * Absolute npm on Windows, resolved off a trusted PATH entry so a bare `npm` can never
+ * be picked up out of the launch directory. The scan itself lives in
+ * `src/lib/trusted-path.mjs` because the Bun update path needs exactly the same rule.
  */
-function isCurrentDirectory(cwd, entry) {
-  const left = win32.resolve(entry);
-  const right = win32.resolve(cwd);
-  return left.toLowerCase() === right.toLowerCase();
-}
-
-function cleanPathEntry(entry) {
-  const trimmed = entry.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.slice(1, -1);
-  return trimmed;
-}
-
 export function resolveNpmCommand(
   platform = process.platform,
   env = process.env,
   deps = {},
 ) {
   if (platform !== "win32") return "npm";
-  const exists = deps.exists ?? existsSync;
-  const cwd = deps.cwd ?? process.cwd();
-  const extensions = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
-    .split(";")
-    .filter(Boolean);
-  const pathEntries = (env.PATH ?? env.Path ?? "")
-    .split(win32.delimiter)
-    .map(cleanPathEntry)
-    .filter(Boolean);
-
-  for (const entry of pathEntries) {
-    if (!win32.isAbsolute(entry)) continue;
-    if (isCurrentDirectory(cwd, entry)) continue;
-    for (const extension of extensions) {
-      const candidate = win32.join(entry, `npm${extension.toLowerCase()}`);
-      if (exists(candidate)) return win32.resolve(candidate);
-    }
-  }
-  return null;
+  return resolveOnTrustedPath("npm", env, deps);
 }
 
 function systemCommandProcessor(env) {

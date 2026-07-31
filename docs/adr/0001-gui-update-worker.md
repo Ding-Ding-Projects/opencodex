@@ -40,6 +40,16 @@ invoked as an explicit `cmd.exe /d /s /c` line built and escaped by the resolver
 resolution runs first: when npm cannot be resolved at all, the update aborts with the proxy and
 service still running, and no cache scan is attempted.
 
+Bun is resolved on Windows by the same rule and shares the PATH scan (`src/lib/trusted-path.mjs`),
+because `bun` is both hijackable by a bare name and usually absent from the PATH a GUI-, service- or
+tray-spawned process inherits. It differs only in what it produces: Bun is a real `.exe`, so it is
+spawned directly with `add -g <pkg>` untouched rather than wrapped in a `cmd.exe` line. The binary
+must be Bun — those arguments mean nothing to another runtime — so the resolution takes the bundled
+binary, then this executable *only when the process is provably running on Bun* (the `Bun` global;
+a size or filename check cannot establish that), then a trusted absolute PATH entry. An
+unresolvable Bun aborts the CLI update before the proxy is stopped, exactly as an unresolvable npm
+does.
+
 Before an npm updater stops the proxy, it resolves the configured npm cache and checks that every
 entry is owned by the current Unix user. A foreign-owned entry (commonly left by an older `sudo npm`
 invocation) aborts the update with an actionable error while the existing proxy and service remain

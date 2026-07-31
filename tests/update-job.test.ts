@@ -24,7 +24,8 @@ import {
   updateJobPath,
   type UpdateJobState,
 } from "../src/update/job";
-import { checkUpdatePackageIntegrity, updateCommand, updateCommandStr } from "../src/update/index";
+import { checkUpdatePackageIntegrity, updateCommand, updateCommandStr, updateSpawnTarget } from "../src/update/index";
+import { isRealBunBinary, resolveBunCommand } from "../src/lib/bun-runtime";
 import { removeTempDir } from "./helpers/temp-dir";
 
 type SpawnResult = { status: number | null; stdout: string };
@@ -1674,26 +1675,113 @@ describe("immutable update target (WP160)", () => {
     expect(cmd.display).toContain("@2.7.24");
   });
 
-  // Windows resolved a path because `bun` is rarely on the PATH a GUI-spawned
-  // process inherits — but it resolved `process.execPath`, which is Node here,
-  // while keeping Bun's arguments. Every Bun-installed update on Windows spawned
-  // `node.exe add -g @bitkyc08/opencodex@…`, which is not a command. This
-  // asserts the shape rather than a literal path, because what was wrong was the
-  // pairing of binary and arguments, not the path itself.
+  // `add -g <pkg>` is Bun's spelling, so whatever runs it has to be Bun. Both update
+  // paths used to substitute `process.execPath` on Windows and keep those arguments,
+  // which is only correct while the caller happens to run on Bun (it does, via
+  // bin/ocx.mjs) — an unstated, unchecked invariant. These assert the *pairing*
+  // rather than a literal path, because the pairing is what must never break.
   test("the bun update never pairs a non-bun binary with bun's arguments", () => {
     const cmd = updateExecutionCommand("bun", "latest", "/pkg/bin/ocx.mjs", "2.7.24");
     const binary = cmd.bin.toLowerCase();
 
-    // `add -g` is Bun's spelling. Whatever runs it has to be Bun.
     expect(cmd.args[0]).toBe("add");
     expect(`${binary} runs "add": ${binary === "bun" || /bun(\.exe)?$/.test(binary)}`)
       .toBe(`${binary} runs "add": true`);
 
-    // The specific regression: never the running interpreter, which is Node or
-    // Electron in the update worker and understands none of these arguments.
-    expect(cmd.bin).not.toBe(process.execPath);
+    // Never a different interpreter, whose only response to `add -g` is to look for
+    // a script named "add".
     expect(binary.endsWith("node.exe")).toBe(false);
     expect(binary.endsWith("electron.exe")).toBe(false);
+  });
+
+  test("the CLI update path resolves bun the same way, and fails closed when it cannot", () => {
+    const resolved = "C:\\Users\\dev\\.bun\\bin\\bun.exe";
+    const args = ["add", "-g", "@bitkyc08/opencodex@2.7.24"];
+
+    // Resolved: the absolute Bun runs Bun's arguments, verbatim and unwrapped
+    // (a real .exe needs no cmd.exe line the way npm.cmd does).
+    expect(updateSpawnTarget("bun", args, () => resolved)).toEqual({
+      bin: resolved,
+      args,
+      options: {},
+    });
+
+    // Unresolvable: null, so runUpdate aborts BEFORE stopping the proxy rather than
+    // spawning something that cannot possibly perform the update.
+    expect(updateSpawnTarget("bun", args, () => null)).toBeNull();
+
+    // A non-installer binary is passed through untouched.
+    expect(updateSpawnTarget("sh", ["-lc", "true"], () => null)).toEqual({
+      bin: "sh",
+      args: ["-lc", "true"],
+      options: {},
+    });
+  });
+
+  test("resolveBunCommand prefers a real bun and refuses to stand in another runtime", () => {
+    const bundled = "C:\\pkg\\node_modules\\bun\\bin\\bun.exe";
+    const bunOnPath = "C:\\Users\\dev\\.bun\\bin\\bun.exe";
+    const cwd = "C:\\work\\untrusted-project";
+    const env = {
+      PATH: `${cwd};C:\\Users\\dev\\.bun\\bin`,
+      PATHEXT: ".EXE",
+    };
+    const never = () => {
+      throw new Error("should not be consulted");
+    };
+
+    // The bundled binary wins: it ships with the package and survives `ocx update`.
+    expect(resolveBunCommand("win32", env, { bundled: () => bundled, underBun: never }))
+      .toBe(bundled);
+
+    // No bundled copy, but this process IS Bun — then its own executable is Bun.
+    expect(resolveBunCommand("win32", env, {
+      bundled: () => null,
+      underBun: () => true,
+      execPath: "C:\\bun\\bun.exe",
+    })).toBe("C:\\bun\\bun.exe");
+
+    // The regression, stated directly: running on some other interpreter, its
+    // execPath is NOT offered up as bun, however large the file is.
+    expect(resolveBunCommand("win32", { PATH: "", PATHEXT: ".EXE" }, {
+      bundled: () => null,
+      underBun: () => false,
+      execPath: "C:\\Program Files\\nodejs\\node.exe",
+      isRealBun: () => true,
+    })).toBeNull();
+
+    // Last resort is a trusted absolute PATH entry — and the launch directory is
+    // skipped there exactly as it is for npm.
+    expect(resolveBunCommand("win32", env, {
+      bundled: () => null,
+      underBun: () => false,
+      execPath: "C:\\Program Files\\nodejs\\node.exe",
+      cwd,
+      exists: (path: string) => path === bunOnPath || path === `${cwd}\\bun.exe`,
+      isRealBun: () => true,
+    })).toBe(bunOnPath);
+
+    expect(resolveBunCommand("win32", env, {
+      bundled: () => null,
+      underBun: () => false,
+      execPath: "C:\\Program Files\\nodejs\\node.exe",
+      cwd,
+      exists: (path: string) => path === `${cwd}\\bun.exe`,
+      isRealBun: () => true,
+    })).toBeNull();
+
+    // POSIX keeps the bare name: a bun global install puts it on PATH by
+    // construction, and there is no cwd-first lookup to defeat.
+    expect(resolveBunCommand("linux", env, { bundled: never, underBun: never })).toBe("bun");
+  });
+
+  test("isRealBunBinary is a stub gate, not an identity check — so it cannot guard this", () => {
+    // Why resolveBunCommand tests `runningUnderBun()` instead of reusing the size
+    // gate: the gate exists to tell a real binary from the `bun` package's ~450-byte
+    // placeholder stub, and any other runtime's executable clears it just as easily.
+    const bigNonBun = join(dir, "node.exe");
+    writeFileSync(bigNonBun, Buffer.alloc(2_000_000));
+    expect(isRealBunBinary(bigNonBun)).toBe(true);
   });
 
   test("integrity pre-flight passes on a valid sha512 SRI and on multi-token metadata", () => {

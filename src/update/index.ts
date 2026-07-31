@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getConfigDir, loadConfig, readPid, readRuntimePort } from "../config";
+import { resolveBunCommand } from "../lib/bun-runtime";
 import { npmInvocation } from "./npm-invocation.mjs";
 import { checkNpmCacheOwnership, formatNpmCacheOwnershipFailure } from "./npm-cache-preflight.mjs";
 import {
@@ -62,10 +63,31 @@ function npmSpawnTarget(args: readonly string[]): { bin: string; args: string[];
   return { bin: invocation.file, args: invocation.args, options: invocation.options };
 }
 
-function updateSpawnTarget(bin: string, args: readonly string[]): { bin: string; args: string[]; options: { windowsVerbatimArguments?: boolean } } | null {
+/**
+ * Resolve what to actually spawn for an update command.
+ *
+ * Both package managers need an absolute Windows path — `npm` because a bare name is
+ * resolvable out of the launch directory, `bun` because it is additionally absent from
+ * the PATH a GUI/service/tray-spawned process inherits. The two differ in *how*: npm's
+ * trusted resolution can land on `npm.cmd`, which has to be rewritten into a
+ * `cmd.exe /d /s /c "…"` line, while Bun is a real `.exe` that spawns directly with its
+ * arguments untouched.
+ *
+ * The one thing neither may do is swap the binary while keeping the other's arguments.
+ * `add -g <pkg>` is Bun's spelling and only Bun can run it, so an unresolvable Bun
+ * returns null and fails the update closed rather than handing those arguments to
+ * whatever interpreter happens to be running this code.
+ */
+export function updateSpawnTarget(
+  bin: string,
+  args: readonly string[],
+  resolveBun: () => string | null = resolveBunCommand,
+): { bin: string; args: string[]; options: { windowsVerbatimArguments?: boolean } } | null {
   if (bin === "npm") return npmSpawnTarget(args);
-  if (process.platform === "win32" && bin === "bun") {
-    return { bin: process.execPath, args: [...args], options: {} };
+  if (bin === "bun") {
+    const bunBin = resolveBun();
+    if (!bunBin) return null;
+    return { bin: bunBin, args: [...args], options: {} };
   }
   return { bin, args: [...args], options: {} };
 }
@@ -187,7 +209,7 @@ export async function runUpdate(): Promise<void> {
   const { bin, args: cmdArgs } = updateCommand(installer, tag, latest);
   const target = updateSpawnTarget(bin, cmdArgs);
   if (!target) {
-    console.error("⚠️  Could not resolve npm from a trusted absolute PATH entry; aborting before stopping the proxy.");
+    console.error(`⚠️  Could not resolve ${bin} from a trusted absolute path; aborting before stopping the proxy.`);
     process.exit(1);
   }
 
