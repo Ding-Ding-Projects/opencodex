@@ -1,8 +1,8 @@
 /** Nav order, icon and label key for every page. Mirrors `PAGES` in the design prototype. */
 
 import {
-  IconActivity, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconDevices, IconGlobe, IconGrid,
-  IconHardDrive, IconHistory, IconKey, IconList, IconPalette, IconRefresh, IconRegex, IconServer,
+  IconActivity, IconApi, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconDevices, IconGrid,
+  IconHardDrive, IconHistory, IconKey, IconPalette, IconReceiptLong, IconRegex, IconRestartAlt, IconServer,
   IconShuffle, IconSliders, IconSparkle, IconTerminal, IconTranslate,
 } from "../icons";
 import { PAGE_GROUP, type Page } from "../app-routing";
@@ -22,13 +22,13 @@ const ICONS: Record<Page, typeof IconGrid> = {
   models: IconBoxes,
   combos: IconShuffle,
   subagents: IconBot,
-  logs: IconList,
+  logs: IconReceiptLong,
   usage: IconActivity,
   storage: IconHardDrive,
-  api: IconGlobe,
+  api: IconApi,
   claude: IconSparkle,
   grok: IconBolt,
-  startup: IconRefresh,
+  startup: IconRestartAlt,
   appearance: IconPalette,
   language: IconTranslate,
   regex: IconRegex,
