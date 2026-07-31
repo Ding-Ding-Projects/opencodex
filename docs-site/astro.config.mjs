@@ -27,6 +27,29 @@ export default defineConfig({
   site: SITE_URL,
   ...(BASE ? { base: BASE } : {}),
   trailingSlash: "ignore",
+  // Section roots that have no index page of their own.
+  //
+  // Four of the five sections are directories of pages, and Starlight emits a
+  // page per file and never one for the folder. So the sidebar worked, every
+  // child page worked, and `/getting-started/`, `/guides/`, `/reference/` and
+  // `/troubleshooting/` all 404ed — including the README's *first* documentation
+  // link. Nothing caught it, because a missing page is not a build error: every
+  // deploy reported success while the top of the docs was a dead end.
+  //
+  // Redirects rather than stub index pages: a landing page whose only content is
+  // a link to the page below it is one more thing to keep in step with the
+  // sidebar, and it puts a content-free stop between the reader and what they
+  // came for.
+  //
+  // Each target is that section's FIRST sidebar entry, so following a section
+  // root lands where the section starts rather than in its middle. `benchmarks`
+  // is absent on purpose — it is the one section with a real overview page.
+  redirects: {
+    "/getting-started": "/getting-started/installation",
+    "/guides": "/guides/providers",
+    "/reference": "/reference/cli",
+    "/troubleshooting": "/troubleshooting/windows-memory",
+  },
   // lightningcss merges animation-timeline into the `animation` shorthand,
   // which Chrome cannot parse — the scroll-driven animations die silently.
   vite: {

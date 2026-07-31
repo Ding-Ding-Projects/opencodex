@@ -1,0 +1,93 @@
+/**
+ * Every documentation section root has to resolve.
+ *
+ * Starlight emits one page per content file and none for the folder, so a
+ * section that is a directory of pages has no page of its own. Four of the five
+ * sections were in that state: `/guides/`, `/reference/`, `/getting-started/`
+ * and `/troubleshooting/` all 404ed while every child page under them worked.
+ *
+ * That is the worst shape for this failure. The sidebar was correct, every deep
+ * link was correct, and the build reported success on every deploy — but the
+ * URL a reader guesses, the one a section heading points at, and the one the
+ * README's *first* documentation link used were all dead. Nothing in the
+ * pipeline noticed, because a missing page is not a build error.
+ *
+ * These assertions are static rather than HTTP: a live check only fails after a
+ * bad deploy has already shipped, and it cannot run in an offline test suite.
+ * Checking the config against the content tree catches it before the push.
+ */
+
+import { describe, expect, test } from "bun:test";
+import { readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+
+const DOCS = join("docs-site", "src", "content", "docs");
+const CONFIG = join("docs-site", "astro.config.mjs");
+
+/** Locale subtrees mirror the English one and are routed by Starlight's i18n. */
+const LOCALES = new Set(["ja", "ko", "ru", "zh-cn"]);
+
+function sectionDirectories(): string[] {
+  return readdirSync(DOCS, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !LOCALES.has(entry.name))
+    .map(entry => entry.name);
+}
+
+function hasIndexPage(section: string): boolean {
+  return ["index.md", "index.mdx"].some(name => existsSync(join(DOCS, section, name)));
+}
+
+const config = await Bun.file(CONFIG).text();
+
+describe("section roots", () => {
+  test("every section either has an index page or a redirect", async () => {
+    // One or the other, never neither. Which of the two is a content decision;
+    // having some answer is not.
+    const unreachable = sectionDirectories().filter(section => {
+      if (hasIndexPage(section)) return false;
+      return !config.includes(`"/${section}"`);
+    });
+    expect(unreachable).toEqual([]);
+  });
+
+  test("every redirect target is a page that actually exists", async () => {
+    // A redirect to a missing file turns one 404 into a slower 404.
+    const targets = [...config.matchAll(/"\/([a-z-]+)":\s*"\/([a-z0-9/-]+)"/g)].map(m => m[2]);
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets) {
+      const exists = [".md", ".mdx"].some(ext => existsSync(join(DOCS, `${target}${ext}`)));
+      expect(`${target} exists: ${exists}`).toBe(`${target} exists: true`);
+    }
+  });
+
+  test("a redirect target is that section's first sidebar entry", async () => {
+    // Landing in the middle of a section is disorienting in a way that landing
+    // at its start is not, and the sidebar already encodes where a section
+    // starts. This pins the two together so they cannot drift apart.
+    for (const [, section, target] of config.matchAll(/"\/([a-z-]+)":\s*"\/([a-z0-9/-]+)"/g)) {
+      const group = config.split(new RegExp(`label: "[^"]*",\\s*(?:translations:[^}]*},\\s*)?\\n\\s*(?:collapsed[^\\n]*\\n\\s*)?items: \\[`))
+        .find(chunk => chunk.includes(`slug: "${section}/`));
+      if (!group) continue;
+      const firstSlug = group.match(/slug: "([a-z0-9/-]+)"/)?.[1];
+      expect(`${section} -> ${target}`).toBe(`${section} -> ${firstSlug}`);
+    }
+  });
+});
+
+describe("the README's documentation links", () => {
+  test("every docs link points at a section root with an answer, or a real page", async () => {
+    // The README's first documentation link was `/getting-started/`, which
+    // 404ed. A broken link at the top of the readme is the first thing a new
+    // reader meets.
+    const readme = await Bun.file("README.md").text();
+    const paths = [...readme.matchAll(/https:\/\/[a-z.-]*github\.io\/opencodex\/([a-z0-9/-]*)/g)]
+      .map(m => m[1].replace(/\/$/, ""))
+      .filter(Boolean);
+
+    for (const path of paths) {
+      const isPage = [".md", ".mdx"].some(ext => existsSync(join(DOCS, `${path}${ext}`)));
+      const isCoveredSection = hasIndexPage(path) || config.includes(`"/${path}"`);
+      expect(`${path} resolves: ${isPage || isCoveredSection}`).toBe(`${path} resolves: true`);
+    }
+  });
+});
