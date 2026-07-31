@@ -310,3 +310,46 @@ test("data-plane requests never receive the management token or prompt", async (
   expect(seenHeaders).toEqual([null]);
   expect(promptCalls).toBe(beforeCrossPrompts);
 });
+
+// Electron does not implement `window.prompt` — it throws. That exception came
+// straight out of the fetch wrapper, so in the desktop app one 401 broke every
+// caller that touched it, Exit included: "Could not exit cleanly: prompt() is
+// not supported", and then it did not exit.
+test("a prompt that throws is an unauthenticated request, not an exception", async () => {
+  let calls = 0;
+  await installMockAuthFetch(async () => {
+    calls += 1;
+    return new Response("nope", { status: 401 });
+  });
+  window.prompt = () => {
+    throw new Error("prompt() is not supported.");
+  };
+
+  // The point is that this resolves at all. Before, it rejected.
+  const res = await fetch("/api/anything");
+  expect(res.status).toBe(401);
+  expect(calls).toBeGreaterThan(0);
+});
+
+test("a registered requester is used instead of window.prompt", async () => {
+  const { setTokenRequester } = await import("../src/api");
+  let promptCalls = 0;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "from-native-prompt";
+  };
+  setTokenRequester(async () => "from-the-dialog");
+
+  const seen: string[] = [];
+  await installMockAuthFetch(async (input, init) => {
+    const key = new Headers(init?.headers).get("X-OpenCodex-API-Key");
+    if (key) seen.push(key);
+    return new Response("", { status: key === "from-the-dialog" ? 200 : 401 });
+  });
+
+  await fetch("/api/anything");
+  expect(seen).toContain("from-the-dialog");
+  // The app's own dialog wins outright; the native one is never reached.
+  expect(promptCalls).toBe(0);
+  setTokenRequester(null);
+});

@@ -100,8 +100,47 @@ function adminTokenPromptMessage(): string {
 }
 
 /**
+ * How the token is asked for.
+ *
+ * `installApiAuthFetch()` runs before React mounts, so this module cannot render
+ * a dialog itself — it can only call whatever the app has registered by the time
+ * a 401 actually arrives. The React tree registers an M3 dialog; anything that
+ * has not registered one falls back to `window.prompt`.
+ */
+type TokenRequester = (message: string) => Promise<string | null>;
+
+let tokenRequester: TokenRequester | null = null;
+
+/** Register the app's own prompt. Pass null on unmount so a dead dialog is not called. */
+export function setTokenRequester(requester: TokenRequester | null): void {
+  tokenRequester = requester;
+}
+
+/**
+ * Ask for a token, by whatever means this environment actually has.
+ *
+ * **Electron does not implement `window.prompt` and throws when it is called.**
+ * That threw straight out of the fetch wrapper, so in the desktop app a single
+ * 401 broke every caller that touched it — including Exit, which reported
+ * "Could not exit cleanly: prompt() is not supported" and then did not exit.
+ * A missing way to ask for a token means the request is unauthenticated, which
+ * is a `null`; it is not an exception for callers to trip over.
+ */
+async function askForToken(): Promise<string | null> {
+  const message = adminTokenPromptMessage();
+  if (tokenRequester) return (await tokenRequester(message))?.trim() || null;
+  try {
+    return window.prompt(message)?.trim() || null;
+  } catch {
+    // No prompt in this environment (Electron, a sandboxed iframe, a headless
+    // test). Nothing to ask with, so nothing was entered.
+    return null;
+  }
+}
+
+/**
  * Resolve a token after a 401. Concurrent callers share one in-flight resolution so a dashboard
- * fan-out does not open one window.prompt per /api request (#647). Re-reads memoryToken before
+ * fan-out does not open one prompt per /api request (#647). Re-reads memoryToken before
  * prompting so waiters that wake after another request already stored a token do not re-prompt.
  */
 async function resolveTokenAfter401(failedToken: string | null): Promise<string | null> {
@@ -113,7 +152,7 @@ async function resolveTokenAfter401(failedToken: string | null): Promise<string 
     const current = readToken();
     if (current && current !== failedToken) return current;
 
-    const prompted = window.prompt(adminTokenPromptMessage())?.trim() || null;
+    const prompted = await askForToken();
     if (prompted) {
       storeToken(prompted);
       return prompted;
