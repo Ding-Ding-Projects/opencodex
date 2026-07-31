@@ -14,6 +14,7 @@ import { IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
 import { FONT_CHOICES, SEED_SWATCHES, type DensityLevel, type ThemeMode } from "../theme/m3";
+import { elsewhereFor } from "./settings-elsewhere";
 import { recordRevision } from "../shell/revisions";
 import { useNotifications } from "../shell/notifications-context";
 import type { TKey } from "../i18n/shared";
@@ -162,18 +163,27 @@ export default function Appearance() {
     { id: "fontWeight", label: t("appearance.fontWeight"), desc: t("appearance.typeTitle"), value: String(prefs.fontWeight) },
   ];
 
-  /** Settings that live on another surface, so a miss here can still point somewhere. */
-  const elsewhere = [
-    { id: "langMode", label: t("lang.mode"), tab: t("nav.language") },
-    { id: "funnyEn", label: t("lang.funnyEn"), tab: t("nav.language") },
-    { id: "funnyYue", label: t("lang.funnyYue"), tab: t("nav.language") },
-  ];
+  /**
+   * Settings that live on another surface, so a miss here can still point
+   * somewhere. Taken from the shared registry rather than listed here: this
+   * screen knew about three entries on one tab while `Settings` knew about five
+   * on four others, so the same query answered differently depending on which
+   * search bar it was typed into.
+   */
+  const elsewhere = elsewhereFor("nav.appearance").map(entry => ({
+    id: entry.tkey,
+    label: t(entry.tkey),
+    desc: entry.descKey ? t(entry.descKey) : "",
+    tab: t(entry.tabKey),
+  }));
 
   const matcher = makeMatcher(query, useRegex);
   const hits = here.filter(row => matcher.test(`${row.label} ${row.desc} ${row.value}`));
   // Only claimed once something was actually typed — an untouched field has not
   // matched anything, here or anywhere else.
-  const otherHits = query ? elsewhere.filter(row => matcher.test(row.label)) : [];
+  // Descriptions are matched too, so a search for what a setting *does* finds it
+  // as readily as a search for what it is called.
+  const otherHits = query ? elsewhere.filter(row => matcher.test(`${row.label} ${row.desc}`)) : [];
   const otherTabs = [...new Set(otherHits.map(row => row.tab))].join(", ");
 
   const onResetElement = () => {

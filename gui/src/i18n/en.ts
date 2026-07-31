@@ -170,7 +170,10 @@ export const en = {
   "dash.proxyStartFailed": "Could not start the proxy",
   "dash.cannotConnect": "Cannot connect to proxy. Is it running?",
   "dash.runStart": "Run {cmd} to start the proxy.",
-  "dash.stop": "Stop Proxy",
+  // Sentence case, matching `common.stopProxy` in design/ocx-i18n.js. Material
+  // uses sentence case for actions; "Stop Proxy" was the only title-cased label
+  // in the nav.
+  "dash.stop": "Stop proxy",
   "dash.stopConfirm": "Stop the proxy and restore native Codex?",
   "dash.stopFailed": "Failed to stop proxy (HTTP {status}).",
   "dash.stopping": "Stopping…",

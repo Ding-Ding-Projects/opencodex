@@ -281,9 +281,20 @@ export function fontStackFor(id: string): string {
 }
 
 /** Curated seeds offered beside the free colour picker on the Appearance screen. */
+/**
+ * The eight curated seeds, in the prototype's order and with its exact values.
+ *
+ * These had drifted: four of the eight differed, the order differed, and the
+ * teal was `#00696E` against the design's `#00696D` — one digit, which no
+ * screenshot comparison would ever catch but which derives a whole tonal palette
+ * from the wrong starting point. The design also carries a mauve the dashboard
+ * had dropped, and the dashboard had gained a violet the design never had.
+ *
+ * Read off `design/OpenCodex M3.dc.html`. If they diverge again, that file wins.
+ */
 export const SEED_SWATCHES = [
-  '#2F6B4F', '#3F6BAA', '#6750A4', '#8E4EC6',
-  '#B3261E', '#B5651D', '#00696E', '#4A4458',
+  '#2F6B4F', '#6750A4', '#0B57D0', '#8C4A1F',
+  '#B3261E', '#00696D', '#7D5260', '#4A4458',
 ]
 
 export const DEFAULT_SEED = SEED_SWATCHES[0]

@@ -23,6 +23,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { elsewhereFor } from "./settings-elsewhere";
 import { IconRefresh, IconSearch } from "../icons";
 import { LOCALES, useI18n, type TKey } from "../i18n/shared";
 import { Button, Card, Chip, Empty, Segmented, TextInput, Toggle } from "../shell/m3-ui";
@@ -67,13 +68,8 @@ const DEBUG_FLAGS = ["debug", "usage", "injection", "claude"] as const;
  * search reports a hit on one of these by name and says which tab owns it, so a
  * miss here never reads as "that setting does not exist".
  */
-const ELSEWHERE: ReadonlyArray<{ tkey: TKey; descKey?: TKey; tabKey: TKey }> = [
-  { tkey: "accountPool.strategy", descKey: "accountPool.strategyDesc", tabKey: "nav.codexAuth" },
-  { tkey: "models.contextCapLabel", tabKey: "nav.models" },
-  { tkey: "models.v2ThreadsLabel", tabKey: "nav.models" },
-  { tkey: "grok.title", descKey: "grok.subtitle", tabKey: "nav.grok" },
-  { tkey: "api.title", tabKey: "nav.api" },
-];
+// One shared registry, so every settings search reports the same neighbours.
+const ELSEWHERE = elsewhereFor("nav.settings");
 
 const LEAD_ROW: CSSProperties = { marginBottom: "var(--sp-3)", alignItems: "flex-start" };
 const LEAD: CSSProperties = { margin: 0 };
