@@ -172,10 +172,11 @@ frame rather than always emitting `response.completed`. If the response status i
 The HTTP/SSE bridge emits `response.heartbeat` events during upstream silence to re-arm Codex's idle
 timer (Codex's default `stream_idle_timeout` is 300 s and ANY SSE event re-arms it). Those
 bridge-enqueued keepalive frames do NOT count as activity for the bridge's own watchdog: a bounded
-stall deadline (default 300 s, configurable via `stallTimeoutSec`, checked on the 2 s heartbeat tick)
+stall deadline (default 600 s, configurable via `stallTimeoutSec`, checked on the 2 s heartbeat tick)
 closes the stream with `response.incomplete` / `upstream_stall_timeout` and cancels the upstream
 request if no real adapter events arrive. Adapter-yielded `{ type: "heartbeat" }` events DO reset
-the watchdog.
+the watchdog. The same ChatGPT forward/passthrough adapter and bridge streaming path powers the
+web-search and vision sidecars, so this stall deadline applies to those sidecar streams as well.
 
 The web-search loop requests `stream: true` for every routed-model iteration, but buffers the events
 needed to decide whether to intercept a synthetic search call. Text explicitly phased as
@@ -228,7 +229,7 @@ raw response-byte inactivity for a routed-model iteration and resets on every no
 from 200 s so an unavailable/limit-exhausted search backend degrades within ~1 min instead of
 hanging the whole turn, #398). The
 effective web-search bridge watchdog is
-`max(base stall, connect timeout, routed-model stall, sidecar timeout) + 30 s` (230 s at defaults,
+`max(base stall, connect timeout, routed-model stall, sidecar timeout) + 30 s` (630 s at defaults,
 dominated by the routed-model stall clock),
 with seam heartbeats between bounded units. None of these clocks is a total generation deadline.
 

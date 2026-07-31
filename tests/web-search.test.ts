@@ -1278,7 +1278,7 @@ describe("web-search stall deadline", () => {
     const parsed = parsedWithWebSearch();
     const auth = new Headers({ authorization: "Bearer chatgpt" });
     // defaults: max(300 bridge, connect 200s, sidecar 200s) + 30 margin
-    expect(planWebSearch(config(), parsed, false, auth, routedProvider, "model")?.stallTimeoutSec).toBe(330);
+    expect(planWebSearch(config(), parsed, false, auth, routedProvider, "model")?.stallTimeoutSec).toBe(630);
     // a larger user-configured stallTimeoutSec dominates
     expect(planWebSearch(config({ stallTimeoutSec: 600 }), parsed, false, auth, routedProvider, "model")?.stallTimeoutSec).toBe(630);
     // small unit budgets -> the bridge's 300s default dominates
@@ -1288,14 +1288,14 @@ describe("web-search stall deadline", () => {
         webSearchSidecar: { timeoutMs: 30_000, routedModelStallTimeoutMs: 30_000 },
       }),
       parsed, false, auth, routedProvider, "model",
-    )?.stallTimeoutSec).toBe(330);
+    )?.stallTimeoutSec).toBe(630);
   });
 
   test("webSearchStallTimeoutSec helper covers the largest bounded unit plus margin", () => {
-    expect(webSearchStallTimeoutSec(undefined, undefined, 200_000)).toBe(330);
+    expect(webSearchStallTimeoutSec(undefined, undefined, 200_000)).toBe(630);
     expect(webSearchStallTimeoutSec(90, 200_000, 200_000)).toBe(230);
     expect(webSearchStallTimeoutSec(600, 200_000, 200_000)).toBe(630);
-    expect(webSearchStallTimeoutSec(undefined, 30_000, 30_000)).toBe(330);
+    expect(webSearchStallTimeoutSec(undefined, 30_000, 30_000)).toBe(630);
   });
 
   test("#398: the default sidecar search deadline is bounded (60s, not 200s)", () => {
