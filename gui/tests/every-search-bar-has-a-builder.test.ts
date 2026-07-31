@@ -41,6 +41,28 @@ const NOT_A_TEXT_SEARCH: Record<string, string> = {
   "logs.filter.conversation.placeholder": "exact-match hash lookup, not a text search",
 };
 
+/**
+ * Files that render their search bar through one local component, used more than
+ * once.
+ *
+ * The count above assumes one `<SearchField>` per search bar in the same file,
+ * which stops being true the moment a file factors its search into a reusable
+ * component and instantiates it several times: four placeholders, one
+ * `<SearchField>`, every one of them with a builder at runtime. Reading that as a
+ * violation would push the codebase towards copy-pasting the search bar four
+ * times to satisfy a test, which is the opposite of what this rule is for.
+ *
+ * These files still have to render a builder — the rule becomes "at least one"
+ * rather than "one per field" — and the test below proves the local component is
+ * really there, so an entry cannot quietly become an excuse for a file that later
+ * drops its builder entirely.
+ */
+const SEARCH_FACTORED_INTO_A_COMPONENT: Record<string, string> = {
+  "shell/TabSearchPanel.tsx":
+    "one local <SearchList> renders the SearchField; the strip, per-group, group-name "
+    + "and master searches are four instantiations of it, each with its own builder",
+};
+
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -79,7 +101,9 @@ test("no search bar is rendered without a regex builder beside it", () => {
     if (searchable.length === 0) continue;
 
     const builders = builderCount(source);
-    if (builders < searchable.length) {
+    const rel = relative(SRC, file).split(sep).join("/");
+    const required = rel in SEARCH_FACTORED_INTO_A_COMPONENT ? 1 : searchable.length;
+    if (builders < required) {
       offenders.push(
         `${relative(SRC, file)}: ${searchable.length} search field(s) [${searchable.join(", ")}] `
         + `but ${builders} builder(s)`,
@@ -99,6 +123,20 @@ test("every documented non-search exception still names a field that exists", ()
   );
   for (const key of Object.keys(NOT_A_TEXT_SEARCH)) {
     expect(everyKey.has(key)).toBe(true);
+  }
+});
+
+// Same reasoning as the exception list above: an entry here relaxes the count, so
+// it has to keep earning that. A file that stopped rendering a builder, or was
+// renamed away, must fail rather than sit here excusing nothing.
+test("every factored-search file still renders a builder of its own", () => {
+  for (const [rel, reason] of Object.entries(SEARCH_FACTORED_INTO_A_COMPONENT)) {
+    const source = readFileSync(join(SRC, ...rel.split("/")), "utf8");
+    expect(`${rel} builders: ${builderCount(source) > 0}`).toBe(`${rel} builders: true`);
+    // And it really is used more than once, or it is not factored at all and the
+    // ordinary one-builder-per-field count should have applied.
+    expect(`${rel} (${reason.slice(0, 24)}…) fields: ${searchFieldKeys(source).length > 1}`)
+      .toBe(`${rel} (${reason.slice(0, 24)}…) fields: true`);
   }
 });
 

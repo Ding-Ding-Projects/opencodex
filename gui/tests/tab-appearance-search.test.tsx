@@ -21,7 +21,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
 import TabAppearanceEditor from "../src/shell/TabAppearanceEditor";
-import type { Tab } from "../src/shell/use-tabs";
+import type { TabStyle } from "../src/shell/use-tabs";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -46,7 +46,9 @@ afterEach(() => {
   }
 });
 
-const TAB: Tab = { id: "t1", page: "settings", style: { color: "#ff0000", badge: "beta" } };
+/* The editor takes the styled record's identity and style directly rather than a
+   whole `Tab`, because a group header has a style and no tab behind it. */
+const STYLE: TabStyle = { color: "#ff0000", badge: "beta" };
 
 async function mount(node: React.ReactNode): Promise<{ container: HTMLElement; root: Root }> {
   const { createRoot } = await import("react-dom/client");
@@ -62,7 +64,15 @@ async function mount(node: React.ReactNode): Promise<{ container: HTMLElement; r
 
 async function open() {
   return mount(
-    <TabAppearanceEditor tab={TAB} label="Settings" anchor={null} onChange={() => {}} onClose={() => {}} />,
+    <TabAppearanceEditor
+      kind="tab"
+      id="t1"
+      style={STYLE}
+      label="Settings"
+      anchor={null}
+      onChange={() => {}}
+      onClose={() => {}}
+    />,
   );
 }
 

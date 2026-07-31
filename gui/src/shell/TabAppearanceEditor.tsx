@@ -442,7 +442,7 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
             {t("tabs.styleResetAll")}
           </Button>
         </div>
-      </div>
       )}
+    </div>
   );
 }
