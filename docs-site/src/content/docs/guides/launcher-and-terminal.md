@@ -126,22 +126,50 @@ Three panels:
 | --- | --- |
 | **Chat** | Send a message to any routed model and watch the reply stream in. |
 | **Sessions** | Recent proxy requests — model, provider, status, duration, tokens. |
-| **Control** | Proxy bind and reachability, plus the API key this device uses. |
+| **Control** | Pairing state for this device, the proxy's bind, and the API key in use. |
 
-It adds **no new server API**. Chat posts to the proxy's own
-`/v1/chat/completions`, the same endpoint every other client uses, so a message
+It adds **one** server route: `POST /api/host/pair/claim`, which exists because
+a phone that has never paired holds no credential and so cannot be served by
+anything that was already there. Everything else reuses what other clients use.
+Chat posts to the proxy's own `/v1/chat/completions` and the model list comes
+from `/v1/models`, both on the data-plane key pairing hands out, so a message
 sent from a phone is routed, logged and counted exactly like one sent from
-Codex. Sessions read `/api/logs`; Control reads `/api/host`. A parallel "mobile
-API" would have been a second path to the same behaviour and a second place for
-it to be wrong.
+Codex. Sessions read `/api/logs` and Control reads `/api/host`; those are
+management routes, so they need the admin token from the desktop and say so
+rather than appearing to load forever. A parallel "mobile API" would have been a
+second path to the same behaviour and a second place for it to be wrong.
 
-### Reaching it from a phone
+### Pairing a phone with a QR code
 
-The proxy has to be published to your network first:
+The proxy has to be published to your network first, and then restarted — the
+listening socket is fixed when the process starts, so enabling remote access
+changes the config and nothing else until it comes back up:
 
 ```bash
 ocx host enable
 ```
+
+Then open **Remote access & backup** on the desktop and choose **Pair a phone**.
+The QR code carries the address *and* a one-time pairing code. Scanning it opens
+the remote on the phone, which spends the code on arrival, receives a data-plane
+key of its own, and removes the code from the URL so a screenshot cannot carry
+it.
+
+What makes showing a credential on a screen acceptable is what the code is:
+256 bits of randomness, valid for **one** device, expiring after **five
+minutes**, replaced whenever a new one is generated, and cancelled the moment
+the panel closes. It mints a data-plane key and never an admin token, so a
+paired phone can drive the proxy but cannot reconfigure it.
+
+The key is then **saved in that phone's browser**, so pairing happens once
+rather than on every visit. That is a deliberate exception to the rule the
+dashboard follows for its own admin token, which is memory-only: an admin token
+can export every account, while this one can only send requests. Clear it from
+the phone with **Forget this device**, and revoke it on the desktop under
+**API keys**, where it is listed as `Paired device`.
+
+If you would rather not use a QR code at all, the Control panel still accepts a
+key typed by hand.
 
 That prints the URLs other devices can use and requires a credential — the same
 gate the rest of the exposed surface uses. Open one of those URLs on the phone

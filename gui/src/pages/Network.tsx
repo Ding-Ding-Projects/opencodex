@@ -5,7 +5,7 @@
  * export names its secrets before anything downloads.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Chip, Empty, Field, TextInput, Toggle } from "../shell/m3-ui";
 import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
@@ -22,6 +22,24 @@ interface HostStatus {
   exposed: boolean;
   credentialConfigured: boolean;
   urls: string[];
+  /**
+   * The stored bind and the live socket disagree, so nothing outside this
+   * machine can see the change yet. Reported by the proxy rather than inferred
+   * here: only the server knows what `Bun.serve` actually bound to.
+   */
+  restartPending?: boolean;
+}
+
+/** What POST /api/host/pair hands back. The token is live for five minutes. */
+interface PairOffer {
+  token: string;
+  expiresAt: number;
+}
+
+/** `m:ss` remaining, for the countdown beside a pairing QR. */
+function countdownLabel(msLeft: number): string {
+  const total = Math.max(0, Math.ceil(msLeft / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 /** One snapshot from the local account-change history, as GET /api/host/history reports it. */
@@ -46,6 +64,97 @@ export default function Network({ apiBase }: { apiBase: string }) {
   const [customKey, setCustomKey] = useState("");
   const { outcomeFor, copy } = useCopyFeedback();
   const copied = outcomeFor(undefined) === "copied";
+
+  // ---- pairing panel ----
+  const [pairOpen, setPairOpen] = useState(false);
+  const [pairOffer, setPairOffer] = useState<PairOffer | null>(null);
+  const [pairFailed, setPairFailed] = useState(false);
+  const [regenerate, setRegenerate] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  /**
+   * One at a time, in order.
+   *
+   * The server keeps a single outstanding token, so mint and cancel are two
+   * writes to the same slot and their ORDER is the whole contract. Regenerate
+   * fires the effect's cleanup (DELETE) and then its body (POST); left
+   * unserialized those are two independent requests, and a DELETE that lands
+   * second cancels the token the QR on screen is already showing — a code that
+   * looks perfectly valid and can never be claimed.
+   */
+  const pairChain = useRef<Promise<unknown>>(Promise.resolve());
+  const runPairOp = useCallback(<T,>(op: () => Promise<T>): Promise<T> => {
+    const next = pairChain.current.then(op, op);
+    // The chain itself must never stay rejected, or every later operation on it
+    // is skipped. Callers handle their own failure.
+    pairChain.current = next.then(() => undefined, () => undefined);
+    return next;
+  }, []);
+
+  /**
+   * Mint on open, cancel on close.
+   *
+   * A pairing token is worth exactly as much as the key it produces, so one
+   * that was displayed and then dismissed should stop being claimable at that
+   * moment rather than idling out the rest of its five minutes.
+   *
+   * The panel's own state is cleared by whichever control opened or refreshed
+   * it, not here: clearing it in the effect body is a synchronous setState
+   * during render-commit and a cascading re-render, and the button press that
+   * caused it is the honest place for it anyway.
+   */
+  useEffect(() => {
+    if (!pairOpen) return;
+    let cancelled = false;
+    void runPairOp(async () => {
+      const res = await fetch(`${apiBase}/api/host/pair`, { method: "POST" });
+      const data = await readJsonIfOk<PairOffer>(res);
+      if (cancelled) return;
+      if (data?.token) {
+        setPairOffer(data);
+        // Seed the countdown from the same moment the offer arrives, so the
+        // first frame shows a real remaining time rather than whatever the last
+        // tick left behind.
+        setNowMs(Date.now());
+      } else {
+        setPairFailed(true);
+      }
+    }).catch(() => { if (!cancelled) setPairFailed(true); });
+
+    return () => {
+      cancelled = true;
+      void runPairOp(async () => {
+        await fetch(`${apiBase}/api/host/pair`, { method: "DELETE" });
+      }).catch(() => {
+        // A failed cancel is not worth a toast: the token expires on its own in
+        // under five minutes, and the panel the user just closed is gone.
+      });
+    };
+  }, [apiBase, pairOpen, regenerate, runPairOp]);
+
+  // The countdown ticks only while a live offer is on screen.
+  useEffect(() => {
+    if (!pairOpen || !pairOffer) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [pairOpen, pairOffer]);
+
+  /** Open the panel, or replace the code it is showing. Both start from clean state. */
+  const startPairing = useCallback(() => {
+    setPairOffer(null);
+    setPairFailed(false);
+    setPairOpen(true);
+    setRegenerate(n => n + 1);
+  }, []);
+
+  const closePairing = useCallback(() => {
+    setPairOpen(false);
+    setPairOffer(null);
+    setPairFailed(false);
+  }, []);
+
+  const pairMsLeft = pairOffer ? pairOffer.expiresAt - nowMs : 0;
+  const pairExpired = !!pairOffer && pairMsLeft <= 0;
 
   const host = useKeyedClientResource(
     `ocx-host:${apiBase}`,
@@ -156,11 +265,17 @@ export default function Network({ apiBase }: { apiBase: string }) {
     }
     setBusy(true);
     try {
-      const needsKey = exposed && host.data && !host.data.credentialConfigured;
       const res = await fetch(`${apiBase}/api/host`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exposed, ...(needsKey ? { newKeyName: "network" } : {}) }),
+        // One click, credential included. Enabling remote access used to mean
+        // inventing a password here and then typing it on the phone, which is
+        // most of the reason nobody enabled it. `mintKeyIfMissing` asks the
+        // proxy to generate the data-plane key as part of enabling — the
+        // requirement for one is untouched, and the server still refuses the
+        // exposed bind if nothing ends up stored. "IfMissing" so toggling off
+        // and on again does not quietly pile up keys nobody asked for.
+        body: JSON.stringify({ exposed, ...(exposed ? { mintKeyIfMissing: true, newKeyName: "network" } : {}) }),
       });
       const body = await res.json().catch(() => null) as (HostStatus & { mintedKey?: string | null; error?: string }) | null;
       if (!res.ok) {
@@ -168,6 +283,8 @@ export default function Network({ apiBase }: { apiBase: string }) {
         return;
       }
       if (body?.mintedKey) setMintedKey(body.mintedKey);
+      // Never "enabled" full stop: the socket is still bound where it was, and
+      // saying otherwise would have the user walk to a phone that cannot connect.
       notify({ tone: "success", title: t(exposed ? "network.enabled" : "network.disabled"), body: t("network.restartHint") });
       host.refresh();
     } catch {
@@ -255,15 +372,33 @@ export default function Network({ apiBase }: { apiBase: string }) {
           <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
         ) : (
           <>
-            <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-3)" }}>
+            <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-2)" }}>
               <div>
                 <div style={{ fontWeight: 500 }}>{t("network.exposed")}</div>
+                {/* Said before the switch is flipped, not in the confirmation
+                    afterwards. What this control does is the thing a user has
+                    to know in order to decide, and a warning that only appears
+                    once the decision is made is a warning about the past. */}
+                <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
+                  {t("network.exposeWhatItDoes")}
+                </div>
                 <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)", fontFamily: "var(--mono)" }}>
                   {status.hostname}:{status.port}
                 </div>
               </div>
               <Toggle on={status.exposed} onChange={next => void setExposed(next)} label={t("network.exposed")} disabled={busy} />
             </div>
+
+            {/* The config moved; the listening socket did not. Reporting the
+                config alone had this screen say "reachable from other devices"
+                while the proxy was still answering loopback only — a claim the
+                user cannot check without walking to another device and failing
+                to connect. */}
+            {status.restartPending && (
+              <p role="status" className="m3-banner m3-banner--warn" style={{ marginBottom: "var(--sp-3)" }}>
+                {t("network.restartPending")}
+              </p>
+            )}
 
             {status.urls.length > 0 && (
               <Field label={t("network.urls")}>
@@ -276,30 +411,86 @@ export default function Network({ apiBase }: { apiBase: string }) {
             )}
 
             {/* The point of exposing the proxy is usually a phone, and this page
-                previously answered that with a LAN address and a 40-character key
-                to retype by hand. The QR carries the mobile remote's URL
-                directly. */}
+                used to answer that with a LAN address and a 40-character key to
+                retype by hand. The QR now carries a pairing token as well as the
+                URL, so the phone claims a data-plane key of its own and nobody
+                transcribes anything. The token is minted when this panel opens
+                and cancelled when it closes. */}
             {status.urls.length > 0 && (
               <Field label={t("network.mobileTitle")}>
                 <p style={{ margin: "0 0 var(--sp-2)", fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
                   {t("network.mobileHint")}
                 </p>
-                <div className="m3-qr-row">
-                  {status.urls.map(url => {
-                    const target = `${url.replace(/\/$/, "")}/${hashRouteFor("mobile")}`;
-                    return (
-                      <figure key={url} className="m3-qr">
-                        <QrCode text={target} label={t("network.mobileQrAlt", { url: target })} />
-                        <figcaption>
-                          <code>{target}</code>
-                          <Button variant="text" onClick={() => copy(target, undefined)}>
-                            {copied ? t("network.copied") : t("network.copy")}
-                          </Button>
-                        </figcaption>
-                      </figure>
-                    );
-                  })}
-                </div>
+
+                {/* No QR before the restart. The addresses in `urls` come from
+                    the stored config, so the moment remote access is enabled
+                    this panel can render a perfectly scannable code pointing at
+                    a socket that is still bound to loopback — the phone would
+                    fail to connect and the five-minute token would expire
+                    proving nothing. Say what is missing instead. */}
+                {status.restartPending ? (
+                  <p style={{ margin: 0, fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
+                    {t("network.pairNeedsRestart")}
+                  </p>
+                ) : !pairOpen ? (
+                  <Button variant="tonal" onClick={startPairing}>{t("network.pairStart")}</Button>
+                ) : (
+                  <div className="m3-stack">
+                    <p className="m3-banner m3-banner--warn" role="note">{t("network.pairWarn")}</p>
+
+                    {pairFailed ? (
+                      <p role="alert" style={{ color: "var(--m3-error)" }}>{t("network.pairFailed")}</p>
+                    ) : !pairOffer ? (
+                      <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
+                    ) : pairExpired ? (
+                      <p role="alert" style={{ color: "var(--m3-error)" }}>{t("network.pairExpired")}</p>
+                    ) : (
+                      <>
+                        <div className="m3-qr-row">
+                          {status.urls.map(url => {
+                            const base = `${url.replace(/\/$/, "")}/${hashRouteFor("mobile")}`;
+                            const target = `${base}?pair=${encodeURIComponent(pairOffer.token)}`;
+                            return (
+                              <figure key={url} className="m3-qr">
+                                {/* The alt text carries the address and NOT the
+                                    token: a screen reader reads its label out
+                                    loud, and a live credential is not something
+                                    to announce across a room. */}
+                                <QrCode text={target} label={t("network.pairQrAlt", { url: base })} />
+                                <figcaption>
+                                  <code>{base}</code>
+                                  {/* Shown without the token, copied with it. The
+                                      caption is what gets screenshotted; the
+                                      clipboard is what gets sent to the phone. */}
+                                  <Button variant="text" onClick={() => copy(target, undefined)}>
+                                    {copied ? t("network.copied") : t("network.pairCopyLink")}
+                                  </Button>
+                                </figcaption>
+                              </figure>
+                            );
+                          })}
+                        </div>
+                        {/* Deliberately NOT a live region. It rewrites itself once
+                            a second, so `aria-live` would interrupt a screen
+                            reader every second for five minutes — the same
+                            reason the mobile transcript uses `role="log"`
+                            without one. Expiry is the event worth announcing,
+                            and the message that replaces this carries
+                            `role="alert"`. */}
+                        <p style={{ margin: 0, fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
+                          {t("network.pairExpiresIn", { time: countdownLabel(pairMsLeft) })}
+                        </p>
+                      </>
+                    )}
+
+                    <div className="m3-row">
+                      <Button variant="outlined" onClick={startPairing}>
+                        {t("network.pairRegenerate")}
+                      </Button>
+                      <Button variant="text" onClick={closePairing}>{t("network.pairClose")}</Button>
+                    </div>
+                  </div>
+                )}
               </Field>
             )}
 

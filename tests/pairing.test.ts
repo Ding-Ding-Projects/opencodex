@@ -68,6 +68,21 @@ describe("what a pairing token is worth", () => {
     expect(config.apiKeys ?? []).toHaveLength(0);
   });
 
+  test("an expired claim says so, rather than reporting no pairing at all", () => {
+    // These are different situations with different fixes — "your code aged
+    // out, mint another" versus "nobody has started pairing here". Sending
+    // someone whose code merely expired off to open a pairing panel that is
+    // already open is the kind of advice that reads as the feature being broken.
+    const config = emptyConfig();
+    let clock = 1_000_000;
+    const offer = createPairingToken(() => clock);
+
+    clock += PAIRING_TTL_MS + 1;
+
+    expect(claimPairingToken(offer.token, config, () => clock))
+      .toEqual({ ok: false, reason: "expired" });
+  });
+
   test("it is still claimable a moment before expiry", () => {
     // The boundary in the other direction: an off-by-one here would make
     // pairing fail intermittently near the end of the window, which reads as

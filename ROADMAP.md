@@ -37,6 +37,7 @@ Behaviour documented on [opencodex.me](https://opencodex.me/) and shipped in a t
 | Home Assistant usage-meter integration; auto-release on green CI | `7a6cdd3a` |
 | Estimated API cost meter in the app bar | `34b1dea0` |
 | App logs written to `~/.opencodex/logs/opencodex.log`, rotated at 2 MiB keeping 3 generations (8 MiB ceiling); clearing the logs commits them to the local git history first, and restoring appends rather than rewinds | uncommitted |
+| QR pairing for the mobile remote — one-click remote access that generates its own data-plane key, a QR carrying a single-use 5-minute pairing token, and a phone that claims it once and remembers the key. The claim route is deliberately unauthenticated and rate limited; `/api/host` now reports `restartPending` so the dashboard stops claiming a bind the socket has not taken yet | uncommitted |
 
 ## Design parity with `design/`
 

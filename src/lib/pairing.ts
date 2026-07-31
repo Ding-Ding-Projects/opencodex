@@ -115,11 +115,17 @@ export function claimPairingToken(
   config: OcxConfig,
   now: () => number = Date.now,
 ): ClaimResult {
+  // Read before peeking, not after. `peekPairing` *drops* an expired token as a
+  // side effect, so asking `pending` afterwards always answered null and the
+  // "expired" branch below could never be taken — every timed-out claim reported
+  // "no-pairing" instead. The two need different words because they need
+  // different actions: "expired" means mint another, "none outstanding" means
+  // the user never started pairing on the desktop at all, and telling someone
+  // whose code merely aged out to go and start pairing sends them to a screen
+  // where pairing is already open.
+  const hadOutstanding = pending !== null;
   const offer = peekPairing(now);
-  // `peekPairing` has already dropped an expired token, so tell the two apart
-  // for the caller's message: "expired" is actionable (mint another), "none
-  // outstanding" means the user never started pairing.
-  if (!offer) return { ok: false, reason: pending ? "expired" : "no-pairing" };
+  if (!offer) return { ok: false, reason: hadOutstanding ? "expired" : "no-pairing" };
 
   const a = Buffer.from(presented);
   const b = Buffer.from(offer.token);

@@ -316,7 +316,11 @@ and restarts. Append-only throughout: an undo can be undone, and that undo undon
 - **Docker** — `docker build -t opencodex .`, with a supervising entrypoint so the dashboard's
   restart works inside a container instead of ending it.
 - **Remote access** — `ocx host enable` exposes the proxy to your LAN behind a required credential,
-  with a separate admin token for the dashboard and `/api/*`.
+  with a separate admin token for the dashboard and `/api/*`. Turning it on from the dashboard
+  generates that credential for you, so there is no password to invent.
+- **Pair a phone by QR** — the remote control's code carries a one-time pairing token as well as the
+  address. The phone spends it on arrival, keeps a data-plane key of its own, and never scans again.
+  Single use, five-minute expiry, one outstanding at a time, and never an admin token.
 - **Headless parity** — anything the dashboard can do, the CLI can do. A test enforces it.
 
 </details>

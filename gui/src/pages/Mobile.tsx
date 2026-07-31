@@ -6,12 +6,17 @@
  * full-bleed surface with a bottom bar, 44px targets and safe-area insets —
  * rather than the admin UI squeezed into 390px.
  *
- * It deliberately adds no new server API. Chat goes through the proxy's own
- * `/v1/chat/completions`, which is the same endpoint every other client uses,
- * so a message sent from a phone is routed, logged, counted and billed exactly
- * like one sent from Codex. Sessions read `/api/logs`; control reads
- * `/api/host`. Inventing a parallel "mobile API" would have created a second
- * path to the same behaviour, and a second place for it to be wrong.
+ * It adds one server route and no more: `POST /api/host/pair/claim`, which
+ * exists because a phone that has never paired has no credential to present and
+ * therefore cannot be served by anything already here. Everything else reuses
+ * what other clients use. Chat goes through the proxy's own
+ * `/v1/chat/completions` and the model list through `/v1/models`, both on the
+ * data-plane key pairing hands out, so a message sent from a phone is routed,
+ * logged, counted and billed exactly like one sent from Codex. Sessions read
+ * `/api/logs`; control reads `/api/host` — both management routes, so both need
+ * the desktop's admin token and say so rather than pretending to load. Inventing
+ * a parallel "mobile API" would have created a second path to the same
+ * behaviour, and a second place for it to be wrong.
  *
  * ## Reaching it from a phone
  *
@@ -19,12 +24,31 @@
  * Remote access screen), which requires a credential — that gate is deliberately
  * the same one the rest of the exposed surface uses, and this screen does not
  * weaken it.
+ *
+ * What changed is how the phone *gets* that credential. Scanning the pairing QR
+ * on the Remote access screen opens `#/mobile?pair=<token>`; this screen spends
+ * the token on load, receives a data-plane key of its own, and removes the
+ * parameter from the URL. Nobody types a 43-character key on a phone keyboard,
+ * and nothing that survives the page — a screenshot, a shared link, the
+ * browser's own session restore — carries a live pairing token.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { setAdminTokenPromptSuppressed } from "../api";
 import { readJsonIfOk } from "../fetch-json";
+import {
+  beginPairingClaim,
+  canRetryPairingClaim,
+  isClaimApplied,
+  markClaimApplied,
+  readPairedKey,
+  retryPairingClaim,
+  savePairedKey,
+  type ClaimFailure,
+} from "../lib/mobile-pairing";
 import { useT } from "../i18n/shared";
+import { useConfirm } from "../shell/confirm-context";
 import { useNotifications } from "../shell/notifications-context";
 
 type Panel = "chat" | "sessions" | "control";
@@ -65,33 +89,27 @@ interface HostStatus {
 /** Sessions poll while the tab is open; a phone on mobile data should not poll hard. */
 const SESSION_POLL_MS = 5000;
 
-/**
- * The API key lives in memory for the life of the page, and nowhere else.
- *
- * An earlier version persisted it to `localStorage`, which is exactly what
- * `gui/src/api.ts` forbids in as many words — "never write tokens to web
- * storage (XSS can read sessionStorage/localStorage)" — and which it enforces
- * by wiping a legacy stored token on every boot. Reintroducing one here would
- * have made this screen the single place in the GUI where a live proxy
- * credential sits readable by any script on the origin.
- *
- * The cost is retyping it after a reload, which is the same bargain the desktop
- * dashboard already makes for its management token. A module-scope variable
- * rather than component state so it survives navigating away and back within
- * one page load.
- */
-let memoryKey = "";
-
 export default function Mobile({ apiBase }: { apiBase: string }) {
   const t = useT();
   const { notify } = useNotifications();
+  // Shadows the global `confirm` deliberately, as every other page here does:
+  // forgetting a paired key is a decision, and a decision gets the M3 dialog.
+  const confirm = useConfirm();
 
   const [panel, setPanel] = useState<Panel>("chat");
   const [models, setModels] = useState<ModelRow[]>([]);
   const [model, setModel] = useState("");
   // Lazy initializer rather than an effect: this is a synchronous storage read
   // that produces the initial value, so an effect would only add a second render.
-  const [apiKey, setApiKey] = useState(memoryKey);
+  const [apiKey, setApiKey] = useState(readPairedKey);
+  const [claiming, setClaiming] = useState(false);
+  const [pairError, setPairError] = useState<ClaimFailure | null>(null);
+  // A key the proxy has actually refused, as opposed to one simply absent. The
+  // two need different advice: "pair this device" versus "pair it again".
+  const [keyRejected, setKeyRejected] = useState(false);
+  // Bumped by the retry button so the claim effect re-runs against the token
+  // still held in module scope.
+  const [reclaim, setReclaim] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -99,7 +117,11 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
   // Collapsing the first two showed "could not read the session log" for a
   // moment on every visit, before anything had been attempted.
   const [logs, setLogs] = useState<LogRow[] | null | undefined>(undefined);
-  const [host, setHost] = useState<HostStatus | null>(null);
+  // undefined = not read yet, null = the read failed, which on a phone usually
+  // means 401: `/api/host` is a management route and a paired phone holds a
+  // data-plane key. Collapsing the two left this panel showing "Loading…"
+  // forever with nothing to act on.
+  const [host, setHost] = useState<HostStatus | null | undefined>(undefined);
 
   const transcript = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
@@ -111,16 +133,45 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
   const [reload, setReload] = useState(0);
   const [modelsError, setModelsError] = useState(false);
 
+  /**
+   * A 401 here must not demand an admin token.
+   *
+   * `/api/*` accepts only the management credential, so a phone holding the
+   * data-plane key it was paired with gets 401 from the panels below by design.
+   * The shared fetch wrapper answers a 401 by opening a dialog asking for an
+   * ADMIN token — one the phone user does not have and whose own copy says a
+   * data-plane key will not work — which turned a successful pairing into what
+   * looked like a credential failure. The 401 still reaches the callers here;
+   * only the dialog is silenced, so each panel can say what it actually needs.
+   */
+  useEffect(() => {
+    setAdminTokenPromptSuppressed(true);
+    return () => setAdminTokenPromptSuppressed(false);
+  }, []);
+
+  // True once a model list has actually arrived, so the first discovery runs
+  // immediately and only the re-runs below pay the debounce.
+  const haveModels = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const load = async () => {
       try {
-        const res = await fetch(`${apiBase}/api/models`);
-        const data = await readJsonIfOk<{ models?: ModelRow[] } | ModelRow[]>(res);
-        const rows = Array.isArray(data) ? data : data?.models;
+        // `/v1/models`, not `/api/models`. The management route requires the
+        // admin token, so on a published proxy a paired phone got an empty
+        // picker and a permanently disabled Send button — chat worked and there
+        // was no way to start one. `/v1/models` is the data-plane discovery
+        // endpoint every other client uses, and it takes exactly the credential
+        // pairing hands out.
+        const res = await fetch(`${apiBase}/v1/models`, {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        });
+        const data = await readJsonIfOk<{ data?: ModelRow[] } | ModelRow[]>(res);
+        const rows = Array.isArray(data) ? data : data?.data;
         if (cancelled) return;
         if (!Array.isArray(rows)) { setModelsError(true); return; }
         setModelsError(false);
+        haveModels.current = true;
         setModels(rows);
         setModel(current => current || rows[0]?.id || "");
       } catch {
@@ -128,9 +179,16 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
         // HTTP error, so `readJsonIfOk` never sees it.
         if (!cancelled) setModelsError(true);
       }
-    })();
-    return () => { cancelled = true; };
-  }, [apiBase, reload]);
+    };
+
+    // Debounced on re-runs, immediate on the first. `apiKey` has to be a
+    // dependency — the list is a data-plane read and an unpaired phone gets
+    // nothing without the key — but the Control tab's key field updates it on
+    // every keystroke, so a hand-typed 43-character key fired 43 discovery
+    // requests. Pairing sets the key in one go and is unaffected either way.
+    const timer = setTimeout(() => void load(), haveModels.current ? 400 : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [apiBase, apiKey, reload]);
 
   // Sessions and host status refresh only while their tab is showing.
   useEffect(() => {
@@ -202,6 +260,18 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
         },
         body: JSON.stringify({ model, messages: history, stream: true }),
       });
+
+      // A refused credential is not a generic HTTP failure: it is the one error
+      // this screen can actually fix, and it must say so rather than surfacing
+      // the proxy's raw "opencodex API key required" and leaving the user to
+      // guess that the key their phone has silently stopped working. Keys are
+      // revoked from the dashboard and wiped by a state restore, so a stored key
+      // going stale is expected, not exotic.
+      if (res.status === 401) {
+        setKeyRejected(true);
+        setPanel("control");
+        throw new Error(t(apiKey ? "mobile.keyRejectedBody" : "mobile.keyMissingBody"));
+      }
 
       if (!res.ok || !res.body) {
         const detail = await res.text().catch(() => "");
@@ -287,8 +357,60 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
 
   const saveKey = useCallback((value: string) => {
     setApiKey(value);
-    memoryKey = value;
+    savePairedKey(value);
+    // Any stored rejection belonged to the key being replaced.
+    setKeyRejected(false);
   }, []);
+
+  /**
+   * Spend the pairing token this page was opened with.
+   *
+   * `claimApplied` is module scope, not a ref, so it is scoped to the page load
+   * rather than to a component instance: navigating away from this screen and
+   * back must not re-announce a pairing that already happened.
+   */
+  useEffect(() => {
+    const pending = beginPairingClaim(apiBase);
+    if (!pending || isClaimApplied()) return;
+
+    let cancelled = false;
+    setClaiming(true);
+    void pending.then(outcome => {
+      // `cancelled` covers StrictMode's first, discarded mount; the applied
+      // latch covers a re-run from a locale change while the request was in
+      // flight. Either way the outcome is announced exactly once.
+      if (cancelled || !markClaimApplied()) return;
+      setClaiming(false);
+      if (outcome.ok) {
+        saveKey(outcome.key);
+        setPairError(null);
+        notify({ tone: "success", title: t("mobile.paired"), body: t("mobile.pairedBody") });
+      } else {
+        setPairError(outcome.reason);
+        notify({ tone: "error", title: t("mobile.pairFailed"), body: t(`mobile.pairFailed.${outcome.reason}`) });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [apiBase, notify, reclaim, saveKey, t]);
+
+  /** Retry a claim that failed on the network, without another trip to the QR. */
+  const retryPairing = useCallback(() => {
+    if (!retryPairingClaim(apiBase)) return;
+    setPairError(null);
+    setReclaim(n => n + 1);
+  }, [apiBase]);
+
+  const forgetDevice = useCallback(async () => {
+    const confirmed = await confirm({
+      title: t("mobile.forget"),
+      body: t("mobile.forgetConfirm"),
+      confirmLabel: t("mobile.forget"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    saveKey("");
+    notify({ tone: "success", title: t("mobile.forgotten"), body: t("mobile.forgottenBody") });
+  }, [confirm, notify, saveKey, t]);
 
   return (
     <div className="m3-mob">
@@ -416,8 +538,10 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
           <div className="m3-mob__list">
             <article className="m3-mob__session">
               <div className="m3-mob__sessionhead"><strong>{t("mobile.proxy")}</strong></div>
-              {host === null ? (
+              {host === undefined ? (
                 <p className="m3-mob__hint">{t("common.loading")}</p>
+              ) : host === null ? (
+                <p className="m3-mob__hint">{t("mobile.hostUnavailable")}</p>
               ) : (
                 <>
                   <div className="m3-mob__sessionmeta">
@@ -429,6 +553,42 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
                   )}
                   {host.urls.map(url => <div key={url} className="m3-mob__url">{url}</div>)}
                 </>
+              )}
+            </article>
+
+            <article className="m3-mob__session">
+              <div className="m3-mob__sessionhead">
+                <strong>{t("mobile.pairing")}</strong>
+                <span className={apiKey ? "m3-mob__ok" : "m3-mob__bad"}>
+                  {apiKey ? t("mobile.pairedState") : t("mobile.unpairedState")}
+                </span>
+              </div>
+
+              {claiming ? (
+                <p className="m3-mob__hint" role="status">{t("mobile.pairingClaiming")}</p>
+              ) : pairError ? (
+                <>
+                  <p className="m3-mob__bad" role="alert">{t(`mobile.pairFailed.${pairError}`)}</p>
+                  {/* Only a dropped connection is worth retrying: a spent, wrong
+                      or expired token will refuse identically however many times
+                      it is presented, so offering "try again" for those would be
+                      an invitation to keep failing. */}
+                  {(pairError === "no-connection" || pairError === "rate-limited") && canRetryPairingClaim() && (
+                    <button type="button" className="m3-mob__send" onClick={retryPairing}>
+                      {t("mobile.retry")}
+                    </button>
+                  )}
+                </>
+              ) : keyRejected ? (
+                <p className="m3-mob__bad" role="alert">{t("mobile.keyRejectedBody")}</p>
+              ) : (
+                <p className="m3-mob__hint">{apiKey ? t("mobile.pairedHint") : t("mobile.unpairedHint")}</p>
+              )}
+
+              {apiKey && (
+                <button type="button" className="m3-mob__send m3-mob__send--stop" onClick={() => void forgetDevice()}>
+                  {t("mobile.forget")}
+                </button>
               )}
             </article>
 

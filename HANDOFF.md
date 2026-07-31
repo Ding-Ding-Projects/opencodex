@@ -67,6 +67,65 @@ script stays alive (FAIL), the current one exits with `stop requested; not resta
 model traffic, and the admin token (`ocx host token`) for `/api/*` and the dashboard. The server
 refuses one value configured as both.
 
+### QR pairing for the mobile remote
+
+`src/lib/pairing.ts` existed, was fully tested, and was imported by nothing. It is now wired to
+three routes in `src/server/management/host-routes.ts`: `POST /api/host/pair` mints,
+`DELETE /api/host/pair` cancels, and `POST /api/host/pair/claim` spends a token for a data-plane
+key.
+
+**The claim is deliberately unauthenticated, and that exemption does not live in the route.**
+`src/server/index.ts` runs `requireManagementAuth` across the whole of `/api/*` *before* route
+dispatch, so no handler can excuse itself — the bypass is a predicate at the gate,
+`isUnauthenticatedPairingClaim(method, pathname)`, exported from the route file so the two cannot
+drift. Widening it opens the management API; narrowing it makes pairing impossible with a 401 that
+reads like a bad token. Both directions are silent, which is why
+`tests/pairing-routes.test.ts` asserts a sibling `/api/host` request 401s in the same test that
+asserts the claim does not.
+
+Things a successor should not undo without knowing why:
+
+- **The claim never answers 401.** `gui/src/api.ts` treats a 401 on `/api/*` as "prompt for the
+  admin token", so a mistyped pairing code would demand an admin credential from the one device
+  that cannot hold one. Refusals are 400, rate limiting is 429.
+- **`gui/src/lib/mobile-pairing.ts` writes the paired key to `localStorage`**, which `api.ts`
+  forbids in as many words — for the *admin* token, which exports every account. This one only
+  sends requests, and the memory-only version meant re-scanning a QR every time a phone browser
+  evicted the tab. The module comment states the accepted cost.
+- **`setAdminTokenPromptSuppressed`** (`gui/src/api.ts`) is set while the mobile route is mounted,
+  and `App.tsx` disables the `/api/claude-code` poll there. Without both, a phone that has just
+  paired is shown a dialog demanding an admin token and stating that a data-plane key will not work.
+- **The model list reads `/v1/models`, not `/api/models`.** The management route needs the admin
+  token, so a paired phone got an empty picker and a permanently disabled Send button.
+- **`restartPending`** on `GET/PUT /api/host` compares the live `Bun.serve` bind to the configured
+  one. The pairing panel refuses to show a QR while they disagree: `urls` comes from the config, so
+  the code would point at a socket still on loopback and the 5-minute token would expire proving
+  nothing.
+
+Two defects were found and fixed on the way, both pre-existing:
+
+- `readPageFromHash` / `hashBelongsToPage` matched the **whole** hash against the page table, so
+  `#/mobile?pair=<token>` resolved to `dashboard` — the QR could not open the one screen it existed
+  for. `hashRoutePath()` / `hashRouteParams()` in `gui/src/app-routing.ts` split route from query.
+- `claimPairingToken` could never return `"expired"`. `peekPairing` drops the expired token as a
+  side effect, so the `pending ? "expired" : "no-pairing"` line after it always took the second
+  branch. Now read before the peek, and pinned by a case in `tests/pairing.test.ts`.
+
+**Verification actually run**, on this tree:
+
+| Command | Result |
+| --- | --- |
+| `bun x tsc --noEmit` (root) | clean |
+| `bun test tests/pairing-routes.test.ts tests/pairing.test.ts` | 28 pass, 0 fail |
+| `gui: tsc -b --force` | clean |
+| `gui: eslint src --max-warnings=0` | clean |
+| `gui: bun test tests` | 699 pass, 0 fail, 116 files |
+
+Not run: the docs-site suite (its `node_modules` is not installed in this checkout, and its tests do
+not read the `content/docs` markdown this change edited), and any real-device scan of a QR code —
+the encoder is asserted against `qrSvgPath(encodeQr(...))` in `gui/tests/network-pairing-qr.test.tsx`,
+which proves the payload, not that a phone camera read it.
+
 ### Undoable deletion, and one-click restore
 
 Every path that can destroy a credential now commits the state **before** deleting, not only after:

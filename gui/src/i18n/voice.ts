@@ -407,19 +407,24 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
     },
   },
 
+  // The fact these five levels state changed with the behaviour: pairing now
+  // saves a data-plane key in this browser, so a variant still promising "never
+  // written to storage" would be the slider telling a security lie. See the
+  // storage note at the top of gui/src/pages/Mobile.tsx for why that trade is
+  // made, and mobile.pairedHint for what the user is told about revoking it.
   "mobile.apiKeyHint": {
     cat: "security",
     en: {
-      1: "Required when the proxy is published to the network. It is held in memory for this session only and is never written to storage, so it must be entered again after a reload.",
-      2: "Needed once the proxy is published to the network. It is kept in memory for this session only and never written to storage, so you re-enter it after a reload.",
-      4: "Only needed when the proxy is published to the network. It lives in memory for this session and is never written to storage — so a reload means typing it again.",
-      5: "Only wanted when the proxy is out on the network. It lives in memory for this session and touches storage never, which is exactly why a reload makes you type it again.",
+      1: "Required when the proxy is published to the network. Pairing supplies it automatically; enter one here only if a QR code is not being used.",
+      2: "Needed once the proxy is published to the network. Pairing fills it in for you, so type one here only if you are not scanning a QR code.",
+      4: "Only needed when the proxy is published to the network. Pairing fills it in — this box is for when you are not scanning a QR code.",
+      5: "Only wanted when the proxy is out on the network. Pairing hands it over for you, so this box is strictly for the no-QR-code crowd.",
     },
     yue: {
-      1: "當 proxy 已公開畀網絡時才需要。只會保存喺記憶體（僅此工作階段），唔會寫入儲存空間，所以重新載入之後要再輸入一次。",
-      2: "proxy 公開咗畀網絡先需要。淨係擺喺記憶體，今次 session 有效，唔會寫入儲存空間，所以重新載入之後要再入一次。",
-      4: "淨係喺 proxy 公開咗畀網絡先要。佢住喺記憶體度，今次 session 過後就冇，亦都唔會寫入儲存空間 —— 所以一 reload 就要再打過。",
-      5: "proxy 出咗街先會問你攞。佢淨係瞓喺記憶體，一次都唔會掂儲存空間，所以你一 reload 就要再打多次。",
+      1: "當 proxy 已公開畀網絡時才需要。配對會自動提供；只有喺唔使用 QR code 嘅情況下才喺呢度輸入。",
+      2: "proxy 公開咗畀網絡先需要。配對會幫你填好，所以唔掃 QR code 先至喺呢度打。",
+      4: "淨係喺 proxy 公開咗畀網絡先要。配對會幫你填埋 —— 呢格係留畀唔掃 QR code 嗰陣用。",
+      5: "proxy 出咗街先會問你攞。配對會自動奉上，所以呢格淨係服務唔掃 QR code 嗰班。",
     },
   },
 

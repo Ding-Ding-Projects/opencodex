@@ -119,6 +119,29 @@ export function setTokenRequester(requester: TokenRequester | null): void {
 }
 
 /**
+ * Surfaces where a 401 must NOT ask for an admin token.
+ *
+ * The mobile remote is one. It is reached by scanning a pairing QR and what it
+ * receives is a **data-plane** key, while `/api/*` accepts only the management
+ * credential — so every management read from a phone answers 401 by design.
+ * Asking for an admin token there is wrong three times over: the phone user does
+ * not have one, cannot produce one from the phone, and the dialog's own copy
+ * says a data-plane key will not work for `/api/*`. The result was that a
+ * successful pairing presented itself as a credential failure.
+ *
+ * Suppressing only silences the *prompt*. The 401 still reaches the caller,
+ * which is what lets the mobile screen say plainly that a panel needs the
+ * desktop instead of hanging on "Loading…". It also deliberately does not set
+ * `promptCancelled`, so leaving that surface restores normal behaviour rather
+ * than latching the dashboard into never asking again.
+ */
+let promptSuppressed = false;
+
+export function setAdminTokenPromptSuppressed(suppressed: boolean): void {
+  promptSuppressed = suppressed;
+}
+
+/**
  * Ask for a token, by whatever means this environment actually has.
  *
  * **Electron does not implement `window.prompt` and throws when it is called.**
@@ -146,6 +169,9 @@ async function askForToken(): Promise<string | null> {
  * prompting so waiters that wake after another request already stored a token do not re-prompt.
  */
 async function resolveTokenAfter401(failedToken: string | null): Promise<string | null> {
+  // Checked before `promptCancelled` so a suppressed surface never latches the
+  // cancel flag on behalf of the whole page load.
+  if (promptSuppressed) return null;
   if (promptCancelled) return null;
   if (promptInFlight) return promptInFlight;
 
@@ -212,4 +238,5 @@ export function resetApiAuthFetchForTests(): void {
   memorySessionOrigin = null;
   promptInFlight = null;
   promptCancelled = false;
+  promptSuppressed = false;
 }

@@ -142,7 +142,20 @@ export default function App() {
     return d && typeof d.enabled === "boolean" ? d.enabled : null;
   }, []);
 
-  const claudePoll = useKeyedClientResource(`app-claude-code:${API_BASE}`, [], fetchClaudeEnabled);
+  // Silent on the phone. This poll is for the nav rail's Claude switch, which
+  // the mobile remote does not render — and `/api/claude-code` is a management
+  // route, so on a published proxy it answers 401 to a phone holding a
+  // data-plane key. That 401 reaches `api.ts`, which asks for an ADMIN token in
+  // a dialog stating that a data-plane key will not work here: a user who has
+  // just scanned a pairing QR would be told, by the app, that the credential
+  // they were handed is useless. Hooks cannot be skipped, so the request is
+  // disabled instead.
+  const claudePoll = useKeyedClientResource(
+    `app-claude-code:${API_BASE}`,
+    [],
+    fetchClaudeEnabled,
+    { enabled: page !== "mobile" },
+  );
   const claudeEnabled = claudePoll.data ?? null;
   // A ref, not state: the guard has to hold within a single click burst, before
   // React has re-rendered with the pending flag.
@@ -207,7 +220,19 @@ export default function App() {
   // The remote control is its own product surface, not a page inside the admin
   // shell: it takes the whole viewport with a bottom bar, because a nav rail and
   // a tab strip are the wrong furniture for a thumb on a phone.
-  if (page === "mobile") return <MobileRemote apiBase={API_BASE} />;
+  // SnackbarHost comes along: it is rendered once, at the bottom of the shell
+  // below, which this early return skips. Every notification the remote raises —
+  // paired, pairing failed, key forgotten — went into the store and rendered
+  // nowhere, so the phone's most important feedback was the one screen with no
+  // way to show it.
+  if (page === "mobile") {
+    return (
+      <>
+        <MobileRemote apiBase={API_BASE} />
+        <SnackbarHost />
+      </>
+    );
+  }
 
   return (
     <div className={`m3-app${compact ? " m3-app--compact" : ""}`}>
