@@ -16,6 +16,22 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
+  # The manual door. When the automatic path is broken — a refused token, a
+  # transient API failure, a commit whose CI went red for an unrelated reason —
+  # this builds the installer anyway and leaves it as an artifact. Waiting for
+  # the pipeline to be fixed before anyone can get a build is how a working
+  # installer sits unbuilt for hours.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit, branch or tag to build"
+        required: false
+        default: main
+      publish:
+        description: "Also publish a GitHub release (off = artifact only)"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: write
@@ -25,22 +41,32 @@ concurrency:
   # newer push must not abort a publish that is already uploading an
   # installer. Releases are tagged build-<run>, so two in flight cannot
   # collide on a tag.
-  group: auto-release-${{ github.event.workflow_run.head_sha }}
+  group: auto-release-${{ github.event.workflow_run.head_sha || inputs.ref || github.sha }}
   cancel-in-progress: false
 
 jobs:
   release:
-    # Only green CI, and only pushes (workflow_run also fires for PR CI runs).
+    # Green CI on a push, or an explicit manual request. `workflow_run` also
+    # fires for PR CI runs, which must never publish.
     if: >
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - name: Checkout the exact commit CI validated
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.ref }}
+
+      # One resolved SHA for every step below. The manual path has no
+      # `workflow_run.head_sha`, and a branch name is not a commit — the release
+      # target, the codename and the notes must all name the same thing or the
+      # release says it is one commit while carrying another.
+      - name: Resolve the commit being released
+        shell: bash
+        run: echo "SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -56,8 +82,6 @@ jobs:
       # art is missing rather than publishing a release with a broken image.
       - name: Pick the dim sum codename
         shell: bash
-        env:
-          SHA: ${{ github.event.workflow_run.head_sha }}
         run: bun scripts/release-codename.ts "$SHA" "${{ github.repository }}" >> "$GITHUB_ENV"
 
       - name: Install proxy dependencies
@@ -90,11 +114,37 @@ jobs:
       - name: Build the Windows installer
         run: npx --yes electron-builder@26.15.3 --win --publish never
 
+      # Upload BEFORE publishing, and regardless of what happens after.
+      #
+      # A run once built a 181 MB working installer and threw it away because
+      # `gh release create` came back "HTTP 403: Resource not accessible by
+      # integration". The build was fine; only the last API call was refused,
+      # and there was nothing left to download. Whatever breaks in the publish
+      # step from here on, the installer it already built survives it.
+      - name: Keep the installer as an artifact, whatever happens next
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencodex-setup-${{ github.run_number }}
+          path: |
+            dist-desktop/*.exe
+            opencodex-dashboard.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0 # An NSIS installer is already compressed.
+
       - name: Create the release
+        # Skipped only when a manual run asked for the artifact alone.
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          # The workflow token is refused for release creation on this
+          # repository even with `contents: write` — measured, not assumed:
+          # run 30600902455 got a 403 on POST /releases. `ORG_TOKEN` is the
+          # organization secret provided for exactly this. The chain keeps an
+          # optional repo-scoped PAT ahead of it and the workflow token as a
+          # last resort, so a fork with none of them still runs and fails
+          # honestly rather than not running at all.
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || github.token }}
         run: |
           tag="build-${{ github.run_number }}"
           version=$(node -p "require('./package.json').version")
@@ -141,10 +191,22 @@ jobs:
             "$installer#opencodex-setup.exe" \
             "opencodex-dashboard.zip"
 
+      # A red run is not self-explanatory when the thing that failed was the
+      # last API call. Say plainly that the installer exists and where, so the
+      # answer to "can I get a build?" is on the run that failed rather than
+      # somewhere the reader has to know to look.
+      - name: Point at the artifact when publishing failed
+        if: failure()
+        shell: bash
+        run: |
+          echo "::warning::Publishing failed, but the installer was built and is attached to this run as the artifact 'opencodex-setup-${{ github.run_number }}'. Download it from ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
       - name: Prune old automated builds (keep 10)
+        # Never let tidying delete a release when the publish above did not run.
+        if: success()
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || github.token }}
         run: |
           # Only build-* releases are pruned; versioned releases are never touched.
           gh release list --limit 100 --json tagName \
