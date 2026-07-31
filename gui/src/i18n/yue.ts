@@ -2008,6 +2008,20 @@ export const yue: Partial<Record<TKey, string>> = {
   "confirm.restoreForceAction": "照還原",
   "confirm.exposeTitle": "將個 proxy 公開畀你個網絡",
   "confirm.exposeAction": "公開",
+  "confirm.removeAccountTitle": "移除呢個帳戶",
+  "confirm.removeKeyTitle": "移除呢條 API key",
+  "confirm.removeAction": "移除",
+  "confirm.restartTitle": "重啟個 proxy",
+  "confirm.restartAction": "重啟",
+  "confirm.deleteModelTitle": "刪除呢個模型",
+  "confirm.deleteAction": "刪除",
+
+  // ---- 文字輸入對話框 ----
+  "prompt.aliasTitle": "改個顯示名",
+  "prompt.aliasAction": "儲存",
+  "auth.adminTokenTitle": "要 admin token 先得",
+  "auth.adminTokenLabel": "Admin token",
+  "auth.adminTokenAction": "用呢個 token",
 
   // ---- account switcher ----
   "switcher.title": "Codex 帳戶",
