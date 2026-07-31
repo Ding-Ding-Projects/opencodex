@@ -13,8 +13,13 @@ import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import { useConfirm } from "../shell/confirm-context";
 import { useCopyFeedback } from "../components/use-copy-feedback";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SettingsSearchRow } from "../shell/SettingsSearch";
+import { useSettingsSearch } from "../shell/use-settings-search";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import QrCode from "../components/QrCode";
 import { hashRouteFor } from "../app-routing";
+import type { SettingsOption } from "../shell/settings-search";
 
 interface HostStatus {
   hostname: string;
@@ -32,6 +37,19 @@ interface StateHistoryEntry {
   at: string;
 }
 
+/**
+ * Where a phone lands when it scans one of these QRs.
+ *
+ * Extracted so the caption under each QR and the string the settings search
+ * indexes are produced by the same expression. Two copies of it would drift the
+ * first time the mobile route moves, and the failure mode is silent: the search
+ * would keep matching an address the page no longer shows.
+ */
+const mobileTargetFor = (url: string) => `${url.replace(/\/$/, "")}/${hashRouteFor("mobile")}`;
+
+/** One snapshot as both the history search and its builder's sample read it. */
+const snapshotText = (entry: StateHistoryEntry) => `${entry.short} ${entry.subject}`;
+
 export default function Network({ apiBase }: { apiBase: string }) {
   const t = useT();
   const { notify } = useNotifications();
@@ -39,8 +57,15 @@ export default function Network({ apiBase }: { apiBase: string }) {
   // file is now a type error rather than a grey Windows box at runtime.
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState("");
-  const [useRegex, setUseRegex] = useState(false);
+  // Named for the list they filter, because this screen now has two search bars
+  // and they must never be wired to each other: this pair belongs to the snapshot
+  // list at the bottom, while the settings search keeps its own query inside
+  // `useSettingsSearch`. A shared `query` here would mean typing a setting's name
+  // silently emptied the history, and typing a commit subject hid every card.
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyRegex, setHistoryRegex] = useState(false);
+  /** The flags the builder beside the history field applied, so the two agree. */
+  const [historyFlags, setHistoryFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [mintedKey, setMintedKey] = useState<string | null>(null);
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [customKey, setCustomKey] = useState("");
@@ -87,7 +112,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
    * makes it undoable in turn.
    */
   const restore = async (entry: StateHistoryEntry, force: boolean): Promise<void> => {
-    const label = `${entry.short} ${entry.subject}`;
+    const label = snapshotText(entry);
     if (!force) {
       const confirmed = await confirm({
         title: t("confirm.restoreTitle"),
@@ -223,29 +248,120 @@ export default function Network({ apiBase }: { apiBase: string }) {
   const { historyRows, historyError } = useMemo(() => {
     const entries = history.data;
     if (!entries) return { historyRows: entries, historyError: null as string | null };
-    if (!query) return { historyRows: entries, historyError: null as string | null };
-    let matcher: (text: string) => boolean;
-    if (useRegex) {
-      try {
-        const re = new RegExp(query, "i");
-        matcher = text => re.test(text);
-      } catch (e) {
-        return { historyRows: [], historyError: e instanceof Error ? e.message : String(e) };
-      }
-    } else {
-      const needle = query.toLowerCase();
-      matcher = text => text.toLowerCase().includes(needle);
-    }
+    if (!historyQuery) return { historyRows: entries, historyError: null as string | null };
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own: it
+    // compiles the flags the builder beside this field actually applied, so the
+    // panel's preview and this list cannot report different matches for the same
+    // pattern. It also drops `g`/`y`, which carry `lastIndex` between calls and
+    // would otherwise make `.test` over a list return every other snapshot.
+    const matcher = settingsMatcher(historyQuery, historyRegex, historyFlags);
+    if (matcher.error) return { historyRows: [], historyError: matcher.error };
     return {
-      historyRows: entries.filter(entry => matcher(`${entry.short} ${entry.subject}`)),
+      historyRows: entries.filter(entry => matcher.test(snapshotText(entry))),
       historyError: null as string | null,
     };
-  }, [history.data, query, useRegex]);
+  }, [history.data, historyQuery, historyRegex, historyFlags]);
 
   const status = host.data;
 
+  /**
+   * What this screen's own configuration is searchable by.
+   *
+   * The only field on this page used to filter the snapshot list, which left the
+   * settings above it — the exposure switch, the addresses, the QR block, the
+   * admin token, the custom key and the export — findable only by reading four
+   * cards top to bottom. A user who knows a setting by name got no answer at all,
+   * which reads as "this app does not have it" rather than "scroll further".
+   *
+   * Every row carries its current value as well as its name, because half the
+   * time what a user remembers is the value: the port they published on, the LAN
+   * address they scanned last week, whether the thing is on.
+   *
+   * Two deliberate omissions, both secrets. The admin token's actual value and
+   * the custom key being typed are never indexed: this option list is also the
+   * corpus the regex builder pastes into its sample textarea, so indexing them
+   * would copy a credential onto a second surface — and into whatever the user
+   * screenshots next — for no search anybody wants to run. Their rows are found
+   * by name and by the words on their buttons instead.
+   */
+  const settingsOptions: SettingsOption[] = useMemo(() => {
+    const urls = status?.urls ?? [];
+    return [
+      {
+        id: "exposed",
+        label: t("network.exposed"),
+        // The row's own sub-line, verbatim: `hostname:port` is the only thing it
+        // renders under the label, so that is its visible description.
+        desc: status ? `${status.hostname}:${status.port}` : undefined,
+        value: status?.exposed ? t("network.stateOn") : t("network.stateOff"),
+        keywords: t("network.endpointWords"),
+      },
+      { id: "urls", label: t("network.urls"), value: urls.join(" ") },
+      {
+        id: "mobile",
+        label: t("network.mobileTitle"),
+        desc: t("network.mobileHint"),
+        value: urls.map(mobileTargetFor).join(" "),
+      },
+      {
+        id: "adminToken",
+        label: t("network.adminToken"),
+        desc: t("network.adminTokenHint"),
+        // The state of the reveal, not the token: "Reveal" while it is hidden,
+        // "Hide" once it is on screen — which is what the button actually reads.
+        value: adminToken ? t("network.hide") : t("network.reveal"),
+        keywords: `${t("network.reveal")} ${t("network.hide")} ${t("network.copy")}`,
+      },
+      {
+        id: "customKey",
+        label: t("network.customKeyTitle"),
+        desc: t("network.customKeyHint"),
+        keywords: `${t("network.customKeyAdd")} ${t("network.customKeyPlaceholder")}`,
+      },
+      {
+        id: "export",
+        label: t("network.exportTitle"),
+        desc: t("network.exportSub"),
+        // The warning paragraph is on screen, so it is searchable: someone who
+        // remembers only "plaintext secrets" has to land on this card.
+        keywords: `${t("network.exportButton")} ${t("network.exportWarning")}`,
+      },
+      {
+        id: "history",
+        label: t("network.historyTitle"),
+        desc: t("network.historySub"),
+        keywords: `${t("network.historySearch")} ${t("network.restore")}`,
+      },
+    ];
+  }, [t, status, adminToken]);
+
+  // Flat surface: four stacked cards, no tabs. So no `tab` on any option and no
+  // `activeTab` here — inventing one would have the status line offer to send the
+  // user to a tab this screen does not have.
+  const settingsSearch = useSettingsSearch({ options: settingsOptions });
+  const { matches } = settingsSearch;
+
+  /**
+   * A titled card with every row filtered out reads as a bug, so a card whose
+   * contents all missed is not rendered at all.
+   *
+   * The minted key is the one thing that overrides the filter. It is shown
+   * exactly once and there is no second chance to read it, so a search typed
+   * while it is on screen must not be what destroys it.
+   */
+  const hostCardShown =
+    matches("exposed") || matches("urls") || matches("mobile") || matches("adminToken") || !!mintedKey;
+
   return (
     <>
+      {/*
+        Search first, above the cards it filters — the same position every other
+        settings surface puts it in, so the control is where a returning user
+        already expects it.
+      */}
+      <SettingsSearchRow search={settingsSearch} builderLabel={t("network.settingsBuilder")} />
+
+      {hostCardShown && (
       <Card title={t("network.hostTitle")} subtitle={t("network.hostSub")}>
         {/* null is a failed read, undefined is still loading. Collapsing the two
             left a dead proxy showing "Loading…" forever with no way to tell. */}
@@ -255,6 +371,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
           <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
         ) : (
           <>
+            {matches("exposed") && (
             <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-3)" }}>
               <div>
                 <div style={{ fontWeight: 500 }}>{t("network.exposed")}</div>
@@ -264,8 +381,9 @@ export default function Network({ apiBase }: { apiBase: string }) {
               </div>
               <Toggle on={status.exposed} onChange={next => void setExposed(next)} label={t("network.exposed")} disabled={busy} />
             </div>
+            )}
 
-            {status.urls.length > 0 && (
+            {matches("urls") && status.urls.length > 0 && (
               <Field label={t("network.urls")}>
                 <div className="m3-stack">
                   {status.urls.map(url => (
@@ -279,14 +397,14 @@ export default function Network({ apiBase }: { apiBase: string }) {
                 previously answered that with a LAN address and a 40-character key
                 to retype by hand. The QR carries the mobile remote's URL
                 directly. */}
-            {status.urls.length > 0 && (
+            {matches("mobile") && status.urls.length > 0 && (
               <Field label={t("network.mobileTitle")}>
                 <p style={{ margin: "0 0 var(--sp-2)", fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>
                   {t("network.mobileHint")}
                 </p>
                 <div className="m3-qr-row">
                   {status.urls.map(url => {
-                    const target = `${url.replace(/\/$/, "")}/${hashRouteFor("mobile")}`;
+                    const target = mobileTargetFor(url);
                     return (
                       <figure key={url} className="m3-qr">
                         <QrCode text={target} label={t("network.mobileQrAlt", { url: target })} />
@@ -303,6 +421,9 @@ export default function Network({ apiBase }: { apiBase: string }) {
               </Field>
             )}
 
+            {/* Deliberately not behind `matches`: this key is shown once and there
+                is no second chance to read it, so a half-typed search must never
+                be the thing that takes it away. */}
             {mintedKey && (
               <div role="alert" style={{
                 padding: "var(--sp-3)", borderRadius: "var(--r-m)", marginBottom: "var(--sp-3)",
@@ -318,6 +439,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
               </div>
             )}
 
+            {matches("adminToken") && (
             <div className="m3-row m3-row--split">
               <div>
                 <div style={{ fontWeight: 500 }}>{t("network.adminToken")}</div>
@@ -333,10 +455,13 @@ export default function Network({ apiBase }: { apiBase: string }) {
                 <Button variant="outlined" onClick={() => void revealAdminToken()}>{t("network.reveal")}</Button>
               )}
             </div>
+            )}
           </>
         )}
       </Card>
+      )}
 
+      {matches("customKey") && (
       <Card title={t("network.customKeyTitle")} subtitle={t("network.customKeyHint")}>
         <div className="m3-row">
           <TextInput
@@ -380,29 +505,56 @@ export default function Network({ apiBase }: { apiBase: string }) {
           </Button>
         </div>
       </Card>
+      )}
 
+      {matches("export") && (
       <Card title={t("network.exportTitle")} subtitle={t("network.exportSub")}>
         <p style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--t-body-s)", color: "var(--m3-on-warn-container)", background: "var(--m3-warn-container)", padding: "var(--sp-2) var(--sp-3)", borderRadius: "var(--r-s)" }}>
           {t("network.exportWarning")}
         </p>
         <Button variant="filled" onClick={() => void downloadExport()}>{t("network.exportButton")}</Button>
       </Card>
+      )}
 
+      {matches("history") && (
       <Card title={t("network.historyTitle")} subtitle={t("network.historySub")}>
         {history.data && history.data.length > 0 && (
           <div className="m3-row" style={{ marginBottom: "var(--sp-3)" }}>
             <TextInput
-              value={query}
-              onChange={e => setQuery(e.target.value)}
+              value={historyQuery}
+              onChange={e => setHistoryQuery(e.target.value)}
               placeholder={t("network.historySearch")}
               aria-label={t("network.historySearch")}
               aria-invalid={!!historyError}
               style={{ flex: "1 1 240px", width: "auto" }}
             />
             {/* Plain text stays the default; `.*` is an explicit opt-in, as everywhere else. */}
-            <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+            <Chip selected={historyRegex} onClick={() => setHistoryRegex(v => !v)} title={t("search.regexHint")}>
               <code style={{ fontFamily: "var(--mono)" }}>.*</code>
             </Chip>
+            {/*
+              This field is the reason the rule exists: it offered regex mode and
+              then left the user to write the pattern from memory, in a 240px box,
+              with no way to see what it matched until they committed it. The
+              builder opens beside it, seeded from what is already typed, and
+              tests against the real snapshot subjects rather than a made-up
+              sample — so a pattern that previews three hits finds those three.
+
+              Its own state, never the settings search's: applying here rewrites
+              the snapshot filter and nothing else.
+            */}
+            <RegexBuilderButton
+              value={historyQuery}
+              flags={historyFlags}
+              // Both halves come back. A builder whose `m` was switched on,
+              // applied to a field that still compiles `i`, previews one set of
+              // snapshots and then filters to another.
+              onApply={(pattern, appliedFlags) => { setHistoryQuery(pattern); setHistoryFlags(appliedFlags); }}
+              regex={historyRegex}
+              onRegexChange={setHistoryRegex}
+              sample={history.data.map(snapshotText).join("\n")}
+              label={t("network.historyBuilder")}
+            />
           </div>
         )}
         {historyError && (
@@ -430,7 +582,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
                   variant="outlined"
                   disabled={busy}
                   onClick={() => void restore(entry, false)}
-                  aria-label={t("network.restoreAria", { label: `${entry.short} ${entry.subject}` })}
+                  aria-label={t("network.restoreAria", { label: snapshotText(entry) })}
                 >
                   {t("network.restore")}
                 </Button>
@@ -439,6 +591,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
           </ul>
         )}
       </Card>
+      )}
     </>
   );
 }

@@ -1,5 +1,204 @@
 # Handoff
 
+> [!NOTE]
+> Two handoffs live in this file. The section immediately below covers the **shared settings-search
+> component** on branch `claude/amazing-chandrasekhar-1d2846` (written 2026-07-31). Everything from
+> *"State of the working tree"* onward is the earlier **2026-07-30 `main`** handoff and is unchanged.
+
+---
+
+# Shared settings-search component — `claude/amazing-chandrasekhar-1d2846`
+
+Written **2026-07-31**. Branch `claude/amazing-chandrasekhar-1d2846`, in the linked worktree
+`.claude/worktrees/amazing-chandrasekhar-1d2846`.
+
+## Verification as it stands
+
+Run from `gui/`:
+
+```bash
+node node_modules/typescript/bin/tsc --noEmit && npx eslint src --max-warnings=0 && bun test
+```
+
+| Check | Result |
+| --- | --- |
+| `tsc --noEmit` | **clean** (exit 0) |
+| `eslint src --max-warnings=0` | **clean** (exit 0) |
+| `bun test` | **738 pass / 0 fail**, 118 files |
+
+> [!IMPORTANT]
+> `npx tsc` does **not** work in this checkout — it resolves to an unrelated npm package named `tsc`
+> and prints *"This is not the tsc command you are looking for"*. Use
+> `node node_modules/typescript/bin/tsc --noEmit`. `npx eslint` and `bun test` are fine.
+>
+> `gui/node_modules` was **not** present at session start. I ran `bun install` (161 packages). A
+> fresh agent on a clean worktree must do the same before anything runs.
+
+## What was built
+
+### The shared component — three new files under `gui/src/shell/`
+
+| File | Holds |
+| --- | --- |
+| `settings-search.ts` | Types + pure matching: `SettingsOption`, `ElsewhereOption`, `settingsMatcher`, `runSettingsSearch`, `optionText`, `DEFAULT_SEARCH_FLAGS`. No React, no i18n — testable without a DOM. |
+| `use-settings-search.ts` | The `useSettingsSearch` hook. Owns query / regex mode / flags. Its own file because `SettingsSearch.tsx` may only export components (the fast-refresh lint rule). |
+| `SettingsSearch.tsx` | `SettingsSearchRow` — field + `.*` chip + its **own** anchored `RegexBuilderButton` + status line. Has a `compact` prop for narrow surfaces. |
+
+Call shape:
+
+```tsx
+const options: SettingsOption[] = useMemo(() => [ ... ], [t, ...values]);
+const search = useSettingsSearch({ options, activeTab });   // activeTab optional
+const { matches } = search;
+
+<SettingsSearchRow search={search} />
+{ matches("someId") && <TheRowThatRendersThatSetting /> }
+```
+
+Behaviours, all covered by tests:
+
+- Searches **label, description, current value and keywords** — someone who remembers "Weekly" finds the control they set to Weekly.
+- Reports an off-tab match **in words** (`settings.otherTabHere`), separately from a match on another *surface* (`settings.otherTab`).
+- Plain text is the default; `.*` is an explicit opt-in, so metacharacters stay literal until then.
+- **Flags round-trip** — applying the builder writes pattern *and* flags back, so the panel's preview and the field's result agree.
+- `g` / `y` are stripped before compiling: they carry `lastIndex`, which makes `.test()` over a list return every *other* match.
+- Bounds come from `src/regex/engine.ts` (400-char pattern, 20 000-char sample). Nothing persisted, nothing transmitted.
+- Each `useSettingsSearch()` call is independent, and each row uses `useId()` for its status line — two bars on one screen cannot share state or collide on a DOM id.
+
+### Surfaces that gained a settings search (had **none** before)
+
+| Surface | Files | Options |
+| --- | --- | --- |
+| Startup | `pages/Startup.tsx`, `startup-sections.tsx`, `startup-shared.ts` | 14 (flat) |
+| Debug | `pages/Debug.tsx`, `debug-settings-panel.tsx`, `debug-shared.ts` | 8 (flat) |
+| Mobile remote | `pages/Mobile.tsx`, `styles/m3-shell.css` | 7 (3 tabs) |
+| Network | `pages/Network.tsx` | 7 (flat) |
+| Tab appearance editor | `shell/TabAppearanceEditor.tsx` | 7 (flat) |
+
+### Search bars that gained the regex builder (had a field, **no** builder)
+
+| Surface | Files |
+| --- | --- |
+| Network snapshot history | `pages/Network.tsx` (also now threads flags) |
+| Provider models filter | `components/provider-workspace/ProviderModels.tsx`, `provider-workspace/report.ts` |
+| Provider catalogue search | `components/provider-catalog/ProviderCatalog.tsx`, `provider-catalog/provider-presets.ts` |
+
+The audit said "three search bars with no builder". The third is **`ProviderCatalog.tsx`**, *not* the
+Logs conversation filter — see *Deliberately not done*.
+
+### New tests — four files
+
+| File | Guards |
+| --- | --- |
+| `tests/settings-search.test.ts` | 27 tests — matching, values, off-tab reporting, plain-text default, invalid patterns, `g`/`y` statefulness, caps. |
+| `tests/settings-search-row.test.tsx` | 14 tests — the interactive contract, incl. **two bars on one screen do not share state** and the flags round-trip. |
+| `tests/every-search-bar-has-a-builder.test.ts` | 3 structural tests — **the test the codebase did not have.** Fails if any file grows a search field without a builder, or if a listed settings surface loses its search bar. |
+| `tests/tab-appearance-search.test.tsx` | 5 tests — that editor's ids are raw string literals, so this asserts every control still renders with an empty field. |
+
+### i18n
+
+12 new keys, in **both** `src/i18n/m3.ts` and `src/i18n/yue.ts` (`tests/i18n-voice-and-locales.test.ts` passes 32/32):
+
+`settings.otherTabHere`, `settings.matchCount`, `startup.overallStatus`, `debug.stateOn`,
+`debug.stateOff`, `mobile.panelNav`, `mobile.keySet`, `network.settingsBuilder`,
+`network.historyBuilder`, `network.stateOn`, `network.stateOff`, `network.endpointWords`
+
+## Open defects — read this first
+
+An adversarial review ran over the diff. **It did not finish**: 22 of 44 verifier agents died on
+`You've hit your session limit`. Findings for **Startup**, **Debug**, **ProviderCatalog** and
+**ProviderModels** were raised but never verified — their status is *unknown*, not *clean*.
+
+Three review agents also left scratch probe files (`gui/tests/zz-*.test.tsx`) behind. I deleted them;
+they were failing by design, as demonstrations. Any future `zz-` test file is scratch, not a real test.
+
+### 1. Network: phantom match renders an empty titled card — CONFIRMED, unfixed (medium)
+
+`gui/src/pages/Network.tsx:299`. Verified independently by 3/3 agents, one of which rendered the real
+component.
+
+The `urls` and `mobile` options are indexed **unconditionally**, but the rows they represent are also
+gated on `status.urls.length > 0` (lines 386, 400). `describeHost` (`src/lib/host-control.ts:52`)
+returns `urls: []` whenever the proxy is on loopback — **which is the default**.
+
+Reproduce: default loopback proxy, type `phone` into the Network settings search. The status line
+reads "1 of 7 settings match", `hostCardShown` (line 353) goes true, and the "Network access" card
+renders **its heading and subtitle with an empty body**. `another device` and `scan` hit the same state.
+
+That is exactly the state the comment at `Network.tsx:344-351` claims the code prevents, and exactly
+the phantom-match lie this whole change exists to stop telling.
+
+**Fix** (small): index the two options only while their rows can render, the way Startup already does
+for the tray buttons (`trayActionsAvailable`, `startup-shared.ts:189`). Inside the `settingsOptions`
+memo: `...(urls.length > 0 ? [urlsOption, mobileOption] : [])`. `urls` is already in scope at line 288
+and `status` is already a memo dependency.
+
+**Add a test with the fix** — `gui/tests/` has *no* Network render test at all, which is why nothing
+caught this.
+
+### 2. Escape closes the tab appearance editor *and* its builder — CONFIRMED, unfixed (medium)
+
+`gui/src/shell/RegexBuilderButton.tsx:147-151` vs `gui/src/shell/TabAppearanceEditor.tsx:200`. Two
+verifiers reproduced it at runtime; the third died on the session limit.
+
+Both register a **bubble-phase `document` keydown** handler for Escape and neither calls
+`stopPropagation`. Before this change the tab editor had no nested popover, so the collision could not
+happen. Now: open the tab editor → open the regex builder inside it → press Escape → **both close**.
+The user loses the editor they were working in, having asked only to dismiss the builder.
+
+**Fix**: the innermost open popover should win. Either have `RegexBuilderButton`'s handler
+`stopPropagation()` when it handles Escape while open, or have `TabAppearanceEditor` ignore an Escape
+whose target sits inside an open `.m3-rxpop`. Prefer fixing `RegexBuilderButton` — it is the nested
+one, and any surface that nests it inherits the same bug.
+
+### 3. Query is capped at compile, not at input (low)
+
+`gui/src/shell/settings-search.ts:119` compiles `trimmed.slice(0, PATTERN_CAP)`, but nothing caps what
+is typed: `SettingsSearch.tsx` sets no `maxLength`, and neither does `TextInput` (`m3-ui.tsx:109`). The
+builder seeds via `capPattern`, so a 401-character pattern makes the field and the builder disagree
+about what is being matched. One verifier refuted this as harmless truncation, one did not, one died.
+**Not a safety hole** — the cap is applied before compiling, so backtracking stays bounded. A
+consistency wart.
+
+### 4. `Changelog.tsx:135` compiles uncapped — pre-existing, not from this change (low)
+
+`new RegExp(query, "i")` with no `PATTERN_CAP`, while the builder beside that same field does cap.
+Worth folding into a follow-up sweep; out of scope here.
+
+## Deliberately not done, with reasons
+
+- **The Logs conversation filter (`pages/Logs.tsx:852`) did NOT get a builder.** It is `type="search"`
+  but it is not a text search: it is an exact-match identity lookup against a SHA-256 hex prefix
+  (`src/log-conversation-id.ts`), matching by equality against the id *or* against the hash of what was
+  typed. A regular expression cannot be hashed, so a builder there would let someone compose a pattern
+  that could only ever be compared verbatim against a digest — finding nothing, forever. It is recorded
+  as a documented exception in `tests/every-search-bar-has-a-builder.test.ts`, and a second test fails
+  if that exception ever names a key that no longer exists.
+
+- **The 22 existing hand-wired search rows were NOT migrated.** Six near-identical copies remain
+  (Storage's own `SettingsSearchRow`, Claude Code's `ClaudeSettingsSearchRow`, and inline rows on
+  Settings, Appearance, LanguageVoice, Notifications). The scope here was the *gaps*; migrating working
+  instances would have churned files whose existing tests assert their exact markup. **This is the
+  obvious follow-up** — until it happens, the drift the shared component was built to stop can still
+  occur in those six.
+
+- **Terminal (`pages/Terminal.tsx`) got nothing.** It is not a settings surface: server-supplied
+  presets that *start a process* when clicked, a read-only transcript, and a command line. Nothing
+  there is a persisted preference.
+
+- **No screenshots were taken.** No build host was stood up, so rendering is verified by tsc, eslint
+  and 738 tests only. The Mobile agent reported driving a headless Chrome at 390×780 and 320×640 with
+  no horizontal overflow; I did not independently confirm that.
+
+## Suggested order for the next agent
+
+1. Fix **Network** (defect 1) and add the missing Network render test.
+2. Fix **Escape propagation** (defect 2) in `RegexBuilderButton`, with a test that nests it in `TabAppearanceEditor`.
+3. Re-run the adversarial review for **Startup, Debug, ProviderCatalog, ProviderModels** — raised but never verified when the session limit hit.
+4. Follow-up, separate change: migrate the six remaining hand-rolled rows onto `SettingsSearchRow`.
+
+---
+
 State of the working tree for whoever picks this up next. Written **2026-07-30** against branch
 `main`. Every verification line below is a command that was actually run, with the output it
 produced — where something was not run, it says so rather than implying a pass.

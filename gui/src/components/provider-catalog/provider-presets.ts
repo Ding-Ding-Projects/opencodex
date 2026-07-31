@@ -62,9 +62,21 @@ export function bucketPresets(presets: CatalogPreset[]): Record<ProviderTier, Ca
 }
 
 /** Case-insensitive search across label and id only (never adapter/baseUrl). */
-export function filterPresets(presets: CatalogPreset[], query: string): CatalogPreset[] {
+export function filterPresets(
+  presets: CatalogPreset[],
+  query: string,
+  /**
+   * How to test a preset against the query, when the caller offers more than
+   * plain text. Optional so the plain-text behaviour stays the default for any
+   * caller that has no regex opt-in to synchronize with.
+   */
+  matcher?: { test: (text: string) => boolean },
+): CatalogPreset[] {
   const q = query.trim().toLowerCase();
   if (!q) return presets;
+  // Label and id are tested as one string, so a pattern spanning both — or an
+  // anchor — behaves the same way it does in every other search bar in the app.
+  if (matcher) return presets.filter(p => matcher.test(`${p.label} ${p.id}`));
   return presets.filter(p => p.label.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
 }
 

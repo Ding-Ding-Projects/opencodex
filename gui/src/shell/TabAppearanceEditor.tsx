@@ -25,11 +25,14 @@
  * stored copy stops following a theme the user later changes.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { PAGE_META_BY_ID } from "./page-meta";
+import { SettingsSearchRow } from "./SettingsSearch";
+import { useSettingsSearch } from "./use-settings-search";
+import type { SettingsOption } from "./settings-search";
 import { clampToViewport, tabStyleProps, type Tab, type TabStyle } from "./use-tabs";
 import { FONT_CHOICES } from "../theme/m3";
 
@@ -121,6 +124,38 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
   const preview = tabStyleProps(tab.style);
   const meta = PAGE_META_BY_ID[tab.page];
 
+  /**
+   * What this editor is searchable by.
+   *
+   * An appearance editor is a settings surface like any other, and six properties
+   * in a 340px panel is exactly the size at which "obviously scannable" stops
+   * being true — the badge field is below the fold on a short viewport. Each row
+   * carries its current value as well as its name, so typing the colour you set
+   * finds the control that set it, and the placeholder text ("Inherits from the
+   * theme") is indexed too, because that is what the row visibly reads while a
+   * property is unset.
+   */
+  const options: SettingsOption[] = useMemo(() => {
+    const inherits = t("tabs.styleInherits");
+    return [
+      { id: "color", label: t("tabs.styleColor"), value: style.color ?? inherits, keywords: t("tabs.styleColorPicker") },
+      { id: "bg", label: t("tabs.styleBg"), value: style.bg ?? inherits, keywords: t("tabs.styleBgPicker") },
+      {
+        id: "font",
+        label: t("tabs.styleFont"),
+        value: FONT_CHOICES.find(font => font.stack === style.font)?.label ?? t("tabs.styleFontInherit"),
+        keywords: FONT_CHOICES.map(font => font.label).join(" "),
+      },
+      { id: "size", label: t("tabs.styleSize"), value: style.size == null ? inherits : `${style.size}px` },
+      { id: "weight", label: t("tabs.styleWeight"), value: style.weight == null ? inherits : String(style.weight) },
+      { id: "badge", label: t("tabs.styleBadge"), desc: t("tabs.styleBadgeHint", { max: String(BADGE_MAX) }), value: style.badge ?? "" },
+      { id: "resetAll", label: t("tabs.styleResetAll"), keywords: t("tabs.styleReset") },
+    ];
+  }, [t, style.color, style.bg, style.font, style.size, style.weight, style.badge]);
+
+  const search = useSettingsSearch({ options });
+  const { matches } = search;
+
   // Measured after paint and re-measured when the page moves under it, so the
   // panel stays beside a tab that scrolled or a window that was resized. Off
   // screen until the first measurement, because a panel that paints at 0,0 and
@@ -196,6 +231,8 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
         </button>
       </header>
 
+      {/* The preview stays put whatever the search hides: it is what is being
+          edited, not one of the things being searched. */}
       <Field label={t("tabs.stylePreview")}>
         <div className="m3-tab selected" style={{ ...preview.surface, maxWidth: "none", borderRadius: "var(--r-s)" }}>
           <span className="m3-tab-btn" style={{ ...preview.label, cursor: "default" }}>
@@ -214,6 +251,11 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
         </div>
       </Field>
 
+      {/* `compact`: this panel is 340px wide, so the row's default field basis
+          would push the builder trigger onto a line of its own. */}
+      <SettingsSearchRow search={search} compact />
+
+      {matches("color") && (
       <Field id={colorId} label={t("tabs.styleColor")} hint={style.color && !HEX.test(style.color) ? t("tabs.styleSwatchFallback") : undefined}>
         <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
           <input
@@ -235,7 +277,9 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
           <ResetButton on={!!style.color} name={t("tabs.styleColor")} clear={() => onChange({ color: undefined })} />
         </div>
       </Field>
+      )}
 
+      {matches("bg") && (
       <Field label={t("tabs.styleBg")} hint={style.bg && !HEX.test(style.bg) ? t("tabs.styleSwatchFallback") : undefined}>
         <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
           <input
@@ -256,7 +300,9 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
           <ResetButton on={!!style.bg} name={t("tabs.styleBg")} clear={() => onChange({ bg: undefined })} />
         </div>
       </Field>
+      )}
 
+      {matches("font") && (
       <Field label={t("tabs.styleFont")}>
         <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
           <SelectField
@@ -272,7 +318,9 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
           <ResetButton on={!!style.font} name={t("tabs.styleFont")} clear={() => onChange({ font: undefined })} />
         </div>
       </Field>
+      )}
 
+      {matches("size") && (
       <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "end" }}>
         <div style={{ flex: "1 1 auto", minWidth: 0 }}>
           <Slider
@@ -286,7 +334,9 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
         </div>
         <ResetButton on={style.size != null} name={t("tabs.styleSize")} clear={() => onChange({ size: undefined })} />
       </div>
+      )}
 
+      {matches("weight") && (
       <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "end" }}>
         <div style={{ flex: "1 1 auto", minWidth: 0 }}>
           <Slider
@@ -301,7 +351,9 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
         </div>
         <ResetButton on={style.weight != null} name={t("tabs.styleWeight")} clear={() => onChange({ weight: undefined })} />
       </div>
+      )}
 
+      {matches("badge") && (
       <Field label={t("tabs.styleBadge")} hint={t("tabs.styleBadgeHint", { max: String(BADGE_MAX) })}>
         <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
           <TextInput
@@ -314,7 +366,9 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
           <ResetButton on={!!style.badge} name={t("tabs.styleBadge")} clear={() => onChange({ badge: undefined })} />
         </div>
       </Field>
+      )}
 
+      {matches("resetAll") && (
       <div className="m3-row" style={{ justifyContent: "end", marginTop: 8 }}>
         <Button
           variant="outlined"
@@ -324,6 +378,7 @@ export default function TabAppearanceEditor({ tab, label, anchor, onChange, onCl
           {t("tabs.styleResetAll")}
         </Button>
       </div>
+      )}
     </div>
   );
 }

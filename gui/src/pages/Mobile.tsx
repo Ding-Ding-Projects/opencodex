@@ -19,13 +19,26 @@
  * Remote access screen), which requires a credential — that gate is deliberately
  * the same one the rest of the exposed surface uses, and this screen does not
  * weaken it.
+ *
+ * ## Finding a control
+ *
+ * The screen carries the shared settings search, and it indexes all three panels
+ * rather than only the one showing. That is what the `tab` on each option buys:
+ * with the search active on Chat, a hit on the Control panel's API key is
+ * reported by name instead of being silently filtered away, which is the exact
+ * "the app does not have that setting" lie the search exists to stop telling.
+ * The bottom bar is deliberately never filtered — hiding the only route back to
+ * another panel would strand whoever typed.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { readJsonIfOk } from "../fetch-json";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
+import { SettingsSearchRow } from "../shell/SettingsSearch";
+import { useSettingsSearch } from "../shell/use-settings-search";
+import type { SettingsOption } from "../shell/settings-search";
 
 type Panel = "chat" | "sessions" | "control";
 
@@ -64,6 +77,16 @@ interface HostStatus {
 
 /** Sessions poll while the tab is open; a phone on mobile data should not poll hard. */
 const SESSION_POLL_MS = 5000;
+
+/**
+ * How many distinct model names from the request log the settings search indexes.
+ *
+ * The log renders sixty rows, and the search corpus is also what the regex
+ * builder shows as sample text. Pasting sixty mostly-repeated model ids into
+ * that textarea would bury every other option on the screen without finding the
+ * user anything a dozen distinct names do not already find.
+ */
+const SESSION_INDEX_MODELS = 12;
 
 /**
  * The API key lives in memory for the life of the page, and nowhere else.
@@ -110,6 +133,120 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
   // error shown and no way back short of restarting the app.
   const [reload, setReload] = useState(0);
   const [modelsError, setModelsError] = useState(false);
+
+  /**
+   * The panel names, once, because they are three separate things: the label on
+   * the bottom bar, the `tab` each option declares, and the tab the search is
+   * told is showing. Deriving them in three places is how those three drift
+   * apart, and a `tab` string that no longer equals `activeTab` turns every
+   * option on the visible panel into an off-tab report.
+   */
+  const tabs = useMemo(() => ({
+    chat: t("mobile.chat"),
+    sessions: t("mobile.sessions"),
+    control: t("mobile.control"),
+  }), [t]);
+
+  /**
+   * Everything on this screen a user might go looking for, in the words the
+   * screen is currently showing them.
+   *
+   * Each option carries its current value as well as its name, because the
+   * remembered thing is often the value — the model that is selected, the host
+   * and port the proxy answers on, the draft still sitting in the compose box.
+   */
+  const options: SettingsOption[] = useMemo(() => {
+    // What the request log actually reads right now: its state message while it
+    // is loading, broken or empty, and otherwise the models it is listing — so
+    // "I saw a request for that model in there" is enough to find the panel.
+    const sessionsValue = logs === undefined
+      ? t("common.loading")
+      : logs === null
+        ? t("mobile.sessionsFailed")
+        : logs.length === 0
+          ? t("mobile.noSessions")
+          : [...new Set(logs.map(row => row.model))].slice(0, SESSION_INDEX_MODELS).join(" ");
+
+    const proxyValue = host === null ? t("common.loading") : [
+      `${host.hostname}:${host.port}`,
+      host.exposed ? t("mobile.exposed") : t("mobile.loopback"),
+      // Only when it is actually on screen: indexing the warning unconditionally
+      // would find "credential" on a proxy that has one, which reads as the
+      // opposite of the truth.
+      ...(host.exposed && !host.credentialConfigured ? [t("mobile.noCredential")] : []),
+      ...host.urls,
+    ].join(" ");
+
+    return [
+      {
+        // No `tab`. The bottom bar is on screen whichever panel is showing, so
+        // reporting it as living "on another tab" would simply be false.
+        id: "panel",
+        label: t("mobile.panelNav"),
+        value: tabs[panel],
+        keywords: [tabs.chat, tabs.sessions, tabs.control].join(" "),
+      },
+      {
+        id: "model",
+        label: t("mobile.model"),
+        value: model || t("common.loading"),
+        // Every model the picker offers, not only the chosen one: typing a model
+        // id has to find the control that selects it, which is the whole reason
+        // `keywords` exists.
+        keywords: models.map(row => row.id).join(" "),
+        tab: tabs.chat,
+      },
+      {
+        id: "transcript",
+        label: t("mobile.transcript"),
+        desc: t("mobile.chatHint"),
+        // Deliberately no `value`. The reply text is rewritten on every streamed
+        // token, so indexing it would rebuild this list and rerun the search
+        // hundreds of times per answer on a phone — and the conversation is
+        // already on screen, which is not what a settings search is for. The
+        // retry control that replaces the transcript when models fail to load is
+        // indexed here instead, because here is where it renders.
+        keywords: [t("mobile.retry"), t("mobile.modelsFailed")].join(" "),
+        tab: tabs.chat,
+      },
+      {
+        id: "prompt",
+        label: t("mobile.prompt"),
+        value: draft,
+        keywords: [t("mobile.send"), t("mobile.stop")].join(" "),
+        tab: tabs.chat,
+      },
+      {
+        id: "sessions",
+        label: t("mobile.sessions"),
+        value: sessionsValue,
+        tab: tabs.sessions,
+      },
+      {
+        id: "proxy",
+        label: t("mobile.proxy"),
+        value: proxyValue,
+        tab: tabs.control,
+      },
+      {
+        id: "apiKey",
+        label: t("mobile.apiKey"),
+        desc: t("mobile.apiKeyHint"),
+        // The key itself is never indexed, only whether one was entered. The
+        // corpus this builds is handed to the regex builder and rendered into a
+        // plain `<textarea>`, so indexing the value would print a live proxy
+        // credential in clear text on the screen — which is the same exposure
+        // the module comment above refuses `localStorage` for, arrived at from
+        // the other direction.
+        value: apiKey ? t("mobile.keySet") : t("mobile.keyPlaceholder"),
+        tab: tabs.control,
+      },
+    ];
+  }, [t, tabs, panel, model, models, draft, logs, host, apiKey]);
+
+  const search = useSettingsSearch({ options, activeTab: tabs[panel] });
+  const { matches } = search;
+  const showTranscript = matches("transcript");
 
   useEffect(() => {
     let cancelled = false;
@@ -167,10 +304,14 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
     return () => { cancelled = true; };
   }, [apiBase, panel]);
 
+  // `showTranscript` is a dependency because a search that filters the transcript
+  // away unmounts it, and clearing the search mounts a fresh element scrolled to
+  // the top. Without this, dismissing a search dropped the user at the beginning
+  // of the conversation instead of where they left off, at the newest reply.
   useEffect(() => {
     const el = transcript.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, showTranscript]);
 
   // Leaving the screen mid-reply must stop the request, not keep a stream open
   // against a component that is gone. A ref, so this runs once on unmount
@@ -294,7 +435,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
     <div className="m3-mob">
       <header className="m3-mob__bar">
         <span className="m3-mob__title">{t("mobile.title")}</span>
-        {panel === "chat" && (
+        {panel === "chat" && matches("model") && (
           <select
             className="m3-mob__model"
             value={model}
@@ -307,6 +448,21 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
         )}
       </header>
 
+      {/*
+        Its own grid row between the bar and the body, and outside both — the
+        body's panels scroll, and a builder popover opened from inside an
+        `overflow-y: auto` box is clipped by it rather than floating over the
+        screen. It sits above all three panels because the search spans all
+        three: moving it inside a panel would have made the off-tab report a
+        thing you can only read on the tab you are already on.
+      */}
+      <div className="m3-mob__search">
+        {/* `compact`: at 390px the row's default 240px field basis pushes the
+            builder button onto a second line, and the search block eats a
+            quarter of the phone. */}
+        <SettingsSearchRow search={search} compact />
+      </div>
+
       <main className="m3-mob__body">
         {panel === "chat" && (
           <>
@@ -318,30 +474,38 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
               screen reader exactly while it was producing the answer. The
               completed reply is announced once, from the polite region below.
             */}
-            <div className="m3-mob__chat" ref={transcript} role="log" aria-label={t("mobile.transcript")}>
-              {modelsError && (
-                <div className="m3-mob__msg m3-mob__msg--error" role="alert">
-                  {t("mobile.modelsFailed")}
-                  <div style={{ marginTop: 8 }}>
-                    <button type="button" className="m3-mob__send" onClick={() => setReload(n => n + 1)}>
-                      {t("mobile.retry")}
-                    </button>
+            {showTranscript ? (
+              <div className="m3-mob__chat" ref={transcript} role="log" aria-label={t("mobile.transcript")}>
+                {modelsError && (
+                  <div className="m3-mob__msg m3-mob__msg--error" role="alert">
+                    {t("mobile.modelsFailed")}
+                    <div style={{ marginTop: 8 }}>
+                      <button type="button" className="m3-mob__send" onClick={() => setReload(n => n + 1)}>
+                        {t("mobile.retry")}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-              {messages.length === 0 && !modelsError && (
-                <p className="m3-mob__hint">{t("mobile.chatHint")}</p>
-              )}
-              {messages.map((message, i) => (
-                <div
-                  key={i}
-                  className={`m3-mob__msg m3-mob__msg--${message.role}${message.error ? " m3-mob__msg--error" : ""}`}
-                >
-                  {message.content}
-                  {message.streaming && <span className="m3-mob__caret" aria-hidden="true" />}
-                </div>
-              ))}
-            </div>
+                )}
+                {messages.length === 0 && !modelsError && (
+                  <p className="m3-mob__hint">{t("mobile.chatHint")}</p>
+                )}
+                {messages.map((message, i) => (
+                  <div
+                    key={i}
+                    className={`m3-mob__msg m3-mob__msg--${message.role}${message.error ? " m3-mob__msg--error" : ""}`}
+                  >
+                    {message.content}
+                    {message.streaming && <span className="m3-mob__caret" aria-hidden="true" />}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              // An empty transcript rather than nothing at all. The body is a
+              // two-row grid whose first row takes the leftover height, so a
+              // filtered-away transcript would promote the compose box into it
+              // and stretch that bar down the whole screen.
+              <div className="m3-mob__chat" />
+            )}
 
             {/* Announced once, when the reply is finished. */}
             <div className="m3-visually-hidden" aria-live="polite">
@@ -350,6 +514,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
                 : ""}
             </div>
 
+            {matches("prompt") && (
             <form
               className="m3-mob__compose"
               onSubmit={event => { event.preventDefault(); void send(); }}
@@ -381,10 +546,11 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
                 </button>
               )}
             </form>
+            )}
           </>
         )}
 
-        {panel === "sessions" && (
+        {panel === "sessions" && matches("sessions") && (
           <div className="m3-mob__list">
             {logs === undefined ? (
               <p className="m3-mob__hint">{t("common.loading")}</p>
@@ -414,6 +580,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
 
         {panel === "control" && (
           <div className="m3-mob__list">
+            {matches("proxy") && (
             <article className="m3-mob__session">
               <div className="m3-mob__sessionhead"><strong>{t("mobile.proxy")}</strong></div>
               {host === null ? (
@@ -431,7 +598,9 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
                 </>
               )}
             </article>
+            )}
 
+            {matches("apiKey") && (
             <article className="m3-mob__session">
               <div className="m3-mob__sessionhead"><strong>{t("mobile.apiKey")}</strong></div>
               <p className="m3-mob__hint">{t("mobile.apiKeyHint")}</p>
@@ -445,6 +614,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
                 aria-label={t("mobile.apiKey")}
               />
             </article>
+            )}
           </div>
         )}
       </main>
