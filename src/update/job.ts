@@ -19,6 +19,7 @@ import {
   verifyPidIdentityFresh,
 } from "../config";
 import { isProcessAlive, killProxy } from "../lib/process-control";
+import { durableBunRuntime, isRealBunBinary } from "../lib/bun-runtime";
 import { reclaimListenPort } from "../server/port-reclaim";
 import {
   findLiveProxy,
@@ -388,7 +389,24 @@ export function updateExecutionCommand(
   }
   if (installer === "bun") {
     const command = updateCommand(installer, channel, resolvedVersion);
-    const bin = process.platform === "win32" ? process.execPath : command.bin;
+    // Windows needed a resolved path because `bun` is usually not on the PATH a
+    // GUI-spawned process inherits. What it got was `process.execPath` — and
+    // this worker runs under Node (or the Electron binary as Node), not Bun. The
+    // binary was swapped while Bun's arguments were kept, so the update spawned
+    //
+    //     node.exe add -g @bitkyc08/opencodex@2.7.42
+    //
+    // which is not a command. Every Bun-installed update on Windows failed, and
+    // it failed at the spawn rather than anywhere near this line.
+    //
+    // `durableBunRuntime()` is the right resolver but cannot be used unchecked:
+    // its last resort is `process.execPath` too, which reintroduces exactly this
+    // bug whenever no bundled Bun is found. So the path is used only when it is
+    // genuinely a Bun binary; otherwise fall back to the bare name and let PATH
+    // resolution fail honestly with ENOENT, which is a diagnosable error rather
+    // than a nonsensical one.
+    const resolved = process.platform === "win32" ? durableBunRuntime().path : null;
+    const bin = resolved && isRealBunBinary(resolved) ? resolved : command.bin;
     const { args } = command;
     return { bin, args, display: updateCommandStr(installer, channel, resolvedVersion) };
   }

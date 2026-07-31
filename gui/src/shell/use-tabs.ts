@@ -120,183 +120,40 @@ function orderTabs(tabs: Tab[]): Tab[] {
   return tabs.slice().sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
 }
 
-/**
- * Narrowest a tab may become before the strip stops squeezing and starts
- * overflowing. `.m3-tab` shrinks to nothing otherwise, so without a floor the
- * strip degrades into a row of unreadable slivers instead of an overflow menu.
- */
-export const MIN_TAB_WIDTH = 132;
-/** `.m3-tablist { gap: 4px }`. */
-const TAB_GAP = 4;
-
-export interface TabSplit {
-  /** Tabs the strip renders, in strip order. */
-  visible: Tab[];
-  /** Tabs that do not fit, in strip order. Never contains a pinned tab. */
-  overflow: Tab[];
-}
+/* ------------------------------------------------ the shared pure layer -- */
 
 /**
- * Which tabs fit in `listWidth` pixels.
+ * The tab rules live in `shared/m3/tabs.ts`, and this file re-exports them.
  *
- * Pinned tabs are never overflowed — staying visible is what pinning means — and
- * neither is the active tab, so activating an overflowed tab always pulls it
- * back into the strip. A width of 0 means "not measured yet" (first paint, or a
- * DOM with no layout) and shows everything rather than guessing.
+ * They were duplicated: byte-identical copies of `splitTabs`,
+ * `closeOthersTargets`, `closeToRightTargets`, `bulkCloseTargets` and
+ * `clampToViewport` existed here and there, differing only by a generic
+ * parameter. Two copies of a rule is two rules the moment either is edited, and
+ * for one of these that is not a cosmetic problem: `bulkCloseTargets` is the
+ * single answer to "what would this close", read by both the confirmation
+ * preview and the close itself. A preview computed by one copy and a close
+ * performed by another is a dialog that shows the user four tabs and shuts five.
+ *
+ * The shared module is the generic one (`Tab<P>` over a page-identity type),
+ * because the docs site's tabs are URLs while these are dashboard routes. This
+ * file pins the parameter to `Page` so nothing downstream has to know.
  */
-export function splitTabs(tabs: Tab[], activeTab: string, listWidth: number): TabSplit {
-  if (!(listWidth > 0) || tabs.length <= 1) return { visible: tabs, overflow: [] };
-  const capacity = Math.max(1, Math.floor((listWidth + TAB_GAP) / (MIN_TAB_WIDTH + TAB_GAP)));
-  if (tabs.length <= capacity) return { visible: tabs, overflow: [] };
+export {
+  MIN_TAB_WIDTH,
+  TAB_MATCH_FLAGS,
+  splitTabs,
+  closeOthersTargets,
+  closeToRightTargets,
+  bulkCloseTargets,
+  clampToViewport,
+  tabMatcher,
+} from "../../../shared/m3/tabs";
+export type { TabMatcher, TabRow, BulkCloseOptions } from "../../../shared/m3/tabs";
 
-  const keep = new Set(tabs.filter(tab => tab.pinned).map(tab => tab.id));
-  if (tabs.some(tab => tab.id === activeTab)) keep.add(activeTab);
-  let slots = capacity - keep.size;
-  for (const tab of tabs) {
-    if (slots <= 0) break;
-    if (!keep.has(tab.id)) { keep.add(tab.id); slots -= 1; }
-  }
-  return {
-    visible: tabs.filter(tab => keep.has(tab.id)),
-    overflow: tabs.filter(tab => !keep.has(tab.id)),
-  };
-}
-
-/* --------------------------------------------------- context-menu targets -- */
-
-/**
- * Which tabs "Close other tabs" removes.
- *
- * Pinned tabs are not in the result, and that exclusion is the whole meaning of
- * a pin: a tidy-up command that swept pinned tabs away would make pinning worth
- * nothing precisely at the moment a user reached for the command it exists to
- * survive.
- */
-export function closeOthersTargets(tabs: Tab[], keepId: string): string[] {
-  return tabs.filter(tab => tab.id !== keepId && !tab.pinned).map(tab => tab.id);
-}
-
-/**
- * Which tabs "Close tabs to the right" removes: strip order, everything after
- * `fromId`, pinned tabs excepted.
- *
- * An id that is not in the strip closes nothing. Without the guard, `findIndex`
- * returning -1 would make `slice(0)` the whole strip, so a stale id would close
- * every tab instead of none.
- */
-export function closeToRightTargets(tabs: Tab[], fromId: string): string[] {
-  const from = tabs.findIndex(tab => tab.id === fromId);
-  if (from < 0) return [];
-  return tabs.slice(from + 1).filter(tab => !tab.pinned).map(tab => tab.id);
-}
-
-/**
- * Flags the bulk closes compile. The same `i` every search bar in this app uses,
- * so a pattern built in the anchored regex builder — which seeds itself with the
- * host's flags — matches here exactly what it previewed there.
- */
-export const TAB_MATCH_FLAGS = "i";
-
-/** Same cap as `regex/engine.ts`, restated rather than imported so tab state does
- * not depend on the regex screen. A longer pattern is truncated, never run. */
-const TAB_PATTERN_CAP = 400;
-
-export type TabMatcher =
-  | { ok: true; test: (label: string) => boolean }
-  | { ok: false; reason: "empty" }
-  | { ok: false; reason: "invalid"; error: string };
-
-/**
- * The single predicate behind both bulk closes.
- *
- * "Close tabs not containing…" negates *this* `test` rather than building a
- * second matcher from the same inputs. Two matchers would each own their own
- * trimming, casing and flags, and the pair would drift apart the first time one
- * of them was adjusted — leaving two commands that are no longer inverses and
- * no test that could tell.
- *
- * An empty query is refused rather than treated as "matches everything": run as
- * a match-all it would close the entire strip for a user who has typed nothing.
- */
-export function tabMatcher(query: string, regex = false, flags: string = TAB_MATCH_FLAGS): TabMatcher {
-  const text = query.trim();
-  if (!text) return { ok: false, reason: "empty" };
-  if (!regex) {
-    const needle = text.toLowerCase();
-    return { ok: true, test: label => label.toLowerCase().includes(needle) };
-  }
-  try {
-    const compiled = new RegExp(text.slice(0, TAB_PATTERN_CAP), flags);
-    return {
-      ok: true,
-      // `lastIndex` is reset per call because a caller may pass `g`, and a
-      // sticky index would make the same label match on one row and not the next.
-      test: label => { compiled.lastIndex = 0; return compiled.test(label); },
-    };
-  } catch (error) {
-    return { ok: false, reason: "invalid", error: (error as Error).message ?? String(error) };
-  }
-}
-
-/** A tab as the bulk close sees it: the label it matches against, and its pin. */
-export interface TabRow {
-  id: string;
-  /** The tab's *visible* label. Bulk close never inspects page contents. */
-  label: string;
-  pinned: boolean;
-}
-
-export interface BulkCloseOptions {
-  /** "not containing": negates `test` rather than using a second predicate. */
-  invert?: boolean;
-  /** Off by default — a pin means the tab survives a bulk close. */
-  includePinned?: boolean;
-  /** Preferred survivor when every tab matches; otherwise the first one lives. */
-  keepId?: string;
-}
-
-/**
- * Exactly which tabs a bulk close would remove, in strip order.
- *
- * This is the *only* answer to that question: the preview the user reviews and
- * the close that follows both read it, so the count shown can never disagree
- * with what happens. Computing the preview separately is how a confirmation
- * surface starts lying.
- *
- * The strip never empties, so when the predicate matches everything one tab is
- * spared here rather than being rescued later by `closeTabs` — a rescue after
- * the preview was drawn would show a count one higher than the strip loses.
- */
-export function bulkCloseTargets(rows: TabRow[], test: (label: string) => boolean, options: BulkCloseOptions = {}): string[] {
-  const matched = rows.filter(row => {
-    if (row.pinned && !options.includePinned) return false;
-    return options.invert ? !test(row.label) : test(row.label);
-  });
-  if (matched.length < rows.length) return matched.map(row => row.id);
-  const survivor = matched.find(row => row.id === options.keepId) ?? matched[0];
-  return matched.filter(row => row !== survivor).map(row => row.id);
-}
-
-/**
- * Keeps a pointer-positioned surface fully on screen.
- *
- * Lives beside the other pure tab helpers so it can be exercised without a
- * layout engine — happy-dom has none, and a clamp that only ever runs in a real
- * browser is a clamp nobody checks. When the surface is wider or taller than the
- * viewport the lower bound wins, pinning it to the top-left corner instead of
- * pushing it off both edges.
- */
-export function clampToViewport(
-  point: { x: number; y: number },
-  size: { width: number; height: number },
-  viewport: { width: number; height: number },
-  pad = 8,
-): { left: number; top: number } {
-  return {
-    left: Math.max(pad, Math.min(point.x, viewport.width - size.width - pad)),
-    top: Math.max(pad, Math.min(point.y, viewport.height - size.height - pad)),
-  };
-}
+// Imported as well as re-exported: `export … from` forwards a name without
+// binding it locally, and the hook below calls these two itself. Re-exporting
+// alone compiles as a module and fails as a program.
+import { closeOthersTargets, closeToRightTargets } from "../../../shared/m3/tabs";
 
 export interface TabsApi {
   tabs: Tab[];

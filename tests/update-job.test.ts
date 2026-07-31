@@ -1670,9 +1670,30 @@ describe("immutable update target (WP160)", () => {
 
   test("bun worker execution pins the resolved version through updateExecutionCommand", () => {
     const cmd = updateExecutionCommand("bun", "latest", "/pkg/bin/ocx.mjs", "2.7.24");
-    expect(cmd.bin).toBe(process.platform === "win32" ? process.execPath : "bun");
     expect(cmd.args).toEqual(["add", "-g", "@bitkyc08/opencodex@2.7.24"]);
     expect(cmd.display).toContain("@2.7.24");
+  });
+
+  // Windows resolved a path because `bun` is rarely on the PATH a GUI-spawned
+  // process inherits — but it resolved `process.execPath`, which is Node here,
+  // while keeping Bun's arguments. Every Bun-installed update on Windows spawned
+  // `node.exe add -g @bitkyc08/opencodex@…`, which is not a command. This
+  // asserts the shape rather than a literal path, because what was wrong was the
+  // pairing of binary and arguments, not the path itself.
+  test("the bun update never pairs a non-bun binary with bun's arguments", () => {
+    const cmd = updateExecutionCommand("bun", "latest", "/pkg/bin/ocx.mjs", "2.7.24");
+    const binary = cmd.bin.toLowerCase();
+
+    // `add -g` is Bun's spelling. Whatever runs it has to be Bun.
+    expect(cmd.args[0]).toBe("add");
+    expect(`${binary} runs "add": ${binary === "bun" || /bun(\.exe)?$/.test(binary)}`)
+      .toBe(`${binary} runs "add": true`);
+
+    // The specific regression: never the running interpreter, which is Node or
+    // Electron in the update worker and understands none of these arguments.
+    expect(cmd.bin).not.toBe(process.execPath);
+    expect(binary.endsWith("node.exe")).toBe(false);
+    expect(binary.endsWith("electron.exe")).toBe(false);
   });
 
   test("integrity pre-flight passes on a valid sha512 SRI and on multi-token metadata", () => {
