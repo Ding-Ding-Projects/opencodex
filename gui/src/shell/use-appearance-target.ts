@@ -74,10 +74,16 @@ export function useAppearanceTarget(id: string, options: { style?: CSSProperties
     },
     onKeyDown: (event: ReactKeyboardEvent) => {
       if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
-      // Only when the key was pressed on this surface itself. Without this, a
-      // Shift+F10 inside a nested control would open the editor for the whole
-      // container the user was not addressing.
-      if (event.target !== event.currentTarget) return;
+      // A more specific handler inside this surface wins. The tab strip is the
+      // case that matters: Shift+F10 on a *tab* opens that tab's menu, and its
+      // handler calls `preventDefault`, so by the time the event reaches the
+      // strip it is already spoken for.
+      //
+      // The alternative — only firing when the key was pressed on this element
+      // itself — reads tidier and is wrong: a nav rail's buttons are the only
+      // things in it that can hold focus, so requiring focus on the container
+      // would leave the rail with no keyboard route at all.
+      if (event.defaultPrevented) return;
       event.preventDefault();
       openFrom(event.currentTarget as HTMLElement);
     },

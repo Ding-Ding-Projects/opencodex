@@ -350,6 +350,30 @@ test("a mouse never arms the hold timer, because it has right-click and it drags
   await act(async () => { root.unmount(); });
 });
 
+test("Shift+F10 reaches the editor from inside the surface, but a tab's own menu wins", async () => {
+  seed([{ id: "t1", page: "dashboard", pinned: false }, { id: "t2", page: "logs", pinned: false }], "t1");
+  stubbedWidth = 2000;
+  const { container, root } = await mount();
+
+  const key = (target: Element | null, name: string, shift = false) =>
+    target?.dispatchEvent(
+      new testWindow.KeyboardEvent("keydown", { key: name, shiftKey: shift, bubbles: true, cancelable: true }) as unknown as KeyboardEvent,
+    );
+
+  // On a tab, the tab's own menu answers — the strip must not also open its
+  // appearance editor behind it.
+  await act(async () => { key(container.querySelector('[role="tab"]'), "F10", true); });
+  expect(document.body.querySelector('[role="menu"][aria-label^="Actions for"]')).not.toBeNull();
+  expect(document.body.querySelector("[data-element-style-editor]")).toBeNull();
+  await act(async () => { key(document.activeElement, "Escape"); });
+
+  // On the strip itself, nothing more specific claims it, so the editor opens.
+  await act(async () => { key(container.querySelector(".m3-tabstrip"), "F10", true); });
+  expect(document.body.querySelector("[data-element-style-editor]")?.getAttribute("data-element-style-editor")).toBe("tabStrip");
+
+  await act(async () => { root.unmount(); });
+});
+
 /* --------------------------------------------------------- settings search -- */
 
 test("the settings search says when a match lives on another tab", () => {
