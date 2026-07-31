@@ -65,6 +65,15 @@ export const M3_EN = {
   "mobile.httpStatus": "The proxy answered {status} with no detail.",
   "mobile.modelsFailed": "Could not reach the proxy to load models.",
   "mobile.retry": "Retry",
+  // The settings search names the bottom bar as one of the things it can find,
+  // so the bar needs a name of its own — "opencodex remote" is what the whole
+  // screen is called, and searching for that to reach a three-way switch is not
+  // a thing anyone would think to type.
+  "mobile.panelNav": "Panel",
+  // Said instead of the key, never beside it: the search corpus is also the
+  // regex builder's sample text, so the value has to describe the field rather
+  // than repeat it.
+  "mobile.keySet": "Entered for this session",
   "nav.settings": "Settings",
 
   // ---- settings surface ----
@@ -263,6 +272,13 @@ export const M3_EN = {
   "debug.captureTitle": "Capture",
   "debug.captureSub": "Each stream is opt-in and costs throughput while it is on.",
   "debug.streamsAria": "Debug log streams",
+  // The Capture switches are M3 switches: their state is a thumb position and an
+  // `aria-checked`, with no word anywhere on the card. The settings search indexes
+  // what a control reads, so the two words it would have read have to exist —
+  // otherwise a user who remembers switching usage extraction on can search for
+  // "on" and be told this screen has no such setting.
+  "debug.stateOn": "On",
+  "debug.stateOff": "Off",
   "debug.claudeInbound.thinking": "Thinking",
   "debug.claudeInbound.effort": "Effort",
   "debug.claudeInbound.beta": "Beta",
@@ -385,6 +401,20 @@ export const M3_EN = {
   "network.historySearch": "Search snapshots",
   "network.historyNoMatch": "No snapshot matches",
   "network.historyNoMatchBody": "Nothing in the history matches that search. Clear it to see every snapshot again.",
+
+  // The screen carries two independent search bars — one over the snapshot list, one
+  // over the screen's own settings — so each builder trigger says which field it
+  // builds for. Two buttons both announced "Open regex builder" is a screen reader
+  // reading the same name twice and meaning different fields.
+  "network.settingsBuilder": "Build a pattern to search these settings",
+  "network.historyBuilder": "Build a pattern to search the snapshots",
+  // The exposure switch renders as a bare M3 switch with no words on it, so the
+  // settings index has to supply the ones a user would actually type to find it.
+  "network.stateOn": "On",
+  "network.stateOff": "Off",
+  // A keyword bag, not a sentence: the endpoint row shows `hostname:port` and
+  // nothing else, so none of the words someone searches for are on screen.
+  "network.endpointWords": "hostname port endpoint address",
 
   // One-click restore. The copy names what will happen in unambiguous words — which
   // files move, that in-flight work finishes first, and that the proxy restarts —
@@ -706,6 +736,11 @@ export const M3_EN = {
   "sub.revisionSaved": "Featured subagent models set to {models}",
   "sub.savedTitle": "Saved {n} models.",
   "sub.savedBody": "Start a new Codex session (or run {cmd}) to see them as spawn_agent overrides.",
+  // Not rendered anywhere: it is what the Startup search indexes the hero under.
+  // The hero shows a verdict ("Protected", "Action required") and never the word
+  // "status", so without this a user typing the obvious thing found nothing on a
+  // screen whose whole top half is a status.
+  "startup.overallStatus": "Overall status",
   "startup.tray.uninstallConfirm": "Remove the login tray icon? The proxy keeps running — only the tray controller is removed, and restart protection is unaffected.",
   "startup.tray.installedRecorded": "Installed the Windows login tray",
   "startup.tray.removedRecorded": "Removed the Windows login tray",
@@ -833,6 +868,16 @@ export const M3_EN = {
   // common with the full page reuses the `regex.*` keys above, because two
   // wordings for one control is how the two surfaces start describing the same
   // pattern differently.
+  // ---- the shared settings search (shell/SettingsSearch.tsx) ----
+  // Two facts the per-surface rows used to leave unsaid. `otherTabHere` is the
+  // near miss — the setting is on this screen, one tab over — and is deliberately
+  // worded differently from `settings.otherTab`, which sends the user to another
+  // screen entirely; a single message for both told the user to go somewhere they
+  // already were. `matchCount` carries its denominator because "3 matches" says
+  // nothing about whether the search narrowed anything down.
+  "settings.otherTabHere": "{count} match(es) on another tab of this screen: {tabs}",
+  "settings.matchCount": "{count} of {total} settings match",
+
   "regexpop.apply": "Use this pattern",
   "regexpop.applyHint": "Replaces the search text with this pattern and switches this field to regex mode.",
   "regexpop.applyHintPlain": "Replaces the search text with this pattern.",

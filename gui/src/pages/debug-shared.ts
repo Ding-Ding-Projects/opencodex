@@ -69,6 +69,20 @@ export type LogStream = "provider" | "usage" | "injection";
 
 export const DEBUG_STREAMS = ["provider", "usage", "injection"] as const;
 
+/**
+ * The Capture card's four switches, in the order the card renders them.
+ *
+ * One list rather than the two that used to exist — a literal tuple inside the
+ * panel's `.map` and the same union written out again in the page's mutation
+ * signature. The settings search is now a third reader of it, and a flag that
+ * the grid renders but the search never indexes is precisely the defect the
+ * search exists to remove: the user types the switch's name and is told this
+ * screen has no such setting. Adding a fifth capture flag should be one edit.
+ */
+export const DEBUG_FLAGS = ["debug", "usage", "injection", "claude"] as const;
+
+export type DebugFlag = (typeof DEBUG_FLAGS)[number];
+
 export function formatLogTime(at: number): string {
   return at > 0 ? `[${new Date(at).toLocaleTimeString()}] ` : "";
 }

@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { setClientResourceData, useKeyedClientResource } from "../client-resource";
 import { useI18n } from "../i18n/shared";
 import { Empty } from "../shell/m3-ui";
+import { SettingsSearchRow } from "../shell/SettingsSearch";
+import { useSettingsSearch } from "../shell/use-settings-search";
+import type { SettingsOption } from "../shell/settings-search";
 import { DebugClaudeInboundPanel } from "./debug-claude-inbound-panel";
 import { DebugLogViewer } from "./debug-log-viewer";
 import { DebugPageHeader, DebugSettingsPanel } from "./debug-settings-panel";
 import {
+  DEBUG_FLAGS,
   DEBUG_STREAMS,
   type DebugSettings,
   type LogStream,
+  isDebugFlagEnabled,
   isStreamEnabled,
 } from "./debug-shared";
 
@@ -166,6 +171,65 @@ export default function Debug({ apiBase, embedded }: { apiBase: string; embedded
     await runDebugMutation({ reset: true });
   };
 
+  /**
+   * What this surface is searchable by.
+   *
+   * Capture is a configuration card like any other — four capture flags that
+   * persist server-side, a reset, and a stream selector — so it carries the same
+   * search bar every settings surface carries, and the header's two view
+   * controls are indexed with it because they are the rest of what this screen
+   * lets a user adjust.
+   *
+   * Each switch carries its on/off state as well as its name. The switches are
+   * M3 switches with no text beside them, so that state is the one thing a user
+   * can remember setting and never read back: "I turned usage extraction on" has
+   * to find the row whether they type "usage" or type "on".
+   *
+   * The stream selector is one option, not three. It is a single control whose
+   * three pills are alternatives, so the pill labels go in `keywords` — typing
+   * "injection" finds the switcher that prints the injection log, rather than
+   * finding nothing because no setting is named that.
+   *
+   * Flat on purpose: no `tab`, no `activeTab`. The pills under the switches look
+   * like tabs and are not — they choose what the viewer prints and hide no
+   * setting — and the Logs/Debug tablist that genuinely does hide things belongs
+   * to the host page, which is a different surface with its own search.
+   */
+  const options: SettingsOption[] = useMemo(() => {
+    const on = t("debug.stateOn");
+    const off = t("debug.stateOff");
+    const streamLabels: Record<LogStream, string> = {
+      provider: t("debug.streamProvider"),
+      usage: t("debug.streamUsage"),
+      injection: t("debug.streamInjection"),
+    };
+    return [
+      ...DEBUG_FLAGS.map(flag => ({
+        id: flag,
+        label: t(`debug.${flag}`),
+        // The card's single subtitle is the only description any of the four
+        // switches has, and it describes all four equally, so all four carry it.
+        desc: t("debug.captureSub"),
+        // Undefined rather than "Off" while the poll is still in flight: the
+        // card is not on screen yet, and indexing a state the user cannot see is
+        // how a search starts answering for settings that are not there.
+        value: debug ? (isDebugFlagEnabled(debug, flag) ? on : off) : undefined,
+      })),
+      { id: "reset", label: t("debug.reset") },
+      {
+        id: "stream",
+        label: t("debug.streamsAria"),
+        value: streamLabels[stream],
+        keywords: Object.values(streamLabels).join(" "),
+      },
+      { id: "follow", label: t("debug.follow"), value: follow ? on : off },
+      { id: "refresh", label: t("debug.refresh") },
+    ];
+  }, [t, debug, stream, follow]);
+
+  const search = useSettingsSearch({ options });
+  const { matches } = search;
+
   return (
     <>
       <DebugPageHeader
@@ -173,9 +237,20 @@ export default function Debug({ apiBase, embedded }: { apiBase: string; embedded
         refreshing={refreshing}
         streamEnabled={streamEnabled}
         follow={follow}
+        matches={matches}
         onRefresh={() => void fetchLogs(true)}
         onFollowChange={setFollow}
       />
+
+      {/*
+        One bar for the whole surface, sitting under the lead the header ends
+        with. Safe to render embedded as well as standalone: the host page keeps
+        its own log-text search inside the Logs panel, and that panel and this one
+        are mutually exclusive halves of the same tablist, so the two bars are
+        never on screen together — and they search different things anyway, this
+        one the settings, that one the request rows.
+      */}
+      <SettingsSearchRow search={search} />
 
       {!debug ? (
         <Empty title={t("debug.loading")} />
@@ -184,6 +259,7 @@ export default function Debug({ apiBase, embedded }: { apiBase: string; embedded
           debug={debug}
           debugBusy={debugBusy}
           stream={stream}
+          matches={matches}
           onSetFlag={(flag, enabled) => { void setDebugFlag(flag, enabled); }}
           onReset={() => { void resetDebug(); }}
           onStreamChange={setStream}

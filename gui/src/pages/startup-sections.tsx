@@ -8,22 +8,41 @@
  */
 
 import { useState, type CSSProperties, type ReactNode } from "react";
-import { useI18n, type TKey } from "../i18n/shared";
-import { startupRiskDetailKey } from "../startup-health-ui";
+import { useI18n } from "../i18n/shared";
 import { IconAlert, IconCheck, IconDownload, IconPower, IconTerminal, IconX } from "../icons";
 import { Button, Card, Dialog } from "../shell/m3-ui";
 import type {
   StartupHealthData,
   StartupInstallAction,
+  StartupPill,
   TrayStatusData,
 } from "./startup-shared";
 import {
   PROTECTION_KEYS,
-  STATUS_KEYS,
-  SUMMARY_KEYS,
+  SEARCH_ID,
+  heroDetailKey,
+  heroStatusKey,
+  heroSummaryKey,
+  routingKey,
+  servicePill,
+  shimPill,
+  startupCommandRows,
+  trayActionsAvailable,
+  trayPill,
 } from "./startup-shared";
 
 type Tone = "ok" | "warn" | "neutral";
+
+/**
+ * Whether one row survives the screen's settings search.
+ *
+ * Every section takes it rather than the search object itself: a section has no
+ * business reading the query, the flags or the hit count, and passing the whole
+ * result would let one grow an opinion about them. `matches` answers true for
+ * everything while the field is untouched, so an unsearched screen renders
+ * exactly what it always did.
+ */
+type MatchFn = (id: string) => boolean;
 
 const TONE_SURFACE: Record<Tone, CSSProperties> = {
   ok: { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
@@ -129,8 +148,14 @@ const platformStyle: CSSProperties = { color: "var(--m3-on-surface-variant)", fo
  */
 const dialogHeadStyle: CSSProperties = { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 };
 
-function StartupStatePill({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
-  return <span style={pillStyle(ok ? "ok" : "warn")}>{ok ? yes : no}</span>;
+/**
+ * Takes a resolved pill rather than a yes/no pair: the word and the tone are
+ * decided together in `startup-shared`, so the search can index the exact word
+ * this renders instead of re-deriving a second opinion about it.
+ */
+function StartupStatePill({ state }: { state: StartupPill }) {
+  const { t } = useI18n();
+  return <span style={pillStyle(state.ok ? "ok" : "warn")}>{t(state.key)}</span>;
 }
 
 function StartupStatCard({ label, value }: { label: ReactNode; value: ReactNode }) {
@@ -145,43 +170,47 @@ function StartupStatCard({ label, value }: { label: ReactNode; value: ReactNode 
 export function StartupHeroSection({
   failed,
   data,
+  match,
 }: {
   failed: boolean;
   data: StartupHealthData;
+  match: MatchFn;
 }) {
   const { t } = useI18n();
   const atRisk = failed || data.status === "at-risk";
   const tone: Tone = atRisk ? "warn" : data.status === "protected" ? "ok" : "neutral";
   const StatusIcon = atRisk ? IconAlert : IconCheck;
 
-  const routingKey: TKey = data.routingKind === "opencodex-local" ? "startup.routing.proxy"
-    : data.routingKind === "custom-local" ? "startup.routing.customLocal"
-      : data.routingKind === "custom-remote" ? "startup.routing.customRemote"
-        : data.routingKind === "unknown" ? "startup.routing.unknown"
-          : "startup.routing.native";
+  /**
+   * The three tiles are filtered as a group so the grid goes with its last tile.
+   * An empty `.m3-grid` keeps its trailing gap, and a stray gap between the hero
+   * and the next card reads as a card that failed to load rather than one the
+   * search deliberately put away.
+   */
+  const tiles = [
+    { id: SEARCH_ID.routing, label: t("startup.routing"), value: t(routingKey(data)) },
+    { id: SEARCH_ID.protection, label: t("startup.restartProtection"), value: t(PROTECTION_KEYS[data.protection]) },
+    { id: SEARCH_ID.preference, label: t("startup.preference"), value: t(data.autostartEnabled ? "startup.enabled" : "startup.disabled") },
+  ].filter(tile => match(tile.id));
 
   return (
     <>
-      <section style={heroStyle(tone)} aria-live="polite">
-        <span style={heroIconStyle} aria-hidden="true"><StatusIcon /></span>
-        <div style={{ minWidth: 0, flex: "1 1 260px" }}>
-          <span style={pillStyle(atRisk ? "warn" : "ok")}>
-            {t(failed ? "startup.status.atRisk" : STATUS_KEYS[data.status])}
-          </span>
-          <h3 style={{ ...heroTitleStyle, marginTop: 10 }}>{t(failed ? "startup.error" : SUMMARY_KEYS[data.status])}</h3>
-          <p style={heroBodyStyle}>{failed
-            ? t("startup.staleData")
-            : data.status === "at-risk"
-              ? t(startupRiskDetailKey(data))
-              : t("startup.safeDetail")}</p>
-        </div>
-      </section>
+      {match(SEARCH_ID.status) && (
+        <section style={heroStyle(tone)} aria-live="polite">
+          <span style={heroIconStyle} aria-hidden="true"><StatusIcon /></span>
+          <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+            <span style={pillStyle(atRisk ? "warn" : "ok")}>{t(heroStatusKey(data, failed))}</span>
+            <h3 style={{ ...heroTitleStyle, marginTop: 10 }}>{t(heroSummaryKey(data, failed))}</h3>
+            <p style={heroBodyStyle}>{t(heroDetailKey(data, failed))}</p>
+          </div>
+        </section>
+      )}
 
-      <div className="m3-grid" style={{ marginBottom: "var(--sp-3)" }}>
-        <StartupStatCard label={t("startup.routing")} value={t(routingKey)} />
-        <StartupStatCard label={t("startup.restartProtection")} value={t(PROTECTION_KEYS[data.protection])} />
-        <StartupStatCard label={t("startup.preference")} value={t(data.autostartEnabled ? "startup.enabled" : "startup.disabled")} />
-      </div>
+      {tiles.length > 0 && (
+        <div className="m3-grid" style={{ marginBottom: "var(--sp-3)" }}>
+          {tiles.map(tile => <StartupStatCard key={tile.id} label={tile.label} value={tile.value} />)}
+        </div>
+      )}
     </>
   );
 }
@@ -191,59 +220,59 @@ export function StartupDetailsSection({
   failed,
   installBusy,
   onInstall,
+  match,
 }: {
   data: StartupHealthData;
   failed: boolean;
   installBusy: StartupInstallAction | null;
   onInstall: (action: StartupInstallAction) => void;
+  match: MatchFn;
 }) {
   const { t } = useI18n();
+
+  // A titled card whose every row was filtered out is a heading promising
+  // settings it no longer shows, so the card leaves with its last row.
+  if (!match(SEARCH_ID.service) && !match(SEARCH_ID.shim)) return null;
 
   return (
     <Card
       title={t("startup.details")}
       actions={<span style={platformStyle}>{data.platform}</span>}
     >
-      <div style={rowStyle}>
-        <div style={rowTextStyle}>
-          <strong style={rowLabelStyle}>{t("startup.service")}</strong>
-          <div style={rowHintStyle}>{t("startup.serviceHint")}</div>
+      {match(SEARCH_ID.service) && (
+        <div style={rowStyle}>
+          <div style={rowTextStyle}>
+            <strong style={rowLabelStyle}>{t("startup.service")}</strong>
+            <div style={rowHintStyle}>{t("startup.serviceHint")}</div>
+          </div>
+          <div style={rowActionsStyle}>
+            <StartupStatePill state={servicePill(data)} />
+            {data.serviceSupported && !data.serviceInstalled && (
+              <Button aria-label={`${t("startup.service")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-service")}>
+                <IconDownload aria-hidden="true" />
+                {t(installBusy === "install-service" ? "startup.installing" : "startup.install")}
+              </Button>
+            )}
+          </div>
         </div>
-        <div style={rowActionsStyle}>
-          <StartupStatePill
-            ok={data.serviceViable}
-            yes={t("startup.viable")}
-            no={t(data.serviceConflict ? "startup.conflict" : data.serviceStale ? "startup.stale" : data.serviceInstalled ? "startup.unhealthy" : data.serviceSupported ? "startup.notInstalled" : "startup.unsupported")}
-          />
-          {data.serviceSupported && !data.serviceInstalled && (
-            <Button aria-label={`${t("startup.service")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-service")}>
-              <IconDownload aria-hidden="true" />
-              {t(installBusy === "install-service" ? "startup.installing" : "startup.install")}
-            </Button>
-          )}
+      )}
+      {match(SEARCH_ID.shim) && (
+        <div style={rowStyle}>
+          <div style={rowTextStyle}>
+            <strong style={rowLabelStyle}>{t("startup.shim")}</strong>
+            <div style={rowHintStyle}>{t("startup.shimHint")}</div>
+          </div>
+          <div style={rowActionsStyle}>
+            <StartupStatePill state={shimPill(data)} />
+            {!data.shimInstalled && (
+              <Button aria-label={`${t("startup.shim")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-shim")}>
+                <IconDownload aria-hidden="true" />
+                {t(installBusy === "install-shim" ? "startup.installing" : "startup.install")}
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
-      <div style={rowStyle}>
-        <div style={rowTextStyle}>
-          <strong style={rowLabelStyle}>{t("startup.shim")}</strong>
-          <div style={rowHintStyle}>{t("startup.shimHint")}</div>
-        </div>
-        <div style={rowActionsStyle}>
-          <StartupStatePill
-            ok={data.shimHealthy && data.autostartEnabled}
-            yes={t(data.shimCoverage === "cli-only" ? "startup.cliOnly" : "startup.healthy")}
-            no={t(data.shimInstalled
-              ? data.shimHealthy && !data.autostartEnabled ? "startup.installedDisabled" : "startup.stale"
-              : "startup.notInstalled")}
-          />
-          {!data.shimInstalled && (
-            <Button aria-label={`${t("startup.shim")} - ${t("startup.install")}`} disabled={installBusy !== null || failed} onClick={() => onInstall("install-shim")}>
-              <IconDownload aria-hidden="true" />
-              {t(installBusy === "install-shim" ? "startup.installing" : "startup.install")}
-            </Button>
-          )}
-        </div>
-      </div>
+      )}
     </Card>
   );
 }
@@ -254,12 +283,14 @@ export function StartupTraySection({
   trayError,
   trayBusy,
   onTrayAction,
+  match,
 }: {
   tray: TrayStatusData | null;
   trayLoading: boolean;
   trayError: boolean;
   trayBusy: boolean;
   onTrayAction: (action: "install" | "start" | "stop" | "uninstall") => void;
+  match: MatchFn;
 }) {
   const { t } = useI18n();
   // Removing the tray is a decision, so it stays a blocking dialog — but a
@@ -270,38 +301,49 @@ export function StartupTraySection({
   // now — and the element hands focus back to the button that opened it.
   const [uninstallOpen, setUninstallOpen] = useState(false);
 
+  // Availability and the search are two independent reasons a button is absent,
+  // and they are kept apart: the status decides which actions this tray can even
+  // offer, the query decides which of those the user asked to see.
+  const available = trayActionsAvailable(tray, trayLoading, trayError);
+  const shown = {
+    install: available.install && match(SEARCH_ID.trayInstall),
+    start: available.start && match(SEARCH_ID.trayStart),
+    stop: available.stop && match(SEARCH_ID.trayStop),
+    uninstall: available.uninstall && match(SEARCH_ID.trayUninstall),
+  };
+  if (!match(SEARCH_ID.trayLogin) && !shown.install && !shown.start && !shown.stop && !shown.uninstall) return null;
+
   return (
     <Card
       title={t("startup.tray.title")}
       subtitle={t("startup.tray.hint")}
       actions={<span aria-hidden="true" style={{ color: "var(--m3-on-surface-variant)" }}><IconPower /></span>}
     >
-      <div style={rowStyle}>
-        <div style={rowTextStyle}>
-          <strong style={rowLabelStyle}>{t("startup.tray.login")}</strong>
-          <div style={rowHintStyle}>{t("startup.tray.notProtection")}</div>
+      {match(SEARCH_ID.trayLogin) && (
+        <div style={rowStyle}>
+          <div style={rowTextStyle}>
+            <strong style={rowLabelStyle}>{t("startup.tray.login")}</strong>
+            <div style={rowHintStyle}>{t("startup.tray.notProtection")}</div>
+          </div>
+          <div style={rowActionsStyle}>
+            <StartupStatePill state={trayPill(tray, trayLoading, trayError)} />
+          </div>
         </div>
-        <div style={rowActionsStyle}>
-          {trayLoading || trayError || !tray
-            ? <span style={pillStyle("warn")}>{t(trayLoading ? "startup.tray.loading" : "startup.tray.unavailable")}</span>
-            : <StartupStatePill
-              ok={tray.running && !tray.stale}
-              yes={t("startup.tray.running")}
-              no={t(tray.stale ? "startup.tray.stale" : tray.installed ? "startup.tray.stopped" : "startup.tray.notInstalled")}
-            />}
-        </div>
-      </div>
+      )}
+      {/* The row itself stays put even when it holds nothing: it already renders
+          empty while the status is still loading, and making it conditional would
+          move the notice below it every time a tray action changed state. */}
       <div style={buttonsRowStyle}>
-        {!trayLoading && !trayError && tray && !tray.installed && !tray.stale && (
+        {shown.install && (
           <Button disabled={trayBusy} onClick={() => onTrayAction("install")}>{t("startup.tray.install")}</Button>
         )}
-        {!trayLoading && !trayError && tray?.installed && !tray.stale && !tray.running && (
+        {shown.start && (
           <Button disabled={trayBusy} onClick={() => onTrayAction("start")}>{t("startup.tray.start")}</Button>
         )}
-        {!trayLoading && !trayError && tray?.running && !tray.stale && (
+        {shown.stop && (
           <Button variant="tonal" disabled={trayBusy} onClick={() => onTrayAction("stop")}>{t("startup.tray.stop")}</Button>
         )}
-        {!trayLoading && !trayError && tray && (tray.installed || tray.stale) && (
+        {shown.uninstall && (
           <Button variant="danger" disabled={trayBusy} onClick={() => setUninstallOpen(true)}>
             {t("startup.tray.uninstall")}
           </Button>
@@ -342,17 +384,19 @@ export function StartupTraySection({
 export function StartupRecoverySection({
   data,
   onCopy,
+  match,
 }: {
   data: StartupHealthData;
   onCopy: (command: string) => void;
+  match: MatchFn;
 }) {
   const { t } = useI18n();
 
-  const commands: { label: string; command: string }[] = [
-    ...(data.serviceSupported ? [{ label: t("startup.command.service"), command: data.commands.installService }] : []),
-    { label: t("startup.command.shim"), command: data.commands.installShim },
-    { label: t("startup.command.native"), command: data.commands.restoreNative },
-  ];
+  // Filtered before the index is read, so whichever command survives first loses
+  // its top border and the list still reads as one bordered block rather than
+  // one with a stray rule across the top.
+  const commands = startupCommandRows(data).filter(row => match(row.id));
+  if (commands.length === 0) return null;
 
   return (
     <Card
@@ -362,9 +406,9 @@ export function StartupRecoverySection({
     >
       <div style={commandListStyle}>
         {commands.map((entry, index) => (
-          <div key={entry.command} style={index === 0 ? { ...commandRowStyle, borderTop: "none" } : commandRowStyle}>
+          <div key={entry.id} style={index === 0 ? { ...commandRowStyle, borderTop: "none" } : commandRowStyle}>
             <div style={{ flex: "1 1 260px", minWidth: 0 }}>
-              <strong style={rowLabelStyle}>{entry.label}</strong>
+              <strong style={rowLabelStyle}>{t(entry.labelKey)}</strong>
               <code style={commandCodeStyle}>{entry.command}</code>
             </div>
             <Button variant="outlined" style={{ marginLeft: "auto" }} onClick={() => onCopy(entry.command)}>

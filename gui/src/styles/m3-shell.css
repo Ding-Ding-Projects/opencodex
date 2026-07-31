@@ -1053,7 +1053,17 @@ html[data-desktop] .m3-appbar .m3-avatar {
      their space. `min-height` rather than `height`: the transcript grows, and a
      fixed height would make the compose box overlap it once it did. */
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* Bar, settings search, panel, bottom nav. Only the panel row is elastic — the
+     other three are sized by their content and stay put while the panel scrolls
+     under them. The search row is the fourth: `Mobile.tsx` renders a
+     `SettingsSearchRow` under the bar, and a three-row template silently gave it
+     the panel's elastic row instead.
+
+     The sizing above deliberately does *not* use `height: 100dvh`, which this
+     rule used to carry from when the remote was a viewport takeover. It is a
+     page inside the shell now, and a fixed height puts the compose box on top of
+     the transcript as soon as the transcript grows. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: min(100%, 32rem);
   max-width: 100%;
   min-width: 0;
@@ -1083,6 +1093,32 @@ html[data-desktop] .m3-appbar .m3-avatar {
   font: inherit;
   font-size: var(--t-label-l);
 }
+
+/* The shared settings search row, scoped for a phone.
+
+   The row itself is the shell component every other settings surface uses, and
+   nothing here changes what it does — it only re-sizes it for a thumb, because
+   the shared field follows the density tokens and this screen has its own floor.
+   No `overflow` of any kind: the regex builder popover is absolutely positioned
+   inside this row, and a clipping ancestor would cut it off at the first line. */
+.m3-mob__search {
+  padding: 8px var(--sp-3) 0;
+  background: var(--m3-surface-container-low);
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+/* 44px and 16px are both floors, for different reasons: below 44 the control
+   stops clearing the touch-target minimum, and below 16 iOS Safari zooms the
+   whole page in when the field takes focus. At the tightest density `--h-btn`
+   is 36px and `--t-body-m` is 14px, so both would otherwise be crossed. */
+.m3-mob__search .m3-input,
+.m3-mob__search .m3-chip {
+  min-height: 44px;
+}
+.m3-mob__search .m3-input { font-size: max(16px, var(--t-body-m)); }
+/* Keeping the row on one line, and giving the status line its margin back, are
+   both the shared component's `compact` prop rather than overrides from here —
+   those values are inline styles on the component, and the only way to beat an
+   inline style from a stylesheet is `!important`. */
 
 .m3-mob__body { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 

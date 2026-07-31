@@ -25,11 +25,14 @@
  * stored copy stops following a theme the user later changes.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { onOutsidePress } from "./outside-press";
 import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
+import { SettingsSearchRow } from "./SettingsSearch";
+import { useSettingsSearch } from "./use-settings-search";
+import type { SettingsOption } from "./settings-search";
 import { clampToViewport, tabStyleProps, type TabStyle } from "./use-tabs";
 import { FONT_CHOICES } from "../theme/m3";
 
@@ -147,6 +150,41 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
   const style = props.style ?? {};
   const preview = tabStyleProps(props.style);
 
+  /**
+   * An appearance editor is a settings surface like any other, and seven
+   * properties in a 340px panel is exactly the size at which "obviously
+   * scannable" stops being true — the badge field is below the fold on a short
+   * viewport. Each row carries its current value as well as its name, so typing
+   * the colour you set finds the control that set it, and the placeholder text
+   * ("Inherits from the theme") is indexed too, because that is what the row
+   * visibly reads while a property is unset.
+   */
+  const options: SettingsOption[] = useMemo(() => {
+    const inherits = t("tabs.styleInherits");
+    const rows: SettingsOption[] = [
+      { id: "color", label: t("tabs.styleColor"), value: style.color ?? inherits, keywords: t("tabs.styleColorPicker") },
+      { id: "bg", label: t("tabs.styleBg"), value: style.bg ?? inherits, keywords: t("tabs.styleBgPicker") },
+      {
+        id: "font",
+        label: t("tabs.styleFont"),
+        value: FONT_CHOICES.find(font => font.stack === style.font)?.label ?? t("tabs.styleFontInherit"),
+        keywords: FONT_CHOICES.map(font => font.label).join(" "),
+      },
+      { id: "size", label: t("tabs.styleSize"), value: style.size == null ? inherits : `${style.size}px` },
+      { id: "weight", label: t("tabs.styleWeight"), value: style.weight == null ? inherits : String(style.weight) },
+      { id: "badge", label: t("tabs.styleBadge"), desc: t("tabs.styleBadgeHint", { max: String(BADGE_MAX) }), value: style.badge ?? "" },
+      { id: "resetAll", label: t("tabs.styleResetAll"), keywords: t("tabs.styleReset") },
+    ];
+    // Only a group has an accent, so it is only searchable while one is being edited.
+    if (onAccentChange) {
+      rows.unshift({ id: "groupAccent", label: t("tabs.groupAccent"), value: accent ?? inherits, keywords: t("tabs.groupAccentPicker") });
+    }
+    return rows;
+  }, [t, accent, onAccentChange, style.color, style.bg, style.font, style.size, style.weight, style.badge]);
+
+  const search = useSettingsSearch({ options });
+  const { matches } = search;
+
   // Measured after paint and re-measured when the page moves under it, so the
   // panel stays beside a tab that scrolled or a window that was resized. Off
   // screen until the first measurement, because a panel that paints at 0,0 and
@@ -252,9 +290,13 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
         )}
       </Field>
 
+      {/* `compact`: this panel is 340px wide, so the row's default field basis
+          would push the builder trigger onto a line of its own. */}
+      <SettingsSearchRow search={search} compact />
+
       {/* A group's accent tints its whole run, so it is edited here beside the
           rest of the group's appearance rather than from a separate surface. */}
-      {onAccentChange && (
+      {onAccentChange && matches("groupAccent") && (
         <Field label={t("tabs.groupAccent")} hint={accent && !HEX.test(accent) ? t("tabs.styleSwatchFallback") : undefined}>
           <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
             <input
@@ -277,116 +319,130 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
         </Field>
       )}
 
-      <Field id={colorId} label={t("tabs.styleColor")} hint={style.color && !HEX.test(style.color) ? t("tabs.styleSwatchFallback") : undefined}>
-        <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-          <input
-            type="color"
-            value={style.color && HEX.test(style.color) ? style.color : COLOR_FALLBACK}
-            aria-label={t("tabs.styleColorPicker")}
-            onChange={event => onChange({ color: event.target.value })}
-            style={SWATCH}
-          />
-          <TextInput
-            id={colorId}
-            value={style.color ?? ""}
-            spellCheck={false}
-            placeholder={t("tabs.styleInherits")}
-            aria-label={t("tabs.styleColor")}
-            onChange={event => onChange({ color: event.target.value || undefined })}
-            style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
-          />
-          <ResetButton on={!!style.color} name={t("tabs.styleColor")} clear={() => onChange({ color: undefined })} />
-        </div>
-      </Field>
+      {matches("color") && (
+        <Field id={colorId} label={t("tabs.styleColor")} hint={style.color && !HEX.test(style.color) ? t("tabs.styleSwatchFallback") : undefined}>
+          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+            <input
+              type="color"
+              value={style.color && HEX.test(style.color) ? style.color : COLOR_FALLBACK}
+              aria-label={t("tabs.styleColorPicker")}
+              onChange={event => onChange({ color: event.target.value })}
+              style={SWATCH}
+            />
+            <TextInput
+              id={colorId}
+              value={style.color ?? ""}
+              spellCheck={false}
+              placeholder={t("tabs.styleInherits")}
+              aria-label={t("tabs.styleColor")}
+              onChange={event => onChange({ color: event.target.value || undefined })}
+              style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
+            />
+            <ResetButton on={!!style.color} name={t("tabs.styleColor")} clear={() => onChange({ color: undefined })} />
+          </div>
+        </Field>
+      )}
 
-      <Field label={t("tabs.styleBg")} hint={style.bg && !HEX.test(style.bg) ? t("tabs.styleSwatchFallback") : undefined}>
-        <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-          <input
-            type="color"
-            value={style.bg && HEX.test(style.bg) ? style.bg : BG_FALLBACK}
-            aria-label={t("tabs.styleBgPicker")}
-            onChange={event => onChange({ bg: event.target.value })}
-            style={SWATCH}
-          />
-          <TextInput
-            value={style.bg ?? ""}
-            spellCheck={false}
-            placeholder={t("tabs.styleInherits")}
-            aria-label={t("tabs.styleBg")}
-            onChange={event => onChange({ bg: event.target.value || undefined })}
-            style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
-          />
-          <ResetButton on={!!style.bg} name={t("tabs.styleBg")} clear={() => onChange({ bg: undefined })} />
-        </div>
-      </Field>
+      {matches("bg") && (
+        <Field label={t("tabs.styleBg")} hint={style.bg && !HEX.test(style.bg) ? t("tabs.styleSwatchFallback") : undefined}>
+          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+            <input
+              type="color"
+              value={style.bg && HEX.test(style.bg) ? style.bg : BG_FALLBACK}
+              aria-label={t("tabs.styleBgPicker")}
+              onChange={event => onChange({ bg: event.target.value })}
+              style={SWATCH}
+            />
+            <TextInput
+              value={style.bg ?? ""}
+              spellCheck={false}
+              placeholder={t("tabs.styleInherits")}
+              aria-label={t("tabs.styleBg")}
+              onChange={event => onChange({ bg: event.target.value || undefined })}
+              style={{ flex: "1 1 auto", minWidth: 0, width: "auto", fontFamily: "var(--mono)" }}
+            />
+            <ResetButton on={!!style.bg} name={t("tabs.styleBg")} clear={() => onChange({ bg: undefined })} />
+          </div>
+        </Field>
+      )}
 
-      <Field label={t("tabs.styleFont")}>
-        <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-          <SelectField
-            label={t("tabs.styleFont")}
-            value={style.font ?? ""}
-            onChange={next => onChange({ font: next || undefined })}
-            options={[
-              { value: "", label: t("tabs.styleFontInherit") },
-              ...FONT_CHOICES.map(font => ({ value: font.stack, label: font.label })),
-            ]}
-            style={{ flex: "1 1 auto", minWidth: 0 }}
-          />
-          <ResetButton on={!!style.font} name={t("tabs.styleFont")} clear={() => onChange({ font: undefined })} />
-        </div>
-      </Field>
+      {matches("font") && (
+        <Field label={t("tabs.styleFont")}>
+          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+            <SelectField
+              label={t("tabs.styleFont")}
+              value={style.font ?? ""}
+              onChange={next => onChange({ font: next || undefined })}
+              options={[
+                { value: "", label: t("tabs.styleFontInherit") },
+                ...FONT_CHOICES.map(font => ({ value: font.stack, label: font.label })),
+              ]}
+              style={{ flex: "1 1 auto", minWidth: 0 }}
+            />
+            <ResetButton on={!!style.font} name={t("tabs.styleFont")} clear={() => onChange({ font: undefined })} />
+          </div>
+        </Field>
+      )}
 
-      <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "end" }}>
-        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
-          <Slider
-            label={t("tabs.styleSize")}
-            min={SIZE_MIN}
-            max={SIZE_MAX}
-            value={style.size ?? SIZE_DEFAULT}
-            valueLabel={style.size == null ? t("tabs.styleInherits") : `${style.size}px`}
-            onChange={size => onChange({ size })}
-          />
+      {matches("size") && (
+        <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "end" }}>
+          <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+            <Slider
+              label={t("tabs.styleSize")}
+              min={SIZE_MIN}
+              max={SIZE_MAX}
+              value={style.size ?? SIZE_DEFAULT}
+              valueLabel={style.size == null ? t("tabs.styleInherits") : `${style.size}px`}
+              onChange={size => onChange({ size })}
+            />
+          </div>
+          <ResetButton on={style.size != null} name={t("tabs.styleSize")} clear={() => onChange({ size: undefined })} />
         </div>
-        <ResetButton on={style.size != null} name={t("tabs.styleSize")} clear={() => onChange({ size: undefined })} />
+      )}
+
+      {matches("weight") && (
+        <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "end" }}>
+          <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+            <Slider
+              label={t("tabs.styleWeight")}
+              min={WEIGHT_MIN}
+              max={WEIGHT_MAX}
+              step={100}
+              value={style.weight ?? WEIGHT_DEFAULT}
+              valueLabel={style.weight == null ? t("tabs.styleInherits") : String(style.weight)}
+              onChange={weight => onChange({ weight })}
+            />
+          </div>
+          <ResetButton on={style.weight != null} name={t("tabs.styleWeight")} clear={() => onChange({ weight: undefined })} />
+        </div>
+      )}
+
+      {matches("badge") && (
+        <Field label={t("tabs.styleBadge")} hint={t("tabs.styleBadgeHint", { max: String(BADGE_MAX) })}>
+          <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+            <TextInput
+              value={style.badge ?? ""}
+              maxLength={BADGE_MAX}
+              aria-label={t("tabs.styleBadge")}
+              onChange={event => onChange({ badge: event.target.value || undefined })}
+              style={{ flex: "1 1 auto", minWidth: 0, width: "auto" }}
+            />
+            <ResetButton on={!!style.badge} name={t("tabs.styleBadge")} clear={() => onChange({ badge: undefined })} />
+          </div>
+        </Field>
+      )}
+
+      {matches("resetAll") && (
+        <div className="m3-row" style={{ justifyContent: "end", marginTop: 8 }}>
+          <Button
+            variant="outlined"
+            disabled={!props.style}
+            onClick={() => onChange({ color: undefined, bg: undefined, font: undefined, size: undefined, weight: undefined, badge: undefined })}
+          >
+            {t("tabs.styleResetAll")}
+          </Button>
+        </div>
       </div>
-
-      <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "end" }}>
-        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
-          <Slider
-            label={t("tabs.styleWeight")}
-            min={WEIGHT_MIN}
-            max={WEIGHT_MAX}
-            step={100}
-            value={style.weight ?? WEIGHT_DEFAULT}
-            valueLabel={style.weight == null ? t("tabs.styleInherits") : String(style.weight)}
-            onChange={weight => onChange({ weight })}
-          />
-        </div>
-        <ResetButton on={style.weight != null} name={t("tabs.styleWeight")} clear={() => onChange({ weight: undefined })} />
-      </div>
-
-      <Field label={t("tabs.styleBadge")} hint={t("tabs.styleBadgeHint", { max: String(BADGE_MAX) })}>
-        <div className="m3-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-          <TextInput
-            value={style.badge ?? ""}
-            maxLength={BADGE_MAX}
-            aria-label={t("tabs.styleBadge")}
-            onChange={event => onChange({ badge: event.target.value || undefined })}
-            style={{ flex: "1 1 auto", minWidth: 0, width: "auto" }}
-          />
-          <ResetButton on={!!style.badge} name={t("tabs.styleBadge")} clear={() => onChange({ badge: undefined })} />
-        </div>
-      </Field>
-
-      <div className="m3-row" style={{ justifyContent: "end", marginTop: 8 }}>
-        <Button
-          variant="outlined"
-          disabled={!props.style}
-          onClick={() => onChange({ color: undefined, bg: undefined, font: undefined, size: undefined, weight: undefined, badge: undefined })}
-        >
-          {t("tabs.styleResetAll")}
-        </Button>
-      </div>
-    </div>
+      )}
   );
 }

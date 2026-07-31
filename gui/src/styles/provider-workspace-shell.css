@@ -906,9 +906,20 @@
   margin-bottom: 0;
 }
 
-.pws-model-search {
-  width: 100%;
+/* The row that carries the model search: the field, the `.*` opt-in and the
+   builder trigger. The bottom margin moved from the field to the row when the
+   two controls joined it — left on the field, it pushed them 18px out of line. */
+.pws-model-search-row {
+  gap: var(--sp-2);
+  align-items: center;
+  flex-wrap: nowrap;
   margin-bottom: 18px;
+}
+
+.pws-model-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
 }
 
 .pws-custom-model-label {

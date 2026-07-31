@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconRefresh } from "../icons";
 import { useI18n } from "../i18n/shared";
 import { copyTextToClipboard } from "../oauth-health-display";
 import { Button, Empty } from "../shell/m3-ui";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
+import { SettingsSearchRow } from "../shell/SettingsSearch";
+import { useSettingsSearch } from "../shell/use-settings-search";
+import type { SettingsOption } from "../shell/settings-search";
 import {
   StartupDetailsSection,
   StartupHeroSection,
@@ -12,7 +15,18 @@ import {
   StartupTraySection,
 } from "./startup-sections";
 import {
+  PROTECTION_KEYS,
+  SEARCH_ID,
+  heroDetailKey,
+  heroStatusKey,
+  heroSummaryKey,
   isTrayStatusData,
+  routingKey,
+  servicePill,
+  shimPill,
+  startupCommandRows,
+  trayActionsAvailable,
+  trayPill,
   type StartupHealthData,
   type StartupInstallAction,
   type TrayStatusData,
@@ -147,6 +161,102 @@ export default function Startup({ apiBase }: { apiBase: string }) {
     return () => window.clearTimeout(timer);
   }, [data, refresh]);
 
+  /**
+   * What this screen is searchable by.
+   *
+   * Four stacked sections, a couple of dozen inspectable or adjustable things,
+   * and until now not one search field on the screen that installs a service and
+   * a login tray. Every row is indexed by its label, its hint, and — the part
+   * that matters most here — the word its status pill currently shows, because a
+   * status is exactly what someone types: nobody hunts for "Windows system tray"
+   * when what they remember seeing is "Not installed". Each option also carries
+   * its section's own title as a keyword, so "tray" finds the tray rows even
+   * though not one of them repeats the word in its label.
+   *
+   * A conditional row is indexed only while it actually renders. "Show tray
+   * icon" is absent while the tray is already running, because promising a match
+   * the screen then cannot show is the same lie as hiding a row that exists.
+   *
+   * No `tab` on any option and no `activeTab`: the four sections stack on one
+   * scrolling page rather than switching, so everything the search can match is
+   * already on screen and nothing here can be "on another tab".
+   */
+  const options: SettingsOption[] = useMemo(() => {
+    if (!data) return [];
+    const heroWords = [t("startup.title"), t("startup.overallStatus")].join(" ");
+    // The platform goes in with the details section's title: it is rendered in
+    // that card's corner, so "win32" is a word the user can actually see there.
+    const detailWords = [t("startup.details"), data.platform].join(" ");
+    const trayWords = [t("startup.tray.title"), t("startup.tray.hint")].join(" ");
+    const recoveryWords = [t("startup.recovery"), t("startup.recoveryHint"), t("startup.copy")].join(" ");
+    const installWord = t("startup.install");
+
+    const rows: SettingsOption[] = [
+      {
+        id: SEARCH_ID.status,
+        label: t(heroSummaryKey(data, failed)),
+        desc: t(heroDetailKey(data, failed)),
+        value: t(heroStatusKey(data, failed)),
+        keywords: heroWords,
+      },
+      { id: SEARCH_ID.routing, label: t("startup.routing"), value: t(routingKey(data)), keywords: heroWords },
+      { id: SEARCH_ID.protection, label: t("startup.restartProtection"), value: t(PROTECTION_KEYS[data.protection]), keywords: heroWords },
+      {
+        id: SEARCH_ID.preference,
+        label: t("startup.preference"),
+        value: t(data.autostartEnabled ? "startup.enabled" : "startup.disabled"),
+        keywords: heroWords,
+      },
+      {
+        id: SEARCH_ID.service,
+        label: t("startup.service"),
+        desc: t("startup.serviceHint"),
+        value: t(servicePill(data).key),
+        keywords: [detailWords, data.serviceSupported && !data.serviceInstalled ? installWord : ""].filter(Boolean).join(" "),
+      },
+      {
+        id: SEARCH_ID.shim,
+        label: t("startup.shim"),
+        desc: t("startup.shimHint"),
+        value: t(shimPill(data).key),
+        keywords: [detailWords, data.shimInstalled ? "" : installWord].filter(Boolean).join(" "),
+      },
+    ];
+
+    if (data.platform === "win32") {
+      rows.push({
+        id: SEARCH_ID.trayLogin,
+        label: t("startup.tray.login"),
+        desc: t("startup.tray.notProtection"),
+        value: t(trayPill(tray, trayLoading, trayError).key),
+        keywords: trayWords,
+      });
+      const available = trayActionsAvailable(tray, trayLoading, trayError);
+      if (available.install) rows.push({ id: SEARCH_ID.trayInstall, label: t("startup.tray.install"), keywords: trayWords });
+      if (available.start) rows.push({ id: SEARCH_ID.trayStart, label: t("startup.tray.start"), keywords: trayWords });
+      if (available.stop) rows.push({ id: SEARCH_ID.trayStop, label: t("startup.tray.stop"), keywords: trayWords });
+      if (available.uninstall) {
+        rows.push({
+          id: SEARCH_ID.trayUninstall,
+          label: t("startup.tray.uninstall"),
+          desc: t("startup.tray.uninstallConfirm"),
+          keywords: trayWords,
+        });
+      }
+    }
+
+    // The command itself is the value: `ocx service install` is on screen in a
+    // <code> block, so typing any part of it has to find the row that offers it.
+    for (const row of startupCommandRows(data)) {
+      rows.push({ id: row.id, label: t(row.labelKey), value: row.command, keywords: recoveryWords });
+    }
+
+    return rows;
+  }, [t, data, failed, tray, trayLoading, trayError]);
+
+  const search = useSettingsSearch({ options });
+  const { matches } = search;
+
   const copyCommand = async (command: string) => {
     // A clipboard write that fails silently reads as a successful copy and the
     // user pastes the previous buffer into a shell, so the outcome is always
@@ -258,12 +368,17 @@ export default function Startup({ apiBase }: { apiBase: string }) {
               )}
             </div>
           )}
-          <StartupHeroSection failed={failed} data={data} />
+          {/* Below the warnings, above everything it filters. The two notices
+              stay put: an alert the search could hide is an alert the user never
+              reads, and neither of them is a setting anybody goes looking for. */}
+          <SettingsSearchRow search={search} />
+          <StartupHeroSection failed={failed} data={data} match={matches} />
           <StartupDetailsSection
             data={data}
             failed={failed}
             installBusy={installBusy}
             onInstall={(action) => { void runInstallAction(action); }}
+            match={matches}
           />
           {data.platform === "win32" && (
             <StartupTraySection
@@ -272,9 +387,10 @@ export default function Startup({ apiBase }: { apiBase: string }) {
               trayError={trayError}
               trayBusy={trayBusy}
               onTrayAction={(action) => { void runTrayAction(action); }}
+              match={matches}
             />
           )}
-          <StartupRecoverySection data={data} onCopy={(command) => { void copyCommand(command); }} />
+          <StartupRecoverySection data={data} onCopy={(command) => { void copyCommand(command); }} match={matches} />
         </>
       ) : null}
     </>

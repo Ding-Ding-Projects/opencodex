@@ -1637,6 +1637,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "mobile.httpStatus": "Proxy 回咗 {status}，冇其他資料。",
   "mobile.modelsFailed": "連唔到 proxy，載入唔到模型清單。",
   "mobile.retry": "再試一次",
+  "mobile.panelNav": "版面",
+  "mobile.keySet": "呢次已經入咗",
 
   // ---- shell / navigation ----
   "nav.settings": "設定",
@@ -1847,6 +1849,10 @@ export const yue: Partial<Record<TKey, string>> = {
   "debug.captureTitle": "擷取",
   "debug.captureSub": "每條 stream 都要你自己開，開住嗰陣會蝕吞吐量。",
   "debug.streamsAria": "除錯 log stream",
+  // 跟返呢頁本身嘅講法：`debug.empty` 已經寫住「除錯記錄已閂」，所以開就係「開」、
+  // 閂就係「閂」，唔會一版兩種叫法。
+  "debug.stateOn": "開",
+  "debug.stateOff": "閂",
   "debug.claudeInbound.thinking": "Thinking",
   "debug.claudeInbound.effort": "Effort",
   "debug.claudeInbound.beta": "Beta",
@@ -1963,6 +1969,11 @@ export const yue: Partial<Record<TKey, string>> = {
   "network.historySearch": "搜尋快照",
   "network.historyNoMatch": "冇快照符合",
   "network.historyNoMatchBody": "紀錄入面冇嘢符合嗰個搜尋。清走佢就會再見到全部快照。",
+  "network.settingsBuilder": "砌個 pattern 嚟搜呢啲設定",
+  "network.historyBuilder": "砌個 pattern 嚟搜啲快照",
+  "network.stateOn": "開咗",
+  "network.stateOff": "閂咗",
+  "network.endpointWords": "hostname 埠 port 端點 位址 主機",
   "network.restore": "還原",
   "network.restoreAria": "還原 {label} 嗰陣嘅狀態",
   "network.restoreConfirm": "將 config、帳戶同憑證還原到呢個快照？\n\n{label}\n\nOpenCodex 會做完仲進行緊嘅請求，寫返啲檔案，然後重新啟動。你而家嘅狀態會先 commit 入紀錄，所以呢次還原本身都可以再還原。",
@@ -2259,6 +2270,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "sub.savedBody": "開一個新嘅 Codex session（或者行 {cmd}）就會見到佢哋做 spawn_agent 嘅覆寫。",
 
   // ---- startup safety ----
+  "startup.overallStatus": "整體狀態",
   "startup.tray.uninstallConfirm": "移除登入時嘅系統匣圖示？proxy 會照樣行 — 淨係移除咗系統匣控制器，重啟保護唔受影響。",
   "startup.tray.installedRecorded": "安裝咗 Windows 登入系統匣",
   "startup.tray.removedRecorded": "移除咗 Windows 登入系統匣",
@@ -2380,6 +2392,9 @@ export const yue: Partial<Record<TKey, string>> = {
   "pws.groupNeedsAttention": "要處理（{count}）",
 
   // ---- anchored regex builder ----
+  "settings.otherTabHere": "呢版另一個分頁有 {count} 個符合：{tabs}",
+  "settings.matchCount": "{total} 個設定入面有 {count} 個符合",
+
   "regexpop.apply": "用呢個 pattern",
   "regexpop.applyHint": "會將搜尋欄嘅字換成呢個 pattern，同埋將個欄轉做 regex 模式。",
   "regexpop.applyHintPlain": "會將搜尋欄嘅字換成呢個 pattern。",

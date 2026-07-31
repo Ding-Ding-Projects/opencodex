@@ -6,6 +6,9 @@
  */
 import { useMemo, useState } from "react";
 import { useT } from "../../i18n/shared";
+import { Chip } from "../../shell/m3-ui";
+import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../../shell/settings-search";
 import {
   bucketPresets,
   filterPresets,
@@ -59,6 +62,14 @@ export default function ProviderCatalog({
   const t = useT();
   const [tier, setTier] = useState<CatalogTier>(initialTier);
   const [query, setQuery] = useState("");
+  /**
+   * The regex opt-in and the flags the builder hands back. This search bar had
+   * neither: it was one of three in the app that offered no route to the builder
+   * at all, so the provider catalogue could only ever be narrowed by substring.
+   * Plain text stays the default, as on every other search bar.
+   */
+  const [useRegex, setUseRegex] = useState(false);
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   const catalog = useMemo(() => presets.filter(p => p.id !== "custom"), [presets]);
 
@@ -72,7 +83,8 @@ export default function ProviderCatalog({
 
   const buckets = useMemo(() => bucketPresets(ranked), [ranked]);
   const tierList = buckets[tier];
-  const rows = useMemo(() => filterPresets(tierList, query), [tierList, query]);
+  const matcher = useMemo(() => settingsMatcher(query, useRegex, flags), [query, useRegex, flags]);
+  const rows = useMemo(() => filterPresets(tierList, query, matcher), [tierList, query, matcher]);
 
   const badges = (p: CatalogPreset) => {
     const auth = p.codexAccountMode === "direct" ? <span className="badge badge-green">{t("modal.badge.direct")}</span>
@@ -112,12 +124,43 @@ export default function ProviderCatalog({
         </div>
       )}
 
-      <input
-        className="input provider-catalog-search"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder={t("modal.search")}
-      />
+      <div className="m3-row provider-catalog-search-row" role="search">
+        <input
+          type="search"
+          className="input provider-catalog-search"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={t("modal.search")}
+          // The field had no accessible name at all — a placeholder is not one,
+          // because it disappears the moment anything is typed into it.
+          aria-label={t("modal.search")}
+          aria-invalid={!!matcher.error}
+          aria-describedby={matcher.error ? "provider-catalog-search-error" : undefined}
+        />
+        <Chip
+          selected={useRegex}
+          onClick={() => setUseRegex(!useRegex)}
+          title={t("regex.regexMode")}
+          aria-label={t("regex.regexMode")}
+        >
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <RegexBuilderButton
+          value={query}
+          flags={flags}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
+          // The whole tier, not `rows`: a sample taken from the already filtered
+          // list would hide exactly the providers the pattern is being built to reach.
+          sample={tierList.map(p => `${p.label} ${p.id}`).join("\n")}
+        />
+      </div>
+      {matcher.error && (
+        <p id="provider-catalog-search-error" role="alert" className="text-label" style={{ color: "var(--m3-error)" }}>
+          {t("regex.invalid")}: {matcher.error}
+        </p>
+      )}
 
       <div className="provider-catalog-rows">
         {presetsLoading && rows.length === 0 && (
