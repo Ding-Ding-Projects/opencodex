@@ -29,7 +29,8 @@
  * what the strip loses.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { onOutsidePress } from "./outside-press";
 import {
   IconChevron, IconCopy, IconFilter, IconPalette, IconPin, IconPlus, IconTrash, IconX,
 } from "../icons";
@@ -37,10 +38,10 @@ import { useT } from "../i18n/shared";
 import { PAGE_META, PAGE_META_BY_ID } from "./page-meta";
 import { SearchField } from "./RegexBuilderButton";
 import TabAppearanceEditor from "./TabAppearanceEditor";
-import { Button, Segmented, Toggle } from "./m3-ui";
+import { Button, Segmented, TextInput, Toggle } from "./m3-ui";
 import {
   TAB_MATCH_FLAGS, bulkCloseTargets, clampToViewport, closeOthersTargets, closeToRightTargets,
-  splitTabs, tabMatcher, tabStyleProps, type Tab, type TabsApi,
+  splitTabs, tabMatcher, tabStyleProps, type Tab, type TabGroup, type TabsApi,
 } from "./use-tabs";
 import type { Page } from "../app-routing";
 
@@ -50,11 +51,30 @@ type MenuColumn = "item" | "close";
 /** An open context menu: which tab it acts on, and the point it was opened at. */
 interface ContextTarget { id: string; x: number; y: number }
 
+/** An open group menu: which group header it acts on, and where it was opened. */
+interface GroupTarget { id: string; x: number; y: number }
+
 /** Every command the tab menu offers. A union rather than free strings so a
  * renamed entry is a compile error instead of a menu item that does nothing. */
 type ContextAction =
   | "close" | "others" | "right" | "pin" | "duplicate"
-  | "containing" | "notContaining" | "appearance";
+  | "containing" | "notContaining" | "appearance"
+  | "newGroup" | "ungroupTab";
+
+/** Every command the group-header menu offers. */
+type GroupAction = "collapse" | "rename" | "appearance" | "ungroup";
+
+/**
+ * Width a group header takes out of the strip before any tab gets a share.
+ *
+ * Matches `.m3-tabgroup-head { max-width: 160px }` plus the run's padding and
+ * gaps, rounded down. It is an estimate on purpose: `splitTabs` only needs to
+ * know the space is *not* available to tabs, and measuring each header would
+ * mean a layout pass per render to answer a question a constant answers well
+ * enough. Erring low would clip the last tab, which is the one failure the
+ * overflow menu exists to prevent, so it errs high.
+ */
+const GROUP_HEADER_WIDTH = 116;
 
 /** An open bulk-close confirmation. `invert` is the "not containing" variant. */
 interface BulkTarget { id: string; invert: boolean; x: number; y: number }
@@ -82,7 +102,11 @@ const BADGE_STYLE: React.CSSProperties = {
 const CONFIRM_STYLE: React.CSSProperties = {
   position: "fixed",
   zIndex: 80,
-  width: 360,
+  // `min()` rather than a flat 360. `clampToViewport` can move this panel but
+  // not shrink it, so on a 320px screen it computed left: 8 and still ran 48px
+  // past the right edge — and because the button row is `justify-content: end`,
+  // the part that went off-screen was the destructive confirm button.
+  width: "min(360px, calc(100vw - 24px))",
   maxHeight: "min(70vh, 560px)",
   overflowY: "auto",
   padding: 16,
@@ -123,6 +147,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const [listWidth, setListWidth] = useState(0);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropId, setDropId] = useState<string | null>(null);
+  /** A group header being dragged. Kept apart from `dragId` so a group drop can
+   * never be mistaken for a tab drop — the two reorder different lists. */
+  const [dragGroupId, setDragGroupId] = useState<string | null>(null);
 
   const [context, setContext] = useState<ContextTarget | null>(null);
   const [contextIndex, setContextIndex] = useState(0);
@@ -136,6 +163,11 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const [bulkPinned, setBulkPinned] = useState(false);
   const [bulkSize, setBulkSize] = useState({ width: 0, height: 0 });
   const [styleTarget, setStyleTarget] = useState<StyleTarget | null>(null);
+  const [groupStyleTarget, setGroupStyleTarget] = useState<StyleTarget | null>(null);
+  const [groupMenu, setGroupMenu] = useState<GroupTarget | null>(null);
+  const [groupMenuSize, setGroupMenuSize] = useState({ width: 0, height: 0 });
+  /** Non-null while a group name is being typed — new group, or a rename. */
+  const [naming, setNaming] = useState<{ groupId: string | null; tabId: string | null; value: string } | null>(null);
   const [pageQuery, setPageQuery] = useState("");
   const [pageRegex, setPageRegex] = useState(false);
 
@@ -147,6 +179,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const contextRef = useRef<HTMLDivElement>(null);
   const bulkRef = useRef<HTMLDivElement>(null);
   const tabButtons = useRef(new Map<string, HTMLButtonElement>());
+  const groupHeaders = useRef(new Map<string, HTMLButtonElement>());
+  const groupMenuRef = useRef<HTMLDivElement>(null);
+  const groupEntryRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const closeRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const contextRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -156,8 +191,49 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
 
   const pageSearchId = useId();
   const bulkQueryId = useId();
+  const groupNameId = useId();
 
-  const { visible, overflow } = splitTabs(tabs.tabs, tabs.activeTab, listWidth);
+  /**
+   * Group headers eat strip width before any tab does, so the capacity sum is
+   * given a list width already reduced by them. Without this the strip would
+   * think it had room for one more tab than it does and the last one would be
+   * clipped rather than moved into the overflow menu — the exact failure the
+   * overflow menu exists to prevent.
+   *
+   * A collapsed group still draws a header, so it counts even though none of its
+   * members are on the strip.
+   */
+  const groupsOnStrip = useMemo(() => {
+    const used = new Set(tabs.visible.map(tab => tab.groupId).filter(Boolean) as string[]);
+    return tabs.groups.filter(group => used.has(group.id) || group.collapsed);
+  }, [tabs.groups, tabs.visible]);
+
+  const { visible, overflow } = splitTabs(
+    tabs.visible,
+    tabs.activeTab,
+    Math.max(0, listWidth - groupsOnStrip.length * GROUP_HEADER_WIDTH),
+  );
+
+  /** Strip order rendered as runs: a pinned run, then group runs and loose tabs. */
+  const runs = useMemo(() => {
+    const out: { group?: TabGroup; tabs: Tab[] }[] = [];
+    for (const tab of visible) {
+      const group = tab.groupId ? tabs.groups.find(g => g.id === tab.groupId) : undefined;
+      const last = out[out.length - 1];
+      if (last && last.group?.id === group?.id && (group || !last.group)) last.tabs.push(tab);
+      else out.push({ group, tabs: [tab] });
+    }
+    // A collapsed group has no visible members, so it would never appear above.
+    // It still has to be drawn — otherwise collapsing a group deletes it from
+    // view and the only way back is to guess where it went.
+    for (const group of tabs.groups) {
+      if (!group.collapsed) continue;
+      if (out.some(run => run.group?.id === group.id)) continue;
+      if (!tabs.tabs.some(tab => tab.groupId === group.id)) continue;
+      out.push({ group, tabs: [] });
+    }
+    return out;
+  }, [visible, tabs.groups, tabs.tabs]);
   // The strip never empties, so the last tab has no close control anywhere.
   const closable = tabs.tabs.length > 1;
   // Derived, not stored: closing the last overflowed tab has to shut the menu,
@@ -224,10 +300,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
       setNewMenuOpen(false);
       newTriggerRef.current?.focus();
     };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [newMenuOpen]);
@@ -242,10 +318,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
       // to the document leaves a keyboard user at the top of the page.
       if (e.key === "Escape") { setOverflowOpen(false); overflowTriggerRef.current?.focus(); }
     };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [menuOpen]);
@@ -323,8 +399,8 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     const onDown = (e: MouseEvent) => {
       if (!contextRef.current?.contains(e.target as Node)) setContext(null);
     };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
+    return stopOutsideonDown;
   }, [context]);
 
   /**
@@ -359,6 +435,12 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
       { action: "containing", label: t("tabs.closeContaining"), Icon: IconFilter, disabled: !closable },
       { action: "notContaining", label: t("tabs.closeNotContaining"), Icon: IconFilter, disabled: !closable },
       { action: "appearance", label: t("tabs.editAppearance"), Icon: IconPalette },
+      // A pinned tab cannot join a group: the pinned region is a fixed row that
+      // must stay visible when everything else overflows, and a member of a
+      // collapsible group cannot promise that. `assignGroup` refuses it too, so
+      // offering it enabled would be a menu entry that silently does nothing.
+      { action: "newGroup", label: t("tabs.newGroup"), Icon: IconPlus, disabled: contextTab.pinned },
+      { action: "ungroupTab", label: t("tabs.removeFromGroup"), Icon: IconX, disabled: !contextTab.groupId },
     ]
     : [];
 
@@ -402,7 +484,79 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
       case "appearance":
         openStyleEditor(id);
         break;
+      case "newGroup":
+        // The group is not created until a name is committed: an unnamed group
+        // is a coloured bar the user cannot tell from any other coloured bar.
+        setContext(null);
+        setNaming({ groupId: null, tabId: id, value: "" });
+        break;
+      case "ungroupTab":
+        tabs.assignGroup(id, undefined);
+        setContext(null);
+        focusTab(id);
+        break;
     }
+  };
+
+  /* --------------------------------------------------------- group menu --- */
+
+  const menuGroup = groupMenu ? tabs.groups.find(group => group.id === groupMenu.id) : undefined;
+
+  const groupEntries: { action: GroupAction; label: string; Icon: typeof IconX }[] = menuGroup
+    ? [
+      { action: "collapse", label: menuGroup.collapsed ? t("tabs.expand") : t("tabs.collapse"), Icon: IconChevron },
+      { action: "rename", label: t("tabs.renameGroup"), Icon: IconCopy },
+      { action: "appearance", label: t("tabs.editGroupAppearance"), Icon: IconPalette },
+      // Ungroup, never "delete": the members are released rather than closed.
+      // A command in a tab strip that silently shut tabs would be the worst
+      // possible reading of the word most users expect here.
+      { action: "ungroup", label: t("tabs.ungroup"), Icon: IconTrash },
+    ]
+    : [];
+
+  const openGroupMenu = (id: string, x: number, y: number) => {
+    setNewMenuOpen(false);
+    setOverflowOpen(false);
+    setBulk(null);
+    setContext(null);
+    setStyleTarget(null);
+    setGroupStyleTarget(null);
+    setGroupMenu({ id, x, y });
+  };
+
+  const runGroupEntry = (action: GroupAction) => {
+    if (!menuGroup) return;
+    const id = menuGroup.id;
+    switch (action) {
+      case "collapse":
+        tabs.toggleGroupCollapsed(id);
+        setGroupMenu(null);
+        break;
+      case "rename":
+        setGroupMenu(null);
+        setNaming({ groupId: id, tabId: null, value: menuGroup.name });
+        break;
+      case "appearance":
+        setGroupMenu(null);
+        setGroupStyleTarget({ id, anchor: groupHeaders.current.get(id) ?? null });
+        break;
+      case "ungroup":
+        tabs.removeGroup(id);
+        setGroupMenu(null);
+        break;
+    }
+  };
+
+  const commitName = () => {
+    if (!naming) return;
+    const name = naming.value.trim();
+    if (name) {
+      if (naming.groupId) tabs.renameGroup(naming.groupId, name);
+      else if (naming.tabId) tabs.createGroup(name, [naming.tabId]);
+    }
+    const tabId = naming.tabId;
+    setNaming(null);
+    if (tabId) focusTab(tabId);
   };
 
   /**
@@ -442,6 +596,40 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
 
   const contextPosition = context
     ? clampToViewport({ x: context.x, y: context.y }, contextSize, { width: window.innerWidth, height: window.innerHeight })
+    : { left: 0, top: 0 };
+
+  useLayoutEffect(() => {
+    if (!groupMenu) return;
+    const rect = groupMenuRef.current?.getBoundingClientRect();
+    if (rect) setGroupMenuSize({ width: rect.width, height: rect.height });
+  }, [groupMenu]);
+
+  useEffect(() => {
+    if (!groupMenu) return;
+    groupEntryRefs.current[0]?.focus();
+  }, [groupMenu]);
+
+  useEffect(() => {
+    if (!groupMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (!groupMenuRef.current?.contains(e.target as Node)) setGroupMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const id = groupMenu.id;
+      setGroupMenu(null);
+      groupHeaders.current.get(id)?.focus();
+    };
+    const stopOutsideonDown = onOutsidePress(onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      stopOutsideonDown();
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [groupMenu]);
+
+  const groupMenuPosition = groupMenu
+    ? clampToViewport({ x: groupMenu.x, y: groupMenu.y }, groupMenuSize, { width: window.innerWidth, height: window.innerHeight })
     : { left: 0, top: 0 };
 
   /* -------------------------------------------------------- bulk closing -- */
@@ -492,10 +680,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
       setBulk(null);
       focusTab(id);
     };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [bulk]);
@@ -656,6 +844,62 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
 
   /* -------------------------------------------------------------- render -- */
 
+  const renderTab = (tab: Tab) => {
+    const label = labelOf(tab);
+    const selected = tab.id === tabs.activeTab;
+    const style = tabStyleProps(tab.style);
+    return (
+      <div
+        key={tab.id}
+        data-tab-id={tab.id}
+        className={`m3-tab${selected ? " selected" : ""}${dragId === tab.id ? " dragging" : ""}${dropId === tab.id && dragId !== tab.id ? " drop-target" : ""}`}
+        style={style.surface}
+        draggable
+        onDragStart={() => setDragId(tab.id)}
+        onDragOver={e => { e.preventDefault(); setDropId(tab.id); }}
+        onDrop={e => { e.preventDefault(); if (dragId) tabs.moveTab(dragId, tab.id); setDragId(null); setDropId(null); }}
+        onDragEnd={() => { setDragId(null); setDropId(null); }}
+        onContextMenu={e => {
+          // Without preventDefault the browser's own menu opens on top of
+          // this one, and the tab commands are buried under Reload/Inspect.
+          e.preventDefault();
+          if (e.shiftKey) openStyleEditor(tab.id);
+          else openContextMenu(tab.id, e.clientX, e.clientY);
+        }}
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={selected}
+          aria-haspopup="menu"
+          tabIndex={selected ? 0 : -1}
+          className="m3-tab-btn"
+          style={style.label}
+          title={label}
+          ref={el => {
+            if (el) tabButtons.current.set(tab.id, el);
+            else tabButtons.current.delete(tab.id);
+          }}
+          onClick={() => tabs.selectTab(tab.id)}
+          onDoubleClick={() => tabs.togglePin(tab.id)}
+          onAuxClick={e => { if (e.button === 1) { e.preventDefault(); requestClose(tab.id); } }}
+        >
+          <TabIdentity tab={tab} label={label} />
+        </button>
+        <button
+          type="button"
+          className="m3-tab-close"
+          hidden={!closable}
+          onClick={() => requestClose(tab.id)}
+          aria-label={t("tabs.close", { name: label })}
+          title={t("tabs.close", { name: label })}
+        >
+          <IconX aria-hidden />
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="m3-tabstrip">
       <div
@@ -665,60 +909,60 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
         onKeyDown={onKeyDown}
         ref={listRef}
       >
-        {visible.map(tab => {
-          const label = labelOf(tab);
-          const selected = tab.id === tabs.activeTab;
-          const style = tabStyleProps(tab.style);
-          return (
+        {runs.flatMap(run => {
+          if (!run.group) return run.tabs.map(renderTab);
+          const group = run.group;
+          const memberCount = tabs.tabs.filter(tab => tab.groupId === group.id).length;
+          const headStyle = tabStyleProps(group.style);
+          return [(
             <div
-              key={tab.id}
-              data-tab-id={tab.id}
-              className={`m3-tab${selected ? " selected" : ""}${dragId === tab.id ? " dragging" : ""}${dropId === tab.id && dragId !== tab.id ? " drop-target" : ""}`}
-              style={style.surface}
-              draggable
-              onDragStart={() => setDragId(tab.id)}
-              onDragOver={e => { e.preventDefault(); setDropId(tab.id); }}
-              onDrop={e => { e.preventDefault(); if (dragId) tabs.moveTab(dragId, tab.id); setDragId(null); setDropId(null); }}
-              onDragEnd={() => { setDragId(null); setDropId(null); }}
-              onContextMenu={e => {
-                // Without preventDefault the browser's own menu opens on top of
-                // this one, and the tab commands are buried under Reload/Inspect.
+              key={group.id}
+              data-group-id={group.id}
+              className={`m3-tabgroup${group.collapsed ? " collapsed" : ""}${dragGroupId === group.id ? " dragging" : ""}`}
+              style={{ ["--m3-group-color" as string]: group.color ?? "var(--m3-tertiary)" }}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => {
                 e.preventDefault();
-                if (e.shiftKey) openStyleEditor(tab.id);
-                else openContextMenu(tab.id, e.clientX, e.clientY);
+                // Two different reorders land here, and which one runs is decided
+                // by what was picked up rather than by where it was dropped: a
+                // group header reorders the group list, a tab joins this group.
+                // Reading the drop target alone would make dragging a group onto
+                // one of its own members silently do the wrong one.
+                if (dragGroupId && dragGroupId !== group.id) tabs.moveGroup(dragGroupId, group.id);
+                else if (dragId) tabs.assignGroup(dragId, group.id);
+                setDragId(null);
+                setDropId(null);
+                setDragGroupId(null);
               }}
             >
               <button
                 type="button"
-                role="tab"
-                aria-selected={selected}
-                aria-haspopup="menu"
-                tabIndex={selected ? 0 : -1}
-                className="m3-tab-btn"
-                style={style.label}
-                title={label}
+                className="m3-tabgroup-head"
+                style={headStyle.label}
+                draggable
+                onDragStart={() => setDragGroupId(group.id)}
+                onDragEnd={() => setDragGroupId(null)}
+                aria-expanded={!group.collapsed}
+                // Named and counted, never identified by its colour alone.
+                aria-label={t("tabs.groupAria", { name: group.name, count: String(memberCount) })}
+                title={group.name}
                 ref={el => {
-                  if (el) tabButtons.current.set(tab.id, el);
-                  else tabButtons.current.delete(tab.id);
+                  if (el) groupHeaders.current.set(group.id, el);
+                  else groupHeaders.current.delete(group.id);
                 }}
-                onClick={() => tabs.selectTab(tab.id)}
-                onDoubleClick={() => tabs.togglePin(tab.id)}
-                onAuxClick={e => { if (e.button === 1) { e.preventDefault(); requestClose(tab.id); } }}
+                onClick={() => tabs.toggleGroupCollapsed(group.id)}
+                onContextMenu={e => {
+                  e.preventDefault();
+                  if (e.shiftKey) setGroupStyleTarget({ id: group.id, anchor: e.currentTarget });
+                  else openGroupMenu(group.id, e.clientX, e.clientY);
+                }}
               >
-                <TabIdentity tab={tab} label={label} />
+                <span className="m3-tabgroup-name">{group.name}</span>
+                {group.collapsed && <span className="m3-tabgroup-count">{memberCount}</span>}
               </button>
-              <button
-                type="button"
-                className="m3-tab-close"
-                hidden={!closable}
-                onClick={() => requestClose(tab.id)}
-                aria-label={t("tabs.close", { name: label })}
-                title={t("tabs.close", { name: label })}
-              >
-                <IconX aria-hidden />
-              </button>
+              {run.tabs.map(renderTab)}
             </div>
-          );
+          )];
         })}
       </div>
 
@@ -978,7 +1222,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
         if (!tab) return null;
         return (
           <TabAppearanceEditor
-            tab={tab}
+            kind="tab"
+            id={tab.id}
+            style={tab.style}
+            Icon={PAGE_META_BY_ID[tab.page].Icon}
             label={labelOf(tab)}
             anchor={styleTarget.anchor}
             onChange={patch => tabs.setTabStyle(tab.id, patch)}
@@ -989,6 +1236,82 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           />
         );
       })()}
+
+      {groupStyleTarget && (() => {
+        const group = tabs.groups.find(item => item.id === groupStyleTarget.id);
+        if (!group) return null;
+        return (
+          <TabAppearanceEditor
+            kind="group"
+            id={group.id}
+            style={group.style}
+            label={group.name}
+            accent={group.color}
+            onAccentChange={color => tabs.setGroupColor(group.id, color)}
+            anchor={groupStyleTarget.anchor}
+            onChange={patch => tabs.setGroupStyle(group.id, patch)}
+            onClose={() => { const anchor = groupStyleTarget.anchor; setGroupStyleTarget(null); anchor?.focus(); }}
+          />
+        );
+      })()}
+
+      {menuGroup && (
+        <div
+          ref={groupMenuRef}
+          className="m3-menu"
+          role="menu"
+          aria-label={t("tabs.groupMenuAria", { name: menuGroup.name })}
+          data-group-menu={menuGroup.id}
+          style={{ position: "fixed", left: groupMenuPosition.left, top: groupMenuPosition.top, minWidth: 240 }}
+        >
+          {groupEntries.map((entry, index) => (
+            <button
+              key={entry.action}
+              type="button"
+              role="menuitem"
+              className="m3-menu-item"
+              tabIndex={index === 0 ? 0 : -1}
+              ref={el => { groupEntryRefs.current[index] = el; }}
+              onClick={() => runGroupEntry(entry.action)}
+            >
+              <entry.Icon aria-hidden />
+              <span>{entry.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {naming && (
+        /* Naming is a decision the user has to finish before a group exists, so
+           unlike every other surface here it is a small committed form rather
+           than a live-applying editor. It is still anchored and non-modal:
+           nothing behind it is inert, and Escape abandons it. */
+        <div
+          role="dialog"
+          aria-label={naming.groupId ? t("tabs.renameGroup") : t("tabs.newGroup")}
+          data-group-name-dialog={naming.groupId ?? "new"}
+          style={{ ...CONFIRM_STYLE, left: 12, top: 64, width: "min(320px, calc(100vw - 24px))" }}
+          onKeyDown={e => {
+            if (e.key === "Escape") { e.preventDefault(); setNaming(null); }
+            else if (e.key === "Enter") { e.preventDefault(); commitName(); }
+          }}
+        >
+          <label className="m3-field-label" htmlFor={groupNameId}>{t("tabs.groupName")}</label>
+          <TextInput
+            id={groupNameId}
+            autoFocus
+            value={naming.value}
+            maxLength={64}
+            placeholder={t("tabs.groupNamePlaceholder")}
+            onChange={e => setNaming(current => (current ? { ...current, value: e.target.value } : current))}
+            style={{ width: "100%" }}
+          />
+          <div className="m3-row" style={{ justifyContent: "end", gap: 8, marginTop: 12 }}>
+            <Button variant="text" onClick={() => setNaming(null)}>{t("tabs.cancel")}</Button>
+            <Button disabled={!naming.value.trim()} onClick={commitName}>{t("tabs.groupSave")}</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

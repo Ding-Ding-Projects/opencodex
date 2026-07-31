@@ -1749,6 +1749,27 @@ export const yue: Partial<Record<TKey, string>> = {
   "tabs.styleInherits": "跟主題",
   "tabs.styleSwatchFallback": "個色板顯示唔到呢個值 —— 真正用緊嘅係隔籬個欄入面嗰個。",
 
+  // ---- 分頁群組 ----
+  // 個名同數量寫晒喺無障礙名度，唔淨係靠顏色分。分唔到色嘅人如果淨係得個顏色,
+  // 兩個群組就變咗兩個冇名嘅嘢。
+  "tabs.groupAria": "{name}，{count} 個分頁",
+  "tabs.groupMenuAria": "「{name}」群組嘅操作",
+  "tabs.group": "群組",
+  "tabs.newGroup": "開個新群組…",
+  "tabs.addTo": "加入「{name}」",
+  "tabs.removeFromGroup": "拎返出嚟",
+  "tabs.collapse": "摺埋個群組",
+  "tabs.expand": "打開個群組",
+  "tabs.renameGroup": "改個群組名…",
+  "tabs.ungroup": "解散呢個群組",
+  "tabs.groupName": "群組名",
+  "tabs.groupNamePlaceholder": "呢堆分頁係做乜嘅",
+  "tabs.groupSave": "儲存",
+  "tabs.editGroupAppearance": "改群組外觀…",
+  "tabs.groupStyleFor": "「{name}」群組嘅外觀",
+  "tabs.groupAccent": "群組顏色",
+  "tabs.groupAccentPicker": "揀群組顏色",
+
   // ---- 紀錄檔同刪咗之後點救 ----
   // 講到明幾多行、擺喺邊、留幾耐。刪嘢之前唔講清楚會冇咗啲乜,
   // 就等於叫人閉住眼簽名。

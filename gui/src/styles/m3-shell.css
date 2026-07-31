@@ -306,6 +306,54 @@
 .m3-tab.dragging { opacity: 0.5; }
 .m3-tab.drop-target { outline: 2px solid var(--m3-primary); outline-offset: -2px; }
 
+/* ---------------------------------------------------------- tab groups --
+   A group is a coloured header immediately before its members' run. The header
+   is a real button (collapse/expand) carrying the group's accessible name and
+   member count, so the colour is decoration and never the only way to tell two
+   groups apart.
+
+   Copied byte-for-byte from `shared/m3/components.css`, which the docs site
+   loads. The two apps keep separate stylesheets — this one is not importable
+   without colliding with half of it — so the rules are duplicated rather than
+   shared, and duplicated *exactly* so a group cannot look like one thing here
+   and another there. Both read the same `--m3-group-color` the strip sets.
+   ------------------------------------------------------------------------- */
+
+.m3-tabgroup {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  padding-inline: 4px;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 14%, transparent);
+  box-shadow: inset 0 -2px 0 0 var(--m3-group-color, var(--m3-tertiary));
+}
+.m3-tabgroup-head {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 30%, transparent);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-weight: 500;
+  cursor: pointer;
+}
+.m3-tabgroup-head:hover { background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 46%, transparent); }
+.m3-tabgroup-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tabgroup-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.m3-tabgroup.collapsed { flex: 0 0 auto; }
+.m3-tabgroup.dragging { opacity: 0.5; }
+
 .m3-tab-btn {
   display: flex;
   align-items: center;
@@ -999,13 +1047,16 @@ html[data-desktop] .m3-appbar .m3-avatar {
    -------------------------------------------------------------------------- */
 
 .m3-mob {
-  position: fixed;
-  inset: 0;
+  /* Was `position: fixed; inset: 0` — a whole-viewport takeover, from when this
+     screen replaced the shell instead of living inside it. It is a page now, so
+     it fills the page area and lets the app bar, tab strip and bottom nav keep
+     their space. `min-height` rather than `height`: the transcript grows, and a
+     fixed height would make the compose box overlap it once it did. */
   display: grid;
-  /* `dvh`, not `vh`: on a phone the URL bar collapses and `vh` leaves a dead
-     strip under the nav that the compose box scrolls behind. */
   grid-template-rows: auto minmax(0, 1fr) auto;
-  height: 100dvh;
+  min-height: min(100%, 32rem);
+  max-width: 100%;
+  min-width: 0;
   background: var(--m3-surface);
   color: var(--m3-on-surface);
   font-family: var(--m3-font);
@@ -1492,3 +1543,102 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
 
 /* The convenience wrapper's row: the input takes the space, the trigger does not. */
 .m3-rxpop-searchrow { gap: var(--sp-2); align-items: center; flex-wrap: nowrap; }
+
+/* =========================================================================
+   Phone layout
+   =========================================================================
+
+   The shell is one shell. What follows adapts its *layout* to a narrow,
+   touch-driven viewport — it never forks a component, and every rule here is
+   either a containment fix (so wide content scrolls inside its own box instead
+   of dragging the page sideways) or a target-size fix.
+
+   Two invariants this section exists to hold at 320px:
+
+     1. The BODY never scrolls horizontally. Wide things — tables, code, the
+        tab strip, the heatmap — scroll inside their own container. A page that
+        pans sideways makes every fixed control drift away from the thumb that
+        is reaching for it.
+     2. Nothing anchored is ever WIDER than the viewport. `clampToViewport`
+        can only move a panel, not shrink one, so a hard-coded 360px panel on a
+        320px screen stays 40px off the edge however well it is clamped. The
+        widths below are the fix; the clamping was never the problem.
+   ========================================================================= */
+
+/* The status line is the app bar's only unshrinkable child: `nowrap` with no
+   `min-width: 0` gives it an automatic minimum size of the whole
+   "v0.9.3 · build 412 · 蝦餃 · :8787" string, which alone is most of a phone's
+   width. It keeps `nowrap` — a build id broken across two lines is unreadable —
+   and gains the ability to be truncated instead of pushing the bar wider. */
+.m3-appbar-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.m3-appbar { min-width: 0; }
+.m3-appbar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Every anchored menu. `min-width` alone let a 300px new-tab menu and a 320px
+   notification centre keep their full width at 320px and be clipped by
+   `.m3-main-col { overflow: hidden }`. Matches shared/m3/components.css. */
+.m3-menu { max-width: min(92vw, 380px); }
+
+/* The strip scrolls rather than clipping. `splitTabs` already moves what does
+   not fit into the overflow menu, but pinned tabs are deliberately exempt from
+   that — staying visible is what a pin means — so six pinned tabs on a phone
+   overflow the list box with nothing to move out. Scrolling is what makes them
+   reachable; the clip was silently swallowing them. */
+@media (pointer: coarse), (max-width: 600px) {
+  .m3-tablist {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+  .m3-tablist::-webkit-scrollbar { height: 0; }
+  .m3-tab { scroll-snap-align: end; }
+}
+
+/* Touch targets. The 44px floor is a shipping requirement and the GUI sheet had
+   no coarse-pointer block at all — the floor existed only in the stylesheet the
+   docs site loads. These are the controls that sat under it. */
+@media (pointer: coarse) {
+  .m3-tab-close { width: 44px; min-height: 44px; }
+  .m3-tab-btn { min-height: 44px; }
+  .m3-tabgroup-head { min-height: 44px; height: auto; }
+  .m3-chip { min-height: 44px; }
+  .m3-menu-item { min-height: 44px; }
+  .m3-mob__navbtn { min-height: 44px; }
+  .m3-mob__model { min-height: 44px; }
+  .m3-mob__send { min-height: 44px; }
+  .m3-nav-item { min-height: 44px; }
+  .m3-tabstrip-btn { min-width: 44px; min-height: 44px; }
+}
+
+/* Safe-area insets, now that `viewport-fit=cover` makes them resolve. The
+   bottom bar and the snackbar host both sat under the home indicator. */
+.m3-bottom-nav { padding-bottom: max(env(safe-area-inset-bottom), 16px); }
+.m3-snack-host {
+  bottom: max(env(safe-area-inset-bottom), 16px);
+  left: max(env(safe-area-inset-left), 16px);
+  right: max(env(safe-area-inset-right), 16px);
+  max-width: calc(100vw - 32px);
+}
+
+/* Auto-fit grids whose track floor is wider than a phone's content box. Each
+   one is inside a card, so the excess was either a page-wide sideways scroll or
+   — worse, because it is silent — clipped by an `overflow: hidden` ancestor.
+   `min(100%, Npx)` keeps the desktop track and lets the track collapse below it
+   rather than forcing the container open; it is the pattern already used at
+   styles-dashboard-workspace.css:362. */
+.m3-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.m3-launch-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+
+/* The page area is the horizontal scroll boundary: anything wider than it
+   scrolls inside itself. Without this a single wide table hands its overflow up
+   to the document and the whole shell pans. */
+.m3-page { max-width: 100%; }
+.m3-page-inner { min-width: 0; max-width: 100%; }
+
+/* Code and pre are the classic silent widener: a long unbroken token has an
+   automatic minimum size equal to its own length. */
+@media (max-width: 600px) {
+  .m3-page pre { overflow-x: auto; max-width: 100%; }
+  .m3-page table { max-width: 100%; }
+}

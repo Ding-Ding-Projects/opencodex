@@ -195,6 +195,28 @@ export const M3_EN = {
   // typed in the field beside it; the swatch is showing a stand-in, not the value.
   "tabs.styleSwatchFallback": "The swatch cannot show this value — the field beside it holds what is applied.",
 
+  // ---- tab groups ----
+  // A group is named and counted in its accessible name, never identified by
+  // colour alone: the accent is decoration, and two groups a colour-blind reader
+  // cannot tell apart would otherwise be two groups with no names.
+  "tabs.groupAria": "{name}, {count} tabs",
+  "tabs.groupMenuAria": "Actions for the group {name}",
+  "tabs.group": "Group",
+  "tabs.newGroup": "New group…",
+  "tabs.addTo": "Add to {name}",
+  "tabs.removeFromGroup": "Remove from group",
+  "tabs.collapse": "Collapse group",
+  "tabs.expand": "Expand group",
+  "tabs.renameGroup": "Rename group…",
+  "tabs.ungroup": "Ungroup",
+  "tabs.groupName": "Group name",
+  "tabs.groupNamePlaceholder": "What these tabs are for",
+  "tabs.groupSave": "Save",
+  "tabs.editGroupAppearance": "Edit group appearance…",
+  "tabs.groupStyleFor": "Appearance for the group {name}",
+  "tabs.groupAccent": "Group colour",
+  "tabs.groupAccentPicker": "Pick a group colour",
+
   "appbar.noAccount": "No account signed in",
 
   // Named exactly, because the two credentials are not interchangeable: the

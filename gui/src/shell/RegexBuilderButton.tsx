@@ -30,6 +30,7 @@
  */
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { onOutsidePress } from "./outside-press";
 import { Button, Chip, Field, TextArea, TextInput } from "./m3-ui";
 import { IconRegex, IconX } from "../icons";
 import { useT } from "../i18n/shared";
@@ -147,10 +148,10 @@ export function RegexBuilderButton({ value, onApply, regex, onRegexChange, flags
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeAndRestore();
     };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [open, closeAndRestore]);

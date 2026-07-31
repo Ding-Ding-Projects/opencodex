@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { onOutsidePress } from "./outside-press";
 import { IconBell, IconMenu, IconPalette } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
@@ -38,10 +39,10 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, onOpen
       if (!notifRef.current?.contains(e.target as Node)) setNotifOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNotifOpen(false); };
-    document.addEventListener("mousedown", onDown);
+    const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      stopOutsideonDown();
       document.removeEventListener("keydown", onKey);
     };
   }, [notifOpen, markAllRead]);

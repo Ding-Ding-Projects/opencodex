@@ -3,7 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` is what makes `env(safe-area-inset-*)` resolve to
+         anything but 0. The app has carried those declarations for the notch and
+         the home indicator since the remote screen landed; without this attribute
+         every one of them silently computed to zero, so the handling was written
+         and did nothing. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>opencodex · proxy dashboard</title>
     <script>
