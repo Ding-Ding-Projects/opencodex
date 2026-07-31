@@ -30,9 +30,15 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Commit, branch or tag to build"
+        # Blank rather than "main" on purpose. The concurrency key below is
+        # `inputs.ref || github.sha`, so a dispatch that says "main" keys on the
+        # string "main" while the push of that very commit keys on its SHA —
+        # two groups, two runs, the same 182 MB installer built twice. Left
+        # blank it falls through to the same SHA the push used, and the second
+        # run is deduplicated instead of duplicated.
+        description: "Commit, branch or tag to build (blank = the current commit)"
         required: false
-        default: main
+        default: ""
       publish:
         description: "Also publish a GitHub release (off = artifact only)"
         type: boolean

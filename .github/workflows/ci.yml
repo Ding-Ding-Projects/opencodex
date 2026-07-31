@@ -24,23 +24,20 @@ on:
       - ".github/workflows/release.yml"
       - ".github/workflows/enforce-pr-target.yml"
       - ".github/workflows/stale-needs-info.yml"
+  # No `paths` filter on push, deliberately, unlike the pull_request trigger
+  # above. `Auto release` now gates publishing on "a successful CI run exists
+  # for this exact commit", and a path filter makes that question unanswerable
+  # for any commit that touches only excluded files: CI never runs, no verdict
+  # is ever recorded, and the release waits out its timeout for a run that was
+  # never going to start. That is not hypothetical — it is how 84d8f16b built a
+  # 182 MB installer and then published nothing.
+  #
+  # A commit that changes no code is not untested, but "not untested" and
+  # "has a recorded pass" are different things, and only the second one is
+  # checkable. Every commit on a release branch gets a verdict. Pull requests
+  # keep the filter, where skipping an irrelevant run costs nobody a release.
   push:
     branches: [main, preview, dev]
-    paths:
-      - "src/**"
-      - "bin/**"
-      - "tests/**"
-      - "scripts/**"
-      - "gui/**"
-      - ".gitattributes"
-      - ".npmignore"
-      - "package.json"
-      - "bun.lock"
-      - "tsconfig.json"
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/release.yml"
-      - ".github/workflows/enforce-pr-target.yml"
-      - ".github/workflows/stale-needs-info.yml"
   workflow_dispatch:
 
 permissions:

@@ -110,9 +110,16 @@ describe("GitHub Actions hardening", () => {
       "tsconfig.json",
     ];
     expect([...(ci.on?.pull_request?.paths ?? [])].sort()).toEqual(ciPaths);
-    // Push and pull_request have to cover the same surfaces, or a change lands
-    // on dev having been checked on one trigger and not the other.
-    expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
+    // Push must have NO filter — a strict superset of the pull_request one, so
+    // nothing reaches a branch checked on one trigger and not the other.
+    //
+    // It is deliberately not "the same list". `Auto release` gates publishing on
+    // a successful CI run existing for the exact commit, and a filtered push
+    // makes that unanswerable for a commit touching only excluded files: no run,
+    // no verdict, and the release waits out its timeout for something that was
+    // never going to start. 84d8f16b built a 182 MB installer and published
+    // nothing, because it changed only a workflow file that was not on this list.
+    expect(ci.on?.push?.paths).toBeUndefined();
   });
 
   test("cross-platform CI keeps the GUI lint and build gates", async () => {
