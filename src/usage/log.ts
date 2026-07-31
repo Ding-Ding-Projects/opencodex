@@ -96,8 +96,16 @@ export function isKnownUsageSurface(value: unknown): value is NonNullable<Persis
   return typeof value === "string" && KNOWN_USAGE_SURFACES.has(value as NonNullable<PersistedUsageEntry["surface"]>);
 }
 
-export function usageLogPath(): string {
-  return join(getConfigDir(), "usage.jsonl");
+/**
+ * Exported because three other modules need to name this file: the git history
+ * tracks it, its ignore rules whitelist it, and the clear path deletes it. A
+ * second spelling of the literal anywhere in that chain is a snapshot that
+ * silently never happens, so there is exactly one.
+ */
+export const USAGE_LOG_FILE_NAME = "usage.jsonl";
+
+export function usageLogPath(configDir: string = getConfigDir()): string {
+  return join(configDir, USAGE_LOG_FILE_NAME);
 }
 
 export function usageTotalTokens(usage: OcxUsage | undefined): number | undefined {

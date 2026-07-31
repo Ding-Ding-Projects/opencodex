@@ -28,6 +28,43 @@ function count(text: string, fragment: string): number {
 }
 
 describe("GitHub Actions hardening", () => {
+  // A bash heredoc in a step that runs under pwsh is a parse error, not a
+  // portability wrinkle: `windows-latest` defaults every `run:` to PowerShell,
+  // which reads `<<` as a redirection missing its filename. It failed the
+  // Dashboard preview build on every push while the build itself was green, so
+  // the only thing lost was the artifact — the least visible way for a job to
+  // be broken. Every heredoc must therefore declare `shell: bash`.
+  test("every heredoc step on a Windows runner asks for bash", async () => {
+    const workflows = ["ci.yml", "gui-preview.yml", "release.yml", "service-lifecycle.yml"];
+    let checkedHeredocs = 0;
+    for (const name of workflows) {
+      const text = await readText(`.github/workflows/${name}`);
+      const parsed = Bun.YAML.parse(text) as {
+        jobs?: Record<string, {
+          "runs-on"?: string;
+          defaults?: { run?: { shell?: string } };
+          steps?: Array<{ name?: string; run?: string; shell?: string }>;
+        }>;
+      };
+      for (const [jobName, job] of Object.entries(parsed.jobs ?? {})) {
+        if (!String(job["runs-on"] ?? "").startsWith("windows")) continue;
+        const jobShell = job.defaults?.run?.shell;
+        for (const step of job.steps ?? []) {
+          if (typeof step.run !== "string" || !/<<-?\s*['"]?\w+/.test(step.run)) continue;
+          checkedHeredocs += 1;
+          const shell = step.shell ?? jobShell;
+          expect(
+            shell,
+            `${name} job "${jobName}" step "${step.name ?? "(unnamed)"}" uses a heredoc; pwsh cannot parse it`,
+          ).toBe("bash");
+        }
+      }
+    }
+    // Guard the guard: if the heredoc disappears entirely the assertion above
+    // would vacuously pass, so prove it actually inspected something.
+    expect(checkedHeredocs).toBeGreaterThan(0);
+  });
+
   test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
 

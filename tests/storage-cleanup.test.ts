@@ -1092,6 +1092,54 @@ describe("listTrashEntries + restoreTrashEntry", () => {
     expect(existsSync(join(home, "sessions", "2026", "05", "27", "rollout-active.jsonl"))).toBe(true);
   });
 
+  // The satellite backup is the ONLY carrier of deleted satellite rows across a
+  // quarantine, and it travels as JSON on disk. Plain `JSON.stringify` flattens a
+  // Uint8Array to {"0":12,…}; `JSON.parse` hands back a plain Object; bun:sqlite
+  // then refuses to bind it, so restoreTrashEntry() failed with a generic
+  // db_reconcile_failed and the rows stayed deleted. Bytes are deliberately invalid
+  // UTF-8 so an accidental string round-trip corrupts rather than quietly passing.
+  test("quarantine → restore round-trips BLOB columns byte-for-byte", () => {
+    home = buildHome({ withSatelliteStores: true });
+    const payloads = new Map<number, Buffer>();
+    const seed = new Database(join(home, "logs_2.sqlite"));
+    seed.exec("ALTER TABLE logs ADD COLUMN payload BLOB");
+    for (const { id } of seed.query<{ id: number }, []>("SELECT id FROM logs ORDER BY id").all()) {
+      // 0x00 string terminator, 0xFF/0xFE (never valid UTF-8), 0x80 lone
+      // continuation byte, 0x22 a literal ASCII double quote.
+      const payload = Buffer.from([0x00, 0xFF, 0xFE, 0x80, 0x22, id]);
+      payloads.set(id, payload);
+      seed.run("UPDATE logs SET payload = ? WHERE id = ?", [payload, id]);
+    }
+    seed.close();
+    expect(payloads.size).toBeGreaterThan(0);
+
+    const quarantined = runWithDigest(100, "quarantine", home, { now: 1_700_000_000_900 });
+    expect(quarantined.ok).toBe(true);
+    expect(quarantined.trashDir).toBe(".trash/1700000000900");
+    // The quarantine must actually have removed satellite rows, or the restore
+    // below would be asserting nothing at all.
+    const during = new Database(join(home, "logs_2.sqlite"), { readonly: true });
+    const remaining = during.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM logs").get()!.n;
+    during.close();
+    expect(remaining).toBeLessThan(payloads.size);
+
+    const restored = restoreTrashEntry(".trash/1700000000900", { codexHome: home });
+    expect(restored.ok).toBe(true);
+
+    const after = new Database(join(home, "logs_2.sqlite"), { readonly: true });
+    const rows = after.query<{ id: number; payload: Uint8Array | null }, []>(
+      "SELECT id, payload FROM logs ORDER BY id",
+    ).all();
+    after.close();
+    expect(rows.length).toBe(payloads.size);
+    for (const row of rows) {
+      const expected = payloads.get(row.id);
+      expect(expected).toBeDefined();
+      expect(row.payload).not.toBeNull();
+      expect(Buffer.compare(Buffer.from(row.payload!), expected!)).toBe(0);
+    }
+  }, { timeout: 30_000 });
+
   test("restore refuses when Codex DB is busy", () => {
     home = buildHome();
     const quarantined = runWithDigest(50, "quarantine", home, { now: 1_700_000_000_200 });

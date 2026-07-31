@@ -98,6 +98,69 @@ its native traffic lights — hiding those would leave a Mac window with no way 
 region now also opts `[role="menu"]`/`[role="listbox"]` out, or a dropdown rendered inside the app bar
 becomes a drag handle and cannot be clicked.
 
+### Logs on disk, and a git-backed undo for clearing them
+
+The proxy's own diagnostic lines used to live only in a 2 000-entry in-memory ring, so the crash that
+needed explaining took its own explanation with it, and "open the log file" had no answer.
+
+- `src/lib/app-log-file.ts` mirrors every `appendDebugLogLine` into
+  `~/.opencodex/logs/opencodex.log` (mode `0o600`, ISO-8601 prefix, plain text). Rotates at 2 MiB
+  keeping 3 generations, so `logs/` is hard-capped at 8 MiB by arithmetic rather than by a prune job.
+  The ring is re-seeded from the file at startup, exactly as `/api/logs` is from `usage.jsonl`.
+- `src/lib/state-history.ts` now tracks a second path set (`usage.jsonl`, `logs/`) in the **same**
+  local git repository as the account snapshots. One timeline, two independent undos.
+- `src/lib/log-store.ts` owns the ordering: measure, commit, *then* unlink. `DELETE /api/logs`
+  awaits that commit; a failed commit answers `snapshot: false` and the delete still proceeds.
+  `POST /api/logs/restore` appends a pre-restore commit and a post-restore commit, so an undo can be
+  undone. Neither drains nor restarts the proxy — logs are not credentials.
+- Logs screen states both absolute paths and the retention bound, with a **Clear logs** button behind
+  a modal that names the exact counts. Version history labels log snapshots and offers **Restore
+  logs** for them. Every string in `gui/src/i18n/m3.ts` and `gui/src/i18n/yue.ts`.
+
+**A real defect the tests caught:** git's Windows default (`core.autocrlf=true`) rewrote LF to CRLF
+on checkout, so restored files came back with different bytes than were committed. Fixed with a
+`.gitattributes` carrying `* -text`, written at init and refreshed on every `ensureRepo` so repos
+created by older builds are repaired. `tests/log-store.test.ts` guards it with mixed line endings.
+
+Verified on the merged tree (`0095125e`, after two `git merge origin/main` passes):
+
+```
+bun run typecheck                         → clean (tsc --noEmit, no diagnostics)
+cd gui && npx tsc --noEmit                → clean
+cd gui && npx eslint src --max-warnings=0 → clean
+cd gui && bun test                        → 692 pass, 0 fail, 9518 expect() calls (116 files)
+bun run test <every tests/ file that references state-history, the debug log buffer,
+  or the /api/host history+restore routes, plus the three new files>
+                                          → 105 pass, 0 fail, 370 expect() calls (9 files)
+                                             — run twice, identical both times
+bun run test tests/log-store.test.ts tests/app-log-file.test.ts \
+  tests/management-api-logs-clear.test.ts tests/usage-log.test.ts tests/request-log.test.ts \
+  tests/management-api-logs-metrics.test.ts tests/api-usage.test.ts \
+  tests/config-ownership-uninstall.test.ts
+                                          → 121 pass, 0 fail, 509 expect() calls (8 files)
+cd docs-site && bun install && bun run build
+                                          → 161 pages built, Complete!
+```
+
+**The full `bun run test` was NOT completed, and here is exactly why.** `bun run test` is
+`bun test --isolate ./tests/`, and on this host it dies two different ways, neither of them a test
+failing:
+
+1. **Bun panics.** Two consecutive runs died at ~73 s inside `tests/api-storage-policy.test.ts` with
+   `panic(thread N): Internal assertion failure` — `oh no: Bun has crashed`, Bun 1.3.14 Windows x64.
+   Zero `(fail)` lines were recorded before either crash, and that file passes on its own
+   (`bun run test tests/api-storage-policy.test.ts` → 7 pass, 0 fail).
+2. **Spawn exhaustion under contention.** Splitting the suite into chunks got further but produced
+   large blocks of failures whose every assertion is `expect(result.status).toBe(0)` receiving `66`
+   — `Bun.spawnSync(["bun", …])` failing to start a child. `Get-Process bun` reported **22** live bun
+   processes (this host runs several agents at once). Every implicated file passes standalone:
+   `tests/ci-workflows.test.ts` → 65 pass, `tests/cli-help.test.ts` + `tests/cli-models.test.ts` +
+   `tests/ci-workflows.test.ts` + `tests/claude-desktop-cli.test.ts` → 89 pass, 0 fail.
+
+So: nothing in the suite has been observed failing on its merits, and the targeted runs above are
+what has actually been proven green. A successor on a quiet machine should run the whole suite once
+and confirm, rather than treating this note as a pass.
+
 ## Verification actually performed
 
 Docs work in this session was verified with:

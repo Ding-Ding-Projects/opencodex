@@ -30,5 +30,16 @@ interface Window {
       /** Subscribe to out-of-band maximise changes; returns an unsubscribe. */
       onMaximizedChanged: (handler: (maximized: boolean) => void) => () => void;
     };
+    /**
+     * Starting the proxy from the one screen that cannot reach it over http.
+     * Absent in a browser, where nothing can start a local process — so the
+     * offline banner falls back to naming the command instead of offering a
+     * button that could not work.
+     */
+    proxy?: {
+      status: () => Promise<{ running: boolean; port: number; pid: number | null; managed: boolean }>;
+      /** Resolves only once `/healthz` answers, or explains why it did not. */
+      start: () => Promise<{ ok: true; port: number; adopted: boolean } | { ok: false; error: string }>;
+    };
   };
 }

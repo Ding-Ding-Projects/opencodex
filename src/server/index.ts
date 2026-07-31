@@ -62,6 +62,8 @@ export {
   trackStreamLifetime,
   unregisterTurn,
 } from "./lifecycle";
+import { ensureAppLogFile } from "../lib/app-log-file";
+import { hydrateDebugLogFromDisk } from "../lib/debug-log-buffer";
 import {
   addFinalRequestLog,
   hydrateRequestLogsFromDisk,
@@ -298,6 +300,12 @@ export function startServer(port?: number) {
   // usage.jsonl already persists every request; rehydrate the in-memory Logs ring so
   // /api/logs (and the GUI) survive `ocx stop` / `ocx start` process restarts.
   hydrateRequestLogsFromDisk();
+  // Same again for the app's own diagnostic lines, which now live in
+  // logs/opencodex.log rather than only in a ring buffer that dies with the
+  // process. Touch the file first so `logs/opencodex.log` is a real path a user
+  // can open before the proxy has had anything to say.
+  ensureAppLogFile();
+  hydrateDebugLogFromDisk();
   // #314: warn-only RSS observability (unref'd, idempotent — safe under repeated
   // startServer(0) in tests). Snapshot surfaces via GET /api/system/memory.
   startMemoryWatchdog();

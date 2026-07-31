@@ -33,7 +33,11 @@ export const M3_EN = {
   // headings, empty states, confirmations, errors — and every other string keeps
   // its neutral wording rather than being padded with five near-identical
   // variants of the word "Save".
-  "lang.funnyCoverage": "The level restyles {en} English and {yue} Cantonese messages today, including errors and destructive warnings. Everything else keeps its neutral wording. The facts never change at any level.",
+  //
+  // The category list is the disclosure the setting owes the user: nothing is
+  // exempt, errors and destructive warnings included, so it says so here rather
+  // than letting a level-5 warning be a surprise.
+  "lang.funnyCoverage": "The level restyles {en} English and {yue} Cantonese messages today — every category, including error, warning, destructive, security, financial and accessibility copy. Everything else keeps its neutral wording. The facts never change at any level: the same file, the same account, the same consequence, at 1 and at 5.",
 
   "mobile.title": "opencodex remote",
   "mobile.chat": "Chat",
@@ -87,7 +91,11 @@ export const M3_EN = {
   "onboard.finish": "Finish",
   "onboard.stepOf": "Step {n} of {total}",
   "onboard.langTitle": "Pick a language",
-  "onboard.langSub": "English, Cantonese, or both side by side. Change it any time on Language & voice.",
+  // First-run disclosure. The funny level is opt-in behaviour that reaches error
+  // and warning copy, so the user is told that here — before they meet a level-5
+  // delete confirmation — rather than only on the settings screen they may never
+  // open. What it cannot change is said in the same breath.
+  "onboard.langSub": "English, Cantonese, or both side by side. Change it any time on Language & voice, along with a funny level per language — that styles every message, errors and destructive warnings included, and never the facts.",
   "onboard.providerTitle": "Connect a provider",
   "onboard.providerSub": "opencodex routes Codex and Claude Code to whatever you point it at. Sign in now, or do it later on Providers.",
   "onboard.providerSkip": "I'll do this later",
@@ -686,6 +694,25 @@ export const M3_EN = {
   "logs.searchAria": "Search logs",
   "logs.sectionsAria": "Logs sections",
   "logs.tokens.inOut": "{in} in · {out} out",
+
+  // ---- logs on disk, and the undo that guards deleting them ----
+  // The copy states counts, paths and the retention bound in words, because the
+  // one thing a delete confirmation must never do is ask someone to agree to an
+  // unspecified amount of loss.
+  "logs.file.title": "Log files",
+  "logs.file.where": "Written to {path} — open it in any text editor.",
+  "logs.file.usage": "Request rows: {path}",
+  "logs.file.retention": "Each log file is capped at {size} and {count} older files are kept, so the log folder never exceeds {total}.",
+  "logs.file.footprint": "{rows} request rows · {lines} app log lines · {size} on disk",
+  "logs.clear": "Clear logs",
+  "logs.clearTitle": "Clear the logs on this machine",
+  "logs.clearBody": "Deletes {rows} request rows and {lines} app log lines. The Logs table, the Debug tab and the Usage totals are all built from these files, so all three go back to empty.\n\nThey are committed to the local version history first, so you can put them back from Version history. That history never leaves this machine.",
+  "logs.cleared": "Logs cleared",
+  "logs.clearedBody": "Saved to version history as \"{label}\". Open Version history to put them back.",
+  "logs.clearedNoSnapshot": "The logs are cleared, but the version history could not be written — this one cannot be undone.",
+  "logs.clearFailed": "Could not clear the logs",
+  "logs.clearNothing": "There are no logs to clear.",
+  "logs.revisionLabel": "Logs",
   "notif.toneErrorOne": "Error",
   "notif.toneWarnOne": "Warning",
   "notif.toneSuccessOne": "Success",
@@ -701,6 +728,19 @@ export const M3_EN = {
   "history.revisions": "Revisions",
   "history.label": "Label",
   "history.labelUpdated": "Label updated",
+
+  // ---- log snapshots on the shared timeline ----
+  // A log snapshot restores differently from a credential snapshot — no drain,
+  // no restart — so it names itself rather than borrowing the other's button.
+  "history.snapshotLogs": "Log files",
+  "history.snapshotState": "Accounts & settings",
+  "history.snapshotMixed": "Accounts, settings & logs",
+  "history.restoreLogs": "Restore logs",
+  "history.restoreLogsConfirm": "Put the logs back as they were at \"{label}\"?\n\nThe logs as they stand now are committed first, so this restore can itself be undone. No requests are interrupted and the proxy does not restart.",
+  "history.logsRestored": "Logs restored",
+  "history.logsRestoredBody": "{count} file(s) written back, and recorded as a new revision — so you can undo this too.",
+  "history.logsRestoredKept": "Log files added since that revision were left in place: {files}",
+  "history.logsRestoreFailed": "Could not restore the logs",
 
   // ---- design parity (all 19 screens) ----
   // Copy taken verbatim from design/OpenCodex M3.dc.html and design/ocx-i18n.js.

@@ -68,6 +68,13 @@ jobs:
         run: bun x vite build --base ./
 
       - name: Add run instructions to the artifact
+        # `windows-latest` defaults every `run:` to pwsh, which has no `<<`
+        # heredoc — it parsed this as a redirection with no file and failed the
+        # job on every push. The build itself had already succeeded, so the only
+        # casualty was the artifact nobody could download. Git Bash ships on the
+        # Windows runners; ask for it explicitly rather than rewriting 30 lines
+        # of prose into a PowerShell here-string.
+        shell: bash
         run: |
           cat > gui/dist/HOW-TO-RUN.txt <<'EOF'
           opencodex dashboard — preview build

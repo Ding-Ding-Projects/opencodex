@@ -933,7 +933,14 @@ describe("codex routing", () => {
 
     expect(resolveCodexAccountForThread("lru-1", config, now + CODEX_THREAD_AFFINITY_MAX_ENTRIES + 1)).toBe("a");
     expect(resolveCodexAccountForThread("lru-0", config, now + CODEX_THREAD_AFFINITY_MAX_ENTRIES + 2)).toBe("b");
-  });
+    // Filling the cap costs ~5.3s against a 5s default, so whichever of the two
+    // cap tests lost the race failed — a flake that reads as a routing bug and
+    // is not one. Measured: the cost is resolveCodexAccountForThread() itself at
+    // a full 2048-entry map, NOT assertion overhead (folding the loop's 2049
+    // expect() calls into one moved the number by ~0). If that resolver is
+    // O(n) per lookup it is worth its own look on the production side; this
+    // ceiling only stops the stress test from lying about it.
+  }, { timeout: 30_000 });
 
   test("thread affinity LRU cap includes legacy and native quota scopes", () => {
     const config = makeConfig();
@@ -954,7 +961,8 @@ describe("codex routing", () => {
     expect(resolveCodexAccountForThread("scoped-lru-0", config, after, "shared")).toBe("a");
     expect(resolveCodexAccountForThread("scoped-lru-0", config, after + 1, "spark")).toBe("a");
     expect(resolveCodexAccountForThread("scoped-lru-0", config, after + 2)).toBe("b");
-  });
+    // Same ceiling, same reason as the sibling cap test above.
+  }, { timeout: 30_000 });
 
   test("generation mismatch invalidates a mapped thread before reuse", () => {
     const config = makeConfig();

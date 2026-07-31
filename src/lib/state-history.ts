@@ -36,18 +36,68 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../config";
+import { APP_LOG_DIR_NAME } from "./app-log-file";
+import { USAGE_LOG_FILE_NAME } from "../usage/log";
 
 /** Durable state worth versioning. Everything else in the dir is runtime noise. */
 const TRACKED = ["config.json", "codex-accounts.json", "auth.json"];
 
-const GITIGNORE = `# opencodex state history — only durable state is tracked.
+/**
+ * The logs, versioned in the SAME repository but as their own path set.
+ *
+ * One repository, two independent path sets, on purpose. A shared history keeps
+ * "what happened to this machine" on one timeline, which is the thing anyone
+ * chasing a fault actually reads. Keeping the sets separate keeps the two undos
+ * independent: restoring a credential snapshot from last Tuesday must not also
+ * throw away the logs that explain why you are restoring it, and restoring the
+ * logs must not silently roll an account back.
+ *
+ * `git add -- <paths>` only stages what it is handed, and the index it stages
+ * into already carries the previous commit's tree — so a log-only commit leaves
+ * the state files at whatever they were, and vice versa.
+ */
+const TRACKED_LOGS = [USAGE_LOG_FILE_NAME, APP_LOG_DIR_NAME];
+
+/**
+ * `*` ignores everything, including directories, and a negation cannot reach
+ * inside a directory that is itself ignored — so `logs/` has to be un-ignored,
+ * its contents re-ignored, and the log files whitelisted by name. Getting this
+ * wrong is silent: `git add` refuses an ignored path outright, so the snapshot
+ * would simply never happen and the delete would proceed with nothing behind it.
+ */
+const GITIGNORE = `# opencodex state history — only durable state and logs are tracked.
 *
 !.gitignore
+!.gitattributes
 !README-HISTORY.md
 ${TRACKED.map(name => `!${name}`).join("\n")}
+!${USAGE_LOG_FILE_NAME}
+!${APP_LOG_DIR_NAME}/
+${APP_LOG_DIR_NAME}/*
+!${APP_LOG_DIR_NAME}/*.log
+!${APP_LOG_DIR_NAME}/*.log.*
+`;
+
+/**
+ * Byte-for-byte, in both directions.
+ *
+ * Git's default on Windows (`core.autocrlf=true`) converts LF to CRLF on
+ * checkout, so a file committed here and restored later came back with
+ * different bytes than it went in with. For a JSONL log that is merely wrong;
+ * for anything encrypted it is fatal, because a ciphertext whose bytes moved
+ * will not decrypt and fails in a way indistinguishable from corruption — and
+ * the snapshot is supposed to be the thing that makes the data recoverable.
+ *
+ * `* -text` disables every content filter regardless of the user's git config,
+ * which is why the rule lives in a file rather than in `git config`: config is
+ * one `git config --global` away from being overridden, an attributes file in
+ * the working tree is not.
+ */
+const GITATTRIBUTES = `# opencodex state history — never transform stored bytes.
+* -text
 `;
 
 const README = `# opencodex state history
@@ -58,6 +108,10 @@ inspected and recovered:
 
     git -C . log --oneline
     git -C . show <commit>:codex-accounts.json
+
+The request log (usage.jsonl) and the app log (logs/opencodex.log) are tracked
+too, and are committed here before the dashboard clears them, so "I deleted the
+logs" is undoable as well.
 
 Its history contains SECRETS — OAuth refresh tokens and provider API keys —
 stored here with your consent, on this machine only. Never add a remote, never
@@ -140,6 +194,32 @@ async function autoInstallGit(configDir: string): Promise<boolean> {
   return installed;
 }
 
+/**
+ * Bring an existing repo's rule files up to the current ones.
+ *
+ * Two upgrade hazards, both silent. A repository created before the logs were
+ * tracked carries an ignore file that excludes them, and `git add` REFUSES an
+ * ignored path rather than warning — so a log snapshot would simply never
+ * happen and the delete it was protecting would go ahead with nothing behind
+ * it. A repository created before `.gitattributes` existed still has git's
+ * Windows line-ending filter armed, so a restore hands back different bytes
+ * than were committed.
+ *
+ * Rewritten only when the bytes differ, so this is not a spurious change on
+ * every snapshot.
+ */
+function refreshRepoRules(dir: string): void {
+  for (const [name, content] of [[".gitignore", GITIGNORE], [".gitattributes", GITATTRIBUTES]] as const) {
+    const path = join(dir, name);
+    try {
+      if (existsSync(path) && readFileSync(path, "utf8") === content) continue;
+      writeFileSync(path, content, "utf8");
+    } catch {
+      /* a read-only dir leaves the old rules in place; snapshots still try */
+    }
+  }
+}
+
 async function ensureRepo(dir: string, allowInstall = true): Promise<boolean> {
   if (!existsSync(dir)) return false;
   if (!(await gitAvailable())) {
@@ -150,10 +230,14 @@ async function ensureRepo(dir: string, allowInstall = true): Promise<boolean> {
     await autoInstallGit(dir);
     if (!(await gitAvailable())) return false;
   }
-  if (existsSync(join(dir, ".git"))) return true;
+  if (existsSync(join(dir, ".git"))) {
+    refreshRepoRules(dir);
+    return true;
+  }
   if (!(await runGit(dir, ["init", "--quiet"])).ok) return false;
   try {
     writeFileSync(join(dir, ".gitignore"), GITIGNORE, "utf8");
+    writeFileSync(join(dir, ".gitattributes"), GITATTRIBUTES, "utf8");
     writeFileSync(join(dir, "README-HISTORY.md"), README, "utf8");
   } catch {
     return false;
@@ -162,14 +246,23 @@ async function ensureRepo(dir: string, allowInstall = true): Promise<boolean> {
   // and without touching their global config.
   await runGit(dir, ["config", "user.name", "opencodex state history"]);
   await runGit(dir, ["config", "user.email", "state-history@localhost"]);
+  // Belt to `.gitattributes`' braces. The attributes file is authoritative, but
+  // a repo whose config also says so cannot be surprised by a future git that
+  // reads them in a different order.
+  await runGit(dir, ["config", "core.autocrlf", "false"]);
   return true;
 }
 
-async function commitSnapshot(reason: string, configDir: string, allowInstall = true): Promise<boolean> {
+async function commitSnapshot(
+  reason: string,
+  configDir: string,
+  allowInstall = true,
+  paths: readonly string[] = TRACKED,
+): Promise<boolean> {
   if (!(await ensureRepo(configDir, allowInstall))) return false;
-  const present = TRACKED.filter(name => existsSync(join(configDir, name)));
+  const present = paths.filter(name => existsSync(join(configDir, name)));
   if (present.length === 0) return false;
-  if (!(await runGit(configDir, ["add", "--", ".gitignore", "README-HISTORY.md", ...present])).ok) return false;
+  if (!(await runGit(configDir, ["add", "--", ".gitignore", ".gitattributes", "README-HISTORY.md", ...present])).ok) return false;
   // Sanitized single-line message: reasons are internal strings, but a defensive
   // strip keeps a future caller from smuggling flags or newlines into argv.
   const message = reason.replace(/[\r\n]+/g, " ").slice(0, 200) || "state change";
@@ -225,8 +318,9 @@ export async function recordStateSnapshotBeforeDelete(
   reason: string,
   configDir: string = getConfigDir(),
   timeoutMs = PRE_DELETE_SNAPSHOT_TIMEOUT_MS,
+  paths: readonly string[] = TRACKED,
 ): Promise<boolean> {
-  const committed = queue.then(() => commitSnapshot(reason, configDir, false)).catch(() => false);
+  const committed = queue.then(() => commitSnapshot(reason, configDir, false, paths)).catch(() => false);
   // Keep the chain intact even if we stop waiting, so a later snapshot still
   // serializes behind this one instead of racing it on the shared git index.
   queue = committed;
@@ -241,6 +335,14 @@ export async function recordStateSnapshotBeforeDelete(
   }
 }
 
+/**
+ * Which path set a commit actually touched. Derived from the commit's changed
+ * files, never from its message: the dashboard picks a restore endpoint from
+ * this, and a restore aimed by parsing a display string is exactly the mistake
+ * `listStateHistoryEntries` was written to avoid in the first place.
+ */
+export type StateHistoryScope = "state" | "logs" | "mixed";
+
 export interface StateHistoryEntry {
   /** Full commit hash — what a restore is addressed by. */
   hash: string;
@@ -250,27 +352,53 @@ export interface StateHistoryEntry {
   subject: string;
   /** Commit time, ISO-8601. */
   at: string;
+  /** What this commit changed, so the caller can offer the matching restore. */
+  scope: StateHistoryScope;
+}
+
+function isLogPath(name: string): boolean {
+  return name === USAGE_LOG_FILE_NAME || name.startsWith(`${APP_LOG_DIR_NAME}/`);
+}
+
+function scopeOf(files: readonly string[]): StateHistoryScope {
+  const logs = files.some(isLogPath);
+  const state = files.some(name => TRACKED.includes(name));
+  // A commit that touched neither (the very first one, which only carries the
+  // ignore file and the README) reads as "state": it is the machine's own
+  // bookkeeping, and offering to restore logs from it would find none.
+  if (logs && state) return "mixed";
+  return logs ? "logs" : "state";
 }
 
 /**
  * Structured history, for the dashboard's restore list. `listStateHistory`'s
  * oneline strings are fine to read but useless to act on — a one-click restore
  * needs the hash as its own field, not something scraped off a display string.
+ *
+ * `--name-only` rides the same `git log` rather than costing one `git show` per
+ * commit, so the scope is real evidence at the price of a slightly fussier parse.
  */
 export function listStateHistoryEntries(limit = 50, configDir: string = getConfigDir()): StateHistoryEntry[] {
   if (!existsSync(join(configDir, ".git"))) return [];
   const SEP = "\x1f";
+  // Record separator: `--name-only` prints a blank line between the header and
+  // the file list, so a blank line cannot delimit commits as well.
+  const REC = "\x1e";
   try {
     const result = spawnSync("git", [
       "-C", configDir, "log",
       `-${Math.max(1, Math.min(200, limit))}`,
-      `--format=%H${SEP}%s${SEP}%cI`,
+      "--name-only",
+      `--format=${REC}%H${SEP}%s${SEP}%cI`,
     ], { encoding: "utf8", timeout: 10_000, windowsHide: true });
     if (result.status !== 0 || !result.stdout.trim()) return [];
-    return result.stdout.trim().split("\n").flatMap(line => {
-      const [hash, subject, at] = line.split(SEP);
+    return result.stdout.split(REC).flatMap(record => {
+      if (!record.trim()) return [];
+      const [header, ...rest] = record.split("\n");
+      const [hash, subject, at] = header.split(SEP);
       if (!hash || !at) return [];
-      return [{ hash, short: hash.slice(0, 7), subject: subject ?? "", at }];
+      const files = rest.map(line => line.trim()).filter(Boolean);
+      return [{ hash, short: hash.slice(0, 7), subject: subject ?? "", at, scope: scopeOf(files) }];
     });
   } catch {
     return [];
@@ -301,7 +429,32 @@ export interface StateRestoreResult {
   touchedDisk: boolean;
 }
 
-async function performRestore(commit: string, configDir: string): Promise<StateRestoreResult> {
+/** Every tracked file that exists on disk right now under `paths`, relative to the repo. */
+function presentUnder(configDir: string, paths: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const name of paths) {
+    const absolute = join(configDir, name);
+    if (!existsSync(absolute)) continue;
+    try {
+      // A tracked entry is either a file (config.json, usage.jsonl) or the log
+      // directory. `git ls-tree -r` returns the directory's members, so the
+      // "kept" comparison has to enumerate its members too or every restore
+      // would report the whole directory as kept.
+      const entries = readdirSync(absolute, { withFileTypes: true });
+      for (const entry of entries) if (entry.isFile()) found.push(`${name}/${entry.name}`);
+    } catch {
+      found.push(name);
+    }
+  }
+  return found;
+}
+
+async function performRestore(
+  commit: string,
+  configDir: string,
+  paths: readonly string[],
+  what: string,
+): Promise<StateRestoreResult> {
   const fail = (error: string, touchedDisk = false): StateRestoreResult =>
     ({ ok: false, error, restored: [], kept: [], snapshotBefore: false, touchedDisk });
 
@@ -315,12 +468,16 @@ async function performRestore(commit: string, configDir: string): Promise<StateR
 
   // The state as it is right now, before being overwritten. This is what makes a
   // restore itself undoable, so the user can always get back to where they were.
-  const snapshotBefore = await commitSnapshot(`before restore: ${commit.slice(0, 7)}`, configDir, false);
+  const snapshotBefore = await commitSnapshot(`before restore: ${commit.slice(0, 7)}`, configDir, false, paths);
 
-  const listed = await runGit(configDir, ["ls-tree", "--name-only", commit, "--", ...TRACKED]);
+  // `-r` so the log directory yields its members rather than one tree entry.
+  const listed = await runGit(configDir, ["ls-tree", "-r", "--name-only", commit, "--", ...paths]);
   if (!listed.ok) return fail("could not read that revision");
-  const inCommit = listed.stdout.split("\n").map(line => line.trim()).filter(name => TRACKED.includes(name));
-  if (inCommit.length === 0) return fail("that revision holds none of the state files");
+  const inCommit = listed.stdout.split("\n").map(line => line.trim())
+    // Defence in depth: only ever write back inside the path set this restore
+    // was scoped to, whatever `ls-tree` happens to return.
+    .filter(name => name !== "" && paths.some(root => name === root || name.startsWith(`${root}/`)));
+  if (inCommit.length === 0) return fail(`that revision holds none of the ${what}`);
 
   if (!(await runGit(configDir, ["checkout", commit, "--", ...inCommit])).ok) {
     // A failed checkout can still have written some of the paths, so the caller is
@@ -330,12 +487,12 @@ async function performRestore(commit: string, configDir: string): Promise<StateR
 
   // A NEW commit on top, never a rewind: the log stays append-only, so this
   // restore can be undone in turn by restoring the commit made just above.
-  await commitSnapshot(`restored from ${commit.slice(0, 7)}`, configDir, false);
+  await commitSnapshot(`restored from ${commit.slice(0, 7)}`, configDir, false, paths);
 
   return {
     ok: true,
     restored: inCommit,
-    kept: TRACKED.filter(name => !inCommit.includes(name) && existsSync(join(configDir, name))),
+    kept: presentUnder(configDir, paths).filter(name => !inCommit.includes(name)),
     snapshotBefore,
     touchedDisk: true,
   };
@@ -364,7 +521,7 @@ async function performRestore(commit: string, configDir: string): Promise<StateR
  */
 export function restoreStateFromHistory(commit: string, configDir: string = getConfigDir()): Promise<StateRestoreResult> {
   const next = queue
-    .then(() => performRestore(commit, configDir))
+    .then(() => performRestore(commit, configDir, TRACKED, "state files"))
     .catch(err => ({
       ok: false as const,
       error: err instanceof Error ? err.message : String(err),
@@ -372,6 +529,60 @@ export function restoreStateFromHistory(commit: string, configDir: string = getC
       kept: [],
       snapshotBefore: false,
       // An unexpected throw gives no proof the tree is untouched; assume it moved.
+      touchedDisk: true,
+    }));
+  queue = next;
+  return next;
+}
+
+/**
+ * Commit the logs as they stand RIGHT NOW, before the caller deletes them.
+ *
+ * Same contract and the same reasoning as
+ * {@link recordStateSnapshotBeforeDelete}, aimed at the log path set instead:
+ * awaited so the bytes are safely in git before they are destroyed, bounded so
+ * a clear cannot hang on it, and never fatal — if the snapshot cannot be made,
+ * the user's clear still happens. Losing the undo is bad; refusing to do what
+ * the user asked because the bookkeeping repo was busy is worse.
+ *
+ * Returns the commit that now holds the logs, or `null` when nothing was
+ * committed. `null` also covers "nothing had changed since the last snapshot",
+ * in which case an earlier commit already holds them.
+ */
+export async function recordLogSnapshotBeforeDelete(
+  reason: string,
+  configDir: string = getConfigDir(),
+  timeoutMs = PRE_DELETE_SNAPSHOT_TIMEOUT_MS,
+): Promise<string | null> {
+  const committed = await recordStateSnapshotBeforeDelete(reason, configDir, timeoutMs, TRACKED_LOGS);
+  if (!committed) return null;
+  // Read the hash back rather than threading it out of the commit plumbing: this
+  // runs once per explicit user action, and the echoed hash is what the dashboard
+  // offers as the one-click undo.
+  return listStateHistoryEntries(1, configDir)[0]?.hash ?? null;
+}
+
+/**
+ * Roll the log files back to a commit from the same local history.
+ *
+ * Append-only exactly as the state restore is: the logs as they are now are
+ * committed first, the restore is committed second, and nothing is rewritten —
+ * so restoring a log snapshot can itself be undone by restoring the commit made
+ * just above it, and that undo undone in turn.
+ *
+ * Unlike the state restore this needs no drain and no restart. Logs are not
+ * credentials: nothing in flight is reading them, and the in-memory rings are
+ * re-seeded from the restored files by the caller.
+ */
+export function restoreLogsFromHistory(commit: string, configDir: string = getConfigDir()): Promise<StateRestoreResult> {
+  const next = queue
+    .then(() => performRestore(commit, configDir, TRACKED_LOGS, "log files"))
+    .catch(err => ({
+      ok: false as const,
+      error: err instanceof Error ? err.message : String(err),
+      restored: [],
+      kept: [],
+      snapshotBefore: false,
       touchedDisk: true,
     }));
   queue = next;

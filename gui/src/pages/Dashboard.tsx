@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { IconAlert } from "../icons";
 import LaunchCard from "../components/LaunchCard";
+import { StartProxyButton } from "../components/StartProxyButton";
 import { Trans } from "../i18n/provider";
 import { navigateHash } from "../hash-routing";
 import { DashboardDialogs } from "./dashboard-dialogs";
@@ -36,7 +37,17 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
         <IconAlert aria-hidden="true" />
         <div>
           <div className="dash-banner__title">{t("dash.cannotConnect")}</div>
+          {/* The command stays visible even beside the button: in a browser the
+              button renders nothing, and if starting fails the command is the
+              fallback that has to still be there. */}
           <div className="dash-banner__body"><Trans k="dash.runStart" cmd="ocx start" /></div>
+          <div className="dash-banner__actions">
+            {/* A reload rather than a refetch: every poll on this screen failed
+                while the proxy was down, and the hook has no way to restart them
+                individually. It is also what `use-dashboard-data` already does
+                after an update lands, so the two recovery paths behave alike. */}
+            <StartProxyButton onStarted={() => window.location.reload()} />
+          </div>
         </div>
       </div>
     );

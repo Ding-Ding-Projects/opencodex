@@ -20,12 +20,33 @@
 
 import type { Revision, RevisionScope } from "../shell/revisions";
 
+/**
+ * Which path set a snapshot commit touched. The server derives it from the
+ * commit's changed files, never from its message, and the two restores it
+ * selects between behave very differently — one drains in-flight requests and
+ * restarts the proxy, the other touches nothing but log files. Guessing wrong
+ * would restart a machine to put a log file back.
+ */
+export type SnapshotScope = "state" | "logs" | "mixed";
+
 /** One snapshot from the local account-change history, as GET /api/host/history reports it. */
 export interface StateHistoryEntry {
   hash: string;
   short: string;
   subject: string;
   at: string;
+  /**
+   * Optional because a proxy older than this field still answers `/api/host/history`.
+   * An absent scope is read as "state", which is what every snapshot was before
+   * logs joined the repository.
+   */
+  scope?: SnapshotScope;
+}
+
+/** Absent means an older proxy, which only ever wrote state snapshots. */
+export function snapshotScope(snapshot: StateHistoryEntry | null | undefined): SnapshotScope {
+  const scope = snapshot?.scope;
+  return scope === "logs" || scope === "mixed" ? scope : "state";
 }
 
 /** Which of the two logs an entry came from. Never inferred — always carried. */

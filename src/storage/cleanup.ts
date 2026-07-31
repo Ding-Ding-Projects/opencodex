@@ -998,6 +998,48 @@ function fsyncDirectoryBestEffort(dirPath: string): void {
 }
 
 /**
+ * Marker for a BLOB column value carried through JSON as base64.
+ *
+ * A SqlRow value is only ever string | number | bigint | null | Uint8Array, so an
+ * OBJECT in value position can only be this tag — nothing legitimate collides.
+ */
+const SATELLITE_BLOB_TAG = "$ocxBlob";
+
+/**
+ * Encode BLOB column values on the way into satellite-backup.json.
+ *
+ * Plain `JSON.stringify` turns a Uint8Array into `{"0":12,"1":255,…}`, and
+ * `JSON.parse` hands that back as a plain Object. bun:sqlite then refuses to
+ * bind it ("Binding expected string, TypedArray, boolean, number, bigint or
+ * null"), so restoreSatelliteBackup() threw, returned false, and the whole
+ * satellite restore failed with no indication of which value was at fault.
+ * A backup that cannot be restored is not a backup.
+ *
+ * Reads `this[key]`, not `value`: by the time the replacer sees `value` a
+ * typed array has already been flattened to an ordinary object.
+ */
+function satelliteBackupReplacer(this: Record<string, unknown>, key: string, value: unknown): unknown {
+  const original = this[key];
+  if (original instanceof Uint8Array) {
+    return { [SATELLITE_BLOB_TAG]: Buffer.from(original).toString("base64") };
+  }
+  return value;
+}
+
+/** Decode the tag written by satelliteBackupReplacer() back into a bindable Buffer. */
+function satelliteBackupReviver(_key: string, value: unknown): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value as object);
+    const encoded = (value as Record<string, unknown>)[SATELLITE_BLOB_TAG];
+    if (keys.length === 1 && keys[0] === SATELLITE_BLOB_TAG && typeof encoded === "string") {
+      // Buffer extends Uint8Array, so this binds as a BLOB directly.
+      return Buffer.from(encoded, "base64");
+    }
+  }
+  return value;
+}
+
+/**
  * Atomically replace satellite-backup.json: private temp in the stage, full write + fsync,
  * rename (with Windows sharing-violation retries), then best-effort directory fsync.
  * An interrupted update never truncates the last valid backup that was written before a
@@ -1012,7 +1054,7 @@ function writeSatelliteBackup(
   const dest = join(stageDir, SATELLITE_BACKUP_FILE);
   const replacing = existsSync(dest);
   const tmp = join(stageDir, `${SATELLITE_BACKUP_FILE}.${process.pid}.${++_satelliteBackupSeq}.tmp`);
-  const payload = Buffer.from(JSON.stringify(backup), "utf8");
+  const payload = Buffer.from(JSON.stringify(backup, satelliteBackupReplacer), "utf8");
   const fd = openSync(tmp, "w", 0o600);
   try {
     let offset = 0;
@@ -2187,7 +2229,7 @@ function readSatelliteBackupFile(stageDir: string): SatelliteBackupRead {
   const path = join(stageDir, SATELLITE_BACKUP_FILE);
   if (!existsSync(path)) return { status: "missing" };
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const raw = JSON.parse(readFileSync(path, "utf8"), satelliteBackupReviver) as unknown;
     if (!raw || typeof raw !== "object") return { status: "invalid" };
     const o = raw as SatelliteBackup;
     if (!Array.isArray(o.threadIds)) return { status: "invalid" };
