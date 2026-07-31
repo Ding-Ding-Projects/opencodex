@@ -16,6 +16,19 @@ import starlight from "@astrojs/starlight";
 const SITE_URL = process.env.DOCS_SITE_URL?.trim() || "https://opencodex.me";
 const BASE = process.env.DOCS_BASE?.trim() || undefined;
 
+/**
+ * The base as a URL prefix, normalised to "" or "/thing" (never a trailing slash).
+ *
+ * Astro rewrites `base` into the links and assets it generates itself, but NOT
+ * into anything hard-coded in `head` below — those strings ship exactly as
+ * written. On the canonical domain the site is at the root, so a bare
+ * `/favicon.png` was right and nobody noticed; on the project-site fallback,
+ * where everything lives under `/opencodex`, both the favicon and the social
+ * preview image 404ed. The favicon is a missing icon, but the og:image means
+ * every link shared from that host previews as a broken image.
+ */
+const BASE_PATH = BASE ? `/${BASE.replace(/^\/|\/$/g, "")}` : "";
+
 // NOTE: the WebSite / SoftwareApplication JSON-LD deliberately does NOT live here.
 // Google only reads site-name markup from the home page of a site, and a global
 // `head` entry would replay one `#website` entity (with the root `url`) on every
@@ -69,6 +82,9 @@ export default defineConfig({
         dark: "./src/assets/logo-dark.png",
         replacesTitle: false,
       },
+      // No `BASE_PATH` here, unlike the `head` entries below: Starlight applies
+      // the base to this option itself, and prefixing it produced
+      // `/opencodex/opencodex/favicon.ico`.
       favicon: "/favicon.ico",
       customCss: [
         "@fontsource-variable/geist",
@@ -86,12 +102,12 @@ export default defineConfig({
       },
       head: [
         // Google favicon guidelines: PNG at a multiple of 48px, exposed via rel="icon".
-        { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "192x192", href: "/favicon.png" } },
-        { tag: "meta", attrs: { property: "og:image", content: `${SITE_URL}/og.png` } },
+        { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "192x192", href: `${BASE_PATH}/favicon.png` } },
+        { tag: "meta", attrs: { property: "og:image", content: `${SITE_URL}${BASE_PATH}/og.png` } },
         { tag: "meta", attrs: { property: "og:image:width", content: "1200" } },
         { tag: "meta", attrs: { property: "og:image:height", content: "630" } },
         { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
-        { tag: "meta", attrs: { name: "twitter:image", content: `${SITE_URL}/og.png` } },
+        { tag: "meta", attrs: { name: "twitter:image", content: `${SITE_URL}${BASE_PATH}/og.png` } },
         { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: light)", content: "#ffffff" } },
         { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: dark)", content: "#212121" } },
       ],
