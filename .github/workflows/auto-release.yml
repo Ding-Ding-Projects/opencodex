@@ -50,6 +50,16 @@ jobs:
         with:
           node-version: 22
 
+      # "build 26" names nothing anybody can remember a week later. The dish is
+      # drawn from the dashboard's own table, so a codename can only ever be a
+      # dish that already ships a photo — and the script exits non-zero if the
+      # art is missing rather than publishing a release with a broken image.
+      - name: Pick the dim sum codename
+        shell: bash
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: bun scripts/release-codename.ts "$SHA" "${{ github.repository }}" >> "$GITHUB_ENV"
+
       - name: Install proxy dependencies
         run: bun install --frozen-lockfile
 
@@ -101,15 +111,32 @@ jobs:
             exit 1
           fi
           echo "installer: $installer ($(wc -c < "$installer") bytes)"
-          notes="Automated build of ${SHA:0:9} (v${version}), published because Cross-platform CI passed on it.
+          echo "codename: $DISH_NAME ($DISH_ZH)"
 
-          - **opencodex-setup.exe** — Windows desktop app (proxy + dashboard, tray, start at login)
-          - **opencodex-dashboard.zip** — the built dashboard alone; serve it next to a running proxy
+          # A heredoc rather than a quoted string: the notes are markdown, and
+          # an image tag inside a shell string is one stray quote away from
+          # becoming an unreadable release note nobody notices until it is
+          # published.
+          notes=$(cat <<NOTES
+          ### 🥟 The **$DISH_ZH $DISH_NAME** build
 
-          Installable releases, not npm packages — the npm package still ships through the audited Release workflow."
+          <img src="$DISH_PHOTO" alt="$DISH_NAME ($DISH_ZH)" width="360">
+
+          *$DISH_ZH · $DISH_NAME · \`$DISH_JYUTPING\`*
+
+          Automated build of \`${SHA:0:9}\` (v${version}), published because Cross-platform CI passed on it.
+
+          | Asset | What it is |
+          | --- | --- |
+          | **opencodex-setup.exe** | Windows desktop app — proxy + dashboard, tray, start at login |
+          | **opencodex-dashboard.zip** | The built dashboard alone; serve it next to a running proxy |
+
+          Installable releases, not npm packages — the npm package still ships through the audited Release workflow.
+          NOTES
+          )
           gh release create "$tag" \
             --target "$SHA" \
-            --title "build ${{ github.run_number }} — v${version} @ ${SHA:0:9}" \
+            --title "build ${{ github.run_number }} · $DISH_ZH $DISH_NAME — v${version} @ ${SHA:0:9}" \
             --notes "$notes" \
             "$installer#opencodex-setup.exe" \
             "opencodex-dashboard.zip"
