@@ -15,7 +15,11 @@ import {
   pickRoundRobinAccount,
   seedPoolRotationAccount,
 } from "./pool-rotation";
-import { CODEX_UNKNOWN_USAGE_SCORE, getAccountQuota } from "./quota";
+import {
+  CODEX_UNKNOWN_USAGE_SCORE,
+  getAccountQuota,
+  isCodexQuotaExhausted,
+} from "./quota";
 import { MAIN_CODEX_ACCOUNT_ID, getMainAccountPlan } from "./main-account";
 import { isSelectableCodexPoolAccount } from "./account-id";
 import type { OcxConfig } from "../types";
@@ -584,6 +588,10 @@ export function isCodexAccountSoftAvoided(accountId: string, now = Date.now()): 
   return getCodexAccountSoftAvoidUntil(accountId, now) !== null;
 }
 
+function isCodexAccountExplicitlyExhausted(config: OcxConfig, accountId: string): boolean {
+  return isCodexQuotaExhausted(getAccountQuota(accountId), getPoolAccountPlan(config, accountId));
+}
+
 function isCodexAccountSelectable(
   config: OcxConfig,
   accountId: string,
@@ -591,6 +599,7 @@ function isCodexAccountSelectable(
   quotaScope?: CodexQuotaScope,
 ): boolean {
   return !isCodexAccountPaused(config, accountId)
+    && !isCodexAccountExplicitlyExhausted(config, accountId)
     && getCodexQuotaHealthSnapshot(accountId, quotaScope, now) === null
     && !isCodexAccountSoftAvoided(accountId, now)
     && isCodexAccountUsable(config, accountId);
@@ -697,21 +706,15 @@ function getEligiblePoolAccounts(
   const ids = (config.codexAccounts ?? [])
     .filter(account => isSelectableCodexPoolAccount(account)
       && account.id !== excludeId
-      && !isCodexAccountPaused(config, account.id)
-      && !isAccountNeedsReauth(account.id))
-    .filter(account => getCodexQuotaHealthSnapshot(account.id, quotaScope, now) === null)
-    .filter(account => !isCodexAccountSoftAvoided(account.id, now))
-    .filter(account => isCodexAccountUsable(config, account.id))
+      && !isAccountNeedsReauth(account.id)
+      && isCodexAccountSelectable(config, account.id, now, quotaScope))
     .map(account => account.id);
   // The main Codex account is not stored in config.codexAccounts; include it as a
   // first-class rotation candidate when its read-only token is usable (Option A).
   if (
     excludeId !== MAIN_CODEX_ACCOUNT_ID
-    && !isCodexAccountPaused(config, MAIN_CODEX_ACCOUNT_ID)
     && !isAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID)
-    && getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope, now) === null
-    && !isCodexAccountSoftAvoided(MAIN_CODEX_ACCOUNT_ID, now)
-    && isCodexAccountUsable(config, MAIN_CODEX_ACCOUNT_ID)
+    && isCodexAccountSelectable(config, MAIN_CODEX_ACCOUNT_ID, now, quotaScope)
   ) {
     ids.unshift(MAIN_CODEX_ACCOUNT_ID);
   }
@@ -888,10 +891,13 @@ export function pickLowestUsageCodexAccount(
   quotaScope?: CodexQuotaScope,
 ): string | null {
   let best: string | null = null;
+  // Seeded above every score including the unknown sentinel, so the first eligible
+  // account always wins the comparison. A pool with no quota data anywhere must
+  // still return a candidate rather than reporting no account at all.
   let bestUsage = Number.POSITIVE_INFINITY;
   for (const id of getEligiblePoolAccounts(config, excludeId, now, quotaScope)) {
     const usage = computeCodexUsageScore(getAccountQuota(id), getPoolAccountPlan(config, id));
-    if (usage < bestUsage) {
+    if (best === null || usage < bestUsage) {
       best = id;
       bestUsage = usage;
     }
@@ -976,7 +982,7 @@ export function reconcileCodexActiveAfterExclusion(
 }
 
 function isUnknownUsage(usage: number): boolean {
-  return usage >= CODEX_UNKNOWN_USAGE_SCORE;
+  return usage === CODEX_UNKNOWN_USAGE_SCORE;
 }
 
 function applyQuotaAutoSwitch(
@@ -1083,7 +1089,11 @@ export function previewCodexAccountForRequest(
   if (!isCodexAccountSelectable(config, active, now, quotaScope)) {
     const fallback = pickLowestUsageCodexAccount(config, active, now, quotaScope);
     if (fallback) active = fallback;
-    else if (hasConfiguredPoolAccount(config, active) && !isCodexAccountPaused(config, active)) return active;
+    else if (
+      hasConfiguredPoolAccount(config, active)
+      && !isCodexAccountPaused(config, active)
+      && !isCodexAccountExplicitlyExhausted(config, active)
+    ) return active;
     else return null;
   }
 
@@ -1098,6 +1108,7 @@ export function previewCodexAccountForRequest(
     const best = pickLowestUsageCodexAccount(config, active, now, quotaScope);
     if (best) active = best;
   }
+  if (isCodexAccountExplicitlyExhausted(config, active)) return null;
   if (!isCodexAccountUsable(config, active)) {
     return hasConfiguredPoolAccount(config, active) ? active : null;
   }
@@ -1178,7 +1189,11 @@ export function resolveCodexAccountForThreadDetailed(
     if (fallback) {
       if (!isIndependentCodexQuotaScope(quotaScope)) setActiveCodexAccount(config, fallback);
       active = fallback;
-    } else if (hasConfiguredPoolAccount(config, active) && !isCodexAccountPaused(config, active)) {
+    } else if (
+      hasConfiguredPoolAccount(config, active)
+      && !isCodexAccountPaused(config, active)
+      && !isCodexAccountExplicitlyExhausted(config, active)
+    ) {
       return { status: "selected", accountId: active };
     } else {
       return { status: "none" };
@@ -1186,6 +1201,7 @@ export function resolveCodexAccountForThreadDetailed(
   }
   active = applyQuotaAutoSwitch(config, active, now, quotaScope);
   active = applyFailureFailover(config, active, now);
+  if (isCodexAccountExplicitlyExhausted(config, active)) return { status: "none" };
   if (!isCodexAccountUsable(config, active)) {
     return hasConfiguredPoolAccount(config, active) ? { status: "selected", accountId: active } : { status: "none" };
   }

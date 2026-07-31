@@ -111,6 +111,14 @@ The **Codex Auth** page manages the native ChatGPT/Codex route:
   the legacy weekly interpretation.
 - **Refresh quotas** re-reads account usage immediately so routing and the account cards use the same
   values.
+- Browser OAuth can add an authenticated account whose relevant WHAM quota is already 100% used. The
+  validation request that would otherwise be sent is skipped for that account, because a spent account
+  cannot answer it and the authenticated usage read already proved the credential. The account remains
+  visible at 100%, but confirmed exhaustion is distinct from unknown quota and keeps the account out of
+  automatic routing until a successful refresh reports recovery. Every other account — including one
+  whose usage probe failed — is still validated, and manual credential import always is.
+- Other OAuth provider accounts also remain stored when optional quota telemetry is unavailable; the
+  dashboard reports unavailable usage instead of turning a valid login into an authentication error.
 - Pool request logs use opaque labels such as `p3fa91c`, never account emails.
 
 ## How the dashboard talks to the proxy

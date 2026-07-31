@@ -98,6 +98,7 @@ async function completeMockCodexOAuth(options: {
   email: string;
   onWarmup: () => void;
   usageResponse?: () => Response;
+  warmupResponse?: () => Response;
 }): Promise<{ startStatus: number; state: { status: string; error?: string } }> {
   const oauth = await import("../src/oauth");
   const oauthStore = await import("../src/oauth/store");
@@ -133,10 +134,11 @@ async function completeMockCodexOAuth(options: {
     }
     if (target === "https://chatgpt.com/backend-api/codex/responses") {
       options.onWarmup();
-      return new Response('event: response.completed\ndata: {"type":"response.completed"}\n\n', {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      });
+      return options.warmupResponse?.()
+        ?? new Response('event: response.completed\ndata: {"type":"response.completed"}\n\n', {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
     }
     return previousFetch(input);
   }) as typeof fetch;
@@ -2206,6 +2208,101 @@ describe("codex-auth API", () => {
       statusSpy.mockRestore();
       openSpy.mockRestore();
     }
+  });
+
+  test("OAuth creation skips warmup entirely for a fresh WHAM-confirmed exhausted account", async () => {
+    const config = makeConfig();
+    let warmupCalls = 0;
+    const result = await completeMockCodexOAuth({
+      config,
+      requestBody: { id: "oauth-exhausted" },
+      oauthAccountId: "acct-oauth-exhausted",
+      email: "oauth-exhausted@example.test",
+      onWarmup: () => { warmupCalls += 1; },
+      usageResponse: () => new Response(JSON.stringify({
+        email: "oauth-exhausted@example.test",
+        plan_type: "plus",
+        rate_limit: { primary_window: { used_percent: 100, reset_at: 1_787_400_000 } },
+      }), { status: 200 }),
+    });
+
+    // A spent account cannot generate; the authenticated WHAM probe already proved
+    // the credential works, so no request may be sent to the responses endpoint.
+    expect(warmupCalls).toBe(0);
+    expect(result.state).toMatchObject({ status: "done" });
+    expect(config.codexAccounts).toContainEqual(expect.objectContaining({
+      id: "oauth-exhausted",
+      plan: "plus",
+    }));
+    expect(getCodexAccountCredential("oauth-exhausted")).not.toBeNull();
+    expect(getAccountQuota("oauth-exhausted")?.weeklyPercent).toBe(100);
+  });
+
+  test("OAuth creation still warms up and rejects when quota is not confirmed exhausted", async () => {
+    const config = makeConfig();
+    let warmupCalls = 0;
+    const result = await completeMockCodexOAuth({
+      config,
+      requestBody: { id: "oauth-not-exhausted" },
+      oauthAccountId: "acct-oauth-not-exhausted",
+      email: "oauth-not-exhausted@example.test",
+      onWarmup: () => { warmupCalls += 1; },
+      usageResponse: () => new Response(JSON.stringify({
+        email: "oauth-not-exhausted@example.test",
+        plan_type: "plus",
+        rate_limit: { primary_window: { used_percent: 99 } },
+      }), { status: 200 }),
+      warmupResponse: () => new Response(null, { status: 401 }),
+    });
+
+    expect(warmupCalls).toBe(1);
+    expect(result.state).toMatchObject({ status: "error" });
+    expect(config.codexAccounts).toEqual([]);
+    expect(getCodexAccountCredential("oauth-not-exhausted")).toBeNull();
+  });
+
+  test("OAuth creation still warms up when the usage probe itself fails", async () => {
+    const config = makeConfig();
+    let warmupCalls = 0;
+    const result = await completeMockCodexOAuth({
+      config,
+      requestBody: { id: "oauth-usage-down" },
+      oauthAccountId: "acct-oauth-usage-down",
+      email: "oauth-usage-down@example.test",
+      onWarmup: () => { warmupCalls += 1; },
+      usageResponse: () => new Response("unavailable", { status: 503 }),
+      warmupResponse: () => new Response(null, { status: 401 }),
+    });
+
+    expect(warmupCalls).toBe(1);
+    expect(result.state).toMatchObject({ status: "error" });
+    expect(getCodexAccountCredential("oauth-usage-down")).toBeNull();
+  });
+
+  test("OAuth creation applies Go monthly quota semantics before skipping warmup", async () => {
+    const config = makeConfig();
+    let warmupCalls = 0;
+    const result = await completeMockCodexOAuth({
+      config,
+      requestBody: { id: "oauth-go-weekly-only" },
+      oauthAccountId: "acct-oauth-go-weekly-only",
+      email: "oauth-go-weekly-only@example.test",
+      onWarmup: () => { warmupCalls += 1; },
+      usageResponse: () => new Response(JSON.stringify({
+        email: "oauth-go-weekly-only@example.test",
+        plan_type: "go",
+        rate_limit: {
+          primary_window: { used_percent: 100 },
+          tertiary_window: { used_percent: 40, limit_window_seconds: 2_592_000 },
+        },
+      }), { status: 200 }),
+      warmupResponse: () => new Response(null, { status: 401 }),
+    });
+
+    // Go plans score only the 30d window, so a spent weekly window is not exhaustion.
+    expect(warmupCalls).toBe(1);
+    expect(result.state).toMatchObject({ status: "error" });
+    expect(config.codexAccounts).toEqual([]);
   });
 
   test("OAuth creation rejects a namespace claimed during warmup without persisting", async () => {

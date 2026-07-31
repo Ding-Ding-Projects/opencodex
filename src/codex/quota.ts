@@ -32,7 +32,7 @@ const MONTHLY_WINDOW_MIN_MINUTES = MONTHLY_WINDOW_MIN_SECONDS / 60;
 
 const accountQuota = new Map<string, StoredAccountQuota>();
 
-export const CODEX_UNKNOWN_USAGE_SCORE = 100;
+export const CODEX_UNKNOWN_USAGE_SCORE = Number.POSITIVE_INFINITY;
 export const CODEX_EXHAUSTED_USAGE_PERCENT = 100;
 
 export function isCodexQuotaExhausted(

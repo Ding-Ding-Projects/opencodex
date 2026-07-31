@@ -106,7 +106,17 @@ login. The Providers page shows those accounts in a dropdown, lets you add anoth
 active account without logging the others out. Only identity-less Kimi credentials replace the
 active slot; Kiro accounts are keyed by profile ARN. `chatgpt` is always single-slot because Codex
 pool accounts have a separate ledger.
-Tokens stay in `~/.opencodex/auth.json`; `/api/oauth/accounts` returns masked metadata only.
+Tokens stay in `~/.opencodex/auth.json`; `/api/oauth/accounts` returns masked metadata only. Provider
+login is independent of optional quota enrichment: a rate-limited or unavailable usage probe does not
+roll back an authenticated account.
+
+Codex pool OAuth follows the same identity-first rule when fresh authenticated WHAM data confirms the
+account's relevant quota is already 100% used. That authenticated usage response has already proved the
+token and account binding work, and a spent account cannot generate, so the warmup generation call is
+skipped rather than sent to be refused. The exhausted account is saved and remains visible, but routing
+excludes it until **Refresh quotas** successfully reports usage below 100%. Identity, duplicate, and
+namespace checks remain mandatory; every account whose quota is not confirmed exhausted — including one
+whose usage probe failed — still must pass warmup, and unverified manual import always does.
 
 By default every request uses the **active** account only. An experimental, opt-in account pool can
 route across them instead — sticky session affinity, `429` cooldown and failover, and

@@ -130,6 +130,40 @@ describe("codex routing", () => {
     expect(computeCodexUsageScore({})).toBe(CODEX_UNKNOWN_USAGE_SCORE);
   });
 
+  test("explicit 100% remains distinct from unknown usage", () => {
+    expect(computeCodexUsageScore({ weeklyPercent: 100 }, "plus")).toBe(100);
+    expect(computeCodexUsageScore({ weeklyPercent: 100 }, "plus")).not.toBe(CODEX_UNKNOWN_USAGE_SCORE);
+    expect(CODEX_UNKNOWN_USAGE_SCORE).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  test("confirmed exhausted accounts stay out of routing until quota refresh recovers", () => {
+    const config = makeConfig({ activeCodexAccountId: "a" });
+    updateAccountQuota("a", 100);
+    updateAccountQuota("b", 25);
+
+    expect(resolveCodexAccountForThread("exhausted-thread", config)).toBe("b");
+
+    clearThreadAccountMap();
+    updateAccountQuota("a", 10);
+    config.activeCodexAccountId = "a";
+    resetCodexRoutingForManualSelection("a");
+    expect(resolveCodexAccountForThread("recovered-thread", config)).toBe("a");
+  });
+
+  test("a pool with no quota data anywhere still selects an account", () => {
+    // The unknown sentinel is Infinity, so a lowest-usage seed of Infinity would
+    // never be beaten and the whole pool would look empty.
+    const config = makeConfig();
+    expect(pickLowestUsageCodexAccount(config)).not.toBeNull();
+  });
+
+  test("routing returns no account when every configured account is confirmed exhausted", () => {
+    const config = makeConfig({ activeCodexAccountId: "a" });
+    updateAccountQuota("a", 100);
+    updateAccountQuota("b", 100);
+    expect(resolveCodexAccountForThread("all-exhausted-thread", config)).toBeNull();
+  });
+
   test("bulk pause exhaustion requires an explicit 100% relevant window", () => {
     expect(isCodexQuotaExhausted(null, "plus")).toBe(false);
     expect(isCodexQuotaExhausted({}, "plus")).toBe(false);

@@ -215,11 +215,25 @@ function manualImportDisabledResponse(): Response {
   }, 403);
 }
 
+type CodexWarmupQuotaEvidence = {
+  fresh: true;
+  plan: string;
+  quota: Omit<StoredAccountQuota, "updatedAt">;
+};
+
 async function verifyCodexAccountWarmup(
   accountId: string,
   accessToken: string,
   chatgptAccountId: string,
+  quotaEvidence?: CodexWarmupQuotaEvidence,
 ): Promise<{ ok: true; validatedAt: number } | { ok: false; response: Response }> {
+  // An account whose relevant window is already fully spent cannot generate, so the
+  // warmup call can only come back as a quota rejection. The authenticated WHAM
+  // response that proved the exhaustion also proved the token and account binding
+  // work, so skip the doomed generation instead of burning a request to be told no.
+  if (quotaEvidence?.fresh && isCodexQuotaExhausted(quotaEvidence.quota, quotaEvidence.plan)) {
+    return { ok: true, validatedAt: Date.now() };
+  }
   try {
     await warmCodexAccount({ accessToken, chatgptAccountId });
     return { ok: true, validatedAt: Date.now() };
@@ -1043,6 +1057,7 @@ export async function handleCodexAuthAPI(
               let email = cred.email || accountId;
               let plan: string | undefined;
               let quota: Omit<StoredAccountQuota, "updatedAt"> | null = null;
+              let freshQuotaEvidence: CodexWarmupQuotaEvidence | undefined;
               try {
                 const tokens = { access_token: cred.access, account_id: oauthAccountId };
                 const resp = await fetch("https://chatgpt.com/backend-api/wham/usage", {
@@ -1054,6 +1069,10 @@ export async function handleCodexAuthAPI(
                   email = data.email ?? email;
                   plan = data.plan_type ?? undefined;
                   quota = parseUsageQuota(data);
+                  const freshPlan = nonEmptyPlan(data.plan_type);
+                  if (freshPlan && quota) {
+                    freshQuotaEvidence = { fresh: true, plan: freshPlan, quota };
+                  }
                 }
               } catch { /* wham fetch is non-blocking */ }
               // Reauth must refresh the same ChatGPT identity already bound to this pool slot.
@@ -1107,7 +1126,12 @@ export async function handleCodexAuthAPI(
                 break;
               }
 
-              const warmup = await verifyCodexAccountWarmup(accountId, cred.access, oauthAccountId);
+              const warmup = await verifyCodexAccountWarmup(
+                accountId,
+                cred.access,
+                oauthAccountId,
+                freshQuotaEvidence,
+              );
               if (!warmup.ok) {
                 const body = await warmup.response.json().catch(() => ({})) as { error?: string; reason?: string };
                 codexAuthLoginState.set(flowId, {
