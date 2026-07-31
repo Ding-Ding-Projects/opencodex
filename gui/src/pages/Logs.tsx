@@ -18,6 +18,7 @@ import { M3_TABLIST_STYLE, m3TabStyle } from "./debug-shared";
 import { consumeLogsSearchHandoff } from "./logs-search-handoff";
 import type { LogsTab } from "./logs-tab-keydown";
 import { logsTabKeyDown, readTabFromHash, selectLogsTab } from "./logs-tab-keydown";
+import { speedLabel } from "./logs-speed-label";
 
 interface UsageBreakdown {
   inputTokens: number;
@@ -173,12 +174,6 @@ function cacheSplit(log: LogEntry): { read?: number; write?: number } {
       ? Math.max(0, u.cachedInputTokens - write)
       : u.cachedInputTokens;
   return { read, write };
-}
-
-function speedLabel(log: LogEntry): string | undefined {
-  if (log.requestedSpeedLabel) return log.requestedSpeedLabel;
-  if (log.modelSupportsServiceTier && log.configuredSpeedLabel) return log.configuredSpeedLabel;
-  return undefined;
 }
 
 interface ReasoningLogFields {

@@ -33,7 +33,11 @@ export const M3_EN = {
   // headings, empty states, confirmations, errors — and every other string keeps
   // its neutral wording rather than being padded with five near-identical
   // variants of the word "Save".
-  "lang.funnyCoverage": "The level restyles {en} English and {yue} Cantonese messages today, including errors and destructive warnings. Everything else keeps its neutral wording. The facts never change at any level.",
+  //
+  // The category list is the disclosure the setting owes the user: nothing is
+  // exempt, errors and destructive warnings included, so it says so here rather
+  // than letting a level-5 warning be a surprise.
+  "lang.funnyCoverage": "The level restyles {en} English and {yue} Cantonese messages today — every category, including error, warning, destructive, security, financial and accessibility copy. Everything else keeps its neutral wording. The facts never change at any level: the same file, the same account, the same consequence, at 1 and at 5.",
 
   "mobile.title": "opencodex remote",
   "mobile.chat": "Chat",
@@ -87,7 +91,11 @@ export const M3_EN = {
   "onboard.finish": "Finish",
   "onboard.stepOf": "Step {n} of {total}",
   "onboard.langTitle": "Pick a language",
-  "onboard.langSub": "English, Cantonese, or both side by side. Change it any time on Language & voice.",
+  // First-run disclosure. The funny level is opt-in behaviour that reaches error
+  // and warning copy, so the user is told that here — before they meet a level-5
+  // delete confirmation — rather than only on the settings screen they may never
+  // open. What it cannot change is said in the same breath.
+  "onboard.langSub": "English, Cantonese, or both side by side. Change it any time on Language & voice, along with a funny level per language — that styles every message, errors and destructive warnings included, and never the facts.",
   "onboard.providerTitle": "Connect a provider",
   "onboard.providerSub": "opencodex routes Codex and Claude Code to whatever you point it at. Sign in now, or do it later on Providers.",
   "onboard.providerSkip": "I'll do this later",
