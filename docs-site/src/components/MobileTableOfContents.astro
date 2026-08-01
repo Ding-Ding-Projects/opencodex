@@ -1,0 +1,24 @@
+---
+/*
+  The narrow-width "On this page" dropdown, with its own search bar.
+
+  Its own — not shared with the desktop sidebar. Both exist in the DOM at once at
+  some widths, so a single island filtering by a document-wide selector would
+  have the dropdown quietly filtering the sidebar behind it. Each copy passes the
+  container it owns and touches nothing else.
+
+  This is also the surface that needs it most. The desktop sidebar is a column
+  the reader can see all of; this one is a popover, and a long guide puts most of
+  its headings behind a scroll inside it — the worst place to hunt for something
+  you already know the name of.
+*/
+import Default from '@astrojs/starlight/components/MobileTableOfContents.astro';
+import TocSearch from './TocSearch.tsx';
+
+const { locale } = Astro.locals.starlightRoute;
+---
+
+<div class="m3-toc-host m3-toc-host--mobile">
+  <Default><slot /></Default>
+  <TocSearch client:visible locale={locale} rootSelector="mobile-starlight-toc ul" />
+</div>

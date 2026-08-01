@@ -1,0 +1,23 @@
+---
+/*
+  The desktop "On this page" sidebar, with the search bar every other search
+  surface on this site already carries.
+
+  Renders Starlight's own component untouched and mounts the filter beside it.
+  The island reaches into the rendered `<ul>` and toggles `hidden` on the items
+  rather than re-rendering them, because Starlight's scroll-spy is bound to those
+  exact anchors — re-rendering would keep the highlight logic and lose its DOM.
+
+  `client:visible` rather than `client:load`: on a page nobody scrolls the ToC
+  into view on, this costs nothing at all.
+*/
+import Default from '@astrojs/starlight/components/TableOfContents.astro';
+import TocSearch from './TocSearch.tsx';
+
+const { locale } = Astro.locals.starlightRoute;
+---
+
+<div class="m3-toc-host">
+  <TocSearch client:visible locale={locale} rootSelector="starlight-toc ul" />
+  <Default><slot /></Default>
+</div>

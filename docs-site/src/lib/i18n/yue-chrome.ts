@@ -122,6 +122,10 @@ export const yueChrome: Partial<Record<StringKey, string>> = {
   "settings.searchPh": "用名、說明或者而家嘅值嚟搵",
   "settings.shown": "{total} 個設定入面顯示 {shown} 個",
   "settings.none": "冇設定夾到。",
+  "toc.search": "搵呢版嘅標題",
+  "toc.searchPh": "篩走唔啱嘅標題",
+  "toc.none": "冇標題夾到。",
+  "toc.shown": "{total} 個標題入面顯示 {shown} 個",
   "settings.elsewhere": "另一版仲有 {count} 個：{tabs}",
   "settings.clear": "清走查詢",
 

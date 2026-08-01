@@ -142,6 +142,13 @@ export default defineConfig({
         Head: "./src/components/Head.astro",
         Header: "./src/components/Header.astro",
         PageTitle: "./src/components/PageTitle.astro",
+        // Both table-of-contents surfaces, each wrapping Starlight's own and
+        // adding the search bar every other search surface here carries. Two
+        // overrides rather than one shared island: both are in the DOM at once
+        // at some widths, and a single filter would have the dropdown quietly
+        // filtering the sidebar behind it.
+        TableOfContents: "./src/components/TableOfContents.astro",
+        MobileTableOfContents: "./src/components/MobileTableOfContents.astro",
       },
       head: [
         // Google favicon guidelines: PNG at a multiple of 48px, exposed via rel="icon".
