@@ -421,6 +421,30 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .btn-icon:hover { background: var(--raised-hover); color: var(--text); }
 .btn-icon:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
 .btn-icon svg { width: 16px; height: 16px; display: block; }
+/* A 28px control with a 16px glyph is the right *look* and the wrong *target*:
+   Material asks for 48dp, and this app already gives 44px to its own mobile
+   controls. Rather than inflate the button — which would change a deliberate
+   visual density — the hit area is extended past the box with a pseudo-element,
+   which is how M3 separates visual size from touch size.
+
+   Safe to do here because `.btn-icon` has exactly one user: the close button in
+   the Add-provider dialog, alone in a header beside a heading. Nothing
+   interactive sits within 48px of it, so the larger target cannot start
+   stealing a neighbour's taps — which is the failure mode that makes a blanket
+   version of this change worse than the problem. Check that again before
+   putting `.btn-icon` in a dense row. */
+.btn-icon { position: relative; }
+.btn-icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translate(-50%, -50%);
+  /* Invisible, and never painted over anything: it exists only to catch the
+     pointer. Clicks on it bubble to the button that owns it. */
+}
 .btn.btn-ghost.btn-icon { width: 28px; height: 28px; padding: 0; }
 
 /* ---- cards / panels ---- */

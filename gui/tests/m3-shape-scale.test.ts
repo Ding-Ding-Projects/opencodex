@@ -25,15 +25,18 @@ import { SHAPE_TOKENS } from "../src/theme/m3";
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
 
-function cssFiles(dir: string): string[] {
+function filesWithSuffix(dir: string, suffix: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...cssFiles(full));
-    else if (entry.endsWith(".css")) out.push(full);
+    if (statSync(full).isDirectory()) out.push(...filesWithSuffix(full, suffix));
+    else if (entry.endsWith(suffix)) out.push(full);
   }
   return out;
 }
+
+const cssFiles = (dir: string) => filesWithSuffix(dir, ".css");
+const tsxFiles = (dir: string) => filesWithSuffix(dir, ".tsx");
 
 describe("the corner scale", () => {
   test("carries M3's steps, extra-small included", () => {
@@ -52,6 +55,35 @@ describe("the corner scale", () => {
     expect(Object.keys(SHAPE_TOKENS).sort()).toEqual(
       ["--r-l", "--r-m", "--r-pill", "--r-s", "--r-xl", "--r-xs"],
     );
+  });
+});
+
+describe("the icon button's touch target", () => {
+  const styles = readFileSync(join(SRC, "styles.css"), "utf-8");
+
+  test("is 48px even though the control is drawn at 28px", () => {
+    // Material asks for 48dp; the control is deliberately 28px so the dialog
+    // header keeps its density. The two are reconciled by extending the hit area
+    // past the box, not by inflating the button.
+    const rule = styles.slice(styles.indexOf(".btn-icon::after"));
+    expect(rule).toContain("width: 48px");
+    expect(rule.slice(0, rule.indexOf("}"))).toContain("height: 48px");
+    // Positioning the pseudo-element requires the button to be a containing
+    // block; without this the 48px box escapes to the nearest positioned
+    // ancestor and lands somewhere else entirely.
+    expect(styles).toContain(".btn-icon { position: relative; }");
+  });
+
+  test("still has exactly one user, which is what makes the larger target safe", () => {
+    // An expanded target that overlaps a neighbour steals its taps, so this is
+    // only sound while `.btn-icon` stays isolated. If this count moves, check
+    // what it is sitting next to before trusting the rule above.
+    // `(?![-\w])` and not `\b`: a hyphen is a word boundary, so `\bbtn-icon\b`
+    // also matches `btn-icon-only`, which is a different class with its own
+    // sizing and would make this count read 2 forever.
+    const uses = tsxFiles(SRC)
+      .flatMap(file => readFileSync(file, "utf-8").match(/className="[^"]*\bbtn-icon(?![-\w])[^"]*"/g) ?? []);
+    expect(uses).toHaveLength(1);
   });
 });
 
