@@ -69,7 +69,7 @@ import type { UiKey } from "../lib/i18n/keys";
 import { SearchBar } from "./RegexBuilder";
 import { useSearchQuery } from "../lib/use-search-query";
 import { Button, Chip, Icon } from "./ui";
-import { EXPORT_FORMATS, FORMAT_META, filenameFor, serialize, type ExportFormat } from "../../../shared/export-formats";
+import { EXPORT_FORMATS, FORMAT_META, filenameFor, serialize, type ExportFormat } from "../../../src/lib/export-formats";
 
 const KIND_KEY: Record<ChangeKind, UiKey> = {
   feat: "changelog.kindFeat",
@@ -389,7 +389,7 @@ export default function Changelog() {
   /**
    * Export the filtered rows in any of the coding formats, not only Markdown.
    *
-   * Same serialisers the app and the CLI use, from `shared/export-formats` —
+   * Same serialisers the app and the CLI use, from `src/lib/export-formats` —
    * "what a CSV of this looks like" must have one answer, and a second
    * implementation here would drift from it the first time either changed.
    *

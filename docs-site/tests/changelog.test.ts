@@ -231,7 +231,7 @@ describe("changelog export formats", () => {
   const source = readFileSync(new URL("../src/components/Changelog.tsx", import.meta.url), "utf-8");
 
   test("uses the shared serialisers rather than a second implementation", () => {
-    expect(source).toContain('from "../../../shared/export-formats"');
+    expect(source).toContain('from "../../../src/lib/export-formats"');
     expect(source).toContain("serialize(");
     expect(source).toContain("filenameFor(");
   });
