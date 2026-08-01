@@ -43,6 +43,8 @@ let testWindow: Window;
 let claimBodies: unknown[] = [];
 let claimStatus = 200;
 let chatStatus = 200;
+/** Model fetches that carried an Authorization header — see `mount`. */
+let authedModelFetches = 0;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -61,7 +63,15 @@ function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> 
     if (claimStatus === 429) return Promise.resolve(json({ error: "too many pairing attempts" }, 429));
     return Promise.resolve(json({ error: "no", reason: "expired" }, 400));
   }
-  if (url.includes("/v1/models")) return Promise.resolve(json({ data: [{ id: "gpt-5.4" }] }));
+  if (url.includes("/v1/models")) {
+    // The screen refetches models once the paired key reaches its state, with
+    // the key attached. That second call is the only externally visible proof
+    // that `setApiKey` has actually landed in React — storage is written by the
+    // same function that queues it, so storage says nothing about the flush.
+    const auth = new Headers(init?.headers ?? {}).get("Authorization");
+    if (auth) authedModelFetches += 1;
+    return Promise.resolve(json({ data: [{ id: "gpt-5.4" }] }));
+  }
   if (url.includes("/v1/chat/completions")) {
     if (chatStatus === 401) return Promise.resolve(json({ error: "opencodex API key required" }, 401));
     return Promise.resolve(new Response("data: [DONE]\n\n", { status: 200 }));
@@ -96,6 +106,7 @@ beforeEach(() => {
   claimBodies = [];
   claimStatus = 200;
   chatStatus = 200;
+  authedModelFetches = 0;
   resetApiAuthFetchForTests();
   // Page-load state, so a fresh case is a fresh page load.
   resetMobilePairingForTests();
@@ -159,8 +170,26 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   for (let i = 0; i < 200 && !readPairedKey() && !isClaimApplied(); i++) {
     await act(async () => { await Promise.resolve(); });
   }
-  // Then the hops hanging off it: the state flush itself, and the model fetch
-  // re-running on the new key.
+
+  // Then wait for the key to reach REACT, which is a different event from the
+  // key reaching storage — and the one every previous version of this got wrong.
+  //
+  // `saveKey` queues `setApiKey` and writes storage in the same call, so a
+  // populated `localStorage` proves only that the update was *queued*. Three
+  // versions waited on storage or on the claim latch and then flushed a fixed
+  // number of turns, which was enough alone and not enough after a heavier file
+  // had run first. When it was not enough, `apiKey` was still "" at submit and
+  // the screen printed "the proxy needs a key" instead of "the key was refused"
+  // — a permanently wrong string, so no amount of later polling could recover.
+  //
+  // The refetch of `/v1/models` *with an Authorization header* only happens once
+  // the component re-rendered with the key, so it is the event itself rather
+  // than a guess about scheduling.
+  if (readPairedKey()) {
+    for (let i = 0; i < 200 && authedModelFetches === 0; i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+  }
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
   return { container, root };
 }
