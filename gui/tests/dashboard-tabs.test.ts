@@ -94,7 +94,11 @@ test("Dashboard uses a pill tablist strip that scrolls instead of wrapping", asy
   const strip = css.slice(css.indexOf(".dash-tabs {"), css.indexOf("}", css.indexOf(".dash-tabs {")));
   expect(strip).toContain("flex-wrap: nowrap");
   expect(strip).toContain("overflow-x: auto");
-  // And it is the M3 pill container, not a bottom-border strip.
-  expect(strip).toContain("border-radius: 999px");
+  // And it is the M3 pill container, not a bottom-border strip. Asserted as the
+  // shape token rather than `999px`: the literal says "these corners are round",
+  // the token says "these corners are the design system's full round" — and only
+  // the second is a thing the appearance editor can restyle, which is the
+  // property actually worth pinning.
+  expect(strip).toContain("border-radius: var(--r-pill)");
   expect(strip).toContain("var(--m3-surface-container)");
 });

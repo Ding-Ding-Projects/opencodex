@@ -549,7 +549,7 @@
 .m3-app :focus-visible {
   outline: 3px solid var(--m3-primary);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
 }
 
 @media (prefers-reduced-motion: reduce) {

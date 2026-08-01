@@ -992,7 +992,7 @@
 .pws-model-chip-main:focus-visible {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
 }
 
 .pws-model-id {

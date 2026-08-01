@@ -142,7 +142,7 @@
 }
 .dialog {
   background: var(--m3-surface-container-high); color: var(--m3-on-surface); border: none;
-  border-radius: 28px; padding: 24px; width: 90%; max-width: 420px;
+  border-radius: var(--r-xl); padding: 24px; width: 90%; max-width: 420px;
   box-shadow: var(--e2); display: flex; flex-direction: column; gap: 16px;
 }
 .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }

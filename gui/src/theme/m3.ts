@@ -176,7 +176,22 @@ export function typeTokens(scale: number): Record<string, string> {
 
 /* ----------------------------------------------------------------- shape -- */
 
+/**
+ * The M3 corner scale.
+ *
+ * `--r-xs` (4dp, M3's extra-small — chips, snackbars, small indicator rails) was
+ * missing, and its absence was doing visible damage rather than nothing: with no
+ * token to reach for, stylesheets wrote `border-radius: 4px` by hand, and a
+ * hand-written radius is one the appearance editor cannot reach. Every corner in
+ * this app is supposed to be a customisation target; a literal silently opts out
+ * of that and there is no way to tell from the screen which corners did.
+ *
+ * The steps are M3's own — 4 / 8 / 12 / 16 / 28 / full — so a value that does not
+ * appear here is a value that does not belong in the design system either. When
+ * something wants 10px, the answer is 8 or 12, not a sixth step.
+ */
 export const SHAPE_TOKENS: Record<string, string> = {
+  '--r-xs': '4px',
   '--r-s': '8px',
   '--r-m': '12px',
   '--r-l': '16px',
