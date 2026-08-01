@@ -1,11 +1,39 @@
 /**
  * Debug sandbox: run the real app without letting it touch the real machine.
  *
- * Set `OPENCODEX_DEBUG_SANDBOX=1` and this process will not write its config to
- * disk and will not hand out a pairing credential. Everything else behaves
- * normally — the dashboard renders, the pairing panel opens, the QR appears, the
- * countdown runs — so the surfaces can be driven, screenshotted and demonstrated
- * without leaving anything behind.
+ * Set `OPENCODEX_DEBUG_SANDBOX=1` and this process will not write **its config**
+ * to disk and will not **issue a credential**. Everything else behaves normally —
+ * the dashboard renders, the pairing panel opens, the QR appears, the countdown
+ * runs — so those surfaces can be driven, screenshotted and demonstrated without
+ * changing the machine's configuration or minting a key somebody has to remember
+ * to revoke.
+ *
+ * ## What it does NOT promise: that the process leaves no trace
+ *
+ * An earlier version of this comment said "nothing in this session persists".
+ * That was false, and worth correcting loudly rather than quietly, because a
+ * sentence like that is exactly what someone would rely on before doing
+ * something they did not want recorded.
+ *
+ * A running opencodex writes a great deal besides its config, none of it through
+ * `saveConfig` and none of it blocked here: the responses state file, the usage
+ * log, the diagnostic log, the crash log, the pid and runtime-port files, the
+ * local git state history, the admin credential file created on a fresh config
+ * directory, and the OAuth credential store on sign-in or token refresh. The
+ * config directory and the log tree are created at startup before this flag is
+ * ever consulted.
+ *
+ * The honest scope is therefore narrow and specific:
+ *
+ * | Blocked | Not blocked |
+ * | --- | --- |
+ * | `config.json` writes via `saveConfig` | every other file the process writes |
+ * | minting a data-plane key (`mintDataPlaneKey`) | a key the *user* supplies via the custom-key route |
+ * | issuing a key from a pairing claim | — |
+ *
+ * If you need a process that genuinely leaves nothing behind, point
+ * `OPENCODEX_HOME` at a throwaway directory and delete it afterwards. This flag
+ * is the complement to that, not a substitute for it.
  *
  * ## Why this exists
  *
@@ -75,7 +103,8 @@ export function announceDebugSandboxOnce(log: (message: string) => void = consol
   announced = true;
   log(
     `[debug-sandbox] ${DEBUG_SANDBOX_ENV} is set: config changes are NOT written to disk and ` +
-    `pairing will not issue a key. Nothing in this session persists.`,
+    `no data-plane key will be issued. Other files (logs, usage, state) are still written ` +
+    `as normal — set OPENCODEX_HOME to a throwaway directory if you need a clean slate.`,
   );
 }
 

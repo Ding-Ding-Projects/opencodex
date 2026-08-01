@@ -49,6 +49,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
 import { addCustomDataPlaneKey, describeHost, hasDataPlaneCredential, mintDataPlaneKey } from "../../lib/host-control";
+import { debugSandboxEnabled } from "../../lib/debug-sandbox";
 import { cancelPairing, claimPairingToken, createPairingToken, hasOutstandingPairing } from "../../lib/pairing";
 import { takeClaimAttempt } from "../../lib/pairing-rate-limit";
 import { listStateHistory, listStateHistoryEntries, restoreStateFromHistory } from "../../lib/state-history";
@@ -256,13 +257,24 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
       // so a user toggling remote access off and on three times accreted three
       // live keys they never asked for and could not read. Enabling something
       // that is already enabled should add nothing.
-      if (!hasDataPlaneCredential(config)) {
+      //
+      // Not in the debug sandbox, which promises to issue no credential. Without
+      // this the one-click opt-in handed out a real `ocx_…` key captioned "shown
+      // once, store it now" — live against the running process and gone at the
+      // next start, so the user was being told to save something worthless while
+      // a mode that says it issues no keys quietly issued one.
+      if (!hasDataPlaneCredential(config) && !debugSandboxEnabled()) {
         mintedKey = mintDataPlaneKey(config, (body.newKeyName ?? "network").trim() || "network");
       }
-    } else if (typeof body.newKeyName === "string") {
+    } else if (typeof body.newKeyName === "string" && !debugSandboxEnabled()) {
       mintedKey = mintDataPlaneKey(config, body.newKeyName.trim() || "network");
     }
-    if (!hasDataPlaneCredential(config)) {
+    // The credential gate is waived in the sandbox, and only there. Its purpose
+    // is to refuse writing a config whose next start would die on a missing
+    // credential — and in the sandbox there is no write and therefore no next
+    // start to protect. Enforcing it here would instead make the screen
+    // unreachable in the one mode built for looking at it.
+    if (!hasDataPlaneCredential(config) && !debugSandboxEnabled()) {
       // Mirror assertServerAuthConfig instead of writing a config that kills the next start.
       return jsonResponse({
         error: "An exposed bind requires a data-plane credential. Pass mintKeyIfMissing to generate one, or create a key first.",

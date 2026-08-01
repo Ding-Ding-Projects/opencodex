@@ -393,7 +393,7 @@ export const M3_EN = {
   "network.exposed": "Reachable from other devices",
   "network.exposeWhatItDoes": "Turning this on publishes the proxy and this dashboard to every device on your network. A key is generated for you as part of enabling it.",
   "network.restartPending": "Saved, but not in effect yet. The proxy is still listening where it was — restart it (ocx stop && ocx start) before another device can connect.",
-  "network.debugSandbox": "Debug mode (OPENCODEX_DEBUG_SANDBOX). Nothing on this screen is saved to disk and pairing will not issue a key — the controls work, but every change is forgotten when the proxy stops. Restart it without that setting to make changes stick.",
+  "network.debugSandbox": "Debug mode (OPENCODEX_DEBUG_SANDBOX). Settings on this screen are not saved and no key will be issued — the controls work, but every change here is forgotten when the proxy stops. Logs, usage and other files are still written as usual. Restart without that setting to make changes stick.",
   "network.enableConfirm": "Expose the proxy to your network? Anyone on it who has a key can drive the proxy and every provider account behind it. Only do this on a network you trust. A restart applies the change.",
   "network.enabled": "Network access enabled",
   "network.disabled": "Network access disabled",

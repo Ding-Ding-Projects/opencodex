@@ -1962,7 +1962,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "network.exposed": "其他裝置連得到",
   "network.exposeWhatItDoes": "開咗佢，個 proxy 同埋呢個總覽就會公開畀你網絡上面每一部裝置。開嘅同時會幫你整定一把 key。",
   "network.restartPending": "存咗，但係仲未生效。個 proxy 依然聽住原本個位 — 要重新啟動（ocx stop && ocx start）之後，另一部裝置先連得到。",
-  "network.debugSandbox": "Debug 模式（OPENCODEX_DEBUG_SANDBOX）。呢版所有嘢都唔會寫落硬碟，配對亦都唔會出 key —— 啲掣係用得，但個 proxy 一熄就乜都唔記得晒。想啲改動留得低，熄咗個設定再開過。",
+  "network.debugSandbox": "Debug 模式（OPENCODEX_DEBUG_SANDBOX）。呢版嘅設定唔會存，亦都唔會出任何 key —— 啲掣係用得，但個 proxy 一熄，呢度啲改動就唔記得晒。log、用量同其他檔案照寫如常。想啲改動留得低，熄咗個設定再開過。",
   "network.enableConfirm": "將 proxy 公開畀你個網絡？網絡上任何有 key 嘅人都可以操控呢個 proxy，同埋佢後面每一個供應商帳戶。淨係喺你信得過嘅網絡先好咁做。要重新啟動先會套用呢個改動。",
   "network.enabled": "網絡存取已開",
   "network.disabled": "網絡存取已閂",

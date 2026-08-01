@@ -24,9 +24,11 @@ import {
   debugSandboxEnabled,
   resetDebugSandboxAnnouncementForTests,
 } from "../src/lib/debug-sandbox";
-import { describeHost } from "../src/lib/host-control";
+import { DebugSandboxMintError, describeHost, mintDataPlaneKey } from "../src/lib/host-control";
 import { claimPairingToken, createPairingToken, resetPairingForTests } from "../src/lib/pairing";
+import { startServer } from "../src/server";
 import type { OcxConfig } from "../src/types";
+import { managementFetch } from "./helpers/management-auth";
 import { removeTempDir } from "./helpers/temp-dir";
 
 function baseConfig(): OcxConfig {
@@ -178,6 +180,82 @@ describe("pairing", () => {
     const result = claimPairingToken("anything", baseConfig());
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("no-pairing");
+  });
+});
+
+describe("no credential is issued by any route", () => {
+  // Found by RUNNING the sandboxed build, not by reading it: enabling remote
+  // access from the dashboard handed out a real `ocx_…` key captioned "shown
+  // once, store it now". It was live against the running process and gone at the
+  // next start, so a mode promising to issue no keys quietly issued one AND told
+  // the user to save something worthless. The guard covered `claimPairingToken`
+  // and nothing else.
+
+  test("mintDataPlaneKey itself refuses — the backstop no future caller can slip past", () => {
+    process.env[DEBUG_SANDBOX_ENV] = "1";
+    expect(() => mintDataPlaneKey(baseConfig(), "network")).toThrow(DebugSandboxMintError);
+  });
+
+  test("and mints normally when the sandbox is off", () => {
+    const config = baseConfig();
+    expect(mintDataPlaneKey(config, "network")).toStartWith("ocx_");
+    expect(config.apiKeys ?? []).toHaveLength(1);
+  });
+
+  test("enabling remote access mints nothing and still reaches the exposed state", async () => {
+    // Both halves matter. Minting nothing is the fix; still reaching the exposed
+    // state is the point of the mode — the credential gate is waived here
+    // precisely so the screen this mode exists to look at stays reachable.
+    process.env[DEBUG_SANDBOX_ENV] = "1";
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const res = await managementFetch(new URL("/api/host", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exposed: true, mintKeyIfMissing: true }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { mintedKey?: string | null; exposed?: boolean; debugSandbox?: boolean };
+      expect(body.mintedKey ?? null).toBeNull();
+      expect(body.exposed).toBe(true);
+      expect(body.debugSandbox).toBe(true);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("an explicit --new-key style request mints nothing either", async () => {
+    process.env[DEBUG_SANDBOX_ENV] = "1";
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const res = await managementFetch(new URL("/api/host", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exposed: true, newKeyName: "network" }),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json() as { mintedKey?: string | null }).mintedKey ?? null).toBeNull();
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("outside the sandbox the same request still mints, so the fix did not break the feature", async () => {
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const res = await managementFetch(new URL("/api/host", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exposed: true, mintKeyIfMissing: true }),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json() as { mintedKey?: string }).mintedKey).toStartWith("ocx_");
+    } finally {
+      await server.stop(true);
+    }
   });
 });
 

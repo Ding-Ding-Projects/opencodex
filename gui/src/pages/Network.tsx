@@ -467,9 +467,15 @@ export default function Network({ apiBase }: { apiBase: string }) {
    * The minted key is the one thing that overrides the filter. It is shown
    * exactly once and there is no second chance to read it, so a search typed
    * while it is on screen must not be what destroys it.
+   *
+   * The debug-sandbox banner overrides it too, for the same shape of reason: it
+   * is the notice explaining why every other control here fails to save, so a
+   * search that empties the card must not take the explanation with it and leave
+   * the screen looking merely broken.
    */
   const hostCardShown =
-    matches("exposed") || matches("urls") || matches("mobile") || matches("adminToken") || !!mintedKey;
+    matches("exposed") || matches("urls") || matches("mobile") || matches("adminToken")
+    || !!mintedKey || !!status?.debugSandbox;
 
   return (
     <>
@@ -490,6 +496,19 @@ export default function Network({ apiBase }: { apiBase: string }) {
           <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
         ) : (
           <>
+            {/* First thing in the card, above the toggle it explains, and NOT
+                behind `matches(...)`. Every control below is about to lie about
+                whether it saved, so a user who cannot see why would reasonably
+                report it as data loss — and a warning that a half-typed search
+                can hide is a warning that is not doing its job. `hostCardShown`
+                counts it too, so the card cannot filter itself away underneath
+                it. */}
+            {status.debugSandbox && (
+              <p role="status" className="m3-banner m3-banner--warn" style={{ marginBottom: "var(--sp-3)" }}>
+                {t("network.debugSandbox")}
+              </p>
+            )}
+
             {matches("exposed") && (
             <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-3)" }}>
               <div>
@@ -507,16 +526,6 @@ export default function Network({ apiBase }: { apiBase: string }) {
               </div>
               <Toggle on={status.exposed} onChange={next => void setExposed(next)} label={t("network.exposed")} disabled={busy} />
             </div>
-            )}
-
-            {/* Ungated for the same reason as the restart banner below: every
-                control on this screen is about to lie about whether it saved,
-                and a user who cannot see why would reasonably report it as data
-                loss. First thing on the panel, before the toggle it explains. */}
-            {status.debugSandbox && (
-              <p role="status" className="m3-banner m3-banner--warn" style={{ marginBottom: "var(--sp-3)" }}>
-                {t("network.debugSandbox")}
-              </p>
             )}
 
             {/* The config moved; the listening socket did not. Reporting the

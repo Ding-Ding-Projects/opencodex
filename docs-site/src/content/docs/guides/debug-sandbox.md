@@ -1,14 +1,26 @@
 ---
-title: Debug sandbox — run the app without touching the machine
-description: OPENCODEX_DEBUG_SANDBOX runs the real dashboard and proxy while blocking the two things that are awkward to undo — writing config.json and issuing a pairing key.
+title: Debug sandbox — change nothing, issue nothing
+description: OPENCODEX_DEBUG_SANDBOX runs the real dashboard and proxy while blocking the two things that are awkward to undo — writing config.json and issuing a data-plane key.
 ---
 
 Set `OPENCODEX_DEBUG_SANDBOX=1` and opencodex runs normally with two things switched off: it will
-**not write its config to disk**, and it will **not issue a pairing key**. Everything else behaves as
-it always does — the dashboard renders, settings toggle, the pairing panel opens, the QR code appears
-and its countdown runs.
+**not write its config to disk**, and it will **not issue a data-plane key**. Everything else behaves
+as it always does — the dashboard renders, settings toggle, the pairing panel opens, the QR code
+appears and its countdown runs.
 
-It exists so the app can be driven, demonstrated and screenshotted without leaving anything behind.
+It exists so the app can be driven, demonstrated and screenshotted without changing the machine's
+configuration or minting a credential somebody has to remember to revoke.
+
+:::caution[It does not make the process leave no trace]
+This blocks **configuration changes and credential issuance**. It does not stop opencodex writing
+its other files. The usage log, the diagnostic log, the crash log, the responses state file, the pid
+and runtime-port files, the local git state history, the admin credential file on a fresh config
+directory, and the OAuth credential store on sign-in or token refresh are all written as normal — and
+the config directory and log tree are created at startup before the flag is consulted.
+
+If you need a run that genuinely leaves nothing behind, point `OPENCODEX_HOME` at a throwaway
+directory and delete it afterwards. This flag complements that; it does not replace it.
+:::
 
 ## Turning it on
 
@@ -30,8 +42,13 @@ not quietly arm it.
 
 | Blocked | Normally | In the sandbox |
 | --- | --- | --- |
-| Config writes | Every settings change is written to `config.json` | Nothing is written. The file is not created, and an existing one is left byte-for-byte alone |
+| `config.json` writes via `saveConfig` | Every settings change is written | Nothing is written. An existing file is left byte-for-byte alone |
 | Pairing | A correct code mints a data-plane key and persists it | The claim is **refused** with the reason `sandbox`. No key is minted |
+| Minting a data-plane key | `mintDataPlaneKey` mints on demand — including the one-click *enable remote access* opt-in | Refused. `mintDataPlaneKey` throws as a backstop, and each caller checks first and reports honestly |
+
+One thing that is **not** blocked and looks like it should be: a key **you supply yourself** through
+the custom-key field is still accepted into the running config. Nothing issues it and nothing writes
+it, but it is live against this process until it stops.
 
 These two are singled out because they are the two that are awkward to undo:
 
@@ -46,17 +63,27 @@ publish the proxy to your network by accident.
 
 ## How you can tell it is on
 
-Three ways, deliberately — a mode that silently stops settings saving is indistinguishable from a
-bug, and "my settings do not save" is the kind of thing that gets reported as data loss.
+A mode that silently stops settings saving is indistinguishable from a bug, and "my settings do not
+save" is the kind of thing that gets reported as data loss. So it says so:
 
-1. **The proxy logs it once**, the first time it blocks anything:
+1. **Remote access & backup shows a banner**, first in the card and above the toggle it explains.
+   The settings search cannot hide it — it is not behind a `matches(...)` gate, and it keeps the card
+   itself on screen even when a query filters every row out.
+2. **`GET /api/host` reports `debugSandbox: true`**, which is what the banner reads. Anything else
+   built on that endpoint gets the same signal for free.
+3. **The proxy writes one line to stderr**, the first time it blocks anything:
    ```
    [debug-sandbox] OPENCODEX_DEBUG_SANDBOX is set: config changes are NOT written to disk
-   and pairing will not issue a key. Nothing in this session persists.
+   and no data-plane key will be issued. Other files (logs, usage, state) are still written
+   as normal — set OPENCODEX_HOME to a throwaway directory if you need a clean slate.
    ```
-2. **Remote access & backup shows a banner** at the top of the panel, before the toggle it explains.
-   It is never hidden by the settings search, for the same reason the restart-pending warning is not.
-3. **`GET /api/host` reports `debugSandbox: true`**, which is what the banner reads.
+
+:::note
+The banner is the reliable one. The log line only fires on the **first blocked action**, so a session
+that just looks at the dashboard and changes nothing never prints it — and because it goes to stderr
+rather than through the app's own logger, it does not appear in `logs/opencodex.log` either. Look at
+Remote access, or at `GET /api/host`, rather than hunting the log.
+:::
 
 A phone that scans a code against a sandboxed desktop is told plainly too, rather than being left to
 guess: *"The desktop is running in debug mode… Scanning again will not help."*
@@ -95,18 +122,28 @@ sandbox lets you pair with it for real without generating another.
 
 | Symptom | Cause |
 | --- | --- |
-| Settings spring back after a restart | Working as intended. The banner and the log line say so |
+| Settings spring back after a restart | Working as intended. The banner on Remote access says so |
 | The phone says the desktop is in debug mode | The desktop has the variable set. Restart it without one |
 | The variable is set but everything still saves | The value is not one of `1` / `true` / `yes` / `on` |
-| No banner, but nothing saves | Something else. The banner is driven by the same check as the block, so they cannot disagree — check the proxy log |
+| No banner, but nothing saves | Something else — the banner and the block read the same flag, so they cannot disagree. Check `GET /api/host` |
+| Files still appearing under `OPENCODEX_HOME` | Expected. Only config writes and key issuance are blocked; see the caution at the top |
 
 ## Verification
 
-`tests/debug-sandbox.test.ts` covers it: the flag's accepted and rejected spellings, that no file
-*and no directory* is created, that an existing config is unchanged byte-for-byte and still reads
-back the same, that the announcement fires exactly once, that a correct code is refused with no key
-minted, that the code survives to pair for real afterwards, that a wrong code still answers
-`mismatch`, and that `describeHost` reports the flag.
+`tests/debug-sandbox.test.ts` — **17 tests**. The flag's accepted and rejected spellings; that
+`saveConfig` creates no config file, leaves an existing one unchanged byte-for-byte, and that a
+re-read still returns the original; that the announcement fires exactly once and names the variable;
+that a correct code is refused with no key minted; that the refused code survives to pair for real
+once the sandbox is off; that a wrong code still answers `mismatch` and an absent pairing still
+answers `no-pairing`; that `mintDataPlaneKey` throws its backstop; that `PUT /api/host` with either
+`mintKeyIfMissing` or `newKeyName` returns **no** key while still reaching the exposed state; that
+the same request outside the sandbox still mints, so the fix did not quietly disable the feature;
+and that `describeHost` reports the flag.
+
+The key-minting cases exist because the first version of this mode **did** hand out a live
+`ocx_…` key from the one-click *enable remote access* path, captioned "shown once, store it now".
+It was found by running the built app and looking at the screen, not by reading the code — which is
+why the tests now drive the real route over a real socket rather than calling the function.
 
 ## Suggested reading
 

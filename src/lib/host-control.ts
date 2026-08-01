@@ -75,7 +75,24 @@ export function describeHost(config: OcxConfig): HostStatus {
  * Mint a data-plane API key onto the config (caller persists). The plaintext
  * is returned exactly once and must never be logged or echoed by later reads.
  */
+/**
+ * Thrown when something tries to mint a credential inside the debug sandbox.
+ *
+ * A backstop, not the mechanism: every caller below is expected to check
+ * `debugSandboxEnabled()` and do something sensible instead. This exists so that
+ * a caller added later cannot quietly reintroduce credential minting into a mode
+ * whose whole promise is that it issues none — the failure is loud rather than a
+ * live key nobody expected.
+ */
+export class DebugSandboxMintError extends Error {
+  constructor() {
+    super("refusing to mint a data-plane key: OPENCODEX_DEBUG_SANDBOX is set");
+    this.name = "DebugSandboxMintError";
+  }
+}
+
 export function mintDataPlaneKey(config: OcxConfig, name: string): string {
+  if (debugSandboxEnabled()) throw new DebugSandboxMintError();
   const key = `ocx_${randomBytes(32).toString("base64url")}`;
   config.apiKeys = [
     ...(config.apiKeys ?? []),

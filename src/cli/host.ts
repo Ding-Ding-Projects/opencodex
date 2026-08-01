@@ -41,6 +41,7 @@ import {
   type AdminTokenVerification,
   type HostStatus,
 } from "../lib/host-control";
+import { DEBUG_SANDBOX_ENV, debugSandboxEnabled } from "../lib/debug-sandbox";
 import type { OcxConfig } from "../types";
 
 // Re-exported so existing importers (tests/cli-host.test.ts) keep their path.
@@ -195,6 +196,17 @@ export async function handleHostCommand(args: string[], io: HostCommandIo = {}):
     }
     minted = result.key;
   } else if (wantsKey) {
+    // The debug sandbox issues no credentials, so say so and stop rather than
+    // letting `mintDataPlaneKey` throw its backstop as an unhandled crash. There
+    // is nothing useful this could do instead: a key it minted would not be
+    // written, so the very next command would not see it.
+    if (debugSandboxEnabled()) {
+      console.error(
+        `ocx host: ${DEBUG_SANDBOX_ENV} is set, so no data-plane key will be minted and no\n`
+        + "  config will be written. Unset it and run this again to make a real change.",
+      );
+      return 2;
+    }
     const nameIndex = args.indexOf("--new-key") + 1;
     const candidate = args[nameIndex];
     minted = mintDataPlaneKey(config, candidate && !candidate.startsWith("--") ? candidate : "network");
