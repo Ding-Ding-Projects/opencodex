@@ -83,7 +83,7 @@ Everything there is live: the cost meter in the app bar, proxy status, provider 
 not, rather than a button that fails when you press it.
 
 <p align="center">
-  <img src="assets/shots/mobile.png" alt="The mobile remote control on a phone viewport: an opencodex remote app bar with a model picker, a chat transcript area, a message composer with a Send button, and a bottom bar of Chat, Sessions and Control" width="300"><br>
+  <img src="assets/shots/mobile.png" alt="The mobile remote on a phone viewport: an opencodex remote app bar with a gpt-5.5 model picker, an empty chat inviting you to pick a model and send a message, a Message composer with a Send button, and a bottom bar of Chat, Sessions and Control" width="300"><br>
   <sub><b>Mobile remote.</b> Chat, live sessions and proxy control, sized for a thumb.</sub>
 </p>
 
@@ -92,8 +92,10 @@ not, rather than a button that fails when you press it.
   <sub><b>Embedded terminal.</b> No console window appears. The line you sent is recorded beside the output, so the log reads as a conversation.</sub>
 </p>
 
-There are twenty-three screens. Every screenshot below is a real capture of the build in this
-repository — open a section to see the ones you care about.
+There are twenty-three screens, plus the dialogs and the things that turn up on their own. Every
+screenshot below is a real capture of the build in this repository — photographed from the actual
+desktop window, and checked against the screen it claims to be before it was saved. Open a section
+to see the ones you care about.
 
 <details open>
 <summary><b>Routing — what Codex is allowed to see</b></summary>
@@ -105,7 +107,7 @@ repository — open a section to see the ones you care about.
       <sub><b>Providers.</b> Grouped by state, with <b>Edit JSON</b> when the form is not enough.</sub>
     </td>
     <td width="50%" align="center">
-      <img src="assets/shots/models.png" alt="Models screen: providers rail showing 7 of 7 models visible, a model search, Shadow Call Intercept, and a row of context-cap chips from 100k to 950k with 350k selected" width="440"><br>
+      <img src="assets/shots/models.png" alt="Models screen: a providers rail counting 13 of 13 models visible across openai and xai, a model search with a regex toggle, Shadow Call Intercept, and a grid of context-cap chips from 100k to 950k with 350k selected" width="440"><br>
       <sub><b>Models.</b> Toggle what reaches Codex's picker. Hidden models stay callable by exact id.</sub>
     </td>
   </tr>
@@ -235,6 +237,80 @@ undo can itself be undone. Full detail in
     <td width="50%" align="center">
       <img src="assets/shots/notifications.png" alt="Notifications screen listing every message shown since the dashboard was first opened, filtered by errors, warnings, successes and info" width="440"><br>
       <sub><b>Notifications.</b> Nothing that toasted past you is lost — it is all still here.</sub>
+    </td>
+  </tr>
+</table>
+</details>
+
+<details>
+<summary><b>Dialogs, menus and the tab strip</b></summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/onboarding.png" alt="The first-run onboarding wizard over the dashboard, titled Welcome to opencodex, on step 1 of 4: a language mode picker offering English, Cantonese, both side by side, and five other languages, with a Don't show this again switch, Skip setup and Next" width="440"><br>
+      <sub><b>First run.</b> Language first, four steps, and every one of them changeable afterwards.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/prompt.png" alt="A modal prompt dialog titled Admin token needed with a masked, empty Admin token field, explaining that this is the management credential and that a data-plane API key will not work, with Cancel and Use this token buttons" width="440"><br>
+      <sub><b>Prompt.</b> Masked, because it is a credential — and it says which token will <i>not</i> work here.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/confirm.png" alt="A modal confirm dialog titled Export everything, warning that the download contains every API key and OAuth token in plaintext, with Cancel and Download export buttons" width="440"><br>
+      <sub><b>Confirm.</b> Blocking, because this one really does write every key to a file in plaintext.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/tab-menu.png" alt="A right-click context menu anchored under the Dashboard tab, listing tab management commands including pinning, duplicating, closing others and editing the tab's appearance. The menu carries no visible heading; its accessible name is Actions for Dashboard" width="440"><br>
+      <sub><b>Tab menu.</b> Right-click stays ordinary tab management. Appearance is one entry further down.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/tab-appearance.png" alt="A non-modal appearance editor anchored beside the Dashboard tab, titled Appearance for Dashboard, with a live preview and label colour, background, font, label size and label weight controls, each with its own Reset" width="440"><br>
+      <sub><b>Tab appearance.</b> Anchored to the tab it edits, non-modal, and resettable one property at a time.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/new-tab.png" alt="The anchored New tab menu opened from the plus button at the end of the tab strip, with a page filter field and a list of pages to open" width="440"><br>
+      <sub><b>New tab.</b> A filterable page list — the strip behaves like a browser, so a second tab is not a hunt.</sub>
+    </td>
+  </tr>
+</table>
+</details>
+
+<details>
+<summary><b>The parts that appear on their own</b></summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/snackbar.png" alt="The Language and voice screen with a non-blocking toast in the corner reading Narrator is off, raised by pressing the narrator's test button" width="440"><br>
+      <sub><b>Toasts.</b> Corner-anchored and non-blocking. Errors stay until dismissed; nothing halts the app.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/notification-centre.png" alt="An anchored notification centre popover hanging from the bell icon in the app bar, headed Notifications, listing the most recent entries above a View all notifications link" width="440"><br>
+      <sub><b>Notification centre.</b> The newest few under the bell; the full history is one click on.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/cost-meter.png" alt="An anchored menu opened from the cost chip in the app bar, headed Estimated cost range, offering lifetime, 30 days and shorter windows" width="440"><br>
+      <sub><b>Cost meter.</b> Lifetime by default. The chip changes the window without leaving the page.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/account-switcher.png" alt="An anchored menu opened from the circular avatar in the app bar, headed Codex accounts, showing which account is active and routes next" width="440"><br>
+      <sub><b>Account switcher.</b> Which account routes next, changed from the app bar rather than a settings page.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/regex-popover.png" alt="The anchored regex builder popover attached to the search field on the Notifications screen, titled Regex builder, with guided construction controls beside the field it filters" width="440"><br>
+      <sub><b>Anchored regex builder.</b> It belongs to the field you are typing in, not to a page you navigate to.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/dimsum.png" alt="The dim sum surprise card in the corner of the dashboard, reading Dim sum time! above a photo of har gow, its name in Chinese and English with the jyutping, and a note that it is a 1-in-100 launch treat that can be turned off" width="440"><br>
+      <sub><b>Dim sum.</b> A 1-in-100 launch treat. Never on a first run, never after an update, and there is a switch.</sub>
     </td>
   </tr>
 </table>
