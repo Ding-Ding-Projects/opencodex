@@ -1668,7 +1668,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "mobile.modelsFailed": "連唔到 proxy，載入唔到模型清單。",
   "mobile.retry": "再試一次",
   "mobile.panelNav": "版面",
-  "mobile.keySet": "呢次已經入咗",
+  "mobile.keySet": "存咗喺呢個瀏覽器",
 
   // ---- shell / navigation ----
   "nav.settings": "設定",

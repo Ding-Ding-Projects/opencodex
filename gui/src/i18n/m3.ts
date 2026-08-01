@@ -103,7 +103,7 @@ export const M3_EN = {
   // Said instead of the key, never beside it: the search corpus is also the
   // regex builder's sample text, so the value has to describe the field rather
   // than repeat it.
-  "mobile.keySet": "Entered for this session",
+  "mobile.keySet": "Saved in this browser",
   "nav.settings": "Settings",
 
   // ---- settings surface ----

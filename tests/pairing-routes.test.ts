@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
 import { PAIRED_KEY_NAME, PAIRING_TTL_MS, resetPairingForTests } from "../src/lib/pairing";
 import { CLAIM_ATTEMPTS_PER_WINDOW, resetPairingRateLimitForTests } from "../src/lib/pairing-rate-limit";
+import { MAX_CLAIM_BODY_BYTES } from "../src/server/management/host-routes";
 import { startServer } from "../src/server";
 import type { OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
@@ -220,6 +221,56 @@ describe("the unauthenticated claim", () => {
       expect(limited.status).toBe(429);
       // A client that backs off needs a number, not a sentence.
       expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("draining the budget while nobody is pairing does not refuse the scan that follows", async () => {
+    // The attack this pins: the claim route answers without a credential, so
+    // anything on the network can spend its allowance. When one global window
+    // was shared by everyone, ten requests a minute — 0.17/s, a rate nothing
+    // would flag — kept pairing refused indefinitely, and regenerating the code
+    // did not help because the counter never belonged to the code.
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      // An attacker empties the allowance before the user has done anything.
+      for (let i = 0; i < CLAIM_ATTEMPTS_PER_WINDOW; i++) {
+        expect((await claim(server.url, `flood-${i}`)).status).toBe(400);
+      }
+      expect((await claim(server.url, "over")).status).toBe(429);
+
+      // The user now opens the pairing panel. Minting arms a fresh budget, so
+      // the very next scan must go through rather than inheriting the refusal.
+      const offer = await mintToken(server.url);
+      const res = await claim(server.url, offer.token);
+      expect(res.status).toBe(200);
+      expect((await res.json() as { key?: string }).key).toBeTruthy();
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("an oversized body is refused before it is parsed", async () => {
+    // Bun's default ceiling is 128 MiB and this is the one route with no
+    // credential in front of it, so without a bound of its own an anonymous
+    // caller could make the process parse a hundred megabytes and then copy it
+    // into a Buffer for a comparison that fails on length anyway.
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const res = await globalThis.fetch(new URL("/api/host/pair/claim", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "A".repeat(MAX_CLAIM_BODY_BYTES + 1) }),
+      });
+      expect(res.status).toBe(413);
+
+      // A normal claim is nowhere near the ceiling — the bound must not be so
+      // tight that it refuses real traffic.
+      const offer = await mintToken(server.url);
+      expect((await claim(server.url, offer.token)).status).toBe(200);
     } finally {
       await server.stop(true);
     }

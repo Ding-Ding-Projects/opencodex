@@ -31,7 +31,7 @@ the intended posture, not a missing feature; see
 The **mobile remote** is the exception, and only for the credential it actually needs. Enabling
 remote access from **Remote access & backup** generates the data-plane key for you rather than
 asking you to invent one, and **Pair a phone** shows a QR code carrying a one-time pairing code
-alongside the address. The phone spends the code on arrival and keeps a data-plane key of its own,
+alongside the address — one code per network address the proxy answers on. The phone spends the code on arrival and keeps a data-plane key of its own,
 saved in that phone's browser so it never scans twice. The admin token is still never stored and
 still never leaves the desktop, so the phone can send requests through the proxy and cannot
 reconfigure it — which is why the remote's Sessions and Control panels say they need the desktop

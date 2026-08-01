@@ -49,7 +49,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
 import { addCustomDataPlaneKey, describeHost, hasDataPlaneCredential, mintDataPlaneKey } from "../../lib/host-control";
-import { cancelPairing, claimPairingToken, createPairingToken } from "../../lib/pairing";
+import { cancelPairing, claimPairingToken, createPairingToken, hasOutstandingPairing } from "../../lib/pairing";
 import { takeClaimAttempt } from "../../lib/pairing-rate-limit";
 import { listStateHistory, listStateHistoryEntries, restoreStateFromHistory } from "../../lib/state-history";
 import { drainAndShutdown, getServerListenHostname, quiesceActiveTurns, setDraining } from "../lifecycle";
@@ -89,6 +89,55 @@ export const PAIRING_CLAIM_PATH = "/api/host/pair/claim";
 
 export function isUnauthenticatedPairingClaim(method: string, pathname: string): boolean {
   return method === "POST" && pathname === PAIRING_CLAIM_PATH;
+}
+
+/**
+ * The most a pairing claim body may weigh.
+ *
+ * A claim is `{"token":"<43 chars>"}` — about sixty bytes. 4 KiB is three orders
+ * of magnitude of slack for a client that sends odd whitespace or an extra
+ * field, and still small enough that an anonymous caller cannot turn the route
+ * into a memory-and-CPU sink. Without a ceiling here Bun's own 128 MiB default
+ * applies, and this is the only management route that answers with no
+ * credential at all.
+ */
+export const MAX_CLAIM_BODY_BYTES = 4096;
+
+/**
+ * Read a request body, giving up once it exceeds `limit` bytes.
+ *
+ * Streamed rather than `await req.text()` so an oversized body is abandoned
+ * partway instead of being fully buffered and then measured — measuring after
+ * the fact would mean the allocation this exists to prevent has already
+ * happened. Returns `null` when the limit is passed.
+ */
+async function readBoundedText(req: Request, limit: number): Promise<string | null> {
+  const body = req.body;
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        void reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    // A connection that dies mid-body is not a claim; treat it as an empty one
+    // and let the JSON parse below answer 400.
+    return "";
+  }
+  const joined = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) { joined.set(chunk, at); at += chunk.byteLength; }
+  return new TextDecoder().decode(joined);
 }
 
 /**
@@ -269,15 +318,28 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
    * 3. **Persist before answering.** The key is only real once it is on disk.
    */
   if (isUnauthenticatedPairingClaim(req.method, url.pathname)) {
-    const attempt = takeClaimAttempt();
+    // Which budget pays depends on whether a code is actually on screen, so that
+    // draining the endpoint while nobody is pairing cannot refuse the scan that
+    // follows. Deliberately `hasOutstandingPairing` and not `peekPairing`: the
+    // latter drops an expired token on read, which would rewrite this claim's
+    // refusal from "expired" to "no-pairing" before it was even attempted.
+    const attempt = takeClaimAttempt(hasOutstandingPairing());
     if (!attempt.allowed) {
       const response = jsonResponse({ error: "too many pairing attempts" }, 429, req, config);
       response.headers.set("Retry-After", String(attempt.retryAfterSeconds));
       return noStore(response);
     }
 
+    // Read the body with a ceiling rather than trusting Bun's 128 MiB default.
+    // This is the one route that answers without a credential, so an unbounded
+    // body means an anonymous caller can make the process parse a hundred
+    // megabytes of JSON and then copy it into a Buffer for a comparison that was
+    // always going to fail on length. A pairing token is 43 characters.
+    const raw = await readBoundedText(req, MAX_CLAIM_BODY_BYTES);
+    if (raw === null) return noStore(jsonResponse({ error: "pairing request was too large" }, 413, req, config));
+
     let body: { token?: unknown };
-    try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
+    try { body = JSON.parse(raw) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
     const presented = typeof body.token === "string" ? body.token : "";
 
     const keysBefore = config.apiKeys;

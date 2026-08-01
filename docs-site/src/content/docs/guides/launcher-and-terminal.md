@@ -128,9 +128,13 @@ Three panels:
 | **Sessions** | Recent proxy requests — model, provider, status, duration, tokens. |
 | **Control** | Pairing state for this device, the proxy's bind, and the API key in use. |
 
-It adds **one** server route: `POST /api/host/pair/claim`, which exists because
-a phone that has never paired holds no credential and so cannot be served by
-anything that was already there. Everything else reuses what other clients use.
+It adds **three** server routes, all of them for pairing: `POST /api/host/pair`
+and `DELETE /api/host/pair`, which the desktop calls to mint and cancel a
+pairing code, and `POST /api/host/pair/claim`, which the phone calls. That last
+one exists because a phone that has never paired holds no credential and so
+cannot be served by anything that was already there — it is the only one of the
+three that is reachable without the admin token. Everything else the remote does
+reuses what other clients use.
 Chat posts to the proxy's own `/v1/chat/completions` and the model list comes
 from `/v1/models`, both on the data-plane key pairing hands out, so a message
 sent from a phone is routed, logged and counted exactly like one sent from
@@ -150,10 +154,13 @@ ocx host enable
 ```
 
 Then open **Remote access & backup** on the desktop and choose **Pair a phone**.
-The QR code carries the address *and* a one-time pairing code. Scanning it opens
-the remote on the phone, which spends the code on arrival, receives a data-plane
-key of its own, and removes the code from the URL so a screenshot cannot carry
-it.
+Each QR code carries one of the proxy's addresses *and* a one-time pairing code;
+a machine with several network addresses shows one code per address, so scan
+whichever matches the network the phone is on. Scanning opens the remote on the
+phone, which strips the code out of the URL *first* and only then spends it. The
+order matters: it means a failed or expired pairing leaves nothing behind in the
+address bar either, so no screenshot, shared link or restored tab can carry a
+live code.
 
 What makes showing a credential on a screen acceptable is what the code is:
 256 bits of randomness, valid for **one** device, expiring after **five
@@ -169,12 +176,10 @@ the phone with **Forget this device**, and revoke it on the desktop under
 **API keys**, where it is listed as `Paired device`.
 
 If you would rather not use a QR code at all, the Control panel still accepts a
-key typed by hand.
-
-That prints the URLs other devices can use and requires a credential — the same
-gate the rest of the exposed surface uses. Open one of those URLs on the phone
-and add `#/mobile`, then paste the key into **Control**. The key is stored on
-that device only.
+key typed by hand. `ocx host enable` prints the URLs other devices can use, and
+requires a credential — the same gate the rest of the exposed surface uses. Open
+one of those URLs on the phone and add `#/mobile`, then paste the key into
+**Control**. The key is stored on that device only.
 
 :::caution
 Publishing the proxy exposes the dashboard too. Only do it on a network you

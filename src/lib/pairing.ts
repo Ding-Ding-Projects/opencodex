@@ -41,6 +41,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
 import { mintDataPlaneKey } from "./host-control";
+import { armClaimBudget } from "./pairing-rate-limit";
 import type { OcxConfig } from "../types";
 
 /**
@@ -77,12 +78,31 @@ export interface PairingOffer {
 export function createPairingToken(now: () => number = Date.now): PairingOffer {
   const token = randomBytes(32).toString("base64url");
   pending = { token, expiresAt: now() + PAIRING_TTL_MS };
+  // A fresh code gets a fresh allowance. Without this, anything that had been
+  // quietly spending the claim budget between pairings would refuse the very
+  // scan this token exists for. See `pairing-rate-limit.ts`.
+  armClaimBudget(now);
   return { ...pending };
 }
 
 /** Forget any outstanding token — used when the user closes the pairing panel. */
 export function cancelPairing(): void {
   pending = null;
+}
+
+/**
+ * Whether a live token is outstanding, **without touching it**.
+ *
+ * `peekPairing` drops an expired token as a side effect, which is right for a
+ * caller about to act on the offer and wrong for one merely asking a question.
+ * The rate limiter asks this before every claim, and if that question expired
+ * the token, `claimPairingToken` below would find `pending === null` and report
+ * `no-pairing` for a code that had in fact just timed out — turning "scan a
+ * fresh code" into "start pairing on the desktop first", which is different
+ * advice and, for a user staring at a code that is plainly on screen, wrong.
+ */
+export function hasOutstandingPairing(now: () => number = Date.now): boolean {
+  return pending !== null && now() < pending.expiresAt;
 }
 
 /** The outstanding offer, or null. Never returns an expired one. */
