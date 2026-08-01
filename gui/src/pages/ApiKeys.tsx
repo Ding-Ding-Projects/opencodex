@@ -4,6 +4,7 @@ import { useCopyFeedback } from "../components/use-copy-feedback";
 import { copyTextToClipboard } from "../oauth-health-display";
 import { useI18n, LOCALES } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
+import { useConfirm } from "../shell/confirm-context";
 import { recordRevision } from "../shell/revisions";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import {
@@ -54,6 +55,12 @@ interface CreateKeyResponse {
 export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
   const { notify } = useNotifications();
+  /* Shadows the global `confirm` deliberately, as the other pages here do — and
+     the shadowing is the point. Without this import, `confirm({ title, ... })`
+     silently resolved to the DOM's `confirm(message: string)`, which accepts one
+     string, ignores an object, and returns immediately. A destructive bulk
+     action would have run with no dialog at all. */
+  const confirm = useConfirm();
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang;
   const [keys, setKeys] = useState<ApiKeyEntry[]>([]);
   const [endpoints, setEndpoints] = useState<ApiEndpointInfo>(DEFAULT_ENDPOINTS);
@@ -279,7 +286,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     }
     setBulkProgress(null);
     setSelected(new Set());
-    await loadKeys();
+    await fetchKeys();
 
     // Never "Done" when it was not. A run that failed at item thirty did
     // twenty-nine things, and saying otherwise is false in the direction that
@@ -292,7 +299,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     } else {
       notify({ tone: "warn", title: t("bulk.deleteKeys"), body: t("bulk.doneAll", { action: t("bulk.deleteKeys"), succeeded }) });
     }
-  }, [apiBase, notify, t]);
+  }, [apiBase, confirm, fetchKeys, notify, t]);
 
   const handleDelete = async (id: string) => {
     setActionError(null);
