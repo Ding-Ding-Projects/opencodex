@@ -1,5 +1,77 @@
 # Handoff
 
+## Exports, bulk actions, and CI back to green — 2026-08-01, `fcfb2b51`
+
+CI on `main` was red for a long stretch and is now green, with build 101 published from
+`fcfb2b51` carrying a real 181 MB installer, the dashboard zip, and its dim-sum photo.
+Four separate causes, none of which was the one the failure name suggested.
+
+### The GUI ordering failure was never an ordering failure
+
+`a rejected key asks to pair again rather than failing silently` failed whenever a heavier
+test file ran before it, and the obvious reading — that `logs-search` leaked module state —
+was wrong. Probing showed both orders reached `/v1/chat/completions` and got the same 401.
+
+The test's mount helper waited for the paired key to reach **storage**, then flushed a fixed
+six microtask turns. `saveKey` writes storage and queues `setApiKey` in the same call, so a
+populated `localStorage` proves only that the update was *queued*. Six turns was enough on a
+small module graph and not enough on a big one. When it was not enough, `apiKey` was still
+`""` at submit, so the 401 handler took the other branch and rendered "the proxy needs a key"
+instead of "the key was refused" — a **permanently wrong string**, which is why polling the
+assertion could never recover it and why it read as ordering rather than scheduling.
+
+The wait is now staged on events rather than turn counts: the claim resolves, then the key is
+stored (only when the claim produced one — a refusal never does), then `/v1/models` refetches
+**with an Authorization header**, which only happens after React re-rendered with the key.
+An intermediate version got this wrong in a way worth recording: it exited on *either* the key
+or the claim latch, so when the latch flipped first the key was not stored yet and the whole
+state wait was skipped. It went green three runs and red on the fourth.
+
+Ten consecutive full-suite runs, 835/835. The Dashboard preview build is green on CI.
+
+### The installer test was measuring runner load
+
+`timeout kills and awaits the installer descendant tree` failed on Windows CI at
+`expect(result.treeExited).toBe(true)` and passed every time locally. Not a Windows bug: the
+test drove termination with `terminationGraceMs: 500` and `forceWaitMs: 2000`, a quarter of
+the 5s/5s defaults the updater ships with. Running beside 460-odd other files, `taskkill /T /F`
+was still working when the wait expired, and the honest "I cannot prove the tree exited"
+answer read as a defect. Budgets are now 2s/8s; every assertion is unchanged.
+
+### The privacy scan was right twice
+
+A test fixture spelled `sk-PROVIDER-SECRET-VALUE` and a comment quoted a masked email address.
+Both are planted by this repo, and both were fixed by following the scan's conventions rather
+than widening its allowlist — a fixture that merely looks fake to a human is exactly what a
+scanner cannot distinguish, and admitting one blunts the check for every file.
+
+### What was built
+
+- **Four more export datasets** in `src/lib/export-datasets.ts`, reaching the dashboard, the
+  management API and `ocx export data` from one registry: `usage` (request log aggregated by
+  provider and model), `changelog`, `history` (local snapshots), `mcp-servers`. Redaction is
+  the load-bearing part — providers report `apiKeyConfigured`, API keys report a 12-character
+  prefix, MCP servers report env and header **names** only. One estimated request marks its
+  whole usage bucket estimated, because a total mixing measured and estimated numbers is
+  estimated and a user bills against it.
+- **Bulk removal in the Combos rail**, the second real list surface. Tick boxes, shift-ranges,
+  select-all/invert/clear, and a confirmed destructive action that names its scope, counts and
+  explains exclusions ("1 excluded: open with unsaved changes"), and reports "1 succeeded,
+  1 failed" rather than Done.
+- **One selection model**, `gui/src/shell/bulk-selection.ts`, now used by both `ApiKeys` and
+  Combos instead of two inline copies, with its own tests.
+- **A docs-site guide**, `guides/export-and-bulk-actions`, in the sidebar with locale labels.
+
+### Notes for whoever is next
+
+- `gui/src/shell/bulk-selection.ts` is a deliberate twin of `src/lib/bulk-actions.ts`'s
+  selection model, not an import: the dashboard is built by Vite from `gui/src` alone, and
+  reaching across would drag a server module into the browser bundle. `src/lib` remains the
+  authority on what a bulk action *means* (scope, skips, honest summaries).
+- Any test mounting `ComboWorkspace` now needs a `ConfirmProvider`; the hook throws without
+  one by design. Three existing tests were updated.
+- Still open: issue #2 (GitHub Pages not loading), not reproducible from here.
+
 ## Material 3 pass — 2026-08-01, `1af76848`, `0b50f6ca`
 
 An MD3 audit of `gui/` against the design system rather than against taste. Two things changed, and
