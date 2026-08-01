@@ -1,5 +1,91 @@
 # Handoff
 
+## QR pairing merged — 2026-08-01, `d2ed7b6f`, pushed
+
+The half-bridge described in the pass below is closed. `claude/festive-hugle-fc8136` is merged into
+`main` and pushed: `main` now has the pairing routes it was missing, so the QR on the Remote access
+screen leads somewhere.
+
+### What this actually changes
+
+Before this commit `main` had `src/lib/pairing.ts`, the QR markup and a whole mobile remote, and
+**no pairing route at all** on the server. The QR encoded a bare URL, the phone arrived holding no
+credential, and nothing existed to give it one. The merge adds `POST /api/host/pair/claim`,
+`src/lib/pairing-rate-limit.ts` in front of it, and `gui/src/lib/mobile-pairing.ts` on the phone
+side, which spends the token from `#/mobile?pair=<token>` and stores the key it gets back.
+
+### The three conflicts and how they went
+
+| File | Resolution |
+| --- | --- |
+| `gui/src/App.tsx` | **Kept main's.** The branch short-circuited the shell for `#/mobile`; main deliberately stopped doing that, so the remote is a page like any other and already receives `SnackbarHost` from the shell. The early return would have re-orphaned twenty-one pages behind a dead end. |
+| `gui/src/pages/Mobile.tsx` | **Both.** Main's settings search plus the branch's pairing card. The pairing card got its own `pairing` search option rather than sharing `apiKey`'s — two ways to hold one credential, different words to search for. |
+| `gui/src/pages/Network.tsx` | **Both.** Every new row is behind `matches()` like its neighbours; the restart-pending warning deliberately is not, following the same reasoning already written next to `mintedKey`. |
+
+### Two bugs the merge created that neither branch had alone
+
+Worth reading, because both are the kind that only exist in the seam.
+
+1. **`proxyValue` dereferenced `undefined` on every first render.** The branch widened `host` to
+   three states (`undefined` loading, `null` unreadable); main's `proxyValue` still tested only for
+   `null` and then reached into it. Fixed at `gui/src/pages/Mobile.tsx:197` by mirroring the
+   three-state shape `sessionsValue` directly above it already used.
+
+   **This one crash was all five pairing test failures.** The previous session recorded the symptom
+   as *"the send never reaches its 401 branch, so `setPanel("control")` never runs"* and abandoned
+   the merge undiagnosed. That was a downstream effect: the component threw during `useMemo` before
+   any of it ran. Anyone re-attempting a merge here should suspect the render before the fetch.
+
+2. **`page` does not exist on main.** The branch's Claude-poll guard read `page !== "mobile"`, its
+   own variable. Now `tabs.activePage` (`gui/src/App.tsx:158`) — which is what "the phone is looking
+   at the remote" means in a shell where the remote is a tab. `tsc` did **not** catch either of
+   these; `eslint` caught the JSX arity error and the test run caught the rest.
+
+### Verification
+
+Run from `gui/`:
+
+| Check | Result |
+| --- | --- |
+| `bun test` | **806 pass, 0 fail** (123 files, 9,992 `expect()`) |
+| `node node_modules/typescript/bin/tsc --noEmit` | clean |
+| `./node_modules/.bin/eslint src --max-warnings=0` | clean |
+
+Root: `bun run typecheck` clean.
+
+> [!WARNING]
+> During the fixing, two full-suite runs reported `1 fail` while `(fail)` never appeared in their
+> captured output, so the test was never named. Both occurred while `claude-toggle-race` was being
+> fixed. **The last four consecutive full runs are 806/806 with zero failures**, and the nine pairing
+> tests pass in every run. Recorded rather than dismissed: if a stray failure shows up here again,
+> it has been seen before, and the way to catch it is to write each run to its own file and grep the
+> file — the terminal summary and the `(fail)` lines disagreed at least twice.
+
+> [!IMPORTANT]
+> `npx tsc` does not work in this checkout and `npx eslint` cannot be relied on either — bun's
+> install layout means `npx` misses them. Use `node node_modules/typescript/bin/tsc` and
+> `./node_modules/.bin/eslint`.
+
+### Root CI is red, and was already red before this merge
+
+`bun test --isolate tests` **crashes Bun itself** on `windows-latest`:
+
+```
+panic(thread 7084): Internal assertion failure
+oh no: Bun has crashed. This indicates a bug in Bun, not your code.
+```
+
+Bun 1.3.14, ~41s in, after the suite has spawned several HTTP servers
+(`workers_spawned(9) workers_terminated(8)`). Observed on run `30671466154` **and on its rerun**, so
+it is not a one-off — I was wrong to first read it as flaky. It is on commit `0e122bc9`, which
+changed `HANDOFF.md` and nothing else, so **this merge did not cause it**. It matches the standing
+note below that the root suite has never been seen green.
+
+Not diagnosed and not fixed. The next useful step is to establish whether `--isolate` is the
+trigger by running the root suite locally without it.
+
+---
+
 ## Integrate-and-clean pass, 2026-07-31 — MERGED, NOT DELETED
 
 `main` is `2aa852fd` and pushed. **No branch, worktree or stash was deleted.** Deletion was
