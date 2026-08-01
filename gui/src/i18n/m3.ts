@@ -86,6 +86,7 @@ export const M3_EN = {
   "mobile.pairFailed.rate-limited": "Too many pairing attempts on this proxy. Wait a minute, then scan a fresh code.",
   "mobile.pairFailed.no-connection": "Could not reach the proxy to finish pairing. Check this device is on the same network, then try again.",
   "mobile.pairFailed.sandbox": "The desktop is running in debug mode (OPENCODEX_DEBUG_SANDBOX), which never issues a key and never saves settings. Scanning again will not help — restart the desktop without that setting to pair for real.",
+  "mobile.debugSandbox": "The desktop is in debug mode, so it will not issue a key and this device cannot pair. Restart the desktop without OPENCODEX_DEBUG_SANDBOX to pair for real.",
   "mobile.forget": "Forget this device",
   "mobile.forgetConfirm": "Delete the paired key from this browser? The proxy will refuse this device until you scan a new pairing code. The key itself stays listed on the desktop under API keys until you revoke it there.",
   "mobile.forgotten": "Key deleted from this device",

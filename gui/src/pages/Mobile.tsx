@@ -97,6 +97,8 @@ interface HostStatus {
   exposed: boolean;
   credentialConfigured: boolean;
   urls: string[];
+  /** The desktop is running with `OPENCODEX_DEBUG_SANDBOX` — it will issue no key. */
+  debugSandbox?: boolean;
 }
 
 /** Sessions poll while the tab is open; a phone on mobile data should not poll hard. */
@@ -726,6 +728,14 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
 
         {panel === "control" && (
           <div className="m3-mob__list">
+            {/* Ungated, and above the cards, like the desktop's banner. A phone
+                that reaches this screen against a sandboxed desktop will never
+                pair and never keep a key, and finding that out by scanning a code
+                and being refused is a worse way to learn it than being told. */}
+            {host?.debugSandbox && (
+              <p role="status" className="m3-mob__bad">{t("mobile.debugSandbox")}</p>
+            )}
+
             {matches("proxy") && (
             <article className="m3-mob__session">
               <div className="m3-mob__sessionhead"><strong>{t("mobile.proxy")}</strong></div>

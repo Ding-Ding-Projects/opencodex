@@ -1658,6 +1658,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "mobile.pairFailed.rate-limited": "呢個 proxy 短時間內試得太多次配對。等一分鐘，再掃個新 code。",
   "mobile.pairFailed.no-connection": "連唔到 proxy，配對做唔完。睇下呢部裝置係咪喺同一個網絡，然後再試。",
   "mobile.pairFailed.sandbox": "桌面而家行緊 debug 模式（OPENCODEX_DEBUG_SANDBOX），永遠唔會出 key，亦都唔會儲低任何設定。再掃都冇用 —— 想真係配對嘅話，熄咗個設定再開過桌面。",
+  "mobile.debugSandbox": "桌面而家喺 debug 模式，唔會出 key，所以呢部裝置配對唔到。想真係配對，熄咗 OPENCODEX_DEBUG_SANDBOX 再開過桌面。",
   "mobile.forget": "唔記得呢部裝置",
   "mobile.forgetConfirm": "喺呢個瀏覽器刪走配對嘅 key？除非你掃過個新配對 code，否則 proxy 唔會再收呢部裝置。把 key 本身仲會留喺桌面嘅 API keys 度，要去嗰邊先收得返。",
   "mobile.forgotten": "已經喺呢部裝置刪咗把 key",
