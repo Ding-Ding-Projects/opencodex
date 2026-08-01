@@ -1,5 +1,40 @@
 # Handoff
 
+## Debug sandbox — 2026-08-01, `9d641305`
+
+`OPENCODEX_DEBUG_SANDBOX=1` runs the app normally but writes no config to disk and issues no pairing
+key. Built because there was no way to look at the Remote access screen *in its enabled state*
+without actually publishing the proxy to the network and rewriting `config.json` — which is exactly
+the wall this session hit when trying to photograph the pairing panel.
+
+New file `src/lib/debug-sandbox.ts`; the guard sits in `saveConfig` (the single funnel every settings
+change goes through) and in `claimPairingToken`.
+
+Three non-behaviours matter more than the feature, and each has a test:
+
+| Does not | Why |
+| --- | --- |
+| Fake a successful pairing | A phone told it had paired fails every later request with no clue why — worse than the problem being solved |
+| Change how a **wrong** code is answered | Only a caller holding the correct live code sees `sandbox`. Otherwise the refusal would depend on nothing but the mode, turning the one uncredentialed route into "is this desktop in debug mode?" |
+| Consume the code it refuses | Nothing was issued, so there is nothing to spend; leaving the sandbox pairs the same code for real |
+
+It announces itself three ways (one-time log line, an ungated banner on Remote access, `debugSandbox`
+on `GET /api/host`) because a mode that silently stops settings saving reads as data loss.
+
+> [!WARNING]
+> **Not a security boundary**, and the docs say so. It lives inside the process it protects; anything
+> that can set the variable can unset it. The real boundaries — admin token, pairing token, the
+> data-plane/management split — are untouched.
+
+Documented at `docs-site/src/content/docs/guides/debug-sandbox.md`, linked from the pairing guide and
+the sidebar. `tests/debug-sandbox.test.ts`: **12 pass**.
+
+Same commit fixes `tests/ci-workflows.test.ts`, which pins the job timeout ceiling and went red when
+`5b4a4527` raised it to 25. **That failure was real**, and it only became visible because the
+crash-retry stopped Bun's panic from hiding it — see below.
+
+---
+
 ## QR pairing merged — 2026-08-01, `d2ed7b6f`, pushed
 
 The half-bridge described in the pass below is closed. `claude/festive-hugle-fc8136` is merged into
@@ -132,6 +167,15 @@ against a stubbed runner in all three cases (ordinary failure → no retry; pers
 red after three; crash-then-pass → green). The job timeout went 20 → 25 to pay for the retries.
 
 If this stops mattering because the old image ages out of the pool, the retry can go with it.
+
+**It worked, and it immediately earned its keep.** On the first run with the retry in place
+(`30678707484`): attempt 1 crashed → detected → retried; attempt 2 ran the full suite, 6,325 tests in
+656s, and reported **one genuine failure** — at which point the guard did the other half of its job
+and refused to retry, logging `Tests failed (exit 1). Not a Bun crash - not retrying.`
+
+The failure was `GitHub Actions hardening > cross-platform CI keeps bounded jobs`, caused by raising
+`timeout-minutes` to 25 in that same commit. So the crash had been **hiding a real regression**,
+which is the argument against the blind `retry 3` this deliberately is not. Fixed in `9d641305`.
 
 ### Two workflows are wired to a service GitHub is retiring
 
