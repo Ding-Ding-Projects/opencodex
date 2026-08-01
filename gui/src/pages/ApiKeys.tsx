@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BulkBar from "../shell/BulkBar";
 import { useCopyFeedback } from "../components/use-copy-feedback";
 import { copyTextToClipboard } from "../oauth-health-display";
 import { useI18n, LOCALES } from "../i18n/shared";
@@ -69,6 +70,14 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const [creating, setCreating] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  /* Bulk selection. Held here rather than in the panel so the bar and the rows
+     read the same set — two copies of a selection is how a bar comes to say 5
+     while 4 rows are ticked. */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const cancelBulk = useRef(false);
+  const lastTouched = useRef<string | null>(null);
   const creatingRef = useRef(false);
   // One copy protocol for the reveal-once key and every model ID; the scope is
   // the copied text itself, so a second click reads as idle on the first target.
@@ -212,6 +221,79 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     }
   };
 
+
+  /* Shift-click extends from the last row touched. Adds rather than replaces, so
+     a second range keeps the first — what every file manager does. */
+  const toggleSelect = useCallback((id: string, shiftKey: boolean) => {
+    setSelected(current => {
+      const next = new Set(current);
+      const order = keys.map(k => k.id);
+      if (shiftKey && lastTouched.current) {
+        const from = order.indexOf(lastTouched.current);
+        const to = order.indexOf(id);
+        if (from !== -1 && to !== -1) {
+          const [start, end] = from <= to ? [from, to] : [to, from];
+          for (const candidate of order.slice(start, end + 1)) next.add(candidate);
+          lastTouched.current = id;
+          return next;
+        }
+      }
+      if (!next.delete(id)) next.add(id);
+      lastTouched.current = id;
+      return next;
+    });
+  }, [keys]);
+
+  /**
+   * Revoke every selected key, one at a time, reporting what actually happened.
+   *
+   * Sequential rather than parallel: each delete writes the config, and the
+   * revision history is meant to read as a list of decisions rather than a race.
+   * The count in the confirmation is the count that will be attempted — there is
+   * nothing to exclude here, since any key the user can see, they can revoke.
+   */
+  const bulkRevoke = useCallback(async (ids: string[]) => {
+    const ok = await confirm({
+      title: t("bulk.deleteKeys"),
+      body: t("bulk.confirmDeleteKeys", { count: ids.length }),
+      confirmLabel: t("bulk.deleteKeys"),
+      tone: "danger",
+    });
+    if (!ok) return;
+
+    cancelBulk.current = false;
+    setBulkProgress({ done: 0, total: ids.length });
+    let succeeded = 0;
+    let failed = 0;
+    for (const [index, id] of ids.entries()) {
+      if (cancelBulk.current) break;
+      try {
+        const res = await fetch(`${apiBase}/api/keys`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        if (res.ok) succeeded += 1; else failed += 1;
+      } catch { failed += 1; }
+      setBulkProgress({ done: index + 1, total: ids.length });
+    }
+    setBulkProgress(null);
+    setSelected(new Set());
+    await loadKeys();
+
+    // Never "Done" when it was not. A run that failed at item thirty did
+    // twenty-nine things, and saying otherwise is false in the direction that
+    // costs the most to discover later.
+    const remaining = ids.length - succeeded - failed;
+    if (cancelBulk.current && remaining > 0) {
+      notify({ tone: "warn", title: t("bulk.deleteKeys"), body: t("bulk.cancelled", { action: t("bulk.deleteKeys"), succeeded, remaining }) });
+    } else if (failed) {
+      notify({ tone: "error", title: t("bulk.deleteKeys"), body: t("bulk.doneSome", { action: t("bulk.deleteKeys"), succeeded, failed }) });
+    } else {
+      notify({ tone: "warn", title: t("bulk.deleteKeys"), body: t("bulk.doneAll", { action: t("bulk.deleteKeys"), succeeded }) });
+    }
+  }, [apiBase, notify, t]);
+
   const handleDelete = async (id: string) => {
     setActionError(null);
     const deleted = keys.find(k => k.id === id);
@@ -334,6 +416,22 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       />
       <ApiKeysAuthPanel claudeCodeEnabled={claudeCodeEnabled} />
       <ApiKeysManagePanel
+        selected={selected}
+        onToggleSelect={toggleSelect}
+        bulkBar={(
+          <BulkBar
+            items={keys.map(k => ({ id: k.id, label: k.name }))}
+            selected={selected}
+            /* "all" and not "page": this table is not paginated and carries no
+               filter, so every key the user can see is every key there is. */
+            scope="all"
+            onSelectAll={() => setSelected(new Set(keys.map(k => k.id)))}
+            onSelectNone={() => setSelected(new Set())}
+            onInvert={() => setSelected(current => new Set(keys.map(k => k.id).filter(id => !current.has(id))))}
+            progress={bulkProgress ? { ...bulkProgress, onCancel: () => { cancelBulk.current = true; } } : null}
+            actions={[{ id: "revoke", label: t("bulk.deleteKeys"), destructive: true, run: ids => void bulkRevoke(ids) }]}
+          />
+        )}
         keys={keys}
         keysLoadFailed={keysLoadFailed}
         newName={newName}

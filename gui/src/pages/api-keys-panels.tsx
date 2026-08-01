@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { IconAlert, IconCheck, IconCopy, IconKey, IconSearch, IconTrash } from "../icons";
 import { useI18n } from "../i18n/shared";
 import { Button, Card, Chip, Dialog, TextInput } from "../shell/m3-ui";
@@ -149,6 +149,9 @@ export function ApiKeysManagePanel({
   onConfirmDelete,
   onCancelDelete,
   onDelete,
+  selected,
+  onToggleSelect,
+  bulkBar,
 }: {
   keys: ApiKeyEntry[];
   keysLoadFailed: boolean;
@@ -166,6 +169,11 @@ export function ApiKeysManagePanel({
   onConfirmDelete: (id: string) => void;
   onCancelDelete: () => void;
   onDelete: (id: string) => void;
+  /** Ids currently ticked. Owned by the page so the bar and rows cannot disagree. */
+  selected: Set<string>;
+  onToggleSelect: (id: string, shiftKey: boolean) => void;
+  /** The bar itself, rendered above the table by the page that owns the actions. */
+  bulkBar?: ReactNode;
 }) {
   const { t } = useI18n();
   // Deleting a key is a decision, not an announcement: it gets the blocking
@@ -216,15 +224,29 @@ export function ApiKeysManagePanel({
       </Card>
 
       <Card title={t("api.activeKeys", { count: keys.length })}>
+        {bulkBar}
         {keys.length > 0 ? (
           <div style={{ overflowX: "auto" }}>
             <table className="m3-table">
               <thead>
-                <tr><th>{t("api.colName")}</th><th>{t("api.colKey")}</th><th>{t("api.colCreated")}</th><th></th></tr>
+                <tr><th scope="col"><span className="m3-visually-hidden">{t("bulk.region")}</span></th><th>{t("api.colName")}</th><th>{t("api.colKey")}</th><th>{t("api.colCreated")}</th><th></th></tr>
               </thead>
               <tbody>
                 {keys.map(k => (
                   <tr key={k.id}>
+                    <td>
+                      {/* Shift-click extends from the last row touched, which is
+                          what every file manager does and therefore what people
+                          expect without being told. */}
+                      <input
+                        type="checkbox"
+                        className="m3-checkbox"
+                        checked={selected.has(k.id)}
+                        aria-label={t("api.selectAria", { label: k.name })}
+                        onClick={event => onToggleSelect(k.id, (event as unknown as { shiftKey: boolean }).shiftKey)}
+                        onChange={() => { /* click handles it, so shiftKey is available */ }}
+                      />
+                    </td>
                     {/* A row header, so the two icon-only buttons below are announced
                         against the key they act on rather than as three bare "Copy"s. */}
                     <th scope="row" style={{ color: "var(--m3-on-surface)", fontSize: "var(--t-body-m)" }}>{k.name}</th>
