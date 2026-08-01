@@ -147,10 +147,17 @@ describe("update installer process isolation", () => {
       "",
     ].join("\n"));
 
+    // Termination budgets near the shipped defaults (5s grace, 5s force wait)
+    // rather than a quarter of them. The tight version — 500ms and 2s — passed
+    // on an idle machine and failed on CI, where this runs alongside 460-odd
+    // other files: `taskkill /T /F` was still working when the wait expired, so
+    // `treeExited` came back false and the assertion read as a Windows bug in
+    // the shipped code. What it actually measured was how busy the runner was.
+    // The timeout under test stays 3s, which is the behaviour this is about.
     const result = await runProcessTreeCommand(process.execPath, [fixture, descendantPidPath], {
-      forceWaitMs: 2_000,
+      forceWaitMs: 8_000,
       stdio: "ignore",
-      terminationGraceMs: 500,
+      terminationGraceMs: 2_000,
       timeoutMs: 3_000,
       inspectProcessGroup: processGroupInspector(descendantPidPath),
     });
@@ -162,7 +169,7 @@ describe("update installer process isolation", () => {
     expect(result.timedOut).toBe(true);
     expect(result.treeExited).toBe(process.platform === "win32");
     expect(descendantRunning).toBe(false);
-  }, 15_000);
+  }, 30_000);
 
   test("a failed root exit does not signal its remaining leaderless process group", async () => {
     if (process.platform === "win32") return;
