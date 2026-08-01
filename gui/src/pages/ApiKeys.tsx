@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BulkBar from "../shell/BulkBar";
+import {
+  invert as invertSelection, selectAll as selectAllIds, selectRange, toggle as toggleSelection,
+} from "../shell/bulk-selection";
 import { useCopyFeedback } from "../components/use-copy-feedback";
 import { copyTextToClipboard } from "../oauth-health-display";
 import { useI18n, LOCALES } from "../i18n/shared";
@@ -230,25 +233,15 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
 
 
   /* Shift-click extends from the last row touched. Adds rather than replaces, so
-     a second range keeps the first — what every file manager does. */
+     a second range keeps the first — what every file manager does. The rules
+     live in `shell/bulk-selection` so this list and the Combos rail cannot drift
+     into two different ideas of what a shift-click means. */
   const toggleSelect = useCallback((id: string, shiftKey: boolean) => {
-    setSelected(current => {
-      const next = new Set(current);
-      const order = keys.map(k => k.id);
-      if (shiftKey && lastTouched.current) {
-        const from = order.indexOf(lastTouched.current);
-        const to = order.indexOf(id);
-        if (from !== -1 && to !== -1) {
-          const [start, end] = from <= to ? [from, to] : [to, from];
-          for (const candidate of order.slice(start, end + 1)) next.add(candidate);
-          lastTouched.current = id;
-          return next;
-        }
-      }
-      if (!next.delete(id)) next.add(id);
-      lastTouched.current = id;
-      return next;
-    });
+    const order = keys.map(k => k.id);
+    setSelected(current => (shiftKey && lastTouched.current
+      ? selectRange(current, order, lastTouched.current, id)
+      : toggleSelection(current, id)));
+    lastTouched.current = id;
   }, [keys]);
 
   /**
@@ -432,9 +425,9 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
             /* "all" and not "page": this table is not paginated and carries no
                filter, so every key the user can see is every key there is. */
             scope="all"
-            onSelectAll={() => setSelected(new Set(keys.map(k => k.id)))}
+            onSelectAll={() => setSelected(selectAllIds(keys.map(k => k.id)))}
             onSelectNone={() => setSelected(new Set())}
-            onInvert={() => setSelected(current => new Set(keys.map(k => k.id).filter(id => !current.has(id))))}
+            onInvert={() => setSelected(current => invertSelection(current, keys.map(k => k.id)))}
             progress={bulkProgress ? { ...bulkProgress, onCancel: () => { cancelBulk.current = true; } } : null}
             actions={[{ id: "revoke", label: t("bulk.deleteKeys"), destructive: true, run: ids => void bulkRevoke(ids) }]}
           />
