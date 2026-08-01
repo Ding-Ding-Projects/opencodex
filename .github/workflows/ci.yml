@@ -61,10 +61,16 @@ jobs:
     # alone is ~10 of the 12 minutes, so the job was cancelled two seconds into
     # the GUI build with every substantive step already green.
     #
-    # 20 leaves real headroom without hiding a hang: a genuinely stuck run blows
+    # 20 left real headroom without hiding a hang: a genuinely stuck run blows
     # 20 as readily as 12. If this needs raising again, shard the suite instead —
     # the ceiling is not the problem worth solving a third time.
-    timeout-minutes: 20
+    #
+    # Raised to 25 for the crash-retry in the Test step below, and only for that.
+    # A Bun crash dies about 42s in, so two of them cost ~1.5 minutes before the
+    # attempt that actually runs the suite — which on the slowest observed run
+    # left the job finishing a shade under 20 and occasionally over it. This is
+    # not the suite getting longer; the note above still stands if it does.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -90,8 +96,57 @@ jobs:
       - name: Typecheck
         run: bun x tsc --noEmit
 
+      # Retries ONLY a Bun crash, never a test failure.
+      #
+      # `windows-latest` is currently serving a mix of runner images, and Bun
+      # 1.3.14 panics on one of them: `panic(...): Internal assertion failure /
+      # oh no: Bun has crashed. This indicates a bug in Bun, not your code.`,
+      # roughly 42s in, after the suite has spawned its ninth worker
+      # (`workers_spawned(9) workers_terminated(8)`). Which image a job lands on
+      # decides whether CI is green, so the same commit passes and fails:
+      #
+      #   image 20260728.188.1 -> passed
+      #   image 20260714.173.1 -> crashed, three times including a rerun
+      #
+      # The same suite runs to completion locally on Windows with the same Bun
+      # and the same flag (6,304 pass over 457 files), so this is the runner
+      # image, not the tests. 1.3.14 is the newest Bun published, so there is
+      # nothing to upgrade to, and GitHub does not let a workflow pin an image
+      # to a patch version — hence a retry rather than a fix.
+      #
+      # The guard is the point: it re-runs when Bun died and the run therefore
+      # says nothing about the code, and it re-raises immediately on an ordinary
+      # non-zero exit. A blind `retry 3` here would turn a genuinely failing test
+      # into a green tick on its third roll of the dice, which is worse than the
+      # crash it was meant to paper over.
       - name: Test
-        run: bun test --isolate tests
+        shell: pwsh
+        run: |
+          $attempt = 0
+          $max = 3
+          while ($true) {
+            $attempt++
+            Write-Host "::group::bun test --isolate tests (attempt $attempt of $max)"
+            $log = "test-attempt-$attempt.log"
+            # Tee so the output is still visible in the log as it happens; the
+            # copy on disk is what gets pattern-matched afterwards.
+            bun test --isolate tests 2>&1 | Tee-Object -FilePath $log
+            $code = $LASTEXITCODE
+            Write-Host "::endgroup::"
+            if ($code -eq 0) { exit 0 }
+
+            $crashed = Select-String -Path $log -SimpleMatch -Quiet `
+              -Pattern 'oh no: Bun has crashed'
+            if (-not $crashed) {
+              Write-Host "::error::Tests failed (exit $code). Not a Bun crash - not retrying."
+              exit $code
+            }
+            if ($attempt -ge $max) {
+              Write-Host "::error::Bun crashed on all $max attempts. See the runner image note in ci.yml."
+              exit $code
+            }
+            Write-Host "::warning::Bun crashed rather than failing a test; retrying ($attempt/$max)."
+          }
 
       - name: GUI tests
         run: cd gui && bun test tests
