@@ -25,7 +25,7 @@ import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { resetApiAuthFetchForTests } from "../src/api";
-import { resetMobilePairingForTests } from "../src/lib/mobile-pairing";
+import { isClaimApplied, resetMobilePairingForTests } from "../src/lib/mobile-pairing";
 import { normalizeHashPath } from "../src/hash-routing";
 
 
@@ -125,9 +125,22 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
       </PrefsProvider>,
     );
   });
-  // Let the claim and the model list settle and re-render. Several awaits: the
-  // claim resolves, applies, saves the key, and the model fetch then re-runs on
-  // the new key — each hop is its own microtask turn.
+  // Wait for the claim to actually land, rather than assuming a fixed number of
+  // microtask turns is enough for it.
+  //
+  // This used to be a flat six turns, and six was enough on a developer machine
+  // and not always enough on CI. When it was not, `apiKey` was still "" at the
+  // moment a test submitted, and the screen correctly showed "the proxy needs a
+  // key" instead of "the key was refused" — so the assertion failed on a message
+  // the component was right to print, for a state the test never meant to be in.
+  // A count of turns is a guess about scheduling; `isClaimApplied()` is the event
+  // itself.
+  for (let i = 0; i < 100 && !isClaimApplied(); i++) {
+    await act(async () => { await Promise.resolve(); });
+  }
+  // Then the hops that hang off it: `saveKey` sets state, and the model fetch
+  // re-runs on the new key. These have no single flag to watch, so they still
+  // get a fixed budget — but they are now the only thing relying on one.
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
   return { container, root };
 }
