@@ -66,6 +66,8 @@ import { handleOauthAccountRoutes } from "./management/oauth-account-routes";
 import { handleComboRoutes } from "./management/combo-routes";
 import { handleSystemRoutes } from "./management/system-routes";
 import { handleChangelogRoutes } from "./management/changelog-routes";
+import { handleExportRoutes, type Dataset } from "./management/export-routes";
+import { requestLogDto } from "./management/shared";
 import { handleHostRoutes } from "./management/host-routes";
 import type { ManagementContext } from "./management/context";
 export type { ManagementApiDeps } from "./management/context";
@@ -79,6 +81,27 @@ export const VERSION = (() => {
     return "0.0.0";
   }
 })();
+
+/**
+ * The collections `/api/export` can write out.
+ *
+ * A registry rather than a branch per list inside the export route: adding a
+ * list here is one entry, and it arrives with every format, every archive option
+ * and the VS Code hand-off already working. The alternative — an export endpoint
+ * per list — is how a list added next month ships with none of it.
+ *
+ * Rebuilt per request because the rows are read lazily; nothing here holds data.
+ */
+function exportDatasets(): Map<string, Dataset> {
+  const datasets: Dataset[] = [
+    {
+      id: "requests",
+      label: "Request log",
+      rows: () => getRequestLogEntries().map(entry => requestLogDto(entry) as Record<string, unknown>),
+    },
+  ];
+  return new Map(datasets.map(dataset => [dataset.id, dataset]));
+}
 
 export async function handleManagementAPI(req: Request, url: URL, config: OcxConfig, deps: ManagementApiDeps = {}): Promise<Response | null> {
   if (!isAllowedManagementOrigin(req, config)) {
@@ -134,6 +157,7 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleComboRoutes(ctx))
     ??     (await handleSystemRoutes(ctx))
     ??     (await handleChangelogRoutes(ctx))
+    ??     (await handleExportRoutes(ctx, exportDatasets()))
     ??     (await handleHostRoutes(ctx));
   if (routed) return routed;
 
