@@ -1,6 +1,54 @@
 # Handoff
 
-## Debug sandbox — 2026-08-01, `9d641305`
+## Debug sandbox, audited and repaired — 2026-08-01, `9d641305` … `56c37cf0`
+
+The mode shipped in `9d641305` was **substantially wrong**, and an adversarial audit that *ran* the
+sandboxed server rather than reading it found why. Read this section before trusting the one below
+it, which describes the first version.
+
+| Commit | What it fixed |
+| --- | --- |
+| `50484369` | The one-click *enable remote access* opt-in **handed out a live `ocx_…` key** captioned "shown once, store it now". The guard only ever covered `claimPairingToken`. Also: two comments I wrote were false about the code directly beneath them (the banner claimed "Ungated" while sitting inside a card `hostCardShown` filters away, and "before the toggle" while rendering below it) |
+| `d7df4af7` | `POST /api/keys` mints its own key format, bypassing the minter. `POST /api/host/restore` rewrites the state files **directly** — in the sandbox it was the one action that genuinely would have changed the machine |
+| `2df8b269` | The phone was told nothing until it scanned and was refused |
+| `56c37cf0` | **A regression the `50484369` fix introduced** — see below |
+
+### The one worth reading
+
+Blocking the mint while waiving the credential gate left the toggle landing in
+`isApiAuthRequired === true` with **zero** `apiKeys` — the unreachable state `assertServerAuthConfig`
+exists to prevent at startup, reached at runtime instead. Measured through the real route:
+
+```
+BEFORE toggle: unauthenticated GET /v1/models -> 200
+AFTER  toggle: unauthenticated GET /v1/models -> 401
+AFTER  toggle: admin-token     GET /v1/models -> 401
+```
+
+Nothing worked. Before that fix at least the minted key did, so the fix made the mode's headline flow
+worse. `isApiAuthRequired` reads `config.hostname`, and setting it was the obvious way to show the
+enabled screen. The sandbox now records the requested bind **for display only**; config, auth posture
+and socket are all untouched.
+
+> [!IMPORTANT]
+> **"Nothing in this session persists" was false and is gone.** The audit enumerated every writer:
+> the responses state file (verbatim prompts and replies), the append-only git state history (commits
+> `auth.json`, so deleting the credential later does not remove it), the usage/diagnostic/crash logs,
+> pid and runtime-port files, the admin credential file, and the OAuth store on refresh. None go
+> through `saveConfig`. The promise is now narrowed to what the code does — config writes and
+> credential issuance — and the guide names the rest.
+>
+> Two writers were deliberately **left alone**, and re-guarding them would be a bug: the OAuth store
+> must persist a rotated refresh token (rotation commits at the IdP before `persist()` runs, so
+> skipping the write strands a dead token), and `admin-api-token` is read by five separate CLI
+> processes.
+
+`tests/debug-sandbox.test.ts`: **21 pass**. Open: [#3](https://github.com/Ding-Ding-Projects/opencodex/issues/3)
+(pairing-claim oracle, unrelated). Closed: [#4](https://github.com/Ding-Ding-Projects/opencodex/issues/4).
+
+---
+
+## Debug sandbox as first shipped — 2026-08-01, `9d641305`
 
 `OPENCODEX_DEBUG_SANDBOX=1` runs the app normally but writes no config to disk and issues no pairing
 key. Built because there was no way to look at the Remote access screen *in its enabled state*
