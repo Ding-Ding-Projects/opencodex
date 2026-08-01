@@ -9,8 +9,20 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "src",
+    // `rootDir` is "." rather than "src" so `src/` may import `shared/`.
+    //
+    // `shared/` holds the code the GUI and the documentation site both use, and
+    // the export serialisers belong there too: the backend writes the files, the
+    // site's changelog viewer writes the same formats, and two implementations
+    // of "what a CSV of this looks like" is two answers to one question.
+    //
+    // Safe because this config never emits. `typecheck` is `tsc --noEmit`, the
+    // desktop build goes through bun and electron-builder, and the only `tsc -b`
+    // in CI runs inside `gui/` against its own config — so `rootDir` here
+    // constrains typechecking and nothing else. If that ever stops being true,
+    // the output layout is what to check first.
+    "rootDir": ".",
     "declaration": true
   },
-  "include": ["src"]
+  "include": ["src", "shared"]
 }

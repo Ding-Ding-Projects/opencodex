@@ -217,3 +217,43 @@ describe("calendar grid", () => {
     expect(monthGrid(2024, 1).some(day => day.iso === "2024-02-29")).toBe(true);
   });
 });
+
+/**
+ * The changelog exports in every coding format, not only Markdown.
+ *
+ * `Changelog.tsx` is `client:only`, so it never appears in the built HTML and a
+ * dist grep proves nothing about it either way. What is checkable — and what
+ * actually matters — is that it reaches for the shared serialisers rather than
+ * growing its own, and that the format list it offers is the same one the app
+ * and the CLI offer.
+ */
+describe("changelog export formats", () => {
+  const source = readFileSync(new URL("../src/components/Changelog.tsx", import.meta.url), "utf-8");
+
+  test("uses the shared serialisers rather than a second implementation", () => {
+    expect(source).toContain('from "../../../shared/export-formats"');
+    expect(source).toContain("serialize(");
+    expect(source).toContain("filenameFor(");
+  });
+
+  test("offers every format the rest of the product does", () => {
+    // Not a hardcoded list in the component: it maps EXPORT_FORMATS, so a format
+    // added centrally appears here without anyone remembering to come back.
+    expect(source).toContain("EXPORT_FORMATS.map(");
+  });
+
+  test("keeps Markdown on its own path, deliberately", () => {
+    // `toMarkdown` writes a document that states the active range and search —
+    // what someone exporting a changelog to *read* wants. The generic writers
+    // produce a table of the same rows, for someone exporting it to *process*.
+    expect(source).toContain('format === "markdown"');
+    expect(source).toContain("buildExport()");
+  });
+
+  test("names the file after the format it actually wrote", () => {
+    expect(source).toContain('filenameFor("opencodex-changelog", format)');
+    // The old hardcoded `.md` would have put a CSV in a file called .md, which
+    // the OS then opens with the wrong application.
+    expect(source).not.toContain('link.download = "opencodex-changelog.md"');
+  });
+});

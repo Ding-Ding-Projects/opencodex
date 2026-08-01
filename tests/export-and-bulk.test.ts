@@ -20,7 +20,7 @@ import { spawnSync } from "node:child_process";
 import {
   EXPORT_FORMATS, FORMAT_META, columnsOf, describeFidelity, filenameFor, serialize,
   type ExportInput,
-} from "../src/lib/export-formats";
+} from "../shared/export-formats";
 import {
   assertSafePath, buildZip, describePlan, findSevenZip, resolveOnPath, runSevenZip, sevenZipArgs,
 } from "../src/lib/export-archive";

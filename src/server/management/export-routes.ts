@@ -27,7 +27,7 @@ import { dirname, join } from "node:path";
 import {
   EXPORT_FORMATS, FORMAT_META, describeFidelity, filenameFor, serialize,
   type ExportFormat, type ExportInput, type Row,
-} from "../../lib/export-formats";
+} from "../../../shared/export-formats";
 import {
   buildZip, describePlan, findSevenZip, runSevenZip,
   type ArchiveKind, type SevenZipOptions,

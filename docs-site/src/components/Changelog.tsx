@@ -69,6 +69,7 @@ import type { UiKey } from "../lib/i18n/keys";
 import { SearchBar } from "./RegexBuilder";
 import { useSearchQuery } from "../lib/use-search-query";
 import { Button, Chip, Icon } from "./ui";
+import { EXPORT_FORMATS, FORMAT_META, filenameFor, serialize, type ExportFormat } from "../../../shared/export-formats";
 
 const KIND_KEY: Record<ChangeKind, UiKey> = {
   feat: "changelog.kindFeat",
@@ -385,19 +386,38 @@ export default function Changelog() {
     }
   }, [buildExport, t]);
 
-  const onExport = useCallback(() => {
-    const blob = new Blob([buildExport()], { type: "text/markdown;charset=utf-8" });
+  /**
+   * Export the filtered rows in any of the coding formats, not only Markdown.
+   *
+   * Same serialisers the app and the CLI use, from `shared/export-formats` —
+   * "what a CSV of this looks like" must have one answer, and a second
+   * implementation here would drift from it the first time either changed.
+   *
+   * Markdown keeps its own path deliberately: `toMarkdown` writes a *document*
+   * with the active range and search stated in it, which is what someone
+   * exporting a changelog to read actually wants. The generic writers produce a
+   * table of the same rows, which is what someone exporting it to process wants.
+   * Both are correct; they are answering different questions.
+   */
+  const onExportAs = useCallback((format: ExportFormat) => {
+    const body = format === "markdown"
+      ? buildExport()
+      : serialize({ name: "changelog", rows: rows as unknown as Array<Record<string, unknown>> }, format);
+    const blob = new Blob([body], { type: `${FORMAT_META[format].mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "opencodex-changelog.md";
+    link.download = filenameFor("opencodex-changelog", format);
     link.click();
     // Revoked on the next task rather than immediately: Safari has not started
     // reading the blob when `click()` returns, and revoking synchronously
     // downloads a zero-byte file.
     setTimeout(() => URL.revokeObjectURL(url), 0);
     notify({ tone: "success", title: t("changelog.exported", { count: rows.length }) });
-  }, [buildExport, rows.length, t]);
+  }, [buildExport, notify, rows, t]);
+
+  /** The Markdown button keeps working exactly as it did. */
+  const onExport = useCallback(() => onExportAs("markdown"), [onExportAs]);
 
   const applyPreset = (next: DateRange) => setRange(next);
 
@@ -452,6 +472,28 @@ export default function Changelog() {
           <span className="ocx-spacer" />
           <Button variant="outlined" onClick={onCopy}>{t("changelog.copy")}</Button>
           <Button variant="tonal" onClick={onExport}>{t("changelog.export")}</Button>
+          {/* Every format, not only the one that happened to be implemented
+              first. The select carries the same list the app and the CLI offer,
+              so a reader who wants this as CSV for a spreadsheet is not told to
+              go and convert a Markdown table by hand. */}
+          <label className="ocx-export-as">
+            <span className="ocx-visually-hidden">{t("changelog.exportAs")}</span>
+            <select
+              className="ocx-select"
+              value=""
+              aria-label={t("changelog.exportAs")}
+              onChange={event => {
+                const chosen = event.target.value;
+                if (chosen) onExportAs(chosen as ExportFormat);
+                event.target.value = "";
+              }}
+            >
+              <option value="">{t("changelog.exportAs")}</option>
+              {EXPORT_FORMATS.map(format => (
+                <option key={format} value={format}>{FORMAT_META[format].label}</option>
+              ))}
+            </select>
+          </label>
         </div>
       </div>
 

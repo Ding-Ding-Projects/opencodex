@@ -87,6 +87,7 @@ export const en = {
   "changelog.noResultsHint": "Widen the dates or change the search text — the two compose, so either one can be what is excluding everything.",
   "changelog.undated": "no date recorded",
   "changelog.export": "Export Markdown",
+  "changelog.exportAs": "Export as…",
   "changelog.copy": "Copy",
   "changelog.copied": "Copied the filtered changelog to the clipboard.",
   "changelog.copyFailed": "The clipboard refused the copy. The export button writes the same text to a file.",

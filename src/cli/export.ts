@@ -68,7 +68,7 @@ export async function handleExportCommand(args: string[]): Promise<number> {
    */
   if (args[0] === "data") {
     const { datasetRows, listDatasets } = await import("../lib/export-datasets");
-    const { EXPORT_FORMATS, describeFidelity, filenameFor, serialize } = await import("../lib/export-formats");
+    const { EXPORT_FORMATS, describeFidelity, filenameFor, serialize } = await import("../../shared/export-formats");
 
     if (args.includes("--list") || args.length === 1) {
       const available = listDatasets();
