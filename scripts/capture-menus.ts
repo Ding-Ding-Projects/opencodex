@@ -76,17 +76,22 @@ const MENUS: Menu[] = [
     })()`,
     appears: `.ap-popover, .m3-popover, [role="dialog"]`,
   },
-  // NOT captured: the account switcher.
-  //
-  // It renders the signed-in Codex accounts, and this repository is public. The
-  // app masks the address (`m***6@outlook.com`), which is the app behaving well,
-  // but a masked personal address is still a personal address and a screenshot
-  // of somebody's account list is not something to commit in passing. The menu's
-  // structure — a list, one row marked active — is also the least informative
-  // thing here, so there is nothing to weigh against it.
-  //
-  // If it is ever wanted, capture it against a profile signed into a throwaway
-  // account and say in the commit which account it is.
+  {
+    // Shows the signed-in Codex accounts, and this repository is public — so it
+    // is worth saying why that is fine here rather than leaving the next person
+    // to re-litigate it. The app masks the address itself (`m***6@outlook.com`),
+    // and every page shot in `assets/shots/` has carried that same masked string
+    // for as long as they have existed, `codex-auth.png` most obviously. This
+    // menu discloses nothing the rest of the directory does not.
+    //
+    // If the address should not be published at all, that is a decision about
+    // *every* shot, not this one — dropping a single file leaves the string in
+    // the others and buys nothing.
+    name: "account-menu",
+    page: "dashboard",
+    open: `(() => { const b = document.querySelector('.m3-avatar--btn'); if (!b) return false; b.click(); return true; })()`,
+    appears: `[role="dialog"], [role="menu"], .m3-menu`,
+  },
   {
     name: "cost-range",
     page: "dashboard",
