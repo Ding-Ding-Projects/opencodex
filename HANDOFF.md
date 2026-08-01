@@ -1,5 +1,53 @@
 # Handoff
 
+## Material 3 pass — 2026-08-01, `1af76848`, `0b50f6ca`
+
+An MD3 audit of `gui/` against the design system rather than against taste. Two things changed, and
+two things deliberately did not.
+
+### The corner scale was missing a step
+
+`gui/src/theme/m3.ts` had 8 / 12 / 16 / 28 / full and **no 4dp** — M3's extra-small, the step focus
+rings and chips want. The absence did not present as a gap; it presented as two stylesheets
+independently writing `border-radius: 4px` because there was nothing to reach for.
+
+**Why that is not cosmetic:** every corner in this app is meant to be an appearance-editor target, and
+a literal silently opts out. The element still renders, still looks right, and simply cannot be
+restyled — with nothing on screen distinguishing it from one that can. Added `--r-xs`; converted two
+`4px`, a `28px` dialog corner that *is* `--r-xl`, four `999px` pills, and one `10px` that is not on
+the M3 scale at all (now `--r-m` — the only visible change here, two pixels).
+
+`gui/tests/m3-shape-scale.test.ts` greps every stylesheet and fails on any hand-written pixel radius,
+because a grep is the only thing that tells a tokenised corner from a literal one.
+
+### A 28px close button got a 48dp target
+
+Material's minimum is 48dp and this app already gives its own mobile controls 44px, but the
+Add-provider dialog's close button was 28×28 with a 16px glyph. The button is **not** inflated — the
+hit area extends past the box, which is how M3 separates visual size from touch size.
+
+> [!WARNING]
+> **Do not generalise this.** On a dense row of 28px buttons, 48px targets overlap and steal each
+> other's taps — worse than the problem. It is sound only because `.btn-icon` has exactly one user,
+> alone in a header beside a heading. A test pins that count at one, so the question gets asked
+> before anyone puts it in a toolbar.
+
+### Deliberately unchanged, both against the obvious action
+
+- **`QrCode.tsx`'s `#fff` / `#000`.** Data, not chrome — scanners read dark-on-light and a quiet zone
+  is only quiet against white. MD3 exempts functional colour and the file already said so.
+- **Elevation and tonal surfaces.** Audited and left alone: all five `surface-container` levels are in
+  genuine use, and every `box-shadow` is an `inset` border or a documented data colour, not a fake
+  elevation. This was already right.
+
+### Still open
+
+44px appears **36 times** as the touch-target floor across the mobile media queries. That is Apple's
+HIG minimum, not Material's 48dp. Raising it is a real change to compact layouts the project
+validates at 320px, so it wants visual verification rather than a find-and-replace.
+
+---
+
 ## Debug sandbox, audited and repaired — 2026-08-01, `9d641305` … `56c37cf0`
 
 The mode shipped in `9d641305` was **substantially wrong**, and an adversarial audit that *ran* the
