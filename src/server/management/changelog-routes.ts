@@ -51,6 +51,19 @@ function changelogPath(): string | null {
   return candidates.find(existsSync) ?? null;
 }
 
+/**
+ * The packaged releases, or an empty list when the file did not ship.
+ *
+ * Exported so the export registry answers from the same parse as this route.
+ * Two parses of one file is two answers to "what shipped in 2.7.42", and the
+ * heading grammar above is fiddly enough that the second copy would be the
+ * wrong one.
+ */
+export function loadChangelogReleases(): ChangelogRelease[] {
+  const path = changelogPath();
+  return path ? parseChangelog(readFileSync(path, "utf-8")) : [];
+}
+
 export async function handleChangelogRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config } = ctx;
   if (url.pathname !== "/api/changelog" || req.method !== "GET") return null;
