@@ -25,7 +25,7 @@ import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { resetApiAuthFetchForTests } from "../src/api";
-import { isClaimApplied, resetMobilePairingForTests } from "../src/lib/mobile-pairing";
+import { isClaimApplied, readPairedKey, resetMobilePairingForTests } from "../src/lib/mobile-pairing";
 import { normalizeHashPath } from "../src/hash-routing";
 
 
@@ -125,22 +125,30 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
       </PrefsProvider>,
     );
   });
-  // Wait for the claim to actually land, rather than assuming a fixed number of
-  // microtask turns is enough for it.
+  // Wait for the key to actually reach the component, rather than assuming a
+  // fixed number of microtask turns gets it there.
   //
-  // This used to be a flat six turns, and six was enough on a developer machine
-  // and not always enough on CI. When it was not, `apiKey` was still "" at the
-  // moment a test submitted, and the screen correctly showed "the proxy needs a
-  // key" instead of "the key was refused" — so the assertion failed on a message
-  // the component was right to print, for a state the test never meant to be in.
-  // A count of turns is a guess about scheduling; `isClaimApplied()` is the event
-  // itself.
-  for (let i = 0; i < 100 && !isClaimApplied(); i++) {
+  // Two wrong versions preceded this one, and the second is the instructive one:
+  //
+  //  1. A flat six turns. Enough on a developer machine, not always enough on CI.
+  //  2. Waiting on `isClaimApplied()`. Still wrong, and it looked right — that
+  //     latch is set *before* `saveKey` runs, so the hop that actually matters
+  //     was still riding the same fixed count. CI went green once and red again.
+  //
+  // `saveKey` queues `setApiKey` and *then* writes storage, so a non-empty
+  // `readPairedKey()` proves the state update is already queued — after which a
+  // single flush lands it. The failure it prevents: `apiKey` still "" at submit,
+  // so the screen says "the proxy needs a key" instead of "the key was refused",
+  // and the assertion fails on a message the component was right to print.
+  //
+  // `isClaimApplied()` is still in the condition, for the cases where the claim
+  // resolves to a refusal and no key is ever stored — otherwise those spin to the
+  // cap on every run.
+  for (let i = 0; i < 200 && !readPairedKey() && !isClaimApplied(); i++) {
     await act(async () => { await Promise.resolve(); });
   }
-  // Then the hops that hang off it: `saveKey` sets state, and the model fetch
-  // re-runs on the new key. These have no single flag to watch, so they still
-  // get a fixed budget — but they are now the only thing relying on one.
+  // Then the hops hanging off it: the state flush itself, and the model fetch
+  // re-running on the new key.
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
   return { container, root };
 }

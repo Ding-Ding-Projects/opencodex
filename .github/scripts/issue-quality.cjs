@@ -286,7 +286,8 @@ function detectIssueKindFromContent(issue) {
   // New feature form: at least 2 of the 3 core headings.
   if (countHeadings(body, FEATURE_NEW_HEADINGS) >= 2) return "feature";
 
-  // Translated / alternate feature headings (e.g. after issue-triage).
+  // Translated / alternate feature headings. Still reachable: the translator
+  // that produced some of them is gone, but the issues it rewrote are not.
   // Require a feature-specific goal heading so common headings like
   // "Expected behaviour" cannot reclassify bug/freeform reports as features.
   // ([Feature]: prefix and enhancement labels are handled elsewhere.)
@@ -933,9 +934,85 @@ function rejectsWorkflowDispatchNonDefaultBranch(eventName, ref, defaultBranch) 
 // Exports
 // ---------------------------------------------------------------------------
 
+
+/* ---------------------------------------------------------------------------
+   Legacy inline-translation blocks.
+
+   The translator that wrote these is gone — GitHub Models, which it called, is
+   being retired and answers 410. Removing the writer does not remove what it
+   already wrote: issues translated before then still carry the block in their
+   body, and validating that generated text as if the reporter had typed it
+   would fail issues that are in fact fine.
+
+   So the reader stays, and only the reader. It is here rather than in its own
+   module because it now has exactly one caller and no future: when the last
+   translated issue is closed, this can go with it.
+   --------------------------------------------------------------------------- */
+
+const TRANSLATION_MARKER = "<!-- opencodex-issue-inline-translator -->";
+const TRANSLATION_END_MARKER = "<!-- /opencodex-issue-inline-translator -->";
+const TRANSLATION_LEGACY_STATE_RE =
+  /<!-- opencodex-issue-inline-translator-state:[\s\S]*? -->\s*/;
+
+/**
+ * Locate the first generated inline translation block.
+ *
+ * Three block shapes exist in the wild and all three are still out there, so
+ * all three are handled: marker + end-marker (current), marker + `<details>`
+ * with no end-marker (pre-end-marker), and a bare marker with nothing after it.
+ *
+ * @returns {{ start: number, end: number } | null}
+ */
+function findTranslationBlockRange(text) {
+  const markerIdx = String(text || "").indexOf(TRANSLATION_MARKER);
+  if (markerIdx === -1) return null;
+
+  let cursor = markerIdx + TRANSLATION_MARKER.length;
+  const afterMarker = String(text).slice(cursor);
+  const legacyState = afterMarker.match(TRANSLATION_LEGACY_STATE_RE);
+  if (legacyState) {
+    cursor += legacyState.index + legacyState[0].length;
+  }
+
+  const rest = String(text).slice(cursor);
+  const endRel = rest.indexOf(TRANSLATION_END_MARKER);
+  if (endRel !== -1) {
+    return { start: markerIdx, end: cursor + endRel + TRANSLATION_END_MARKER.length };
+  }
+
+  if (/^\s*<details>/i.test(rest)) {
+    const closeRel = rest.search(/<\/details>/i);
+    if (closeRel !== -1) {
+      return { start: markerIdx, end: cursor + closeRel + "</details>".length };
+    }
+    return { start: markerIdx, end: cursor };
+  }
+
+  if (legacyState) {
+    return { start: markerIdx, end: cursor };
+  }
+
+  return { start: markerIdx, end: markerIdx + TRANSLATION_MARKER.length };
+}
+
+/** The reporter's own words, with any generated translation block removed. */
+function stripTranslationBlock(body) {
+  const text = String(body || "");
+  const range = findTranslationBlockRange(text);
+  if (!range) return text.replace(/\s+$/, "");
+
+  const prefix = text.slice(0, range.start).replace(/\s+$/, "");
+  const suffix = text.slice(range.end).replace(/^\s+/, "");
+  if (!suffix) return prefix;
+  return (prefix ? `${prefix}
+
+${suffix}` : suffix).replace(/\s+$/, "");
+}
+
 module.exports = {
   clean,
   normalise,
+  stripTranslationBlock,
   canonicalise,
   extractSection,
   resolveSection,

@@ -1917,75 +1917,32 @@ describe("GitHub Actions hardening", () => {
   test("issue-quality workflow rejects workflow_dispatch pull request numbers before mutation", async () => {
     const workflow = await readText(".github/workflows/enforce-issue-quality.yml");
 
-    expect(workflow).toContain("issue_comment:");
-    expect(workflow).toContain("Translate non-English issue comments");
-    expect(workflow).toContain("shouldTranslateComment");
-    expect(workflow).toContain("buildTranslatedCommentBody");
-    expect(workflow).toContain("github.rest.issues.updateComment");
-    expect(workflow).toContain("group: issue-translation-${{ github.event.issue.number }}");
-    expect(workflow).not.toContain("issue-comment-translation-${{ github.event.comment.id }}");
-    expect(workflow).toContain("if: github.event_name == 'issue_comment'");
-    expect(workflow).toMatch(
-      /translate:\s*\n\s*name: Translate non-English issues\s*\n\s*if: github\.event_name == 'issues' \|\| github\.event_name == 'workflow_dispatch'/,
-    );
+    // One job. The translation jobs are gone with GitHub Models, and their
+    // absence is asserted rather than merely true — a re-added `ai-inference`
+    // step would be a call to a retired service that answers 410, and a red
+    // check on every issue opened.
+    expect(workflow).not.toContain("ai-inference");
+    expect(workflow).not.toContain("models: read");
+    expect(workflow).not.toMatch(/\n {2}translate:/);
+    expect(workflow).not.toMatch(/\n {2}translate-comment:/);
     expect(workflow).toMatch(
       /validate:\s*\n\s*if: github\.event_name == 'issues' \|\| github\.event_name == 'workflow_dispatch'/,
     );
 
-    const commentJob = workflow.split(/\n {2}translate-comment:\n/)[1]!.split(/\n {2}[a-zA-Z]/)[0]!;
-    expect(commentJob).toContain("parse-issue-translation-response.cjs");
-    expect(commentJob).toContain("Apply inline comment translation");
-    expect(commentJob).toContain("isPreparedSourceStillCurrent");
-    expect(commentJob).toContain("updateComment");
-    expect(commentJob).toContain("requires_translation == 'true'");
-    expect(commentJob).toContain("group: issue-translation-${{ github.event.issue.number }}");
-    expect(commentJob).toContain("# Required to rewrite the triggering issue comment in place.");
-    expect(commentJob).toContain("sourceKey:");
-    // Same fail-closed parse → apply gate as the issue path.
-    const commentParse = commentJob
-      .split("- name: Parse AI response")[1]!
-      .split("- name: Apply inline comment translation")[0]!;
-    expect(commentParse).toContain("parse-issue-translation-response.cjs");
-    const commentRun = commentParse.split(/\n\s*run:\s*/)[1];
-    expect(commentRun).toBeDefined();
-    expect(commentRun!).not.toContain("${{");
-    const commentApply = commentJob
-      .split("- name: Apply inline comment translation")[1]!
-      .split("- name: Persist comment translation control state")[0]!;
-    const guardAt = commentApply.indexOf("isPreparedSourceStillCurrent({");
-    const updateAt = commentApply.indexOf("updateComment");
-    const missingAt = commentApply.indexOf("missingRequiredTranslationFields({");
-    expect(guardAt).toBeGreaterThanOrEqual(0);
-    expect(updateAt).toBeGreaterThanOrEqual(0);
-    expect(missingAt).toBeGreaterThanOrEqual(0);
-    expect(missingAt).toBeLessThan(updateAt);
-    expect(guardAt).toBeLessThan(updateAt);
-    expect(commentApply).toContain("omitted required field(s)");
-
     // Job-scoped permissions only (no top-level issues:write; no actions:write).
     expect(workflow).toMatch(
-      /jobs:\s*\n\s*translate:[\s\S]*?permissions:\s*\n(?:\s*#.*\n)*\s*contents: read\s*\n(?:\s*#.*\n)*\s*issues: write\s*\n(?:\s*#.*\n)*\s*models: read/,
-    );
-    const translateJob = workflow.split(/\n {2}translate:\n/)[1]!.split(/\n {2}[a-zA-Z]/)[0]!;
-    expect(translateJob).not.toMatch(/actions:\s*write/);
-    expect(workflow).toMatch(
-      /jobs:\s*\n\s*translate:[\s\S]*?validate:[\s\S]*?permissions:\s*\n\s*contents: read\s*\n\s*#.*\n\s*issues: write/,
+      /jobs:\s*\n\s*validate:[\s\S]*?permissions:\s*\n\s*contents: read\s*\n\s*#.*\n\s*issues: write/,
     );
     const beforeJobs = workflow.split(/jobs:\s*\n/)[0]!;
     expect(beforeJobs).not.toMatch(/^\s*permissions:/m);
+    const validateJob = workflow.split(/\n {2}validate:\n/)[1]!;
+    expect(validateJob).not.toMatch(/actions:\s*write/);
 
-    // Non-cancelling per-issue concurrency at workflow and translate-job scope.
+    // Non-cancelling per-issue concurrency at workflow scope.
     expect(workflow).toContain("group: issue-quality-${{ github.event.issue.number || inputs.issue_number }}");
-    expect(workflow).toContain("group: issue-translation-${{ github.event.issue.number || inputs.issue_number }}");
-    const workflowConcurrency = workflow.split(/jobs:\s*\n/)[0]!;
-    expect(workflowConcurrency).toMatch(
+    expect(beforeJobs).toMatch(
       /concurrency:\s*\n\s*group: issue-quality-[^\n]*\n\s*cancel-in-progress:\s*false/,
     );
-    expect(translateJob).toMatch(
-      /concurrency:\s*\n\s*group: issue-translation-[^\n]*\n\s*cancel-in-progress:\s*false/,
-    );
-    expect(translateJob).toContain("translation-state-degraded");
-    expect(translateJob).toContain("core.summary");
 
     // Trusted scripts always come from the repository default branch.
     const checkoutStep = workflow
@@ -1999,6 +1956,12 @@ describe("GitHub Actions hardening", () => {
       .split("- name: Validate issue quality")[1]!
       .split("script: |")[1]!
       .split(/\n {6}- name:/)[0]!;
+
+    // The translation *reader* moved into issue-quality.cjs and is still needed:
+    // issues translated before the retirement still carry the block, and
+    // validating generated text as the reporter's own would fail a good issue.
+    expect(script).toContain("stripTranslationBlock");
+    expect(script).not.toContain("issue-translation.cjs");
 
     // Invalid issue numbers fail before any issues API call.
     const invalidNumberIdx = script.indexOf("Invalid workflow_dispatch issue_number:");
@@ -2026,99 +1989,6 @@ describe("GitHub Actions hardening", () => {
     expect(prGuardIdx).toBeLessThan(firstMutationIdx);
     expect(script).toContain("if (pullRequestFailure) {");
     expect(script).toContain("core.setFailed(pullRequestFailure);");
-
-    const translateScript = workflow
-      .split("- name: Prepare translation")[1]!
-      .split("- name: Detect and translate")[0]!;
-    const branchGuardIdxTranslate = translateScript.indexOf(
-      "rejectsWorkflowDispatchNonDefaultBranch(",
-    );
-    const issuesGetIdxTranslate = translateScript.indexOf("github.rest.issues.get({");
-    expect(branchGuardIdxTranslate).toBeGreaterThan(-1);
-    expect(issuesGetIdxTranslate).toBeGreaterThan(-1);
-    expect(branchGuardIdxTranslate).toBeLessThan(issuesGetIdxTranslate);
-    expect(translateScript).toContain("resolveControlState");
-    expect(translateScript).toContain("Never trust author-editable issue body markers");
-
-    const applyScript = workflow
-      .split("- name: Apply inline translation")[1]!
-      .split("- name: Persist translation control state")[0]!;
-    const staleGuardIdx = applyScript.indexOf("isPreparedSourceStillCurrent({");
-    const issueUpdateIdx = applyScript.indexOf("github.rest.issues.update(");
-    expect(staleGuardIdx).toBeGreaterThan(-1);
-    expect(issueUpdateIdx).toBeGreaterThan(-1);
-    expect(staleGuardIdx).toBeLessThan(issueUpdateIdx);
-    expect(applyScript).toContain("persistTranslationControlState");
-    expect(applyScript).toContain("Translation control state not persisted");
-    expect(applyScript).toContain("sourceComplete");
-    expect(applyScript).toContain("source remains retryable");
-    expect(applyScript).toContain("missingRequiredTranslationFields");
-    expect(applyScript).toContain("omitted required field(s)");
-    expect(applyScript).toMatch(/sourceComplete,\s*\n\s*\}/);
-    expect(applyScript.indexOf("missingRequiredTranslationFields({")).toBeLessThan(
-      applyScript.indexOf("github.rest.issues.update("),
-    );
-
-    const parseStep = workflow
-      .split("- name: Parse AI response")[1]!
-      .split("- name: Apply inline translation")[0]!;
-    expect(parseStep).toContain("parse-issue-translation-response.cjs");
-    expect(parseStep).not.toContain("node -e");
-    expect(parseStep).not.toContain("node <<");
-    // AI output must stay in env, never interpolated into the shell run script.
-    expect(parseStep.split(/\n\s*run:\s*/)[1] || "").not.toContain("${{");
-
-    const persistStep = workflow
-      .split("- name: Persist translation control state")[1]!
-      .split(/\n {2}[a-zA-Z]/)[0]!;
-    expect(persistStep).toContain("always()");
-    expect(persistStep).toContain("requires_translation != 'true'");
-    expect(persistStep).toContain("persistTranslationControlState");
-    expect(persistStep).toContain("SOURCE_COMPLETE");
-    expect(persistStep).toContain("detectedLanguageForControlPersist");
-    expect(persistStep).toContain('const sourceComplete = process.env.SOURCE_COMPLETE === "true"');
-    expect(persistStep).toMatch(/sourceComplete,\s*\n\s*\}/);
-    // Missing DETECTED_LANG on incomplete/skipped parse must not default to English.
-    expect(persistStep).not.toContain('DETECTED_LANG || "English"');
-    expect(persistStep).not.toContain("DETECTED_LANG || 'English'");
-    expect(persistStep).not.toContain("silent_state");
-    expect(persistStep).not.toContain("cleanup_comment_ids");
-    expect(workflow).not.toContain("Save translation control state cache");
-    expect(workflow).not.toContain("Remove migrated English control comments");
-    expect(workflow).not.toContain("Restore translation control state cache");
-
-    const commentPersist = workflow
-      .split("- name: Persist comment translation control state")[1]!
-      .split(/\n {2}[a-zA-Z]/)[0]!;
-    expect(commentPersist).toContain('const sourceComplete = process.env.SOURCE_COMPLETE === "true"');
-    expect(commentPersist).toContain("detectedLanguageForControlPersist");
-    expect(commentPersist).toMatch(/sourceComplete,\s*\n\s*\}/);
-    expect(commentPersist).not.toContain('DETECTED_LANG || "English"');
-    expect(commentPersist).not.toContain("DETECTED_LANG || 'English'");
-    const commentApplyStep = workflow
-      .split("- name: Apply inline comment translation")[1]!
-      .split("- name: Persist comment translation control state")[0]!;
-    expect(commentApplyStep).toContain("sourceComplete");
-    expect(commentApplyStep).toContain("source remains retryable");
-    expect(commentApplyStep).toContain("missingRequiredTranslationFields");
-    expect(commentApplyStep).toContain("omitted required field(s)");
-    const commentMissingAt = commentApplyStep.indexOf("missingRequiredTranslationFields({");
-    const commentUpdateAt = commentApplyStep.indexOf("updateComment");
-    expect(commentMissingAt).toBeGreaterThanOrEqual(0);
-    expect(commentUpdateAt).toBeGreaterThanOrEqual(0);
-    expect(commentMissingAt).toBeLessThan(commentUpdateAt);
-
-    // Helper contract: always-visible bookkeeping; sticky oldest upsert; body non-authoritative.
-    const helperSrc = await readText(".github/scripts/issue-translation.cjs");
-    expect(helperSrc).toContain("shouldOmitVisibleBookkeeping");
-    expect(helperSrc).toContain("findStickyControlComment");
-    expect(helperSrc).toContain("detectedLanguageForControlPersist");
-    expect(helperSrc).toContain("Automated translation bookkeeping");
-    expect(helperSrc).toContain("canonical comment first");
-    expect(helperSrc).toContain("Authoritative control state comes only from verified bot-owned comments");
-    expect(helperSrc).toContain("sourceComplete");
-    expect(helperSrc).not.toContain("writeFileControlState");
-    expect(helperSrc).not.toContain(".ocx-translation-state");
   });
 
   test("React Doctor workflow is SHA-pinned, engine-pinned, gating, and read-only", async () => {
