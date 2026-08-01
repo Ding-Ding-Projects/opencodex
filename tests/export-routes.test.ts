@@ -207,7 +207,12 @@ test("the API-keys export carries metadata and never the secret", async () => {
 });
 
 test("the providers export reports whether a key is set, not what it is", async () => {
-  const providerKey = "sk-PROVIDER-SECRET-VALUE";
+  // Named to the repo's fixture convention (`sk-test-<digits>`) so the privacy
+  // scan can tell a planted sentinel from a real key that escaped into a commit.
+  // A fixture that merely *looks* fake to a human reader is exactly what that
+  // scan cannot distinguish, and widening its allowlist to admit this one would
+  // blunt the check for every file.
+  const providerKey = "sk-test-90210provider";
   saveConfig({
     ...baseConfig(),
     providers: { xai: { adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "api-key", apiKey: providerKey } },

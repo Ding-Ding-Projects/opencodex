@@ -79,7 +79,10 @@ const MENUS: Menu[] = [
   {
     // Shows the signed-in Codex accounts, and this repository is public — so it
     // is worth saying why that is fine here rather than leaving the next person
-    // to re-litigate it. The app masks the address itself (`m***6@outlook.com`),
+    // to re-litigate it. The app masks the address itself, rendering an initial,
+    // three asterisks and a digit in place of the local part — spelled out rather
+    // than quoted, because a quoted example is a literal address to the privacy
+    // scan and it is right not to take a comment's word for it.
     // and every page shot in `assets/shots/` has carried that same masked string
     // for as long as they have existed, `codex-auth.png` most obviously. This
     // menu discloses nothing the rest of the directory does not.
