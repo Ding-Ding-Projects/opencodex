@@ -143,7 +143,23 @@ export default function App() {
     return d && typeof d.enabled === "boolean" ? d.enabled : null;
   }, []);
 
-  const claudePoll = useKeyedClientResource(`app-claude-code:${API_BASE}`, [], fetchClaudeEnabled);
+  // Silent while the remote is the open tab. This poll feeds the nav rail's
+  // Claude switch, and `/api/claude-code` is a management route, so on a
+  // published proxy it answers 401 to a phone holding a data-plane key. That 401
+  // reaches `api.ts`, which asks for an ADMIN token in a dialog stating that a
+  // data-plane key will not work here: a user who has just scanned a pairing QR
+  // would be told, by the app, that the credential they were handed is useless.
+  // Hooks cannot be skipped, so the request is disabled instead.
+  //
+  // Keyed off the open tab rather than a separate mobile surface: the remote is
+  // a page inside this shell, so `tabs.activePage` is what "the phone is looking
+  // at the remote" actually means here.
+  const claudePoll = useKeyedClientResource(
+    `app-claude-code:${API_BASE}`,
+    [],
+    fetchClaudeEnabled,
+    { enabled: tabs.activePage !== "mobile" },
+  );
   const claudeEnabled = claudePoll.data ?? null;
   // A ref, not state: the guard has to hold within a single click burst, before
   // React has re-rendered with the pending flag.

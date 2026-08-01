@@ -4,11 +4,16 @@
  *
  * Endpoints (all behind the standard management-auth gate):
  * - GET  /api/host                → bind status, LAN URLs, credential presence
- * - PUT  /api/host                → { exposed, hostname?, newKeyName? } enable/disable;
- *                                    refuses to expose without a data-plane credential
- *                                    (mirrors assertServerAuthConfig — never writes a
- *                                    config that would kill the next start). Returns
- *                                    the minted key plaintext AT MOST ONCE.
+ * - PUT  /api/host                → { exposed, hostname?, newKeyName?, mintKeyIfMissing? }
+ *                                    enable/disable; refuses to expose without a data-plane
+ *                                    credential (mirrors assertServerAuthConfig — never writes
+ *                                    a config that would kill the next start). Returns the
+ *                                    minted key plaintext AT MOST ONCE.
+ * - POST /api/host/pair           → mint a QR pairing token, { token, expiresAt }
+ * - DELETE /api/host/pair         → cancel the outstanding token (the panel closed)
+ * - POST /api/host/pair/claim     → DELIBERATELY UNAUTHENTICATED. Spend a token, receive a
+ *                                    data-plane key once. See the block comment above the
+ *                                    handler, and src/lib/pairing.ts for why that is safe.
  * - GET  /api/host/admin-token    → the management credential, for handing to another
  *                                    device. The caller by definition already holds
  *                                    management access (this route sits behind it), so
@@ -44,10 +49,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
 import { addCustomDataPlaneKey, describeHost, hasDataPlaneCredential, mintDataPlaneKey } from "../../lib/host-control";
+import { cancelPairing, claimPairingToken, createPairingToken } from "../../lib/pairing";
+import { takeClaimAttempt } from "../../lib/pairing-rate-limit";
 import { listStateHistory, listStateHistoryEntries, restoreStateFromHistory } from "../../lib/state-history";
-import { drainAndShutdown, quiesceActiveTurns, setDraining } from "../lifecycle";
+import { drainAndShutdown, getServerListenHostname, quiesceActiveTurns, setDraining } from "../lifecycle";
 import { acceptSystemRestartAfterExternalDrain } from "./system-restart";
 import { isLoopbackHostname, jsonResponse } from "../auth-cors";
+import type { OcxConfig } from "../../types";
 import type { ManagementContext } from "./context";
 
 /** Default hand-off window for restore/exit, and the ceiling a caller may ask for. */
@@ -62,6 +70,56 @@ function drainWindowMs(requested: unknown): number {
 function noStore(response: Response): Response {
   response.headers.set("Cache-Control", "no-store");
   return response;
+}
+
+/**
+ * The one management path served WITHOUT a credential.
+ *
+ * `src/server/index.ts` runs `requireManagementAuth` across the whole of
+ * `/api/*` before any route is dispatched, so a handler cannot opt itself out —
+ * the exemption has to be made there, and this predicate is what it asks. It
+ * lives beside the route it describes so the two cannot drift: an exemption
+ * declared in the server entrypoint for a path that moved would silently become
+ * an exemption for nothing, or for something else.
+ *
+ * Method AND exact path, never a prefix. `startsWith` would exempt
+ * `/api/host/pair/claim-everything` too.
+ */
+export const PAIRING_CLAIM_PATH = "/api/host/pair/claim";
+
+export function isUnauthenticatedPairingClaim(method: string, pathname: string): boolean {
+  return method === "POST" && pathname === PAIRING_CLAIM_PATH;
+}
+
+/**
+ * Whether the configured bind and the live socket disagree.
+ *
+ * `PUT /api/host` writes `config.hostname` immediately, but `Bun.serve` fixed
+ * the listening address at startup and only a restart moves it. Reporting only
+ * the config would have the dashboard say "reachable from other devices" while
+ * the socket was still answering loopback alone — the screen claiming a change
+ * took effect when nothing outside this process can see it yet.
+ *
+ * Normalized the same way `startServer` normalizes it, so a config that says
+ * `localhost` and a socket bound to `127.0.0.1` are correctly reported as
+ * agreeing rather than as a pending restart that will never arrive.
+ */
+function bindHostFor(config: OcxConfig): string {
+  const configured = config.hostname?.trim();
+  return !configured || /^localhost$/i.test(configured) ? "127.0.0.1" : configured;
+}
+
+function restartPending(config: OcxConfig): boolean {
+  const listening = getServerListenHostname();
+  // No listener in this process (the CLI, a unit test) means there is nothing
+  // for the config to disagree with — not a pending restart.
+  if (listening === undefined) return false;
+  return listening !== bindHostFor(config);
+}
+
+/** GET/PUT /api/host share one body shape, so the dashboard reads one contract. */
+function hostStatusBody(config: OcxConfig): ReturnType<typeof describeHost> & { restartPending: boolean } {
+  return { ...describeHost(config), restartPending: restartPending(config) };
 }
 
 function readJsonIfPresent(path: string): unknown {
@@ -93,17 +151,20 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   const { req, url, config } = ctx;
 
   if (url.pathname === "/api/host" && req.method === "GET") {
-    return jsonResponse(describeHost(config), 200, req, config);
+    return jsonResponse(hostStatusBody(config), 200, req, config);
   }
 
   if (url.pathname === "/api/host" && req.method === "PUT") {
-    let body: { exposed?: boolean; hostname?: string; newKeyName?: string; customKeyValue?: string };
+    let body: {
+      exposed?: boolean; hostname?: string; newKeyName?: string;
+      customKeyValue?: string; mintKeyIfMissing?: boolean;
+    };
     try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
 
     if (body.exposed === false) {
       config.hostname = "127.0.0.1";
       saveConfigPreservingClaudeCode(config);
-      return jsonResponse({ ...describeHost(config), restartRequired: true }, 200, req, config);
+      return jsonResponse({ ...hostStatusBody(config), restartRequired: true }, 200, req, config);
     }
 
     // Key-only operation: store a user-chosen key WITHOUT touching the bind.
@@ -112,7 +173,7 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
       const result = addCustomDataPlaneKey(config, (body.newKeyName ?? "custom").trim() || "custom", body.customKeyValue);
       if ("error" in result) return jsonResponse({ error: result.error }, 400, req, config);
       saveConfigPreservingClaudeCode(config);
-      return noStore(jsonResponse({ ...describeHost(config), mintedKey: result.key, restartRequired: false }, 200, req, config));
+      return noStore(jsonResponse({ ...hostStatusBody(config), mintedKey: result.key, restartRequired: false }, 200, req, config));
     }
 
     if (body.exposed !== true) {
@@ -132,20 +193,121 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
       const result = addCustomDataPlaneKey(config, (body.newKeyName ?? "custom").trim() || "custom", body.customKeyValue);
       if ("error" in result) return jsonResponse({ error: result.error }, 400, req, config);
       mintedKey = result.key;
+    } else if (body.mintKeyIfMissing === true) {
+      // The one-click opt-in. Enabling remote access used to mean inventing a
+      // password on the laptop and typing it on the phone, which is most of the
+      // reason the feature went unused — so the caller may ask for the
+      // credential to be generated as PART of enabling.
+      //
+      // The invariant is untouched: this mints a credential, it does not waive
+      // the requirement for one. The `hasDataPlaneCredential` gate below still
+      // runs, and still refuses the exposed bind if nothing ended up stored.
+      //
+      // "IfMissing", not "always". `newKeyName` on its own mints unconditionally,
+      // so a user toggling remote access off and on three times accreted three
+      // live keys they never asked for and could not read. Enabling something
+      // that is already enabled should add nothing.
+      if (!hasDataPlaneCredential(config)) {
+        mintedKey = mintDataPlaneKey(config, (body.newKeyName ?? "network").trim() || "network");
+      }
     } else if (typeof body.newKeyName === "string") {
       mintedKey = mintDataPlaneKey(config, body.newKeyName.trim() || "network");
     }
     if (!hasDataPlaneCredential(config)) {
       // Mirror assertServerAuthConfig instead of writing a config that kills the next start.
       return jsonResponse({
-        error: "An exposed bind requires a data-plane credential. Pass newKeyName to generate one, or create a key first.",
+        error: "An exposed bind requires a data-plane credential. Pass mintKeyIfMissing to generate one, or create a key first.",
       }, 409, req, config);
     }
 
     config.hostname = hostname;
     saveConfigPreservingClaudeCode(config);
     // The plaintext key rides this one response and is never readable again.
-    return noStore(jsonResponse({ ...describeHost(config), mintedKey, restartRequired: true }, 200, req, config));
+    return noStore(jsonResponse({ ...hostStatusBody(config), mintedKey, restartRequired: true }, 200, req, config));
+  }
+
+  // ---- QR pairing --------------------------------------------------------
+  //
+  // Minting and cancelling sit behind the standard management gate like every
+  // other route in this file. Only the claim below is exempt.
+
+  if (url.pathname === "/api/host/pair" && req.method === "POST") {
+    const offer = createPairingToken();
+    // no-store for the same reason the minted key is: this body is a live
+    // secret, and a cached copy of it outlives the five minutes it is supposed
+    // to be worth anything for.
+    return noStore(jsonResponse({ token: offer.token, expiresAt: offer.expiresAt }, 200, req, config));
+  }
+
+  if (url.pathname === "/api/host/pair" && req.method === "DELETE") {
+    // The dashboard calls this when the pairing panel closes, so a QR that was
+    // displayed and then dismissed stops being claimable immediately rather
+    // than lingering for the rest of its TTL.
+    cancelPairing();
+    return jsonResponse({ ok: true }, 200, req, config);
+  }
+
+  /**
+   * Spend a pairing token for a data-plane key. **Deliberately unauthenticated.**
+   *
+   * It has to be: a phone that has never paired holds no credential to present.
+   * `src/lib/pairing.ts` documents every property that makes that safe — 256
+   * bits, single use, five-minute TTL, one outstanding at a time, constant-time
+   * compare, and never an admin token — and `tests/pairing.test.ts` pins each
+   * of them individually. `src/server/index.ts` is where the exemption is
+   * actually made, keyed on `isUnauthenticatedPairingClaim`.
+   *
+   * Three things this handler owes on top of that core:
+   *
+   * 1. **Never 401.** The dashboard's fetch wrapper treats a 401 on `/api/*` as
+   *    "ask the user for the admin token", so answering a mistyped pairing
+   *    token with 401 would pop an admin-credential prompt on the phone of
+   *    someone who by definition does not have one. A refused claim is a 400.
+   * 2. **Never log the token or the key.** Nothing here writes either to a log,
+   *    and the token travels in the body rather than the URL precisely so the
+   *    request-line logging upstream cannot capture it.
+   * 3. **Persist before answering.** The key is only real once it is on disk.
+   */
+  if (isUnauthenticatedPairingClaim(req.method, url.pathname)) {
+    const attempt = takeClaimAttempt();
+    if (!attempt.allowed) {
+      const response = jsonResponse({ error: "too many pairing attempts" }, 429, req, config);
+      response.headers.set("Retry-After", String(attempt.retryAfterSeconds));
+      return noStore(response);
+    }
+
+    let body: { token?: unknown };
+    try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
+    const presented = typeof body.token === "string" ? body.token : "";
+
+    const keysBefore = config.apiKeys;
+    const result = claimPairingToken(presented, config);
+    if (!result.ok) {
+      // The reason is safe to hand back and is the difference between "scan a
+      // fresh code" and "start pairing on the desktop first". It says nothing
+      // about the token that was presented.
+      return noStore(jsonResponse({ error: "pairing token was not accepted", reason: result.reason }, 400, req, config));
+    }
+
+    try {
+      saveConfigPreservingClaudeCode(config);
+    } catch (err) {
+      // `claimPairingToken` mutates the live config and leaves persisting to us.
+      // A failed write would otherwise leave a key this process honours but the
+      // next one has never heard of — working now, gone after a restart, which
+      // is the worst of the three possible outcomes. Roll the in-memory config
+      // back so the state is simply "not paired", and say so.
+      config.apiKeys = keysBefore;
+      // No `detail`. This is the one route that answers without a credential, and
+      // a write error's message is a filesystem path — the config directory, and
+      // with it the account name it sits under. The desktop can see the real
+      // failure; an unauthenticated caller gets "it did not save".
+      void err;
+      return noStore(jsonResponse({ error: "the pairing key could not be saved" }, 500, req, config));
+    }
+
+    // Shown exactly once, like every other minted key.
+    return noStore(jsonResponse({ key: result.key }, 200, req, config));
   }
 
   if (url.pathname === "/api/host/admin-token" && req.method === "GET") {

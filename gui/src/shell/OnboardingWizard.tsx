@@ -311,35 +311,42 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
 
             {expose && (
               <div className="m3-stack" style={{ gap: 8 }}>
-                {/* Said before they type, not after the server refuses: exposing
-                    the proxy publishes the dashboard too, and the password is
+                {/* Said before they act, not after the server refuses: exposing
+                    the proxy publishes the dashboard too, and the credential is
                     the only thing between the two. */}
                 <p className="m3-banner m3-banner--warn" role="note">{t("onboard.netExposeWarn")}</p>
-                <TextInput
-                  type="password"
-                  value={key}
-                  onChange={e => setKey(e.target.value)}
-                  placeholder={t("onboard.netKeyPlaceholder")}
-                  aria-label={t("onboard.netKey")}
-                  autoComplete="new-password"
-                />
+
+                {/* One click, and the key is generated here rather than invented
+                    by the user. This step used to demand a 12-character password
+                    typed on a laptop and then retyped on a phone, at the exact
+                    moment a first-run user has the least patience for either —
+                    so most people turned the whole feature down. The credential
+                    requirement is unchanged; who authors it is what changed. A
+                    phone gets it by scanning the QR on Remote access, never by
+                    transcription. */}
+                <p style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)", margin: 0 }}>
+                  {t("onboard.netAutoKeyHint")}
+                </p>
                 <Button
                   variant="filled"
-                  disabled={exposeBusy || key.trim().length < MIN_KEY_LENGTH}
+                  disabled={exposeBusy}
                   onClick={async () => {
                     setExposeBusy(true);
                     try {
                       const res = await fetch(`${apiBase}/api/host`, {
                         method: "PUT",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ exposed: true, customKeyValue: key, newKeyName: "onboarding" }),
+                        body: JSON.stringify({ exposed: true, mintKeyIfMissing: true, newKeyName: "onboarding" }),
                       });
                       const body = await res.json().catch(() => null) as { error?: string } | null;
                       if (!res.ok) {
                         notify({ tone: "error", title: t("onboard.netExposeFailed"), body: body?.error });
                         return;
                       }
-                      notify({ tone: "success", title: t("onboard.netExposed"), body: t("network.restartHint") });
+                      // "Published" is not yet true of the socket, only of the
+                      // config. Saying so here rather than letting the user find
+                      // out from a phone that will not connect.
+                      notify({ tone: "success", title: t("onboard.netExposed"), body: t("onboard.netExposedPending") });
                       setStep(3);
                     } catch {
                       notify({ tone: "error", title: t("onboard.netExposeFailed") });
@@ -350,9 +357,52 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
                 >
                   {t("onboard.netExposeAction")}
                 </Button>
-                <p style={{ fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", margin: 0 }}>
-                  {t("onboard.netKeyRule", { n: MIN_KEY_LENGTH })}
-                </p>
+
+                {/* Still available, and still the only way to get a key you can
+                    remember — but no longer the price of admission. */}
+                <details>
+                  <summary style={{ fontSize: "var(--t-label-m)", cursor: "pointer" }}>{t("onboard.netOwnKey")}</summary>
+                  <div className="m3-stack" style={{ gap: 8, marginTop: 8 }}>
+                    <TextInput
+                      type="password"
+                      value={key}
+                      onChange={e => setKey(e.target.value)}
+                      placeholder={t("onboard.netKeyPlaceholder")}
+                      aria-label={t("onboard.netKey")}
+                      autoComplete="new-password"
+                    />
+                    <Button
+                      variant="outlined"
+                      disabled={exposeBusy || key.trim().length < MIN_KEY_LENGTH}
+                      onClick={async () => {
+                        setExposeBusy(true);
+                        try {
+                          const res = await fetch(`${apiBase}/api/host`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ exposed: true, customKeyValue: key, newKeyName: "onboarding" }),
+                          });
+                          const body = await res.json().catch(() => null) as { error?: string } | null;
+                          if (!res.ok) {
+                            notify({ tone: "error", title: t("onboard.netExposeFailed"), body: body?.error });
+                            return;
+                          }
+                          notify({ tone: "success", title: t("onboard.netExposed"), body: t("onboard.netExposedPending") });
+                          setStep(3);
+                        } catch {
+                          notify({ tone: "error", title: t("onboard.netExposeFailed") });
+                        } finally {
+                          setExposeBusy(false);
+                        }
+                      }}
+                    >
+                      {t("onboard.netOwnKeyAction")}
+                    </Button>
+                    <p style={{ fontSize: "var(--t-label-s)", color: "var(--m3-on-surface-variant)", margin: 0 }}>
+                      {t("onboard.netKeyRule", { n: MIN_KEY_LENGTH })}
+                    </p>
+                  </div>
+                </details>
               </div>
             )}
           </div>

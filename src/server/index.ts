@@ -141,6 +141,7 @@ import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveS
 import { handleSearch } from "./search";
 import { fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
 import { initializeManagementAuthState, issueGuiSession, requireManagementAuth } from "./management-auth";
+import { isUnauthenticatedPairingClaim } from "./management/host-routes";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -397,8 +398,25 @@ export function startServer(port?: number) {
       }
 
       if (url.pathname.startsWith("/api/")) {
-        const apiAuthError = requireManagementAuth(req, managementAuth, config);
-        if (apiAuthError) return withManagementCors(apiAuthError, req, config);
+        // One exemption, and it is deliberate: a phone claiming a QR pairing
+        // token has no credential to present, because receiving one is the
+        // whole point of the request. What guards it is the token itself —
+        // 256 bits, single use, five-minute TTL, one outstanding at a time —
+        // plus a rate limit, all documented in src/lib/pairing.ts and pinned by
+        // tests/pairing.test.ts.
+        //
+        // It is made here rather than inside the handler because this gate runs
+        // before route dispatch, so a handler cannot opt itself out. The
+        // predicate lives beside the route it names so the two cannot drift.
+        //
+        // Bypassing the gate also bypasses its 503 for an unavailable
+        // management credential, which is harmless: minting a pairing token
+        // still requires management auth, so with no admin token there is
+        // nothing outstanding to claim and the route refuses on its own terms.
+        if (!isUnauthenticatedPairingClaim(req.method, url.pathname)) {
+          const apiAuthError = requireManagementAuth(req, managementAuth, config);
+          if (apiAuthError) return withManagementCors(apiAuthError, req, config);
+        }
         const mgmtResponse = await handleManagementAPI(req, url, config);
         if (mgmtResponse) return withManagementCors(mgmtResponse, req, config);
         return withManagementCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
