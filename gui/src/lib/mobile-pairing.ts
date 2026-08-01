@@ -68,7 +68,17 @@ export function savePairedKey(value: string): void {
 }
 
 /** Why a claim was refused, in the words the phone can act on. */
-export type ClaimFailure = "expired" | "no-pairing" | "mismatch" | "rate-limited" | "no-connection";
+export type ClaimFailure =
+  | "expired"
+  | "no-pairing"
+  | "mismatch"
+  | "rate-limited"
+  | "no-connection"
+  // The desktop is running with OPENCODEX_DEBUG_SANDBOX set and will not issue a
+  // key. Its own category rather than folded into `mismatch`, because every other
+  // refusal here is answered by scanning again and this one never will be — the
+  // advice is "the desktop is in debug mode", not "try harder".
+  | "sandbox";
 
 export type ClaimOutcome = { ok: true; key: string } | { ok: false; reason: ClaimFailure };
 
@@ -123,7 +133,7 @@ async function claim(apiBase: string, token: string): Promise<ClaimOutcome> {
     const data = await res.json().catch(() => null) as { key?: string; reason?: string } | null;
     if (res.ok && data?.key) return { ok: true, key: data.key };
     const reason = data?.reason;
-    if (reason === "expired" || reason === "no-pairing" || reason === "mismatch") return { ok: false, reason };
+    if (reason === "expired" || reason === "no-pairing" || reason === "mismatch" || reason === "sandbox") return { ok: false, reason };
     return { ok: false, reason: "no-connection" };
   } catch {
     // A phone that dropped off Wi-Fi rejects the fetch rather than answering.

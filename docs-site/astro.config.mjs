@@ -196,6 +196,7 @@ export default defineConfig({
             { label: "Web Dashboard", translations: { ko: "웹 대시보드", "zh-CN": "网页控制台", ru: "Веб-дашборд", ja: "ウェブダッシュボード" }, slug: "guides/web-dashboard" },
             { label: "Launcher & Terminal", translations: { ko: "런처 & 터미널", "zh-CN": "启动器与终端", ru: "Лаунчер и терминал", ja: "ランチャー & ターミナル" }, slug: "guides/launcher-and-terminal" },
             { label: "Log Files", translations: { ko: "로그 파일", "zh-CN": "日志文件", ru: "Файлы логов", ja: "ログファイル" }, slug: "guides/log-files" },
+            { label: "Debug Sandbox", translations: { ko: "디버그 샌드박스", "zh-CN": "调试沙盒", ru: "Отладочная песочница", ja: "デバッグサンドボックス" }, slug: "guides/debug-sandbox" },
             { label: "Docker", translations: { ko: "Docker", "zh-CN": "Docker", ru: "Docker", ja: "Docker" }, slug: "guides/docker" },
             { label: "Sub-agent Surface", translations: { ko: "서브에이전트 서피스", "zh-CN": "子代理界面", ru: "Интерфейс подагентов", ja: "サブエージェントサーフェス" }, slug: "guides/sub-agent-surface" },
           ],

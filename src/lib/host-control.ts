@@ -10,6 +10,8 @@
  */
 
 import { randomBytes } from "node:crypto";
+
+import { debugSandboxEnabled } from "./debug-sandbox";
 import { networkInterfaces } from "node:os";
 import { isLoopbackHostname } from "../server/auth-cors";
 import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
@@ -43,6 +45,15 @@ export interface HostStatus {
   credentialConfigured: boolean;
   /** URLs another device should use. Empty when bound to loopback. */
   urls: string[];
+  /**
+   * True when this process runs with `OPENCODEX_DEBUG_SANDBOX` set.
+   *
+   * Reported so the dashboard can say so. Without it the sandbox is invisible
+   * from the UI and simply looks broken: every toggle springs back on reload and
+   * pairing refuses a code that is plainly on screen, which reads as data loss
+   * rather than as the mode the user asked for.
+   */
+  debugSandbox: boolean;
 }
 
 export function describeHost(config: OcxConfig): HostStatus {
@@ -56,6 +67,7 @@ export function describeHost(config: OcxConfig): HostStatus {
     exposed,
     credentialConfigured: hasDataPlaneCredential(config),
     urls: hosts.map(h => `http://${h}:${port}/`),
+    debugSandbox: debugSandboxEnabled(),
   };
 }
 

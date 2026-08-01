@@ -40,6 +40,7 @@
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
+import { announceDebugSandboxOnce, debugSandboxEnabled } from "./debug-sandbox";
 import { mintDataPlaneKey } from "./host-control";
 import { armClaimBudget } from "./pairing-rate-limit";
 import type { OcxConfig } from "../types";
@@ -117,7 +118,7 @@ export function peekPairing(now: () => number = Date.now): PairingOffer | null {
 
 export type ClaimResult =
   | { ok: true; key: string }
-  | { ok: false; reason: "no-pairing" | "expired" | "mismatch" };
+  | { ok: false; reason: "no-pairing" | "expired" | "mismatch" | "sandbox" };
 
 /**
  * Spend a pairing token and return a data-plane key for the device.
@@ -153,6 +154,20 @@ export function claimPairingToken(
     // A wrong token does NOT consume the outstanding one. Otherwise anybody able
     // to reach the endpoint could cancel a legitimate pairing by guessing once.
     return { ok: false, reason: "mismatch" };
+  }
+
+  // Correct token, and we still refuse — the debug sandbox exists so the pairing
+  // screens can be driven without a live credential outliving the demonstration.
+  //
+  // Checked AFTER the comparison, so a sandboxed process answers a wrong token
+  // with "mismatch" exactly as a normal one does. Checking first would make the
+  // refusal reason depend on nothing but the mode, turning this into a way to ask
+  // an unauthenticated question about the server. Deliberately without consuming
+  // the token either: nothing was issued, so there is nothing to spend, and the
+  // next scan of the same still-valid code should behave the same way.
+  if (debugSandboxEnabled()) {
+    announceDebugSandboxOnce();
+    return { ok: false, reason: "sandbox" };
   }
 
   // Consume before minting: if minting throws, the token is still spent, which

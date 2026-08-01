@@ -68,10 +68,13 @@ describe("GitHub Actions hardening", () => {
   test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
 
-    // 20 for the test matrix: the Windows full suite alone measured 10m04s on
-    // run 30503517934, so 12 cancelled green runs. The invariant is that every
-    // job stays bounded — the exact ceiling is maintained here alongside ci.yml.
-    expect(count(workflow, "timeout-minutes: 20")).toBe(1);
+    // 25 for the test matrix. It was 20, sized off the Windows full suite's
+    // 10m04s on run 30503517934; the extra five minutes pay for the Test step's
+    // crash-retry, because a Bun panic on the bad runner image burns ~42s before
+    // the attempt that actually runs the suite. The invariant is that every job
+    // stays bounded — the exact ceiling is maintained here alongside ci.yml, and
+    // this assertion failing is the intended way to notice it moved.
+    expect(count(workflow, "timeout-minutes: 25")).toBe(1);
     expect(count(workflow, "timeout-minutes: 8")).toBe(1);
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
     expect(workflow).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");

@@ -33,6 +33,8 @@ interface HostStatus {
    * here: only the server knows what `Bun.serve` actually bound to.
    */
   restartPending?: boolean;
+  /** The proxy is running with `OPENCODEX_DEBUG_SANDBOX` — nothing here persists. */
+  debugSandbox?: boolean;
 }
 
 /** What POST /api/host/pair hands back. The token is live for five minutes. */
@@ -505,6 +507,16 @@ export default function Network({ apiBase }: { apiBase: string }) {
               </div>
               <Toggle on={status.exposed} onChange={next => void setExposed(next)} label={t("network.exposed")} disabled={busy} />
             </div>
+            )}
+
+            {/* Ungated for the same reason as the restart banner below: every
+                control on this screen is about to lie about whether it saved,
+                and a user who cannot see why would reasonably report it as data
+                loss. First thing on the panel, before the toggle it explains. */}
+            {status.debugSandbox && (
+              <p role="status" className="m3-banner m3-banner--warn" style={{ marginBottom: "var(--sp-3)" }}>
+                {t("network.debugSandbox")}
+              </p>
             )}
 
             {/* The config moved; the listening socket did not. Reporting the

@@ -175,6 +175,11 @@ can export every account, while this one can only send requests. Clear it from
 the phone with **Forget this device**, and revoke it on the desktop under
 **API keys**, where it is listed as `Paired device`.
 
+To open these screens and watch the QR flow *without* publishing the proxy or minting a
+real key, start the desktop with `OPENCODEX_DEBUG_SANDBOX=1` — see
+[Debug sandbox](/guides/debug-sandbox/). The panel behaves normally and the claim is
+refused, so nothing outlives the session.
+
 If you would rather not use a QR code at all, the Control panel still accepts a
 key typed by hand. `ocx host enable` prints the URLs other devices can use, and
 requires a credential — the same gate the rest of the exposed surface uses. Open

@@ -13,6 +13,7 @@ import {
 import { COMBO_NAMESPACE, comboConfigIssues } from "./combos/types";
 import { hardenSecretDir, hardenSecretPath, hardenSecretPathAsync } from "./lib/windows-secret-acl";
 import { recordOwnedConfigPath } from "./lib/config-ownership";
+import { announceDebugSandboxOnce, debugSandboxEnabled } from "./lib/debug-sandbox";
 import { providerDestinationConfigError } from "./lib/destination-policy";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
 import {
@@ -1300,6 +1301,15 @@ export function readConfigDiagnostics(): ConfigDiagnostics {
 }
 
 export function saveConfig(config: OcxConfig): void {
+  // The single funnel every settings change goes through, which is why the
+  // sandbox check sits here and not at the dozens of call sites. Returning
+  // before `getConfigDir()` matters: that call creates the directory and hardens
+  // its ACL, so checking any later would still leave a footprint on a machine
+  // the caller asked us not to touch.
+  if (debugSandboxEnabled()) {
+    announceDebugSandboxOnce();
+    return;
+  }
   const dir = getConfigDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });

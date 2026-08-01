@@ -133,6 +133,25 @@ red after three; crash-then-pass → green). The job timeout went 20 → 25 to p
 
 If this stops mattering because the old image ages out of the pool, the retry can go with it.
 
+### Two workflows are wired to a service GitHub is retiring
+
+`Enforce issue quality` and `Issue Triage (Deduplicate)` both fail, and not for anything in this
+repository:
+
+```
+##[error]API error: Error: 410 GitHub Models is temporarily unavailable
+as part of a scheduled retirement brownout.
+```
+
+Both call `https://models.github.ai/inference` (`.github/workflows/enforce-issue-quality.yml`,
+`.github/workflows/issue-triage.yml`). A *brownout* means it will come back and then go away for
+good, so these are on borrowed time rather than briefly broken — every issue opened from now on will
+show two red checks it did nothing to cause.
+
+Not fixed here: choosing what replaces GitHub Models is a decision, and the honest options differ a
+lot in cost and privacy (another inference provider behind a secret, a non-AI heuristic check, or
+deleting the workflows). Flagged rather than guessed at.
+
 ---
 
 ## Integrate-and-clean pass, 2026-07-31 — MERGED, NOT DELETED
