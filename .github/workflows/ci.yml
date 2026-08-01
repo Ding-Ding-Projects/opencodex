@@ -130,7 +130,21 @@ jobs:
             $log = "test-attempt-$attempt.log"
             # Tee so the output is still visible in the log as it happens; the
             # copy on disk is what gets pattern-matched afterwards.
-            bun test --isolate tests 2>&1 | Tee-Object -FilePath $log
+            # `--timeout 20000` because the runner is slower than this machine,
+            # not because any test needs 20 seconds.
+            #
+            # Bun's default is 5000ms per test. Two consecutive runs failed on two
+            # *different* tests, each timing out at exactly 5000ms
+            # (`executeArchivedCleanup > concurrent archiving …`, then
+            # `Kiro review regressions > Add account binds a legacy identity-less
+            # row …`), and both pass here in well under a second. Two different
+            # tests hitting the same wall is the wall moving, not the tests.
+            #
+            # This does not hide a hang: a genuinely stuck test still burns the
+            # job's 25-minute ceiling and fails the run. What it stops is a
+            # correct test being failed for the crime of running on a busy VM,
+            # which had already blocked two releases.
+            bun test --isolate --timeout 20000 tests 2>&1 | Tee-Object -FilePath $log
             $code = $LASTEXITCODE
             Write-Host "::endgroup::"
             if ($code -eq 0) { exit 0 }

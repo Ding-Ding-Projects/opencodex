@@ -79,7 +79,13 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
     expect(workflow).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
     expect(workflow).toContain("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e");
-    expect(workflow).toContain("bun test --isolate tests");
+    expect(workflow).toContain("bun test --isolate --timeout 20000 tests");
+    // The per-test timeout is raised for the runner, not for any test. Bun's
+    // default 5000ms failed two consecutive runs on two *different* tests, both
+    // of which pass locally in well under a second — two different tests hitting
+    // the same wall is the wall moving. Asserted so a later "tidy-up" that drops
+    // the flag fails here rather than resurfacing as flaky releases.
+    expect(workflow).toContain("--timeout 20000");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
