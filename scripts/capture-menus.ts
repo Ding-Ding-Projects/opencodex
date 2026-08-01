@@ -51,21 +51,49 @@ const MENUS: Menu[] = [
     appears: `[role="dialog"], .m3-notif-panel, .m3-menu`,
   },
   {
-    name: "appearance-menu",
+    // The anchored per-element appearance editor, reached the way a user reaches
+    // it: right-click the tab, then "Edit tab appearance…".
+    //
+    // There is an `[aria-label="Appearance"]` button in the app bar and it is NOT
+    // this. It navigates to the Appearance *page*, which `capture-shots.ts`
+    // already photographs — clicking it here captured that page and called it a
+    // menu until the guard refused it.
+    name: "tab-appearance-editor",
     page: "dashboard",
-    open: `(() => { const b = document.querySelector('[aria-label="Appearance"]'); if (!b) return false; b.click(); return true; })()`,
-    appears: `[role="dialog"], [role="menu"], .m3-menu`,
+    open: `(async () => {
+      const tab = document.querySelector('[role="tab"], .m3-tab-btn');
+      if (!tab) return false;
+      const r = tab.getBoundingClientRect();
+      tab.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      }));
+      await new Promise(res => setTimeout(res, 400));
+      const item = [...document.querySelectorAll('button, [role="menuitem"]')]
+        .find(el => /edit tab appearance/i.test(el.textContent || ''));
+      if (!item) return false;
+      item.click();
+      return true;
+    })()`,
+    appears: `.ap-popover, .m3-popover, [role="dialog"]`,
   },
-  {
-    name: "account-menu",
-    page: "dashboard",
-    open: `(() => { const b = [...document.querySelectorAll('button')].find(b => (b.getAttribute('aria-label')||'').startsWith('Active account')); if (!b) return false; b.click(); return true; })()`,
-    appears: `[role="dialog"], [role="menu"], .m3-menu`,
-  },
+  // NOT captured: the account switcher.
+  //
+  // It renders the signed-in Codex accounts, and this repository is public. The
+  // app masks the address (`m***6@outlook.com`), which is the app behaving well,
+  // but a masked personal address is still a personal address and a screenshot
+  // of somebody's account list is not something to commit in passing. The menu's
+  // structure — a list, one row marked active — is also the least informative
+  // thing here, so there is nothing to weigh against it.
+  //
+  // If it is ever wanted, capture it against a profile signed into a throwaway
+  // account and say in the commit which account it is.
   {
     name: "cost-range",
     page: "dashboard",
-    open: `(() => { const b = [...document.querySelectorAll('button')].find(b => (b.getAttribute('aria-label')||'').startsWith('Estimated API cost')); if (!b) return false; b.click(); return true; })()`,
+    // Data-dependent: the chip only renders once cost data is available, so a
+    // fresh `OPENCODEX_HOME` may legitimately have nothing to click. The guard
+    // reports that rather than inventing a shot.
+    open: `(() => { const b = document.querySelector('.m3-cost-chip'); if (!b) return false; b.click(); return true; })()`,
     appears: `[role="dialog"], [role="menu"], .m3-menu`,
   },
   {
@@ -78,8 +106,8 @@ const MENUS: Menu[] = [
   {
     name: "tab-search",
     page: "dashboard",
-    open: `(() => { const b = [...document.querySelectorAll('button')].find(b => /search tabs|find tab/i.test(b.getAttribute('aria-label')||'')); if (!b) return false; b.click(); return true; })()`,
-    appears: `input[placeholder*="tab" i], [role="dialog"], .m3-menu`,
+    open: `(() => { const b = document.querySelector('[aria-label="Find a tab"]'); if (!b) return false; b.click(); return true; })()`,
+    appears: `input[placeholder*="tab" i], [role="dialog"], .m3-menu, .m3-tabsearch`,
   },
   {
     name: "tab-context",
@@ -99,9 +127,11 @@ const MENUS: Menu[] = [
   {
     name: "settings-search-regex",
     page: "network",
-    // The regex builder anchored to a settings search bar — the `.*` chip.
-    open: `(() => { const b = [...document.querySelectorAll('button')].find(b => (b.textContent||'').trim() === '.*' || /regex/i.test(b.getAttribute('aria-label')||'')); if (!b) return false; b.click(); return true; })()`,
-    appears: `[role="dialog"], .m3-regex, .rx-panel, .m3-menu`,
+    // The regex builder anchored to a settings search bar. Not the `.*` chip —
+    // that is the "Regex mode" toggle beside it, which switches the field's
+    // matching and opens nothing.
+    open: `(() => { const b = document.querySelector('[aria-label="Build a pattern to search these settings"]'); if (!b) return false; b.click(); return true; })()`,
+    appears: `[role="dialog"], .m3-regex, .rx-panel, .m3-menu, .rx-builder`,
   },
 ];
 
