@@ -92,12 +92,57 @@ export const VERSION = (() => {
  *
  * Rebuilt per request because the rows are read lazily; nothing here holds data.
  */
-function exportDatasets(): Map<string, Dataset> {
+function exportDatasets(config: OcxConfig): Map<string, Dataset> {
   const datasets: Dataset[] = [
     {
       id: "requests",
       label: "Request log",
       rows: () => getRequestLogEntries().map(entry => requestLogDto(entry) as Record<string, unknown>),
+    },
+    {
+      id: "providers",
+      label: "Providers",
+      rows: () => Object.entries(config.providers ?? {}).map(([name, provider]) => ({
+        name,
+        adapter: provider.adapter,
+        baseUrl: provider.baseUrl,
+        authMode: provider.authMode,
+        // `apiKey` is deliberately not here. A provider key is a live credential,
+        // and an export is a file that gets mailed, synced and forgotten about.
+        // Whether one is configured is the useful fact; the value is not.
+        apiKeyConfigured: !!provider.apiKey,
+      })),
+    },
+    {
+      id: "combos",
+      label: "Combos",
+      rows: () => Object.entries(config.combos ?? {}).map(([name, combo]) => ({
+        name,
+        ...(combo as unknown as Record<string, unknown>),
+      })),
+    },
+    {
+      id: "api-keys",
+      label: "API keys",
+      /*
+       * The metadata, never the secret.
+       *
+       * `config.apiKeys[].key` is the plaintext data-plane credential. Exporting
+       * it would put every key in a file whose whole purpose is to be moved
+       * somewhere else — and the formats this can be written in include HTML and
+       * Markdown, which people paste into issues. The prefix is enough to
+       * identify a row against the dashboard, which is what an export of this
+       * list is actually for.
+       *
+       * `ocx export` remains the deliberate way to move real credentials, and it
+       * says in as many words that it contains plaintext secrets.
+       */
+      rows: () => (config.apiKeys ?? []).map(entry => ({
+        id: entry.id,
+        name: entry.name,
+        prefix: entry.key.slice(0, 12),
+        createdAt: entry.createdAt,
+      })),
     },
   ];
   return new Map(datasets.map(dataset => [dataset.id, dataset]));
@@ -157,7 +202,7 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleComboRoutes(ctx))
     ??     (await handleSystemRoutes(ctx))
     ??     (await handleChangelogRoutes(ctx))
-    ??     (await handleExportRoutes(ctx, exportDatasets()))
+    ??     (await handleExportRoutes(ctx, exportDatasets(config)))
     ??     (await handleHostRoutes(ctx));
   if (routed) return routed;
 

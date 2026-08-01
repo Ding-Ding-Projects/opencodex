@@ -173,6 +173,63 @@ test("an unknown dataset is refused, and lists the real ones", async () => {
   }
 });
 
+test("the API-keys export carries metadata and never the secret", async () => {
+  // The one that would be quiet and catastrophic. `config.apiKeys[].key` is a
+  // live data-plane credential, and an export is a file whose entire purpose is
+  // to be moved somewhere else — into a spreadsheet, an issue, a chat. The
+  // formats include HTML and Markdown, which people paste.
+  const secret = "ocx_SUPERSECRETVALUE_do_not_export_me";
+  saveConfig({
+    ...baseConfig(),
+    apiKeys: [{ id: "k1", name: "Laptop", key: secret, createdAt: "2026-01-01T00:00:00.000Z" }],
+  } as unknown as OcxConfig);
+
+  const server = startServer(0);
+  try {
+    // Check every format, not just JSON: a leak through the CSV writer would be
+    // just as complete and rather less likely to be noticed.
+    for (const format of ["json", "csv", "yaml", "html", "markdown", "sql", "xml"]) {
+      const res = await managementFetch(new URL("/api/export", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset: "api-keys", format }),
+      });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text, `${format} leaked the key`).not.toContain(secret);
+      // The metadata is genuinely there — this is a redaction, not an empty file
+      // that would pass the assertion above by exporting nothing at all.
+      expect(text, `${format} lost the metadata`).toContain("Laptop");
+    }
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("the providers export reports whether a key is set, not what it is", async () => {
+  const providerKey = "sk-PROVIDER-SECRET-VALUE";
+  saveConfig({
+    ...baseConfig(),
+    providers: { xai: { adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "api-key", apiKey: providerKey } },
+  } as unknown as OcxConfig);
+
+  const server = startServer(0);
+  try {
+    const res = await managementFetch(new URL("/api/export", server.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset: "providers", format: "json" }),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(providerKey);
+    expect(text).toContain("apiKeyConfigured");
+    expect(JSON.parse(text)[0].apiKeyConfigured).toBe(true);
+  } finally {
+    await server.stop(true);
+  }
+});
+
 test("the export routes sit behind management auth like everything else", async () => {
   const server = startServer(0);
   try {
