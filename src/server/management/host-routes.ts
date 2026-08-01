@@ -49,7 +49,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
 import { addCustomDataPlaneKey, describeHost, hasDataPlaneCredential, mintDataPlaneKey } from "../../lib/host-control";
-import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled } from "../../lib/debug-sandbox";
+import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled, setSandboxExposedPreview } from "../../lib/debug-sandbox";
 import { cancelPairing, claimPairingToken, createPairingToken, hasOutstandingPairing } from "../../lib/pairing";
 import { takeClaimAttempt } from "../../lib/pairing-rate-limit";
 import { listStateHistory, listStateHistoryEntries, restoreStateFromHistory } from "../../lib/state-history";
@@ -212,6 +212,10 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
     try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
 
     if (body.exposed === false) {
+      if (debugSandboxEnabled()) {
+        setSandboxExposedPreview(null);
+        return jsonResponse({ ...hostStatusBody(config), restartRequired: false }, 200, req, config);
+      }
       config.hostname = "127.0.0.1";
       saveConfigPreservingClaudeCode(config);
       return jsonResponse({ ...hostStatusBody(config), restartRequired: true }, 200, req, config);
@@ -279,6 +283,17 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
       return jsonResponse({
         error: "An exposed bind requires a data-plane credential. Pass mintKeyIfMissing to generate one, or create a key first.",
       }, 409, req, config);
+    }
+
+    // In the sandbox the bind is recorded for display and the live config is left
+    // exactly as it was. Writing it here would be pointless (the save is blocked)
+    // and actively harmful: `isApiAuthRequired` reads `config.hostname`, so the
+    // running process would start demanding a credential for `/api/*` and `/v1/*`
+    // while the sandbox refuses to mint one — leaving a process no credential can
+    // satisfy, on the very flow this mode exists to demonstrate.
+    if (debugSandboxEnabled()) {
+      setSandboxExposedPreview(hostname);
+      return noStore(jsonResponse({ ...hostStatusBody(config), mintedKey: null, restartRequired: true }, 200, req, config));
     }
 
     config.hostname = hostname;

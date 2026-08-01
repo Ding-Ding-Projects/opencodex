@@ -13,10 +13,17 @@ configuration or minting a credential somebody has to remember to revoke.
 
 :::caution[It does not make the process leave no trace]
 This blocks **configuration changes and credential issuance**. It does not stop opencodex writing
-its other files. The usage log, the diagnostic log, the crash log, the responses state file, the pid
-and runtime-port files, the local git state history, the admin credential file on a fresh config
-directory, and the OAuth credential store on sign-in or token refresh are all written as normal — and
-the config directory and log tree are created at startup before the flag is consulted.
+its other files, and two of those matter more than their names suggest:
+
+- **The responses state file** holds the **verbatim text of prompts and replies**.
+- **The local git state history** is **append-only**, and commits `config.json`, `codex-accounts.json`
+  and `auth.json` into it — so deleting a credential file afterwards does **not** remove it from the
+  history.
+
+Also written as normal: the usage log, the diagnostic log, the crash log, the pid and runtime-port
+files, the admin credential file on a fresh config directory, and the OAuth credential store on
+sign-in or token refresh. The config directory and log tree are created at startup, before the flag
+is consulted at all.
 
 If you need a run that genuinely leaves nothing behind, point `OPENCODEX_HOME` at a throwaway
 directory and delete it afterwards. This flag complements that; it does not replace it.
@@ -120,6 +127,22 @@ mode. It is pinned by a test.
 Nothing was issued, so there is nothing to spend. The same code keeps working, and leaving the
 sandbox lets you pair with it for real without generating another.
 
+## How the enabled state is shown without enabling anything
+
+Turning *Reachable from other devices* on inside the sandbox does **not** set the hostname, even in
+memory. The requested bind is recorded for display only, and `describeHost` renders from it; the live
+config, the auth posture and the listening socket are all untouched.
+
+That indirection is not neatness — the direct version was a trap. `isApiAuthRequired` is derived from
+`config.hostname`, so setting it made the running process demand a credential for `/api/*` and
+`/v1/*`, while the sandbox correctly refused to mint one. The result was a process **no credential
+could satisfy**: an unauthenticated `GET /v1/models` answered `200` before the toggle and `401`
+after, and so did one carrying the admin token. That is exactly the unreachable state
+`assertServerAuthConfig` exists to prevent at startup, reached at runtime instead.
+
+A test pins it: after the toggle the data plane answers exactly as it did before, and the persisted
+hostname is still loopback.
+
 ## Failure modes
 
 | Symptom | Cause |
@@ -152,4 +175,4 @@ why the tests now drive the real route over a real socket rather than calling th
 - [Remote access and pairing a phone](/guides/launcher-and-terminal/#pairing-a-phone-with-a-qr-code) —
   the flow this mode lets you exercise safely
 - [The web dashboard](/guides/web-dashboard/) — the two-credential split the sandbox does not alter
-- [Log files](/guides/log-files/) — where the announcement line is written
+- [Log files](/guides/log-files/) — the files the sandbox does **not** stop being written

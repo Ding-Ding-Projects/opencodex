@@ -11,7 +11,7 @@
 
 import { randomBytes } from "node:crypto";
 
-import { debugSandboxEnabled } from "./debug-sandbox";
+import { debugSandboxEnabled, sandboxExposedPreview } from "./debug-sandbox";
 import { networkInterfaces } from "node:os";
 import { isLoopbackHostname } from "../server/auth-cors";
 import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
@@ -57,7 +57,13 @@ export interface HostStatus {
 }
 
 export function describeHost(config: OcxConfig): HostStatus {
-  const hostname = config.hostname ?? "127.0.0.1";
+  // In the sandbox the "enabled" state is a display fiction: the config was never
+  // changed, so the auth posture and the socket are both untouched, and only this
+  // read pretends otherwise. See `exposedPreview` in `debug-sandbox.ts` for why
+  // the obvious alternative — mutating `config.hostname` — made the running
+  // process reject every credential it had.
+  const preview = debugSandboxEnabled() ? sandboxExposedPreview() : null;
+  const hostname = preview ?? config.hostname ?? "127.0.0.1";
   const port = config.port;
   const exposed = !isLoopbackHostname(hostname);
   const hosts = ALL_INTERFACES.has(hostname) ? lanAddresses() : exposed ? [hostname] : [];

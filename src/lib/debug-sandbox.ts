@@ -87,6 +87,36 @@ export function debugSandboxEnabled(env: NodeJS.ProcessEnv = process.env): boole
   return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
+/**
+ * The bind the sandbox is *pretending* to have, for display only.
+ *
+ * The whole point of the mode is to look at Remote access in its enabled state,
+ * and the obvious way to do that — set `config.hostname = "0.0.0.0"` in memory —
+ * turned out to be a trap. `isApiAuthRequired` is derived from
+ * `config.hostname`, so flipping it made the running process demand a credential
+ * for `/api/*` and `/v1/*`; and because the sandbox also (correctly) refuses to
+ * mint one, the process landed in a state where **no credential that exists can
+ * satisfy it**. Measured: an unauthenticated `GET /v1/models` answered 200 before
+ * the toggle and 401 after, and so did one carrying the admin token.
+ *
+ * That is precisely the unreachable state `assertServerAuthConfig` exists to
+ * prevent at startup, reached at runtime instead. So the sandbox no longer
+ * touches `config.hostname` at all — it records the requested bind here, and
+ * `describeHost` renders from it. The screen shows the enabled state; the auth
+ * posture, like the listening socket, never moves.
+ */
+let exposedPreview: string | null = null;
+
+/** Record the bind the sandboxed UI should display, or `null` to go back to real. */
+export function setSandboxExposedPreview(hostname: string | null): void {
+  exposedPreview = hostname;
+}
+
+/** The pretended bind, or `null` when the sandbox is showing the real one. */
+export function sandboxExposedPreview(): string | null {
+  return exposedPreview;
+}
+
 /** Whether the banner below has already been printed by this process. */
 let announced = false;
 
@@ -111,4 +141,5 @@ export function announceDebugSandboxOnce(log: (message: string) => void = consol
 /** Test seam — lets a case observe the first-time announcement more than once. */
 export function resetDebugSandboxAnnouncementForTests(): void {
   announced = false;
+  exposedPreview = null;
 }

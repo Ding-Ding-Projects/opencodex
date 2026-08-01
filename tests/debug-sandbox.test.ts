@@ -27,6 +27,7 @@ import {
 import { DebugSandboxMintError, describeHost, mintDataPlaneKey } from "../src/lib/host-control";
 import { claimPairingToken, createPairingToken, resetPairingForTests } from "../src/lib/pairing";
 import { startServer } from "../src/server";
+import { isLoopbackHostname } from "../src/server/auth-cors";
 import type { OcxConfig } from "../src/types";
 import { managementFetch } from "./helpers/management-auth";
 import { removeTempDir } from "./helpers/temp-dir";
@@ -300,6 +301,70 @@ describe("the two paths that bypass the funnels", () => {
       const body = await res.json() as { success?: boolean; error?: string };
       expect(body.success).toBe(false);
       expect(body.error).toContain(DEBUG_SANDBOX_ENV);
+    } finally {
+      await server.stop(true);
+    }
+  });
+});
+
+describe("showing the enabled state must not break the running process", () => {
+  test("the data plane still answers after the toggle, and config.hostname never moves", async () => {
+    // The regression this pins was introduced BY the fix above. Blocking the mint
+    // while waiving the credential gate left `isApiAuthRequired` true with zero
+    // apiKeys — a state no credential can satisfy, reached on the mode's headline
+    // flow. Measured then: unauthenticated /v1/models 200 before, 401 after, and
+    // 401 with the admin token too. The sandbox now records the bind for display
+    // and leaves the live config alone.
+    process.env[DEBUG_SANDBOX_ENV] = "1";
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const before = await globalThis.fetch(new URL("/v1/models", server.url));
+
+      const put = await managementFetch(new URL("/api/host", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exposed: true, mintKeyIfMissing: true }),
+      });
+      expect(put.status).toBe(200);
+      const body = await put.json() as { exposed?: boolean; hostname?: string; urls?: string[] };
+      // The screen genuinely shows the enabled state — that is the point.
+      expect(body.exposed).toBe(true);
+
+      // And the process is exactly as reachable as it was a moment ago.
+      const after = await globalThis.fetch(new URL("/v1/models", server.url));
+      expect(after.status).toBe(before.status);
+
+      // The live config was never moved off loopback, which is what keeps the
+      // auth posture still and the listening socket honest. Asserted as "not the
+      // exposed bind" rather than a literal: an unset hostname reads back as
+      // `undefined` and means loopback, so pinning the exact string would fail
+      // for a reason that has nothing to do with what is being tested.
+      const persisted = loadConfig().hostname;
+      expect(persisted === undefined || isLoopbackHostname(persisted)).toBe(true);
+      expect(persisted).not.toBe("0.0.0.0");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("toggling back off returns the display to the real bind", async () => {
+    process.env[DEBUG_SANDBOX_ENV] = "1";
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      await managementFetch(new URL("/api/host", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exposed: true, mintKeyIfMissing: true }),
+      });
+      const off = await managementFetch(new URL("/api/host", server.url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exposed: false }),
+      });
+      expect(off.status).toBe(200);
+      expect((await off.json() as { exposed?: boolean }).exposed).toBe(false);
     } finally {
       await server.stop(true);
     }
