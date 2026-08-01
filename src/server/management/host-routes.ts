@@ -49,7 +49,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
 import { addCustomDataPlaneKey, describeHost, hasDataPlaneCredential, mintDataPlaneKey } from "../../lib/host-control";
-import { debugSandboxEnabled } from "../../lib/debug-sandbox";
+import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled } from "../../lib/debug-sandbox";
 import { cancelPairing, claimPairingToken, createPairingToken, hasOutstandingPairing } from "../../lib/pairing";
 import { takeClaimAttempt } from "../../lib/pairing-rate-limit";
 import { listStateHistory, listStateHistoryEntries, restoreStateFromHistory } from "../../lib/state-history";
@@ -575,6 +575,18 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   }
 
   if (url.pathname === "/api/host/restore" && req.method === "POST") {
+    // `restoreStateFromHistory` rewrites the state files directly — it does not
+    // go through `saveConfig`, so the sandbox's guard never sees it. Restoring an
+    // old revision would therefore be the one action in this mode that really
+    // does change the machine's config on disk, which is precisely what the mode
+    // exists not to do. Refused up front, before anything drains.
+    if (debugSandboxEnabled()) {
+      announceDebugSandboxOnce();
+      return jsonResponse({
+        success: false,
+        error: `${DEBUG_SANDBOX_ENV} is set: restoring would write the state files directly, which this mode exists to prevent. Restart without it to restore.`,
+      }, 409, req, config);
+    }
     let body: { commit?: unknown; drainMs?: unknown; force?: unknown };
     try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
     const commit = typeof body.commit === "string" ? body.commit.trim() : "";

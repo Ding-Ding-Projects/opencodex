@@ -259,6 +259,53 @@ describe("no credential is issued by any route", () => {
   });
 });
 
+describe("the two paths that bypass the funnels", () => {
+  // Both found by auditing every writer and every minter rather than the two the
+  // guard already covered. Each reaches its effect without going through
+  // `saveConfig` or `mintDataPlaneKey`, so neither backstop would have caught it.
+
+  test("POST /api/keys mints its own key format, and is refused too", async () => {
+    process.env[DEBUG_SANDBOX_ENV] = "1";
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const res = await managementFetch(new URL("/api/keys", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "test" }),
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json() as { key?: string; error?: string };
+      expect(body.key).toBeUndefined();
+      expect(body.error).toContain(DEBUG_SANDBOX_ENV);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("POST /api/host/restore writes state files directly, and is refused before it drains", async () => {
+    // The dangerous one: a restore rewrites config on disk without touching
+    // `saveConfig`, so in the sandbox it would be the single action that really
+    // did change the machine.
+    process.env[DEBUG_SANDBOX_ENV] = "1";
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const res = await managementFetch(new URL("/api/host/restore", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commit: "deadbeef" }),
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json() as { success?: boolean; error?: string };
+      expect(body.success).toBe(false);
+      expect(body.error).toContain(DEBUG_SANDBOX_ENV);
+    } finally {
+      await server.stop(true);
+    }
+  });
+});
+
 describe("the dashboard is told", () => {
   test("describeHost reports the sandbox so the UI can say so", () => {
     expect(describeHost(baseConfig()).debugSandbox).toBe(false);

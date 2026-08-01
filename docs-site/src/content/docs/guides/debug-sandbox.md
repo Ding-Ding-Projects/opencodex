@@ -45,6 +45,8 @@ not quietly arm it.
 | `config.json` writes via `saveConfig` | Every settings change is written | Nothing is written. An existing file is left byte-for-byte alone |
 | Pairing | A correct code mints a data-plane key and persists it | The claim is **refused** with the reason `sandbox`. No key is minted |
 | Minting a data-plane key | `mintDataPlaneKey` mints on demand — including the one-click *enable remote access* opt-in | Refused. `mintDataPlaneKey` throws as a backstop, and each caller checks first and reports honestly |
+| `POST /api/keys` | Mints its own `ocx_data_…` key without going through `mintDataPlaneKey` | Refused with `409` |
+| `POST /api/host/restore` | Rewrites the state files **directly**, not through `saveConfig` | Refused with `409`, before anything drains — this is the one action that would otherwise really change the machine |
 
 One thing that is **not** blocked and looks like it should be: a key **you supply yourself** through
 the custom-key field is still accepted into the running config. Nothing issues it and nothing writes

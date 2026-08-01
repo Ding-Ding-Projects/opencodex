@@ -68,6 +68,7 @@ import { isPlainRecord, parseDebugLogQuery, tokPerSecondResult, unavailableCostR
 import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, CostResult, MetricSource } from "./shared";
 import type { ManagementContext } from "./context";
 import { codexAccountNamespaceProviderCollisionError } from "../../codex/account-namespace-match";
+import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled } from "../../lib/debug-sandbox";
 
 export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config, deps, refreshCodexCatalogBestEffort, syncClaudeAgentDefsBestEffort } = ctx;
@@ -484,6 +485,19 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
   if (url.pathname === "/api/keys" && req.method === "POST") {
     const body = await req.json() as { name?: string };
     const name = (body.name ?? "").trim() || "default";
+    // The debug sandbox issues no credentials, and this route is a second way to
+    // get one — it mints its own `ocx_data_…` rather than calling
+    // `mintDataPlaneKey`, so the backstop there does not cover it. A key handed
+    // out here would be live against the running process and gone at the next
+    // start, which is the same worthless-but-real credential the pairing and
+    // host-enable paths already refuse.
+    if (debugSandboxEnabled()) {
+      announceDebugSandboxOnce();
+      return jsonResponse({
+        error: `${DEBUG_SANDBOX_ENV} is set: no API key will be created, because nothing would be written and the key would die with this process.`,
+      }, 409, req, config);
+    }
+
     // Generate key from provider keys hash + random salt
     const providerKeys = Object.values(config.providers).map(p => p.apiKey ?? "").filter(Boolean).join("|");
     const salt = crypto.randomUUID();
