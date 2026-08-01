@@ -230,6 +230,22 @@ test("the providers export reports whether a key is set, not what it is", async 
   }
 });
 
+test("the CLI and the route offer the same lists, from one registry", async () => {
+  // The repo's headless-parity test caught `/api/export` shipping with no CLI
+  // behind it. Two registries would satisfy that test and still drift: a list
+  // added to one, a redaction remembered in one. So both read `DATASETS`, and
+  // this asserts the two answers are literally the same set.
+  const { listDatasets } = await import("../src/lib/export-datasets");
+  const server = startServer(0);
+  try {
+    const res = await managementFetch(new URL("/api/export/capabilities", server.url));
+    const body = await res.json() as { datasets: Array<{ id: string }> };
+    expect(body.datasets.map(d => d.id).sort()).toEqual(listDatasets().map(d => d.id).sort());
+  } finally {
+    await server.stop(true);
+  }
+});
+
 test("the export routes sit behind management auth like everything else", async () => {
   const server = startServer(0);
   try {

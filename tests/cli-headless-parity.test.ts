@@ -70,6 +70,9 @@ describe("headless GUI parity CLI", () => {
       ["/api/debug", "ocx debug/observe"],
       ["/api/diagnostics", "ocx system"],
       ["/api/effort", "ocx agent"],
+      // `ocx export data <list>` — the same registry, serialisers and redaction
+      // the route uses, so neither surface can offer a list the other cannot.
+      ["/api/export", "ocx export data"],
       ["/api/grok", "ocx grok"],
       ["/api/host", "ocx host/export"],
       ["/api/injection", "ocx agent"],

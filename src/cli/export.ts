@@ -19,7 +19,7 @@ import { join, resolve } from "node:path";
 import { getConfigDir, readConfigDiagnostics } from "../config";
 import { listStateHistory } from "../lib/state-history";
 
-const USAGE = "Usage: ocx export <path|-> --yes  |  ocx export --history [--json]";
+const USAGE = "Usage: ocx export <path|-> --yes  |  ocx export --history [--json]  |  ocx export data <dataset> [--format <f>] [--out <path>] [--list]";
 
 const WARNING = `
 ⚠️  THIS EXPORT CONTAINS SECRETS.
@@ -56,6 +56,59 @@ export async function handleExportCommand(args: string[]): Promise<number> {
   }
 
   const json = args.includes("--json");
+
+  /*
+   * `ocx export data` — the headless twin of `/api/export`.
+   *
+   * The GUI must never be able to do something the CLI cannot; the repo's own
+   * parity test enforces that, and it is what caught this route family shipping
+   * with no command behind it. Same registry, same serialisers, same redaction —
+   * this is a second front door onto one implementation, not a second
+   * implementation.
+   */
+  if (args[0] === "data") {
+    const { datasetRows, listDatasets } = await import("../lib/export-datasets");
+    const { EXPORT_FORMATS, describeFidelity, filenameFor, serialize } = await import("../lib/export-formats");
+
+    if (args.includes("--list") || args.length === 1) {
+      const available = listDatasets();
+      if (json) { console.log(JSON.stringify({ datasets: available, formats: EXPORT_FORMATS }, null, 2)); return 0; }
+      console.log("Exportable lists:\n");
+      for (const dataset of available) console.log(`  ${dataset.id.padEnd(12)} ${dataset.label}`);
+      console.log(`\nFormats: ${EXPORT_FORMATS.join(", ")}`);
+      console.log("\nExample:  ocx export data requests --format csv --out requests.csv");
+      return 0;
+    }
+
+    const id = args[1];
+    const rows = datasetRows(id);
+    if (!rows) {
+      console.error(`Unknown list "${id}". Known: ${listDatasets().map(d => d.id).join(", ")}`);
+      return 2;
+    }
+
+    const formatIndex = args.indexOf("--format");
+    const requested = formatIndex === -1 ? "json" : args[formatIndex + 1];
+    if (!(EXPORT_FORMATS as readonly string[]).includes(String(requested))) {
+      console.error(`Unknown format "${requested}". Known: ${EXPORT_FORMATS.join(", ")}`);
+      return 2;
+    }
+    const format = requested as (typeof EXPORT_FORMATS)[number];
+
+    const input = { name: id, rows };
+    // Said before the write, on stderr so it cannot corrupt a piped document.
+    const fidelity = describeFidelity(input, format);
+    for (const loss of fidelity.losses) console.error(`note: ${loss}`);
+
+    const body = serialize(input, format);
+    const outIndex = args.indexOf("--out");
+    if (outIndex === -1) { process.stdout.write(body); return 0; }
+
+    const target = args[outIndex + 1] ?? filenameFor(id, format);
+    writeFileSync(resolve(target), body, "utf-8");
+    console.log(`Wrote ${rows.length} record(s) to ${resolve(target)}`);
+    return 0;
+  }
 
   if (args.includes("--history")) {
     const entries = listStateHistory(20);
