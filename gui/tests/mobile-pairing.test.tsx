@@ -148,43 +148,42 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
       </PrefsProvider>,
     );
   });
-  // Wait for the key to actually reach the component, rather than assuming a
-  // fixed number of microtask turns gets it there.
+  // Wait for the key to actually reach the COMPONENT, which is a different event
+  // from the key reaching storage, and the one every previous version got wrong.
   //
-  // Two wrong versions preceded this one, and the second is the instructive one:
+  // Three wrong versions preceded this one:
   //
-  //  1. A flat six turns. Enough on a developer machine, not always enough on CI.
-  //  2. Waiting on `isClaimApplied()`. Still wrong, and it looked right — that
-  //     latch is set *before* `saveKey` runs, so the hop that actually matters
-  //     was still riding the same fixed count. CI went green once and red again.
+  //  1. A flat six microtask turns. Enough on a developer machine and enough
+  //     alone; not enough once a heavier test file had run first.
+  //  2. Waiting on `isClaimApplied()`. That latch is set *before* `saveKey`
+  //     runs, so the hop that actually matters was still riding the fixed count.
+  //  3. Waiting on `readPairedKey()`. Closer, but `saveKey` writes storage and
+  //     queues `setApiKey` in the same call, so a populated storage proves only
+  //     that the update was *queued*. It also left a hole: when the claim latch
+  //     flipped first, the loop exited with the key not yet stored and skipped
+  //     the state wait entirely.
   //
-  // `saveKey` queues `setApiKey` and *then* writes storage, so a non-empty
-  // `readPairedKey()` proves the state update is already queued — after which a
-  // single flush lands it. The failure it prevents: `apiKey` still "" at submit,
-  // so the screen says "the proxy needs a key" instead of "the key was refused",
-  // and the assertion fails on a message the component was right to print.
+  // When the wait was short, `apiKey` was still "" at submit, so the 401 handler
+  // took the other branch and printed "the proxy needs a key" instead of "the
+  // key was refused". That is a permanently wrong string rather than a slow one,
+  // which is why polling the assertion could never recover it.
   //
-  // `isClaimApplied()` is still in the condition, for the cases where the claim
-  // resolves to a refusal and no key is ever stored — otherwise those spin to the
-  // cap on every run.
+  // So: wait for the claim to resolve, then — only if it produced a key — for
+  // the key to be stored, then for the refetch of `/v1/models` carrying an
+  // Authorization header. That last one only happens after the component has
+  // re-rendered with the key, so it is the event itself rather than a guess
+  // about scheduling.
   for (let i = 0; i < 200 && !readPairedKey() && !isClaimApplied(); i++) {
     await act(async () => { await Promise.resolve(); });
   }
-
-  // Then wait for the key to reach REACT, which is a different event from the
-  // key reaching storage — and the one every previous version of this got wrong.
-  //
-  // `saveKey` queues `setApiKey` and writes storage in the same call, so a
-  // populated `localStorage` proves only that the update was *queued*. Three
-  // versions waited on storage or on the claim latch and then flushed a fixed
-  // number of turns, which was enough alone and not enough after a heavier file
-  // had run first. When it was not enough, `apiKey` was still "" at submit and
-  // the screen printed "the proxy needs a key" instead of "the key was refused"
-  // — a permanently wrong string, so no amount of later polling could recover.
-  //
-  // The refetch of `/v1/models` *with an Authorization header* only happens once
-  // the component re-rendered with the key, so it is the event itself rather
-  // than a guess about scheduling.
+  // A claim that resolved to a refusal never stores a key, and waiting for one
+  // would spin to the cap on every such test. A claim that succeeded stores it
+  // within a turn or two of the latch.
+  if (isClaimApplied()) {
+    for (let i = 0; i < 200 && !readPairedKey(); i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+  }
   if (readPairedKey()) {
     for (let i = 0; i < 200 && authedModelFetches === 0; i++) {
       await act(async () => { await Promise.resolve(); });

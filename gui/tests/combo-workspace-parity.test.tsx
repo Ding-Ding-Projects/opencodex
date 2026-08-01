@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ComboItem } from "../src/combo-workspace-data";
 import ComboWorkspace from "../src/components/ComboWorkspace";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -64,6 +65,7 @@ function workspace(extra: Partial<Parameters<typeof ComboWorkspace>[0]> = {}) {
     // so the provider it reads has to exist even in the tests that never save.
     <LanguageProvider>
       <NotificationsProvider>
+            <ConfirmProvider>
         <ComboWorkspace
           combos={combos}
           providers={[{ name: "openai" }, { name: "anthropic" }]}
@@ -78,7 +80,8 @@ function workspace(extra: Partial<Parameters<typeof ComboWorkspace>[0]> = {}) {
           onCreated={() => {}}
           {...extra}
         />
-      </NotificationsProvider>
+      </ConfirmProvider>
+          </NotificationsProvider>
     </LanguageProvider>
   );
 }

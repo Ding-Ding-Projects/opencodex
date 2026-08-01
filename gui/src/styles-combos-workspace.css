@@ -98,6 +98,35 @@
   font-weight: 500;
 }
 
+/* The tick box sits beside the row rather than inside it — a checkbox nested in
+   a button is invalid markup, and the two gestures mean different things. The
+   wrapper keeps them on one line without the row losing its full-width fill. */
+.combos-workspace-rail-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.combos-workspace-rail-check {
+  flex: none;
+  /* Material asks for a 48dp target; the visual box stays 18px and the padding
+     carries the rest, so the hit area is honest without a fat-looking rail. */
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 15px;
+  box-sizing: content-box;
+  margin-inline: -11px;
+  accent-color: var(--m3-primary);
+  cursor: pointer;
+}
+
+.combos-workspace-rail-check:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+  border-radius: var(--r-xs, 4px);
+}
+
 .combos-workspace-rail-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto 18px;

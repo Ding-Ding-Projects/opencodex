@@ -5,6 +5,7 @@ import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import ComboWorkspace from "../src/components/ComboWorkspace";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 import SnackbarHost from "../src/shell/SnackbarHost";
 
@@ -37,6 +38,7 @@ test("an empty combo list renders the first-combo editor inline", () => {
   const html = renderToStaticMarkup(
     <LanguageProvider>
       <NotificationsProvider>
+            <ConfirmProvider>
         <ComboWorkspace
           combos={[]}
           providers={[{ name: "openai" }]}
@@ -50,7 +52,8 @@ test("an empty combo list renders the first-combo editor inline", () => {
           onCloseAdd={() => {}}
           onCreated={() => {}}
         />
-      </NotificationsProvider>
+      </ConfirmProvider>
+          </NotificationsProvider>
     </LanguageProvider>,
   );
 
@@ -78,6 +81,7 @@ test("an empty combo list creates the first combo and shows confirmation", async
       // container the assertion reads. What the user is told is unchanged.
       <LanguageProvider>
         <NotificationsProvider>
+            <ConfirmProvider>
           <ComboWorkspace
             combos={[]}
             providers={[{ name: "openai" }]}
@@ -95,7 +99,8 @@ test("an empty combo list creates the first combo and shows confirmation", async
             onCreated={(id) => { createdId = id; }}
           />
           <SnackbarHost />
-        </NotificationsProvider>
+        </ConfirmProvider>
+          </NotificationsProvider>
       </LanguageProvider>,
     );
   });

@@ -5,6 +5,7 @@ import type { Root } from "react-dom/client";
 import type { ComboItem } from "../src/combo-workspace-data";
 import ComboWorkspace from "../src/components/ComboWorkspace";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -86,6 +87,7 @@ test("Strict Mode: edit, revert, and unsaved navigation keep dirty state coheren
           {/* The detail panel reports a successful save as a snackbar now, so the
               provider it reads has to exist even where no save happens. */}
           <NotificationsProvider>
+            <ConfirmProvider>
             <ComboWorkspace
               combos={combos}
               providers={[{ name: "openai" }]}
@@ -99,6 +101,7 @@ test("Strict Mode: edit, revert, and unsaved navigation keep dirty state coheren
               onCloseAdd={() => {}}
               onCreated={() => {}}
             />
+          </ConfirmProvider>
           </NotificationsProvider>
         </LanguageProvider>
       </StrictMode>,
