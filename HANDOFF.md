@@ -51,7 +51,37 @@ Run from `gui/`:
 | `node node_modules/typescript/bin/tsc --noEmit` | clean |
 | `./node_modules/.bin/eslint src --max-warnings=0` | clean |
 
-Root: `bun run typecheck` clean.
+Root: `bun run typecheck` clean; `bun test --isolate tests` **6,304 pass across 457 files** locally
+(17 minutes). The root suite has now been seen green — the standing note further down saying it
+never has is superseded as of this entry.
+
+### Security review of what was merged, and what came of it
+
+The merged pairing code was reviewed after it landed. **The protocol itself is sound** — single-use
+with no TOCTOU window (the critical section has no `await`), 256-bit CSPRNG tokens compared with
+`timingSafeEqual`, expiry genuinely enforced, the minted key data-plane scope only and unable to
+satisfy management auth, and the token never leaves the URL fragment so it is never in a request
+line, a `Referer`, or a log. Three defects came out of it, all on the one unauthenticated route.
+
+Fixed in `c856dd53`:
+
+1. **The rate limiter could be held down indefinitely.** One global window, ten attempts a minute,
+   shared by everyone — so **0.17 requests per second** kept pairing refused for as long as an
+   attacker cared to continue, and regenerating the code did not help because the counter never
+   belonged to the code. No credential and not even parseable JSON required. Now split into an
+   armed budget (reset by `armClaimBudget` whenever a code is minted) and an idle floor, so
+   draining a budget nobody was pairing against costs the user nothing. Regression test added.
+2. **The body was bounded only by Bun's 128 MiB default** on the one route with no credential in
+   front of it. Now 4 KiB, streamed and abandoned partway rather than buffered then measured.
+   Regression test added.
+3. A near-miss introduced while fixing (1): asking the limiter's question with `peekPairing` broke
+   expired claims, because that function drops an expired token *as it reads*. Added
+   `hasOutstandingPairing`, which answers without mutating. The suite caught it.
+
+Left open deliberately, as [#3](https://github.com/Ding-Ding-Projects/opencodex/issues/3):
+the refusal `reason` lets an unauthenticated caller learn whether a QR is on screen right now.
+Low severity — it yields neither token nor key — but the fix changes user-visible copy, so it wants
+a decision rather than a quick patch.
 
 > [!WARNING]
 > During the fixing, two full-suite runs reported `1 fail` while `(fail)` never appeared in their
@@ -66,7 +96,7 @@ Root: `bun run typecheck` clean.
 > install layout means `npx` misses them. Use `node node_modules/typescript/bin/tsc` and
 > `./node_modules/.bin/eslint`.
 
-### Root CI is red, and was already red before this merge
+### Root CI was red on a coin flip — diagnosed, mitigated in `5b4a4527`
 
 `bun test --isolate tests` **crashes Bun itself** on `windows-latest`:
 
@@ -75,14 +105,33 @@ panic(thread 7084): Internal assertion failure
 oh no: Bun has crashed. This indicates a bug in Bun, not your code.
 ```
 
-Bun 1.3.14, ~41s in, after the suite has spawned several HTTP servers
-(`workers_spawned(9) workers_terminated(8)`). Observed on run `30671466154` **and on its rerun**, so
-it is not a one-off — I was wrong to first read it as flaky. It is on commit `0e122bc9`, which
-changed `HANDOFF.md` and nothing else, so **this merge did not cause it**. It matches the standing
-note below that the root suite has never been seen green.
+Bun 1.3.14, ~42s in, on the ninth worker (`workers_spawned(9) workers_terminated(8)`).
 
-Not diagnosed and not fixed. The next useful step is to establish whether `--isolate` is the
-trigger by running the root suite locally without it.
+**The variable is the runner image, not the commit.** `windows-latest` is currently serving a mix,
+and the correlation is exact across every run checked:
+
+| Test-job image | Result |
+| --- | --- |
+| `20260728.188.1` | passed |
+| `20260714.173.1` | crashed — three times, including a rerun of the same commit |
+
+One of the crashes landed on `0e122bc9`, which changed `HANDOFF.md` and nothing else. That is what
+ruled the tests out. The same suite, same Bun, same `--isolate`, runs to completion **locally on
+Windows: 6,304 pass across 457 files in 17 minutes, no panic.**
+
+> [!NOTE]
+> I first read this as flaky, then as deterministic, and both were wrong. It is neither: it is
+> deterministic *per image* and random in which image you get. Two reruns crashing looked like
+> determinism only because both landed on the same image.
+
+**Mitigation, not a fix.** Bun 1.3.14 is the newest published, so there is nothing to upgrade into,
+and GitHub does not let a workflow pin an image to a patch version. `5b4a4527` retries the Test step
+**only** when the output carries the Bun panic signature, and re-raises immediately on any other
+non-zero exit — so a genuinely failing test still fails on the first attempt. That guard was checked
+against a stubbed runner in all three cases (ordinary failure → no retry; persistent crash → still
+red after three; crash-then-pass → green). The job timeout went 20 → 25 to pay for the retries.
+
+If this stops mattering because the old image ages out of the pool, the retry can go with it.
 
 ---
 
