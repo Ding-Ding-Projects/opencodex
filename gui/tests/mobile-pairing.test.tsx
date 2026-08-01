@@ -106,6 +106,18 @@ afterEach(() => {
   resetMobilePairingForTests();
 });
 
+/**
+ * Flush until `text` is on screen, or give up after a bounded number of turns.
+ *
+ * Bounded so a genuine regression still fails rather than hanging: the assertion
+ * that follows is what reports it, and it reports the real rendered text.
+ */
+async function waitForText(container: HTMLElement, text: string, turns = 100): Promise<void> {
+  for (let i = 0; i < turns && !container.textContent?.includes(text); i++) {
+    await act(async () => { await Promise.resolve(); });
+  }
+}
+
 async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   const { createRoot } = await import("react-dom/client");
   const container = document.createElement("div");
@@ -301,7 +313,17 @@ test("a rejected key asks to pair again rather than failing silently", async () 
     await act(async () => {
       form.dispatchEvent(new testWindow.Event("submit", { bubbles: true, cancelable: true }) as never);
     });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // Wait for the message, rather than for a fixed number of microtask turns
+    // and a hope.
+    //
+    // This was two turns. The send awaits a fetch, reads the 401, switches to
+    // the Control panel and renders — more hops than two on any run, and exactly
+    // two on the runs where it happened to work. It failed the moment anything
+    // else in the module graph shifted the timing: adding an unrelated import to
+    // `Logs.tsx`, or a block of keys to either locale file, each flipped it on
+    // its own, which is the signature of a race rather than a bug in any of them.
+    await waitForText(container, "scan a new pairing code");
 
     // A stale key is expected, not exotic — keys get revoked on the desktop and
     // wiped by a state restore. The screen has to name the fix.

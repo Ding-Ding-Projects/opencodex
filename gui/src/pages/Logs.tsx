@@ -18,6 +18,7 @@ import { consumeLogsSearchHandoff } from "./logs-search-handoff";
 import type { LogsTab } from "./logs-tab-keydown";
 import { logsTabKeyDown, readTabFromHash, selectLogsTab } from "./logs-tab-keydown";
 import { speedLabel } from "./logs-speed-label";
+import ExportDialog from "../components/ExportDialog";
 
 interface UsageBreakdown {
   inputTokens: number;
@@ -490,6 +491,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   const { notify } = useNotifications();
   const [footprint, setFootprint] = useState<LogFootprint | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -863,7 +865,14 @@ export default function Logs({ apiBase }: { apiBase: string }) {
             {t("logs.filter.conversation.clear")}
           </Button>
         )}
+        {/* Every list can be taken away, and this is the list people most often
+            want out of the app — into a spreadsheet, a notebook, or an editor. */}
+        <Button variant="text" onClick={() => setExporting(true)}>
+          {t("export.run")}
+        </Button>
       </div>
+
+      {exporting && <ExportDialog apiBase={apiBase} dataset="requests" onClose={() => setExporting(false)} />}
 
       {/* Informational, not a success: it reports what the active conversation filter
           adds up to, and it stays for exactly as long as that filter does. The legacy
