@@ -93,8 +93,18 @@ jobs:
 
           --- END UNTRUSTED DATA: existing open issues ---
           PROMPT
+      # Duplicate detection is advisory, so a dead inference service must not
+      # fail the run. GitHub Models is being retired and answers `410 ...
+      # scheduled retirement brownout`, which was turning every newly opened
+      # issue red for a reason that has nothing to do with the issue.
+      #
+      # With this, a failed inference means no duplicate suggestion — which is
+      # the same outcome as inference finding nothing, and is the safe direction:
+      # this workflow only ever *suggests* duplicates, so losing it silently
+      # under-reports rather than mislabelling someone's issue.
       - name: Run inference
         id: infer
+        continue-on-error: true
         uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1
         with:
           model: openai/gpt-4o-mini
@@ -112,6 +122,7 @@ jobs:
           prompt-file: prompt.txt
       - name: Parse matches
         id: parse
+        if: steps.infer.outcome == 'success'
         env:
           AI_RESPONSE: ${{ steps.infer.outputs.response }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}

@@ -221,6 +221,27 @@ jobs:
           echo "installer: $installer ($(wc -c < "$installer") bytes)"
           echo "codename: $DISH_NAME ($DISH_ZH)"
 
+          # The dish photo travels WITH the release, not only as a link in the
+          # notes. The note's <img> points at raw.githubusercontent at this SHA,
+          # which renders today and stops rendering the moment the repository is
+          # made private, renamed, or transferred — leaving a permanent record
+          # with a broken image. An attached asset is part of the release itself
+          # and survives all three.
+          #
+          # `release-codename.ts` has already refused to name a dish whose art is
+          # missing, so this file exists whenever we reach here; the check is for
+          # the case where that guarantee is changed out from under us, and it
+          # warns rather than failing, because a release with an installer and no
+          # photo is a far better outcome than no release at all.
+          photo="gui/public/dimsum/${DISH_ID}.webp"
+          photo_asset=""
+          if [ -s "$photo" ]; then
+            photo_asset="$photo#${DISH_ID}.webp"
+            echo "dish photo: $photo ($(wc -c < "$photo") bytes)"
+          else
+            echo "::warning::Dish photo $photo is missing; publishing without it."
+          fi
+
           # A heredoc rather than a quoted string: the notes are markdown, and
           # an image tag inside a shell string is one stray quote away from
           # becoming an unreadable release note nobody notices until it is
@@ -238,6 +259,7 @@ jobs:
           | --- | --- |
           | **opencodex-setup.exe** | Windows desktop app — proxy + dashboard, tray, start at login |
           | **opencodex-dashboard.zip** | The built dashboard alone; serve it next to a running proxy |
+          | **${DISH_ID}.webp** | The build's dim sum, attached so it outlives the link above |
 
           Installable releases, not npm packages — the npm package still ships through the audited Release workflow.
           NOTES
@@ -247,7 +269,8 @@ jobs:
             --title "build ${{ github.run_number }} · $DISH_ZH $DISH_NAME — v${version} @ ${SHA:0:9}" \
             --notes "$notes" \
             "$installer#opencodex-setup.exe" \
-            "opencodex-dashboard.zip"
+            "opencodex-dashboard.zip" \
+            ${photo_asset:+"$photo_asset"}
 
       # Neither a red run nor a skipped publish is self-explanatory when the
       # build itself succeeded. Say plainly that the installer exists and where,

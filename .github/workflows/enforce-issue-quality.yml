@@ -146,8 +146,20 @@ jobs:
             const bodyDelim = "SOURCE_" + require("crypto").randomBytes(16).toString("hex");
             fs.appendFileSync(process.env.GITHUB_OUTPUT, "source_body<<" + bodyDelim + "\n" + sourceBody + "\n" + bodyDelim + "\n");
 
+      # Translation is a courtesy, not the gate — so it must not fail the run.
+      #
+      # GitHub Models is being retired and now answers `410 GitHub Models is
+      # temporarily unavailable as part of a scheduled retirement brownout.`
+      # Without this, every issue opened shows a red check for a service outage
+      # that says nothing about the issue or the repository, and the quality gate
+      # below — which does the actual work and is unaffected — looks broken too.
+      #
+      # `continue-on-error` here rather than on the job: the steps after this one
+      # are guarded on `steps.ai.outcome`, so a missing translation skips the
+      # translation and nothing else. Any real failure in the gate still fails.
       - name: Detect and translate
         id: ai
+        continue-on-error: true
         if: steps.prepare.outputs.should_translate == 'true'
         uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1
         with:
@@ -177,7 +189,7 @@ jobs:
 
       - name: Parse AI response
         id: parse
-        if: steps.prepare.outputs.should_translate == 'true'
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome == 'success'
         env:
           AI_RESPONSE: ${{ steps.ai.outputs.response }}
         run: node .github/scripts/parse-issue-translation-response.cjs
@@ -483,8 +495,11 @@ jobs:
               "source_body<<" + bodyDelim + "\n" + decision.sourceBody + "\n" + bodyDelim + "\n",
             );
 
+      # Same reasoning as the issue translator above: a retiring external service
+      # must not turn every comment on every issue into a red check.
       - name: Detect and translate comment
         id: ai
+        continue-on-error: true
         if: steps.prepare.outputs.should_translate == 'true'
         uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1
         with:
@@ -513,7 +528,7 @@ jobs:
 
       - name: Parse AI response
         id: parse
-        if: steps.prepare.outputs.should_translate == 'true'
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome == 'success'
         env:
           AI_RESPONSE: ${{ steps.ai.outputs.response }}
         run: node .github/scripts/parse-issue-translation-response.cjs
