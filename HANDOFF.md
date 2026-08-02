@@ -1,5 +1,99 @@
 # Handoff
 
+## Squirrel installer, the docs site at 48dp, and a guard for the number — 2026-08-02, `33f8df6d`
+
+### The installer is Squirrel now, and it took three failed release builds
+
+Requested mid-session. `win.target` is `squirrel`, and the release carries
+Squirrel's update feed (`RELEASES` + the full `.nupkg`) beside `Setup.exe` — a
+release with only the installer is installable but not updatable, which is most
+of the reason to prefer Squirrel.
+
+**State when this was written: the fourth release build was still running.** The
+third got as far as producing the installer and the nupkg. Check it before
+assuming this shipped.
+
+Three failures, each teaching something worth keeping:
+
+1. **`Authors is required.`** — the whole error, from `nuget pack`. `package.json`
+   had never carried an `author`; NSIS never asked, so nothing noticed for years.
+2. **The same error again**, after setting it through `extraMetadata` in
+   `electron-builder.yml`. That looked equivalent and is not: electron-builder
+   computes app metadata from the ORIGINAL manifest before that merge. *The
+   error being byte-identical is what located it* — a second failure that says
+   exactly what the first said means the value is read from somewhere the change
+   never reached. It lives in `package.json` now.
+3. **`ls dist-desktop/*.exe` found nothing**, so the publish step refused to
+   release a build that had succeeded. Squirrel writes into
+   `dist-desktop/squirrel-windows/`; NSIS wrote to the root. Now recursive, and
+   the Setup binary is chosen *by name* — a recursive `*.exe` also matches
+   Squirrel's own `Update.exe`, and shipping that as the installer would be
+   worse than shipping nothing.
+
+> [!WARNING]
+> **A consent step is gone and cannot be recreated.** Squirrel has no installer
+> UI: always one-click, always per-user, no choice of directory. The NSIS config
+> set `oneClick: false` with `allowToChangeInstallationDirectory` *on purpose* —
+> the proxy writes to `~/.opencodex` and rewrites the native Codex config, and
+> the comment said the user should see where it is going and be able to opt out.
+> There is no wizard to put that back in. What survives is that both things it
+> warned about are reversible and visible from the app.
+
+**The part that is not optional:** Squirrel runs the app with
+`--squirrel-install`, `--squirrel-updated`, `--squirrel-uninstall` and
+`--squirrel-obsolete`. Ignoring them starts the window, the tray and a proxy
+bound to port 10100 once per flag during a "silent" install, and on uninstall
+Squirrel waits for the process to exit before deleting the directory — so a
+running proxy blocks its own removal. None of it appears in a build log.
+
+That logic is in `electron/squirrel.mjs`, not `main.mjs`, so it is testable at
+all: `main.mjs` imports `electron`, which this repo does not install. Twelve
+tests, verified by mutation.
+
+### The docs site was still on 44
+
+The app was swept last iteration; the site was not, and it loads the same
+`shared/m3/components.css`. Twenty-two more 44px declarations, the same
+`/* touch target */` comment asserting the same wrong thing, and a
+coarse-pointer block of its own written entirely at 44.
+
+Two spellings the earlier sweep could not see: `.ocx-menu-btn` was `2.75rem`
+square — 44 in different clothes — and `.m3-btn`/`.m3-input` size from
+`--h-btn`, which is 41px on a site with no density control to raise it.
+
+**Three things are deliberately left under 48, and the stylesheet says why** so
+the next audit does not re-litigate them: inline prose links (~21px — a link in a
+paragraph is not a control, and 48px would break the text), the ¶ anchor beside
+each heading, and "Skip to content" (hidden until keyboard focus; reached with
+Tab, never tapped).
+
+### `tests/touch-target-floor.test.ts` guards the number
+
+Across `gui/src`, `shared/` and `docs-site/src`, in CSS and inline React styles,
+in px and in rem. It bans the specific wrong number rather than checking a
+minimum, because "nothing under 48" cannot be decided from source — a 32px
+swatch with a 48px pseudo-element target is correct, and an 18px checkbox in a
+48px wrapper is correct. `scripts/touch-target-audit.ts` remains the check that
+*proves* compliance; this is the cheap half that stops a copy-paste between
+audits.
+
+It was wrong twice before it was right, both caught by mutation: it chose its
+pattern by file extension, so `height: 44px` inside an `.astro` `<style>` block
+was scanned with the inline-JS pattern and sailed through; and it knew only the
+px spelling until the rem one turned up.
+
+### Also this iteration
+
+- **The pairing test's wait probed the wrong thing.** CI failed it again, and the
+  precondition assertion added last iteration is what fired — `send.disabled` was
+  true, so the model list had not arrived and the submit was a silent no-op. The
+  wait had checked for `select option`, but with no models the screen still
+  renders `<option value="">Loading…</option>`, so the check passed the moment
+  the select mounted. It now probes the select's *value*, and `mount()` throws
+  rather than returning a screen it knows is unusable. **Not proven fixed** — it
+  did not reproduce locally.
+- Issue #2 has no reply from the reporter; left open.
+
 ## The 48dp sweep, and a debug mode that was not — 2026-08-02, `da02350f`
 
 > [!NOTE]
