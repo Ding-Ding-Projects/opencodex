@@ -1,5 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { formatErrorResponse } from "../bridge";
+// The socket that is actually listening, which is not always the one the config
+// names — see `isApiAuthRequired`. `lifecycle` imports nothing from here, so
+// this direction adds no cycle.
+import { getServerListenHostname } from "./lifecycle";
 import {
   apiKeyTransportConfigError,
   booleanRecordConfigError,
@@ -188,14 +192,66 @@ export function isLoopbackHostname(hostname: string | undefined): boolean {
   return normalized === "" || normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1" || normalized === "[::1]";
 }
 
+/**
+ * Whether a data-plane request must carry a credential.
+ *
+ * Derived from **both** the configured bind and the socket actually listening,
+ * because those two disagree for as long as it takes to restart — and one of the
+ * two orders they disagree in is dangerous.
+ *
+ * `PUT /api/host { exposed: false }` sets `config.hostname = "127.0.0.1"` on the
+ * live config object and answers `restartRequired: true`: the socket stays bound
+ * to `0.0.0.0` until the proxy is restarted, which the dashboard says plainly.
+ * Reading `config.hostname` alone therefore made this return false the instant
+ * remote access was switched *off*, while every device on the network could
+ * still reach the port — so `hasValidApiAuth` short-circuited to `true` and
+ * `/v1/*` served the LAN with no credential at all, until a restart nobody was
+ * required to perform.
+ *
+ * The action that is supposed to make the proxy more private was the one that
+ * dropped its authentication.
+ *
+ * Either side being non-loopback means a credential is required. That is the
+ * safe direction for both transitions: enabling demands one immediately (the
+ * route mints a key first, so nothing is stranded), and disabling keeps
+ * demanding one until the socket it was protecting has actually gone.
+ *
+ * `getServerListenHostname()` returns undefined before the server is up, and
+ * that is treated as "unknown" rather than "safe" — a bare config read is the
+ * fallback only when there is no socket to ask about, which is exactly the
+ * CLI-and-tests case.
+ */
 export function isApiAuthRequired(config: OcxConfig): boolean {
+  if (isApiAuthRequiredByConfig(config)) return true;
+  const live = getServerListenHostname();
+  return live !== undefined && !isLoopbackHostname(live);
+}
+
+/**
+ * The same question asked of the configuration alone, ignoring any live socket.
+ *
+ * This is the *intent* check, and the two must not be confused.
+ * `assertServerAuthConfig` runs immediately before `Bun.serve`, deciding whether
+ * the bind it is about to make is allowed — at that moment `getServerListenHostname()`
+ * still describes the *previous* server in the process, if there was one, so the
+ * live-aware version would refuse to start a loopback proxy purely because an
+ * earlier one in the same process had been exposed.
+ *
+ * Request-time gates want the live-aware `isApiAuthRequired` above: they are
+ * asking "can this packet have arrived from off-box", and the socket is what
+ * answers that. Startup validation wants this one: it is asking "is the
+ * configuration I am about to honour a safe one".
+ */
+export function isApiAuthRequiredByConfig(config: OcxConfig): boolean {
   return !isLoopbackHostname(config.hostname);
 }
 
 export function assertServerAuthConfig(config: OcxConfig): void {
   const hasConfiguredDataCredential = !!configuredApiAuthToken(config)
     || (config.apiKeys ?? []).some(entry => !!entry.key.trim());
-  if (isApiAuthRequired(config) && !hasConfiguredDataCredential) {
+  // By config, not by live socket: this runs immediately before `Bun.serve`, and
+  // the live reading still describes whichever server this process bound last.
+  if (isApiAuthRequiredByConfig(config) && !hasConfiguredDataCredential) {
     throw new Error(
       "A data-plane credential (OPENCODEX_API_AUTH_TOKEN or config.apiKeys) is required when binding opencodex to a non-loopback hostname",
     );

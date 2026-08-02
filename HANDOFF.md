@@ -1,5 +1,71 @@
 # Handoff
 
+## Turning remote access OFF dropped data-plane auth for the whole LAN — 2026-08-02
+
+The most serious thing the sweep found, confirmed by **all three** skeptics who
+were told to refute it, and reproduced independently against a real listener on
+a real non-loopback interface.
+
+### The mechanism
+
+`isApiAuthRequired(config)` was `!isLoopbackHostname(config.hostname)`, and
+`config.hostname` is **writable at runtime**: `PUT /api/host { exposed: false }`
+sets it to `127.0.0.1` on the live config object and answers
+`restartRequired: true`. The socket does not move — the dashboard says so
+plainly, "the socket is still bound where it was".
+
+So for the entire window between that toggle and a restart nobody is required to
+perform, the process is answering on `0.0.0.0` while every admission gate
+believes it is loopback-only:
+
+- `hasValidApiAuth` returns `true` unconditionally
+- `requireResponsesApiAuth` returns `null`
+- `issueGuiSession` will mint a **management** session, which `serveGuiFile`
+  injects into `index.html` and `requireManagementAuth` then accepts
+
+> [!CAUTION]
+> Anyone on the network could run turns on the user's provider accounts with no
+> credential, and fetch a page carrying a live management token granting
+> read/write access to `/api/*` — providers, keys, config. **The action that
+> exists to make the proxy more private is the one that removed its
+> authentication.**
+
+### The fix, and the split that made it work
+
+Request-time gates now ask the **live socket**; either side being non-loopback
+means a credential is required. That is safe in both directions: enabling
+demands one immediately (the route mints a key first), and disabling keeps
+demanding one until the socket it was protecting has actually gone.
+
+`src/server/lifecycle.ts` already documented this exact rule, and the embedded
+terminal gate had already been converted to obey it. The primary data-plane gate
+never was.
+
+> [!IMPORTANT]
+> The first attempt broke **60 tests**, and the reason is worth keeping.
+> `assertServerAuthConfig` runs immediately *before* `Bun.serve`, so a live read
+> there still describes the **previous** server in the process — a loopback proxy
+> refused to start purely because an earlier one had been exposed. Startup
+> validation asks "is the configuration I am about to honour safe"; request gates
+> ask "can this packet have arrived from off-box". Those are different questions,
+> so there are now two functions: `isApiAuthRequiredByConfig` and
+> `isApiAuthRequired`.
+
+Seven new tests, and they use `setServerRef` — the seam the process itself uses,
+which `tests/terminal-route-gate.test.ts` already established — rather than
+patching the module namespace, which Bun refuses and which would have tested a
+stand-in for the exact lookup under examination. Two of the seven fail without
+the fix, and they are the two that matter.
+
+### Note on the surrounding suites
+
+`server-auth.test.ts` is **flaky on a loaded machine**: one run showed 2 failures
+and an error, the next 57 pass / 0 fail with no change in between. Verified
+against a stashed baseline before concluding anything. Do not read a single red
+run there as a regression without repeating it.
+
+---
+
 ## Bug hunt: four fixed and dewed, a 7-lens sweep still running — 2026-08-02
 
 Deliberate hunt rather than incidental fixes. Seven independent finders, each on
