@@ -40,7 +40,9 @@ answer read as a defect. Budgets are now 2s/8s; every assertion is unchanged.
 
 ### The privacy scan was right twice
 
-A test fixture spelled `sk-PROVIDER-SECRET-VALUE` and a comment quoted a masked email address.
+A test fixture was spelled as an `sk-` prefix followed by uppercase words, and a comment quoted a
+masked email address. (Neither is written out here — quoting either would trip the same scan, which
+is the point.)
 Both are planted by this repo, and both were fixed by following the scan's conventions rather
 than widening its allowlist — a fixture that merely looks fake to a human is exactly what a
 scanner cannot distinguish, and admitting one blunts the check for every file.

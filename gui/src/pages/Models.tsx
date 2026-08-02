@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "../ui";
 import { Banner, Button, Chip, Dialog, Empty, SelectField, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import BulkBar from "../shell/BulkBar";
+import {
+  invert as invertSelection, selectAll as selectAllIds, selectRange, toggle as toggleSelection,
+} from "../shell/bulk-selection";
 import { IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { useConfirm } from "../shell/confirm-context";
@@ -84,6 +88,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const [loadError, setLoadError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // Selection is per PROVIDER, not one set across the page. The list is grouped,
+  // every action here is a per-provider API call, and a "select all" that
+  // silently reached across groups would delete models from a provider whose
+  // group the user never even scrolled to.
+  const [modelSel, setModelSel] = useState<Record<string, ReadonlySet<string>>>({});
+  const modelAnchor = useRef<Record<string, string>>({});
+  const [modelBulk, setModelBulk] = useState<{ provider: string; done: number; total: number } | null>(null);
+  const cancelModelBulk = useRef(false);
   const busyRef = useRef(false);
   const loadGenerationRef = useRef(0);
   const loadPendingRef = useRef(false);
@@ -643,6 +655,83 @@ export default function Models({ apiBase }: { apiBase: string }) {
     }
   };
 
+  const EMPTY_SELECTION: ReadonlySet<string> = new Set();
+  const selectionFor = (provider: string) => modelSel[provider] ?? EMPTY_SELECTION;
+  const setSelectionFor = (provider: string, next: ReadonlySet<string>) =>
+    setModelSel(current => ({ ...current, [provider]: next }));
+
+  /* Shift-click extends from the last row touched IN THIS GROUP. The anchor is
+     kept per provider for the same reason the selection is: an anchor shared
+     across groups would let one shift-click sweep a range that spans a boundary
+     the user can see and the code cannot. */
+  const toggleModelSelect = (provider: string, order: string[], id: string, shiftKey: boolean) => {
+    const anchor = modelAnchor.current[provider];
+    setSelectionFor(provider, shiftKey && anchor
+      ? selectRange(selectionFor(provider), order, anchor, id)
+      : toggleSelection(selectionFor(provider), id));
+    modelAnchor.current[provider] = id;
+  };
+
+  /**
+   * Enable or disable a selection in one request.
+   *
+   * `putModelVisibility` already takes a batch, so this is a single call rather
+   * than a loop — which also means it cannot half-succeed, and there is nothing
+   * partial to report.
+   */
+  const bulkSetVisibility = async (provider: string, rows: ModelRow[], enabled: boolean) => {
+    if (!rows.length) return;
+    await applyVisibility("models", provider, rows.map(m => ({ id: m.id, native: m.native === true })), enabled);
+    setSelectionFor(provider, new Set());
+  };
+
+  /**
+   * Delete the selected custom models, one at a time, reporting what happened.
+   *
+   * Only models the user added themselves can be deleted; discovered and native
+   * rows are excluded by the bar with a reason rather than being silently
+   * dropped from the count. Sequential because each delete rewrites the config.
+   */
+  const bulkDeleteCustom = async (provider: string, rows: ModelRow[]) => {
+    if (!rows.length) return;
+    const ok = await confirm({
+      title: t("bulk.deleteModels"),
+      body: t("bulk.confirmDeleteModels", { count: rows.length, provider }),
+      confirmLabel: t("bulk.deleteModels"),
+      tone: "danger",
+    });
+    if (!ok) return;
+
+    cancelModelBulk.current = false;
+    setModelBulk({ provider, done: 0, total: rows.length });
+    let succeeded = 0;
+    let failed = 0;
+    for (const [index, row] of rows.entries()) {
+      if (cancelModelBulk.current) break;
+      try {
+        const res = await fetch(`${apiBase}/api/custom-models/${encodeURIComponent(row.customId!)}`, { method: "DELETE" });
+        if (res.ok) succeeded += 1; else failed += 1;
+      } catch { failed += 1; }
+      setModelBulk({ provider, done: index + 1, total: rows.length });
+    }
+    const remaining = rows.length - succeeded - failed;
+    setModelBulk(null);
+    setSelectionFor(provider, new Set());
+    if (succeeded) logRevision(`${t("models.customDeleted")} — ${succeeded}× ${provider}`);
+    await load(true);
+
+    // Never "Done" when it was not: a run that failed at item thirty did
+    // twenty-nine things, and the summary has to say so.
+    const action = t("bulk.deleteModels");
+    if (remaining > 0) {
+      notify({ tone: "warn", title: t("bulk.cancelled", { action, succeeded, remaining }) });
+    } else if (failed > 0) {
+      notify({ tone: "error", title: t("bulk.doneSome", { action, succeeded, failed }) });
+    } else {
+      notify({ tone: "success", title: t("bulk.doneAll", { action, succeeded }) });
+    }
+  };
+
   if (loading) return <div className="row muted"><span className="spin" /> {t("models.loading")}</div>;
   if (!selectedModels) {
     return <Banner tone="error">{t("models.loadFail")}</Banner>;
@@ -689,6 +778,16 @@ export default function Models({ apiBase }: { apiBase: string }) {
          enable,
        );
      };
+    // Selection lives per group, over the rows actually on screen.
+    const order = visible.map(m => m.namespaced);
+    const chosen = selectionFor(provider);
+    const chosenRows = visible.filter(m => chosen.has(m.namespaced));
+    const deletableRows = chosenRows.filter(m => m.custom && m.customId);
+    // "page" whenever the group is truncated by Show more, because select-all
+    // takes the rendered rows and nothing else. Saying "all" there would promise
+    // rows the button does not touch.
+    const bulkScope = remaining > 0 ? "page" : query.trim() ? "matching" : "all";
+
     return (
       <div key={provider} className="m3-card models-provider-card">
        <div className={`row group-head models-provider-head${isCollapsed ? "" : " open"}`}>
@@ -748,6 +847,34 @@ export default function Models({ apiBase }: { apiBase: string }) {
             {rows.length === 0 && (
               <EmptyProviderHint liveModels={liveModels} discovery={discovery} showFailureBadge={false} />
             )}
+             <BulkBar
+               items={visible.map(m => ({
+                 id: m.namespaced,
+                 label: m.native ? m.id : m.namespaced,
+                 // Enable/disable applies to every row; delete does not. Rather
+                 // than hiding the ones it cannot delete, the bar keeps them in
+                 // the count and says why they are excluded from that action.
+                 skipReason: m.custom && m.customId ? null : t("bulk.skip.notCustom"),
+               }))}
+               selected={new Set(chosen)}
+               scope={bulkScope}
+               onSelectAll={() => setSelectionFor(provider, selectAllIds(order))}
+               onSelectNone={() => setSelectionFor(provider, new Set())}
+               onInvert={() => setSelectionFor(provider, invertSelection(chosen, order))}
+               progress={modelBulk?.provider === provider
+                 ? { done: modelBulk.done, total: modelBulk.total, onCancel: () => { cancelModelBulk.current = true; } }
+                 : null}
+               actions={[
+                 { id: "delete", label: t("bulk.deleteModels"), destructive: true, run: () => void bulkDeleteCustom(provider, deletableRows) },
+               ]}
+             >
+               {/* Enable and disable apply to every selected row, so they sit
+                   beside the selection controls rather than among the actions
+                   the bar disables when everything selected is excluded from
+                   the destructive one. */}
+               <Button variant="text" disabled={busy || !chosenRows.length} onClick={() => void bulkSetVisibility(provider, chosenRows, true)}>{t("bulk.enableModels")}</Button>
+               <Button variant="text" disabled={busy || !chosenRows.length} onClick={() => void bulkSetVisibility(provider, chosenRows, false)}>{t("bulk.disableModels")}</Button>
+             </BulkBar>
              {visible.map(m => {
                // The row reflects the same final-visibility answer as the count and the picker.
                const off = !isVisible(m);
@@ -765,6 +892,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
                    {/* Context and modalities read inline, as the design shows them: a hover-only
                        tooltip hides them from touch and from anyone scanning the list. */}
                    <div className="row models-model-row" style={{ flexWrap: "wrap" }}>
+                     <input
+                       type="checkbox"
+                       className="models-row-check"
+                       checked={chosen.has(m.namespaced)}
+                       aria-label={t("bulk.selectRow", { name: m.native ? m.id : m.namespaced })}
+                       onClick={(e) => toggleModelSelect(provider, order, m.namespaced, e.shiftKey)}
+                       onChange={() => { /* handled on click, which carries shiftKey */ }}
+                     />
                      <Toggle on={!off} onChange={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy} label={m.native ? m.id : m.namespaced} />
                      <code className={`mono text-control models-model-id${off ? " models-model-id--off" : ""}`} style={{ flex: "1 1 220px" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
                      {(m.contextWindow || m.contextCap) && (

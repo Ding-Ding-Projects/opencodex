@@ -270,6 +270,26 @@
   border-bottom: 1px solid var(--m3-outline-variant);
 }
 
+/* The row already stands 48dp tall, so the tick box only needs its own padding
+   to reach a full-height target rather than being inflated visually. */
+.models-row-check {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 15px;
+  box-sizing: content-box;
+  margin-inline: -11px;
+  accent-color: var(--m3-primary);
+  cursor: pointer;
+}
+
+.models-row-check:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
 .models-model-id {
   min-width: 0;
   overflow-wrap: anywhere;

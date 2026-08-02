@@ -43,8 +43,6 @@ let testWindow: Window;
 let claimBodies: unknown[] = [];
 let claimStatus = 200;
 let chatStatus = 200;
-/** Model fetches that carried an Authorization header — see `mount`. */
-let authedModelFetches = 0;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -63,15 +61,7 @@ function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> 
     if (claimStatus === 429) return Promise.resolve(json({ error: "too many pairing attempts" }, 429));
     return Promise.resolve(json({ error: "no", reason: "expired" }, 400));
   }
-  if (url.includes("/v1/models")) {
-    // The screen refetches models once the paired key reaches its state, with
-    // the key attached. That second call is the only externally visible proof
-    // that `setApiKey` has actually landed in React — storage is written by the
-    // same function that queues it, so storage says nothing about the flush.
-    const auth = new Headers(init?.headers ?? {}).get("Authorization");
-    if (auth) authedModelFetches += 1;
-    return Promise.resolve(json({ data: [{ id: "gpt-5.4" }] }));
-  }
+  if (url.includes("/v1/models")) return Promise.resolve(json({ data: [{ id: "gpt-5.4" }] }));
   if (url.includes("/v1/chat/completions")) {
     if (chatStatus === 401) return Promise.resolve(json({ error: "opencodex API key required" }, 401));
     return Promise.resolve(new Response("data: [DONE]\n\n", { status: 200 }));
@@ -106,7 +96,6 @@ beforeEach(() => {
   claimBodies = [];
   claimStatus = 200;
   chatStatus = 200;
-  authedModelFetches = 0;
   resetApiAuthFetchForTests();
   // Page-load state, so a fresh case is a fresh page load.
   resetMobilePairingForTests();
@@ -123,9 +112,27 @@ afterEach(() => {
  * Bounded so a genuine regression still fails rather than hanging: the assertion
  * that follows is what reports it, and it reports the real rendered text.
  */
+/**
+ * One turn of the event loop, timers included.
+ *
+ * `await Promise.resolve()` drains microtasks and nothing else, and this screen
+ * does not run on microtasks: the model list is fetched from inside
+ * `setTimeout(…, haveModels ? 400 : 0)`, so every wait built on microtasks was
+ * waiting for something that could not happen. It appeared to work only because
+ * a busy event loop occasionally serviced a timer between two unrelated awaits
+ * — which is why adding any test file anywhere could flip this suite.
+ *
+ * Yielding through a real timer makes that deterministic instead of incidental.
+ */
+async function tick(ms = 0): Promise<void> {
+  await act(async () => {
+    await new Promise<void>(resolve => testWindow.setTimeout(resolve, ms));
+  });
+}
+
 async function waitForText(container: HTMLElement, text: string, turns = 100): Promise<void> {
   for (let i = 0; i < turns && !container.textContent?.includes(text); i++) {
-    await act(async () => { await Promise.resolve(); });
+    await tick();
   }
 }
 
@@ -148,48 +155,37 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
       </PrefsProvider>,
     );
   });
-  // Wait for the key to actually reach the COMPONENT, which is a different event
-  // from the key reaching storage, and the one every previous version got wrong.
+  // Wait for the screen to be genuinely usable, on the event loop it actually
+  // runs on.
   //
-  // Three wrong versions preceded this one:
+  // Four earlier versions of this wait were wrong, and all four shared one
+  // mistake: they flushed MICROTASKS and this screen does not run on microtasks.
+  // The model list is fetched from inside `setTimeout(…, haveModels ? 400 : 0)`,
+  // and the Send button is `disabled={!draft.trim() || !model}` — so until that
+  // timer runs there is no model, the button is inert, and submitting the form
+  // does nothing at all. The captured failure was exactly that: still on the
+  // Chat panel, draft intact, no error anywhere, because no send had happened.
   //
-  //  1. A flat six microtask turns. Enough on a developer machine and enough
-  //     alone; not enough once a heavier test file had run first.
-  //  2. Waiting on `isClaimApplied()`. That latch is set *before* `saveKey`
-  //     runs, so the hop that actually matters was still riding the fixed count.
-  //  3. Waiting on `readPairedKey()`. Closer, but `saveKey` writes storage and
-  //     queues `setApiKey` in the same call, so a populated storage proves only
-  //     that the update was *queued*. It also left a hole: when the claim latch
-  //     flipped first, the loop exited with the key not yet stored and skipped
-  //     the state wait entirely.
+  // It passed most of the time only because a busy event loop sometimes serviced
+  // the timer between two unrelated awaits. That is why adding a test file
+  // anywhere in the suite could flip it, and why "wait for the claim", "wait for
+  // storage" and "wait for an authenticated /v1/models refetch" each looked like
+  // a fix for a while. The last of those never once observed its own signal —
+  // measured across full-suite runs, the counter was 0 nearly every time — so it
+  // was a 200-iteration delay wearing an event wait's clothes.
   //
-  // When the wait was short, `apiKey` was still "" at submit, so the 401 handler
-  // took the other branch and printed "the proxy needs a key" instead of "the
-  // key was refused". That is a permanently wrong string rather than a slow one,
-  // which is why polling the assertion could never recover it.
-  //
-  // So: wait for the claim to resolve, then — only if it produced a key — for
-  // the key to be stored, then for the refetch of `/v1/models` carrying an
-  // Authorization header. That last one only happens after the component has
-  // re-rendered with the key, so it is the event itself rather than a guess
-  // about scheduling.
-  for (let i = 0; i < 200 && !readPairedKey() && !isClaimApplied(); i++) {
-    await act(async () => { await Promise.resolve(); });
-  }
-  // A claim that resolved to a refusal never stores a key, and waiting for one
-  // would spin to the cap on every such test. A claim that succeeded stores it
-  // within a turn or two of the latch.
+  // So: yield through real timers, and wait for the two things the test needs to
+  // be true — the pairing claim has resolved, and the screen has a model.
+  for (let i = 0; i < 100 && !readPairedKey() && !isClaimApplied(); i++) await tick();
+  // A claim that succeeded stores the key in the same synchronous step that
+  // latches it; a refusal never stores one, so this cannot spin on that path.
   if (isClaimApplied()) {
-    for (let i = 0; i < 200 && !readPairedKey(); i++) {
-      await act(async () => { await Promise.resolve(); });
-    }
+    for (let i = 0; i < 100 && !readPairedKey(); i++) await tick();
   }
-  if (readPairedKey()) {
-    for (let i = 0; i < 200 && authedModelFetches === 0; i++) {
-      await act(async () => { await Promise.resolve(); });
-    }
-  }
-  for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+  // The model list is what un-disables Send. Without it the form submit in these
+  // tests is a no-op, which is a far more confusing failure than a timeout here.
+  for (let i = 0; i < 100 && !container.querySelector("select option"); i++) await tick();
+  await tick();
   return { container, root };
 }
 
