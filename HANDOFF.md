@@ -1,5 +1,47 @@
 # Handoff
 
+## Models gets bulk actions, and the pairing wait is finally understood — 2026-08-01, `4a6f6f99`
+
+> [!NOTE]
+> `4a6f6f99` is mis-titled. A `git add -A` swept the Models bulk-action feature into a commit
+> whose message describes only the pairing-wait fix. Both are in it; the history is not rewritten
+> because it was already on the hui. This entry is the record of what actually landed.
+
+### The pairing wait was on the wrong event loop
+
+Four versions of that wait were wrong and all four shared one mistake, found only by capturing the
+failing screen rather than reasoning about it. Every version flushed **microtasks**, and the screen
+does not run on microtasks: the model list is fetched inside `setTimeout(…, haveModels ? 400 : 0)`,
+and Send is `disabled={!draft.trim() || !model}`. Until that timer runs there is no model, the
+button is inert, and submitting the form does nothing at all. The captured failure was exactly
+that — still on the Chat panel, draft intact, no error text anywhere, because no send had happened.
+
+It passed most of the time because a busy event loop occasionally serviced the timer between two
+unrelated awaits, which is why adding any test file could flip the suite.
+
+**The instructive part:** the previous "fix" waited for an authenticated `/v1/models` refetch.
+Instrumented across full-suite runs, that counter was **0 nearly every time** — it never once
+observed the signal it was named after. It was a 200-iteration delay wearing an event wait's
+clothes, and it passed ten consecutive runs on that basis before a new file moved the timing.
+A wait that cannot observe its own event is indistinguishable from a sleep. It was reported as
+fixed twice on that evidence.
+
+The wait now yields through real timers and waits for the claim to resolve and a model to appear.
+Ten consecutive full-suite runs, 842/842, plus the original two-file repro.
+
+### Bulk actions on Models, the first grouped surface
+
+Selection is per **provider**, because every action there is a per-provider API call. Per-group
+state, per-group visible rows, and a per-group shift-click anchor. Enable and disable go out as one
+batched request; delete loops and reports real counts. Rows that are not custom models stay in the
+count and are explained rather than dropped from it.
+
+`gui/tests/models-bulk-groups.test.tsx` states which of its assertions actually enforce the
+boundary and which are structural. Two were verified by breaking the code and watching them go red.
+A third mutation turned out to be **unobservable** — a select-all that swept in another group's ids
+is re-scoped away by the group's own visible rows before it can act — so the file says so instead
+of implying a guard it does not provide.
+
 ## Exports, bulk actions, and CI back to green — 2026-08-01, `fcfb2b51`
 
 CI on `main` was red for a long stretch and is now green, with build 101 published from

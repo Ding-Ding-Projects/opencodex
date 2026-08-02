@@ -110,6 +110,33 @@ Destructive actions stop for a blocking confirmation that states the count and w
 undone. Long runs stay cancellable, and cancelling reports how many were not attempted rather than
 pretending the batch simply ended.
 
+### Where selection is available
+
+| Surface | Actions | Scope of a selection |
+| --- | --- | --- |
+| **API keys** | Revoke | The whole list — it is neither paginated nor filtered, so every key you can see is every key there is. |
+| **Combos** (rail) | Remove | The search results when a query is active, otherwise every combo. |
+| **Models** | Enable, Disable, Delete | **One provider group.** |
+
+### Models is grouped, and selection stops at the group
+
+Every action on the Models page is a per-provider API call, so a selection is scoped to a single
+provider group. Each group gets its own bar, its own tick boxes, and its own shift-click anchor —
+so a range you start in one group is still remembered after you have gone and ticked something in
+another. Nothing you select in one provider can be sent to another provider's endpoint.
+
+Two further honesty rules apply there:
+
+- **Enable and disable reach every selected row; delete reaches only models you added yourself.**
+  Discovered and built-in models stay in the count and are listed as excluded with the reason,
+  rather than vanishing from the total.
+- **When a group is truncated by Show more, the bar says "on this page".** Select-all takes the
+  rendered rows and nothing else, so calling it "all" would promise rows the button does not touch.
+
+Enable and disable go out as a single request covering the whole selection, so there is nothing
+to half-succeed. Delete runs one at a time, because each one rewrites the configuration, and
+reports its real counts.
+
 ## From the CLI
 
 ```bash
