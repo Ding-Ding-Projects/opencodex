@@ -135,7 +135,11 @@
   --control-sm: 28px;
   --control-md: 34px;
   --control-lg: 40px;
-  --control-touch: 44px;
+  /* Material's minimum touch target. Was 44px — Apple's HIG number — which is
+     where the whole "44 clears the minimum hit target" belief in this codebase
+     came from. It is the token every coarse-pointer floor resolves through, so
+     the one edit moves them together. */
+  --control-touch: 48px;
 
   --icon-sm: 14px;
   --icon-md: 16px;
@@ -307,7 +311,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .mobile-topbar { display: none; }
 .menu-toggle {
   display: none; align-items: center; justify-content: center;
-  min-width: 44px; min-height: 44px; padding: 8px;
+  min-width: 48px; min-height: 48px; padding: 8px;
   background: none; border: none; border-radius: var(--radius-sm);
   color: var(--muted); cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
@@ -570,7 +574,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .badge-disabled { opacity: 0.5; cursor: default; }
 .card-badges { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .card-badges .badge { flex-shrink: 0; }
-.confirm-icon { width: 44px; height: 44px; border-radius: var(--radius-round); background: var(--amber-soft); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; color: var(--amber); }
+.confirm-icon { width: 48px; height: 48px; border-radius: var(--radius-round); background: var(--amber-soft); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; color: var(--amber); }
 .credit-list { display: flex; flex-direction: column; gap: 6px; }
 .credit-item { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--raised); transition: border-color var(--motion-fast); }
 .credit-next { border-color: var(--amber); background: var(--amber-soft); }
@@ -924,7 +928,7 @@ button.prov-account-row.active { cursor: default; }
     -webkit-backdrop-filter: var(--glass-blur);
   }
   .mobile-topbar .brand { flex: 1 1 auto; min-width: 0; padding: 4px; }
-  .mobile-topbar .stop-toggle { width: auto; min-width: 44px; min-height: 44px; justify-content: center; padding: 8px; }
+  .mobile-topbar .stop-toggle { width: auto; min-width: 48px; min-height: 48px; justify-content: center; padding: 8px; }
   .menu-toggle { display: inline-flex; }
   /* drawer: the desktop sidebar kept intact (nav groups + foot + GitHub link), off-canvas */
   .sidebar {
@@ -1265,14 +1269,14 @@ button.prov-account-row.active { cursor: default; }
 
 @media (max-width: 760px) {
   .claude-tabs { display: flex; width: 100%; }
-  .claude-tabs button { flex: 1; min-height: 44px; }
+  .claude-tabs button { flex: 1; min-height: 48px; }
   .claude-desktop-head { flex-direction: column; }
   .claude-profile-tools { width: 100%; }
-  .claude-profile-tools .btn { flex: 1; min-height: 44px; }
+  .claude-profile-tools .btn { flex: 1; min-height: 48px; }
   .claude-profile-bar { top: 8px; align-items: stretch; flex-direction: column; }
-  .claude-save-actions .btn { flex: 1; min-height: 44px; }
+  .claude-save-actions .btn { flex: 1; min-height: 48px; }
   .ocx-group-head { align-items: flex-start; }
-  .claude-move-row .input, .claude-move-row .btn { min-height: 44px; }
+  .claude-move-row .input, .claude-move-row .btn { min-height: 48px; }
 }
 
 /* ── Desktop status bar + effort badges (hardening WP3) ── */

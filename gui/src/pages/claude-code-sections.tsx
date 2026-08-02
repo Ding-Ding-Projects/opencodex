@@ -259,7 +259,7 @@ export function ClaudeCodeQuickstartSection({ manualEnv }: { manualEnv: string }
     <Card title={t("claude.quickstart")} subtitle={<Trans k="claude.quickstartHint" cmd="ocx claude" />}>
       <pre className="mono" style={{ ...snippetStyle, margin: 0 }}>ocx claude</pre>
       <details style={{ margin: "12px 0 0" }}>
-        <summary style={{ cursor: "pointer", minHeight: 44, display: "flex", alignItems: "center", color: "var(--m3-primary)", fontSize: "var(--t-label-l)", fontWeight: 500 }}>
+        <summary style={{ cursor: "pointer", minHeight: 48, display: "flex", alignItems: "center", color: "var(--m3-primary)", fontSize: "var(--t-label-l)", fontWeight: 500 }}>
           {t("claude.manualEnv")}
         </summary>
         <pre className="mono" style={{ ...snippetStyle, margin: "8px 0 0" }}>{manualEnv}</pre>
@@ -321,7 +321,7 @@ export function ClaudeCodeModelMapSection({
               type="button"
               onClick={() => onRowsChange(rows.filter((_, j) => j !== i))}
               aria-label={t("claude.removeMapping")}
-              style={{ display: "grid", placeItems: "center", flex: "0 0 auto", width: 44, height: 44, border: "none", borderRadius: "999px", background: "transparent", color: "var(--m3-error)", cursor: "pointer" }}
+              style={{ display: "grid", placeItems: "center", flex: "0 0 auto", width: 48, height: 48, border: "none", borderRadius: "999px", background: "transparent", color: "var(--m3-error)", cursor: "pointer" }}
             >
               <IconX aria-hidden="true" />
             </button>

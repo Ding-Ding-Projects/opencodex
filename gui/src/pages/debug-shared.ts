@@ -16,10 +16,23 @@ export const M3_TABLIST_STYLE: CSSProperties = {
   rowGap: 4,
 };
 
-/** 44px-tall pill so every tab clears the minimum hit target. */
+/**
+ * A 48px-tall pill, which is what "clears the minimum hit target" actually means.
+ *
+ * This said 44 and claimed to clear the minimum. It did not: Material's floor is
+ * 48dp, and measured on a 320px touch viewport these tabs came back 71x44 and
+ * 80.6x44 — the only controls in the app still under it after the rest of the
+ * sweep. Raising it by four pixels satisfies the intent the old comment already
+ * stated rather than changing any design decision.
+ *
+ * It is unconditional rather than behind `@media (pointer: coarse)` like the
+ * shared floor, because these are inline styles: a stylesheet cannot override
+ * one without `!important`, and reaching for that to win an argument with your
+ * own code is worse than four pixels on a desktop tab.
+ */
 export function m3TabStyle(selected: boolean): CSSProperties {
   return {
-    minHeight: 44,
+    minHeight: 48,
     padding: "0 20px",
     border: "none",
     borderRadius: 999,

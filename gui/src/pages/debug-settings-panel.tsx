@@ -47,7 +47,7 @@ export function DebugSettingsPanel({
         {DEBUG_FLAGS.filter(flag => matches(flag)).map(flag => {
           const checked = isDebugFlagEnabled(debug, flag);
           return (
-            <div key={flag} className="m3-row" style={{ gap: 10, minHeight: 44 }}>
+            <div key={flag} className="m3-row" style={{ gap: 10, minHeight: 48 }}>
               <Toggle
                 on={checked}
                 disabled={debugBusy}
@@ -150,7 +150,7 @@ export function DebugPageHeader({
           {showFollow && (
             <label
               className="m3-row"
-              style={{ cursor: "pointer", gap: 8, minHeight: 44, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}
+              style={{ cursor: "pointer", gap: 8, minHeight: 48, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}
             >
               <input type="checkbox" checked={follow} onChange={e => onFollowChange(e.target.checked)} />
               {t("debug.follow")}

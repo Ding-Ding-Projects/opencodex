@@ -295,7 +295,10 @@ export default function Appearance() {
                   aria-pressed={prefs.seed.toLowerCase() === hex.toLowerCase()}
                   title={hex}
                   style={{
-                    width: 44, height: 44, borderRadius: "var(--r-pill)", cursor: "pointer",
+                    // 48, not 44: Material's minimum, and these are the one
+                    // control here whose size is set inline where no stylesheet
+                    // floor can reach it.
+                    width: 48, height: 48, borderRadius: "var(--r-pill)", cursor: "pointer",
                     background: hex,
                     border: prefs.seed.toLowerCase() === hex.toLowerCase()
                       ? "3px solid var(--m3-on-surface)"

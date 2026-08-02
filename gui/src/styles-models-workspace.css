@@ -239,7 +239,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  min-height: 44px;
+  min-height: 48px;
 }
 
 .models-provider-chevron {
@@ -277,9 +277,6 @@
   width: 18px;
   height: 18px;
   margin: 0;
-  padding: 15px;
-  box-sizing: content-box;
-  margin-inline: -11px;
   accent-color: var(--m3-primary);
   cursor: pointer;
 }
@@ -331,8 +328,8 @@
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   padding: 0;
   border: none;
   border-radius: var(--r-pill, 999px);
@@ -401,7 +398,7 @@
 }
 
 .models-modal-close {
-  min-width: 44px;
+  min-width: 48px;
   padding: 0 12px;
 }
 
@@ -480,4 +477,17 @@
     margin-left: 0;
     justify-content: flex-start;
   }
+}
+
+/*
+ * Touch floor, restated here rather than in `m3-shell.css`.
+ *
+ * `.models-provider-toggle` sets its own height in this file, which loads after the shared sheet
+ * at equal specificity — so the shared `@media (pointer: coarse)` rule lost and
+ * this control measured under 48 on a touch viewport while every other one was
+ * compliant. The floor belongs next to the declaration that undercuts it, where
+ * whoever next changes this height will see it.
+ */
+@media (pointer: coarse) {
+  .models-provider-toggle { min-height: 48px; }
 }

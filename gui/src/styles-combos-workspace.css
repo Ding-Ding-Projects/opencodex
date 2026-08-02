@@ -114,9 +114,6 @@
   width: 18px;
   height: 18px;
   margin: 0;
-  padding: 15px;
-  box-sizing: content-box;
-  margin-inline: -11px;
   accent-color: var(--m3-primary);
   cursor: pointer;
 }
@@ -414,7 +411,7 @@
   display: grid;
   place-items: center;
   width: 28px;
-  height: 44px;
+  height: 48px;
   padding: 0;
   border: none;
   border-radius: var(--r-pill);
@@ -441,8 +438,8 @@
 .cwi-icon-btn {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   padding: 0;
   border: none;
   border-radius: var(--r-pill);
@@ -594,3 +591,16 @@
 /* Shared with the providers workspace — keep the legacy metrics so that screen
    is untouched by this restyle; only the colour is re-pointed at an M3 role. */
 .pwi-section-title { margin: 0 0 4px; font-size: 12px; font-weight: 650; color: var(--m3-on-surface-variant); text-transform: uppercase; letter-spacing: .05em; }
+
+/*
+ * Touch floor, restated here rather than in `m3-shell.css`.
+ *
+ * `.combos-workspace-tab` sets its own height in this file, which loads after the shared sheet
+ * at equal specificity — so the shared `@media (pointer: coarse)` rule lost and
+ * this control measured under 48 on a touch viewport while every other one was
+ * compliant. The floor belongs next to the declaration that undercuts it, where
+ * whoever next changes this height will see it.
+ */
+@media (pointer: coarse) {
+  .combos-workspace-tab { min-height: 48px; }
+}

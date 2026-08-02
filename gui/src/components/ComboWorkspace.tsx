@@ -301,14 +301,16 @@ export default function ComboWorkspace({
                       // mean different things — ticking marks a row to act on,
                       // clicking opens it.
                       <div key={item.id} className="combos-workspace-rail-row-wrap">
-                      <input
-                        type="checkbox"
-                        className="combos-workspace-rail-check"
-                        checked={checked.has(item.id)}
-                        aria-label={t("bulk.selectRow", { name: item.model })}
-                        onClick={(e) => toggleChecked(item.id, e.shiftKey)}
-                        onChange={() => { /* handled on click, which carries shiftKey */ }}
-                      />
+                      <span className="m3-check-hit">
+                        <input
+                          type="checkbox"
+                          className="combos-workspace-rail-check"
+                          checked={checked.has(item.id)}
+                          aria-label={t("bulk.selectRow", { name: item.model })}
+                          onClick={(e) => toggleChecked(item.id, e.shiftKey)}
+                          onChange={() => { /* handled on click, which carries shiftKey */ }}
+                        />
+                      </span>
                       <button
                         type="button"
                         className={`combos-workspace-rail-row${activeId === item.id ? " combos-workspace-rail-row--selected" : ""}`}

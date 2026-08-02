@@ -126,7 +126,7 @@ function ResultRow({
       <button
         type="button"
         className="m3-menu-item"
-        style={{ flex: "1 1 auto", minWidth: 0, minHeight: 44, textAlign: "left" }}
+        style={{ flex: "1 1 auto", minWidth: 0, minHeight: 48, textAlign: "left" }}
         onClick={onActivate}
       >
         {pinned && <IconPin aria-hidden />}
@@ -134,7 +134,7 @@ function ResultRow({
         {note && <span className="m3-field-hint" style={{ marginInlineStart: "auto", flex: "0 0 auto" }}>{note}</span>}
       </button>
       {onClose && (
-        <button type="button" className="m3-icon-btn" style={{ width: 44, height: 44 }} onClick={onClose} aria-label={closeLabel} title={closeLabel}>
+        <button type="button" className="m3-icon-btn" style={{ width: 48, height: 48 }} onClick={onClose} aria-label={closeLabel} title={closeLabel}>
           <IconX aria-hidden />
         </button>
       )}

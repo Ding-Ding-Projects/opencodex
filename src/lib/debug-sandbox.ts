@@ -88,6 +88,35 @@ export function debugSandboxEnabled(env: NodeJS.ProcessEnv = process.env): boole
 }
 
 /**
+ * Whether opencodex may reconfigure the OTHER tools on this machine.
+ *
+ * Distinct from `debugSandboxEnabled` only in what it reads as, and that is the
+ * point: the call sites are about someone else's files, not about our own.
+ *
+ * Starting the proxy normally rewrites four things that live outside
+ * `OPENCODEX_HOME` entirely — Codex's `config.toml`, Grok's `config.toml`, the
+ * shell profile hook, and system-wide environment variables. All four are
+ * reverted on a clean shutdown, and none of them is reverted by a crash, a
+ * force-kill, or a machine that loses power in between.
+ *
+ * That made the sandbox misleading in the one direction that matters. Its
+ * promise was "config changes are not written to disk", and someone reading that
+ * — reasonably — takes it to mean the mode does not reconfigure their machine.
+ * It did: a sandboxed start still pointed the user's real Codex install at the
+ * proxy and rewrote their real Grok config. The narrowest reading of the old
+ * wording was defensible, since only `config.json` was named, but a debug mode
+ * whose entire purpose is "look at the app without changing anything" should not
+ * need a careful reading to avoid changing something.
+ *
+ * So the sandbox now declines all four. The proxy still starts, still serves,
+ * and still renders every screen; it simply does not go and edit other people's
+ * configuration to do it. Any client pointed at it manually keeps working.
+ */
+export function clientIntegrationsAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !debugSandboxEnabled(env);
+}
+
+/**
  * The bind the sandbox is *pretending* to have, for display only.
  *
  * The whole point of the mode is to look at Remote access in its enabled state,

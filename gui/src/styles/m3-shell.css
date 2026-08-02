@@ -222,7 +222,7 @@
   white-space: nowrap;
 }
 
-/* 48px icon buttons: M3 states layer + a 44px minimum hit target. */
+/* 48px icon buttons: M3 states layer + Material's 48px minimum hit target. */
 .m3-icon-btn {
   position: relative;
   flex: 0 0 auto;
@@ -433,7 +433,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 44px;
+  min-height: 48px;
   padding: 0 12px;
   border: none;
   border-radius: var(--r-s);
@@ -654,12 +654,12 @@
 .m3-input:focus { border-color: var(--m3-primary); }
 .m3-textarea { min-height: 120px; padding: 12px 16px; resize: vertical; font-family: var(--mono); font-size: var(--t-body-s); line-height: 1.5; }
 
-/* 44px tall so the whole control clears the minimum hit target, not just the thumb. */
+/* 48px tall so the whole control clears Material's minimum hit target, not just the thumb. */
 .m3-slider-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
 .m3-slider-row .m3-field-label { margin: 0; flex: 0 0 auto; min-width: 140px; }
 .m3-slider {
   flex: 1 1 200px;
-  height: 44px;
+  height: 48px;
   accent-color: var(--m3-primary);
   background: transparent;
   cursor: pointer;
@@ -1041,7 +1041,7 @@ html[data-desktop] .m3-appbar .m3-avatar {
 }
 
 /* ------------------------------------------------- mobile remote control --
-   Its own surface, not a page in the admin shell. Sized for a thumb: 44px
+   Its own surface, not a page in the admin shell. Sized for a thumb: 48px
    minimum targets, safe-area insets for a notch and a home indicator, and a
    layout that survives the on-screen keyboard shrinking the viewport.
    -------------------------------------------------------------------------- */
@@ -1106,13 +1106,13 @@ html[data-desktop] .m3-appbar .m3-avatar {
   background: var(--m3-surface-container-low);
   border-bottom: 1px solid var(--m3-outline-variant);
 }
-/* 44px and 16px are both floors, for different reasons: below 44 the control
+/* 48px and 16px are both floors, for different reasons: below 48 the control
    stops clearing the touch-target minimum, and below 16 iOS Safari zooms the
    whole page in when the field takes focus. At the tightest density `--h-btn`
    is 36px and `--t-body-m` is 14px, so both would otherwise be crossed. */
 .m3-mob__search .m3-input,
 .m3-mob__search .m3-chip {
-  min-height: 44px;
+  min-height: 48px;
 }
 .m3-mob__search .m3-input { font-size: max(16px, var(--t-body-m)); }
 /* Keeping the row on one line, and giving the status line its margin back, are
@@ -1185,7 +1185,7 @@ html[data-desktop] .m3-appbar .m3-avatar {
 .m3-mob__compose textarea {
   flex: 1;
   min-width: 0;
-  min-height: 44px;
+  min-height: 48px;
   max-height: 40dvh;
   padding: 11px 14px;
   border: 1px solid var(--m3-outline);
@@ -1199,7 +1199,7 @@ html[data-desktop] .m3-appbar .m3-avatar {
 }
 .m3-mob__send {
   flex: 0 0 auto;
-  min-height: 44px;
+  min-height: 48px;
   min-width: 64px;
   padding: 0 18px;
   border: none;
@@ -1235,7 +1235,7 @@ html[data-desktop] .m3-appbar .m3-avatar {
 .m3-mob__url { margin-top: 4px; font-family: var(--mono); font-size: var(--t-label-l); overflow-wrap: anywhere; }
 .m3-mob__key {
   width: 100%;
-  min-height: 44px;
+  min-height: 48px;
   margin-top: 8px;
   padding: 0 12px;
   border: 1px solid var(--m3-outline);
@@ -1497,7 +1497,7 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
 .m3-rxpop-title { flex: 1 1 auto; margin: 0; font-size: var(--t-title-m); font-weight: 500; }
 /* Trimmed from 48px so the header is not mostly button, but not below 44 — that
    is the hit-target floor, and a close control is exactly what a shaky hand misses. */
-.m3-rxpop-close { width: 44px; height: 44px; }
+.m3-rxpop-close { width: 48px; height: 48px; }
 
 /* The body scrolls, not the panel: the heading and the apply button stay put so
    the control that commits the pattern is never scrolled out of reach. */
@@ -1641,20 +1641,92 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   .m3-tab { scroll-snap-align: end; }
 }
 
-/* Touch targets. The 44px floor is a shipping requirement and the GUI sheet had
-   no coarse-pointer block at all — the floor existed only in the stylesheet the
-   docs site loads. These are the controls that sat under it. */
+/*
+ * A real hit area for a checkbox.
+ *
+ * Padding does NOT apply to `input[type=checkbox]` — it is a replaced element —
+ * so the obvious trick (18px box, 15px padding, negative margin) produces a
+ * control that still measures 18x18 to a finger while reading, in the
+ * stylesheet, exactly like a 48dp target. Two of those shipped before a real
+ * engine was asked. The wrapper is the target; the input keeps its 18px look.
+ *
+ * No negative margin: a `margin-inline-start: -15px` version kept the tick
+ * aligned with its old column and made two adjacent wrappers overlap by 5px,
+ * measured. One per row means they are never actually adjacent today, but a rule
+ * whose safety depends on nobody ever putting two side by side is a trap.
+ */
+.m3-check-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+}
+
+/*
+ * Touch targets: Material's 48dp minimum, applied where the guideline applies.
+ *
+ * The floor is 48, not 44. This block used to say "the 44px floor is a shipping
+ * requirement" while its rules already wrote 48px — 44 is Apple's HIG number and
+ * it had spread through this codebase in comments asserting that 44 "clears the
+ * minimum hit target". It does not clear Material's.
+ *
+ * Coarse pointers only, deliberately. `--h-btn` is a density ramp the user
+ * controls, from 56px at level 1 to a purposely compact 36px at level 5, and at
+ * the default (3) the standard control is 46px. That is not a defect for a mouse
+ * — 48dp is a *touch* minimum — so forcing it everywhere would move every screen
+ * for every user to fix a problem a pointer never had.
+ *
+ * These raise `min-height` rather than adding padding with a negative margin.
+ * Both enlarge a target; only the first is safe here, because these controls sit
+ * in flex rows where growing the box pushes neighbours apart, while the padding
+ * trick makes adjacent targets overlap and steal each other's taps — the failure
+ * HANDOFF.md already records against blanket 48dp targets on a dense row. A
+ * negative-margin version of `.m3-check-hit` was measured overlapping its
+ * neighbour by 5px before it was removed.
+ *
+ * Every selector below was measured under 48 on a 320px touch viewport, not
+ * guessed at.
+ */
 @media (pointer: coarse) {
-  .m3-tab-close { width: 44px; min-height: 44px; }
-  .m3-tab-btn { min-height: 44px; }
-  .m3-tabgroup-head { min-height: 44px; height: auto; }
-  .m3-chip { min-height: 44px; }
-  .m3-menu-item { min-height: 44px; }
-  .m3-mob__navbtn { min-height: 44px; }
-  .m3-mob__model { min-height: 44px; }
-  .m3-mob__send { min-height: 44px; }
-  .m3-nav-item { min-height: 44px; }
-  .m3-tabstrip-btn { min-width: 44px; min-height: 44px; }
+  .m3-tab-close { width: 48px; min-height: 48px; }
+  .m3-tabgroup-head { min-height: 48px; height: auto; }
+  .m3-menu-item { min-height: 48px; }
+  .m3-mob__navbtn { min-height: 48px; }
+  .m3-mob__model { min-height: 48px; }
+  .m3-mob__send { min-height: 48px; }
+  .m3-nav-item { min-height: 48px; }
+
+  .m3-btn,
+  .m3-input,
+  .m3-chip,
+  .m3-switch,
+  .m3-segment,
+  .m3-tab-btn,
+  .m3-tabstrip-btn,
+  .m3-cost-chip,
+  .m3-avatar--btn,
+  .models-icon-btn,
+  .models-provider-toggle,
+  .combos-workspace-tab,
+  .cwi-target-grip,
+  .ocx-tooltip {
+    min-height: 48px;
+  }
+
+  /* Width too, or a 48-tall 40-wide icon button is still a miss in one axis.
+     Chips and segments join them because a short label — ".*", "v1" — is what
+     makes them narrow: measured at 44.1px and 46.3px. */
+  .m3-tabstrip-btn,
+  .m3-avatar--btn,
+  .m3-chip,
+  .m3-segment,
+  .models-icon-btn,
+  .cwi-target-grip,
+  .ocx-tooltip {
+    min-width: 48px;
+  }
 }
 
 /* Safe-area insets, now that `viewport-fit=cover` makes them resolve. The
@@ -1688,3 +1760,37 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   .m3-page pre { overflow-x: auto; max-width: 100%; }
   .m3-page table { max-width: 100%; }
 }
+
+/*
+ * A real hit area for a checkbox.
+ *
+ * Padding does NOT apply to `input[type=checkbox]` — it is a replaced element —
+ * so the obvious trick (18px box, 15px padding, negative margin) produces a
+ * control that still measures 18x18 to a finger while looking, in the
+ * stylesheet, exactly like a 48dp target. Two of those shipped before a real
+ * engine was asked. The wrapper is the target; the input keeps its 18px look.
+ *
+ * No negative margin: these sit one per row in rows that are already at least
+ * 48px tall, so the wrapper costs width and overlaps nothing. That is the
+ * difference between this and the blanket 48dp targets HANDOFF.md warns about,
+ * where neighbours steal each other's taps.
+ */
+.m3-check-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+}
+
+/*
+ * No negative margin, deliberately.
+ *
+ * A `margin-inline-start: -15px` version of this kept the tick aligned with the
+ * column it used to sit in, and made two adjacent wrappers overlap by 5px —
+ * measured, not theorised. One per row means they are never actually adjacent
+ * today, but a rule whose safety depends on nobody ever putting two of them side
+ * by side is a trap for whoever does. The row indents by the wrapper instead.
+ */
+

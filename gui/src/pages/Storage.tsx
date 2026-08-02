@@ -267,7 +267,7 @@ function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, sample, 
         selected={regexOn}
         title={t("regex.regexMode")}
         aria-label={t("regex.regexMode")}
-        style={{ minHeight: 44, fontFamily: "var(--mono)" }}
+        style={{ minHeight: 48, fontFamily: "var(--mono)" }}
         onClick={() => onRegex(!regexOn)}
       >
         .*

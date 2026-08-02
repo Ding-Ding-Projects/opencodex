@@ -17,7 +17,7 @@
 
 .pwi-auth-state {
   display: flex; align-items: center; gap: 8px;
-  min-height: 44px; padding: 10px 16px;
+  min-height: 48px; padding: 10px 16px;
   font-size: var(--t-body-s); color: var(--m3-on-surface-variant);
   background: var(--m3-surface-container); border-radius: var(--r-s);
 }
@@ -63,7 +63,7 @@
 .pwi-auth-row-remove:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
 .pwi-auth-row-label  { font-size: var(--t-body-m); color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pwi-auth-row-remove {
-  min-width: 44px; min-height: 44px; padding: 0;
+  min-width: 48px; min-height: 48px; padding: 0;
   color: var(--m3-on-surface-variant); border-radius: var(--r-pill);
 }
 .pwi-auth-row-remove:hover { color: var(--m3-on-error-container); background: var(--m3-error-container); }

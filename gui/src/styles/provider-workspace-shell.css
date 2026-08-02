@@ -110,7 +110,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
+  min-height: 48px;
   padding: 4px 8px;
   border-radius: var(--r-s, 8px);
   cursor: pointer;
@@ -444,7 +444,7 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
+  min-height: 48px;
   color: inherit;
   font: inherit;
   text-align: center;
@@ -530,7 +530,7 @@
   font: inherit;
   font-size: var(--t-label-l, 0.82rem);
   font-weight: 500;
-  min-height: 44px;
+  min-height: 48px;
   cursor: pointer;
   padding: 0 4px;
   margin-bottom: 4px;
@@ -579,8 +579,8 @@
 
 /* Icon-only M3 button: square 44px hit target, no label padding. */
 .btn-icon-only {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 48px;
+  min-height: 48px;
   padding: 0;
   border-radius: var(--r-pill, 999px);
 }
@@ -594,6 +594,17 @@
 
 .pws-btn-sm.m3-btn--text {
   padding: 0 12px;
+}
+
+/*
+ * The shared touch floor in `m3-shell.css` cannot reach this one: `.pws-btn-sm`
+ * has the same specificity and loads later, so its 40px wins and the button
+ * measured 61x40 on a touch viewport while every other control was compliant.
+ * Restated here rather than fought with `!important` — the floor belongs beside
+ * the rule that undercuts it, where the next person editing this size sees it.
+ */
+@media (pointer: coarse) {
+  .pws-btn-sm { min-height: 48px; }
 }
 
 /* Overview 2-column layout (Phase 030) */
@@ -730,8 +741,8 @@
 }
 
 .pws-detail-icon {
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -964,7 +975,7 @@
   align-items: center;
   gap: 10px;
   max-width: 100%;
-  min-height: 44px;
+  min-height: 48px;
   padding: 6px 12px;
   border: 1px solid var(--m3-outline-variant);
   border-radius: var(--r-pill, 999px);

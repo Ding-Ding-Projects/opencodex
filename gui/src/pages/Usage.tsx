@@ -264,7 +264,7 @@ function buildHeatmap(days: UsageDay[], locale: Locale): { weeks: HeatmapCell[][
 // ---- M3 presentation tokens -------------------------------------------------
 // Inline because the Usage screen has no dedicated stylesheet and the shared
 // ones are off-limits; every value is an --m3-* role token or a shell metric.
-const TAB_STYLE: React.CSSProperties = { minHeight: 44, display: "inline-flex", alignItems: "center", gap: 6 };
+const TAB_STYLE: React.CSSProperties = { minHeight: 48, display: "inline-flex", alignItems: "center", gap: 6 };
 const STAT_GRID: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",

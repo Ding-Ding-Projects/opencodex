@@ -51,7 +51,7 @@
   font: inherit;
   font-size: var(--t-label-l);
   font-weight: 500;
-  min-height: 44px;
+  min-height: 48px;
   padding: 0 20px;
   border-radius: var(--r-pill);
   background: transparent;
@@ -423,7 +423,7 @@
   appearance: none;
   background: none;
   border: none;
-  min-height: 44px;
+  min-height: 48px;
   padding: 10px 14px;
   cursor: pointer;
   font: inherit;

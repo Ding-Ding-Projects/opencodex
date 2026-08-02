@@ -92,7 +92,7 @@ export function CodexAccountPoolCards({
             <button
               type="button"
               className="m3-btn m3-btn--text"
-              style={{ flex: "0 0 auto", minWidth: 44, padding: 0, color: "var(--m3-error)" }}
+              style={{ flex: "0 0 auto", minWidth: 48, padding: 0, color: "var(--m3-error)" }}
               aria-label={`${t("common.remove")} — ${a.email}`}
               title={`${t("common.remove")} — ${a.email}`}
               onClick={e => { e.stopPropagation(); void onRemove(a.id); }}

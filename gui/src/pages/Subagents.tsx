@@ -49,12 +49,18 @@ const CANDIDATE_ROW: React.CSSProperties = {
   textAlign: "left",
 };
 
-/** 44px round icon button — meets the minimum hit target without a bespoke class. */
+/**
+ * 48px round icon button — Material's minimum hit target, without a bespoke class.
+ *
+ * Said 44 and claimed to meet the minimum. 44 is Apple's HIG figure; Material's
+ * is 48, and these measured 44x44 on a 320px touch viewport. Inline, so no
+ * stylesheet floor could reach them.
+ */
 const ICON_BTN: React.CSSProperties = {
   display: "grid",
   placeItems: "center",
-  width: 44,
-  height: 44,
+  width: 48,
+  height: 48,
   border: "none",
   borderRadius: "var(--r-pill)",
   background: "transparent",

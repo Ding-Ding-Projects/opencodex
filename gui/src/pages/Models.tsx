@@ -892,14 +892,20 @@ export default function Models({ apiBase }: { apiBase: string }) {
                    {/* Context and modalities read inline, as the design shows them: a hover-only
                        tooltip hides them from touch and from anyone scanning the list. */}
                    <div className="row models-model-row" style={{ flexWrap: "wrap" }}>
-                     <input
-                       type="checkbox"
-                       className="models-row-check"
-                       checked={chosen.has(m.namespaced)}
-                       aria-label={t("bulk.selectRow", { name: m.native ? m.id : m.namespaced })}
-                       onClick={(e) => toggleModelSelect(provider, order, m.namespaced, e.shiftKey)}
-                       onChange={() => { /* handled on click, which carries shiftKey */ }}
-                     />
+                     {/* The hit area is the WRAPPER, not the input. Padding does
+                         not apply to a checkbox — it is a replaced element — so
+                         the padded version of this measured 18x18 in a real
+                         engine while claiming to be a 48dp target. */}
+                     <span className="m3-check-hit">
+                       <input
+                         type="checkbox"
+                         className="models-row-check"
+                         checked={chosen.has(m.namespaced)}
+                         aria-label={t("bulk.selectRow", { name: m.native ? m.id : m.namespaced })}
+                         onClick={(e) => toggleModelSelect(provider, order, m.namespaced, e.shiftKey)}
+                         onChange={() => { /* handled on click, which carries shiftKey */ }}
+                       />
+                     </span>
                      <Toggle on={!off} onChange={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy} label={m.native ? m.id : m.namespaced} />
                      <code className={`mono text-control models-model-id${off ? " models-model-id--off" : ""}`} style={{ flex: "1 1 220px" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
                      {(m.contextWindow || m.contextCap) && (

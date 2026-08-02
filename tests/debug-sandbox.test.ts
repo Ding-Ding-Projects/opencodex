@@ -22,8 +22,8 @@ import {
   DEBUG_SANDBOX_ENV,
   announceDebugSandboxOnce,
   debugSandboxEnabled,
-  resetDebugSandboxAnnouncementForTests,
-} from "../src/lib/debug-sandbox";
+  resetDebugSandboxAnnouncementForTests, clientIntegrationsAllowed} from "../src/lib/debug-sandbox";
+import { applyClientIntegrations } from "../src/lib/client-integrations";
 import { DebugSandboxMintError, describeHost, mintDataPlaneKey } from "../src/lib/host-control";
 import { claimPairingToken, createPairingToken, resetPairingForTests } from "../src/lib/pairing";
 import { startServer } from "../src/server";
@@ -376,5 +376,82 @@ describe("the dashboard is told", () => {
     expect(describeHost(baseConfig()).debugSandbox).toBe(false);
     process.env[DEBUG_SANDBOX_ENV] = "1";
     expect(describeHost(baseConfig()).debugSandbox).toBe(true);
+  });
+});
+
+describe("other tools on this machine", () => {
+  test("the sandbox declines to reconfigure them", () => {
+    // Starting the proxy normally rewrites Codex's config.toml, Grok's
+    // config.toml, the shell profile and system-wide environment variables —
+    // all of them OUTSIDE `OPENCODEX_HOME`, and none of them reverted by a
+    // crash. A mode whose promise is "look without changing anything" pointing
+    // a real Codex install at the proxy is the surprise this prevents.
+    expect(clientIntegrationsAllowed({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(clientIntegrationsAllowed({ [DEBUG_SANDBOX_ENV]: "1" } as NodeJS.ProcessEnv)).toBe(false);
+  });
+
+  test("it reads the same spellings the flag itself accepts", () => {
+    // Not a second parser. A predicate that honoured "1" but not "true" would
+    // silently reconfigure the machine for anyone who wrote the other one.
+    for (const on of ["1", "true", "yes", "on", "TRUE", " on "]) {
+      expect(clientIntegrationsAllowed({ [DEBUG_SANDBOX_ENV]: on } as NodeJS.ProcessEnv)).toBe(false);
+    }
+    for (const off of ["", "0", "false", "no"]) {
+      expect(clientIntegrationsAllowed({ [DEBUG_SANDBOX_ENV]: off } as NodeJS.ProcessEnv)).toBe(true);
+    }
+  });
+});
+
+describe("client integrations", () => {
+  /** A recorder for the four things a start would do to this machine. */
+  function spies() {
+    const called: string[] = [];
+    return {
+      called,
+      integrations: {
+        injectSystemEnv: async () => { called.push("injectSystemEnv"); },
+        installShellHook: () => { called.push("installShellHook"); },
+        syncModelsToCodex: async () => { called.push("syncModelsToCodex"); },
+        syncGrokConfig: async () => { called.push("syncGrokConfig"); },
+      },
+    };
+  }
+
+  test("a normal start applies all four", async () => {
+    const { called, integrations } = spies();
+    const result = await applyClientIntegrations(integrations, {} as NodeJS.ProcessEnv);
+    expect(result.applied).toBe(true);
+    expect(result.failed).toEqual([]);
+    expect(called.sort()).toEqual(
+      ["injectSystemEnv", "installShellHook", "syncGrokConfig", "syncModelsToCodex"],
+    );
+  });
+
+  test("a sandboxed start applies NONE of them", async () => {
+    // The failure this exists for: a sandboxed start used to point the user's
+    // real Codex install at the proxy and rewrite their real Grok config, both
+    // of which live outside OPENCODEX_HOME and neither of which a crash undoes.
+    const { called, integrations } = spies();
+    const result = await applyClientIntegrations(
+      integrations, { [DEBUG_SANDBOX_ENV]: "1" } as NodeJS.ProcessEnv,
+    );
+    expect(result.applied).toBe(false);
+    expect(called).toEqual([]);
+  });
+
+  test("one integration failing never stops the others, and is named", async () => {
+    const called: string[] = [];
+    const result = await applyClientIntegrations({
+      injectSystemEnv: async () => { called.push("injectSystemEnv"); },
+      installShellHook: () => { throw new Error("no shell profile here"); },
+      syncModelsToCodex: async () => { called.push("syncModelsToCodex"); },
+      syncGrokConfig: async () => { called.push("syncGrokConfig"); },
+    }, {} as NodeJS.ProcessEnv);
+
+    // None of these may block the proxy from serving — but a silent failure is
+    // how a stale config survives unnoticed, so the caller gets the name.
+    expect(result.applied).toBe(true);
+    expect(result.failed).toEqual(["installShellHook"]);
+    expect(called).toEqual(["injectSystemEnv", "syncModelsToCodex", "syncGrokConfig"]);
   });
 });

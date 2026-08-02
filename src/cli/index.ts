@@ -43,6 +43,7 @@ import { syncModelsToCodex } from "../codex/sync";
 import { normalizeUpdateChannel, runGuiUpdateWorker } from "../update/job";
 import { collectOrcaCodexHomeDiagnostic } from "../codex/home";
 import { removeOwnedConfigState } from "../lib/config-ownership";
+import { applyClientIntegrations } from "../lib/client-integrations";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -298,14 +299,7 @@ async function handleStart(options: { block?: boolean } = {}) {
   process.on("SIGHUP", shutdown);
   process.on("exit", syncCleanup);
 
-  // System-wide env injection AFTER signal handlers are registered (crash safety:
-  // syncCleanup reverts even if injection itself or subsequent startup steps fail).
-  await injectSystemEnv(port, config).catch(() => {});
-  // Auto-install .zshrc hook (idempotent — skips if already present).
-  installShellHook();
-
   await maybeShowStarPrompt(); // once-only Yes/No GitHub-star prompt on first interactive start
-  await syncModelsToCodex(port).catch(() => {});
   if (!currentExternalCodexModelProvider() && !shouldInjectApiAuthHeader(config) && config.syncResumeHistory !== false) {
     historyGuardian = startHistoryMigrationGuardian();
   }
@@ -325,19 +319,38 @@ async function handleStart(options: { block?: boolean } = {}) {
   // absent or the bind is non-loopback; removed again by stop/eject/uninstall/shutdown.
   // Deliberately a SIBLING of the Desktop-3P block above: nesting it there meant a catalog
   // failure skipped the fence entirely, even though syncGrokConfig handles that case itself.
-  try {
-    const { syncGrokConfig } = await import("../grok/sync");
-    const r = await syncGrokConfig(port, config, config.hostname ? { hostname: config.hostname } : {});
-    if (r.changed) console.log("   + Grok Build config updated (~/.grok/config.toml)");
-    else if (!r.ok) console.error(`⚠️  ${r.message}`);
-  } catch (err) {
-    // Best-effort: grok integration must never block startup. But swallowing the error
-    // silently is how a stale fence survives unnoticed — ~/.grok/config.toml keeps
-    // pointing at whatever port the LAST successful sync wrote, and if that listener is
-    // gone every grok turn retries against a refused connection with nothing in our log
-    // to explain it. Name the failure and the one command that repairs it.
-    console.error(`⚠️  ${grokSyncFailureMessage(err)}`);
+  // Everything here edits files OUTSIDE OPENCODEX_HOME — the machine's
+  // environment, the shell profile, Codex's own config and Grok's own config.
+  // They go through one call so the debug sandbox can decline the whole set:
+  // a mode for looking at the app without changing anything must not reconfigure
+  // three other tools to do it. Env injection runs after the signal handlers
+  // above, because the revert runs from those.
+  let grokError: unknown = null;
+  const clients = await applyClientIntegrations({
+    injectSystemEnv: async () => { await injectSystemEnv(port, config); },
+    installShellHook: () => { installShellHook(); },
+    syncModelsToCodex: async () => { await syncModelsToCodex(port); },
+    syncGrokConfig: async () => {
+      // Additive fenced block in ~/.grok/config.toml so an installed grok CLI can
+      // pick opencodex-routed models without manual config. No-op when ~/.grok is
+      // absent or the bind is non-loopback; removed again by stop/eject/uninstall.
+      try {
+        const { syncGrokConfig } = await import("../grok/sync");
+        const r = await syncGrokConfig(port, config, config.hostname ? { hostname: config.hostname } : {});
+        if (r.changed) console.log("   + Grok Build config updated (~/.grok/config.toml)");
+        else if (!r.ok) console.error(`⚠️  ${r.message}`);
+      } catch (err) { grokError = err; }
+    },
+  });
+
+  if (!clients.applied) {
+    console.log("   ⏸  Debug sandbox: leaving Codex, Grok, the shell profile and system env untouched.");
   }
+  // Swallowing this silently is how a stale fence survives unnoticed —
+  // ~/.grok/config.toml keeps pointing at whatever port the LAST successful sync
+  // wrote, and if that listener is gone every grok turn retries against a refused
+  // connection with nothing in our log to explain it. Name it and the repair.
+  if (grokError) console.error(`⚠️  ${grokSyncFailureMessage(grokError)}`);
   if (options.block ?? true) {
     setInterval(() => {}, 60_000);
     await new Promise<void>(() => {});
