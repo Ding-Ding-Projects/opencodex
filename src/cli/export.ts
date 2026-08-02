@@ -16,7 +16,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getConfigDir, readConfigDiagnostics } from "../config";
+import { getConfigDir, getConfigPath, readConfigDiagnostics } from "../config";
 import { listStateHistory } from "../lib/state-history";
 
 const USAGE = "Usage: ocx export <path|-> --yes  |  ocx export --history [--json]  |  ocx export data <dataset> [--format <f>] [--out <path>] [--list]";
@@ -138,12 +138,33 @@ export async function handleExportCommand(args: string[]): Promise<number> {
     return 2;
   }
 
+  // A backup of defaults is worse than no backup, because it looks like one.
+  //
+  // `readConfigDiagnostics` always returns a usable object, and on an unreadable
+  // file that object is `getDefaultConfig()`. Writing it into a bundle labelled
+  // "opencodex-export" and printing "Exported config + accounts + auth" told the
+  // user their configuration was safely backed up while the file it came from
+  // was unreadable and the bundle held factory defaults. Restoring from it later
+  // would then complete the loss.
+  //
+  // The accounts and auth halves are read separately and are unaffected, so this
+  // refuses rather than silently exporting two thirds of a backup.
+  const diagnostics = readConfigDiagnostics();
+  if (diagnostics.error) {
+    console.error(
+      `ocx export: ${getConfigPath()} could not be read (${diagnostics.error}).\n`
+      + "  Exporting now would write a bundle containing default configuration and call it a backup.\n"
+      + "  Inspect it with:  ocx config validate",
+    );
+    return 2;
+  }
+
   const dir = getConfigDir();
   const bundle = {
     kind: "opencodex-export",
     exportedAt: new Date().toISOString(),
     warning: "CONTAINS PLAINTEXT SECRETS: provider API keys and Codex OAuth access/refresh tokens.",
-    config: readConfigDiagnostics().config,
+    config: diagnostics.config,
     codexAccounts: readJsonIfPresent(join(dir, "codex-accounts.json")),
     auth: readJsonIfPresent(join(dir, "auth.json")),
   };

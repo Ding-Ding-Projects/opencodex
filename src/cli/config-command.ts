@@ -98,7 +98,30 @@ export async function handleConfigCommand(argv: string[]): Promise<number> {
       const raw = action === "set" ? args.shift() : undefined;
       if (!path || (action === "set" && raw === undefined)) throw new CliUsageError("config path and value are required", USAGE);
       rejectArgs(args, USAGE);
-      const candidate = structuredClone(readConfigDiagnostics().config) as unknown as Record<string, unknown>;
+      // Refuse to write over a config we could not read.
+      //
+      // `readConfigDiagnostics` always hands back a usable object, and on an
+      // unreadable file that object is `getDefaultConfig()` with `source:
+      // "fallback"`. Using it here meant `ocx config set anything whatever`
+      // quietly replaced the user's entire config — every provider, key and
+      // pooled account — with factory defaults plus the one field they asked to
+      // change, printed "Set …", and exited 0. Unlike `loadConfig`, this path
+      // takes no backup on the way past, so there was nothing to restore from
+      // either.
+      //
+      // A write is the one operation that must not proceed on a guess.
+      // `ocx config validate` says what is wrong and `ocx config get` still
+      // reads, so nothing else is blocked by this.
+      const diagnostics = readConfigDiagnostics();
+      if (diagnostics.error) {
+        throw new CliUsageError(
+          `refusing to write: ${getConfigPath()} could not be read (${diagnostics.error}).\n`
+          + "  Writing now would replace it with defaults and lose every provider, key and account in it.\n"
+          + "  Inspect it with:  ocx config validate\n"
+          + "  Then fix the file, or move it aside to start from defaults.",
+        );
+      }
+      const candidate = structuredClone(diagnostics.config) as unknown as Record<string, unknown>;
       setPath(candidate, path, raw === undefined ? undefined : parseValue(raw), action === "unset");
       const config = validate(candidate);
       const savedValue = action === "unset" ? null : getPath(config, path);
