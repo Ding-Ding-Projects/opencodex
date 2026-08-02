@@ -142,9 +142,9 @@ jobs:
         with:
           name: opencodex-setup-${{ github.run_number }}
           path: |
-            dist-desktop/*.exe
-            dist-desktop/*.nupkg
-            dist-desktop/RELEASES
+            dist-desktop/**/*.exe
+            dist-desktop/**/*.nupkg
+            dist-desktop/**/RELEASES
             opencodex-dashboard.zip
           if-no-files-found: error
           retention-days: 30
@@ -214,7 +214,16 @@ jobs:
           # so an empty `installer` would leave a real, visible release carrying only
           # the dashboard zip — which is precisely the "release with no installer"
           # this pipeline exists to never produce.
-          installer=$(ls dist-desktop/*.exe 2>/dev/null | head -1)
+          # Recursive, and NOT `dist-desktop/*.exe`. Squirrel writes into
+          # `dist-desktop/squirrel-windows/`, where NSIS wrote to the root — so
+          # the flat glob found nothing and this step correctly refused to
+          # publish a release with no installer. The build had succeeded.
+          #
+          # `-name '*.exe'` also matches Squirrel's own `Update.exe` if it is
+          # copied out, so the Setup binary is selected by name rather than by
+          # being the first thing `ls` happens to return.
+          installer=$(find dist-desktop -type f -name '*Setup*.exe' 2>/dev/null | head -1)
+          [ -n "$installer" ] || installer=$(find dist-desktop -type f -name '*.exe' ! -name 'Update.exe' 2>/dev/null | head -1)
           if [ -z "$installer" ] || [ ! -s "$installer" ]; then
             echo "::error::No Windows installer was produced in dist-desktop/ — refusing to publish a release without one."
             ls -la dist-desktop/ 2>/dev/null || echo "dist-desktop/ does not exist"
@@ -230,9 +239,9 @@ jobs:
           # array so a missing one is visible here rather than as a silent
           # omission from the asset list.
           feed=()
-          for f in dist-desktop/RELEASES dist-desktop/*.nupkg; do
+          while IFS= read -r f; do
             [ -s "$f" ] && feed+=("$f")
-          done
+          done < <(find dist-desktop -type f \( -name RELEASES -o -name '*.nupkg' \) 2>/dev/null)
           if [ ${#feed[@]} -lt 2 ]; then
             echo "::warning::Squirrel update feed incomplete (found ${#feed[@]} of RELEASES + .nupkg). The release will install but not self-update."
           fi

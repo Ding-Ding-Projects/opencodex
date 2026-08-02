@@ -76,12 +76,12 @@ jobs:
 
       - name: List what was produced
         shell: bash
-        run: ls -lh dist-desktop
+        run: ls -lhR dist-desktop
 
       - name: Upload installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-desktop-windows-${{ github.sha }}
-          path: dist-desktop/*.exe
+          path: dist-desktop/**/*.exe
           if-no-files-found: error
           retention-days: 14

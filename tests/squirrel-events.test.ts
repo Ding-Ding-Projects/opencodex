@@ -148,7 +148,13 @@ describe("the packaging metadata Squirrel needs", () => {
     // A release carrying only Setup.exe is installable but not updatable, which
     // is most of the reason for choosing Squirrel over NSIS.
     const workflow = await Bun.file(new URL("../.github/workflows/auto-release.yml", import.meta.url)).text();
-    expect(workflow).toContain("dist-desktop/RELEASES");
-    expect(workflow).toContain("dist-desktop/*.nupkg");
+    expect(workflow).toContain("dist-desktop/**/RELEASES");
+    expect(workflow).toContain("dist-desktop/**/*.nupkg");
+
+    // Recursive, deliberately. Squirrel writes into `dist-desktop/squirrel-windows/`
+    // where NSIS wrote to the root, so a flat `dist-desktop/*.exe` found nothing
+    // and the publish step refused to release a build that had succeeded.
+    expect(workflow).not.toContain("ls dist-desktop/*.exe");
+    expect(workflow).toContain("find dist-desktop -type f -name '*Setup*.exe'");
   });
 });
