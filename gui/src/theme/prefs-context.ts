@@ -151,15 +151,38 @@ export function readPrefs(): Prefs {
   }
 }
 
+/** Numeric bounds, matching `readElementStyle` in `shared/m3/elements.ts`. */
+const EL_LIMITS = { radius: [0, 999], pad: [0, 200], size: [1, 400] } as const;
+/** Longest a stored CSS value may be. A font stack is the biggest legitimate one. */
+const EL_VALUE_MAX = 400;
+
+function clampStored(value: unknown, [lo, hi]: readonly [number, number]): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : undefined;
+}
+
+function storedCssValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, EL_VALUE_MAX) : undefined;
+}
+
 /**
  * Everything in the stored per-element overrides that is still renderable.
  *
- * The six flat fields were previously trusted wholesale, which was survivable
- * while they were six strings and numbers feeding `var()`. Typography is not:
- * `typographyCss` writes its values straight into a real CSS rule, so a
- * hand-edited or corrupted entry could set `font-size: 1e9px` on every card and
- * leave the user with a screen they cannot navigate back from. `readTypography`
- * clamps every number and checks every enum, and drops keys it does not know.
+ * The six flat fields used to be trusted wholesale, which was survivable while
+ * they only fed `var()` — the CSSOM parses each value on its own and simply
+ * rejects junk. They no longer only feed `var()`. A derived (`auto:…`) target
+ * has no hand-written variable anywhere, so its six are compiled into a real
+ * generated stylesheet, and an unclamped number now reaches a real declaration:
+ * a stored `radius: 1e9` becomes `border-radius: 1000000000px` on everything the
+ * selector matches, which is a screen nobody can navigate back from.
+ *
+ * So they are clamped here to the same bounds `shared/m3/elements.ts` uses, and
+ * strings are capped — an oversized value would otherwise be rewritten into the
+ * stylesheet on every render. `cssText` separately refuses any value carrying
+ * `;{}<>\\`, a comment, or `url(`, so the two together mean nothing from storage
+ * can either escape a declaration or produce an unusable one.
  *
  * An entry that validates down to nothing is dropped rather than kept as `{}`,
  * so "has an override" stays a truthful question to ask of this map.
@@ -180,8 +203,21 @@ function readElementStyles(raw: unknown): Record<string, ElementStyle> {
     if (!elementSelectorFor(id)) continue;
     const entry = value as ElementStyle & { typography?: unknown };
     const typography = readTypography(entry.typography);
-    const next: ElementStyle = { ...entry, typography };
-    if (!typography) delete next.typography;
+    const next: ElementStyle = {
+      font: storedCssValue(entry.font),
+      color: storedCssValue(entry.color),
+      bg: storedCssValue(entry.bg),
+      radius: clampStored(entry.radius, EL_LIMITS.radius),
+      pad: clampStored(entry.pad, EL_LIMITS.pad),
+      size: clampStored(entry.size, EL_LIMITS.size),
+      typography,
+    };
+    // Drop the keys that validated away, so `{}` and "no override" stay the
+    // same thing and the reset list does not grow entries that style nothing.
+    for (const key of Object.keys(next) as (keyof ElementStyle)[]) {
+      if (next[key] === undefined) delete next[key];
+    }
+    if (Object.keys(next).length === 0) continue;
     out[id] = next;
   }
   return out;

@@ -402,6 +402,19 @@ function showWindow() {
       deferredConflict = null;
       void promptProxyConflict(plan, proxyPort).then(async choice => {
         if (choice !== "replace") return;
+        // No pid means /healthz did not report one, so there is nothing to
+        // signal and nothing to wait for — going ahead would burn the fifteen
+        // second port-free timeout and then fail to bind, which reads to the
+        // user as "Replace did nothing, slowly". `ensureProxy` guards the same
+        // way on its own path.
+        if (!plan.pid) {
+          dialog.showErrorBox(
+            "opencodex could not replace the running build",
+            `The opencodex on port ${proxyPort} did not report a process id, so it cannot be asked to stop.`
+            + " Quit it yourself and relaunch this app.",
+          );
+          return;
+        }
         try { process.kill(plan.pid, "SIGTERM"); } catch { /* already gone */ }
         await waitForPortFree(proxyPort);
         try {
