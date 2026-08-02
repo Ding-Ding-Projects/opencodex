@@ -130,7 +130,7 @@ async function tick(ms = 0): Promise<void> {
   });
 }
 
-async function waitForText(container: HTMLElement, text: string, turns = 100): Promise<void> {
+async function waitForText(container: HTMLElement, text: string, turns = 200): Promise<void> {
   for (let i = 0; i < turns && !container.textContent?.includes(text); i++) {
     await tick();
   }
@@ -180,7 +180,12 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   // A claim that succeeded stores the key in the same synchronous step that
   // latches it; a refusal never stores one, so this cannot spin on that path.
   if (isClaimApplied()) {
-    for (let i = 0; i < 100 && !readPairedKey(); i++) await tick();
+    // Deliberately short. A claim that succeeded stores the key in the SAME
+    // synchronous step that latches it, so this needs a turn or two; a claim
+    // that was refused never stores one, and every iteration here is real time
+    // burned on that path. A large budget made the refusal test take five
+    // seconds and time out.
+    for (let i = 0; i < 20 && !readPairedKey(); i++) await tick();
   }
   // The model list is what un-disables Send. Without it the form submit in these
   // tests is a no-op, which is a far more confusing failure than a timeout here.
@@ -332,6 +337,15 @@ test("a rejected key asks to pair again rather than failing silently", async () 
     Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(textarea, "hello");
     textarea.dispatchEvent(new testWindow.Event("input", { bubbles: true }) as never);
     await act(async () => { await Promise.resolve(); });
+
+    // Assert the precondition instead of discovering it as a confusing text
+    // mismatch later. Send is `disabled={!draft.trim() || !model}`, so with no
+    // model the submit below is a silent no-op and the failure then reads as
+    // "the screen printed the wrong message" when nothing was ever sent — which
+    // is exactly how this test misled three separate investigations.
+    const send = container.querySelector<HTMLButtonElement>("button.m3-mob__send");
+    expect(send).toBeTruthy();
+    expect(send!.disabled).toBe(false);
 
     const form = container.querySelector("form")!;
     await act(async () => {
