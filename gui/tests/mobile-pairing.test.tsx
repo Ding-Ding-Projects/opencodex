@@ -187,9 +187,29 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
     // seconds and time out.
     for (let i = 0; i < 20 && !readPairedKey(); i++) await tick();
   }
-  // The model list is what un-disables Send. Without it the form submit in these
-  // tests is a no-op, which is a far more confusing failure than a timeout here.
-  for (let i = 0; i < 100 && !container.querySelector("select option"); i++) await tick();
+  // The model list is what un-disables Send: the button is
+  // `disabled={!draft.trim() || !model}`, so without a model every form submit
+  // in this file is a silent no-op.
+  //
+  // CI proved this is not hypothetical. The Send-button assertion in the rejected
+  // key test fired on a run where the list had not arrived — which is the whole
+  // reason that assertion exists, and why this wait now refuses to hand back a
+  // screen it knows is unusable instead of letting the test discover it later
+  // and blame the wrong thing.
+  // Probe the select's VALUE, not the presence of an `<option>`. With no models
+  // the screen still renders `<option value="">Loading…</option>`, so an
+  // option-presence check is satisfied the moment the select mounts and reports
+  // a usable screen while `model` is still "" and Send is still inert. Verified
+  // by emptying the models mock and watching the option check stay green.
+  const modelChosen = () => !!container.querySelector<HTMLSelectElement>("select")?.value;
+  for (let i = 0; i < 300 && !modelChosen(); i++) await tick();
+  if (!modelChosen()) {
+    throw new Error(
+      "mount(): the model list never arrived, so Send is inert and every submit " +
+      "in this test would be a silent no-op. " +
+      `claimApplied=${isClaimApplied()} storedKey=${JSON.stringify(readPairedKey())}`,
+    );
+  }
   await tick();
   return { container, root };
 }
