@@ -3,17 +3,40 @@ title: Debug sandbox — change nothing, issue nothing
 description: OPENCODEX_DEBUG_SANDBOX runs the real dashboard and proxy while blocking the two things that are awkward to undo — writing config.json and issuing a data-plane key.
 ---
 
-Set `OPENCODEX_DEBUG_SANDBOX=1` and opencodex runs normally with two things switched off: it will
-**not write its config to disk**, and it will **not issue a data-plane key**. Everything else behaves
-as it always does — the dashboard renders, settings toggle, the pairing panel opens, the QR code
-appears and its countdown runs.
+Set `OPENCODEX_DEBUG_SANDBOX=1` and opencodex runs normally with three things switched off: it will
+**not write its config to disk**, **not issue a data-plane key**, and **not reconfigure the other
+tools on your machine**. Everything else behaves as it always does — the dashboard renders, settings
+toggle, the pairing panel opens, the QR code appears and its countdown runs.
+
+## It leaves your other tools alone
+
+A normal start edits four things that live **outside** the opencodex data directory entirely:
+
+| What | Where |
+| --- | --- |
+| Codex's provider config | `~/.codex/config.toml` |
+| Grok Build's config | `~/.grok/config.toml` |
+| The shell profile hook | your shell rc file |
+| System-wide environment variables | the machine's environment |
+
+All four are reverted on a clean shutdown, and **none of them is reverted by a crash or a
+force-kill**. A sandboxed start declines the whole set rather than any one of them: a
+half-configured machine — Codex pointed at the proxy, Grok not — is harder to reason about than
+either end state.
+
+:::note[What this costs you]
+The Codex model catalogue is produced by that sync, so a sandboxed proxy has **no catalogue** and the
+Models screen renders empty. Everything else on the dashboard behaves normally, and any client you
+point at the proxy by hand still works.
+:::
 
 It exists so the app can be driven, demonstrated and screenshotted without changing the machine's
 configuration or minting a credential somebody has to remember to revoke.
 
 :::caution[It does not make the process leave no trace]
-This blocks **configuration changes and credential issuance**. It does not stop opencodex writing
-its other files, and two of those matter more than their names suggest:
+This blocks **configuration changes, credential issuance, and reconfiguring your other tools**. It
+does not stop opencodex writing its own other files, and two of those matter more than their names
+suggest:
 
 - **The responses state file** holds the **verbatim text of prompts and replies**.
 - **The local git state history** is **append-only**, and commits `config.json`, `codex-accounts.json`
