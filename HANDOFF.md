@@ -1,5 +1,78 @@
 # Handoff
 
+## The 48dp sweep, and a debug mode that was not — 2026-08-02, `da02350f`
+
+> [!NOTE]
+> `da02350f` is mis-scoped, the same way `4a6f6f99` was: a `git add -A` swept the
+> debug-sandbox fix into a commit whose message describes only the touch-target
+> work. Both are in it. Not rewritten — it was already on the hui — but that is
+> twice in two iterations, and the fix is to stage explicitly rather than to keep
+> writing this paragraph.
+
+### 44 was never the minimum
+
+The audit found one belief repeated everywhere: that **44px** "clears the minimum
+hit target". It does not. 44 is Apple's HIG figure and Material's is 48, and the
+number had spread into comments asserting the claim, into inline styles no
+stylesheet could reach, and into a token — `--control-touch: 44px` — that every
+coarse-pointer floor resolved through. That token was the root; the rest was
+sediment on top of it.
+
+Measured in a real engine at 320px with touch emulation rather than grepped:
+twelve routes now report every reachable target at 48x48, down from roughly
+twenty-five offending control classes.
+
+**Only coarse pointers get the floor.** `--h-btn` is a density ramp the user
+controls — 56px at level 1 down to a deliberately compact 36px at level 5, 46px
+at the default — and 48dp is a *touch* minimum. Forcing it on every pointer
+would have moved every screen for every user to fix a problem a mouse never had.
+
+Three things worth keeping:
+
+- **The checkbox target from the previous iteration never worked.** Padding does
+  not apply to `input[type=checkbox]` — a replaced element — so an 18px box with
+  15px of padding measured **18x18** while reading in the stylesheet exactly like
+  a 48dp target. The commit message asserted it was one. It now delegates to a
+  `.m3-check-hit` wrapper, verified at 48x48.
+- **A negative margin on that wrapper overlapped its neighbour by 5px**, measured.
+  Never adjacent today; removed anyway, because a rule whose safety depends on
+  nobody putting two side by side is a trap for whoever does.
+- **Three classes beat the shared floor on load order at equal specificity**
+  (`.pws-btn-sm`, `.models-provider-toggle`, `.combos-workspace-tab`). The floor
+  is restated beside each declaration that undercuts it.
+
+`scripts/touch-target-audit.ts` ships so this is repeatable, and states what it
+cannot see: a pseudo-element overlay like `.ap-picker__swatch::after`, whose 32px
+swatch it reports as 32 while the real target is 48. An earlier draft of that
+same comment claimed no such rule existed in the codebase — it did.
+
+### The debug sandbox reconfigured three other tools
+
+Found by using it. `OPENCODEX_DEBUG_SANDBOX=1` blocked `config.json` writes and
+key minting exactly as documented, and a sandboxed start still **pointed the
+machine's real Codex install at the proxy and rewrote its real Grok config**,
+plus the shell profile and system-wide environment variables. All four live
+outside `OPENCODEX_HOME`; all four are reverted on a clean shutdown and none of
+them by a crash.
+
+The old wording was narrowly defensible — it named `config.json` and nothing
+else — but a mode whose whole purpose is "look at the app without changing
+anything" should not need a careful reading to avoid changing something.
+
+`src/lib/client-integrations.ts` now holds all four behind one decision, so a
+fifth cannot quietly miss the gate, and the sandbox declines the set. Verified
+end to end: a sandboxed start leaves both files byte-identical and still serves.
+
+An earlier attempt tested this by scanning `src/cli/index.ts` for the guard near
+each call. It passed with a gate deleted, and the tightened version then failed on
+correct code because a comment sits 325 characters before one of the calls — it
+was measuring comment length. The dependencies are injected instead and the test
+asserts behaviour.
+
+**Consequence worth knowing:** with the Codex sync correctly skipped, a sandboxed
+proxy has no model catalogue, so the Models page renders empty. That is why the
+audit harness documents pointing at a sandboxed proxy *and* what it costs.
+
 ## Models gets bulk actions, and the pairing wait is finally understood — 2026-08-01, `4a6f6f99`
 
 > [!NOTE]
