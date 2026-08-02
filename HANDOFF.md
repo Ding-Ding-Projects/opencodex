@@ -1,5 +1,61 @@
 # Handoff
 
+## Bug hunt: four fixed and dewed, a 7-lens sweep still running — 2026-08-02
+
+Deliberate hunt rather than incidental fixes. Seven independent finders, each on
+its own lens, every candidate then put to **three skeptics who are told to
+refute it** — a bug survives only when at least two of the three fail to kill it.
+One dissenting voice is not evidence.
+
+### Landed so far
+
+| Commit | Bug | Why it mattered |
+| --- | --- | --- |
+| [`cbed37b0`](https://github.com/Ding-Ding-Projects/opencodex/commit/cbed37b0) | Stored element styles were never clamped | They used to feed only `--el-*` custom properties, where the CSSOM rejects junk for free. Derived `auto:` targets have no variable anywhere, so yesterday's change started compiling them into a real stylesheet — and `radius: 1e9` became `border-radius: 1000000000px` on every match, a screen you cannot navigate back from to undo it. |
+| [`cbed37b0`](https://github.com/Ding-Ding-Projects/opencodex/commit/cbed37b0) | `process.kill` with a null pid on the deferred conflict path | The throw was caught, then it waited out the full 15s port-free timeout and failed to bind — "Replace did nothing, slowly". |
+| [`cdae6d96`](https://github.com/Ding-Ding-Projects/opencodex/commit/cdae6d96) | The desktop app was classified as a **git checkout** | `asar: false` means its tree is unpacked, so nothing in its path says `node_modules` and `detectInstall` returned `"source"`. Someone who ran a `.exe` was told to run `git pull && bun install && bun run build:gui`, with the update button disabled. The desktop build therefore offered **no update route at all from inside the app** — the gap sitting directly behind "the app is not showing updated page after downloading new update". |
+| [`d25c1747`](https://github.com/Ding-Ding-Projects/opencodex/commit/d25c1747) | `ocx config set` wrote **defaults** over an unreadable config | One malformed byte and a single `set` replaced every provider, key and pooled account with factory defaults, printed "Set …", exited 0. `loadConfig` backs up an unparseable file; this path does not go through it, so nothing was left to restore from. |
+| [`d25c1747`](https://github.com/Ding-Ding-Projects/opencodex/commit/d25c1747) | `ocx export` wrote a **backup of defaults** and called it a backup | Same root cause: `readConfigDiagnostics()` always returns a usable object, and both callers used it while ignoring the `error` beside it. A backup of factory defaults is worse than none, because it looks like one. |
+
+> [!IMPORTANT]
+> The last two share one root cause worth remembering: **a function that always
+> returns something usable, with the failure reported in a sibling field, will
+> have that field ignored.** Two independent callers made the same mistake. If a
+> caller must not proceed on a fallback, the fallback should not be handed to it
+> looking like an answer.
+
+Every fix is pinned by tests that **fail without it** — 4 of 8, 5 of 7, and 9 new
+ones respectively. That check is the point: a test written after a fix will pass
+against the broken code just as happily unless you go and look.
+
+### Still open — the sweep is mid-flight
+
+22 candidates so far, 42 refutation verdicts in, 6 killed. The unrefuted list
+includes several that look serious and are **not yet verified by me**, so they
+are listed as leads rather than findings:
+
+- `src/server/auth-cors.ts` — `isApiAuthRequired` reads the *mutable*
+  `config.hostname`, so turning remote access off may disable data-plane auth
+  while the socket is still bound to `0.0.0.0`.
+- `src/chat/outbound.ts` — a failed SSE bridge closes the client stream without
+  cancelling upstream, leaking the turn into `activeTurns` permanently.
+- `src/providers/key-failover.ts` — 429 failover appears to retry with a literal
+  `${ENV_VAR}` placeholder as the bearer token.
+- `src/lib/terminal-session.ts` — Stop never escalates to `taskkill /T /F`, so
+  the child tree is orphaned on Windows.
+- `src/cli/index.ts` — `ocx restart` may stop the proxy and never start it again
+  when `codexAutoStart` is off, exiting 0.
+- `gui/src/pages/Mobile.tsx` — an open Remote tab may silence the admin-token
+  dialog for the whole app.
+- `electron/main.mjs` — "Replace it with this build" hard-kills the other proxy
+  on Windows, so its shutdown handler never restores the native Codex config.
+  **That one is mine, from yesterday.**
+
+Nothing above is fixed yet, and none of it should be treated as true until it has
+been read and reproduced.
+
+---
+
 ## Right-click everywhere, every screenshot replaced, and a line count CI publishes — 2026-08-02
 
 Follow-on to the entry below, after `d40c4617`.
