@@ -441,12 +441,21 @@ export function checkForUpdate(
   const current = deps.currentVersion();
   const installer = deps.detectInstall();
   const channel = requestedChannel ?? normalizeUpdateChannel(null, current);
-  const latest = installer === "source" ? null : deps.latestVersion(channel);
+  // Neither a source checkout nor the desktop installer can be updated by
+  // running a package manager, so neither asks npm what the latest version is.
+  const selfUpdating = installer !== "source" && installer !== "desktop";
+  const latest = selfUpdating ? deps.latestVersion(channel) : null;
   const updateAvailable = !!latest && isNewer(latest, current, channel);
   let reason: string | undefined;
-  let command = installer === "source" ? manualSourceCommand() : updateExecutionCommand(installer, channel).display;
+  let command = selfUpdating ? updateExecutionCommand(installer, channel).display : manualSourceCommand();
 
-  if (installer === "source") {
+  if (installer === "desktop") {
+    // The packaged app used to land in the `source` branch below and advise
+    // `git pull && bun install`, which is unusable advice for somebody who ran
+    // an installer. It gets the one instruction that actually applies instead.
+    reason = "desktop_installer";
+    command = RELEASE_NOTES_URL;
+  } else if (installer === "source") {
     reason = "source_checkout";
     command = manualSourceCommand();
   } else if (!latest) {
@@ -461,7 +470,7 @@ export function checkForUpdate(
     channel,
     installer,
     updateAvailable,
-    canUpdate: installer !== "source" && updateAvailable,
+    canUpdate: selfUpdating && updateAvailable,
     command: sanitizeUpdateJobText(command),
     releaseNotesUrl: RELEASE_NOTES_URL,
     ...(reason ? { reason } : {}),

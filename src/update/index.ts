@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getConfigDir, loadConfig, readPid, readRuntimePort } from "../config";
@@ -29,12 +29,29 @@ export function historyRestoreIncomplete(configDir = getConfigDir()): boolean {
 export const PKG = "@bitkyc08/opencodex";
 const HERE = dirname(fileURLToPath(import.meta.url)); // .../opencodex/src/update
 
-export type Installer = "bun" | "npm" | "source";
+export type Installer = "bun" | "npm" | "source" | "desktop";
 export type Channel = "latest" | "preview";
 
-/** Infer how opencodex is installed from the running module's path. */
+/**
+ * Infer how opencodex is installed from the running module's path.
+ *
+ * The packaged desktop app is NOT a source checkout, and calling it one was a
+ * real bug rather than a naming quibble. Its tree is unpacked (`asar: false`),
+ * so nothing in its path says `node_modules` — which sent it down the `source`
+ * branch, where the updater disables its own button and advises
+ * `git pull && bun install && bun run build:gui`. That is nonsense to somebody
+ * who ran an installer, and it left the desktop build with no working update
+ * path offered from inside the app at all.
+ *
+ * `build-info.json` beside `package.json` is what tells the two apart: CI writes
+ * it immediately before packaging and it is gitignored, so a checkout never has
+ * one. A developer running `electron-builder` locally has no run number to stamp
+ * and correctly still reads as `source`.
+ */
 export function detectInstall(): Installer {
-  if (!HERE.includes("node_modules")) return "source"; // a git checkout, not a global install
+  if (!HERE.includes("node_modules")) {
+    return existsSync(join(HERE, "..", "..", "build-info.json")) ? "desktop" : "source";
+  }
   return HERE.includes(".bun") ? "bun" : "npm";
 }
 

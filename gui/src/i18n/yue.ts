@@ -274,6 +274,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "dash.updateRecheck": "再檢查",
   "dash.updateCannotAuto": "一撳即更新用唔到（{reason}）。",
   "dash.updateReason.source_checkout": "source checkout",
+  "dash.updateReason.desktop_installer": "用桌面安裝檔裝嘅 — 去下載最新嗰個",
   "dash.updateReason.latest_unavailable": "連唔到 npm registry",
   "dash.updateReason.already_latest": "已經係最新版",
   "dash.updateReason.unknown": "更新用唔到",

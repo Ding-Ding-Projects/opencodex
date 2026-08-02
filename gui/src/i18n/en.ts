@@ -241,6 +241,7 @@ export const en = {
   "dash.updateRecheck": "Re-check",
   "dash.updateCannotAuto": "One-click update is unavailable ({reason}).",
   "dash.updateReason.source_checkout": "source checkout",
+  "dash.updateReason.desktop_installer": "installed from the desktop installer — download the latest one",
   "dash.updateReason.latest_unavailable": "npm registry unreachable",
   "dash.updateReason.already_latest": "already on latest",
   "dash.updateReason.unknown": "update unavailable",
