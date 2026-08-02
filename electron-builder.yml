@@ -58,19 +58,46 @@ files:
 # on Windows too. See docs/design-system/m3-port-handoff.md, "Platform support".
 win:
   target:
-    - target: nsis
+    - target: squirrel
       arch: [x64]
   icon: gui/public/logo.png
 
-nsis:
-  # Not one-click: the proxy writes to ~/.opencodex and rewrites the native Codex
-  # config, so the user should see where it is going and be able to opt out.
-  oneClick: false
-  perMachine: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
-  shortcutName: opencodex
-  # Leave ~/.opencodex alone on uninstall: it holds the user's providers, accounts
-  # and API keys, and an uninstall is not consent to delete credentials.
-  deleteAppDataOnUninstall: false
+# Squirrel.Windows, not NSIS.
+#
+# ## What changes for the user, stated plainly
+#
+# Squirrel has no installer UI to speak of: it is always one-click, always
+# per-user (into %LOCALAPPDATA%\opencodex), and offers no choice of install
+# directory. The NSIS config it replaces deliberately did the opposite —
+# `oneClick: false` with `allowToChangeInstallationDirectory` — because the proxy
+# writes to ~/.opencodex and rewrites the native Codex config, so the reasoning
+# went that the user should see where it is going and be able to opt out.
+#
+# That consent step is genuinely gone. It is not recreated here, because Squirrel
+# cannot: there is no wizard to put it in. The mitigation is that the two things
+# the prompt was warning about are both reversible and both visible from the app
+# — the Codex rewrite is reverted on a clean shutdown and can be skipped entirely
+# with OPENCODEX_DEBUG_SANDBOX, and ~/.opencodex is listed on the Storage screen.
+#
+# ## What it buys
+#
+# Per-user install needs no elevation, and Squirrel's delta/full nupkg feed is
+# the format Electron's own autoUpdater speaks, so update delivery has a
+# supported path rather than re-running a full installer.
+#
+# ## The part that is not optional
+#
+# Squirrel drives the app with `--squirrel-install`, `--squirrel-updated`,
+# `--squirrel-uninstall` and `--squirrel-obsolete` during install and uninstall.
+# An app that does not answer those launches its full UI four times during a
+# silent install and blocks its own uninstall. `electron/main.mjs` handles them
+# before anything else runs.
+squirrelWindows:
+  # No .msi: it is a second artifact with a second update path and nothing here
+  # needs Group Policy deployment.
+  msi: false
+  # `iconUrl` is deliberately unset. It is the Add/Remove Programs icon and must
+  # be a live https URL to a real .ico — this repo ships only a PNG, and pointing
+  # at a URL that 404s puts a broken icon in the user's control panel forever.
+  # electron-builder falls back to its own default, which is honest about being a
+  # default. Set this once a hosted .ico exists.

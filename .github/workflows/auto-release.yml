@@ -143,10 +143,12 @@ jobs:
           name: opencodex-setup-${{ github.run_number }}
           path: |
             dist-desktop/*.exe
+            dist-desktop/*.nupkg
+            dist-desktop/RELEASES
             opencodex-dashboard.zip
           if-no-files-found: error
           retention-days: 30
-          compression-level: 0 # An NSIS installer is already compressed.
+          compression-level: 0 # A Squirrel installer and its nupkg are already compressed.
 
       # Building on every push must not mean publishing on every push. The
       # invariant that a red commit never becomes a release is unchanged; the
@@ -219,6 +221,22 @@ jobs:
             exit 1
           fi
           echo "installer: $installer ($(wc -c < "$installer") bytes)"
+
+          # Squirrel's update feed travels with the installer or not at all.
+          # `RELEASES` plus the full `.nupkg` are what Squirrel reads to decide
+          # whether a newer version exists; a release carrying only Setup.exe is
+          # installable but not updatable, which is most of the reason for
+          # choosing Squirrel over NSIS in the first place. Collected into an
+          # array so a missing one is visible here rather than as a silent
+          # omission from the asset list.
+          feed=()
+          for f in dist-desktop/RELEASES dist-desktop/*.nupkg; do
+            [ -s "$f" ] && feed+=("$f")
+          done
+          if [ ${#feed[@]} -lt 2 ]; then
+            echo "::warning::Squirrel update feed incomplete (found ${#feed[@]} of RELEASES + .nupkg). The release will install but not self-update."
+          fi
+          echo "feed: ${feed[*]:-none}"
           echo "codename: $DISH_NAME ($DISH_ZH)"
 
           # The dish photo travels WITH the release, not only as a link in the

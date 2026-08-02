@@ -16,6 +16,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { handleSquirrelEvent } from "./squirrel.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
@@ -35,8 +36,27 @@ const HOST = "127.0.0.1";
 const STARTUP_TIMEOUT_MS = 60_000;
 const HEALTH_POLL_MS = 250;
 
-/** Single instance: a second launch focuses the existing window instead of racing for the port. */
-if (!app.requestSingleInstanceLock()) {
+/**
+ * Squirrel's install-time launches, answered before anything else happens.
+ *
+ * Squirrel runs this app with `--squirrel-install`, `--squirrel-updated`,
+ * `--squirrel-uninstall` or `--squirrel-obsolete` during install and uninstall.
+ * Ignoring them starts the window, the tray and a proxy bound to port 10100 once
+ * per flag during a supposedly silent install — and on uninstall, Squirrel waits
+ * for this process to exit before deleting the directory, so a running proxy
+ * blocks its own removal.
+ *
+ * The logic lives in `./squirrel.mjs` so it can be tested: this file imports
+ * `electron`, which is not installed in this repo, so nothing in it is reachable
+ * from a test.
+ *
+ * `app.exit(0)` rather than `app.quit()`: quit runs `before-quit` and the whole
+ * shutdown path, and this process has started nothing to shut down.
+ */
+if (handleSquirrelEvent({ spawn, exit: code => app.exit(code) })) {
+  // Nothing below this line may run: the process is on its way out.
+} else if (!app.requestSingleInstanceLock()) {
+  /** Single instance: a second launch focuses the existing window instead of racing for the port. */
   app.quit();
 }
 

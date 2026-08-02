@@ -1,4 +1,4 @@
-# Windows only, deliberately. `electron-builder.yml` ships an NSIS installer and
+# Windows only, deliberately. `electron-builder.yml` ships a Squirrel installer and
 # nothing else — the macOS and Linux desktop targets were removed rather than
 # left half-configured — so validating on runners the product never ships to
 # bought nothing and cost three times the wall-clock on every commit. A green
