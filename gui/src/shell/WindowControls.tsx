@@ -7,6 +7,15 @@
  * only way to minimise or close the window. Nothing renders in a browser, or on
  * macOS where the native traffic lights stay (see `customWindowControls`).
  *
+ * They are drawn to Material Design, not to Windows. The first version used the
+ * Segoe Fluent caption marks and Windows 11's own close-button red, reasoning
+ * that window chrome should look like the platform's. That reasoning assumed a
+ * platform title bar to sit inside; this window has none, so those four buttons
+ * were simply the last non-M3 elements left in an otherwise fully M3 surface.
+ * The glyphs are Material Symbols (`minimize`, `crop_square`, `filter_none`) and
+ * the destructive hover uses the error role, which follows the theme and the
+ * user's seed colour the way a hard-coded hex never could.
+ *
  * Exit is separate from close on purpose. Close hides to the tray and leaves the
  * proxy serving, which is what the native X always did. Exit is the graceful
  * teardown: it asks the proxy to finish the requests still in flight, stop, and

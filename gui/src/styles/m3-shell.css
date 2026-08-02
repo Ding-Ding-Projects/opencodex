@@ -159,9 +159,12 @@
   grid-auto-columns: 1fr;
   align-items: stretch;
   height: 80px;
-  padding: 12px 8px 16px;
-  background: var(--m3-surface-container);
+  padding: var(--el-bottomNav-pad, 12px 8px 16px);
+  background: var(--el-bottomNav-bg, var(--m3-surface-container));
+  color: var(--el-bottomNav-color, inherit);
+  font-family: var(--el-bottomNav-font, inherit);
   border-top: 1px solid var(--m3-outline-variant);
+  border-radius: var(--el-bottomNav-radius, 0);
 }
 .m3-bottom-nav .m3-nav-item {
   flex-direction: column;
@@ -215,6 +218,40 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/*
+  The build's dim sum code name.
+
+  Set apart from the monospaced build line beside it on purpose: the run number
+  and the port are machine facts and read as such, while this is what the release
+  is *called*. It shrinks in two steps rather than one — the English name goes
+  first, then the whole thing — so a narrow window drops detail instead of
+  clipping a name mid-character.
+*/
+.m3-appbar-codename {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--t-label-l);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+.m3-appbar-codename-en {
+  color: var(--m3-primary);
+  font-size: var(--t-label-s);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Medium and below: the row has a page title, a cost meter and four window
+   buttons to fit. The English name is the first thing that can go without
+   losing the identity — the Chinese name alone is still the code name. */
+@media (max-width: 1000px) {
+  .m3-appbar-codename-en { display: none; }
+}
+@media (max-width: 720px) {
+  .m3-appbar-codename { display: none; }
+}
+
 .m3-appbar-status {
   font-family: var(--mono);
   font-size: var(--t-label-s);
@@ -228,18 +265,23 @@
   flex: 0 0 auto;
   display: grid;
   place-items: center;
+  /* The button stays 48dp. An earlier attempt fed the size slider in here behind
+     a `max(48px, …)` floor, which made the control inert — the slider tops out
+     at 24px, so the floor won at every value and the row did nothing. The size
+     control drives the glyph instead (see the `svg` rule below): the icon grows,
+     the hit target does not shrink, and the control visibly does something. */
   width: 48px;
   height: 48px;
   border: none;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--m3-on-surface-variant);
+  border-radius: var(--el-iconButton-radius, var(--r-pill));
+  background: var(--el-iconButton-bg, transparent);
+  color: var(--el-iconButton-color, var(--m3-on-surface-variant));
   cursor: pointer;
   transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
 }
 .m3-icon-btn:hover { background: var(--m3-surface-container-high); }
 .m3-icon-btn[aria-expanded="true"] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
-.m3-icon-btn svg { width: 22px; height: 22px; }
+.m3-icon-btn svg { width: var(--el-iconButton-size, 22px); height: var(--el-iconButton-size, 22px); }
 
 .m3-badge {
   position: absolute;
@@ -422,10 +464,11 @@
   min-width: 220px;
   max-height: min(60vh, 480px);
   overflow-y: auto;
-  padding: 8px;
-  border-radius: var(--r-m);
-  background: var(--m3-surface-container-high);
-  color: var(--m3-on-surface);
+  padding: var(--el-menu-pad, 8px);
+  border-radius: var(--el-menu-radius, var(--r-m));
+  background: var(--el-menu-bg, var(--m3-surface-container-high));
+  color: var(--el-menu-color, var(--m3-on-surface));
+  font-family: var(--el-menu-font, inherit);
   box-shadow: var(--e3);
 }
 .m3-menu-item {
@@ -587,13 +630,17 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: var(--el-button-size, var(--h-btn));
+  /* The size control is type size, not height — its slider runs 10–24px, so
+     driving `min-height` from it made "make the label bigger" shrink every
+     filled button in the app to well under the 48dp touch floor. Same mistake
+     as `.m3-input` and `.m3-chip` below; the height stays the token. */
+  min-height: var(--h-btn);
   padding: 0 var(--el-button-pad, 24px);
   border: none;
   border-radius: var(--el-button-radius, var(--r-pill));
   font: inherit;
   font-family: var(--el-button-font, inherit);
-  font-size: var(--t-label-l);
+  font-size: var(--el-button-size, var(--t-label-l));
   font-weight: 500;
   cursor: pointer;
   transition: background 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms;
@@ -642,14 +689,21 @@
 
 .m3-input {
   width: 100%;
+  /* NOT `--el-input-size`. That variable carries the editor's *type* size
+     slider, which ranges 10–24px — feeding it to `min-height` turned "make the
+     label bigger" into "collapse every text field in the app to 18px tall", and
+     below the 48dp touch floor at every value the slider can produce. The height
+     stays the token; the size control drives the text, which is what it is
+     labelled as and what `.m3-table` already does with it. */
   min-height: var(--h-btn);
-  padding: 0 16px;
+  padding: 0 var(--el-input-pad, 16px);
   border: 1px solid var(--m3-outline);
-  border-radius: var(--r-s);
-  background: var(--m3-surface-container-lowest);
-  color: var(--m3-on-surface);
+  border-radius: var(--el-input-radius, var(--r-s));
+  background: var(--el-input-bg, var(--m3-surface-container-lowest));
+  color: var(--el-input-color, var(--m3-on-surface));
   font: inherit;
-  font-size: var(--t-body-m);
+  font-family: var(--el-input-font, inherit);
+  font-size: var(--el-input-size, var(--t-body-m));
 }
 .m3-input:focus { border-color: var(--m3-primary); }
 .m3-textarea { min-height: 120px; padding: 12px 16px; resize: vertical; font-family: var(--mono); font-size: var(--t-body-s); line-height: 1.5; }
@@ -678,14 +732,16 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* Same rule as `.m3-input` above: the size slider is type size, not height. */
   min-height: 36px;
-  padding: 0 14px;
+  padding: 0 var(--el-chip-pad, 14px);
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-s);
-  background: transparent;
-  color: var(--m3-on-surface-variant);
+  border-radius: var(--el-chip-radius, var(--r-s));
+  background: var(--el-chip-bg, transparent);
+  color: var(--el-chip-color, var(--m3-on-surface-variant));
   font: inherit;
-  font-size: var(--t-label-l);
+  font-family: var(--el-chip-font, inherit);
+  font-size: var(--el-chip-size, var(--t-label-l));
   cursor: pointer;
 }
 .m3-chip.selected {
@@ -807,31 +863,45 @@ html[data-desktop] .m3-appbar .m3-avatar {
 }
 
 /*
-  Window buttons. Narrower and squarer than the app bar's icon buttons because
-  they are window chrome, and they sit flush to the top-right corner the way the
-  native controls did — a rounded, inset control there reads as a stray toolbar
-  button. Close keeps the platform's red hover so the most destructive-looking
-  control still looks like itself.
+  Window buttons — Material, not Windows.
+
+  These used to be 46px square, flush to the corner, with the Segoe Fluent
+  minimise/maximise/restore marks and Windows 11's own #c42b1c close hover. The
+  argument was that window chrome should look like the platform's window chrome.
+  It does not survive the shell being frameless: there is no platform title bar
+  here to match, the M3 app bar *is* the chrome, and those four buttons were the
+  only thing in the whole window still drawn to another design system — a
+  hard-coded hex in a themed surface, in the most looked-at corner of the app.
+
+  So they are M3 icon buttons now: the same 48dp target and pill shape as every
+  other icon button in the bar, a standard state layer, and error-role tokens for
+  close instead of a literal Windows red. The tokens track the theme and the
+  user's seed colour, which the hex could not.
 */
 .m3-window-controls {
   flex: 0 0 auto;
   display: flex;
-  align-items: stretch;
-  align-self: stretch;
-  margin-left: 4px;
+  align-items: center;
+  align-self: center;
+  /* An M3 icon button carries its own state layer inside its target, so the
+     strip is spaced rather than flush — a row of touching pills reads as one
+     control. */
+  gap: 2px;
+  margin-left: var(--sp-2);
+  padding-right: var(--sp-2);
 }
 .m3-window-controls .m3-win-btn {
-  width: 46px;
-  height: 100%;
-  border-radius: 0;
+  /* Inherits .m3-icon-btn: 48dp floor, pill radius, M3 state layer. Nothing to
+     restate here — restating it is how the two drifted apart in the first
+     place. The one thing kept is that close reads as destructive. */
+  border-radius: var(--r-pill);
 }
-.m3-window-controls .m3-win-btn:last-child { border-top-right-radius: inherit; }
 .m3-win-btn--close:hover {
-  background: #c42b1c;
-  color: #fff;
+  background: var(--m3-error);
+  color: var(--m3-on-error);
 }
 .m3-win-btn--close:hover::before { background: none; }
-/* Focus must stay visible against both the surface and the red hover. */
+/* Focus must stay visible against both the surface and the error hover. */
 .m3-win-btn:focus-visible {
   outline: 2px solid var(--m3-primary);
   outline-offset: -3px;
@@ -892,9 +962,10 @@ html[data-desktop] .m3-appbar .m3-avatar {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-2, 12px);
-  padding: 12px 14px;
-  border-radius: var(--r-m, 12px);
-  font-size: var(--t-body-s, 13px);
+  padding: var(--el-banner-pad, 12px 14px);
+  border-radius: var(--el-banner-radius, var(--r-m, 12px));
+  font-family: var(--el-banner-font, inherit);
+  font-size: var(--el-banner-size, var(--t-body-s, 13px));
   line-height: 1.45;
 }
 .m3-banner__text { min-width: 0; flex: 1 1 auto; display: grid; gap: 2px; }
@@ -914,13 +985,14 @@ html[data-desktop] .m3-appbar .m3-avatar {
 
 .m3-select {
   min-height: var(--h-btn, 40px);
-  padding: 0 32px 0 12px;
+  padding: 0 32px 0 var(--el-select-pad, 12px);
   border: 1px solid var(--m3-outline);
-  border-radius: var(--r-s, 8px);
-  background: var(--m3-surface);
-  color: var(--m3-on-surface);
+  border-radius: var(--el-select-radius, var(--r-s, 8px));
+  background: var(--el-select-bg, var(--m3-surface));
+  color: var(--el-select-color, var(--m3-on-surface));
   font: inherit;
-  font-size: var(--t-body-m, 14px);
+  font-family: var(--el-select-font, inherit);
+  font-size: var(--el-select-size, var(--t-body-m, 14px));
   cursor: pointer;
   /* Room for the UA arrow without it colliding with a long option label. */
   appearance: auto;
@@ -971,11 +1043,13 @@ html[data-desktop] .m3-appbar .m3-avatar {
 .m3-dialog__surface {
   width: 100%;
   /* M3 dialogs are the most raised surface in the app, at the largest radius. */
-  background: var(--m3-surface-container-high);
-  color: var(--m3-on-surface);
-  border-radius: var(--r-xl, 28px);
+  background: var(--el-dialog-bg, var(--m3-surface-container-high));
+  color: var(--el-dialog-color, var(--m3-on-surface));
+  border-radius: var(--el-dialog-radius, var(--r-xl, 28px));
+  font-family: var(--el-dialog-font, inherit);
+  font-size: var(--el-dialog-size, inherit);
   box-shadow: var(--e3);
-  padding: var(--sp-4, 24px);
+  padding: var(--el-dialog-pad, var(--sp-4, 24px));
   display: grid;
   gap: var(--sp-3, 16px);
   max-height: 84vh;
@@ -1215,10 +1289,13 @@ html[data-desktop] .m3-appbar .m3-avatar {
 
 .m3-mob__list { min-height: 0; overflow-y: auto; padding: var(--sp-3); display: grid; gap: var(--sp-2); align-content: start; }
 .m3-mob__session {
-  padding: 12px 14px;
+  padding: var(--el-remotePanel-pad, 12px 14px);
   border: 1px solid var(--m3-outline-variant);
-  border-radius: var(--r-m, 12px);
-  background: var(--m3-surface-container-low);
+  border-radius: var(--el-remotePanel-radius, var(--r-m, 12px));
+  background: var(--el-remotePanel-bg, var(--m3-surface-container-low));
+  color: var(--el-remotePanel-color, inherit);
+  font-family: var(--el-remotePanel-font, inherit);
+  font-size: var(--el-remotePanel-size, inherit);
 }
 .m3-mob__sessionhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .m3-mob__sessionhead strong { overflow-wrap: anywhere; }

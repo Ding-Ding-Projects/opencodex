@@ -41,6 +41,11 @@ files:
   - src/**
   - gui/dist/**
   - package.json
+  # Written by CI immediately before packaging. Its absence is not a build
+  # failure — a local `electron-builder` run has no run number to stamp — and the
+  # readers all fall back to "dev" rather than guessing. See
+  # electron/build-stamp.mjs.
+  - build-info.json
   # The COMPLETE production node_modules tree, not an allowlist. The first draft
   # enumerated top-level deps and missed @modelcontextprotocol/sdk's transitive
   # tree (express, hono, ajv, jose, ~40 packages) — the installed app would have

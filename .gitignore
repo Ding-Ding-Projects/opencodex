@@ -1,4 +1,10 @@
-node_modules/
+node_modules
+
+# Written by CI immediately before packaging (electron/build-stamp.mjs reads it).
+# Never committed: a checked-in build number would claim every local build was
+# the release it was copied from, and the adoption check in
+# electron/proxy-adoption.mjs treats that number as an identity.
+build-info.json/
 dist/
 .env
 *.log

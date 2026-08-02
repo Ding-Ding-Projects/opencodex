@@ -14,6 +14,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   ELEMENT_SELECTORS,
   ELEMENT_TYPE_STYLE_ID,
@@ -41,9 +43,90 @@ describe("the selector map", () => {
       card: ".m3-card",
       table: ".m3-table",
       button: ".m3-btn",
+      iconButton: ".m3-icon-btn",
+      input: ".m3-input",
+      chip: ".m3-chip",
+      menu: ".m3-menu",
+      select: ".m3-select",
+      dialog: ".m3-dialog__surface",
+      banner: ".m3-banner",
+      bottomNav: ".m3-bottom-nav",
+      statCard: ".dash-stat-card",
+      remotePanel: ".m3-mob__session",
     });
   });
+
+  /**
+   * The list above is a transcription, and a transcription can be wrong in the
+   * one way that matters: a class nobody defines. That failure is invisible at
+   * runtime — the editor opens, the controls move, and nothing on screen
+   * changes — so the stylesheet itself is the assertion rather than a second
+   * hand-written list agreeing with the first.
+   */
+  test("each of those classes has a rule in the app's stylesheets", () => {
+    const css = allStyles();
+    for (const selector of Object.values(ELEMENT_SELECTORS)) {
+      expect({ selector, defined: css.includes(`${selector} {`) || css.includes(`${selector},`) })
+        .toEqual({ selector, defined: true });
+    }
+  });
+
+  /**
+   * A target whose rule reads no `--el-<id>-*` variable is a row in the editor
+   * that cannot change anything. The variable channel is how the six flat
+   * overrides reach the page, so every mapped target has to consume at least one.
+   */
+  test("each target's rule actually reads its own --el- variables", () => {
+    const css = allStyles();
+    const inert = Object.keys(ELEMENT_SELECTORS).filter(id => !css.includes(`--el-${id}-`));
+    expect(inert).toEqual([]);
+  });
+
+  /**
+   * The size control is a *type* size — the editor's slider runs 10–24px.
+   *
+   * Wiring it to a box dimension turns "make the label bigger" into "collapse
+   * this control", and every value the slider can produce is below the 48dp
+   * touch floor. That shipped briefly for text fields and chips, where it made
+   * every input in the app 18px tall; it is cheap to make unrepeatable.
+   */
+  test("no target feeds its size variable into its own box dimensions", () => {
+    const css = allStyles();
+    const BOX = /(min-height|max-height|height|min-width|max-width|width)\s*:[^;}]*--el-([A-Za-z]+)-size/g;
+    const abuses: string[] = [];
+    for (const [selector, body] of ruleBlocks(css)) {
+      for (const [, , id] of body.matchAll(BOX)) {
+        // A rule for a *descendant* is a different question: an icon button's
+        // glyph is its content, and sizing `.m3-icon-btn svg` from the size
+        // control is the control doing exactly what it says while the 48dp
+        // button around it stays 48dp. The bug is a target resizing *itself*.
+        const own = selector.split(",").some(part => part.trim() === ELEMENT_SELECTORS[id]);
+        if (own) abuses.push(`${selector.trim()} { …--el-${id}-size }`);
+      }
+    }
+    expect(abuses).toEqual([]);
+  });
 });
+
+/** `selector { body }` pairs, flat — enough to ask which rule a declaration is in. */
+function ruleBlocks(css: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) out.push([match[1], match[2]]);
+  return out;
+}
+
+/** Every stylesheet the app ships, concatenated. */
+function allStyles(): string {
+  const dir = join(import.meta.dir, "..", "src");
+  const files = [
+    join(dir, "styles.css"),
+    ...readdirSync(dir).filter(f => f.endsWith(".css")).map(f => join(dir, f)),
+    ...readdirSync(join(dir, "styles")).filter(f => f.endsWith(".css")).map(f => join(dir, "styles", f)),
+  ];
+  return [...new Set(files)].map(f => {
+    try { return readFileSync(f, "utf8"); } catch { return ""; }
+  }).join("\n");
+}
 
 describe("compiling element typography", () => {
   test("emits one rule per target that has typography, and none for the rest", () => {

@@ -17,7 +17,19 @@ import { DEFAULT_SEED } from "./m3";
 
 export const PREFS_KEY = "ocx-m3:v1";
 
-/** Editable chrome surfaces on the Appearance screen's per-element editor. */
+/**
+ * Editable surfaces on the Appearance screen's per-element editor, and the
+ * targets the delegated right-click in `ElementAppearanceHost` can resolve.
+ *
+ * The list is what "every rendered element" is currently spelled out as. The
+ * three chrome entries came first because three components spread
+ * `useAppearanceTarget` by hand; the rest were reachable only from the
+ * Appearance screen, which meant right-clicking a card, a button, a field or a
+ * chip — the surfaces the app is almost entirely made of — did nothing at all.
+ * Adding an entry here is now half the work: `ELEMENT_SELECTORS` in `m3.ts`
+ * says where it lives, and the `--el-<id>-*` variables in the stylesheet are
+ * what make the editor's controls actually change anything.
+ */
 export const ELEMENT_TARGETS = [
   { id: "navRail", tkey: "appearance.elNavRail" },
   { id: "tabStrip", tkey: "appearance.elTabStrip" },
@@ -25,6 +37,20 @@ export const ELEMENT_TARGETS = [
   { id: "card", tkey: "appearance.elCard" },
   { id: "table", tkey: "appearance.elTable" },
   { id: "button", tkey: "appearance.elButton" },
+  { id: "iconButton", tkey: "appearance.elIconButton" },
+  { id: "input", tkey: "appearance.elInput" },
+  { id: "chip", tkey: "appearance.elChip" },
+  { id: "menu", tkey: "appearance.elMenu" },
+  { id: "select", tkey: "appearance.elSelect" },
+  { id: "dialog", tkey: "appearance.elDialog" },
+  { id: "banner", tkey: "appearance.elBanner" },
+  { id: "bottomNav", tkey: "appearance.elBottomNav" },
+  { id: "statCard", tkey: "appearance.elStatCard" },
+  // The remote control's own panels. That screen is built from `m3-mob__*`
+  // classes rather than the shell's, so before this it resolved to nothing at
+  // all — right-clicking anywhere on it did nothing, on every one of its three
+  // tabs.
+  { id: "remotePanel", tkey: "appearance.elRemotePanel" },
 ] as const;
 
 export interface Prefs {

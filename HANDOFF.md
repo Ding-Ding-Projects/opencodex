@@ -1,5 +1,137 @@
 # Handoff
 
+## Two installs, a stolen port, and the right-click that reached three elements — 2026-08-02
+
+Four user reports that turned out to be two causes.
+
+### "Cannot exit opencodex remote" + "not showing updated page" + "version number is always the same"
+
+All three were one machine-state problem, and none of them were bugs in the
+build the user had just installed.
+
+Two desktop apps were installed side by side: the **NSIS** build at
+`%LocalAppData%\Programs\opencodex` (GUI dated 30 Jul) and the **Squirrel** build
+at `%LocalAppData%\opencodex-desktop\app-2.7.42` (GUI dated 1 Aug, build 116).
+The NSIS→Squirrel switch changed the install directory, so the new installer
+never replaced the old app — it installed *beside* it.
+
+- `#/mobile` in the 30 Jul bundle still carried `.m3-mob { position: fixed;
+  inset: 0; height: 100dvh }` — the viewport takeover from before the remote
+  became a page. No nav rail, no tab strip, **no way out**. Confirmed by reading
+  the shipped CSS out of both installs: the 1 Aug bundle has the page version.
+- The window loads the dashboard over http from whatever proxy holds :10100, so
+  the old install's proxy served the old `gui/dist` to whichever app started
+  second.
+- Both reported `v2.7.42`, because `package.json` moves only on an npm release.
+
+**Fixed on the machine**: the NSIS install was uninstalled with its own
+uninstaller. It took the Squirrel desktop shortcut with it — both were
+`opencodex.lnk` in the same folder — which was restored with
+`Update.exe --createShortcut`.
+
+**Fixed in the code**, so it cannot recur:
+
+- `/healthz` now reports `build` and `commit` beside `version`
+  (`src/server/index.ts`, `BUILD_STAMP` in `src/server/management-api.ts`), read
+  from a `build-info.json` CI writes next to `package.json`. Both values are
+  already public on the release, so an unauthenticated route learns nothing new
+  — `tests/server-auth.test.ts` pins that distinction.
+- `electron/proxy-adoption.mjs` decides adopt / conflict / spawn from that stamp.
+  `ensureProxy` no longer adopts a different build silently; it asks, naming both
+  builds. A `--hidden` autostart defers the question to the first window rather
+  than dropping it.
+- 16 tests in `tests/proxy-adoption.test.ts`, mostly negative cases — the guard
+  that shipped was one that adopted too eagerly and looked fine.
+
+> [!IMPORTANT]
+> `build-info.json` is **gitignored**. A committed build number would claim every
+> local build was the release it was copied from, and the adoption check treats
+> that number as an identity.
+
+### "Right click context menu not showing for 90% of features"
+
+Accurate. `useAppearanceTarget` was spread by hand in exactly three components —
+nav rail, app bar, tab strip. Every card, button, field, chip, table, dialog and
+menu in twenty-two pages had no route in, although `ELEMENT_SELECTORS` already
+knew where several of them lived and the Appearance screen could already style
+them.
+
+`ElementAppearanceHost` now delegates from `document`: it walks up from the
+clicked node, offers the nearest editable surface, and shows a disambiguation
+menu when the pointer sat inside more than one. Targets went **6 → 16**, adding
+icon buttons, text fields, chips, menus, dropdowns, dialogs, banners, the bottom
+nav, the dashboard stat tiles and the remote control's own panels — that last one
+had resolved to nothing at all on all three of its tabs.
+
+Verified in the running app, not only in tests: right-clicking a Dashboard stat
+tile opens *Edit appearance: Dashboard stat tiles*.
+
+> [!WARNING]
+> **A 29-agent adversarial audit found five real defects in this change, three of
+> them introduced by it.** They are fixed, but the shape is worth keeping:
+>
+> - `--el-<id>-size` is a **type** size (the slider runs 10–24px). It was wired
+>   into `min-height` for text fields and chips, collapsing every input in the app
+>   to 18px — below the touch floor at every value the slider can produce.
+>   `.m3-btn` had the same bug **already**, unnoticed. All three now drive
+>   `font-size`, and `gui/tests/element-typography.test.ts` fails any target that
+>   feeds its size variable into its own box dimensions.
+> - The chain menu called `focus()` in the same layout effect as `setPos`, so it
+>   ran while the menu was still `visibility: hidden`. Chromium refuses that and
+>   does not retry. **The test suite passed anyway** — happy-dom does not model
+>   visibility-based focusability, so the assertion was a green false. Focus is
+>   now keyed on the render that makes the menu visible.
+> - The editor claimed no focus at all when it opened, so picking from the menu
+>   dropped focus to `<body>` — and the panel is the last node in the document.
+> - The delegate fired inside modal `<dialog>`s, whose top layer is above every
+>   z-index, opening an editor behind the scrim. It stands down there now.
+> - `role="menu"` had no arrow-key handling.
+
+### The title bar is Material now, and says which build it is
+
+Two requests, one surface.
+
+The four window buttons were the last non-M3 elements in the app: Segoe Fluent
+caption marks and a literal `#c42b1c` Windows close-red, inside a themed surface.
+`scripts/gen-icons.ts` had argued for that — window chrome should look like the
+platform's — but the shell is frameless, so there is no platform title bar to
+match. They are Material Symbols (`minimize`, `crop_square`, `filter_none`) at
+the standard 48dp pill with error-role tokens now, and one hand-drawn glyph is
+left in the generator instead of four.
+
+> [!NOTE]
+> Regenerating the icons deleted `IconEyedropper`, which had been added straight
+> to the generated file and never recorded in the generator. It is in the map now.
+> The file's "do not edit by hand" header is load-bearing.
+
+The dim sum code name shows in two places it did not: its own element in the app
+bar (both names, English dropped below 1000px rather than clipped) and the **OS
+window title**, which had read `opencodex · proxy dashboard` for every build ever
+shipped — so the one place Windows shows two builds side by side could not tell
+them apart. It reads
+`opencodex · 雲耳蒸雞 Steamed Chicken with Black Fungus · v2.7.42 build 117` now.
+`shortBuildLabel` dropped the dish so it is not printed twice.
+
+### Verification
+
+`bun test tests` in `gui`: **860 pass, 0 fail**. `tsc -b --noEmit`: clean.
+Server/desktop tests: **202 pass, 0 fail**. The installed app was temporarily
+staged with this build for visual confirmation and then **restored** — HEAD's
+bundle rebuilt in a throwaway worktree reproduced the released asset hash
+(`index-DotjWkuo.js`) exactly, so the machine is back on build 116 until CI
+publishes.
+
+### Left undone
+
+- Coverage is 16 targets, not literally every element. The audit named what is
+  still out: the `m3-ui` primitives (Toggle, Segmented, Slider, Field), the
+  Providers workspace containers, and the appearance editors themselves. The
+  structural fix is the `auto:<tag>.<class>` derivation in
+  `shared/m3/elements.ts` that docs-site already uses, which needs the inline
+  style channel the GUI does not have yet.
+- A worktree at `.claude/worktrees/keen-dijkstra-a12563` (`40aa982f`) is not mine
+  and was left alone.
+
 ## Squirrel installer, the docs site at 48dp, and a guard for the number — 2026-08-02, `33f8df6d`
 
 ### The installer is Squirrel now, and it took three failed release builds

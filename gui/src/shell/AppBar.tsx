@@ -21,12 +21,18 @@ interface AppBarProps {
   statusLine: string;
   /** The whole build identity, for hover — the line itself is abbreviated. */
   statusTitle?: string;
+  /**
+   * This build's dim sum code name, or null for a local build that names no
+   * release. Kept as a pair so the English half can be dropped at narrow widths
+   * without cutting a name in half.
+   */
+  codename?: { zh: string; name: string } | null;
   onOpenDrawer: () => void;
   drawerOpen: boolean;
   onOpen: (page: Page, newTab: boolean) => void;
 }
 
-export default function AppBar({ apiBase, title, statusLine, statusTitle, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
+export default function AppBar({ apiBase, title, statusLine, statusTitle, codename, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
   const { history, unreadCount, markAllRead } = useNotifications();
@@ -61,6 +67,21 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, onOpen
 
       <div className="m3-appbar-title">
         <h1>{title}</h1>
+        {/*
+          The code name, as its own element rather than two characters buried in
+          the middle-dot run of the build line. It is how a release is referred
+          to in conversation and in the release notes, so it has to be *readable*
+          as a name — and the English half is what makes it sayable by anyone who
+          does not read the Chinese. That half hides below the breakpoint instead
+          of being allowed to push the row into a clip.
+        */}
+        {codename && (
+          <span className="m3-appbar-codename" title={`${codename.zh} ${codename.name}`}>
+            <span aria-hidden="true">·</span>
+            <span lang="zh-Hant">{codename.zh}</span>
+            <span className="m3-appbar-codename-en">{codename.name}</span>
+          </span>
+        )}
         <span className="m3-appbar-status" title={statusTitle}>{statusLine}</span>
       </div>
 

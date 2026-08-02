@@ -415,6 +415,20 @@ export const M3_EN = {
   "appearance.elCard": "Cards",
   "appearance.elTable": "Data tables",
   "appearance.elButton": "Filled buttons",
+  "appearance.elIconButton": "Icon buttons",
+  "appearance.elInput": "Text fields",
+  "appearance.elChip": "Chips",
+  "appearance.elMenu": "Menus",
+  "appearance.elSelect": "Dropdowns",
+  "appearance.elDialog": "Dialogs",
+  "appearance.elBanner": "Banners",
+  "appearance.elBottomNav": "Bottom navigation",
+  "appearance.elStatCard": "Dashboard stat tiles",
+  "appearance.elRemotePanel": "Remote control panels",
+  // The delegated right-click offers the surface under the pointer first and its
+  // containers after it, because right-clicking a label inside a card usually
+  // means the card. The container rows say what they are rather than "parent".
+  "appearance.editContainer": "Edit appearance of {name}",
   "appearance.elBg": "Background",
   "appearance.elColor": "Text colour",
   "appearance.elRadius": "Corner radius",

@@ -556,10 +556,23 @@ describe("server local API auth", () => {
       expect(body.bunVersion).toBe(Bun.version);
 
       // /healthz must NOT gain memory/runtime introspection — it is unauthenticated.
+      //
+      // `build` and `commit` were added deliberately and are the exception that
+      // shows where the line is: both are already published on the GitHub
+      // release this binary came from, so an anonymous caller learns nothing
+      // from them that the release page does not print. They exist because the
+      // desktop shell has to ask a proxy holding its port whether it is the same
+      // build before adopting it, and `version` alone could not answer — it
+      // moves only on an npm release, so the previous version of the app was
+      // indistinguishable from the one that had just replaced it.
+      //
+      // What stays out is anything about *this machine*: memory, paths, the
+      // environment. That is what `rss` stands for below.
       const health = await fetch(`http://127.0.0.1:${server.port}/healthz`);
       expect(health.status).toBe(200);
       const healthBody = await health.json() as Record<string, unknown>;
-      expect(Object.keys(healthBody).sort()).toEqual(["pid", "port", "service", "status", "uptime", "version"]);
+      expect(Object.keys(healthBody).sort())
+        .toEqual(["build", "commit", "pid", "port", "service", "status", "uptime", "version"]);
       expect("rss" in healthBody).toBe(false);
     } finally {
       await server.stop(true);

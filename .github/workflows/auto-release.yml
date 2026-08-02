@@ -121,6 +121,20 @@ jobs:
           OCX_COMMIT: ${{ env.SHA }}
         run: bun run build
 
+      # The same two facts the dashboard bundle just baked in, on disk this time.
+      #
+      # The bundle's copy answers "which build am I looking at" for a human. This
+      # one answers it for two programs: `/healthz` reports it, and the desktop
+      # shell reads it to decide whether a proxy already holding its port is the
+      # build it just installed or the one it just replaced. Without it those two
+      # are indistinguishable — both say v2.7.42 — so an updated app adopted the
+      # old proxy and served the old dashboard. See electron/proxy-adoption.mjs.
+      - name: Stamp the build on disk
+        shell: bash
+        run: |
+          printf '{"build":"%s","commit":"%s"}\n' "${{ github.run_number }}" "${{ env.SHA }}" > build-info.json
+          cat build-info.json
+
       - name: Pack the dashboard bundle
         shell: bash
         run: |

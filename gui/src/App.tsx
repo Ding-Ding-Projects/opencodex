@@ -33,7 +33,7 @@ import { usePrefs } from "./theme/prefs-context";
 import { useNotifications } from "./shell/notifications-context";
 import { useConfirm } from "./shell/confirm-context";
 import { useTabRouting } from "./shell/use-tab-routing";
-import { fullBuildLabel, readBuildInfo, shortBuildLabel } from "./shell/build-info";
+import { codenameLabel, fullBuildLabel, readBuildInfo, shortBuildLabel, windowTitle } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
 import ElementAppearanceHost from "./shell/ElementAppearanceHost";
@@ -220,6 +220,18 @@ export default function App() {
   const buildInfo = readBuildInfo(displayedVersion);
   const statusLine = shortBuildLabel(buildInfo, health?.port ?? null);
   const statusTitle = fullBuildLabel(buildInfo);
+  const codename = codenameLabel(buildInfo);
+
+  // The window title, which in a frameless shell is the one piece of chrome the
+  // app does NOT draw: it is what Windows shows in the taskbar, in Alt+Tab and
+  // in the window list. It read `opencodex · proxy dashboard` for every build
+  // ever shipped, so two running builds were indistinguishable in the only place
+  // the OS shows them beside each other. Set from here rather than from
+  // `BrowserWindow({ title })` because the page's own <title> wins the moment it
+  // loads — which is why the value passed at window creation never survived.
+  useEffect(() => {
+    document.title = windowTitle(buildInfo);
+  }, [buildInfo.version, buildInfo.build, buildInfo.commit]);
 
   // The remote control used to short-circuit the whole shell here, on the
   // reasoning that a nav rail and a tab strip are the wrong furniture for a
@@ -262,6 +274,7 @@ export default function App() {
           title={title}
           statusLine={statusLine}
           statusTitle={statusTitle}
+          codename={codename}
           onOpenDrawer={() => setDrawerRequested(true)}
           drawerOpen={drawerOpen}
           onOpen={openPage}

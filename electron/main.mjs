@@ -17,6 +17,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleSquirrelEvent } from "./squirrel.mjs";
+import { readBuildStamp } from "./build-stamp.mjs";
+import { describeConflict, planProxyAdoption } from "./proxy-adoption.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
@@ -66,6 +68,8 @@ let proxy = null;
 let proxyPort = DEFAULT_PORT;
 /** True once the user has chosen Quit, so window-close stops meaning "hide to tray". */
 let quitting = false;
+/** A build conflict found during a `--hidden` start, asked about when a window first opens. */
+let deferredConflict = null;
 
 function appVersion() {
   try {
@@ -106,6 +110,52 @@ async function probeHealth(port) {
   }
 }
 
+/** This install's identity, read once from the packaged tree. */
+let stampCache = null;
+function ourStamp() {
+  stampCache ??= readBuildStamp(ROOT);
+  return stampCache;
+}
+
+/**
+ * Wait for the replaced proxy to actually let go of the port.
+ *
+ * Polling `/healthz` rather than sleeping a fixed interval: a graceful shutdown
+ * drains in-flight turns first, so how long it takes depends on what it was
+ * doing. Giving up after the deadline is deliberate — `spawnProxy` will fail
+ * loudly on a bound port, which is a better outcome than waiting forever with a
+ * blank window.
+ */
+async function waitForPortFree(port, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await probeHealth(port))) return true;
+    await new Promise(resolve => setTimeout(resolve, HEALTH_POLL_MS));
+  }
+  return false;
+}
+
+/**
+ * Ask what to do about another build holding the port.
+ *
+ * A blocking dialog, and one of the few that earns it: it is a genuine decision
+ * with no safe default. The copy names both builds, because "which one am I
+ * looking at" is precisely what the user could not previously find out.
+ */
+async function promptProxyConflict(plan, port) {
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    title: "Another opencodex is running",
+    message: `Another opencodex is already using port ${port}.`,
+    detail: describeConflict(ourStamp(), plan.theirs, port),
+    buttons: ["Replace it with this build", "Open the running one", "Quit"],
+    defaultId: 0,
+    cancelId: 2,
+    normalizeAccessKeys: true,
+  });
+  return response === 0 ? "replace" : response === 1 ? "adopt" : "cancel";
+}
+
 function spawnProxy(port) {
   const entry = join(ROOT, "bin", "ocx.mjs");
   if (!existsSync(entry)) {
@@ -142,15 +192,45 @@ function spawnProxy(port) {
 /**
  * Bring a proxy up on `port` and return once it is answering.
  *
- * If a healthy opencodex is already listening — the user started one from the
- * CLI — we attach to it rather than spawning a competitor, and leave it running
- * on quit because we did not start it.
+ * If a healthy opencodex of *the same build* is already listening — the user
+ * started one from the CLI, or this app is relaunching against the proxy it left
+ * running — we attach to it rather than spawning a competitor, and leave it
+ * running on quit because we did not start it.
+ *
+ * A *different* build holding the port is not adopted silently. That is what
+ * made an update look like it had done nothing: the new app attached to the old
+ * install's proxy and rendered the old install's `gui/dist`, with a version
+ * string that read the same either way. The decision belongs to the user, so it
+ * gets a real dialog — replacing another install's proxy can drop work it is
+ * mid-way through, and continuing with it means not seeing the update.
+ *
+ * `askConflict` is injected so the startup path stays reachable without a dialog
+ * (and so `--hidden` autostart can answer for itself rather than blocking on a
+ * window nobody is looking at).
  */
-async function ensureProxy(port) {
+async function ensureProxy(port, { askConflict = promptProxyConflict } = {}) {
   const existing = await probeHealth(port);
-  if (existing) {
-    console.log(`[desktop] attaching to the opencodex already on :${port} (pid ${existing.pid})`);
+  const plan = planProxyAdoption(existing, ourStamp());
+
+  if (plan.action === "adopt") {
+    console.log(`[desktop] attaching to the opencodex already on :${port} (pid ${plan.pid})`);
     return { port, adopted: true };
+  }
+
+  if (plan.action === "conflict") {
+    const choice = await askConflict(plan, port);
+    if (choice === "adopt") {
+      console.log(`[desktop] user kept the other build on :${port} (pid ${plan.pid})`);
+      return { port, adopted: true, foreign: true };
+    }
+    if (choice === "cancel") throw new Error(`Port ${port} is held by another opencodex build.`);
+    // "replace": stop the other proxy and take the port. Its own shutdown path
+    // restores the native Codex config, so SIGTERM rather than a hard kill.
+    if (plan.pid) {
+      console.log(`[desktop] replacing the opencodex on :${port} (pid ${plan.pid})`);
+      try { process.kill(plan.pid, "SIGTERM"); } catch { /* already gone, or not ours to signal */ }
+      await waitForPortFree(port);
+    }
   }
 
   proxy = spawnProxy(port);
@@ -313,7 +393,27 @@ function createWindow(port) {
 }
 
 function showWindow() {
-  if (!mainWindow) return createWindow(proxyPort);
+  if (!mainWindow) {
+    // A conflict deferred by `--hidden` is asked here, where there is finally
+    // somebody to answer it. Cleared first so a declined prompt is not re-asked
+    // on every tray click.
+    if (deferredConflict) {
+      const plan = deferredConflict;
+      deferredConflict = null;
+      void promptProxyConflict(plan, proxyPort).then(async choice => {
+        if (choice !== "replace") return;
+        try { process.kill(plan.pid, "SIGTERM"); } catch { /* already gone */ }
+        await waitForPortFree(proxyPort);
+        try {
+          proxy = spawnProxy(proxyPort);
+          mainWindow?.webContents.reloadIgnoringCache();
+        } catch (error) {
+          dialog.showErrorBox("opencodex could not take over the port", String(error?.message ?? error));
+        }
+      });
+    }
+    return createWindow(proxyPort);
+  }
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -407,8 +507,16 @@ function buildAppMenu() {
 app.on("second-instance", showWindow);
 
 app.whenReady().then(async () => {
+  // A login-item start goes to the tray with no window, so there is nobody to
+  // answer a modal. It takes the old behaviour — attach and carry on — and
+  // *remembers* that it did, so the question is asked the first time a window is
+  // actually opened rather than dropped. Silently adopting and never mentioning
+  // it is the original bug; deferring the question is not.
+  const hidden = process.argv.includes("--hidden");
   try {
-    const started = await ensureProxy(DEFAULT_PORT);
+    const started = await ensureProxy(DEFAULT_PORT, hidden
+      ? { askConflict: async plan => { deferredConflict = plan; return "adopt"; } }
+      : {});
     proxyPort = started.port;
   } catch (error) {
     dialog.showErrorBox("opencodex could not start", String(error?.message ?? error));

@@ -139,7 +139,7 @@ import { runClaudeAuthModeMigration } from "../claude/auth-mode-migration";
 import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
 import { handleSearch } from "./search";
-import { fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
+import { BUILD_STAMP, fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
 import { initializeManagementAuthState, issueGuiSession, requireManagementAuth } from "./management-auth";
 import { isUnauthenticatedPairingClaim } from "./management/host-routes";
 
@@ -394,7 +394,21 @@ export function startServer(port?: number) {
 
       if (url.pathname === "/healthz" && req.method === "GET") {
         // service/pid/port let CLI liveness reject foreign 200s and verify pid identity.
-        return jsonResponse({ status: "ok", service: "opencodex", version: VERSION, uptime: process.uptime(), pid: process.pid, port: listenPort }, 200, req, config);
+        // build/commit answer the question `version` cannot: WHICH build this is.
+        // The desktop shell adopts a proxy already on its port rather than racing
+        // it, and with only `version` to go on it could not tell the previous
+        // version of itself from the copy it had just installed — so an updated
+        // app served the old dashboard. See `electron/proxy-adoption.mjs`.
+        return jsonResponse({
+          status: "ok",
+          service: "opencodex",
+          version: VERSION,
+          build: BUILD_STAMP.build,
+          commit: BUILD_STAMP.commit,
+          uptime: process.uptime(),
+          pid: process.pid,
+          port: listenPort,
+        }, 200, req, config);
       }
 
       if (url.pathname.startsWith("/api/")) {

@@ -84,11 +84,13 @@
   flex-direction: column;
   gap: 6px;
   min-height: var(--h-stat);
-  padding: var(--pad-card, 16px);
-  border-radius: var(--r-l, 16px);
+  padding: var(--el-statCard-pad, var(--pad-card, 16px));
+  border-radius: var(--el-statCard-radius, var(--r-l, 16px));
   border: 1px solid var(--m3-outline-variant);
-  background: var(--m3-surface-container-low);
-  color: var(--m3-on-surface);
+  background: var(--el-statCard-bg, var(--m3-surface-container-low));
+  color: var(--el-statCard-color, var(--m3-on-surface));
+  font-family: var(--el-statCard-font, inherit);
+  font-size: var(--el-statCard-size, inherit);
   min-width: 0;
 }
 

@@ -83,6 +83,35 @@ export const VERSION = (() => {
 })();
 
 /**
+ * The run number and commit that produced this install, for `/healthz`.
+ *
+ * `VERSION` alone cannot answer "which build is this": it moves only when an npm
+ * release is cut, so every automated build in between reports the same string.
+ * That is survivable for a version banner and not survivable for the desktop
+ * shell, which asks a proxy already holding its port whether it is the same
+ * build before adopting it. Answering that with `VERSION` alone made the
+ * previous version of the app indistinguishable from this one, so an updated app
+ * adopted the old proxy and served the old dashboard — see
+ * `electron/proxy-adoption.mjs`.
+ *
+ * Read from `build-info.json` beside `package.json`, written by CI. Absent, this
+ * is a source checkout or a local package, and it says `dev` rather than
+ * inventing a number — a fabricated build id here would be treated as a real
+ * identity by the adoption check.
+ */
+export const BUILD_STAMP: { build: string; commit: string } = (() => {
+  try {
+    const raw = JSON.parse(readFileSync(new URL("../../build-info.json", import.meta.url), "utf8"));
+    return {
+      build: typeof raw.build === "string" && raw.build ? raw.build : "dev",
+      commit: typeof raw.commit === "string" ? raw.commit : "",
+    };
+  } catch {
+    return { build: "dev", commit: "" };
+  }
+})();
+
+/**
  * The collections `/api/export` can write out.
  *
  * Defined in `lib/export-datasets` so the CLI answers with the same list and the

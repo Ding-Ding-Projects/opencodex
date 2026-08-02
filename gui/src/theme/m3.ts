@@ -285,6 +285,19 @@ export const ELEMENT_SELECTORS: Record<string, string> = {
   card: '.m3-card',
   table: '.m3-table',
   button: '.m3-btn',
+  iconButton: '.m3-icon-btn',
+  input: '.m3-input',
+  chip: '.m3-chip',
+  menu: '.m3-menu',
+  select: '.m3-select',
+  // The visible card, not `.m3-dialog` — that is the native `<dialog>` element
+  // itself, which spans the viewport and IS the scrim. Styling the scrim when
+  // the user right-clicked the dialog is not what they asked for.
+  dialog: '.m3-dialog__surface',
+  banner: '.m3-banner',
+  bottomNav: '.m3-bottom-nav',
+  statCard: '.dash-stat-card',
+  remotePanel: '.m3-mob__session',
 }
 
 /** The id of the single generated `<style>` element. */
