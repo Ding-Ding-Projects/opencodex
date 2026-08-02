@@ -50,9 +50,15 @@ const server = process.env.AUDIT_BASE ? null : Bun.serve({
   port: PORT,
   async fetch(request) {
     const path = new URL(request.url).pathname;
-    const file = Bun.file(`gui/dist${path === "/" ? "/index.html" : path}`);
+    // `AUDIT_ROOT` lets the same harness measure the documentation site, which
+    // shares `shared/m3/components.css` with the app and was never measured
+    // until that sheet turned out to be where the 44px floor actually lived.
+    const root = process.env.AUDIT_ROOT ?? "gui/dist";
+    const file = Bun.file(`${root}${path === "/" ? "/index.html" : path}`);
     if (await file.exists()) return new Response(file);
-    return new Response(Bun.file("gui/dist/index.html"));
+    const indexed = Bun.file(`${root}${path.replace(/\/$/, "")}/index.html`);
+    if (await indexed.exists()) return new Response(indexed);
+    return new Response(Bun.file(`${root}/index.html`));
   },
 });
 

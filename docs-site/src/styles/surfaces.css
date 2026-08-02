@@ -754,13 +754,13 @@
 @media (pointer: coarse) {
   .ocx-snack-close,
   .ocx-notif-trigger {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 48px;
+    min-height: 48px;
   }
-  .ocx-calendar-day { height: 44px; }
-  .ocx-settings-tab { min-height: 44px; }
+  .ocx-calendar-day { height: 48px; }
+  .ocx-settings-tab { min-height: 48px; }
   .ocx-notif-row { padding-block: 0.75rem; }
-  .ocx-notif-row-link { min-height: 44px; display: inline-flex; align-items: center; }
+  .ocx-notif-row-link { min-height: 48px; display: inline-flex; align-items: center; }
 }
 
 /* Below the sidebar breakpoint the filter block stops being sticky: on a phone

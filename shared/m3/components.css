@@ -847,6 +847,12 @@
 /* A finger is not a pointer. Gated on `pointer: coarse` so a desktop keeps the
    compact density these controls were sized for. */
 @media (pointer: coarse) {
+  /* The base controls too, not only chips and segments. `.m3-btn` and
+     `.m3-input` size from `--h-btn`, which is a density value — 41px on the
+     documentation site, where there is no density control to raise it. Measured
+     at 165.7x41 and 166.4x41 on the settings page at 320px. */
+  .m3-btn,
+  .m3-input,
   .m3-chip,
   .m3-segment { min-height: 48px; }
   .m3-searchbar-clear { width: 48px; height: 48px; inset-inline-end: 0; }

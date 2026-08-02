@@ -470,7 +470,7 @@ const contributing: NavLink = {
 	@media (pointer: coarse) {
 		.preference-control,
 		.nav-link {
-			min-height: 44px;
+			min-height: 48px;
 			padding-inline: 0.875rem;
 		}
 		/* These are `display: block` links, so a bare `min-height` would grow the
@@ -480,7 +480,7 @@ const contributing: NavLink = {
 		.ocx-menu-contrib {
 			display: flex;
 			align-items: center;
-			min-height: 44px;
+			min-height: 48px;
 		}
 	}
 
@@ -591,8 +591,11 @@ const contributing: NavLink = {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 2.75rem;
-		height: 2.75rem;
+		/* 3rem = 48px, Material's minimum. Was 2.75rem = 44px, which is the same
+		   wrong number as everywhere else — just spelled in rem, where a sweep
+		   looking for `44px` could not see it. */
+		width: 3rem;
+		height: 3rem;
 		border: 0;
 		border-radius: var(--r-pill);
 		background: transparent;

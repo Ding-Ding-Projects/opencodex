@@ -341,16 +341,16 @@ body::before {
   .m3-tab-btn,
   .m3-tabstrip-btn,
   .m3-tab-close {
-    min-height: 44px;
+    min-height: 48px;
   }
   .m3-tabstrip-btn,
   .m3-tab-close {
-    min-width: 44px;
+    min-width: 48px;
   }
   /* Starlight's wordmark is a link, and at 35px it is one of the smallest
      targets on the page while also being the way back to the home page. */
   a.site-title {
-    min-height: 44px;
+    min-height: 48px;
   }
 
   /* Starlight's own search button, measured at 40x34 — the narrowest target in
@@ -361,8 +361,8 @@ body::before {
      would work today and break the day the bundler emits these two sheets the
      other way round, which is not a thing that announces itself. */
   .ocx-appbar .search-wrapper button {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: 48px;
+    min-width: 48px;
   }
 }
 
@@ -608,7 +608,7 @@ dialog::backdrop { backdrop-filter: blur(6px); }
 }
 
 .m3-appearance__panel input[type='color'] {
-  width: 44px;
+  width: 48px;
   height: 32px;
   padding: 0;
   border: 1px solid var(--m3-outline-variant);
@@ -705,7 +705,7 @@ main:has(.m3-lp) .content-panel { border: 0; padding-block: 0; }
 .m3-lp__btn {
   display: inline-flex;
   align-items: center;
-  min-height: 44px; /* touch target */
+  min-height: 48px; /* Material's touch target. Was 44 — Apple's number, not this project's. */
   padding: 0 24px;
   border-radius: var(--r-pill);
   font-weight: 600;
@@ -751,7 +751,7 @@ main:has(.m3-lp) .content-panel { border: 0; padding-block: 0; }
 }
 .m3-lp__tab {
   flex: 0 0 auto;
-  min-height: 44px;
+  min-height: 48px;
   padding: 0 18px;
   border: none;
   border-bottom: 2px solid transparent;
@@ -878,3 +878,65 @@ main:has(.m3-lp) .content-panel { border: 0; padding-block: 0; }
     transition-duration: 0.01ms;
   }
 }
+
+/* ------------------------------------------- Starlight's own touch targets -- */
+
+/*
+ * Starlight ships its chrome at its own sizes, and three of them measured under
+ * 48 on a 320px touch viewport. Two are worth raising and one is not, which is
+ * the whole point of listing them rather than sweeping.
+ *
+ * Raised: the mobile menu button (32x32) is the primary navigation on a phone,
+ * and "Edit page" (84.9x24.5) is a real link people tap.
+ *
+ * NOT raised: "Skip to content" is visually hidden until it receives keyboard
+ * focus. It is reached with Tab and activated with Enter — it is never tapped,
+ * and giving it a 48px box would push the page content down for a control no
+ * pointer can find. A touch minimum applied to a keyboard-only affordance is
+ * cargo cult, not accessibility.
+ *
+ * Inline prose links are likewise left alone. A 21px-tall link inside a running
+ * paragraph is not a control, and forcing 48px on it would break the text it
+ * lives in — Material's minimum is about controls, not about every anchor.
+ */
+@media (pointer: coarse) {
+  /* Starlight's own class, hence the escape. Scoped tightly so this cannot
+     start applying to unrelated flex containers if Starlight renames things. */
+  button.sl-flex[aria-expanded],
+  a.sl-flex.print\:hidden {
+    min-height: 48px;
+    min-width: 48px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* Sidebar and on-this-page links: real navigation, measured at 34.5px tall. */
+  starlight-toc a,
+  mobile-starlight-toc a,
+  nav.sidebar a[href] {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* The copy button on every code block — 40x40, unlabelled, and the single
+     most-tapped control on a reference page. */
+  .expressive-code .copy button,
+  starlight-code-copy button {
+    min-height: 48px;
+    min-width: 48px;
+  }
+}
+
+/*
+ * Deliberately NOT raised, so the next audit does not re-litigate them:
+ *
+ * - **Inline prose links** (~21px tall). A link inside a running paragraph is
+ *   not a control; forcing 48px would break the text it lives in. Material's
+ *   minimum is about controls.
+ * - **`.sl-anchor-link`** — the ¶ beside a heading. It duplicates a destination
+ *   the heading already provides, appears on hover, and a 48px box beside every
+ *   heading would reflow the whole document for a convenience affordance.
+ * - **"Skip to content"** — visually hidden until keyboard focus. Reached with
+ *   Tab, activated with Enter, never tapped.
+ */
