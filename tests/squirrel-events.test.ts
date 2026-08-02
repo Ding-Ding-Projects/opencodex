@@ -122,3 +122,30 @@ describe("handling", () => {
     expect(r.exits).toEqual([0]);
   });
 });
+
+describe("the packaging metadata Squirrel needs", () => {
+  test("an author is declared, because NuGet refuses to build without one", async () => {
+    // Squirrel packages through `nuget pack`, which fails with a bare
+    // "Authors is required." and no further context. `package.json` has never
+    // carried an `author` — NSIS never asked for one, so nothing noticed until
+    // the first Squirrel release build died on it.
+    //
+    // Cheap to guard and otherwise invisible: no typecheck, lint or unit test
+    // reads this file, and the only thing that would catch it again is a failed
+    // release, which is the most expensive place to learn it.
+    const yaml = await Bun.file(new URL("../electron-builder.yml", import.meta.url)).text();
+    const author = /^\s*author:\s*(\S.*)$/m.exec(yaml);
+    expect(author?.[1]?.trim()).toBeTruthy();
+  });
+
+  test("the Windows target is squirrel, and the release ships its update feed", async () => {
+    const yaml = await Bun.file(new URL("../electron-builder.yml", import.meta.url)).text();
+    expect(yaml).toContain("target: squirrel");
+
+    // A release carrying only Setup.exe is installable but not updatable, which
+    // is most of the reason for choosing Squirrel over NSIS.
+    const workflow = await Bun.file(new URL("../.github/workflows/auto-release.yml", import.meta.url)).text();
+    expect(workflow).toContain("dist-desktop/RELEASES");
+    expect(workflow).toContain("dist-desktop/*.nupkg");
+  });
+});

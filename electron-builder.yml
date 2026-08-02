@@ -17,6 +17,14 @@ copyright: MIT
 extraMetadata:
   name: opencodex-desktop
   main: electron/main.mjs
+  # NuGet requires an `authors` field and refuses to build the package without
+  # one: Squirrel's first release build failed with exactly "Authors is
+  # required." after `nuget pack` read a `package.json` that has never carried an
+  # `author` — NSIS never asked for it, so nothing noticed.
+  #
+  # Set here rather than in `package.json` so the published npm package is
+  # untouched; `extraMetadata` is merged only into the packaged copy.
+  author: opencodex contributors
 
 directories:
   output: dist-desktop
