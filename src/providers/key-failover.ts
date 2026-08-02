@@ -8,7 +8,7 @@
  *
  * Modelled after src/codex/routing.ts cooldown logic but scoped to plain API-key pools.
  */
-import { saveConfigPreservingClaudeCode } from "../config";
+import { resolveEnvValue, saveConfigPreservingClaudeCode } from "../config";
 import type { OcxConfig, OcxProviderConfig } from "../types";
 import { resolveProviderTransport, type OcxProviderTransport } from "./xai-transport";
 
@@ -41,6 +41,21 @@ function parseRetryAfterMs(value: string | null | undefined, now = Date.now()): 
   if (!Number.isFinite(timestamp)) return undefined;
   const delay = timestamp - now;
   return delay > 0 ? Math.min(delay, MAX_COOLDOWN_MS) : undefined;
+}
+
+/**
+ * Whether two key values name the same credential.
+ *
+ * A pool entry holds the config file's text and the documented form for a secret
+ * is `"${XAI_API_KEY}"`; everything downstream sees the expanded value. Both
+ * spellings therefore have to compare equal, or the pool can never recognise the
+ * key that just failed. Compared raw as well so a literal key — the other
+ * documented form — still matches without an env lookup.
+ */
+function sameKey(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return resolveEnvValue(a) === resolveEnvValue(b);
 }
 
 function isKeyInCooldown(providerName: string, keyId: string, now = Date.now()): boolean {
@@ -93,7 +108,18 @@ export function rotateKeyOn429(
   // rotated provider.apiKey — cooling the live key would punish an innocent replacement and can
   // exhaust a 2-key pool from a single bad key. CAS semantics: callers pass the key they used.
   const failedKey = attemptedKey ?? provider.apiKey;
-  const currentEntry = pool.find(e => e.key === failedKey);
+  // Compare RESOLVED values on both sides.
+  //
+  // A pool entry stores whatever the config file says, and the documented form
+  // for a secret is `"${XAI_API_KEY}"`. The router expands it before use
+  // (`route.provider.apiKey = resolveEnvValue(provider.apiKey)`), so callers hand
+  // back the *expanded* secret as `attemptedKey`, and a raw `e.key === failedKey`
+  // never matched. Nothing was ever cooled, the "lost the race" branch below then
+  // returned the same un-rotated key, and every retry went out as
+  // `Authorization: Bearer ${XAI_API_KEY}` — the twelve literal characters.
+  // Upstream answered 401 for two perfectly valid keys, and the second key was
+  // never reached at all.
+  const currentEntry = pool.find(e => sameKey(e.key, failedKey));
   if (currentEntry) {
     const cooldownMs = parseRetryAfterMs(retryAfterHeader, now) ?? DEFAULT_COOLDOWN_MS;
     keyCooldowns.set(cooldownKey(providerName, currentEntry.id), {
@@ -104,16 +130,20 @@ export function rotateKeyOn429(
   // Lost the race: someone already rotated away from the failed key. If the live key is healthy,
   // retry with it as-is instead of rotating a second time.
   if (attemptedKey !== undefined && provider.apiKey !== attemptedKey) {
-    const liveEntry = pool.find(e => e.key === provider.apiKey);
+    const liveEntry = pool.find(e => sameKey(e.key, provider.apiKey));
     if (liveEntry && !isKeyInCooldown(providerName, liveEntry.id, now)) {
       return { ...provider };
     }
   }
 
   // Pick the next key that is NOT in cooldown
+  // When the failed key is not in the pool at all, start from the beginning and
+  // consider EVERY entry. The old `-1` start combined with `i = 1..length-1`
+  // walked indices 0..length-2, so the last key in the pool was never offered.
   const currentIndex = currentEntry ? pool.indexOf(currentEntry) : -1;
-  for (let i = 1; i < pool.length; i++) {
-    const candidate = pool[(currentIndex + i) % pool.length]!;
+  const first = currentEntry ? 1 : 0;
+  for (let i = first; i < first + pool.length; i++) {
+    const candidate = pool[(currentIndex + i + pool.length) % pool.length]!;
     if (!isKeyInCooldown(providerName, candidate.id, now)) {
       // Swap active key
       provider.apiKey = candidate.key;
@@ -165,7 +195,12 @@ export function rotateProviderTransportOn429(
   return rotated
     ? resolveProviderTransport(
         providerName,
-        { ...routedProvider, apiKey: rotated.apiKey },
+        // Resolved, because this value goes straight into
+        // `Authorization: Bearer …`. The pool stores what the config file says,
+        // and `resolveProviderTransport` does not expand env references — so a
+        // `${XAI_API_KEY}` pool entry used to be sent upstream as those twelve
+        // literal characters, turning a recoverable 429 into a 401.
+        { ...routedProvider, apiKey: resolveEnvValue(rotated.apiKey) },
         options.promptCacheKey,
       )
     : null;

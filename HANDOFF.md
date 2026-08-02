@@ -1,5 +1,39 @@
 # Handoff
 
+## Key failover never worked for environment-variable keys — 2026-08-02
+
+The sweep's second high-severity finding, confirmed 3/3 and reproduced.
+
+`"apiKey": "${XAI_API_KEY}"` is the **documented** form for a secret, and the
+pool stores that text verbatim. The router expands it before use, so callers hand
+back the *expanded* secret as `attemptedKey` while the pool still holds the
+placeholder — and `pool.find(e => e.key === failedKey)` never matched.
+
+Three things followed from that single miss:
+
+1. **Nothing was ever cooled**, so the exhausted key stayed "healthy".
+2. The "lost the race" branch found the live entry and returned the **same
+   un-rotated key**.
+3. `rotateProviderTransportOn429` copied that key straight onto the transport,
+   and the adapter emitted it verbatim — so the retry went upstream as
+   `Authorization: Bearer ${XAI_API_KEY}`, those twelve literal characters.
+
+A recoverable 429 became a 401, **the second key was never tried at all**, and
+because nothing was cooled the same thing happened on every subsequent request.
+
+Fixed by comparing and emitting *resolved* values on both sides. A separate
+off-by-one fell out of the same read: when the failed key is not in the pool the
+search started at index `-1` and walked `1..length-1`, covering `0..length-2`, so
+the **last entry was never offered** — half the pool, with the common two-key
+setup.
+
+> [!NOTE]
+> `tests/key-failover.test.ts` covers these paths thoroughly with **literal**
+> keys, which is exactly why this survived: every assertion there passes either
+> way. Three of the six new tests fail without the fix.
+
+---
+
 ## Turning remote access OFF dropped data-plane auth for the whole LAN — 2026-08-02
 
 The most serious thing the sweep found, confirmed by **all three** skeptics who
