@@ -133,9 +133,12 @@ describe("the packaging metadata Squirrel needs", () => {
     // Cheap to guard and otherwise invisible: no typecheck, lint or unit test
     // reads this file, and the only thing that would catch it again is a failed
     // release, which is the most expensive place to learn it.
-    const yaml = await Bun.file(new URL("../electron-builder.yml", import.meta.url)).text();
-    const author = /^\s*author:\s*(\S.*)$/m.exec(yaml);
-    expect(author?.[1]?.trim()).toBeTruthy();
+    // In `package.json`, specifically. Setting it via `extraMetadata` in
+    // `electron-builder.yml` looks equivalent and is not: electron-builder reads
+    // its app metadata from the original manifest before that merge, so the
+    // build failed with the identical error and no new information.
+    const pkg = await Bun.file(new URL("../package.json", import.meta.url)).json() as { author?: unknown };
+    expect(typeof pkg.author === "string" ? pkg.author.trim() : "").toBeTruthy();
   });
 
   test("the Windows target is squirrel, and the release ships its update feed", async () => {
