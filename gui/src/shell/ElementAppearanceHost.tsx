@@ -409,12 +409,19 @@ function ElementAppearanceEditor({ id, anchor, onClose }: { id: string; anchor: 
    * The first control rather than the panel itself, so the first Tab moves
    * *within* the editor instead of stepping off a heading — the same choice the
    * docs-site editor made, for the same reason.
+   *
+   * Controls before buttons, and not simply "the first focusable in document
+   * order": that is the close ✕ in the header, so opening the editor would land
+   * on the control that shuts it, where Enter throws the panel away and Tab
+   * leaves immediately. A real-browser probe is what caught it — this whole
+   * effect is invisible to the test suite, because happy-dom focuses whatever it
+   * is told to.
    */
   useEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
-    const first = panel.querySelector<HTMLElement>("select, input, button");
-    (first ?? panel).focus();
+    const control = panel.querySelector<HTMLElement>("select, input, textarea");
+    (control ?? panel.querySelector<HTMLElement>("button") ?? panel).focus();
   }, [id]);
 
   useEffect(() => {
