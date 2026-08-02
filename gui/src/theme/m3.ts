@@ -9,6 +9,12 @@
    ============================================================================ */
 
 import { cssText, typographyCss, type TypographyStyle } from '../../../shared/m3/typography'
+// The derived-id half of the element registry. `selectorFor` is the only thing
+// that turns a stored `auto:div.m3-card` back into a selector, and it is written
+// so that no id it accepts can produce a character that would end a CSS
+// attribute or start a new rule — which is what makes it safe to feed a
+// generated stylesheet from a map that came off disk.
+import { selectorFor } from '../../../shared/m3/elements'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type DensityLevel = 1 | 2 | 3 | 4 | 5
@@ -304,7 +310,38 @@ export const ELEMENT_SELECTORS: Record<string, string> = {
 export const ELEMENT_TYPE_STYLE_ID = 'ocx-element-typography'
 
 /**
- * Compile every target's typography into one stylesheet.
+ * Where a style with this id applies.
+ *
+ * Two kinds of id, and the second is what makes "every rendered element" true
+ * rather than "the sixteen we remembered":
+ *
+ *  - a **curated** id, from the table above. Those have hand-written
+ *    `--el-<id>-*` hooks in the stylesheets, so their six flat overrides arrive
+ *    through the variable channel and only their typography is compiled here.
+ *  - a **derived** id — `auto:<tag>.<class>.<class>` — reconstructed by
+ *    `selectorFor` in `shared/m3/elements.ts`. Nothing hand-written knows about
+ *    those, so everything they carry has to be compiled into a real rule.
+ *
+ * Returns null for an id whose selector cannot be rebuilt, which is the gate
+ * that keeps a stored key out of the generated stylesheet. These strings are
+ * concatenated into CSS, and the map they come from is whatever was on disk.
+ */
+export function elementSelectorFor(id: string): string | null {
+  if (ELEMENT_SELECTORS[id]) return ELEMENT_SELECTORS[id]
+  // Only the two kinds. An arbitrary string is NOT quietly turned into
+  // `[data-m3-el="…"]`: that selector is syntactically fine and matches nothing,
+  // which is the exact failure this whole module is written to avoid — a rule
+  // that applies to nothing looks identical to a control that does not work.
+  return isDerivedElementId(id) ? selectorFor(id) : null
+}
+
+/** True for the `auto:` ids the right-click delegate derives from the DOM. */
+export function isDerivedElementId(id: string): boolean {
+  return id.startsWith('auto:')
+}
+
+/**
+ * Compile every target's style into one stylesheet.
  *
  * Returned as text rather than written, so the whole mapping can be asserted in
  * a test with no DOM at all — which matters because the failure mode here is
@@ -317,16 +354,37 @@ export const ELEMENT_TYPE_STYLE_ID = 'ocx-element-typography'
  * order, which is a bundler's decision and not ours to rely on. `:root .m3-card`
  * outranks them without reaching for `!important`, which would in turn be
  * unbeatable by anything downstream.
+ *
+ * A curated id contributes typography only, because its flat six already arrive
+ * through `--el-<id>-*` and emitting both would have the rule fight the variable
+ * for the same property. A derived id has no variables anywhere, so it
+ * contributes the lot.
  */
 export function elementTypographyCss(elementStyles: Record<string, ElementStyle | undefined> | undefined): string {
   if (!elementStyles) return ''
   const rules: string[] = []
   for (const id of Object.keys(elementStyles)) {
-    const selector = ELEMENT_SELECTORS[id]
-    const typography = elementStyles[id]?.typography
-    if (!selector || !typography) continue
-    const declarations = cssText(typographyCss(typography))
-    if (declarations) rules.push(`:root ${selector} { ${declarations} }`)
+    const style = elementStyles[id]
+    const selector = elementSelectorFor(id)
+    if (!selector || !style) continue
+
+    const declarations: Record<string, string> = { ...typographyCss(style.typography) }
+    if (isDerivedElementId(id)) {
+      // The flat six, written out. `size` is a type size everywhere else in this
+      // system (the slider runs 10–24px), so it stays `font-size` here too —
+      // wiring it to a box dimension is the bug that collapsed every text field
+      // in the app to 18px, and a derived rule would repeat it silently across
+      // whatever the selector happens to match.
+      if (style.font) declarations.fontFamily = style.font
+      if (style.color) declarations.color = style.color
+      if (style.bg) declarations.background = style.bg
+      if (style.radius != null) declarations.borderRadius = `${style.radius}px`
+      if (style.pad != null) declarations.padding = `${style.pad}px`
+      if (style.size != null) declarations.fontSize = `${style.size}px`
+    }
+
+    const text = cssText(declarations)
+    if (text) rules.push(`:root ${selector} { ${text} }`)
   }
   return rules.join('\n')
 }

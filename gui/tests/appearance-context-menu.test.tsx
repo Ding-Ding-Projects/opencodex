@@ -101,15 +101,52 @@ test("right-clicking a card opens that card's editor", async () => {
   expect(openEditor()?.getAttribute("data-element-style-editor")).toBe("card");
 });
 
-test("right-clicking inside a card still finds the card", async () => {
+test("right-clicking inside a card offers the thing clicked and the card", async () => {
   // The realistic case: nobody right-clicks the one pixel of padding between a
   // card's border and its content, so resolving only the exact node under the
   // pointer would leave the feature looking broken everywhere it matters.
+  //
+  // `.m3-card-title` is not a curated target and does not need to be — it is
+  // derived as `auto:span.m3-card-title`, which is what makes "every rendered
+  // element" true rather than "the sixteen we remembered". So the click offers
+  // both, nearest first, and the card is still one keystroke away.
   const { container } = await mount(
     <div className="m3-card"><span className="m3-card-title">Accounts</span></div>,
   );
   await rightClick(container.querySelector(".m3-card-title")!);
+
+  const items = [...(openMenu()?.querySelectorAll("button") ?? [])].map(b => b.textContent ?? "");
+  expect(items.length).toBe(2);
+  // Derived targets carry no translation and cannot have one — nobody can
+  // pre-translate a class name — so they are named from the id itself.
+  expect(items[0]).toContain("Card title");
+  expect(items[1]).toContain("Cards");
+
+  await act(async () => { openMenu()!.querySelectorAll("button")[1].click(); });
   expect(openEditor()?.getAttribute("data-element-style-editor")).toBe("card");
+});
+
+test("a class-less container is not offered as a target", async () => {
+  // `targetFor` will return `auto:div` for a bare `<div>`, which means "every
+  // div in the app" — never what someone right-clicking one thing intends, and
+  // not harmless: almost everything has a bare div above it, so accepting them
+  // put a useless second row in the menu on nearly every click and stopped the
+  // editor opening directly.
+  const { container } = await mount(<div><div className="m3-card">Providers</div></div>);
+  await rightClick(container.querySelector(".m3-card")!);
+
+  expect(openMenu()).toBeNull();
+  expect(openEditor()?.getAttribute("data-element-style-editor")).toBe("card");
+});
+
+test("a surface with no curated target of its own is still reachable", async () => {
+  // The whole point of the derived half. `.provider-row` is not in the selector
+  // table and never will be — the table was always going to be shorter than the
+  // app.
+  const { container } = await mount(<div className="provider-row">openai</div>);
+  await rightClick(container.querySelector(".provider-row")!);
+
+  expect(openEditor()?.getAttribute("data-element-style-editor")).toBe("auto:div.provider-row");
 });
 
 test("a button inside a card offers both, nearest first", async () => {

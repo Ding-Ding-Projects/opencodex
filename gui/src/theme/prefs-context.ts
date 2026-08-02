@@ -9,6 +9,7 @@
 import { createContext, useContext } from "react";
 import { readTypography } from "../../../shared/m3/typography";
 import type { TypographyStyle } from "../../../shared/m3/typography";
+import { elementSelectorFor } from "./m3";
 import type { DensityLevel, ElementStyle, ThemeMode, WindowClass } from "./m3";
 
 /** Range for the app-bar cost meter; mirrors the ranges /api/usage accepts. */
@@ -168,6 +169,15 @@ function readElementStyles(raw: unknown): Record<string, ElementStyle> {
   const out: Record<string, ElementStyle> = {};
   for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!value || typeof value !== "object") continue;
+    // An id whose selector cannot be reconstructed is dropped, and that gate
+    // matters more than it used to. Derived (`auto:…`) ids are compiled into a
+    // real generated stylesheet rather than into `--el-*` variables, so a key
+    // from disk becomes text inside a CSS rule. `elementSelectorFor` accepts
+    // only ids that rebuild into a selector made of a tag and class names — no
+    // id it passes can carry a character that closes the rule and opens
+    // another. It also drops entries that are simply unreachable, which would
+    // otherwise sit in storage styling nothing and reappear in the reset list.
+    if (!elementSelectorFor(id)) continue;
     const entry = value as ElementStyle & { typography?: unknown };
     const typography = readTypography(entry.typography);
     const next: ElementStyle = { ...entry, typography };

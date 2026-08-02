@@ -24,13 +24,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { INITIAL_PLACEMENT, computePlacement, fixedPanelStyle } from "../../../shared/m3/anchor";
 import { clampToViewport } from "../../../shared/m3/tabs";
+import { labelFor, targetFor } from "../../../shared/m3/elements";
 import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
 import { IconX } from "../icons";
-import { useT } from "../i18n/shared";
+import { useI18n, useT } from "../i18n/shared";
+import { translateWithBilingualVars } from "../i18n/resolve";
 import { onOutsidePress } from "./outside-press";
 import { ElementAppearanceContext, type ElementAppearanceApi } from "./element-appearance-context";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
-import { ELEMENT_SELECTORS, FONT_CHOICES } from "../theme/m3";
+import { ELEMENT_SELECTORS, FONT_CHOICES, elementSelectorFor } from "../theme/m3";
 import type { TKey } from "../i18n/shared";
 
 /**
@@ -67,6 +69,24 @@ interface MenuState { x: number; y: number; chain: ChainEntry[] }
  * "every rendered element" true without asking a hundred call sites to remember
  * a hook.
  *
+ * Two kinds of hit, and the second is what closes the remaining gap:
+ *
+ *  1. A **curated** target — `data-m3-el`, or a match against the selector table.
+ *     Sixteen of those, each with hand-written `--el-*` hooks in the stylesheets.
+ *  2. Anything else, via `targetFor` in `shared/m3/elements.ts`, which derives
+ *     `auto:<tag>.<class>` from the node itself. Curating sixteen surfaces still
+ *     left the `m3-ui` primitives, the Providers workspace containers and the
+ *     appearance editors themselves unreachable — the list was always going to
+ *     be shorter than the app.
+ *
+ * Curated wins where both apply, because a curated id has a translated name and
+ * a variable channel that a derived one does not.
+ *
+ * A derived id is deliberately *class-level*: right-clicking one provider row
+ * means "rows like this", not "this row and not its six identical siblings".
+ * That is also what lets the style survive a reload, which an instance identity
+ * could not.
+ *
  * An id appears once: a `.m3-card` nested in another `.m3-card` is one target,
  * because the style is applied by selector and both rows would do the same
  * thing.
@@ -78,20 +98,42 @@ function editableChain(start: Element | null, limit = 4): ChainEntry[] {
   while (node && out.length < limit) {
     const tag = node.tagName?.toLowerCase();
     if (tag === "body" || tag === "html") break;
-    const explicit = node.getAttribute?.("data-m3-el");
-    const id = explicit && ELEMENT_TARGETS.some(t => t.id === explicit)
+    const here = node;
+    const explicit = here.getAttribute?.("data-m3-el");
+    const curated = explicit && ELEMENT_TARGETS.some(t => t.id === explicit)
       ? explicit
       : ELEMENT_TARGETS.find(t => {
         const selector = ELEMENT_SELECTORS[t.id];
-        return selector ? node!.matches(selector) : false;
+        return selector ? here.matches(selector) : false;
       })?.id;
+    const id = curated ?? namedDerivedId(here);
     if (id && !seen.has(id)) {
       seen.add(id);
-      out.push({ id, node: node as HTMLElement });
+      out.push({ id, node: here as HTMLElement });
     }
-    node = node.parentElement;
+    node = here.parentElement;
   }
   return out;
+}
+
+/**
+ * A derived id for this node, but only if it names itself.
+ *
+ * `targetFor` will happily return `auto:div` for a `<div>` with no usable class.
+ * That is a target meaning *every div in the application*, which is never what
+ * anyone right-clicking one thing intends, and it is not a harmless offer:
+ * almost every element in the app has a bare `<div>` somewhere above it, so
+ * accepting them put a second row in the chain menu on nearly every click — the
+ * editor stopped opening directly and a menu appeared instead, with a useless
+ * entry in it.
+ *
+ * Requiring at least one class is what keeps a derived target meaningful. It is
+ * also why `<p>just some prose</p>` still resolves to nothing at all: prose with
+ * no class is not a styleable surface, it is text.
+ */
+function namedDerivedId(node: Element): string | null {
+  const id = targetFor(node)?.id;
+  return id && id.startsWith("auto:") && id.includes(".") ? id : null;
 }
 
 /**
@@ -134,6 +176,34 @@ function inTopLayerModal(node: Element | null): boolean {
   }
 }
 
+/**
+ * What to call a target on screen.
+ *
+ * A curated id has a translated name and gets it. A derived one has no
+ * translation and cannot have one — nobody can pre-translate
+ * `auto:div.provider-row` — so `labelFor` builds a readable name out of the id
+ * itself ("Provider row <div>"). Untranslated is the honest outcome there; the
+ * alternative is showing the raw selector, which reads as a leak rather than a
+ * label.
+ */
+function targetName(id: string, node: Element | null, t: ReturnType<typeof useT>): string {
+  const meta = ELEMENT_TARGETS.find(target => target.id === id);
+  return meta ? t(meta.tkey as TKey) : labelFor(id, node ?? undefined);
+}
+
+/**
+ * "Edit appearance: <name>", with the name landing in the right language.
+ *
+ * `t(key, { name })` would paste the whole bilingual name into both halves of a
+ * bilingual template — see `translateWithBilingualVars`. This is the surface
+ * where that was first noticed, because every row of this menu is exactly that
+ * shape.
+ */
+function useTargetPhrase(): (key: TKey, name: string) => string {
+  const { locale, funny } = useI18n();
+  return (key, name) => translateWithBilingualVars(locale, funny, key, { name });
+}
+
 export default function ElementAppearanceHost({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState<OpenState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -141,7 +211,10 @@ export default function ElementAppearanceHost({ children }: { children: ReactNod
   const returnFocus = useRef<HTMLElement | null>(null);
 
   const openTarget = useCallback((id: string, anchor: HTMLElement | null) => {
-    if (!ELEMENT_TARGETS.some(target => target.id === id)) return;
+    // Curated ids and derived ones both, but nothing that cannot be turned back
+    // into a selector — those style nothing and would open a panel whose every
+    // control is a no-op.
+    if (!elementSelectorFor(id)) return;
     setMenu(null);
     setOpen({ id, anchor });
   }, []);
@@ -313,10 +386,8 @@ function AppearanceChainMenu(
     return () => { stop(); document.removeEventListener("keydown", onKey); };
   }, [onClose]);
 
-  const labelFor = (id: string) => {
-    const meta = ELEMENT_TARGETS.find(target => target.id === id);
-    return t((meta?.tkey ?? ELEMENT_TARGETS[0].tkey) as TKey);
-  };
+  const phrase = useTargetPhrase();
+  const nameOf = (entry: ChainEntry) => targetName(entry.id, entry.node, t);
 
   return (
     <div
@@ -344,8 +415,8 @@ function AppearanceChainMenu(
           onClick={() => onPick(entry)}
         >
           {index === 0
-            ? t("appearance.editElement", { name: labelFor(entry.id) })
-            : t("appearance.editContainer", { name: labelFor(entry.id) })}
+            ? phrase("appearance.editElement", nameOf(entry))
+            : phrase("appearance.editContainer", nameOf(entry))}
         </button>
       ))}
     </div>
@@ -360,8 +431,9 @@ function ElementAppearanceEditor({ id, anchor, onClose }: { id: string; anchor: 
   const [narrow, setNarrow] = useState(false);
 
   const style = prefs.elementStyles[id] ?? {};
-  const meta = ELEMENT_TARGETS.find(target => target.id === id);
-  const label = t((meta?.tkey ?? ELEMENT_TARGETS[0].tkey) as TKey);
+  const label = targetName(id, anchor, t);
+  const phrase = useTargetPhrase();
+  const heading = phrase("appearance.editElement", label);
 
   // Measured before paint, so the panel's first frame is already placed rather
   // than appearing at one position and jumping to another. `place` is defined
@@ -458,7 +530,7 @@ function ElementAppearanceEditor({ id, anchor, onClose }: { id: string; anchor: 
       tabIndex={-1}
       // No `aria-modal` even as a sheet: nothing behind it is inert, and saying
       // otherwise tells a screen reader the rest of the page is unavailable.
-      aria-label={t("appearance.editElement", { name: label })}
+      aria-label={heading}
       data-element-style-editor={id}
       data-narrow={narrow ? "true" : undefined}
       style={{
@@ -479,7 +551,7 @@ function ElementAppearanceEditor({ id, anchor, onClose }: { id: string; anchor: 
     >
       <header className="m3-row" style={{ justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
         <h2 className="m3-card-title" style={{ fontSize: "var(--t-title-s)" }}>
-          {t("appearance.editElement", { name: label })}
+          {heading}
         </h2>
         <button type="button" className="m3-icon-btn" title={t("tabs.styleClose")} aria-label={t("tabs.styleClose")} onClick={onClose}>
           <IconX width={18} height={18} aria-hidden="true" />

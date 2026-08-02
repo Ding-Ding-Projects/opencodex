@@ -79,6 +79,45 @@ export function bilingualParts(locale: Locale, funny: FunnyLevels, key: TKey): {
   return { primary, secondary: cantonese && cantonese !== primary ? cantonese : "" };
 }
 
+/**
+ * A bilingual sentence whose *placeholder* is itself bilingual, joined once.
+ *
+ * `t("appearance.editElement", { name })` resolves the template bilingually and
+ * then substitutes `name` into both halves. When `name` came from `t()` too it is
+ * already `English · 廣東話`, so the result reads
+ *
+ *   Edit appearance: Filled buttons · 實心按鈕 · 改外觀：Filled buttons · 實心按鈕
+ *
+ * — the name twice in each half, and the English name sitting inside the
+ * Cantonese clause. It was invisible until the screenshots moved to bilingual
+ * mode and the element context menu was photographed saying exactly that.
+ *
+ * This resolves the template *per track* and interpolates the matching half of
+ * each variable into each, so English gets the English name and Cantonese gets
+ * the Cantonese one. Variables with no Cantonese half (a model id, a port, a
+ * count) are used unchanged in both, which is right — those are not translated.
+ */
+export function translateWithBilingualVars(
+  locale: Locale,
+  funny: FunnyLevels,
+  key: TKey,
+  vars: Record<string, string>,
+): string {
+  const parts = bilingualParts(locale, funny, key);
+  const half = (index: 0 | 1) => {
+    const filled: Vars = {};
+    for (const [name, value] of Object.entries(vars)) {
+      const halves = value.split(" · ");
+      filled[name] = halves.length > 1 ? (halves[index] ?? halves[0]!) : value;
+    }
+    return filled;
+  };
+  const english = interpolate(parts.primary, half(0));
+  if (!parts.secondary) return english;
+  const cantonese = interpolate(parts.secondary, half(1));
+  return cantonese === english ? english : `${english} · ${cantonese}`;
+}
+
 /** What `t()` returns: the resolved string with its placeholders filled in. */
 export function translate(locale: Locale, funny: FunnyLevels, key: TKey, vars?: Vars): string {
   return interpolate(resolveKey(locale, funny, key), vars);

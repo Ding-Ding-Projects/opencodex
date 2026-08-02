@@ -23,21 +23,25 @@ const icons = await Bun.file(ICONS).text();
 const generator = await Bun.file(GENERATOR).text();
 
 /**
- * The only glyphs allowed to be hand-drawn, and the reason each one is.
+ * The only glyph allowed to be hand-drawn, and the reason it is.
  *
- * Three window controls, because Windows title-bar marks are OS chrome and a
- * filled Material glyph in that corner looks foreign on the platform it runs on.
- * One brand logo, because GitHub's mark is not in Material Symbols at all and a
- * generic substitute would point the user at the wrong idea of where a link goes.
+ * GitHub's mark is not in Material Symbols at all, and a generic substitute
+ * would point the user at the wrong idea of where a link goes.
+ *
+ * The three window controls used to be here too, drawn as Segoe Fluent caption
+ * marks on the argument that a filled Material glyph looks foreign in a Windows
+ * title bar. The shell has no Windows title bar — it is frameless, and the M3
+ * app bar is the chrome — so those three marks were simply the last non-Material
+ * elements in an otherwise fully M3 surface. They are Material Symbols now.
  */
-const HAND_DRAWN = ["IconWinMinimize", "IconWinMaximize", "IconWinRestore", "IconGithub"];
+const HAND_DRAWN = ["IconGithub"];
 
 function exportedIcons(): string[] {
   return [...icons.matchAll(/^export const (Icon[A-Za-z]+)/gm)].map(m => m[1]);
 }
 
 describe("the icon set", () => {
-  test("every icon is Material Symbols geometry, except the documented four", () => {
+  test("every icon is Material Symbols geometry, except the documented one", () => {
     // One assertion over the whole file rather than per-icon, so a new icon that
     // skips the generator shows up here by name instead of silently passing.
     const wrong: string[] = [];
@@ -74,7 +78,7 @@ describe("the icon set", () => {
     expect(offenders).toEqual([]);
   });
 
-  test("the hand-drawn exceptions are exactly the four the generator declares", () => {
+  test("the hand-drawn exceptions are exactly the ones the generator declares", () => {
     // Both lists have to agree. If someone adds a fifth exception to the
     // generator, this fails until they justify it here too — which is the point:
     // the exception list should be annoying to grow.

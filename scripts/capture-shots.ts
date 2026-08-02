@@ -278,7 +278,24 @@ const names = (o: Overlay) => [o.label, o.heading].filter(Boolean);
  * no two surfaces in this app are distinguished only by capitalisation. Every
  * other difference still fails.
  */
-const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+/**
+ * Does this on-screen string say what the target expects?
+ *
+ * The expectations below are written in English, once, and the app is captured
+ * in **bilingual** mode — where `resolveKey` joins the two tracks as
+ * `English · 廣東話`. Comparing the whole string would fail every target the
+ * moment a Cantonese translation exists, and re-writing forty expectations as
+ * bilingual literals would pin them to the contents of `yue.ts`: adding one
+ * translation would then break a screenshot for no reason anybody could see.
+ *
+ * So a bilingual observation matches if *either* half matches. The guard keeps
+ * all of its power — "Dashboard · 儀表板" still cannot satisfy an expectation of
+ * "Providers" — while surviving a translation landing or being reworded.
+ */
+const eq = (a: string, b: string) => {
+  const same = (x: string) => x.trim().toLowerCase() === b.trim().toLowerCase();
+  return same(a) || a.split(" · ").some(same);
+};
 
 /**
  * The gate. Throws with what was on screen instead, because that is the only
@@ -366,18 +383,66 @@ async function settle(timeoutMs = 15_000): Promise<void> {
  * mounted, so identical buttons exist in the DOM for every other open tab and an
  * unfiltered `find` happily clicks one nobody can see.
  */
+/**
+ * Click the visible element whose label reads `text` — in any language mode.
+ *
+ * The English label is compared against the whole string *and* against each half
+ * of a bilingual `English · 廣東話` one. Exact whole-string equality is what
+ * these triggers used to do, and it quietly stopped finding anything the moment
+ * the captures moved to bilingual: six targets failed with "no visible button
+ * labelled …" while the button was plainly on screen, reading
+ * `Download export · 下載匯出`.
+ *
+ * That was the harness being English-bound rather than the app being wrong, and
+ * it is worth fixing here rather than pinning the expectations to Cantonese
+ * strings — a trigger written against `yue.ts` breaks whenever a translation is
+ * reworded.
+ */
 async function clickText(sel: string, text: string): Promise<void> {
   const ok = await evaluate(`
     (() => {
+      const want = ${lit(text)}.toLowerCase();
+      const says = value => {
+        const s = (value || "").trim();
+        return s.toLowerCase() === want || s.split(" · ").some(p => p.trim().toLowerCase() === want);
+      };
       const hit = [...document.querySelectorAll(${lit(sel)})].find(el => {
         const box = el.getBoundingClientRect();
-        return box.width > 0 && box.height > 0 && (el.textContent || "").trim() === ${lit(text)};
+        return box.width > 0 && box.height > 0 && says(el.textContent);
       });
       if (!hit) return false;
       hit.click();
       return true;
     })()`);
   if (!ok) throw new Error(`no visible ${sel} labelled "${text}"`);
+  await Bun.sleep(500);
+}
+
+/**
+ * Click a visible element by `aria-label`, matching either half in bilingual mode.
+ *
+ * `[aria-label="Notifications"]` is an exact attribute match, so it finds
+ * nothing once the label reads `Notifications · 通知`. Prefix matching would
+ * work for the English half and quietly fail for anything the Cantonese track
+ * happens to order differently, so the split is done properly instead.
+ */
+async function clickAriaLabel(scope: string, label: string): Promise<void> {
+  const ok = await evaluate(`
+    (() => {
+      const want = ${lit(label)}.toLowerCase();
+      const says = value => {
+        const s = (value || "").trim();
+        return s.toLowerCase() === want || s.split(" · ").some(p => p.trim().toLowerCase() === want);
+      };
+      const hit = [...document.querySelectorAll(${lit(scope)})].find(el => {
+        const box = el.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && says(el.getAttribute("aria-label"));
+      });
+      if (!hit) return false;
+      hit.click();
+      return true;
+    })()`);
+  if (!ok) throw new Error(`nothing visible in ${scope} is labelled "${label}"`);
   await Bun.sleep(500);
 }
 
@@ -430,6 +495,70 @@ async function pressKey(key: string, code: string, keyCode: number): Promise<voi
  * out is not reliable either because an error toast is deliberately sticky. So
  * press their close buttons, which is what a user would do.
  */
+/**
+ * Record the onboarding wizard as finished, the way finishing it does.
+ *
+ * `gui/src/shell/onboarding-state.ts` owns this flag and biases every ambiguous
+ * signal towards *not* showing the wizard, so writing `completed` is enough. The
+ * key is duplicated here rather than imported because this script runs outside
+ * the bundle; `tests/capture-onboarding-key.test.ts` is what keeps the two from
+ * drifting apart.
+ */
+const ONBOARDING_KEY = "ocx-m3:onboarding";
+
+/**
+ * The language mode every screenshot is taken in.
+ *
+ * Bilingual, because the shots are the project's own evidence that the three
+ * language modes are real. English-only images say nothing about whether the
+ * Cantonese half exists, fits, or wraps — and "validate narrow widths and the
+ * longest localized strings (bilingual mode especially)" is a rule these images
+ * are supposed to demonstrate compliance with, not quietly sidestep.
+ *
+ * It is also the harshest layout case in the app: every label carries
+ * `English · 廣東話`, so a row that clips or a button that overflows shows up
+ * here first.
+ */
+const LANG_KEY = "ocx-lang";
+const CAPTURE_LOCALE = "bi";
+
+/**
+ * Everything the app must already believe before the first shutter.
+ *
+ * Written straight to `localStorage` rather than clicked through the UI: the
+ * language picker lives on a settings screen that is itself one of the targets,
+ * so driving it would make the first capture depend on the state the capture is
+ * supposed to establish.
+ */
+async function primeProfile(): Promise<void> {
+  await evaluate(`
+    (() => {
+      localStorage.setItem(${JSON.stringify(ONBOARDING_KEY)}, JSON.stringify({ completed: true, at: 1 }));
+      localStorage.setItem(${JSON.stringify(LANG_KEY)}, ${JSON.stringify(CAPTURE_LOCALE)});
+      return true;
+    })()`);
+  await send("Page.reload");
+  await Bun.sleep(2500);
+  await settle();
+}
+
+/**
+ * The same, minus the onboarding flag — for the pass that captures the wizard.
+ *
+ * The wizard has to be genuinely first-run to be photographed, but it should
+ * still be photographed bilingual like everything else.
+ */
+async function setCaptureLocale(): Promise<void> {
+  await evaluate(`
+    (() => {
+      localStorage.setItem(${JSON.stringify(LANG_KEY)}, ${JSON.stringify(CAPTURE_LOCALE)});
+      return true;
+    })()`);
+  await send("Page.reload");
+  await Bun.sleep(2500);
+  await settle();
+}
+
 async function clearOverlays(): Promise<void> {
   for (let attempt = 0; attempt < 4; attempt++) {
     const seen = await probe();
@@ -607,13 +736,13 @@ const surfaces: Target[] = [
     id: "new-tab",
     hash: "dashboard",
     expect: { h1: "Dashboard", overlay: "New tab" },
-    prepare: () => clickSelector('.m3-tabstrip button[aria-label="New tab"]'),
+    prepare: () => clickAriaLabel('.m3-tabstrip button', 'New tab'),
   },
   {
     id: "regex-popover",
     hash: "notifications",
     expect: { h1: "Notifications", overlay: "Regex builder" },
-    prepare: () => clickSelector('.m3-rxpop-wrap > button[aria-label="Open regex builder"]'),
+    prepare: () => clickAriaLabel('.m3-rxpop-wrap > button', 'Open regex builder'),
     note:
       "Captured on Notifications rather than the Regex route: the route's own h1 is also "
       + "'Regex builder', so a shot taken there could not tell the anchored popover from the page.",
@@ -622,7 +751,7 @@ const surfaces: Target[] = [
     id: "notification-centre",
     hash: "dashboard",
     expect: { h1: "Dashboard", overlay: "Notifications" },
-    prepare: () => clickSelector('header.m3-appbar button[aria-label="Notifications"]'),
+    prepare: () => clickAriaLabel('header.m3-appbar button', 'Notifications'),
     note: "The anchored bell popover. A different component from the #notifications route.",
   },
   {
@@ -795,7 +924,12 @@ function shutdown(): void {
  */
 async function answerAdminPrompt(): Promise<boolean> {
   const seen = await probe();
-  if (!seen.overlays.some(o => names(o).includes("Admin token needed"))) return false;
+  // `eq`, not `includes`: in bilingual mode the accessible name reads
+  // `Admin token needed · <廣東話>`, and an exact array-membership test simply
+  // never matched it. The dialog then went unrecognised — so it was neither
+  // photographed nor answered, and the run reported that it "vanished before it
+  // could be captured" while it was sitting on screen the whole time.
+  if (!seen.overlays.some(o => names(o).some(n => eq(n, "Admin token needed")))) return false;
 
   // This dialog cannot be opened on demand, so the run photographs it the moment
   // it appears of its own accord, before answering it away. See the `prompt`
@@ -981,6 +1115,19 @@ for (const { viewport, list } of byViewport) {
     await launch(viewport);
     // The wizard opens over the dashboard on a wiped profile, so it is captured
     // first and dismissed; every later target asserts nothing is floating.
+    //
+    // Dismissing it with Escape does not *persist* that decision, and each
+    // viewport relaunches Electron against the same profile — so the phone pass
+    // met a fresh "Welcome to opencodex" sitting over the remote control, and
+    // `mobile` failed every run with "1 overlay(s) are covering this page".
+    // Nobody noticed for a while, because a target that refuses to write leaves
+    // the previous image in place and a stale screenshot looks exactly like a
+    // fresh one. So the flag is written directly for every pass after the first,
+    // which is the same thing finishing the wizard does.
+    // The pass that photographs the wizard needs it still unseen; every other
+    // pass writes the flag so it does not sit over the first target.
+    if (list.some(t => t.firstRunOnly)) await setCaptureLocale();
+    else await primeProfile();
     for (const target of list) {
       let restore: (() => Promise<void>) | null = null;
       try {

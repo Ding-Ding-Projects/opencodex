@@ -1,5 +1,127 @@
 # Handoff
 
+## Right-click everywhere, every screenshot replaced, and a line count CI publishes — 2026-08-02
+
+Follow-on to the entry below, after `d40c4617`.
+
+### Right-click now reaches every rendered element, not sixteen of them
+
+The previous pass curated sixteen targets and said so honestly: the `m3-ui`
+primitives, the Providers workspace containers and the appearance editors
+themselves were still out of reach, because a hand-written list was always going
+to be shorter than the app.
+
+It uses `shared/m3/elements.ts` now — the derivation `docs-site` has had all
+along. Anything with no curated target resolves to `auto:<tag>.<class>`, and
+`selectorFor` rebuilds that id into a selector from the id alone, so a derived
+style survives a reload with nothing else written down.
+
+Two rules keep it sane, and both were found by the tests failing:
+
+- **Curated wins where both apply.** A curated id has a translated name and an
+  `--el-*` variable channel; a derived one has neither, and `labelFor` names it
+  from the id ("Card title <span>").
+- **A derived target must name itself with a class.** `targetFor` will return
+  `auto:div` for a bare `<div>` — a target meaning *every div in the
+  application*. Accepting those put a useless second row in the chain menu on
+  nearly every click, because almost everything has a bare div above it, and
+  stopped the editor opening directly. `<p>prose</p>` with no class therefore
+  still resolves to nothing, which is correct: unclassed text is not a surface.
+
+Derived styles are compiled into the generated stylesheet rather than into
+`--el-*` variables, so a **stored id becomes text inside a CSS rule**.
+`readElementStyles` drops any id `elementSelectorFor` cannot rebuild, and that
+function accepts only the curated table or an `auto:` id — an arbitrary string is
+no longer turned into `[data-m3-el="…"]`, which was syntactically fine and
+matched nothing.
+
+### Every screenshot in the repository was retaken
+
+**52 images**, all from the real desktop window at `build 118`, **in bilingual
+mode**, verified by the harness against the live DOM before each shutter:
+
+| Where | Count | How |
+| --- | ---: | --- |
+| `assets/shots/` | 35 | `bun run scripts/capture-shots.ts` |
+| `assets/shots/menus/` | 10 | `bun run scripts/capture-menus.ts` |
+| `docs-site/src/assets/shots/` + `dashboard.png` | 7 | copied from the above |
+
+Bilingual because English-only images say nothing about whether the Cantonese
+half exists, fits or wraps — and these shots are the project's own evidence that
+the three language modes are real. It is also the harshest layout case in the
+app: every label carries `English · 廣東話`, so a row that clips shows up here
+first. `resolveKey` joins the two tracks with ` · `, so the harness's exact-match
+guard now accepts either half — rewriting forty expectations as bilingual
+literals would have pinned them to the contents of `yue.ts`, where adding one
+translation breaks a screenshot for no visible reason.
+
+Two **new** targets, because the feature this session added had no picture
+anywhere: `element-context` (right-clicking a button inside a card, showing the
+menu offer both, nearest first) and `element-appearance-editor` (the anchored
+panel on a dashboard stat tile — the same editor a tab gets, on plain page
+content). Both are shown in the README beside the tab menu and tab appearance
+shots they generalise.
+
+> [!IMPORTANT]
+> **The harness had a silent bug, and it is the reason this is worth writing
+> down.** Each viewport relaunches Electron against the same profile, and
+> dismissing the onboarding wizard with Escape does not *persist* that decision —
+> so the phone pass always met a fresh "Welcome to opencodex" over the remote
+> control, and `mobile` failed every run. A target that refuses to write leaves
+> the previous image in place, and **a stale screenshot is indistinguishable from
+> a fresh one**. `markOnboardingSeen()` writes the flag directly now, and
+> `tests/capture-onboarding-key.test.ts` pins the key, because the harness runs
+> outside the bundle and cannot import it.
+
+Deliberately **not** replaced, each for a reason:
+
+- `assets/architecture.png`, `banner.png`, `logo-*.png`, `docs-site` `hero-*.png`
+  — a diagram, branding and photographic backgrounds. Not screenshots.
+- `codex-app-picker.png` and `docs-site/public/demo-frames/` (158 frames) —
+  captures of the **Codex desktop app**, not of opencodex. Substituting an
+  opencodex capture would be labelling a picture of one product as another.
+- `assets/issue-evidence/` and `devlog/_fin/**` — evidence pinned to a specific
+  commit. Replacing it would falsify the record it exists to be.
+
+### The line count, and CI is what counts it
+
+New shared rule. `scripts/count-lines.ts` is the single definition, the release
+workflow runs it over the tagged commit and writes the table into the release
+notes, and the README carries a convenience copy that names the commit it was
+measured at.
+
+**600,804 lines across 3,056 tracked files** at `d40c4617c`. Generated files are
+reported apart from hand-written ones, assets are counted as files rather than
+given invented line counts, and the last bucket matches everything — so a file in
+a directory nobody thought of cannot vanish from the total.
+`tests/count-lines.test.ts` asserts the rows sum to the total rather than pinning
+a number that moves every commit.
+
+### Three CI failures from the previous push, all mine
+
+`be608762` went red and I had only run a subset of the root suite locally.
+
+1. **`.gitignore`** — the edit matched `node_modules` as a prefix of
+   `node_modules/`, split the line, and left `build-info.json/` with a spurious
+   slash. `repo-hygiene` catches exactly this.
+2. **`icon-contract`** ×2 — it pinned four hand-drawn glyphs; there is one now.
+
+### Verification
+
+`gui`: **862 pass, 0 fail**, `tsc -b --noEmit` clean. Root suite green on
+`icon-contract`, `repo-hygiene`, `count-lines`, `capture-onboarding-key`,
+`proxy-adoption`, `server-auth`. Screenshots verified by opening
+`assets/shots/dashboard.png` and reading the codename (酥皮蛋撻 Puff Pastry Egg
+Tarts) and Material window buttons off it.
+
+### Still open
+
+- `assets/architecture.png`, both `codex-app-picker.png` copies and the five
+  `hero-*.png` files are **unreferenced by any page** — dead assets, not deleted
+  here because deleting is not what was asked.
+- A Gerk Tong Hui at `.claude/worktrees/keen-dijkstra-a12563` (`40aa982f`) is not
+  mine and was left alone.
+
 ## Two installs, a stolen port, and the right-click that reached three elements — 2026-08-02
 
 Four user reports that turned out to be two causes.

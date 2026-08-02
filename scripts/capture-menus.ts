@@ -43,11 +43,33 @@ interface Menu {
   appears: string;
 }
 
+/**
+ * Find a visible element by `aria-label`, in any language mode.
+ *
+ * Emitted into the page rather than kept here, because every `open` expression
+ * below runs in the browser. Captures are taken bilingual, so a label reads
+ * `Notifications · 通知` and an exact `[aria-label="Notifications"]` selector
+ * matches nothing — three menus were silently skipped for exactly that reason,
+ * reported as "trigger not found" while the button was on screen.
+ */
+const BY_LABEL = `
+  (scope, label) => {
+    const want = label.toLowerCase();
+    const says = v => {
+      const s = (v || "").trim();
+      return s.toLowerCase() === want || s.split(" · ").some(p => p.trim().toLowerCase() === want);
+    };
+    return [...document.querySelectorAll(scope)].find(el => {
+      const b = el.getBoundingClientRect();
+      return b.width > 0 && b.height > 0 && says(el.getAttribute("aria-label"));
+    }) || null;
+  }`;
+
 const MENUS: Menu[] = [
   {
     name: "notifications",
     page: "dashboard",
-    open: `(() => { const b = document.querySelector('[aria-label="Notifications"]'); if (!b) return false; b.click(); return true; })()`,
+    open: `(() => { const b = (${BY_LABEL})('button', 'Notifications'); if (!b) return false; b.click(); return true; })()`,
     appears: `[role="dialog"], .m3-notif-panel, .m3-menu`,
   },
   {
@@ -114,7 +136,7 @@ const MENUS: Menu[] = [
   {
     name: "tab-search",
     page: "dashboard",
-    open: `(() => { const b = document.querySelector('[aria-label="Find a tab"]'); if (!b) return false; b.click(); return true; })()`,
+    open: `(() => { const b = (${BY_LABEL})('button', 'Find a tab'); if (!b) return false; b.click(); return true; })()`,
     appears: `input[placeholder*="tab" i], [role="dialog"], .m3-menu, .m3-tabsearch`,
   },
   {
@@ -133,12 +155,59 @@ const MENUS: Menu[] = [
     appears: `[role="menu"], .m3-menu, .m3-context-menu`,
   },
   {
+    // Right-click on an ordinary element — the delegated route that reaches the
+    // whole app rather than the three components that once spread the hook.
+    //
+    // A button inside a card is the case worth photographing: the pointer sits
+    // inside *two* editable surfaces, so the shot shows the disambiguation menu
+    // offering the button first and its container after it. A single-target
+    // right-click opens the editor with no menu at all, which is the next shot.
+    name: "element-context",
+    page: "dashboard",
+    open: `(() => {
+      const btn = [...document.querySelectorAll('.m3-card .m3-btn')].find(b => b.offsetParent !== null);
+      if (!btn) return false;
+      const r = btn.getBoundingClientRect();
+      btn.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      }));
+      return true;
+    })()`,
+    appears: `[data-appearance-menu]`,
+  },
+  {
+    // The anchored element appearance editor, on a surface that is not a tab.
+    //
+    // `tab-appearance-editor` above photographs the same panel reached from a
+    // tab, and that is the one surface it could ever be reached from until now.
+    // This one is a dashboard stat tile: a plain piece of page content, which is
+    // the whole point of the change.
+    name: "element-appearance-editor",
+    page: "dashboard",
+    open: `(async () => {
+      const tile = [...document.querySelectorAll('.dash-stat-card')].find(c => c.offsetParent !== null);
+      if (!tile) return false;
+      const r = tile.getBoundingClientRect();
+      tile.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: r.left + 40, clientY: r.top + r.height / 2,
+      }));
+      await new Promise(res => setTimeout(res, 400));
+      // A tile nested inside another editable surface offers a menu first; take
+      // its first entry so this target always ends on the editor rather than
+      // sometimes photographing the menu and calling it the editor.
+      const first = document.querySelector('[data-appearance-menu] [role="menuitem"]');
+      if (first) { first.click(); await new Promise(res => setTimeout(res, 400)); }
+      return true;
+    })()`,
+    appears: `[data-element-style-editor]`,
+  },
+  {
     name: "settings-search-regex",
     page: "network",
     // The regex builder anchored to a settings search bar. Not the `.*` chip —
     // that is the "Regex mode" toggle beside it, which switches the field's
     // matching and opens nothing.
-    open: `(() => { const b = document.querySelector('[aria-label="Build a pattern to search these settings"]'); if (!b) return false; b.click(); return true; })()`,
+    open: `(() => { const b = (${BY_LABEL})('button', 'Build a pattern to search these settings'); if (!b) return false; b.click(); return true; })()`,
     appears: `[role="dialog"], .m3-regex, .rx-panel, .m3-menu, .rx-builder`,
   },
 ];
@@ -217,6 +286,28 @@ async function goTo(page: string): Promise<void> {
 await send("Runtime.enable");
 await send("Emulation.setDeviceMetricsOverride", VIEWPORT);
 await Bun.sleep(400);
+
+/**
+ * Capture in bilingual mode, like `capture-shots.ts`.
+ *
+ * This script attaches to an app somebody else started, so without this the
+ * language of every menu shot is whatever that profile happened to be left in —
+ * and a set of screenshots where the pages are bilingual and the menus are not
+ * is worse than either, because it reads as a bug in the language mode.
+ *
+ * Menus are also where bilingual bites hardest: a menu item is a single row with
+ * `English · 廣東話` in it, so this is the surface that shows whether the mode
+ * actually fits.
+ */
+await evaluate(`
+  (() => {
+    localStorage.setItem("ocx-lang", "bi");
+    return true;
+  })()`);
+await send("Page.reload");
+await Bun.sleep(2500);
+await send("Emulation.setDeviceMetricsOverride", VIEWPORT);
+await Bun.sleep(600);
 
 console.log(`Capturing ${targets.length} menu surface(s) from the running desktop app:\n`);
 

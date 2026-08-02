@@ -283,6 +283,15 @@ jobs:
             echo "::warning::Dish photo $photo is missing; publishing without it."
           fi
 
+          # The line count, produced by this run over this commit.
+          #
+          # The release is the record for this figure precisely because it is
+          # pinned to a tag: a number in prose is stale the day after it is
+          # written, and a number typed by hand was never measured at all. The
+          # committed script is the single definition, so the table here and the
+          # one a contributor gets locally cannot disagree.
+          lines=$(bun run scripts/count-lines.ts)
+
           # A heredoc rather than a quoted string: the notes are markdown, and
           # an image tag inside a shell string is one stray quote away from
           # becoming an unreadable release note nobody notices until it is
@@ -303,6 +312,15 @@ jobs:
           | **${DISH_ID}.webp** | The build's dim sum, attached so it outlives the link above |
 
           Installable releases, not npm packages — the npm package still ships through the audited Release workflow.
+
+          <details>
+          <summary>📏 <strong>Lines of code at this commit</strong></summary>
+
+          $lines
+
+          Produced by this run with \`bun run scripts/count-lines.ts\` over \`${SHA:0:9}\`.
+
+          </details>
           NOTES
           )
           gh release create "$tag" \

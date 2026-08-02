@@ -285,6 +285,22 @@ These are durable user-level defaults. A current explicit request and higher-pri
 - When a periodic re-scan finds a new instruction issue **mid-task**, apply it to the work in flight rather than finishing under the old rules and applying it next time. If the change would invalidate work already done, say so plainly, state what must be redone, and do it. Record a nil re-scan in one line; it costs nothing. A skipped re-scan is how a fleet of agents spends hours building the wrong thing while the correction sits unread.
 - A re-scan that finds nothing new is recorded briefly and costs nothing; a re-scan that is skipped is how a user-reported defect sits untouched while the agent works beside it for hours.
 
+## Line counts
+
+- **Every repository states how many lines of code it has, in its `README.md`.** No exemption for size or kind. A reader deciding whether to open a project wants to know its scale before they clone it, and "large" or "small" in prose is not an answer.
+- **Break it down; do not report one number.** Report at minimum the project's own source, its tests, and its styles/markup separately, and give both total and non-blank lines. Add whatever further split the project actually has.
+- **Say plainly what is excluded and why.** Vendored trees, dependency directories, build output and lockfiles are not the project's code and are excluded — but the exclusion is stated, not silent.
+- **Separate generated from hand-written** wherever a generated file is large enough to move the number. A reader should be able to see how much of the project a person actually wrote.
+- **Count what was measured, never what was estimated.** Produce the figure with a real tool over the tracked files, record the command, and state the commit the count was taken at. Never approximate, round for effect, or carry a stale number forward.
+- **Every GitHub Release states the line count at that release, and CI is what counts it.** The release workflow runs the repository's committed counter over the tagged commit and writes the table into the release notes, so the figure is produced by the same run that built the artifacts. The README copy is a convenience; the release is the record, and the two must never disagree.
+- **Agents never count lines by hand.** Run the committed script and read its table — never an ad-hoc `git ls-files | xargs wc -l` or a per-extension sweep. That is a cost rule as much as a correctness one: ad-hoc counting dumps hundreds of per-file lines into context to arrive at a handful of totals. It is also more accurate, because a path-prefix bucketing written on the spot silently drops every file matching no prefix. If the script is wrong, fix the script and re-run it.
+- The count is information, never a boast. Do not present a larger number as a virtue, do not pad it with generated or vendored code, and do not hide test lines to make a ratio look better.
+
+## No unsolicited promotion
+
+- Apps must not nag users with unsolicited dialogs, banners, popovers, notifications, or startup interruptions asking for payment, donations, sponsorship, support, reviews, ratings, upgrades, subscriptions, or other promotional action. Do not ship "support us", "donate", "pay", or equivalent recurring prompts.
+- User-initiated account, billing, purchase, support, or feedback flows may explain their own next steps in context, but must remain non-blocking unless the user must explicitly confirm a consequential action.
+
 ## Continuous integration and releases
 
 - Resolve a workflow's GitHub token as an optional repository-scoped fine-grained token, then an organization token, then the ephemeral workflow token as a last fallback, and wire that chain in from the start rather than after a permission refusal. Never print, log, or echo the token; pass it only through the standard token environment convention.

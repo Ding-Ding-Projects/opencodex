@@ -276,6 +276,16 @@ undo can itself be undone. Full detail in
       <sub><b>New tab.</b> A filterable page list — the strip behaves like a browser, so a second tab is not a hunt.</sub>
     </td>
   </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/shots/menus/element-context.png" alt="A right-click context menu on the dashboard, opened over a button inside a card. It offers two entries: Edit appearance of the filled button first, and Edit appearance of the card that contains it second" width="440"><br>
+      <sub><b>Right-click, anywhere.</b> The pointer sat inside two editable surfaces, so it offers both — nearest first.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/shots/menus/element-appearance-editor.png" alt="The anchored element appearance editor open beside a dashboard stat tile, titled Edit appearance for Dashboard stat tiles, with font, label colour, background, corner radius, padding and label size controls and a reset button" width="440"><br>
+      <sub><b>Appearance editor.</b> The same panel a tab gets, on a plain piece of page content.</sub>
+    </td>
+  </tr>
 </table>
 </details>
 
@@ -497,6 +507,41 @@ never a public issue.
 
 ---
 
+## How big is it
+
+<details>
+<summary><strong>600,804 lines across 3,056 tracked files</strong> — the breakdown, and what is excluded</summary>
+
+| Area | Files | Lines | Non-blank |
+| --- | ---: | ---: | ---: |
+| Generated (icons, catalogues) | 1 | 96 | 92 |
+| Tests | 624 | 164,603 | 148,289 |
+| Desktop shell (Electron) | 5 | 889 | 827 |
+| Dashboard — styles | 13 | 6,869 | 6,165 |
+| Dashboard — source | 253 | 63,188 | 59,663 |
+| Documentation site | 193 | 39,451 | 34,148 |
+| Shared M3 layer | 12 | 4,491 | 4,139 |
+| Proxy & CLI (src/, bin/) | 403 | 125,473 | 115,863 |
+| Build & tooling scripts | 57 | 9,929 | 9,012 |
+| Docs & prose (Markdown) | 1,457 | 176,122 | 139,537 |
+| Config & manifests | 38 | 9,693 | 9,273 |
+| **Total** | **3,056** | **600,804** | **527,008** |
+
+Counted with `bun run scripts/count-lines.ts` over `git ls-files`, so nothing untracked or ignored is included — no `node_modules`, no build output, no lockfile-adjacent generated trees. 435 tracked files are images, fonts and other binaries and have no line count; 2 were unreadable as text.
+
+Measured at `d40c4617c`. The release notes carry the figure for the exact commit each
+release was built from, produced by the same CI run that built the installer —
+this copy is a convenience and the release is the record. Re-run it yourself:
+
+```bash
+bun run scripts/count-lines.ts
+```
+
+Generated files are listed separately rather than folded in, so the number is not
+inflated by anything nobody wrote by hand. The count is information, not a boast.
+
+</details>
+
 ## Development
 
 ```bash
@@ -630,6 +675,22 @@ These are durable user-level defaults. A current explicit request and higher-pri
 - Every agent and sub-agent that touches a repository inherits this duty; an orchestrator delegating work still re-scans itself, because a sub-agent's narrow scope will not notice a newly filed unrelated issue.
 - When a periodic re-scan finds a new instruction issue **mid-task**, apply it to the work in flight rather than finishing under the old rules and applying it next time. If the change would invalidate work already done, say so plainly, state what must be redone, and do it. Record a nil re-scan in one line; it costs nothing. A skipped re-scan is how a fleet of agents spends hours building the wrong thing while the correction sits unread.
 - A re-scan that finds nothing new is recorded briefly and costs nothing; a re-scan that is skipped is how a user-reported defect sits untouched while the agent works beside it for hours.
+
+## Line counts
+
+- **Every repository states how many lines of code it has, in its `README.md`.** No exemption for size or kind. A reader deciding whether to open a project wants to know its scale before they clone it, and "large" or "small" in prose is not an answer.
+- **Break it down; do not report one number.** Report at minimum the project's own source, its tests, and its styles/markup separately, and give both total and non-blank lines. Add whatever further split the project actually has.
+- **Say plainly what is excluded and why.** Vendored trees, dependency directories, build output and lockfiles are not the project's code and are excluded — but the exclusion is stated, not silent.
+- **Separate generated from hand-written** wherever a generated file is large enough to move the number. A reader should be able to see how much of the project a person actually wrote.
+- **Count what was measured, never what was estimated.** Produce the figure with a real tool over the tracked files, record the command, and state the commit the count was taken at. Never approximate, round for effect, or carry a stale number forward.
+- **Every GitHub Release states the line count at that release, and CI is what counts it.** The release workflow runs the repository's committed counter over the tagged commit and writes the table into the release notes, so the figure is produced by the same run that built the artifacts. The README copy is a convenience; the release is the record, and the two must never disagree.
+- **Agents never count lines by hand.** Run the committed script and read its table — never an ad-hoc `git ls-files | xargs wc -l` or a per-extension sweep. That is a cost rule as much as a correctness one: ad-hoc counting dumps hundreds of per-file lines into context to arrive at a handful of totals. It is also more accurate, because a path-prefix bucketing written on the spot silently drops every file matching no prefix. If the script is wrong, fix the script and re-run it.
+- The count is information, never a boast. Do not present a larger number as a virtue, do not pad it with generated or vendored code, and do not hide test lines to make a ratio look better.
+
+## No unsolicited promotion
+
+- Apps must not nag users with unsolicited dialogs, banners, popovers, notifications, or startup interruptions asking for payment, donations, sponsorship, support, reviews, ratings, upgrades, subscriptions, or other promotional action. Do not ship "support us", "donate", "pay", or equivalent recurring prompts.
+- User-initiated account, billing, purchase, support, or feedback flows may explain their own next steps in context, but must remain non-blocking unless the user must explicitly confirm a consequential action.
 
 ## Continuous integration and releases
 
