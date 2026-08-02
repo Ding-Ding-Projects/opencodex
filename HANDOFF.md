@@ -1,5 +1,60 @@
 # Handoff
 
+## Integrate-and-clean pass: nothing merged, and that is the finding — 2026-08-02
+
+Four unmerged refs, two stashes and one linked worktree, each surveyed by its own
+agent against `main` at `f99793b5` before anything was touched.
+
+**Nothing was merged.** Every ref's content is already on `main` under different
+SHAs, and every merge would have been a regression rather than an addition. That
+is the result, not a failure to do the work.
+
+### Removed
+
+| What | Why it was safe |
+| --- | --- |
+| Linked worktree `.claude/worktrees/keen-dijkstra-a12563` | Clean tree, nothing unpushed, and its commit `40aa982f` is preserved on both the local branch and the remote. Removing the directory loses no commit. |
+| Stale worktree metadata | `git worktree prune`. |
+| `stash@{0}` (`ec190b3c`) and `stash@{1}` (`43213c7e`) | Both proven present on `main` today. Spot-checked by hand, not taken on trust: `docs-site/src/lib/appearance.ts` and `docs-site/package.json` are byte-identical to `main`; `@media (pointer: coarse)` is at `Header.astro:470`; `M3_TABLIST_STYLE`/`m3TabStyle`, all four i18n keys, `StatTile` and `ShareBar` are all on `main`, and `main` carries the stash's own prose comments verbatim. |
+
+### Kept, and why
+
+> [!IMPORTANT]
+> **Three of these are load-bearing.** A clean branch list is not worth a broken
+> contribution or release path.
+
+- **`dev`** — `enforce-pr-target.yml` hardcodes `ALLOWED_BASES = ["dev", "dev2-go"]`
+  and `DEFAULT_BASE = "dev"`, and runs on `pull_request_target` for *every*
+  incoming PR. Deleting it would reject every contributor PR and redirect them to
+  a branch that no longer exists. Its 12 commits are content-superseded on `main`
+  (kiro wire contract → `a5251f65`, subagent effort → `src/config.ts:1038-1272`,
+  #608 scheduler → `cea8cd34`, speed badge → `de4ddb99`), so there is nothing to
+  merge either.
+- **`preview`** — `release.yml` gates the npm preview channel on
+  `refs/heads/preview`. It also holds `release: v2.7.43-preview.20260728`, which
+  must not land on `main`.
+- **`dev2-go`** — the rejected Go port: 1,005 files under `go/`, 955 of them
+  `.go`. Merging it is out of the question. Deleting it is a **contribution-policy
+  change**, not cleanup: it is named in four workflow/script files and described
+  as an active integration line in `AGENTS.md`, `CONTRIBUTING.md`,
+  `MAINTAINERS.md` and the docs site **in six languages**. That wiring has to be
+  edited first, and that is the user's call.
+- **`claude/keen-dijkstra-a12563`** — superseded, and **kept anyway**. Its tip is
+  not an ancestor of `main`, so it holds unmerged work, and the preservation rule
+  is not waived by permission. Its 4,875 lines were reimplemented on `main`
+  independently and better (`d15c7423`, `1542b440`, `11c6a6e4`), it carries three
+  confirmed blocking defects, and its "a pinned tab keeps its group" rule is the
+  **inverse** of `main`'s deliberate contract. Merging would re-fork the tab
+  engine `main` unified on purpose and overwrite this file with a stale copy.
+
+> [!NOTE]
+> One command drops that last branch if you want it gone, now that the analysis
+> is written down: `git branch -D claude/keen-dijkstra-a12563 && git push origin --delete claude/keen-dijkstra-a12563`.
+> I did not run it, because deleting unmerged work is the one thing `mat day`
+> does not make safe.
+
+---
+
 ## Key failover never worked for environment-variable keys — 2026-08-02
 
 The sweep's second high-severity finding, confirmed 3/3 and reproduced.
