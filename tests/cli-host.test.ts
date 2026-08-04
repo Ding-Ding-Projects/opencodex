@@ -3,7 +3,6 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describeHost, handleHostCommand, hasDataPlaneCredential } from "../src/cli/host";
-import { verifyAdminTokenAgainstProxy } from "../src/lib/host-control";
 import { getDefaultConfig } from "../src/config";
 import type { OcxConfig } from "../src/types";
 import { removeTempDir } from "./helpers/temp-dir";
@@ -164,68 +163,5 @@ describe("ocx host", () => {
   test("token --json reports the open management plane without a secret", async () => {
     expect(await handleHostCommand(["token", "--json"])).toBe(0);
     expect(JSON.parse(logged.join("\n"))).toEqual({ adminTokenGate: false, managementApi: "open" });
-  });
-});
-
-/**
- * The verdict itself: only a literal 401 from the live proxy counts as a
- * rejection. Treating a timeout or a 500 as "wrong token" would send users
- * hunting a credential problem they do not have.
- */
-describe("verifyAdminTokenAgainstProxy", () => {
-  const proxy = async () => ({ port: 10100, hostname: "0.0.0.0" });
-
-  test("401 from the running proxy is a rejection, and names the endpoint probed", async () => {
-    const result = await verifyAdminTokenAgainstProxy("ocx_admin_stale", {
-      findProxyFn: proxy,
-      fetchFn: (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch,
-    });
-    expect(result.state).toBe("rejected");
-    // A wildcard bind is probed on loopback, not on "0.0.0.0".
-    expect(result).toMatchObject({ endpoint: "http://127.0.0.1:10100/api/host" });
-  });
-
-  test("200 means the running proxy accepts it, and the token rides the management header", async () => {
-    let seen: string | null = null;
-    const result = await verifyAdminTokenAgainstProxy("ocx_admin_good", {
-      findProxyFn: proxy,
-      fetchFn: (async (_url: string, init: RequestInit) => {
-        seen = new Headers(init.headers).get("x-opencodex-api-key");
-        return new Response("{}", { status: 200 });
-      }) as unknown as typeof fetch,
-    });
-    expect(result.state).toBe("accepted");
-    expect(seen).toBe("ocx_admin_good");
-  });
-
-  test("404 still proves the credential passed the auth gate (older build, no /api/host)", async () => {
-    const result = await verifyAdminTokenAgainstProxy("ocx_admin_good", {
-      findProxyFn: proxy,
-      fetchFn: (async () => new Response("{}", { status: 404 })) as unknown as typeof fetch,
-    });
-    expect(result.state).toBe("accepted");
-  });
-
-  test("no running proxy, a transport failure, and a 5xx are unverified — never a rejection", async () => {
-    const none = await verifyAdminTokenAgainstProxy("t", { findProxyFn: async () => null });
-    expect(none).toEqual({ state: "unverified", reason: "no proxy is running on this machine" });
-
-    const threw = await verifyAdminTokenAgainstProxy("t", {
-      findProxyFn: proxy,
-      fetchFn: (async () => { throw new Error("ECONNREFUSED"); }) as unknown as typeof fetch,
-    });
-    expect(threw.state).toBe("unverified");
-
-    const unavailable = await verifyAdminTokenAgainstProxy("t", {
-      findProxyFn: proxy,
-      fetchFn: (async () => new Response("{}", { status: 503 })) as unknown as typeof fetch,
-    });
-    expect(unavailable).toMatchObject({ state: "unverified" });
-
-    const broken = await verifyAdminTokenAgainstProxy("t", {
-      findProxyFn: proxy,
-      fetchFn: (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch,
-    });
-    expect(broken).toMatchObject({ state: "unverified" });
   });
 });

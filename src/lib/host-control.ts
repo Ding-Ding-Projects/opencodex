@@ -14,7 +14,6 @@ import { randomBytes } from "node:crypto";
 import { debugSandboxEnabled, sandboxExposedPreview } from "./debug-sandbox";
 import { networkInterfaces } from "node:os";
 import { isLoopbackHostname } from "../server/auth-cors";
-import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
 import type { OcxConfig } from "../types";
 
 /** Bind addresses that accept connections from other devices. */
@@ -137,67 +136,4 @@ export function addCustomDataPlaneKey(config: OcxConfig, name: string, value: st
     { id: randomBytes(8).toString("hex"), name, key, createdAt: new Date().toISOString() },
   ];
   return { key };
-}
-
-/**
- * Legacy probe result retained for callers that still import the old host-token helper.
- *
- * Reading `OPENCODEX_ADMIN_AUTH_TOKEN` / the token file tells you what a proxy
- * started *from this shell* would use — not what the live one is enforcing. A
- * proxy launched as a service, in a container, or from another shell with that
- * variable set holds a token this process cannot see, and the on-disk file it
- * ignored still parses perfectly. Printing that file token as if it worked is
- * the failure mode this type exists to prevent: `rejected` and `unverified`
- * are distinct because "the server said no" and "nothing answered" must never
- * be reported with the same confidence.
- */
-export type AdminTokenVerification =
-  | { state: "accepted"; endpoint: string }
-  | { state: "rejected"; endpoint: string }
-  | { state: "unverified"; reason: string };
-
-export interface AdminTokenProbeIo {
-  findProxyFn?: () => Promise<{ port: number; hostname?: string } | null>;
-  fetchFn?: typeof fetch;
-  timeoutMs?: number;
-}
-
-/**
- * Ask the live proxy whether it accepts `token`. The management plane is now open, so this helper
- * is compatibility-only and must not be used as an authentication decision.
- *
- * GET /api/host remains side-effect-free. Only a literal 401 is treated as rejection —
- * anything else (timeout, 5xx, management API unavailable) is `unverified`,
- * because guessing "rejected" from a transport hiccup would send a user chasing
- * a credential problem they do not have.
- */
-export async function verifyAdminTokenAgainstProxy(
-  token: string,
-  io: AdminTokenProbeIo = {},
-): Promise<AdminTokenVerification> {
-  const findProxyFn = io.findProxyFn ?? findLiveProxy;
-  const fetchFn = io.fetchFn ?? fetch;
-
-  let live: { port: number; hostname?: string } | null;
-  try {
-    live = await findProxyFn();
-  } catch {
-    return { state: "unverified", reason: "the running proxy could not be located" };
-  }
-  if (!live) return { state: "unverified", reason: "no proxy is running on this machine" };
-
-  const endpoint = `http://${probeHostname(live.hostname)}:${live.port}/api/host`;
-  try {
-    const res = await fetchFn(endpoint, {
-      method: "GET",
-      headers: { "x-opencodex-api-key": token },
-      signal: AbortSignal.timeout(io.timeoutMs ?? 2_000),
-    });
-    if (res.status === 401) return { state: "rejected", endpoint };
-    if (res.status === 503) return { state: "unverified", reason: "the running proxy reports its management API is unavailable" };
-    if (res.status >= 500) return { state: "unverified", reason: `the running proxy answered ${res.status}` };
-    return { state: "accepted", endpoint };
-  } catch {
-    return { state: "unverified", reason: "the running proxy did not answer the check" };
-  }
 }
