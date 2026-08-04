@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { browserSecurityHeaders } from "./auth-cors";
-import type { GuiSessionBootstrap } from "./management-auth";
 
 /** opencodex version, read from the packaged package.json (same source as the server bootstrap). */
 const VERSION = (() => {
@@ -63,16 +62,8 @@ function isFile(path: string): boolean {
   }
 }
 
-function htmlResponse(path: string, session?: GuiSessionBootstrap): Response {
-  let html = readFileSync(path, "utf8");
-  if (session) {
-    const bootstrap = [
-      `<meta name="opencodex-session-token" content="${session.token}">`,
-      `<meta name="opencodex-session-csrf" content="${session.csrfToken}">`,
-      `<meta name="opencodex-session-origin" content="${session.origin}">`,
-    ].join("");
-    html = html.includes("</head>") ? html.replace("</head>", `${bootstrap}</head>`) : `${bootstrap}${html}`;
-  }
+function htmlResponse(path: string): Response {
+  const html = readFileSync(path, "utf8");
   return new Response(html, {
     headers: {
       "Content-Type": "text/html",
@@ -86,7 +77,6 @@ function htmlResponse(path: string, session?: GuiSessionBootstrap): Response {
 export function serveGuiFile(
   pathname: string,
   guiDist = findGuiDist(),
-  session?: GuiSessionBootstrap,
 ): Response | null {
   if (!guiDist) return null;
   const filePath = resolveGuiFilePath(guiDist, pathname);
@@ -96,7 +86,7 @@ export function serveGuiFile(
     if (!extname(pathname)) {
       const indexPath = join(guiDist, "index.html");
       if (isFile(indexPath)) {
-        return htmlResponse(indexPath, session);
+        return htmlResponse(indexPath);
       }
     }
     return null;
@@ -104,7 +94,7 @@ export function serveGuiFile(
 
   const ext = extname(filePath);
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
-  if (ext === ".html") return htmlResponse(filePath, session);
+  if (ext === ".html") return htmlResponse(filePath);
   return new Response(Bun.file(filePath), {
     headers: { "Content-Type": contentType, ...browserSecurityHeaders() },
   });

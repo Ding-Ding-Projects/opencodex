@@ -12,40 +12,20 @@ unsupported; deployments that previously relied on such embedding must open it a
 
 ## Authentication boundaries
 
-OpenCodex uses three mutually exclusive admission credential classes:
+OpenCodex keeps data-plane authentication separate from the management plane. The admin-token
+gate is intentionally removed: every `/api/*` route is reachable without `OPENCODEX_ADMIN_AUTH_TOKEN`,
+an `admin-api-token` file, or a GUI session.
 
 | Credential class | Sources | Allowed surface |
 | --- | --- | --- |
 | Data plane | `OPENCODEX_API_AUTH_TOKEN`, the `service-api-token` file loaded through `OCX_API_TOKEN_FILE`, and `config.apiKeys` | `/v1/*` HTTP endpoints and new data-plane WebSocket handshakes only |
-| Management plane | `OPENCODEX_ADMIN_AUTH_TOKEN` or the independent protected `admin-api-token` file | `/api/*` only |
-| GUI session | A short-lived token issued only with a legitimate same-origin local dashboard page | `/api/*` only, bound to the issuing origin |
+| Management plane | None | `/api/*` without an admin credential |
 
-The service token file remains a delivery mechanism for the data-plane environment token; it is not
-a fourth credential class. A management credential that equals any configured data-plane credential
-does not enable management access. The data plane may continue to start, but `/api/*` remains closed.
-
-Management authentication never has a loopback bypass. If no management credential is available, or
-management token creation, validation, or permission hardening fails, every `/api/*` request returns
-503 while `/v1/*` and unauthenticated `/healthz` continue to operate. Windows ACL hardening results
-must be checked explicitly because an `icacls` timeout is a soft failure in the shared secret helper.
-
-Local dashboard page entry requires a loopback binding, a valid parseable loopback `Host`, and an
-exact request origin. A non-loopback dashboard uses the management token flow instead. The server
-issues an in-memory session that lives as long as the process, capped at 128 live sessions and evicted
-least-recently-used. The session is bound to the
-exact protocol, host, and port; state-changing requests additionally require the session CSRF token.
-There is no session TTL: a clock expiry made an open dashboard start answering 401 to every `/api/*`
-call. The map is in-memory, so a restart still invalidates every session.
-
-`GET /api/gui-session` renews a session so a dashboard repairs itself instead of asking for an admin
-token the user should never need locally. It runs ahead of the management gate, because requiring a
-live session to renew a dead one can never be satisfied, and it is not an authentication bypass: it
-re-runs the same loopback binding, loopback `Host`, and allowed-origin proof used when serving the
-page, so it grants nothing a reload would not. The dashboard calls it automatically on a 401, sharing
-one renewal across a fan-out and latching a refusal so a non-loopback page asks once rather than per
-request; only an unrenewable session reaches the admin-token prompt.
-The dashboard never attaches its management session to `/v1/*` requests, and pages containing a
-session bootstrap are served with `Cache-Control: no-store`.
+The service token file remains a delivery mechanism for the data-plane environment token. Removing
+the management gate is deliberately broad: a non-loopback listener exposes provider settings,
+account controls, exports, logs, and other management operations to any caller allowed by the
+management CORS policy. Deployments that need confidentiality must keep the proxy loopback-only or
+place it behind an external authenticated boundary.
 
 Proxy admission credentials must never reach an upstream provider. The forwarding guard rejects the
 `ocx_data_`, `ocx_admin_`, and `ocx_session_` prefixes, historical keys matching
@@ -62,7 +42,7 @@ be treated as implemented:
 
 ## API ownership
 
-`src/server/index.ts` authenticates and routes `/api/*`, then delegates the management surface to
+`src/server/index.ts` routes unauthenticated `/api/*` requests to
 `src/server/management-api.ts`:
 
 | Endpoint area | Responsibility |

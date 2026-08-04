@@ -13,17 +13,15 @@
  * `/v1/chat/completions` and the model list through `/v1/models`, both on the
  * data-plane key pairing hands out, so a message sent from a phone is routed,
  * logged, counted and billed exactly like one sent from Codex. Sessions read
- * `/api/logs`; control reads `/api/host` — both management routes, so both need
- * the desktop's admin token and say so rather than pretending to load. Inventing
- * a parallel "mobile API" would have created a second path to the same
+ * `/api/logs`; control reads `/api/host` — both management routes, now open like
+ * the desktop dashboard. Inventing a parallel "mobile API" would have created a second path to the same
  * behaviour, and a second place for it to be wrong.
  *
  * ## Reaching it from a phone
  *
  * The proxy must be published to the network first (`ocx host enable`, or the
- * Remote access screen), which requires a credential — that gate is deliberately
- * the same one the rest of the exposed surface uses, and this screen does not
- * weaken it.
+ * Remote access screen), which still requires a data-plane credential for model
+ * traffic. The management routes used by this screen have no admin-token gate.
  *
  * What changed is how the phone *gets* that credential. Scanning the pairing QR
  * on the Remote access screen opens `#/mobile?pair=<token>`; this screen spends
@@ -45,7 +43,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { setAdminTokenPromptSuppressed } from "../api";
 import { readJsonIfOk } from "../fetch-json";
 import {
   beginPairingClaim,
@@ -207,7 +204,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
           // unconditionally would find "credential" on a proxy that has one,
           // which reads as the opposite of the truth.
           ...(host.exposed && !host.credentialConfigured ? [t("mobile.noCredential")] : []),
-          ...host.urls,
+          ...(host.urls ?? []),
         ].join(" ");
 
     return [
@@ -296,22 +293,6 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
   const { matches } = search;
   const showTranscript = matches("transcript");
 
-  /**
-   * A 401 here must not demand an admin token.
-   *
-   * `/api/*` accepts only the management credential, so a phone holding the
-   * data-plane key it was paired with gets 401 from the panels below by design.
-   * The shared fetch wrapper answers a 401 by opening a dialog asking for an
-   * ADMIN token — one the phone user does not have and whose own copy says a
-   * data-plane key will not work — which turned a successful pairing into what
-   * looked like a credential failure. The 401 still reaches the callers here;
-   * only the dialog is silenced, so each panel can say what it actually needs.
-   */
-  useEffect(() => {
-    setAdminTokenPromptSuppressed(true);
-    return () => setAdminTokenPromptSuppressed(false);
-  }, []);
-
   // True once a model list has actually arrived, so the first discovery runs
   // immediately and only the re-runs below pay the debounce.
   const haveModels = useRef(false);
@@ -320,12 +301,8 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
     let cancelled = false;
     const load = async () => {
       try {
-        // `/v1/models`, not `/api/models`. The management route requires the
-        // admin token, so on a published proxy a paired phone got an empty
-        // picker and a permanently disabled Send button — chat worked and there
-        // was no way to start one. `/v1/models` is the data-plane discovery
-        // endpoint every other client uses, and it takes exactly the credential
-        // pairing hands out.
+        // `/v1/models` remains the data-plane discovery endpoint every other
+        // client uses, and it takes exactly the credential pairing hands out.
         const res = await fetch(`${apiBase}/v1/models`, {
           headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
         });
@@ -752,7 +729,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
                   {host.exposed && !host.credentialConfigured && (
                     <p className="m3-mob__bad">{t("mobile.noCredential")}</p>
                   )}
-                  {host.urls.map(url => <div key={url} className="m3-mob__url">{url}</div>)}
+                  {(host.urls ?? []).map(url => <div key={url} className="m3-mob__url">{url}</div>)}
                 </>
               )}
             </article>

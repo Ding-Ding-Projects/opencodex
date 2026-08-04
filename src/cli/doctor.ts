@@ -15,7 +15,6 @@ import { findLiveProxy } from "../server/proxy-liveness";
 import { gracefulStopHost } from "../lib/process-control";
 import { maskAccountId } from "../lib/privacy";
 import { PROXY_ENV_KEYS, proxyEnvPresent } from "../lib/proxy-env";
-import { configuredAdminToken } from "../lib/admin-secrets";
 import { readCodexTokens } from "../codex/auth-collision";
 import { collectOrcaCodexHomeDiagnostic, resolveCodexHomeDir as resolveCodexHomeDirImpl, isWslRuntime, listWslWindowsCodexHomes, wslAutomountRoot, type CodexHomeDeps } from "../codex/home";
 import { findCodexOnPath, isWindowsInteropDir } from "../codex/shim";
@@ -471,7 +470,7 @@ export async function probeWham(fetchImpl: typeof fetch = fetch): Promise<WhamPr
  *
  * Doctor runs in its OWN Bun process; the only honest source for the SERVICE
  * process identity (Bun version, RSS, stream-mode gate decision) is the
- * authed management endpoint added in WP3. Observe-only: failures render as
+ * management endpoint. Observe-only: failures render as
  * honest status lines, never as fake data, and never fail the command.
  */
 export type ServiceMemoryData = {
@@ -492,7 +491,6 @@ export type ServiceMemoryData = {
 
 export type ServiceMemoryReport =
   | { status: "ok"; data: ServiceMemoryData }
-  | { status: "unauthorized" }
   | { status: "unreachable"; error: string };
 
 const SERVICE_MEMORY_TIMEOUT_MS = 2000;
@@ -514,15 +512,13 @@ function observedMemory(data: { rss: number; external?: number; arrayBuffers?: n
 export async function fetchServiceMemory(
   host: string,
   port: number,
-  token: string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ServiceMemoryReport> {
   try {
     const res = await fetchImpl(`http://${host}:${port}/api/system/memory`, {
-      headers: token ? { "x-opencodex-api-key": token } : {},
+      headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(SERVICE_MEMORY_TIMEOUT_MS),
     });
-    if (res.status === 401 || res.status === 403) return { status: "unauthorized" };
     if (!res.ok) return { status: "unreachable", error: `http ${res.status}` };
     const body = await res.json() as Partial<ServiceMemoryData>;
     if (typeof body.pid !== "number" || typeof body.bunVersion !== "string" || typeof body.rss !== "number") {
@@ -570,10 +566,6 @@ const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))}MB`;
 export function formatServiceMemoryLines(report: ServiceMemoryReport): string[] {
   const lines: string[] = [];
   lines.push(`  --     doctor process Bun ${Bun.version} (this is NOT the service process)`);
-  if (report.status === "unauthorized") {
-    lines.push("  --     proxy reachable but rejected the request — set OPENCODEX_ADMIN_AUTH_TOKEN to match the service");
-    return lines;
-  }
   if (report.status === "unreachable") {
     lines.push(`  --     proxy not reachable (not running?) [${report.error}]`);
     return lines;
@@ -761,8 +753,7 @@ export async function runDoctor(args: string[] = []): Promise<void> {
       console.log(`  --     doctor process Bun ${Bun.version} (this is NOT the service process)`);
       console.log("  --     no running ocx proxy found (no live pid/runtime record)");
     } else {
-      const token = configuredAdminToken();
-      const report = await fetchServiceMemory(gracefulStopHost(runtime.hostname), runtime.port, token);
+      const report = await fetchServiceMemory(gracefulStopHost(runtime.hostname), runtime.port);
       for (const line of formatServiceMemoryLines(report)) console.log(line);
     }
   }

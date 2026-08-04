@@ -252,8 +252,7 @@ undo can itself be undone. Full detail in
       <sub><b>First run.</b> Language first, four steps, and every one of them changeable afterwards.</sub>
     </td>
     <td width="50%" align="center">
-      <img src="assets/shots/prompt.png" alt="A modal prompt dialog titled Admin token needed with a masked, empty Admin token field, explaining that this is the management credential and that a data-plane API key will not work, with Cancel and Use this token buttons" width="440"><br>
-      <sub><b>Prompt.</b> Masked, because it is a credential — and it says which token will <i>not</i> work here.</sub>
+      <p><b>No admin-token prompt.</b><br>Management routes stay reachable without a browser credential dialog.</p>
     </td>
   </tr>
   <tr>
@@ -401,12 +400,13 @@ and restarts. Append-only throughout: an undo can be undone, and that undo undon
   requests and warns you with a live count rather than cutting sessions off.
 - **Docker** — `docker build -t opencodex .`, with a supervising entrypoint so the dashboard's
   restart works inside a container instead of ending it.
-- **Remote access** — `ocx host enable` exposes the proxy to your LAN behind a required credential,
-  with a separate admin token for the dashboard and `/api/*`. Turning it on from the dashboard
-  generates that credential for you, so there is no password to invent.
+- **Remote access** — `ocx host enable` exposes the proxy to your LAN behind its data-plane
+  credential. The dashboard and `/api/*` no longer have an admin-token gate; put remote deployments
+  behind an external authenticated boundary because management routes expose provider settings and
+  account data.
 - **Pair a phone by QR** — the remote control's code carries a one-time pairing token as well as the
   address. The phone spends it on arrival, keeps a data-plane key of its own, and never scans again.
-  Single use, five-minute expiry, one outstanding at a time, and never an admin token.
+  Single use, five-minute expiry, one outstanding at a time, and no admin token.
 - **Headless parity** — anything the dashboard can do, the CLI can do. A test enforces it.
 
 </details>

@@ -1,4 +1,4 @@
-"""Config flow: host + port + API key, validated against the live proxy."""
+"""Config flow: host + port, validated against the live proxy."""
 
 from __future__ import annotations
 
@@ -11,13 +11,12 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import API_KEY_HEADER, CONF_API_KEY, DEFAULT_PORT, DOMAIN
+from .const import DEFAULT_PORT, DOMAIN
 
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-        vol.Required(CONF_API_KEY): str,
     }
 )
 
@@ -44,7 +43,7 @@ class OpencodexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors)
 
     async def _validate(self, user_input: dict[str, Any]) -> str | None:
-        """Probe /healthz for identity, then /api/usage for the key. Returns an error key or None."""
+        """Probe /healthz for identity, then the open management API."""
         session = async_get_clientsession(self.hass)
         base = f"http://{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
         timeout = aiohttp.ClientTimeout(total=10)
@@ -57,13 +56,7 @@ class OpencodexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # Something answered, but it is not the proxy — likely the
                     # wrong port, or `ocx host enable` has not been run.
                     return "not_opencodex"
-            async with session.get(
-                f"{base}/api/usage?range=7d",
-                headers={API_KEY_HEADER: user_input[CONF_API_KEY]},
-                timeout=timeout,
-            ) as response:
-                if response.status == 401:
-                    return "invalid_auth"
+            async with session.get(f"{base}/api/usage?range=7d", timeout=timeout) as response:
                 if response.status != 200:
                     return "cannot_connect"
         except (aiohttp.ClientError, TimeoutError):

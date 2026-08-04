@@ -27,11 +27,8 @@
  * ancestors checking `display`, `visibility`, `opacity`, `aria-hidden`, `hidden`
  * and `inert`.
  *
- * Route captures additionally assert that *nothing* is floating over the page.
- * That rule is not theoretical: visiting `#claude` on a fresh profile raises an
- * admin-token prompt which then sits on top of every page navigated to
- * afterwards, so without it twelve route screenshots would each quietly carry a
- * modal belonging to none of them.
+ * Route captures additionally assert that *nothing* is floating over the page,
+ * so twelve route screenshots cannot quietly carry a modal belonging to none of them.
  *
  * ## Why it photographs the window rather than the page
  *
@@ -78,7 +75,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { configuredAdminToken } from "../src/lib/admin-secrets";
 
 const ROOT = join(import.meta.dir, "..");
 const OUT = join(ROOT, "assets", "shots");
@@ -129,18 +125,8 @@ interface Target {
   prepare?: () => Promise<void>;
   /** Put the app back in a neutral state afterwards, where Escape will not do it. */
   cleanup?: () => Promise<void>;
-  /**
-   * This surface only exists in the state a freshly launched app starts in, so
-   * nothing may tidy up before it. Both such targets are consumed by being
-   * looked at: dismissing the wizard marks it seen, and answering the token
-   * prompt is what stops it appearing again.
-   */
+  /** This surface only exists in the state a freshly launched app starts in. */
   firstRunOnly?: boolean;
-  /**
-   * Cannot be summoned, only met. Skipped in the normal sweep and captured by
-   * whichever target first finds it on screen. See the `prompt` target.
-   */
-  opportunistic?: boolean;
   /** Why this target exists, where the id alone does not say it. */
   note?: string;
 }
@@ -327,8 +313,7 @@ function assertMatches(target: Target, seen: Probe): void {
       fail(`the open overlay is ${JSON.stringify(names(seen.overlays[0]))}, expected "${e.overlay}"`);
     }
   } else if (seen.overlays.length > 0) {
-    // The rule that would have caught the admin-token modal riding along on a
-    // dozen route shots.
+    // The rule that keeps an unrelated modal from riding along on a dozen route shots.
     fail(`${seen.overlays.length} overlay(s) are covering this page`);
   }
 
@@ -684,25 +669,6 @@ const surfaces: Target[] = [
     note: "First-run wizard. Deterministic only because the profile is wiped each run.",
   },
   {
-    id: "prompt",
-    opportunistic: true,
-    expect: { overlay: "Admin token needed" },
-    note:
-      "The M3 prompt from shell/confirm.tsx, shown for real rather than staged.\n"
-      + "\n"
-      + "It is the only prompt in the app reachable without a signed-in account: the only other\n"
-      + "usePrompt() caller is the Codex account pool, which needs a real OpenAI account.\n"
-      + "\n"
-      + "It cannot be opened on demand, so it is raised on purpose rather than faked\n"
-      + "(waitForSessionLapse). GUI sessions do not expire on a clock -- they used to, and that\n"
-      + "clock was a bug that 401'd live dashboards after five minutes -- so the harness evicts\n"
-      + "this page's session instead, by minting past GUI_SESSION_LIMIT\n"
-      + "(src/server/management-auth.ts). The next privileged call then 401s for real.\n"
-      + "\n"
-      + "It is still captured last, because its side effect -- storing an admin token -- would\n"
-      + "change what every later capture sees.",
-  },
-  {
     id: "confirm",
     hash: "network",
     expect: { h1: "Remote access & backup", overlay: "Export everything" },
@@ -778,10 +744,8 @@ const surfaces: Target[] = [
  * Order matters, and only here.
  *
  * The first-run surfaces come first because looking at them is what consumes
- * them: dismissing the wizard records it as seen, and answering the token prompt
- * is exactly what stops it appearing again. Putting them anywhere else means
- * every earlier target tidies them away and they are simply gone by the time
- * their own turn arrives, which is what the first version of this file did.
+ * them: dismissing the wizard records it as seen. Putting them anywhere else
+ * means every earlier target tidies them away before their own turn.
  */
 const ALL: Target[] = [
   ...surfaces.filter(t => t.firstRunOnly),
@@ -907,63 +871,6 @@ function shutdown(): void {
 // ------------------------------------------------------------ run preparation
 
 /**
- * Answer the admin-token prompt with the token this machine already has.
- *
- * A fresh `--user-data-dir` has no management session, so the first privileged
- * call 401s and the app asks. The token is read from the local config directory
- * and typed into the real dialog; it is never printed, logged, or written
- * anywhere. Without it the pages that need it would photograph as error states,
- * which is a fair picture of a broken install and a false one of this app.
- */
-async function answerAdminPrompt(): Promise<boolean> {
-  const seen = await probe();
-  // `eq`, not `includes`: in bilingual mode the accessible name reads
-  // `Admin token needed · <廣東話>`, and an exact array-membership test simply
-  // never matched it. The dialog then went unrecognised — so it was neither
-  // photographed nor answered, and the run reported that it "vanished before it
-  // could be captured" while it was sitting on screen the whole time.
-  if (!seen.overlays.some(o => names(o).some(n => eq(n, "Admin token needed")))) return false;
-
-  // This dialog cannot be opened on demand, so the run photographs it the moment
-  // it appears of its own accord, before answering it away. See the `prompt`
-  // target's note.
-  if (pendingOpportunistic) {
-    const target = pendingOpportunistic;
-    try {
-      assertMatches(target, seen);
-      await writeShot(target);
-      pendingOpportunistic = null;
-    } catch (err) {
-      // Do not leave the app stuck behind a modal because a capture failed.
-      failures.push(`${target.id}: ${(err as Error).message}`);
-      console.error(`  ${target.id.padEnd(20)} FAILED - ${(err as Error).message}`);
-      pendingOpportunistic = null;
-    }
-  }
-
-  const token = configuredAdminToken();
-  if (!token) {
-    throw new Error(
-      "the app is asking for an admin token and this machine has none. "
-      + "Start the proxy once (`bun run start`) so it mints one, then re-run.",
-    );
-  }
-  await evaluate(`
-    (() => {
-      const el = document.querySelector("dialog[open] input");
-      if (!el) return false;
-      el.focus();
-      el.select && el.select();
-      return true;
-    })()`);
-  await send("Input.insertText", { text: token });
-  await Bun.sleep(200);
-  await clickText("button", "Use this token");
-  await Bun.sleep(1200);
-  return true;
-}
-
-/**
  * Make the 1%-per-launch dim sum draw happen.
  *
  * The card is a real feature drawn by its real code path; all this does is stop
@@ -997,69 +904,6 @@ async function forceDimSum(): Promise<() => Promise<void>> {
   };
 }
 
-/**
- * Evict this page's GUI session, then make a privileged call so the app asks.
- *
- * This used to wait out a five-minute `expiresAt` that `issueGuiSession` stamped
- * and nothing extended. That clock is gone -- it was expiring live dashboards
- * mid-use, which is a bug and not a feature to photograph -- so waiting now
- * never raises the dialog at all.
- *
- * What is left is the only other way a session legitimately dies: the
- * `GUI_SESSION_LIMIT` cap in `src/server/management-auth.ts`. Loading the page
- * mints a session, so requesting the document that many times pushes this page's
- * own session out of the map. Each request is a real page load minting a real
- * session, and the 401 that follows is a real eviction -- nothing here fakes a
- * response or plants a bad token.
- *
- * Two things the loop must not do. It must not reload this page, which would
- * mint a replacement session for the tab we are trying to strand; `fetch` leaves
- * the document alone. And it must not touch `/api/*` while filling the map,
- * because a successful management call re-inserts this session at the fresh end
- * of the LRU and saves it from the very eviction we want.
- */
-async function waitForSessionLapse(): Promise<void> {
-  // Mirrors GUI_SESSION_LIMIT. One extra guarantees the wrap even if the map
-  // already held entries from earlier captures.
-  const SESSIONS_TO_MINT = 129;
-
-  // Start from a known-fresh session so the eviction is bounded rather than lucky.
-  await send("Page.reload");
-  await Bun.sleep(2500);
-  await settle();
-
-  console.log(`  ${"prompt".padEnd(20)} minting ${SESSIONS_TO_MINT} sessions to evict this page's...`);
-
-  // Same-origin document requests. `needsApiAuth` ignores anything outside
-  // `/api/`, so these carry no token and cannot refresh what they are displacing.
-  await evaluate(`
-    (async () => {
-      for (let i = 0; i < ${SESSIONS_TO_MINT}; i++) {
-        await fetch("/?evict=" + i, { cache: "no-store" });
-      }
-    })()
-  `);
-
-  const startedAt = Date.now();
-  const DEADLINE_MS = 90_000;
-
-  while (Date.now() - startedAt < DEADLINE_MS) {
-    if ((await probe()).overlays.some(o => names(o).some(n => eq(n, "Admin token needed")))) return;
-    // Bounce between two pages that both make authenticated calls. The evicted
-    // session now 401s, and the app asks. Hash navigation does not reload, so
-    // this cannot accidentally mint a replacement.
-    await evaluate(`location.hash = "#/claude"`);
-    await Bun.sleep(3000);
-    await evaluate(`location.hash = "#/usage"`);
-    await Bun.sleep(3000);
-  }
-  throw new Error(
-    `no admin-token prompt ${Math.round((Date.now() - startedAt) / 1000)}s after evicting the GUI session. `
-    + "Either the proxy is running with OPENCODEX_ADMIN_AUTH_TOKEN unset for the GUI, or GUI_SESSION_LIMIT "
-    + "changed and SESSIONS_TO_MINT needs to change with it.",
-  );
-}
-
 // -------------------------------------------------------------------- capture
 
 /** Take the picture. Only ever called after `assertMatches` has passed. */
@@ -1078,10 +922,6 @@ async function writeShot(target: Target): Promise<void> {
 async function captureOne(target: Target): Promise<void> {
   if (target.hash) await goto(target.hash);
   await settle();
-
-  // Answering clears the way for this target, and is also the moment the
-  // opportunistic prompt capture happens.
-  if (await answerAdminPrompt()) await settle();
 
   if (target.prepare) await target.prepare();
 
@@ -1115,12 +955,9 @@ mkdirSync(OUT, { recursive: true });
 rmSync(PROFILE, { recursive: true, force: true });
 
 const failures: string[] = [];
-/** Set while a `opportunistic: true` target is still waiting to be met. */
-let pendingOpportunistic: Target | null = selected.find(t => t.opportunistic) ?? null;
-
 const byViewport = [
-  { viewport: DESKTOP, list: selected.filter(t => !t.opportunistic && (t.viewport ?? DESKTOP) === DESKTOP) },
-  { viewport: PHONE, list: selected.filter(t => !t.opportunistic && t.viewport === PHONE) },
+  { viewport: DESKTOP, list: selected.filter(t => (t.viewport ?? DESKTOP) === DESKTOP) },
+  { viewport: PHONE, list: selected.filter(t => t.viewport === PHONE) },
 ];
 
 for (const { viewport, list } of byViewport) {
@@ -1162,34 +999,9 @@ for (const { viewport, list } of byViewport) {
         } catch { /* the next target's clearOverlays is the backstop */ }
       }
     }
-    // Last, because it is the only target that costs minutes rather than
-    // seconds, and because answering it changes the auth state for everything
-    // that would run after it.
-    if (pendingOpportunistic && viewport === DESKTOP) {
-      const target = pendingOpportunistic;
-      try {
-        await clearOverlays();
-        await waitForSessionLapse();
-        // The wait ends the moment the dialog is up; `answerAdminPrompt` is what
-        // verifies, captures and then answers it.
-        if (!(await answerAdminPrompt())) throw new Error("the prompt vanished before it could be captured");
-        if (pendingOpportunistic === target) throw new Error("the prompt was answered without being captured");
-      } catch (err) {
-        failures.push(`${target.id}: ${(err as Error).message}`);
-        console.error(`  ${target.id.padEnd(20)} FAILED - ${(err as Error).message}`);
-        pendingOpportunistic = null;
-      }
-    }
   } finally {
     shutdown();
   }
-}
-
-if (pendingOpportunistic) {
-  failures.push(
-    `${pendingOpportunistic.id}: was selected but never reached. It is captured during the desktop `
-    + "pass, so it needs at least one desktop target selected alongside it.",
-  );
 }
 
 if (failures.length) {

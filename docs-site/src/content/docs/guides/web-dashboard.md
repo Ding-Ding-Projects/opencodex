@@ -21,21 +21,18 @@ ocx start
 bun run dev:gui
 ```
 
-On a loopback bind the dashboard authenticates itself: the server issues it a short-lived session,
-so you never paste anything. From **another device** it cannot — expose the proxy with
-[`ocx host enable`](/reference/cli/#ocx-host-statusenabledisabletoken) and the page asks for the
-admin token (`ocx host token`) on every device and every reload, holding it in memory only. That is
-the intended posture, not a missing feature; see
-[Two credentials, on purpose](/reference/configuration/#two-credentials-on-purpose).
+The dashboard never asks for an admin token. `/api/*` management routes are intentionally open, so
+loopback and remote pages use the same request path and a proxy restart cannot produce a credential
+dialog. Data-plane `/v1/*` authentication remains separate. If you expose the proxy beyond
+loopback, place it behind an external authenticated boundary because management routes include
+provider settings, account controls, exports, and logs.
 
-The **mobile remote** is the exception, and only for the credential it actually needs. Enabling
+The **mobile remote** uses the same open management surface. Enabling
 remote access from **Remote access & backup** generates the data-plane key for you rather than
 asking you to invent one, and **Pair a phone** shows a QR code carrying a one-time pairing code
 alongside the address — one code per network address the proxy answers on. The phone spends the code on arrival and keeps a data-plane key of its own,
-saved in that phone's browser so it never scans twice. The admin token is still never stored and
-still never leaves the desktop, so the phone can send requests through the proxy and cannot
-reconfigure it — which is why the remote's Sessions and Control panels say they need the desktop
-instead of asking a phone for a credential it has no way to hold. See
+saved in that phone's browser so it never scans twice. The phone can send requests through the
+proxy and can reach the same management routes as any other client. See
 [Pairing a phone with a QR code](/guides/launcher-and-terminal/#pairing-a-phone-with-a-qr-code).
 
 ## What you can do
@@ -158,7 +155,7 @@ The GUI is a thin client over the proxy's JSON management API. Useful endpoints 
 | `GET` / `PUT /api/subagent-models` | Read or set the five featured `spawn_agent` override models. |
 | `GET` / `PUT /api/oauth/accounts/pool?provider=...` | Read or change one OAuth provider's experimental [account pool](/reference/configuration/#providersnameaccountpool-experimental). `409` when a non-Anthropic provider is not in the config, because there is nowhere to store the setting. |
 | `GET` / `PUT /api/host` | Read the bind status and LAN URLs, or expose/unexpose the proxy. A minted data-plane key is returned in that one response and never again. |
-| `GET /api/host/admin-token` · `GET /api/host/export` · `GET /api/host/history` · `POST /api/host/restore` | Reveal the admin token for another device, download the full state bundle (**plaintext secrets**), list account-change snapshots, and restore one. |
+| `GET /api/host/export` · `GET /api/host/history` · `POST /api/host/restore` | Download the full state bundle (**plaintext secrets**), list account-change snapshots, and restore one. |
 | `POST /api/stop` | Stop the proxy/service, restore native Codex, and exit. |
 
 :::tip

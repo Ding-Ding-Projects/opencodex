@@ -151,7 +151,7 @@ An unknown list or format exits `2` and names the valid ones. Nothing is written
 
 ## From the API
 
-Both endpoints sit behind the standard management-auth gate.
+Both endpoints are management routes and do not require an admin token.
 
 ```
 GET  /api/export/capabilities        formats, per-dataset fidelity, 7z and VS Code availability

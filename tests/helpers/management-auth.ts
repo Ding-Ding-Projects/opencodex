@@ -1,5 +1,3 @@
-import { configuredAdminToken } from "../../src/lib/admin-secrets";
-
 function isLocalManagementRequest(input: RequestInfo | URL): boolean {
   try {
     const raw = input instanceof Request ? input.url : String(input);
@@ -12,7 +10,7 @@ function isLocalManagementRequest(input: RequestInfo | URL): boolean {
   }
 }
 
-/** Test transport: authenticate local management requests without changing data/upstream traffic. */
+/** Test transport: keep local management requests credential-free without changing data/upstream traffic. */
 export function managementFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!isLocalManagementRequest(input)) return globalThis.fetch(input, init);
   const headers = managementHeaders(init?.headers ?? (input instanceof Request ? input.headers : undefined));
@@ -25,10 +23,7 @@ export function managementFetch(input: RequestInfo | URL, init?: RequestInit): P
 
 /** Headers for callers that must retain a captured fetch implementation. */
 export function managementHeaders(initial?: HeadersInit): Headers {
-  const headers = new Headers(initial);
-  const token = configuredAdminToken();
-  if (token && !headers.has("x-opencodex-api-key")) headers.set("x-opencodex-api-key", token);
-  return headers;
+  return new Headers(initial);
 }
 
 /** Direct-handler test request with the Host header an actual HTTP server would provide. */

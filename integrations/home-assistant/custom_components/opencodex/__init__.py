@@ -1,7 +1,8 @@
 """opencodex usage meter — reads the proxy's usage and quota over the local network.
 
-Requires the proxy to be reachable from Home Assistant: run `ocx host enable
---new-key --yes` on the machine running opencodex and use the printed key here.
+Requires the proxy to be reachable from Home Assistant. Management routes are
+intentionally unauthenticated, so put remote deployments behind a trusted
+network or an external authenticated boundary.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_API_KEY, DOMAIN
+from .const import DOMAIN
 from .coordinator import OpencodexCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
@@ -21,7 +22,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass,
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
-        api_key=entry.data[CONF_API_KEY],
     )
     # Fail setup loudly if the proxy is unreachable, so HA shows a retryable error
     # instead of a device full of unavailable sensors.

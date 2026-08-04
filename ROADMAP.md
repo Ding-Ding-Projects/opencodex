@@ -85,10 +85,10 @@ Checked in the tree; each of these is genuinely absent, not merely undocumented.
 ### Remote access
 
 - **No TLS.** `Bun.serve` is started without a `tls` option, so `ocx host` and the container both
-  serve plain HTTP; the data-plane key and the admin token cross the network in cleartext.
-- **No second factor.** Management auth is a single admin token plus a loopback-only session
-  bootstrap. The TOTP + dim-sum pairing step-up sketched in
-  [`docs/design-system/m3-port-handoff.md`](docs/design-system/m3-port-handoff.md) is not built.
+  serve plain HTTP; the data-plane key crosses the network in cleartext.
+- **Management API is intentionally open.** The admin-token gate and GUI-session bootstrap were
+  removed. Any non-loopback deployment must add an external authenticated boundary before exposing
+  `/api/*`, which includes provider settings, exports, and account controls.
 - **Passkeys are blocked on the TLS gap**, not merely unimplemented: WebAuthn requires a secure
   context, which a plain-HTTP LAN origin is not.
 

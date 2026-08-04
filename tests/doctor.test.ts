@@ -338,21 +338,17 @@ describe("service memory section (#314 WP4)", () => {
     watchdog: { warnThresholdBytes: 4 * 1024 ** 3, lastWarnAt: null },
   };
 
-  test("fetchServiceMemory: ok / unauthorized / unreachable / malformed", async () => {
-    const ok = await fetchServiceMemory("127.0.0.1", 10100, null,
+  test("fetchServiceMemory: ok / unreachable / malformed", async () => {
+    const ok = await fetchServiceMemory("127.0.0.1", 10100,
       (async () => Response.json(baseData)) as typeof fetch);
     expect(ok.status).toBe("ok");
     if (ok.status === "ok") expect(ok.data.pid).toBe(4242);
 
-    const unauthorized = await fetchServiceMemory("127.0.0.1", 10100, "wrong",
-      (async () => new Response("{}", { status: 401 })) as typeof fetch);
-    expect(unauthorized.status).toBe("unauthorized");
-
-    const unreachable = await fetchServiceMemory("127.0.0.1", 10100, null,
+    const unreachable = await fetchServiceMemory("127.0.0.1", 10100,
       (async () => { throw new TypeError("fetch failed"); }) as typeof fetch);
     expect(unreachable.status).toBe("unreachable");
 
-    const malformed = await fetchServiceMemory("127.0.0.1", 10100, null,
+    const malformed = await fetchServiceMemory("127.0.0.1", 10100,
       (async () => Response.json({ hello: "world" })) as typeof fetch);
     expect(malformed.status).toBe("unreachable");
     if (malformed.status === "unreachable") expect(malformed.error).toBe("malformed response");
@@ -423,11 +419,7 @@ describe("service memory section (#314 WP4)", () => {
     expect(fixedRuntime.some(l => l.includes("OPENCODEX_BUN_PATH"))).toBe(false);
   });
 
-  test("unauthorized and unreachable render honest lines without fake data", () => {
-    const unauthorized = formatServiceMemoryLines({ status: "unauthorized" });
-    expect(unauthorized.some(l => l.includes("rejected the request"))).toBe(true);
-    expect(unauthorized.some(l => l.includes("service pid"))).toBe(false);
-
+  test("unreachable renders an honest line without fake data", () => {
     const unreachable = formatServiceMemoryLines({ status: "unreachable", error: "ECONNREFUSED" });
     expect(unreachable.some(l => l.includes("not reachable"))).toBe(true);
     expect(unreachable.some(l => l.includes("service pid"))).toBe(false);

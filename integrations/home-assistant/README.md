@@ -5,51 +5,20 @@ estimated cost over the last 7 days, and the active Codex account's weekly/month
 
 ## Requirements
 
-The proxy must be reachable from Home Assistant, and this integration reads the **management
-API** (`/api/*`), so it needs the **admin token** — *not* the data-plane key. On the machine
-running opencodex:
+The proxy must be reachable from Home Assistant. This integration reads the **management API**
+(`/api/*`), whose admin-token gate has been removed. On the machine running opencodex:
 
 ```bash
-ocx host enable --new-key --yes   # bind to the LAN; mints the data-plane key (used by API clients, not by this integration)
-ocx host token                    # print the ADMIN token — this is what the integration asks for
+ocx host enable --new-key --yes   # bind to the LAN and mint the data-plane key for model clients
 ```
 
-`ocx host status` shows the URLs and whether a credential is configured. Only do this on a
-network you trust.
+`ocx host status` shows the URLs and data-plane credential state. Because management routes are
+open, put any non-loopback deployment behind a trusted network or an external authenticated
+boundary.
 
-The two credentials are deliberately distinct and the server refuses one that plays both roles:
-the data-plane key authenticates model traffic from Codex/Claude Code, the admin token
-authenticates the dashboard and `/api/*`. Pasting the data-plane key here gets a rejected-token
-error, not usage sensors.
-
-## Read this before you paste the admin token
-
-> **Warning — the admin token is a full-control credential, and this integration handles it in
-> the clear.**
-
-The admin token is not a scoped read-only usage key. Anyone holding it can drive the entire
-proxy through `/api/*`: add, remove, and switch provider accounts, rewrite configuration, mint
-and revoke data-plane keys, and call `GET /api/host/export`, which returns the **full state
-bundle in plaintext — every provider API key and every stored OAuth refresh token**. That is
-equivalent to handing over all the AI accounts behind the proxy.
-
-Three specific exposures follow from giving it to Home Assistant:
-
-- **Home Assistant stores it in plaintext.** Config-entry data lives unencrypted in
-  `.storage/core.config_entries`, so anyone with the HA config directory, a backup of it, or
-  an add-on that can read it also has the token.
-- **It goes over the network unencrypted.** The integration talks plain `http://` to the proxy
-  — `ocx host` has no TLS support — so the token crosses your LAN in cleartext.
-- **It does so every 60 seconds,** on every poll, indefinitely.
-
-So: **use this on a trusted LAN only.** Do not route it across a VPN-less WAN link, a shared or
-guest network, an untrusted VLAN, or the public internet. If your Home Assistant instance is
-exposed to the internet, treat its compromise as compromise of every provider account behind the
-proxy, and rotate the admin token if you ever suspect it leaked.
-
-The proper fix is a scoped, read-only usage credential the integration could hold instead of the
-admin token — **that does not exist yet**. Until it does, the trade-off above is the real one,
-and this integration is only appropriate where you accept it.
+The management surface includes provider settings, account controls, exports, and logs. Anyone who
+can reach this integration's configured address can reach those routes too; do not expose it to an
+untrusted network.
 
 ## Install
 
@@ -60,7 +29,7 @@ and this integration is only appropriate where you accept it.
 directory and restart.
 
 Then: Settings → Devices & Services → Add Integration → "opencodex usage meter", and enter the
-host, port (default 10100), and the admin token from `ocx host token`.
+host and port (default 10100).
 
 ## Sensors
 
@@ -81,8 +50,5 @@ Polling is every 60 seconds; the proxy caches usage summaries server-side, so th
 Everything stays on your network — nothing is sent anywhere else. The account email shown as a
 quota attribute arrives pre-masked from the proxy, and the integration never reads prompts,
 completions, or provider credentials; it only calls the three read endpoints listed in
-`coordinator.py`.
-
-That is a statement about what this integration *does*, not about what its credential *permits*.
-The admin token it holds could read every provider secret out of the proxy (see the warning
-above); the protection is that the token stays on a trusted LAN, not that the token is weak.
+`coordinator.py`. Keep the proxy behind a trusted network or external authenticated boundary,
+because the management API is intentionally open.

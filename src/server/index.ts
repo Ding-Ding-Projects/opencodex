@@ -140,8 +140,6 @@ import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
 import { handleSearch } from "./search";
 import { BUILD_STAMP, fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
-import { initializeManagementAuthState, issueGuiSession, requireManagementAuth } from "./management-auth";
-import { isUnauthenticatedPairingClaim } from "./management/host-routes";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -257,7 +255,6 @@ export function startServer(port?: number) {
   const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()));
   applyProxyEnv(config);
   assertServerAuthConfig(config);
-  const managementAuth = initializeManagementAuthState(config);
   // Refresh OAuth provider presets (models/noReasoningModels) from the registry so a proxy update
   // adding/dropping models reaches existing configs on start — not just fresh installs.
   reconcileOAuthProviders(config);
@@ -411,59 +408,9 @@ export function startServer(port?: number) {
         }, 200, req, config);
       }
 
-      // Session renewal, so a lost GUI session repairs itself instead of asking
-      // the user for an admin token they should never need on their own machine.
-      //
-      // The session token ships in the page HTML and there is no other way to
-      // obtain one, so anything that empties the session map — a proxy restart,
-      // most obviously — stranded every open dashboard on 401 until a manual
-      // reload. What the user saw for that was the "Admin token needed" dialog,
-      // which is the wrong ask twice over: the credential is sitting on their
-      // disk, and the app is perfectly capable of proving it may have one.
-      //
-      // It is not an authentication bypass and does not need auth of its own.
-      // `issueGuiSession` re-runs the identical proof it runs when serving the
-      // page: loopback binding, parseable loopback Host, allowed same-origin
-      // request. A caller that can satisfy those can simply GET `/` and read the
-      // meta tags, so this hands out nothing a reload would not. It is placed
-      // ahead of the management gate for exactly that reason — requiring a live
-      // session to renew a dead one is a circular condition that can never be
-      // met.
-      if (url.pathname === "/api/gui-session" && req.method === "GET") {
-        const renewed = issueGuiSession(req, config, managementAuth);
-        if (!renewed) {
-          return withManagementCors(
-            formatErrorResponse(403, "origin_rejected", "GUI sessions are issued only to same-origin loopback pages"),
-            req,
-            config,
-          );
-        }
-        const renewedResponse = withManagementCors(jsonResponse(renewed, 200, req, config), req, config);
-        // Same reason the bootstrap page is no-store: this body is a credential.
-        renewedResponse.headers.set("Cache-Control", "no-store");
-        return renewedResponse;
-      }
-
       if (url.pathname.startsWith("/api/")) {
-        // One exemption, and it is deliberate: a phone claiming a QR pairing
-        // token has no credential to present, because receiving one is the
-        // whole point of the request. What guards it is the token itself —
-        // 256 bits, single use, five-minute TTL, one outstanding at a time —
-        // plus a rate limit, all documented in src/lib/pairing.ts and pinned by
-        // tests/pairing.test.ts.
-        //
-        // It is made here rather than inside the handler because this gate runs
-        // before route dispatch, so a handler cannot opt itself out. The
-        // predicate lives beside the route it names so the two cannot drift.
-        //
-        // Bypassing the gate also bypasses its 503 for an unavailable
-        // management credential, which is harmless: minting a pairing token
-        // still requires management auth, so with no admin token there is
-        // nothing outstanding to claim and the route refuses on its own terms.
-        if (!isUnauthenticatedPairingClaim(req.method, url.pathname)) {
-          const apiAuthError = requireManagementAuth(req, managementAuth, config);
-          if (apiAuthError) return withManagementCors(apiAuthError, req, config);
-        }
+        // The management plane is intentionally open. Admin-token authentication was removed;
+        // data-plane authentication for /v1/* remains enforced separately below.
         const mgmtResponse = await handleManagementAPI(req, url, config);
         if (mgmtResponse) return withManagementCors(mgmtResponse, req, config);
         return withManagementCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
@@ -810,10 +757,7 @@ export function startServer(port?: number) {
         return withCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
       }
 
-      const guiSessionCandidate = req.method === "GET" && (url.pathname === "/" || !url.pathname.includes("."))
-        ? issueGuiSession(req, config, managementAuth)
-        : null;
-      const guiFile = serveGuiFile(url.pathname, undefined, guiSessionCandidate ?? undefined);
+      const guiFile = serveGuiFile(url.pathname, undefined);
       if (guiFile) return guiFile;
       if (url.pathname === "/" && req.method === "GET") {
         return jsonResponse(rootFallbackPayload());

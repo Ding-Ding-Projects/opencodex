@@ -11,7 +11,8 @@
  *   exact filename, or by probing a fixed list of install locations. A target
  *   that is not found is reported as unavailable rather than guessed at, so the
  *   dashboard can say "not installed" instead of failing on click.
- * - The route sits behind the standard management-auth gate like every `/api/*`.
+ * - The route is part of the intentionally open `/api/*` management plane; deployments exposed
+ *   beyond loopback need an external authenticated boundary.
  *
  * **No console window is ever created.** Only windowed applications are ever
  * spawned: a CLI target is handed to Windows Terminal — a real windowed app the

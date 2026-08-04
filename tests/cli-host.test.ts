@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describeHost, handleHostCommand, hasDataPlaneCredential } from "../src/cli/host";
 import { verifyAdminTokenAgainstProxy } from "../src/lib/host-control";
 import { getDefaultConfig } from "../src/config";
@@ -155,77 +155,15 @@ describe("ocx host", () => {
     expect(errored.join("\n")).toContain("unknown command");
   });
 
-  /**
-   * `ocx host token` reads the admin secret from THIS process's environment and
-   * config dir, which is not necessarily where the running proxy got its own.
-   * These pin that a token the live proxy rejects is never printed as if it
-   * worked — the bare token still goes to stdout (scripts capture it) and every
-   * word of doubt goes to stderr.
-   */
-  const FAKE_ADMIN_TOKEN = `ocx_admin_${"A".repeat(43)}`;
-
-  function writeAdminTokenFile(): void {
-    writeFileSync(join(home, "admin-api-token"), `${FAKE_ADMIN_TOKEN}\n`, "utf8");
-  }
-
-  test("token warns loudly on stderr when the running proxy rejects it, and still prints it on stdout", async () => {
-    writeAdminTokenFile();
-    const code = await handleHostCommand(["token"], {
-      verifyAdminToken: async () => ({ state: "rejected", endpoint: "http://127.0.0.1:10100/api/host" }),
-    });
-    expect(code).toBe(0);
-    // stdout stays the bare token: `TOKEN=$(ocx host token)` must keep working.
-    expect(logged.join("\n").trim()).toBe(FAKE_ADMIN_TOKEN);
-    const warning = errored.join("\n");
-    expect(warning).toContain("REJECTED this token");
-    expect(warning).toContain("http://127.0.0.1:10100/api/host");
-    expect(warning).toContain("OPENCODEX_ADMIN_AUTH_TOKEN");
+  test("token is a legacy no-op after the admin gate removal", async () => {
+    expect(await handleHostCommand(["token"])).toBe(0);
+    expect(logged.join("\n")).toContain("admin-token gate is disabled permanently");
+    expect(errored).toEqual([]);
   });
 
-  test("token says it could not verify rather than implying the proxy accepted it", async () => {
-    writeAdminTokenFile();
-    expect(await handleHostCommand(["token"], {
-      verifyAdminToken: async () => ({ state: "unverified", reason: "no proxy is running on this machine" }),
-    })).toBe(0);
-    expect(logged.join("\n").trim()).toBe(FAKE_ADMIN_TOKEN);
-    const notice = errored.join("\n");
-    expect(notice).toContain("Not verified");
-    expect(notice).toContain("no proxy is running on this machine");
-  });
-
-  test("token --json reports verified=null for unverified and false for rejected", async () => {
-    writeAdminTokenFile();
-    await handleHostCommand(["token", "--json"], {
-      verifyAdminToken: async () => ({ state: "unverified", reason: "no proxy is running on this machine" }),
-    });
-    const unverified = JSON.parse(logged.join("\n"));
-    expect(unverified.adminToken).toBe(FAKE_ADMIN_TOKEN);
-    expect(unverified.verified).toBeNull();
-    expect(unverified.verification).toBe("unverified");
-
-    logged = [];
-    await handleHostCommand(["token", "--json"], {
-      verifyAdminToken: async () => ({ state: "rejected", endpoint: "http://127.0.0.1:10100/api/host" }),
-    });
-    const rejected = JSON.parse(logged.join("\n"));
-    expect(rejected.verified).toBe(false);
-    expect(rejected.verification).toBe("rejected");
-  });
-
-  test("token accepted by the running proxy prints no rejection warning", async () => {
-    writeAdminTokenFile();
-    expect(await handleHostCommand(["token"], {
-      verifyAdminToken: async () => ({ state: "accepted", endpoint: "http://127.0.0.1:10100/api/host" }),
-    })).toBe(0);
-    expect(logged.join("\n").trim()).toBe(FAKE_ADMIN_TOKEN);
-    expect(errored.join("\n")).not.toContain("REJECTED");
-    expect(errored.join("\n")).not.toContain("Not verified");
-  });
-
-  test("token with no stored secret fails instead of printing an empty line", async () => {
-    expect(await handleHostCommand(["token"])).toBe(1);
-    expect(errored.join("\n")).toContain("no admin token exists yet");
-    expect(logged.join("\n").trim()).toBe("");
+  test("token --json reports the open management plane without a secret", async () => {
+    expect(await handleHostCommand(["token", "--json"])).toBe(0);
+    expect(JSON.parse(logged.join("\n"))).toEqual({ adminTokenGate: false, managementApi: "open" });
   });
 });
 

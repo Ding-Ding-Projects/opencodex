@@ -322,43 +322,33 @@ at the next `ocx start`:
 ```bash
 ocx host enable --new-key --yes   # bind to the LAN and mint the data-plane key
 ocx host status                   # bind address, credential state, URLs for other devices
-ocx host token                    # print the ADMIN token the remote dashboard asks for
-ocx host disable                  # back to loopback
+  ocx host disable                  # back to loopback
 ```
 
-### Two credentials, on purpose
+### Management API has no admin-token gate
 
-The data plane and the management API do **not** share a secret, and the server refuses to start the
-management API at all if one value is configured as both (`management credential conflicts with a
-data-plane credential`, surfaced as `503 management API unavailable`).
+The data plane still uses its own credential when the proxy binds beyond loopback. The management API
+does **not** require `OPENCODEX_ADMIN_AUTH_TOKEN`, an `admin-api-token` file, or a GUI session.
 
-| | Data-plane key | Admin token |
+| | Data-plane key | Management API |
 | --- | --- | --- |
-| Protects | `/v1/responses`, `/v1/messages`, `/v1/images/*` — model traffic | `/api/*` and the dashboard |
-| Sent by | Codex CLI/App, Claude Code, opencode, your scripts | the dashboard, `curl` against `/api/*` |
-| Where it comes from | `OPENCODEX_API_AUTH_TOKEN`, or an `apiKeys` entry (`ocx host enable --new-key`, `ocx host enable --key <value>`, `ocx access key create`) | `OPENCODEX_ADMIN_AUTH_TOKEN`, else an auto-generated `ocx_admin_…` token in `~/.opencodex/admin-api-token` (mode 600), created the first time the proxy starts |
-| Required when | the bind is non-loopback (`assertServerAuthConfig` refuses to start otherwise) | always, for every `/api/*` request |
+| Protects | `/v1/responses`, `/v1/messages`, `/v1/images/*` — model traffic | nothing; `/api/*` is open |
+| Sent by | Codex CLI/App, Claude Code, opencode, your scripts | no management credential |
+| Where it comes from | `OPENCODEX_API_AUTH_TOKEN`, or an `apiKeys` entry (`ocx host enable --new-key`, `ocx host enable --key <value>`, `ocx access key create`) | none |
+| Required when | the bind is non-loopback (`assertServerAuthConfig` refuses to start otherwise) | never |
 
-Both are sent the same way — `x-opencodex-api-key: <token>`, or `Authorization: Bearer <token>` —
-and every candidate is compared in constant time (`timingSafeEqual`) to prevent timing
-side-channels.
+Data-plane requests use `x-opencodex-api-key: <token>`, or `Authorization: Bearer <token>`.
+Management requests carry no admin credential. A non-loopback listener therefore exposes management
+operations, including provider secrets and account exports, to callers allowed by CORS.
 
-`/api/*` is credential-gated even on a loopback bind. What makes the local dashboard work without
-you pasting anything is a short-lived session that the server issues **only** to a loopback `Host`
-on an allowed origin, and only while the bind is loopback. Expose the proxy and that bootstrap stops
-entirely: every device, and every page reload, asks for the admin token, which the dashboard holds
-in memory only and never writes to storage a page script could read back.
-
-If you install a background service for LAN access, export the tokens before `ocx service install`
-so launchd, systemd, or Task Scheduler receives them. A service (or container) started with its own
-`OPENCODEX_ADMIN_AUTH_TOKEN` enforces a secret the on-disk file does not match — `ocx host token`
-checks its answer against the running proxy and says so on stderr rather than printing a token the
-dashboard will reject.
+If you install a background service for LAN access, configure the data-plane token before `ocx
+service install`. The management API remains open by design; use an external authenticated boundary
+for remote deployments.
 
 :::caution[LAN exposure]
 Binding to `0.0.0.0` exposes your proxy — and all configured provider credentials — to the local
-network. There is no TLS: both tokens cross the network in cleartext, so only do this on a network
-you trust, and use strong values.
+network. There is no TLS and management routes have no admin-token gate, so only do this on a network
+you trust or behind an external authenticated boundary.
 :::
 
 A container is the same situation with the bind decided for you — see [Docker](/guides/docker/),

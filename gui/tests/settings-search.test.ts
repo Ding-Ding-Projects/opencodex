@@ -83,7 +83,7 @@ test("matching ignores case in plain-text mode", () => {
 test("a match on another tab of this surface is counted and its tab named", () => {
   const tabbed: SettingsOption[] = [
     { id: "port", label: "Port", tab: "Connection" },
-    { id: "token", label: "Admin token", tab: "Security" },
+    { id: "data-key", label: "Data-plane key", tab: "Security" },
   ];
   const result = runSettingsSearch({ options: tabbed, activeTab: "Connection", query: "token", useRegex: false });
 

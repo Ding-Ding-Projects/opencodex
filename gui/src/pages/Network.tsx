@@ -87,7 +87,6 @@ export default function Network({ apiBase }: { apiBase: string }) {
   /** The flags the builder beside the history field applied, so the two agree. */
   const [historyFlags, setHistoryFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [mintedKey, setMintedKey] = useState<string | null>(null);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
   const [customKey, setCustomKey] = useState("");
   const { outcomeFor, copy } = useCopyFeedback();
   const copied = outcomeFor(undefined) === "copied";
@@ -321,17 +320,6 @@ export default function Network({ apiBase }: { apiBase: string }) {
     }
   };
 
-  const revealAdminToken = async () => {
-    try {
-      const res = await fetch(`${apiBase}/api/host/admin-token`);
-      const d = await readJsonIfOk<{ adminToken?: string }>(res);
-      if (d?.adminToken) setAdminToken(d.adminToken);
-      else notify({ tone: "error", title: t("network.tokenUnavailable") });
-    } catch {
-      notify({ tone: "error", title: t("network.tokenUnavailable") });
-    }
-  };
-
   const downloadExport = async () => {
     // The export is a credential dump; the dialog carries the same warning as the
     // CLI, and its button says "Download export" rather than "OK".
@@ -388,7 +376,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
    *
    * The only field on this page used to filter the snapshot list, which left the
    * settings above it — the exposure switch, the addresses, the QR block, the
-   * admin token, the custom key and the export — findable only by reading four
+   * custom key and the export — findable only by reading four
    * cards top to bottom. A user who knows a setting by name got no answer at all,
    * which reads as "this app does not have it" rather than "scroll further".
    *
@@ -396,8 +384,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
    * time what a user remembers is the value: the port they published on, the LAN
    * address they scanned last week, whether the thing is on.
    *
-   * Two deliberate omissions, both secrets. The admin token's actual value and
-   * the custom key being typed are never indexed: this option list is also the
+   * The custom key being typed is never indexed: this option list is also the
    * corpus the regex builder pastes into its sample textarea, so indexing them
    * would copy a credential onto a second surface — and into whatever the user
    * screenshots next — for no search anybody wants to run. Their rows are found
@@ -423,15 +410,6 @@ export default function Network({ apiBase }: { apiBase: string }) {
         value: urls.map(mobileTargetFor).join(" "),
       },
       {
-        id: "adminToken",
-        label: t("network.adminToken"),
-        desc: t("network.adminTokenHint"),
-        // The state of the reveal, not the token: "Reveal" while it is hidden,
-        // "Hide" once it is on screen — which is what the button actually reads.
-        value: adminToken ? t("network.hide") : t("network.reveal"),
-        keywords: `${t("network.reveal")} ${t("network.hide")} ${t("network.copy")}`,
-      },
-      {
         id: "customKey",
         label: t("network.customKeyTitle"),
         desc: t("network.customKeyHint"),
@@ -452,7 +430,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
         keywords: `${t("network.historySearch")} ${t("network.restore")}`,
       },
     ];
-  }, [t, status, adminToken]);
+  }, [t, status]);
 
   // Flat surface: four stacked cards, no tabs. So no `tab` on any option and no
   // `activeTab` here — inventing one would have the status line offer to send the
@@ -474,7 +452,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
    * the screen looking merely broken.
    */
   const hostCardShown =
-    matches("exposed") || matches("urls") || matches("mobile") || matches("adminToken")
+    matches("exposed") || matches("urls") || matches("mobile")
     || !!mintedKey || !!status?.debugSandbox;
 
   return (
@@ -657,23 +635,6 @@ export default function Network({ apiBase }: { apiBase: string }) {
               </div>
             )}
 
-            {matches("adminToken") && (
-            <div className="m3-row m3-row--split">
-              <div>
-                <div style={{ fontWeight: 500 }}>{t("network.adminToken")}</div>
-                <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>{t("network.adminTokenHint")}</div>
-              </div>
-              {adminToken ? (
-                <div className="m3-row">
-                  <code style={{ fontFamily: "var(--mono)", fontSize: "var(--t-body-s)" }}>{adminToken}</code>
-                  <Button variant="tonal" onClick={() => copy(adminToken, undefined)}>{copied ? t("network.copied") : t("network.copy")}</Button>
-                  <Button variant="text" onClick={() => setAdminToken(null)}>{t("network.hide")}</Button>
-                </div>
-              ) : (
-                <Button variant="outlined" onClick={() => void revealAdminToken()}>{t("network.reveal")}</Button>
-              )}
-            </div>
-            )}
           </>
         )}
       </Card>

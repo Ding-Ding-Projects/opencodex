@@ -2,7 +2,7 @@
  * /api/host — the dashboard's surface for `ocx host` and `ocx export`, sharing
  * their implementations so GUI and CLI cannot drift.
  *
- * Endpoints (all behind the standard management-auth gate):
+ * Endpoints (all on the intentionally open management plane):
  * - GET  /api/host                → bind status, LAN URLs, credential presence
  * - PUT  /api/host                → { exposed, hostname?, newKeyName?, mintKeyIfMissing? }
  *                                    enable/disable; refuses to expose without a data-plane
@@ -14,11 +14,6 @@
  * - POST /api/host/pair/claim     → DELIBERATELY UNAUTHENTICATED. Spend a token, receive a
  *                                    data-plane key once. See the block comment above the
  *                                    handler, and src/lib/pairing.ts for why that is safe.
- * - GET  /api/host/admin-token    → the management credential, for handing to another
- *                                    device. The caller by definition already holds
- *                                    management access (this route sits behind it), so
- *                                    this reveals nothing the caller could not already
- *                                    use — but it is still served with no-store.
  * - GET  /api/host/export         → the full state bundle (config + accounts + auth),
  *                                    Content-Disposition: attachment. Same content as
  *                                    `ocx export`; the GUI shows the same warning and
@@ -73,19 +68,7 @@ function noStore(response: Response): Response {
   return response;
 }
 
-/**
- * The one management path served WITHOUT a credential.
- *
- * `src/server/index.ts` runs `requireManagementAuth` across the whole of
- * `/api/*` before any route is dispatched, so a handler cannot opt itself out —
- * the exemption has to be made there, and this predicate is what it asks. It
- * lives beside the route it describes so the two cannot drift: an exemption
- * declared in the server entrypoint for a path that moved would silently become
- * an exemption for nothing, or for something else.
- *
- * Method AND exact path, never a prefix. `startsWith` would exempt
- * `/api/host/pair/claim-everything` too.
- */
+/** The pairing claim path is kept as a named invariant for its token-bound handler. */
 export const PAIRING_CLAIM_PATH = "/api/host/pair/claim";
 
 export function isUnauthenticatedPairingClaim(method: string, pathname: string): boolean {
@@ -397,14 +380,6 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
 
     // Shown exactly once, like every other minted key.
     return noStore(jsonResponse({ key: result.key }, 200, req, config));
-  }
-
-  if (url.pathname === "/api/host/admin-token" && req.method === "GET") {
-    const envToken = process.env.OPENCODEX_ADMIN_AUTH_TOKEN?.trim();
-    const { loadAdminTokenFromFile } = await import("../../lib/admin-secrets");
-    const token = envToken || loadAdminTokenFromFile();
-    if (!token) return jsonResponse({ error: "no admin token exists yet" }, 404, req, config);
-    return noStore(jsonResponse({ adminToken: token }, 200, req, config));
   }
 
   if (url.pathname === "/api/host/export" && req.method === "GET") {

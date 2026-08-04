@@ -180,6 +180,7 @@ export function configuredApiAuthToken(_config: OcxConfig): string | undefined {
   return token || undefined;
 }
 
+/** Legacy compatibility only: an old admin secret must never be forwarded upstream. */
 export function configuredAdminAuthToken(): string | undefined {
   const token = process.env.OPENCODEX_ADMIN_AUTH_TOKEN?.trim();
   return token || undefined;
@@ -277,18 +278,12 @@ export function isDataPlaneAdmissionSecret(token: string, config: OcxConfig): bo
   return false;
 }
 
-/** Whether `token` is the environment-provided management secret. */
-export function isManagementAdmissionSecret(token: string): boolean {
-  const actual = token.trim();
-  return !!actual && secretEquals(actual, configuredAdminAuthToken());
-}
-
 /** Whether `token` is one of the proxy's own admission secrets and must never reach an upstream. */
 export function isProxyAdmissionSecret(token: string, config: OcxConfig): boolean {
   const actual = token.trim();
   if (!actual) return false;
   if (/^ocx_(?:data|admin|session)_/.test(actual) || /^ocx_[0-9a-f]{40}$/.test(actual)) return true;
-  return isDataPlaneAdmissionSecret(actual, config) || isManagementAdmissionSecret(actual);
+  return isDataPlaneAdmissionSecret(actual, config) || secretEquals(actual, configuredAdminAuthToken());
 }
 
 export class ForwardAdmissionCredentialError extends Error {

@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { loadConfig, readRuntimePort } from "../config";
-import { configuredAdminToken } from "./admin-secrets";
 
 export function isProcessAlive(pid: number): boolean {
   try {
@@ -65,10 +64,7 @@ export async function stopProxyGracefully(pid: number, io: GracefulStopIo = {}):
   const readRuntime = io.readRuntime ?? readRuntimePort;
   const runtime = readRuntime(pid);
   if (!runtime?.port) return false;
-  const env = io.env ?? process.env;
-  const headers: Record<string, string> = {};
-  const token = configuredAdminToken(env.OPENCODEX_HOME?.trim() || undefined, env as NodeJS.ProcessEnv);
-  if (token) headers["x-opencodex-api-key"] = token;
+  const headers: Record<string, string> = { Accept: "application/json" };
   const fetchFn = io.fetchFn ?? fetch;
   try {
     const res = await fetchFn(`http://${gracefulStopHost(runtime.hostname)}:${runtime.port}/api/stop`, {

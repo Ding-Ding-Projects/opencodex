@@ -31,7 +31,6 @@ import { handleManagementAPI } from "../src/server/management-api";
 import type { OcxConfig } from "../src/types";
 import { fakeChatGptJwt } from "./helpers/fake-chatgpt-jwt";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
-import { configuredAdminToken } from "../src/lib/admin-secrets";
 import { removeTempDir } from "./helpers/temp-dir";
 
 const previousApiToken = process.env.OPENCODEX_API_AUTH_TOKEN;
@@ -58,11 +57,7 @@ function config(hostname?: string): OcxConfig {
 }
 
 function managementHeaders(initial?: HeadersInit): Headers {
-  const token = configuredAdminToken();
-  if (!token) throw new Error("management token was not initialized");
-  const headers = new Headers(initial);
-  headers.set("x-opencodex-api-key", token);
-  return headers;
+  return new Headers(initial);
 }
 
 const canonicalDirect = {
@@ -532,7 +527,7 @@ describe("server local API auth", () => {
     }
   });
 
-  test("/api/system/memory rides the management auth gate; /healthz shape unchanged (#314 WP3)", async () => {
+  test("/api/system/memory is open with management routes; /healthz shape unchanged (#314 WP3)", async () => {
     if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
@@ -544,12 +539,7 @@ describe("server local API auth", () => {
 
     const server = startServer(0);
     try {
-      const missing = await fetch(`http://127.0.0.1:${server.port}/api/system/memory`);
-      expect(missing.status).toBe(401);
-
-      const ok = await fetch(`http://127.0.0.1:${server.port}/api/system/memory`, {
-        headers: managementHeaders(),
-      });
+      const ok = await fetch(`http://127.0.0.1:${server.port}/api/system/memory`);
       expect(ok.status).toBe(200);
       const body = await ok.json() as { rss?: number; bunVersion?: string };
       expect(body.rss).toBeGreaterThan(0);
@@ -624,7 +614,7 @@ describe("server local API auth", () => {
         headers: {
           host: `attacker.test:${server.port}`,
           origin: attackerOrigin,
-          "x-opencodex-api-key": configuredAdminToken() ?? "missing-admin-token",
+          "x-opencodex-api-key": "legacy-admin-token",
         },
       });
       expect(response.status).toBe(403);
@@ -660,7 +650,7 @@ describe("server local API auth", () => {
     }
   });
 
-  test("non-loopback management API allows same-origin GUI requests with API token", async () => {
+  test("non-loopback management API allows same-origin GUI requests without a token", async () => {
     if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
@@ -673,19 +663,11 @@ describe("server local API auth", () => {
     const server = startServer(0);
     const origin = `http://lan.example.test:${server.port}`;
     try {
-      const missing = await fetch(`http://127.0.0.1:${server.port}/api/settings`, {
+      const ok = await fetch(`http://127.0.0.1:${server.port}/api/settings`, {
         headers: {
           host: `lan.example.test:${server.port}`,
           origin,
         },
-      });
-      expect(missing.status).toBe(401);
-
-      const ok = await fetch(`http://127.0.0.1:${server.port}/api/settings`, {
-        headers: managementHeaders({
-          host: `lan.example.test:${server.port}`,
-          origin,
-        }),
       });
       expect(ok.status).toBe(200);
       expect(ok.headers.get("access-control-allow-origin")).toBe(origin);

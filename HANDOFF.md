@@ -1,5 +1,17 @@
 # Handoff
 
+## Admin-token gate removed — 2026-08-03
+
+The dashboard no longer collects an admin token, injects a GUI session, or retries `/api/*` with a
+browser-held credential. `src/server/index.ts` now routes management requests without the former
+admin-auth check, and `/api/host/admin-token` is gone. Data-plane authentication for `/v1/*` is
+unchanged. This is intentionally unsafe on a non-loopback bind: `/api/*` exposes provider settings,
+exports, logs, and account controls, so remote deployments need an external authenticated boundary.
+
+Focused proof: `gui/tests/api-auth-memory.test.ts` 3/3, `tests/gui-management-session.test.ts` 1/1,
+and `tests/server-management-auth.test.ts` 17/17. The full repository and GUI suites remain to be
+run after the existing tab-branch work is integrated or deliberately discarded.
+
 ## The tab branch is a rival implementation, not pending work — 2026-08-03
 
 A second integrate-and-clean pass, authorized to delete. **Nothing merged and

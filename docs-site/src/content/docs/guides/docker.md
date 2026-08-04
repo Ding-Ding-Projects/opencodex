@@ -15,7 +15,6 @@ docker build -t opencodex .
 
 docker run -d --name opencodex -p 10100:10100 \
   -e OPENCODEX_API_AUTH_TOKEN=<data-plane-secret> \
-  -e OPENCODEX_ADMIN_AUTH_TOKEN=<admin-secret> \
   -v opencodex-data:/data \
   opencodex
 ```
@@ -30,15 +29,8 @@ does — `OPENCODEX_API_AUTH_TOKEN`, **or** a non-empty `apiKeys` entry in the `
 volume — and fails fast with that message instead of letting the server throw later. This is not a
 Docker quirk; it is exactly what `ocx host enable` insists on.
 
-`OPENCODEX_ADMIN_AUTH_TOKEN` is the separate credential the dashboard and `/api/*` authenticate
-with. Omit it and the proxy generates one on first start, into `admin-api-token` inside its config
-directory — which here is the `/data` volume, **not** `~/.opencodex` on the host. `ocx host token`
-run on the host reads the host's own config directory and will not find it, so read it out of the
-container:
-
-```bash
-docker exec opencodex cat /data/admin-api-token
-```
+There is no admin-token requirement. The dashboard and `/api/*` management routes are intentionally
+open; keep the container on a trusted network or add an external authenticated reverse proxy.
 
 ## State lives on the volume
 

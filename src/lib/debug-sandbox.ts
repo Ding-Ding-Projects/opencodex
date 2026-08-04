@@ -53,9 +53,9 @@
  * It is not a security boundary and must never be described as one. It is a
  * convenience for the person driving the app, and it lives inside the process it
  * is protecting — anything already able to set an environment variable on this
- * process could equally unset it. The security boundaries are the admin token,
- * the pairing token and the data-plane/management split, none of which this
- * touches.
+ * process could equally unset it. The security boundaries are the pairing token
+ * and the data-plane credential; management routes are intentionally open, and
+ * the sandbox does not change either boundary.
  *
  * It also does not fake success. A blocked pairing claim is *refused*, with a
  * reason of its own, rather than answered with a fabricated key: a phone told it
@@ -121,12 +121,12 @@ export function clientIntegrationsAllowed(env: NodeJS.ProcessEnv = process.env):
  *
  * The whole point of the mode is to look at Remote access in its enabled state,
  * and the obvious way to do that — set `config.hostname = "0.0.0.0"` in memory —
- * turned out to be a trap. `isApiAuthRequired` is derived from
- * `config.hostname`, so flipping it made the running process demand a credential
- * for `/api/*` and `/v1/*`; and because the sandbox also (correctly) refuses to
- * mint one, the process landed in a state where **no credential that exists can
- * satisfy it**. Measured: an unauthenticated `GET /v1/models` answered 200 before
- * the toggle and 401 after, and so did one carrying the admin token.
+  * turned out to be a trap. `isApiAuthRequired` is derived from
+  * `config.hostname`, so flipping it made the running process demand a data-plane
+  * credential for `/v1/*`; management routes remain open. The sandbox also refuses
+  * to mint a data-plane key, so the data plane can still land in a state where
+  * **no credential that exists can satisfy it**. Measured: an unauthenticated
+  * `GET /v1/models` answered 200 before the toggle and 401 after.
  *
  * That is precisely the unreachable state `assertServerAuthConfig` exists to
  * prevent at startup, reached at runtime instead. So the sandbox no longer

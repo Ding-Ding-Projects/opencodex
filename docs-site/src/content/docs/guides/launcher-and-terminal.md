@@ -131,16 +131,14 @@ Three panels:
 It adds **three** server routes, all of them for pairing: `POST /api/host/pair`
 and `DELETE /api/host/pair`, which the desktop calls to mint and cancel a
 pairing code, and `POST /api/host/pair/claim`, which the phone calls. That last
-one exists because a phone that has never paired holds no credential and so
-cannot be served by anything that was already there — it is the only one of the
-three that is reachable without the admin token. Everything else the remote does
-reuses what other clients use.
+one exists because a phone that has never paired holds no data-plane credential.
+Everything else the remote does reuses what other clients use.
 Chat posts to the proxy's own `/v1/chat/completions` and the model list comes
 from `/v1/models`, both on the data-plane key pairing hands out, so a message
 sent from a phone is routed, logged and counted exactly like one sent from
-Codex. Sessions read `/api/logs` and Control reads `/api/host`; those are
-management routes, so they need the admin token from the desktop and say so
-rather than appearing to load forever. A parallel "mobile API" would have been a
+Codex. Sessions read `/api/logs` and Control reads `/api/host`; the management
+plane is open, so those panels use the same routes without a second credential.
+A parallel "mobile API" would have been a
 second path to the same behaviour and a second place for it to be wrong.
 
 ### Pairing a phone with a QR code
@@ -165,13 +163,11 @@ live code.
 What makes showing a credential on a screen acceptable is what the code is:
 256 bits of randomness, valid for **one** device, expiring after **five
 minutes**, replaced whenever a new one is generated, and cancelled the moment
-the panel closes. It mints a data-plane key and never an admin token, so a
-paired phone can drive the proxy but cannot reconfigure it.
+the panel closes. It mints a data-plane key and never an admin token. The
+management plane is open, so a paired phone can drive and configure the proxy.
 
 The key is then **saved in that phone's browser**, so pairing happens once
-rather than on every visit. That is a deliberate exception to the rule the
-dashboard follows for its own admin token, which is memory-only: an admin token
-can export every account, while this one can only send requests. Clear it from
+rather than on every visit. Clear it from
 the phone with **Forget this device**, and revoke it on the desktop under
 **API keys**, where it is listed as `Paired device`.
 

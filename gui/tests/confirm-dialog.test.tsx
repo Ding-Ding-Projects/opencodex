@@ -568,14 +568,14 @@ test("the field is labelled and holds focus, and a secret one is masked", async 
   const { container, root } = await mountProvider(
     <TextOpener
       answers={answers}
-      request={{ title: "Admin token needed", label: "Admin token", secret: true, confirmLabel: "Use this token" }}
+       request={{ title: "Secret value", label: "Secret value", secret: true, confirmLabel: "Use value" }}
     />,
   );
   await click(container.querySelector("button")!);
 
   const input = promptField(container);
   const labelled = container.querySelector<HTMLLabelElement>(`label[for="${input.id}"]`);
-  expect(labelled?.textContent).toBe("Admin token");
+  expect(labelled?.textContent).toBe("Secret value");
   // A credential is masked and kept out of autofill; an ordinary value is not.
   expect(input.getAttribute("type")).toBe("password");
   expect(input.getAttribute("autocomplete")).toBe("off");

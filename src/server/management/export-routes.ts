@@ -7,7 +7,7 @@
  * exported, so writing them per list would be writing them wrong in different
  * ways — and a list added later would quietly ship without any of it.
  *
- * Endpoints (behind the standard management-auth gate):
+ * Endpoints (on the intentionally open management plane):
  * - GET  /api/export/capabilities → formats, fidelity per dataset, 7z and VS Code availability
  * - POST /api/export              → { dataset, format, archive?, sevenZip?, openInVsCode? }
  *

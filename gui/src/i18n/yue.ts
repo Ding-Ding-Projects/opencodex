@@ -1635,8 +1635,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "mobile.stopped": "（未開始回覆就已經停咗）",
   "mobile.sendFailed": "send 唔到呢個訊息",
   "mobile.noSessions": "仲未有請求",
-  "mobile.sessionsFailed": "讀唔到工作階段紀錄。呢樣要 admin token，而 admin token 喺桌面嗰邊 — 配對畀呢部裝置嘅 key 係用嚟發請求，唔係用嚟睇 proxy 自己啲設定。",
-  "mobile.hostUnavailable": "讀唔到 proxy 嘅狀態。呢樣要 admin token，而 admin token 喺桌面嗰邊。",
+  "mobile.sessionsFailed": "讀唔到工作階段紀錄。睇吓 proxy 有冇開，同埋呢部機連唔連到。",
+  "mobile.hostUnavailable": "讀唔到 proxy 嘅狀態。睇吓 proxy 有冇開，同埋呢部機連唔連到。",
   "mobile.proxy": "Proxy",
   "mobile.exposed": "其他裝置連得到",
   "mobile.loopback": "淨係限呢部機",
@@ -1915,7 +1915,6 @@ export const yue: Partial<Record<TKey, string>> = {
   "appbar.noAccount": "冇帳戶登入咗",
 
   // ---- auth ----
-  "auth.adminTokenPrompt": "OpenCodex ADMIN token — 喺行 proxy 嗰部機用呢句印出嚟：ocx host token\n\n呢個係管理用嘅憑證。data-plane API key（即係 `ocx host enable --new-key` 嗰個，由 Codex/Claude Code 隨模型請求送出嗰個）喺呢度係唔會用得 — server 唔接受 data-plane 憑證去 /api/*。",
 
   // ---- dashboard ----
   "dash.stopFailedTitle": "停唔到 proxy",
@@ -2040,13 +2039,10 @@ export const yue: Partial<Record<TKey, string>> = {
   "network.changeFailed": "改唔到網絡存取",
   "network.urls": "喺另一部裝置打開",
   "network.keyShownOnce": "Data-plane key — 淨係顯示一次，而家就存起佢",
-  "network.adminToken": "Admin token",
-  "network.adminTokenHint": "遙距總覽同 API 要嘅就係呢個。當佢係密碼咁保管。",
   "network.copy": "複製",
   "network.copied": "已複製",
   "network.reveal": "顯示",
   "network.hide": "隱藏",
-  "network.tokenUnavailable": "而家仲未有 admin token — proxy 第一次啟動嗰陣先會建立。",
   "network.customKeyTitle": "自訂 key",
   "network.customKeyHint": "自己揀一個 key 值（12 個字元或以上，唔可以有空格）。佢會以明文存喺 config.json，匯出嗰陣亦都會包埋 — 千祈唔好攞你喺第度用緊嘅密碼嚟做。",
   "network.customKeyPlaceholder": "your-memorable-key-value",
@@ -2175,9 +2171,6 @@ export const yue: Partial<Record<TKey, string>> = {
   // ---- 文字輸入對話框 ----
   "prompt.aliasTitle": "改個顯示名",
   "prompt.aliasAction": "儲存",
-  "auth.adminTokenTitle": "要 admin token 先得",
-  "auth.adminTokenLabel": "Admin token",
-  "auth.adminTokenAction": "用呢個 token",
 
   // ---- account switcher ----
   "switcher.title": "Codex 帳戶",

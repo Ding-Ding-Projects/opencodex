@@ -50,7 +50,7 @@ afterEach(() => {
 const OPTIONS: SettingsOption[] = [
   { id: "theme", label: "Theme", desc: "Light or dark", value: "Dark", tab: "Look" },
   { id: "density", label: "Density", desc: "Row spacing", value: "3", tab: "Look" },
-  { id: "token", label: "Admin token", desc: "Reveal the token", value: "Hidden", tab: "Security" },
+  { id: "data-key", label: "Data-plane key", desc: "Manage the model API key", value: "Configured", tab: "Security" },
 ];
 
 /** A surface: the shared row, plus the rows it left visible, so both can be asserted. */

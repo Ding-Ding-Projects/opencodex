@@ -2,8 +2,8 @@
  * `ocx host` — expose the proxy and its dashboard to other devices on the network.
  *
  * The server already supports this: binding to a non-loopback hostname flips
- * `isApiAuthRequired()`, which forces every `/api/*` and data-plane request to
- * carry a credential, and `assertServerAuthConfig()` refuses to start without
+ * `isApiAuthRequired()`, which forces data-plane requests to carry a credential,
+ * and `assertServerAuthConfig()` refuses to start without
  * one. What was missing was a safe, discoverable way to turn it on — previously
  * you hand-edited `config.hostname` and hoped you had a key.
  *
@@ -14,10 +14,8 @@
  * - **No credential, no exposure.** `enable` refuses unless a data-plane
  *   credential already exists or `--new-key` mints one. That mirrors the
  *   server-side assertion rather than duplicating a weaker version of it.
- * - **No session bootstrap over the network.** `issueGuiSession()` refuses any
- *   non-loopback Host, so a remote browser cannot be silently trusted — it gets
- *   a 401 and must paste the key, which the dashboard holds in memory only.
- *   That is intended, and `status` says so rather than treating it as a defect.
+ * - **Management is open by design.** `/api/*` no longer has an admin-token gate;
+ *   use an external authenticated boundary before exposing a non-loopback proxy.
  * - **Plaintext once.** A generated key is printed exactly once, like
  *   `ocx access key create`.
  *
@@ -37,8 +35,6 @@ import {
   hasDataPlaneCredential,
   lanAddresses,
   mintDataPlaneKey,
-  verifyAdminTokenAgainstProxy,
-  type AdminTokenVerification,
   type HostStatus,
 } from "../lib/host-control";
 import { DEBUG_SANDBOX_ENV, debugSandboxEnabled } from "../lib/debug-sandbox";
@@ -74,12 +70,10 @@ function printStatus(status: HostStatus, json: boolean): void {
     console.log("\nOpen from another device:");
     for (const url of status.urls) console.log(`  ${url}`);
     console.log(
-      "\nThe dashboard and /api/* ask for the ADMIN token (not the data-plane key):\n"
-      + "  ocx host token\n"
-      + "It is held in browser memory only, so each device (and each reload) asks\n"
-      + "again. That is deliberate: a browser reached over the network is never\n"
-      + "handed a session automatically. The data-plane key from --new-key is what\n"
-      + "API clients (Codex, Claude Code) send with their model requests.",
+      "\nThe dashboard and /api/* no longer require an ADMIN token.\n"
+      + "The data-plane key from --new-key is still required by model API clients\n"
+      + "when this proxy is reachable from other devices. Put remote management\n"
+      + "behind an external authenticated boundary.",
     );
   } else if (!status.exposed) {
     // Name the flag that will actually succeed: without a credential the plain
@@ -93,8 +87,8 @@ function printStatus(status: HostStatus, json: boolean): void {
 }
 
 export interface HostCommandIo {
-  /** Injectable so the stale-token path is testable without a live proxy. */
-  verifyAdminToken?: (token: string) => Promise<AdminTokenVerification>;
+  /** Kept for compatibility with callers of the former token command. */
+  verifyAdminToken?: (token: string) => Promise<unknown>;
 }
 
 export async function handleHostCommand(args: string[], io: HostCommandIo = {}): Promise<number> {
@@ -121,55 +115,11 @@ export async function handleHostCommand(args: string[], io: HostCommandIo = {}):
   }
 
   if (action === "token") {
-    // The management (/api/*, dashboard) credential — distinct from the data-plane
-    // key on purpose: the server refuses a credential that plays both roles.
-    const envToken = process.env.OPENCODEX_ADMIN_AUTH_TOKEN?.trim();
-    const { loadAdminTokenFromFile, adminApiTokenFilePath } = await import("../lib/admin-secrets");
-    const token = envToken || loadAdminTokenFromFile();
-    if (!token) {
-      console.error(
-        "ocx host: no admin token exists yet — it is created the first time the proxy starts.\n"
-        + `  Expected at: ${adminApiTokenFilePath()}`,
-      );
-      return 1;
-    }
-    // Where this token came from is NOT where the running proxy got its own.
-    // A proxy started as a service, in a container, or from another shell with
-    // OPENCODEX_ADMIN_AUTH_TOKEN set enforces a secret this process cannot read,
-    // while the on-disk file it never consulted still parses fine — so printing
-    // the file token alone would hand the user a credential the dashboard
-    // rejects, with nothing on screen to explain why. Ask the live proxy.
-    const verify = io.verifyAdminToken ?? verifyAdminTokenAgainstProxy;
-    const verification = await verify(token);
-
     if (json) {
-      console.log(JSON.stringify({
-        adminToken: token,
-        source: envToken ? "environment" : "file",
-        // null, not false: "the proxy said no" and "nothing answered" are
-        // different facts and a script must be able to tell them apart.
-        verified: verification.state === "unverified" ? null : verification.state === "accepted",
-        verification: verification.state,
-        verificationDetail: verification.state === "unverified" ? verification.reason : verification.endpoint,
-      }, null, 2));
-      return 0;
+      console.log(JSON.stringify({ adminTokenGate: false, managementApi: "open" }, null, 2));
+    } else {
+      console.log("The admin-token gate is disabled permanently; /api/* needs no ADMIN token.");
     }
-
-    console.error("⚠️  This token grants full management access to the proxy. Treat it like a password.");
-    if (verification.state === "rejected") {
-      console.error(
-        `⚠️  The RUNNING proxy at ${verification.endpoint} REJECTED this token — it will not work.\n`
-        + `  This token came from ${envToken ? "OPENCODEX_ADMIN_AUTH_TOKEN in this shell" : adminApiTokenFilePath()},\n`
-        + "  but the proxy was started with a different OPENCODEX_ADMIN_AUTH_TOKEN (a service,\n"
-        + "  a container, or another shell). Read the token from that environment, or restart\n"
-        + "  the proxy without OPENCODEX_ADMIN_AUTH_TOKEN so it uses the file above.",
-      );
-    } else if (verification.state === "unverified") {
-      console.error(`ℹ️  Not verified against a running proxy (${verification.reason}) — if one is started elsewhere with its own OPENCODEX_ADMIN_AUTH_TOKEN, this token will not work there.`);
-    }
-    // The bare token still goes to stdout in every case: scripts capture it,
-    // and a warning on stderr is the honest way to flag a token that may not fit.
-    console.log(token);
     return 0;
   }
 

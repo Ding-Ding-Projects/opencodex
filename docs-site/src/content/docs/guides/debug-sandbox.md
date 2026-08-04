@@ -126,8 +126,8 @@ guess: *"The desktop is running in debug mode… Scanning again will not help."*
 
 Never describe it as one. It is a convenience for the person driving the app, and it lives inside the
 process it is protecting — anything already able to set an environment variable on this process could
-equally unset it. The real boundaries are the admin token, the pairing token, and the
-data-plane/management split, and the sandbox touches none of them.
+equally unset it. The real boundary is the data-plane credential; the management plane is
+intentionally open, and the sandbox does not change that or the pairing-token flow.
 
 ### It does not fake success
 
@@ -157,10 +157,10 @@ memory. The requested bind is recorded for display only, and `describeHost` rend
 config, the auth posture and the listening socket are all untouched.
 
 That indirection is not neatness — the direct version was a trap. `isApiAuthRequired` is derived from
-`config.hostname`, so setting it made the running process demand a credential for `/api/*` and
-`/v1/*`, while the sandbox correctly refused to mint one. The result was a process **no credential
-could satisfy**: an unauthenticated `GET /v1/models` answered `200` before the toggle and `401`
-after, and so did one carrying the admin token. That is exactly the unreachable state
+`config.hostname`, so setting it still makes the running process demand a data-plane credential for
+`/v1/*`, while management routes remain open. The result used to be a process **no credential could
+satisfy**: an unauthenticated `GET /v1/models` answered `200` before the toggle and `401` after, and
+so did one carrying the admin token. That is exactly the unreachable state
 `assertServerAuthConfig` exists to prevent at startup, reached at runtime instead.
 
 A test pins it: after the toggle the data plane answers exactly as it did before, and the persisted

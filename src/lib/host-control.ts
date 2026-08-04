@@ -140,7 +140,7 @@ export function addCustomDataPlaneKey(config: OcxConfig, name: string, value: st
 }
 
 /**
- * What the RUNNING proxy thinks of an admin token.
+ * Legacy probe result retained for callers that still import the old host-token helper.
  *
  * Reading `OPENCODEX_ADMIN_AUTH_TOKEN` / the token file tells you what a proxy
  * started *from this shell* would use — not what the live one is enforcing. A
@@ -163,12 +163,10 @@ export interface AdminTokenProbeIo {
 }
 
 /**
- * Ask the live proxy whether it accepts `token`.
+ * Ask the live proxy whether it accepts `token`. The management plane is now open, so this helper
+ * is compatibility-only and must not be used as an authentication decision.
  *
- * `/api/*` runs `requireManagementAuth` BEFORE route dispatch, so the answer is
- * the auth verdict regardless of which path is probed; GET /api/host is used
- * because it is side-effect-free and a 404 from an older build still proves the
- * credential passed the gate. Only a literal 401 is treated as rejection —
+ * GET /api/host remains side-effect-free. Only a literal 401 is treated as rejection —
  * anything else (timeout, 5xx, management API unavailable) is `unverified`,
  * because guessing "rejected" from a transport hiccup would send a user chasing
  * a credential problem they do not have.

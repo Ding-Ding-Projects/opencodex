@@ -5,7 +5,7 @@ Three endpoints per refresh, all local:
 - /api/usage?range=7d — the summarized usage the dashboard's Usage screen shows
 - /api/codex-auth/active + /accounts — the routed account and its quota
 
-The API key travels in the x-opencodex-api-key header. When the proxy is bound
+Management requests are intentionally unauthenticated. When the proxy is bound
 to loopback only (no `ocx host enable`), requests from HA will simply fail to
 connect — the config flow explains that instead of leaving a dead entry.
 """
@@ -23,7 +23,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import API_KEY_HEADER, DEFAULT_SCAN_INTERVAL_SECONDS, DOMAIN, USAGE_RANGE
+from .const import DEFAULT_SCAN_INTERVAL_SECONDS, DOMAIN, USAGE_RANGE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class OpencodexData:
 class OpencodexCoordinator(DataUpdateCoordinator[OpencodexData]):
     """Polls the proxy on a fixed interval."""
 
-    def __init__(self, hass: HomeAssistant, host: str, port: int, api_key: str) -> None:
+    def __init__(self, hass: HomeAssistant, host: str, port: int) -> None:
         super().__init__(
             hass,
             _LOGGER,
@@ -53,18 +53,14 @@ class OpencodexCoordinator(DataUpdateCoordinator[OpencodexData]):
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL_SECONDS),
         )
         self._base = f"http://{host}:{port}"
-        self._headers = {API_KEY_HEADER: api_key}
         self._session = async_get_clientsession(hass)
 
-    async def _get(self, path: str, authed: bool = True) -> Any:
+    async def _get(self, path: str) -> Any:
         try:
             async with self._session.get(
                 f"{self._base}{path}",
-                headers=self._headers if authed else None,
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as response:
-                if response.status == 401:
-                    raise UpdateFailed("token rejected (401) — get the admin token with: ocx host token")
                 response.raise_for_status()
                 return await response.json()
         except UpdateFailed:
@@ -73,7 +69,7 @@ class OpencodexCoordinator(DataUpdateCoordinator[OpencodexData]):
             raise UpdateFailed(f"opencodex unreachable at {self._base}: {err}") from err
 
     async def _async_update_data(self) -> OpencodexData:
-        health = await self._get("/healthz", authed=False)
+        health = await self._get("/healthz")
         if not isinstance(health, dict) or health.get("service") != "opencodex":
             # A foreign server on the port must never be read as proxy data.
             raise UpdateFailed(f"{self._base} did not identify as opencodex")

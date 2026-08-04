@@ -62,8 +62,8 @@ export const M3_EN = {
   "mobile.stopped": "(stopped before the reply started)",
   "mobile.sendFailed": "Could not send that message",
   "mobile.noSessions": "No requests yet",
-  "mobile.sessionsFailed": "Could not read the session log. It needs the admin token, which lives on the desktop — pairing gives this device a key for sending requests, not for reading the proxy's own settings.",
-  "mobile.hostUnavailable": "Could not read the proxy's status. It needs the admin token, which lives on the desktop.",
+  "mobile.sessionsFailed": "Could not read the session log. Check that the proxy is running and reachable.",
+  "mobile.hostUnavailable": "Could not read the proxy's status. Check that the proxy is running and reachable.",
   "mobile.proxy": "Proxy",
   "mobile.exposed": "Reachable from other devices",
   "mobile.loopback": "This machine only",
@@ -339,7 +339,6 @@ export const M3_EN = {
   // Named exactly, because the two credentials are not interchangeable: the
   // management API rejects a data-plane key, and a user who pastes one gets a
   // silent re-prompt loop with no clue which secret is wanted.
-  "auth.adminTokenPrompt": "OpenCodex ADMIN token — print it on the proxy machine with: ocx host token\n\nThis is the management credential. A data-plane API key (the one from `ocx host enable --new-key`, sent by Codex/Claude Code with model requests) will NOT work here — the server rejects data-plane credentials for /api/*.",
 
   "dash.stopFailedTitle": "Could not stop the proxy",
 
@@ -473,13 +472,10 @@ export const M3_EN = {
   "network.changeFailed": "Could not change network access",
   "network.urls": "Open from another device",
   "network.keyShownOnce": "Data-plane key — shown once, store it now",
-  "network.adminToken": "Admin token",
-  "network.adminTokenHint": "What the remote dashboard and API ask for. Treat it like a password.",
   "network.copy": "Copy",
   "network.copied": "Copied",
   "network.reveal": "Reveal",
   "network.hide": "Hide",
-  "network.tokenUnavailable": "No admin token exists yet — it is created when the proxy first starts.",
   "network.customKeyTitle": "Custom key",
   "network.customKeyHint": "Choose your own key value (12+ characters, no spaces). It is stored in PLAINTEXT in config.json and included in exports — never reuse a password you use anywhere else.",
   "network.customKeyPlaceholder": "your-memorable-key-value",
@@ -652,9 +648,6 @@ export const M3_EN = {
   // asking anything.
   "prompt.aliasTitle": "Set a display name",
   "prompt.aliasAction": "Save",
-  "auth.adminTokenTitle": "Admin token needed",
-  "auth.adminTokenLabel": "Admin token",
-  "auth.adminTokenAction": "Use this token",
 
   // ---- app-bar account switcher ----
   "switcher.title": "Codex accounts",

@@ -52,12 +52,12 @@ describe("stopProxyGracefully", () => {
     expect(calls).toEqual([{ url: "http://127.0.0.1:10123/api/stop", method: "POST" }]);
   });
 
-  test("sends the management token instead of the data token", async () => {
-    let headers: Record<string, string> | undefined;
+  test("sends no management credential", async () => {
+    let headers: Headers | undefined;
     await stopProxyGracefully(1, {
       readRuntime: () => ({ port: 10100 }),
       fetchFn: (async (_url: string | URL | Request, init?: RequestInit) => {
-        headers = init?.headers as Record<string, string>;
+        headers = new Headers(init?.headers);
         return okResponse();
       }) as typeof fetch,
       waitExit: () => true,
@@ -67,7 +67,7 @@ describe("stopProxyGracefully", () => {
       },
     });
 
-    expect(headers?.["x-opencodex-api-key"]).toBe("admin-secret");
+    expect(headers?.get("x-opencodex-api-key")).toBeNull();
   });
 
   test("returns false when no runtime port is recorded (caller falls back to killProxy)", async () => {

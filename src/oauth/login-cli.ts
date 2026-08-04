@@ -5,14 +5,10 @@ import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
 import { isPublicOAuthProvider, listOAuthProviders, runLogin } from "./index";
 import { KEY_LOGIN_PROVIDERS, isKeyLoginProvider, validateApiKey, type KeyLoginProvider } from "./key-providers";
 import type { OcxProviderConfig } from "../types";
-import { configuredAdminToken } from "../lib/admin-secrets";
 import { codexAccountNamespaceProviderCollisionError } from "../codex/account-namespace-match";
 
 export function runningProxyUpdateHeaders(): Headers {
-  const headers = new Headers({ "Content-Type": "application/json" });
-  const adminToken = configuredAdminToken();
-  if (adminToken) headers.set("X-OpenCodex-API-Key", adminToken);
-  return headers;
+  return new Headers({ "Content-Type": "application/json", Accept: "application/json" });
 }
 
 /** Push the new provider into a running proxy's live config so it routes without a restart. */

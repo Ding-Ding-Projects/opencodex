@@ -10,7 +10,6 @@
  * - 장점, 단점 및 영향: 동작 일관성이 높아지는 대신 live 관리 명령은 실행 중인 proxy가 필요하다.
  */
 import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
-import { runningProxyUpdateHeaders } from "../oauth/login-cli";
 
 export type CliStdin = NodeJS.ReadableStream & { isTTY?: boolean; readableEnded?: boolean };
 
@@ -64,7 +63,7 @@ export async function runtimeRequest<T = unknown>(
   deps: RuntimeApiDeps = {},
 ): Promise<T> {
   const baseUrl = await runtimeBaseUrl(deps);
-  const headers = runningProxyUpdateHeaders();
+  const headers = new Headers({ Accept: "application/json" });
   for (const [key, value] of new Headers(init.headers).entries()) headers.set(key, value);
   const fetchImpl = deps.fetchImpl ?? fetch;
   let response: Response;

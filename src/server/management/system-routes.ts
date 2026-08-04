@@ -2,10 +2,8 @@
  * /api/system/* — service-process runtime/memory introspection (#314 WP3)
  * and the memory-card drain-and-restart action (#563).
  *
- * Rides the standard management gate: every /api/* request already passed
- * the independent management-auth gate + the origin check before dispatch, so these
- * routes add no auth of their own. NEVER expose this data on the
- * unauthenticated /healthz surface.
+ * Rides the open management plane and the origin check before dispatch. NEVER expose this data on
+ * the unauthenticated /healthz surface.
  *
  * The payload is scalar-only (numbers, enum strings, booleans): no paths, no
  * tokens, no account identifiers. `external` and `arrayBuffers` keep Windows

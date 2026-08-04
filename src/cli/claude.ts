@@ -14,7 +14,6 @@ import { refreshGatewayModelCacheFromProxy } from "../claude/gateway-cache";
 import { commandInvocation } from "../lib/win-exec";
 import { findLiveProxy } from "../server/proxy-liveness";
 import type { OcxConfig } from "../types";
-import { configuredAdminToken } from "../lib/admin-secrets";
 import { PROXY_MARKER, ownAdmissionTokens, defaultAuthDetectDeps, detectClaudeAuth, type AuthDetectDeps } from "../claude/auth-detect";
 import { resolveClaudeAuthMode } from "../claude/auth-mode";
 
@@ -149,17 +148,14 @@ export function buildClaudeEnv(
 }
 
 /**
- * Context-window map from the RUNNING proxy's management API (warm TTL cache; the
- * daemon registers every selector form — audit R3#1). 3s bound + management auth header.
+ * Context-window map from the RUNNING proxy's open management API (warm TTL cache; the
+ * daemon registers every selector form — audit R3#1). 3s bound.
  * (no [1m] marking, conservative).
  */
 export async function fetchClaudeContextWindows(config: OcxConfig, port: number, timeoutMs = 3_000): Promise<Record<string, number>> {
   try {
-    const headers = new Headers();
-    const token = configuredAdminToken();
-    if (token) headers.set("x-opencodex-api-key", token);
     const res = await fetch(`http://127.0.0.1:${port}/api/claude-code`, {
-      headers,
+      headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return {};

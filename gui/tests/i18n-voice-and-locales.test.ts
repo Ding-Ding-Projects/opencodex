@@ -78,7 +78,6 @@ describe("baseline locales", () => {
     // would make the instruction unusable.
     expect(yue["terminal.fullScreenWarn"]).toContain("--help");
     expect(yue["launch.installRestart"]).toContain("PATH");
-    expect(yue["auth.adminTokenPrompt"]).toContain("ocx host token");
   });
 });
 

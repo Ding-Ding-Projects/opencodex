@@ -434,7 +434,7 @@ ocx host disable
 | `status` | Bind address, whether other devices can reach it, whether a credential is configured, and the URLs to open. |
 | `enable` | Bind to the network. Requires `--yes` **and** an existing data-plane credential (or `--new-key` / `--key` to create one in the same command). |
 | `disable` | Return `hostname` to `127.0.0.1` (this machine only). |
-| `token` | Print the **admin** token the remote dashboard and `/api/*` ask for. The bare token goes to stdout; warnings go to stderr. |
+| `token` | Legacy no-op reporting that the dashboard and `/api/*` no longer use an admin token. |
 
 | Flag | Meaning |
 | --- | --- |
@@ -446,18 +446,13 @@ ocx host disable
 
 Either way a restart applies the change: `ocx stop && ocx start`.
 
-`ocx host token` prints the credential for the **management** surface, which is deliberately not the
-data-plane key — see [Two credentials, on purpose](/reference/configuration/#two-credentials-on-purpose).
-It resolves `OPENCODEX_ADMIN_AUTH_TOKEN` first, then `~/.opencodex/admin-api-token` (generated the
-first time the proxy starts), then verifies that value against the running proxy. A proxy started
-elsewhere — as a service, in a container, or from another shell with its own
-`OPENCODEX_ADMIN_AUTH_TOKEN` — enforces a secret this command cannot read, so a rejected or
-unverifiable token is reported on stderr instead of being printed as though it worked. With
-`--json`, `verified` is `null` when nothing answered, distinct from `false` when the proxy said no.
+`ocx host token` is retained only as a compatibility command. It prints no secret and reports that
+the management plane is open. Configure the data-plane key before exposing the proxy and use an
+external authenticated boundary for remote management.
 
 :::caution[Trusted networks only]
 `enable` binds to your local network. It does not open a firewall port, forward anything, or expose
-the proxy to the internet — and there is no TLS, so both tokens cross the network in cleartext.
+the proxy to the internet — and there is no TLS, so the data-plane key crosses the network in cleartext.
 Anyone who can reach the port and holds the key can drive the proxy and every provider account
 behind it.
 :::

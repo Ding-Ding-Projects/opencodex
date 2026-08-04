@@ -391,21 +391,6 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
     },
   },
 
-  "network.adminTokenHint": {
-    cat: "security",
-    en: {
-      1: "The credential the remote dashboard and API require. Treat it as a password.",
-      2: "This is what the remote dashboard and API ask for. Treat it like a password.",
-      4: "The remote dashboard and API both ask for this one. Treat it exactly like a password.",
-      5: "This is the thing the remote dashboard and API want before they let anyone in. Treat it exactly like a password — because that is what it is.",
-    },
-    yue: {
-      1: "遠端控制台同 API 會要求呢個。請當佢係密碼咁處理。",
-      2: "遠端控制台同 API 就係要呢個。當佢係密碼咁睇。",
-      4: "遠端控制台同 API 兩邊都係要呢個。當佢係一條密碼咁處理。",
-      5: "遠端控制台同 API 放人入嚟之前就係要呢個。當佢係密碼咁處理 —— 因為佢本身就係密碼。",
-    },
-  },
 
   // The fact these five levels state changed with the behaviour: pairing now
   // saves a data-plane key in this browser, so a variant still promising "never

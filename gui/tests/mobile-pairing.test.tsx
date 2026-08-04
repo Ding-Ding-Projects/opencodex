@@ -7,8 +7,8 @@
  * 1. **The token leaves the URL before anything else happens.** A URL is the
  *    part that gets screenshotted, shared and restored by the browser on next
  *    launch. A live credential must not survive in it.
- * 2. **The key IS written to localStorage**, which `gui/src/api.ts` forbids for
- *    the admin token in as many words. Pairing mints a data-plane key, not a
+ * 2. **The key IS written to localStorage**, which is appropriate for a
+ *    device-scoped data-plane key. Pairing mints a data-plane key, not a
  *    management one, and re-scanning a QR on every visit is what made this
  *    screen unused. If a refactor ever "restores consistency" with api.ts, the
  *    reload case below fails and says why.
@@ -50,8 +50,8 @@ function json(body: unknown, status = 200): Response {
 
 /**
  * Stands in for the proxy. Only the pairing claim is scripted in detail; the
- * management reads answer 401 exactly as a real published proxy does to a phone
- * holding a data-plane key, which is the condition the screen has to survive.
+ * management reads answer successfully because the management plane no longer
+ * has an admin-token gate (it is intentionally open now).
  */
 function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = String(input instanceof Request ? input.url : input);
@@ -66,8 +66,8 @@ function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> 
     if (chatStatus === 401) return Promise.resolve(json({ error: "opencodex API key required" }, 401));
     return Promise.resolve(new Response("data: [DONE]\n\n", { status: 200 }));
   }
-  // Management routes: a paired phone does not hold the admin token.
-  return Promise.resolve(json({ error: "opencodex admin token required" }, 401));
+  // Management routes are intentionally open.
+  return Promise.resolve(json({}));
 }
 
 function boot(hash: string): void {

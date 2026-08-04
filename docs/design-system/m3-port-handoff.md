@@ -289,13 +289,12 @@ on these features. The user-facing homes are
   Codex account from any page; server refusals surface verbatim.
 - **Remote access & backup screen** (`pages/Network.tsx` + `/api/host*` routes)
   — the GUI face of `ocx host` / `ocx export`: expose/disable with confirm,
-  one-time key display, admin-token reveal, custom user-chosen keys (12+ chars,
+  one-time data-plane key display, custom user-chosen keys (12+ chars,
   plaintext warning), full-state export download, account-change history.
   Routes share `src/lib/host-control.ts` with the CLI so they cannot drift.
-- **Credential model, correctly documented at last**: management (`/api/*`,
-  dashboard) authenticates with the ADMIN token (`ocx host token`); the
-  data-plane key authenticates model traffic. They are deliberately distinct
-  and the server refuses a credential that plays both roles.
+- **Credential model**: management (`/api/*`, dashboard) is intentionally open;
+  the data-plane key authenticates model traffic. Remote deployments need an
+  external authenticated boundary around management routes.
 
 #### Auth roadmap (user-requested three-step authentication)
 
@@ -406,7 +405,4 @@ Add-Codex-Account modal writes those class names by hand.
   `label` is required: `window.prompt()` gave the box no accessible name, and
   inside Electron it does not merely look wrong — `prompt` is unimplemented and
   *throws*. Confirmations and prompts share one queue, so only one modal is ever
-  on screen. `shell/api-token-prompt.tsx` registers this prompt with `api.ts`'s
-  `setTokenRequester()`, which is how a 401 in the desktop shell can ask for an
-  admin token at all; `api.ts` keeps its `window.prompt` fallback in a try/catch
-  for anything that has not registered one.
+  on screen. Management requests no longer open a credential prompt.
