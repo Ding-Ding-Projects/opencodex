@@ -11,7 +11,6 @@ import { removeTempDir } from "./helpers/temp-dir";
 
 const previousHome = process.env.OPENCODEX_HOME;
 const previousDataToken = process.env.OPENCODEX_API_AUTH_TOKEN;
-const previousAdminToken = process.env.OPENCODEX_ADMIN_AUTH_TOKEN;
 let testHome = "";
 
 function remoteConfig(): OcxConfig {
@@ -34,7 +33,6 @@ beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), "ocx-management-open-"));
   process.env.OPENCODEX_HOME = testHome;
   process.env.OPENCODEX_API_AUTH_TOKEN = "data-secret";
-  process.env.OPENCODEX_ADMIN_AUTH_TOKEN = "admin-secret";
 });
 
 afterEach(() => {
@@ -42,8 +40,6 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousHome;
   if (previousDataToken === undefined) delete process.env.OPENCODEX_API_AUTH_TOKEN;
   else process.env.OPENCODEX_API_AUTH_TOKEN = previousDataToken;
-  if (previousAdminToken === undefined) delete process.env.OPENCODEX_ADMIN_AUTH_TOKEN;
-  else process.env.OPENCODEX_ADMIN_AUTH_TOKEN = previousAdminToken;
   if (testHome) removeTempDir(testHome);
   testHome = "";
 });
@@ -53,7 +49,7 @@ describe("management plane without an admin-token gate", () => {
     saveConfig(remoteConfig());
     const server = startServer(0);
     try {
-      for (const headers of [undefined, { "x-opencodex-api-key": "data-secret" }, { "x-opencodex-api-key": "admin-secret" }]) {
+      for (const headers of [undefined, { "x-opencodex-api-key": "data-secret" }, { "x-opencodex-api-key": "ocx_admin_legacy" }]) {
         const response = await fetch(new URL("/api/config", server.url), headers ? { headers } : undefined);
         expect(response.status).toBe(200);
       }
@@ -73,7 +69,7 @@ describe("management plane without an admin-token gate", () => {
       });
       expect(accepted.status).toBe(200);
       const admin = await fetch(new URL("/v1/models", server.url), {
-        headers: { "x-opencodex-api-key": "admin-secret" },
+        headers: { "x-opencodex-api-key": "ocx_admin_legacy" },
       });
       expect(admin.status).toBe(401);
     } finally {
@@ -82,7 +78,6 @@ describe("management plane without an admin-token gate", () => {
   });
 
   test("the server never creates or reads an admin-token file", async () => {
-    delete process.env.OPENCODEX_ADMIN_AUTH_TOKEN;
     saveConfig(remoteConfig());
     const legacyPath = join(testHome, "admin-api-token");
     writeFileSync(legacyPath, "legacy-token\n", "utf8");
@@ -131,7 +126,7 @@ describe("management plane without an admin-token gate", () => {
 
   test("proxy admission credentials remain blocked from upstream forwarding", () => {
     const config = remoteConfig();
-    for (const value of ["ocx_admin_legacy", "ocx_session_legacy", "ocx_data_legacy", "data-secret", "admin-secret"]) {
+    for (const value of ["ocx_admin_legacy", "ocx_session_legacy", "ocx_data_legacy", "data-secret"]) {
       expect(isProxyAdmissionSecret(value, config)).toBe(true);
     }
   });

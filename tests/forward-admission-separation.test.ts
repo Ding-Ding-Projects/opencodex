@@ -36,7 +36,7 @@ beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), "ocx-forward-admission-"));
   process.env.OPENCODEX_HOME = testHome;
   delete process.env.OPENCODEX_API_AUTH_TOKEN;
-  process.env.OPENCODEX_ADMIN_AUTH_TOKEN = "admin-secret";
+  process.env.OPENCODEX_ADMIN_AUTH_TOKEN = "ocx_admin_legacy";
   upstreamAttempts = [];
   globalThis.fetch = (async (input, init) => {
     const raw = input instanceof Request ? input.url : String(input);
@@ -67,7 +67,7 @@ describe("management credentials never leave data-plane forwarding paths", () =>
     const provider = config.providers.openai!;
     const selected = await resolveFirstUsableOpenAiSidecar(
       [{ providerName: "openai", provider, accountMode: "direct" }],
-      new Headers({ authorization: "Bearer admin-secret" }),
+      new Headers({ authorization: "Bearer ocx_admin_legacy" }),
       config,
     );
     expect(selected).toBeUndefined();
@@ -119,7 +119,7 @@ describe("management credentials never leave data-plane forwarding paths", () =>
           method: "POST",
           headers: {
             "content-type": request.contentType,
-            authorization: "Bearer admin-secret",
+            authorization: "Bearer ocx_admin_legacy",
           },
           body: request.body,
         });
