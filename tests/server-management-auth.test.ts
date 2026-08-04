@@ -333,6 +333,50 @@ describe("management and data-plane credential separation", () => {
     expect(issueGuiSession(new Request("http://localhost:10100/"), config, state)).toBeNull();
   });
 
+  test("GET /api/gui-session renews a local dashboard without an admin token", async () => {
+    // The repair path for a lost session. It sits ahead of the management gate
+    // on purpose: requiring a live session to renew a dead one can never be met.
+    const config = remoteConfig();
+    config.hostname = "127.0.0.1";
+    config.port = 0;
+    saveConfig(config);
+    const server = await startServer(config);
+    try {
+      const renewed = await fetch(new URL("/api/gui-session", server.url), {
+        headers: { Origin: server.url.origin },
+      });
+      expect(renewed.status).toBe(200);
+      expect(renewed.headers.get("cache-control")).toBe("no-store");
+      const session = await renewed.json() as { token: string; csrfToken: string; origin: string };
+      expect(session.token.startsWith("ocx_session_")).toBe(true);
+      expect(session.origin).toBe(server.url.origin);
+
+      // It is a real session, not a placebo: it authenticates /api/*.
+      const read = await fetch(new URL("/api/config", server.url), {
+        headers: {
+          Origin: server.url.origin,
+          "x-opencodex-api-key": session.token,
+          "x-opencodex-gui-origin": server.url.origin,
+        },
+      });
+      expect(read.status).toBe(200);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("a non-loopback dashboard is refused a renewed session", () => {
+    // Renewal grants exactly what serving the page grants and nothing more, so a
+    // remote browser still has to present the management token by hand.
+    const config = remoteConfig();
+    const state = initializeManagementAuthState(config);
+    expect(issueGuiSession(
+      new Request("http://attacker.test/api/gui-session", { headers: { Host: "attacker.test" } }),
+      config,
+      state,
+    )).toBeNull();
+  });
+
   test("a GUI session does not expire on a clock", () => {
     const config = remoteConfig();
     config.hostname = "127.0.0.1";

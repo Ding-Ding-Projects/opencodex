@@ -595,32 +595,28 @@ describe("Responses previous_response_id state", () => {
     }
   });
 
-  test("TTL-prune eviction releases byte accounting", () => {
+  test("byte-cap eviction releases byte accounting", () => {
+    // Eviction is driven by the byte cap rather than by age: entries no longer
+    // expire on a clock, so the accounting proof has to come from the bound that
+    // actually still evicts.
     setResponseStateByteCapForTests(10_000);
     try {
-      const realNow = Date.now;
-      try {
-        // Store an old heavy entry, then advance time past the 1h TTL.
-        Date.now = () => realNow() - 2 * 60 * 60 * 1_000;
-        const oldBody = { model: "cursor/grok-4.5", input: "o".repeat(6_000), store: false };
-        const oldJson = buildResponseJSON([{ type: "text_delta", text: "ok" }, { type: "done" }], "cursor/grok-4.5");
-        rememberResponseState(oldBody, oldJson, { cursor: { conversationId: "conv_old" } }, { force: true });
+      const oldBody = { model: "cursor/grok-4.5", input: "o".repeat(8_000), store: false };
+      const oldJson = buildResponseJSON([{ type: "text_delta", text: "ok" }, { type: "done" }], "cursor/grok-4.5");
+      rememberResponseState(oldBody, oldJson, { cursor: { conversationId: "conv_old" } }, { force: true });
 
-        Date.now = realNow;
-        // TTL prune removes the old entry; if its ~6KB were leaked as phantom debt,
-        // this fresh ~3KB entry would immediately trip the 10KB cap and be evicted.
-        const newBody = { model: "cursor/grok-4.5", input: "n".repeat(3_000), store: false };
-        const newJson = buildResponseJSON([{ type: "text_delta", text: "ok" }, { type: "done" }], "cursor/grok-4.5");
-        rememberResponseState(newBody, newJson, { cursor: { conversationId: "conv_new" } }, { force: true });
+      // Pushes the total past the 10KB cap, evicting the older entry oldest-first.
+      // If its ~8KB were leaked as phantom debt, this fresh entry would trip the
+      // cap on its own and be evicted too, leaving nothing behind.
+      const newBody = { model: "cursor/grok-4.5", input: "n".repeat(3_000), store: false };
+      const newJson = buildResponseJSON([{ type: "text_delta", text: "ok" }, { type: "done" }], "cursor/grok-4.5");
+      rememberResponseState(newBody, newJson, { cursor: { conversationId: "conv_new" } }, { force: true });
 
-        expect(previousResponseProviderState(oldJson.id as string)).toBeUndefined();
-        expect(previousResponseProviderState(newJson.id as string)?.cursor?.conversationId).toBe("conv_new");
-        // Direct accounting proof: only the fresh entry's bytes remain (~3KB < 6KB old entry).
-        expect(getStoredResponseBytesForTests()).toBeLessThan(6_000);
-        expect(getStoredResponseBytesForTests()).toBeGreaterThan(0);
-      } finally {
-        Date.now = realNow;
-      }
+      expect(previousResponseProviderState(oldJson.id as string)).toBeUndefined();
+      expect(previousResponseProviderState(newJson.id as string)?.cursor?.conversationId).toBe("conv_new");
+      // Direct accounting proof: only the fresh entry's bytes remain (~3KB < 8KB old entry).
+      expect(getStoredResponseBytesForTests()).toBeLessThan(8_000);
+      expect(getStoredResponseBytesForTests()).toBeGreaterThan(0);
     } finally {
       setResponseStateByteCapForTests(null);
     }
@@ -772,7 +768,7 @@ describe("Responses previous_response_id state", () => {
     expect(snapshot.version).toBe(2);
   });
 
-  test("stale snapshot entries are pruned on load", async () => {
+  test("an old snapshot entry still continues its thread after a restart", async () => {
     const first = buildResponseJSON([
       { type: "text_delta", text: "old" },
       { type: "done" },
@@ -781,12 +777,14 @@ describe("Responses previous_response_id state", () => {
     await flushResponseState();
     clearResponseStateMemoryForTests();
 
-    // Rewrite the snapshot with an expired createdAt (2h ago > 1h TTL).
+    // Age the snapshot well past the hour that used to evict it on load. That
+    // TTL silently broke continuation for any thread returned to after a break:
+    // the chain was dropped and the turn re-sent as a fresh conversation.
     const path = join(home, "responses-state.json");
     const snapshot = JSON.parse(readFileSync(path, "utf-8")) as {
       states: [string, { createdAt: number }][];
     };
-    for (const [, state] of snapshot.states) state.createdAt = Date.now() - 2 * 60 * 60 * 1_000;
+    for (const [, state] of snapshot.states) state.createdAt = Date.now() - 30 * 24 * 60 * 60 * 1_000;
     writeFileSync(path, JSON.stringify(snapshot));
 
     const second = {
@@ -794,7 +792,8 @@ describe("Responses previous_response_id state", () => {
       previous_response_id: first.id,
       input: "next",
     };
-    expect(expandPreviousResponseInput(second)).toEqual(second);
+    // Expanded, not passed through unchanged: the prior turn is still in the chain.
+    expect(expandPreviousResponseInput(second)).not.toEqual(second);
   });
 
   test("corrupt snapshot file is ignored", () => {

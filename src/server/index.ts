@@ -411,6 +411,39 @@ export function startServer(port?: number) {
         }, 200, req, config);
       }
 
+      // Session renewal, so a lost GUI session repairs itself instead of asking
+      // the user for an admin token they should never need on their own machine.
+      //
+      // The session token ships in the page HTML and there is no other way to
+      // obtain one, so anything that empties the session map — a proxy restart,
+      // most obviously — stranded every open dashboard on 401 until a manual
+      // reload. What the user saw for that was the "Admin token needed" dialog,
+      // which is the wrong ask twice over: the credential is sitting on their
+      // disk, and the app is perfectly capable of proving it may have one.
+      //
+      // It is not an authentication bypass and does not need auth of its own.
+      // `issueGuiSession` re-runs the identical proof it runs when serving the
+      // page: loopback binding, parseable loopback Host, allowed same-origin
+      // request. A caller that can satisfy those can simply GET `/` and read the
+      // meta tags, so this hands out nothing a reload would not. It is placed
+      // ahead of the management gate for exactly that reason — requiring a live
+      // session to renew a dead one is a circular condition that can never be
+      // met.
+      if (url.pathname === "/api/gui-session" && req.method === "GET") {
+        const renewed = issueGuiSession(req, config, managementAuth);
+        if (!renewed) {
+          return withManagementCors(
+            formatErrorResponse(403, "origin_rejected", "GUI sessions are issued only to same-origin loopback pages"),
+            req,
+            config,
+          );
+        }
+        const renewedResponse = withManagementCors(jsonResponse(renewed, 200, req, config), req, config);
+        // Same reason the bootstrap page is no-store: this body is a credential.
+        renewedResponse.headers.set("Cache-Control", "no-store");
+        return renewedResponse;
+      }
+
       if (url.pathname.startsWith("/api/")) {
         // One exemption, and it is deliberate: a phone claiming a QR pairing
         // token has no credential to present, because receiving one is the

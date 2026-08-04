@@ -4,7 +4,6 @@ import { atomicWriteFileAsync, getConfigDir } from "../config";
 import type { OcxProviderContinuationState } from "../types";
 
 const MAX_STORED_RESPONSES = 1_000;
-const RESPONSE_TTL_MS = 60 * 60 * 1_000;
 const SNAPSHOT_DEBOUNCE_MS = 2_000;
 /** In-memory high-water byte cap across all entries. Forced store:false retention (kiro/cursor
  * continuation chains) stores the full expanded input each turn — ~quadratic bytes per chain —
@@ -316,10 +315,16 @@ function inputItems(input: unknown): unknown[] {
   return [input];
 }
 
-function pruneResponses(at = now()): void {
-  for (const [id, state] of states) {
-    if (at - state.createdAt > RESPONSE_TTL_MS) deleteEntry(id);
-  }
+/**
+ * Bounded by size, not by age.
+ *
+ * A one-hour TTL used to run first here, which broke `previous_response_id`
+ * continuation for any thread a user came back to after lunch: the chain was
+ * gone and the turn re-sent as a fresh conversation. Age was never a good proxy
+ * for "nobody wants this" — the count and byte caps below are, and they bound
+ * the map on their own, oldest-first.
+ */
+function pruneResponses(_at = now()): void {
   while (states.size > MAX_STORED_RESPONSES) {
     const oldest = states.keys().next().value;
     if (!oldest) break;

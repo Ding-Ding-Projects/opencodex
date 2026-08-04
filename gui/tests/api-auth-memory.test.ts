@@ -85,6 +85,86 @@ test("prompted API tokens stay memory-only and are not written to sessionStorage
   expect(sessionStorage.length).toBe(0);
 });
 
+test("a lapsed session renews itself silently, without ever asking for a token", async () => {
+  // The failure this pins: the session token ships only in the page HTML, so a
+  // proxy restart stranded every open dashboard on 401 and raised the admin-token
+  // dialog. On a local machine that ask is wrong -- the app can prove same-origin
+  // loopback and mint its own session, exactly as reloading the page would.
+  let promptCalls = 0;
+  let requesterCalls = 0;
+  window.prompt = () => { promptCalls += 1; return "should-never-be-asked"; };
+  setTokenRequester(async () => { requesterCalls += 1; return "should-never-be-asked"; });
+
+  let renewals = 0;
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("/api/gui-session")) {
+      renewals += 1;
+      return new Response(JSON.stringify({
+        token: "ocx_session_renewed",
+        csrfToken: "csrf-renewed",
+        origin: "http://localhost",
+      }), { status: 200 });
+    }
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (headers.get("X-OpenCodex-API-Key") === "ocx_session_renewed") return new Response("{}", { status: 200 });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(renewals).toBe(1);
+  // The whole point: no dialog, by either route.
+  expect(promptCalls).toBe(0);
+  expect(requesterCalls).toBe(0);
+  // Renewed sessions are credentials too, so they stay out of web storage.
+  expect(sessionStorage.length).toBe(0);
+});
+
+test("a session bound to another origin is refused rather than adopted", async () => {
+  // Renewal must not attach this page to a session it cannot legitimately hold,
+  // so a mismatched origin falls through to the prompt instead of being trusted.
+  let asked = 0;
+  setTokenRequester(async () => { asked += 1; return "typed-by-hand"; });
+
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("/api/gui-session")) {
+      return new Response(JSON.stringify({
+        token: "ocx_session_elsewhere",
+        csrfToken: "csrf",
+        origin: "http://evil.example",
+      }), { status: 200 });
+    }
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (headers.get("X-OpenCodex-API-Key") === "typed-by-hand") return new Response("{}", { status: 200 });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(asked).toBe(1);
+});
+
+test("a failed renewal still falls through to the prompt", async () => {
+  // Renewal is a repair, not a gate. When it cannot succeed -- a remote
+  // dashboard, a non-loopback binding -- the manual route must still be there.
+  let asked = 0;
+  setTokenRequester(async () => { asked += 1; return "typed-by-hand"; });
+
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("/api/gui-session")) return new Response("forbidden", { status: 403 });
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (headers.get("X-OpenCodex-API-Key") === "typed-by-hand") return new Response("{}", { status: 200 });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(asked).toBe(1);
+});
+
 test("a registered requester is used in preference to window.prompt", async () => {
   // The desktop shell is the whole point of the registry. Electron does not
   // implement `window.prompt` — it throws — so before the React tree registered
@@ -176,7 +256,14 @@ test("concurrent 401s share one token prompt and all retry with the stored token
   // and must reuse the in-memory token from an earlier request instead of prompting again.
   let promptCalls = 0;
   const release401: Array<() => void> = [];
-  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    // This test is about the prompt path, so renewal is refused: a page that
+    // cannot mint its own session is exactly when the dialog is the right ask.
+    // It must answer rather than hang -- an unanswered renewal would block every
+    // 401 behind it, which is the deadlock and not the behaviour under test.
+    if (String(input instanceof Request ? input.url : input).includes("/api/gui-session")) {
+      return new Response("forbidden", { status: 403 });
+    }
     const headers = new Headers(init?.headers);
     if (headers.get("X-OpenCodex-API-Key") === "shared-token") {
       return new Response("{}", { status: 200 });
@@ -294,7 +381,11 @@ test("stale concurrent 401 does not clear a token refreshed by another request",
 test("canceling the token prompt once does not reopen it for the rest of the 401 fan-out", async () => {
   let promptCalls = 0;
   const release401: Array<() => void> = [];
-  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Renewal refused, so the cancel latch is what is actually under test here.
+    if (String(input instanceof Request ? input.url : input).includes("/api/gui-session")) {
+      return new Response("forbidden", { status: 403 });
+    }
     const headers = new Headers(init?.headers);
     if (headers.get("X-OpenCodex-API-Key")) {
       return new Response("{}", { status: 200 });

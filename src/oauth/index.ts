@@ -261,6 +261,12 @@ async function resolveAccessSnapshotForAccount(
   if (!cred) throw new OAuthLoginRequiredError(provider);
   const current = accessSnapshot(provider, accountId, cred);
   if (rejectedGeneration !== undefined && current.generation !== rejectedGeneration) return current;
+  // This is not merely a "discard when stale" check — it is the ENTRY POINT to
+  // refresh. Returning early here for a live credential is what makes refresh
+  // happen at all for an aged one, so removing the clock does not make refresh
+  // reactive, it disables refresh (and the lock/CAS/adoption path behind it)
+  // entirely. Reactive recovery is additive on top of this, via the upstream-401
+  // replay in `forceRefreshOAuthAccessSnapshot`.
   if (rejectedGeneration === undefined && cred.expires > Date.now() + REFRESH_SKEW_MS) return current;
 
   const key = `${provider}\u0000${accountId}`;
@@ -307,13 +313,29 @@ export async function getAccessSnapshotForAccount(provider: string, accountId: s
   return resolveAccessSnapshotForAccount(provider, accountId);
 }
 
-/** Providers whose upstream-401 replay path may force a snapshot refresh. */
-const FORCE_REFRESH_PROVIDERS = new Set(["xai", "github-copilot", "kiro"]);
-
+/**
+ * Force a refresh because upstream rejected the token we sent.
+ *
+ * This used to be gated to an allowlist of three providers (`xai`,
+ * `github-copilot`, `kiro`); everything else got an `UnsupportedOAuthProvider`
+ * throw and the 401 went straight to the client. That left the local expiry
+ * clock as the *only* refresh trigger for Anthropic, ChatGPT/Codex and
+ * Antigravity — so any token the provider invalidated early (a revoked grant, a
+ * server-side rotation, a clock skew) was unrecoverable until the local clock
+ * happened to agree.
+ *
+ * Any provider defined in `OAUTH_PROVIDERS` knows how to refresh itself, so the
+ * allowlist was narrower than the capability. Now the rule is the capability:
+ * a rejected token is refreshed and replayed once for every OAuth provider.
+ * `resolveAccessSnapshotForAccount` still single-flights per (provider,
+ * account), so a fan-out of 401s produces one refresh rather than a storm, and
+ * the generation check still makes the replay a no-op when another caller
+ * already rotated the credential out from under this one.
+ */
 export async function forceRefreshOAuthAccessSnapshot(
   rejected: OAuthAccessSnapshot,
 ): Promise<OAuthAccessSnapshot> {
-  if (!FORCE_REFRESH_PROVIDERS.has(rejected.provider)) throw new UnsupportedOAuthProviderError(rejected.provider);
+  if (!OAUTH_PROVIDERS[rejected.provider]) throw new UnsupportedOAuthProviderError(rejected.provider);
   return resolveAccessSnapshotForAccount(rejected.provider, rejected.accountId, rejected.generation);
 }
 

@@ -1311,8 +1311,11 @@ export async function handleResponses(
 
   // OAuth providers: swap in a fresh access token (auto-refreshed) as the Bearer key, so the
   // existing openai-chat / anthropic adapters authenticate with no change.
-  const isOAuth401ReplayProvider = (route.providerName === "xai" || route.providerName === "github-copilot" || route.providerName === "kiro")
-    && route.provider.authMode === "oauth";
+  // Every OAuth provider replays a rejected token, not a hand-picked three. The
+  // local expiry clock no longer discards credentials preemptively, so upstream's
+  // own 401 is what triggers a refresh — and that has to work for whichever
+  // provider is authenticating, or its accounts simply break on rejection.
+  const isOAuth401ReplayProvider = route.provider.authMode === "oauth";
   let sentOAuthSnapshot: OAuthAccessSnapshot | undefined;
   let oauthPoolAccountId: string | null = null;
   let oauthPoolFailovers = 0;

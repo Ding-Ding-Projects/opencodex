@@ -323,7 +323,16 @@ export function captureAgentLineage(
 // Session registry
 // ---------------------------------------------------------------------------
 
-const SESSION_IDLE_TTL_MS = 30 * 60_000;
+/**
+ * Sessions are not dropped on a clock.
+ *
+ * A 30-minute idle TTL used to evict them, which silently reset the depth and
+ * spawn-budget bookkeeping under any conversation that paused longer than that —
+ * a resumed turn came back looking like a brand-new root agent. `MAX_SESSIONS`
+ * below is the real bound and does the job without guessing when a conversation
+ * is over: the registry is in-memory and evicts least-recently-used, so it stays
+ * bounded whether or not anything ages out.
+ */
 const MAX_SESSIONS = 200;
 /** Bound on distinct node keys tracked per session, so a hostile/looping client cannot grow the map. */
 const MAX_NODES_PER_SESSION = 4096;
@@ -351,12 +360,6 @@ export function __nestedSubagentSessionCountForTests(): number {
   return sessions.size;
 }
 
-function pruneExpiredSessions(now: number): void {
-  for (const [key, state] of sessions) {
-    if (now - state.lastUsedAt > SESSION_IDLE_TTL_MS) sessions.delete(key);
-  }
-}
-
 function pruneLruSessions(): void {
   while (sessions.size > MAX_SESSIONS) {
     let oldestKey: string | null = null;
@@ -373,7 +376,6 @@ function pruneLruSessions(): void {
 }
 
 function sessionFor(key: string, now: number): SessionState {
-  pruneExpiredSessions(now);
   const existing = sessions.get(key);
   if (existing) {
     existing.lastUsedAt = now;

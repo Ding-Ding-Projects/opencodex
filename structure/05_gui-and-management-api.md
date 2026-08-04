@@ -34,9 +34,16 @@ exact request origin. A non-loopback dashboard uses the management token flow in
 issues an in-memory session that lives as long as the process, capped at 128 live sessions and evicted
 least-recently-used. The session is bound to the
 exact protocol, host, and port; state-changing requests additionally require the session CSRF token.
-There is no session TTL: the token is delivered in the page HTML with no refresh endpoint, so a clock
-expiry could only be recovered from by a full reload and made an open dashboard start answering 401 to
-every `/api/*` call. The map is in-memory, so a restart still invalidates every session.
+There is no session TTL: a clock expiry made an open dashboard start answering 401 to every `/api/*`
+call. The map is in-memory, so a restart still invalidates every session.
+
+`GET /api/gui-session` renews a session so a dashboard repairs itself instead of asking for an admin
+token the user should never need locally. It runs ahead of the management gate, because requiring a
+live session to renew a dead one can never be satisfied, and it is not an authentication bypass: it
+re-runs the same loopback binding, loopback `Host`, and allowed-origin proof used when serving the
+page, so it grants nothing a reload would not. The dashboard calls it automatically on a 401, sharing
+one renewal across a fan-out and latching a refusal so a non-loopback page asks once rather than per
+request; only an unrenewable session reaches the admin-token prompt.
 The dashboard never attaches its management session to `/v1/*` requests, and pages containing a
 session bootstrap are served with `Cache-Control: no-store`.
 

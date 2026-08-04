@@ -26,6 +26,15 @@ function needsApiAuth(input: RequestInfo | URL): boolean {
 /** Legacy sessionStorage key from pre-memory auth — wiped once on install, never read. */
 const LEGACY_TOKEN_KEY = "opencodex-api-token";
 
+/**
+ * The unwrapped `fetch`, captured at install.
+ *
+ * Session renewal must not go through the wrapper: `/api/gui-session` is an
+ * `/api/` path, so a wrapped call would attach the dead token, take its own 401
+ * and try to renew again — recursion, on the exact path whose job is to break it.
+ */
+let originalFetchRef: typeof window.fetch | null = null;
+
 /** In-memory only — never write tokens to web storage (XSS can read sessionStorage/localStorage). */
 let memoryToken: string | null = null;
 let memoryCsrfToken: string | null = null;
@@ -164,6 +173,81 @@ async function askForToken(): Promise<string | null> {
 }
 
 /**
+ * Silently mint a new GUI session, the way loading the page would.
+ *
+ * The session token arrives in the page HTML and nothing renewed it, so any
+ * event that emptied the server's session map — a proxy restart, most obviously
+ * — stranded the open dashboard on 401 forever and raised the "Admin token
+ * needed" dialog. That ask is wrong on a local machine: the credential is on
+ * disk, the app can prove same-origin loopback, and a user should never be
+ * asked to paste a token to repair something a reload would have fixed.
+ *
+ * `/api/gui-session` re-runs the same proof the server runs when serving the
+ * page, so this grants nothing that reloading would not. Failure is a `null`,
+ * never a throw: a dead renewal must fall through to the existing prompt path
+ * rather than break the caller that triggered it.
+ */
+let renewalInFlight: Promise<string | null> | null = null;
+/**
+ * Set once the server has said this page cannot hold a session (a remote
+ * dashboard, a non-loopback binding). That answer will not change for this page
+ * lifetime, so without latching it every subsequent 401 in a fan-out would fire
+ * another doomed renewal — turning one refused request into a request storm.
+ */
+let renewalRefused = false;
+
+function renewSession(): Promise<string | null> {
+  if (renewalRefused) return Promise.resolve(null);
+  // Concurrent 401s share one renewal, exactly as they share one prompt.
+  if (renewalInFlight) return renewalInFlight;
+  renewalInFlight = requestSession().finally(() => { renewalInFlight = null; });
+  return renewalInFlight;
+}
+
+async function requestSession(): Promise<string | null> {
+  try {
+    const response = await originalFetchRef?.("/api/gui-session", {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    if (!response) return null;
+    // 403 is the server saying this page may never hold a session. Latch it so a
+    // fan-out does not re-ask once per request.
+    if (response.status === 403) {
+      renewalRefused = true;
+      return null;
+    }
+    if (!response.ok) return null;
+    const session = await response.json() as { token?: unknown; csrfToken?: unknown; origin?: unknown };
+    const { token, csrfToken, origin } = session;
+    // A malformed body is not a transient failure — the endpoint answered, it
+    // just cannot give this page a session. Latch it like a refusal.
+    if (typeof token !== "string" || !token.startsWith("ocx_session_")) {
+      renewalRefused = true;
+      return null;
+    }
+    if (typeof csrfToken !== "string" || !csrfToken) {
+      renewalRefused = true;
+      return null;
+    }
+    // Never adopt a session bound to some other origin — that would attach this
+    // page's requests to a session it cannot legitimately hold.
+    if (origin !== window.location.origin) {
+      renewalRefused = true;
+      return null;
+    }
+    memoryToken = token;
+    memoryCsrfToken = csrfToken;
+    memorySessionOrigin = origin;
+    return token;
+  } catch {
+    // Offline, proxy down, malformed body. Nothing renewed.
+    return null;
+  }
+}
+
+/**
  * Resolve a token after a 401. Concurrent callers share one in-flight resolution so a dashboard
  * fan-out does not open one prompt per /api request (#647). Re-reads memoryToken before
  * prompting so waiters that wake after another request already stored a token do not re-prompt.
@@ -172,13 +256,24 @@ async function resolveTokenAfter401(failedToken: string | null): Promise<string 
   // Checked before `promptCancelled` so a suppressed surface never latches the
   // cancel flag on behalf of the whole page load.
   if (promptSuppressed) return null;
-  if (promptCancelled) return null;
+  // `promptCancelled` latches the *prompt*, not repair. A user who dismissed the
+  // dialog once still gets a silently renewed session — otherwise one cancel
+  // permanently disables the automatic path, and the page stays broken for a
+  // reason the user has no way to connect to the click they made.
+  if (promptCancelled) return renewSession();
   if (promptInFlight) return promptInFlight;
 
   promptInFlight = (async () => {
     if (promptCancelled) return null;
     const current = readToken();
     if (current && current !== failedToken) return current;
+
+    // Repair before asking. This is the ordinary case on a local machine — the
+    // session lapsed with the proxy, not the user's authority — so it must be
+    // tried first, and silently. Only a genuinely unrenewable session (a remote
+    // dashboard, a non-loopback binding) reaches the prompt below.
+    const renewed = await renewSession();
+    if (renewed) return renewed;
 
     const prompted = await askForToken();
     if (prompted) {
@@ -201,6 +296,7 @@ export function installApiAuthFetch(): void {
   clearLegacySessionToken();
   loadInjectedSession();
   const originalFetch = window.fetch.bind(window);
+  originalFetchRef = originalFetch;
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     if (!needsApiAuth(input)) return originalFetch(input, init);
 
@@ -233,6 +329,9 @@ export function installApiAuthFetch(): void {
 /** Test-only: allow a fresh `installApiAuthFetch()` in the same module instance. */
 export function resetApiAuthFetchForTests(): void {
   installed = false;
+  originalFetchRef = null;
+  renewalInFlight = null;
+  renewalRefused = false;
   memoryToken = null;
   memoryCsrfToken = null;
   memorySessionOrigin = null;
