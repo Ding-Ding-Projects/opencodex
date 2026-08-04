@@ -87,62 +87,6 @@ export interface Tab<P extends string = string> {
   style?: TabStyle;
 }
 
-/**
- * A group header's decoration, over and above the typography a tab can carry.
- *
- * Separate from `TabStyle` rather than bolted onto it because a tab has no
- * border, no corner radius and no collapsed state — folding these in would give
- * every tab six properties nothing renders, and a stored value nothing renders
- * is a value that quietly rots until somebody wires it up wrong.
- *
- * Every field is decoration in the strict sense: none of it replaces the group's
- * accessible name or its expanded/collapsed state, both of which come from
- * `name` and `collapsed` and are announced whatever this says. A group whose
- * icon is an emoji and whose label colour matches its background is still read
- * correctly aloud — which is the whole reason the two are kept apart.
- */
-export interface GroupDecor {
-  /** Emoji or short glyph shown before the name. Never the accessible name. */
-  icon?: string;
-  /** Short user-authored badge shown after the name. */
-  badge?: string;
-  /** Header label colour. */
-  text?: string;
-  /** Highlight drawn behind the label text, as distinct from the header fill. */
-  highlight?: string;
-  /** Header fill. */
-  bg?: string;
-  /** Header fill while collapsed, so the two states can be told apart at a glance. */
-  collapsedBg?: string;
-  /** Header fill on hover. */
-  hoverBg?: string;
-  /** Focus ring colour, so a custom fill cannot swallow the focus indicator. */
-  focusRing?: string;
-  border?: string;
-  /** 0–4px. 0 means no border at all rather than a hairline nobody can see. */
-  borderWidth?: number;
-  borderStyle?: "solid" | "dashed" | "dotted";
-  /** Corner radius, 0–24px. */
-  radius?: number;
-  /** Space between the header and its members, 0–16px. */
-  gap?: number;
-  /** Header horizontal padding, 0–20px. */
-  pad?: number;
-  /** What divides this group's run from what precedes it. */
-  separator?: "none" | "line" | "space";
-  font?: string;
-  /** Label size in px, 9–24. */
-  size?: number;
-  /** Label weight, 300–700. */
-  weight?: number;
-  italic?: boolean;
-  underline?: boolean;
-  /** Renders the name in small caps. The stored `name` is never rewritten. */
-  caps?: boolean;
-  /** Letter spacing in px, -1–4. */
-  letterSpacing?: number;
-}
-
 export interface TabGroup {
   id: string;
   name: string;
@@ -154,8 +98,6 @@ export interface TabGroup {
   collapsed: boolean;
   /** Typography/badge overrides for the group header, same shape as a tab's. */
   style?: TabStyle;
-  /** Border, shape, spacing, separator and per-state decoration. */
-  decor?: GroupDecor;
 }
 
 export interface TabsState<P extends string = string> {
@@ -182,112 +124,6 @@ export function readTabStyle(raw: unknown): TabStyle | undefined {
   }
   if (typeof input.badge === "string" && input.badge.trim()) style.badge = input.badge.trim().slice(0, 12);
   return Object.keys(style).length ? style : undefined;
-}
-
-/** Clamp a stored number into the range the renderer can actually draw. */
-function readNumber(value: unknown, min: number, max: number): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.min(max, Math.max(min, value));
-}
-
-/** Accept a stored string only when it is one of the values the renderer knows. */
-function readEnum<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
-  return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
-}
-
-const BORDER_STYLES = ["solid", "dashed", "dotted"] as const;
-const SEPARATORS = ["none", "line", "space"] as const;
-
-/**
- * Drop anything a group header cannot actually render.
- *
- * Same contract as `readTabStyle` and for the same reason: this runs on data
- * that came back out of `localStorage`, where a hand-edited or half-migrated
- * value is entirely possible, and a `radius` of `"12px; content: ..."` reaching
- * a style attribute is not a rendering bug. Numbers are clamped rather than
- * rejected so a value written by a future version with a wider slider degrades
- * to the nearest thing this one can draw instead of vanishing.
- */
-export function readGroupDecor(raw: unknown): GroupDecor | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const input = raw as Record<string, unknown>;
-  const decor: GroupDecor = {};
-  for (const key of ["text", "highlight", "bg", "collapsedBg", "hoverBg", "focusRing", "border", "font"] as const) {
-    if (typeof input[key] === "string" && input[key]) decor[key] = input[key] as string;
-  }
-  // Capped hard: the icon sits in a fixed-width slot, and a "one emoji" field
-  // pasted full of text would push the group's name out of its own header.
-  if (typeof input.icon === "string" && input.icon.trim()) decor.icon = [...input.icon.trim()].slice(0, 2).join("");
-  if (typeof input.badge === "string" && input.badge.trim()) decor.badge = input.badge.trim().slice(0, 12);
-  const borderWidth = readNumber(input.borderWidth, 0, 4);
-  if (borderWidth != null) decor.borderWidth = borderWidth;
-  const radius = readNumber(input.radius, 0, 24);
-  if (radius != null) decor.radius = radius;
-  const gap = readNumber(input.gap, 0, 16);
-  if (gap != null) decor.gap = gap;
-  const pad = readNumber(input.pad, 0, 20);
-  if (pad != null) decor.pad = pad;
-  const size = readNumber(input.size, 9, 24);
-  if (size != null) decor.size = size;
-  const weight = readNumber(input.weight, 300, 700);
-  if (weight != null) decor.weight = weight;
-  const letterSpacing = readNumber(input.letterSpacing, -1, 4);
-  if (letterSpacing != null) decor.letterSpacing = letterSpacing;
-  const borderStyle = readEnum(input.borderStyle, BORDER_STYLES);
-  if (borderStyle) decor.borderStyle = borderStyle;
-  const separator = readEnum(input.separator, SEPARATORS);
-  if (separator) decor.separator = separator;
-  for (const key of ["italic", "underline", "caps"] as const) {
-    if (input[key] === true) decor[key] = true;
-  }
-  return Object.keys(decor).length ? decor : undefined;
-}
-
-/**
- * A group header's decoration as CSS custom properties.
- *
- * Custom properties rather than resolved declarations because hover, focus and
- * collapsed are *states*, and a state cannot be expressed in an inline style —
- * React would have to re-render the header on mouseenter to fake it, which is
- * both slower and wrong for a user driving the keyboard. The stylesheet reads
- * `--g-hover-bg` in a `:hover` rule; this only says what the value is.
- *
- * Every property falls back inside the stylesheet rather than here, so a group
- * with no decoration emits no properties at all and follows the theme — which
- * keeps following it when the user later changes the theme, as a stored copy of
- * today's default would not.
- */
-export function groupDecorProps(decor: GroupDecor | undefined, accent?: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  // The accent keeps the name the existing group stylesheet already reads, so
-  // the three `color-mix` tints derived from it keep working untouched; the
-  // richer decoration below is layered on as its own `--g-*` namespace.
-  if (accent) out["--m3-group-color"] = accent;
-  if (!decor) return out;
-  const put = (name: string, value: string | number | undefined, unit = "") => {
-    if (value == null || value === "") return;
-    out[name] = `${value}${unit}`;
-  };
-  put("--g-text", decor.text);
-  put("--g-highlight", decor.highlight);
-  put("--g-bg", decor.bg);
-  put("--g-collapsed-bg", decor.collapsedBg);
-  put("--g-hover-bg", decor.hoverBg);
-  put("--g-focus-ring", decor.focusRing);
-  put("--g-border", decor.border);
-  put("--g-border-width", decor.borderWidth, "px");
-  put("--g-border-style", decor.borderStyle);
-  put("--g-radius", decor.radius, "px");
-  put("--g-gap", decor.gap, "px");
-  put("--g-pad", decor.pad, "px");
-  put("--g-font", decor.font);
-  put("--g-size", decor.size, "px");
-  put("--g-weight", decor.weight);
-  put("--g-tracking", decor.letterSpacing, "px");
-  if (decor.italic) out["--g-style"] = "italic";
-  if (decor.underline) out["--g-decoration"] = "underline";
-  if (decor.caps) out["--g-caps"] = "small-caps";
-  return out;
 }
 
 /**
@@ -331,7 +167,6 @@ function readGroups(raw: unknown): TabGroup[] {
       color: typeof row.color === "string" && row.color ? row.color : undefined,
       collapsed: !!row.collapsed,
       style: readTabStyle(row.style),
-      decor: readGroupDecor(row.decor),
     });
   }
   return groups;
@@ -373,22 +208,14 @@ export function reviveTabs<P extends string>(
           }))
       : [];
     if (tabs.length) {
-      // Restored verbatim rather than run through `orderTabs`.
-      //
-      // Every reducer that can disturb the order already re-orders, so a strip
-      // this app wrote is ordered by construction; re-sorting on the way in only
-      // ever changes a strip that arrived some *other* way — a hand-edited
-      // storage entry, or a fixture — and silently rearranging a user's tabs on
-      // startup is a worse failure than briefly drawing them where they were
-      // last seen. The renderer coalesces a group's members itself, so a stored
-      // order that scattered them still draws one header per group.
-      const activeTab = tabs.some(t => t.id === stored?.activeTab)
+      const ordered = orderTabs(tabs);
+      const activeTab = ordered.some(t => t.id === stored?.activeTab)
         ? (stored!.activeTab as string)
-        : tabs[0].id;
+        : ordered[0].id;
       // Groups nobody is in are kept: an emptied group is a container the user
       // made and may be about to refill, and silently deleting it loses a name
       // and a colour they chose.
-      return { tabs, groups, activeTab };
+      return { tabs: ordered, groups, activeTab };
     }
   } catch {
     /* corrupt or unavailable storage falls through to a fresh strip */
@@ -444,17 +271,10 @@ export function adoptPage<P extends string>(state: TabsState<P>, page: P, label?
  * group's slot is decided by its first surviving member, so reordering inside a
  * group never teleports the whole group somewhere else.
  *
- * Pinned tabs are laid out *ahead of* every group run rather than inside one:
- * the pinned region is a fixed row that must stay visible when everything else
- * overflows, and a collapsible header drawn around it could hide the tabs
- * pinning exists to keep on screen.
- *
- * They keep their `groupId` all the same, which is where this departs from a
- * browser. "Pin a whole group" has to be reversible to mean anything, and a pin
- * that erased membership would leave nothing to unpin back into — the group
- * would empty on pin and the tabs would come back loose. So membership is
- * remembered and only the *layout* ignores it; `visibleTabs` correspondingly
- * refuses to hide a pinned member when its group collapses.
+ * Pinned tabs are excluded from grouping in the strip for the same reason a
+ * browser excludes them: the pinned region is a fixed row that must stay visible
+ * when everything else overflows, and a collapsible header inside it could hide
+ * the tabs pinning exists to keep on screen.
  */
 export function orderTabs<P extends string>(tabs: Tab<P>[]): Tab<P>[] {
   const pinned = tabs.filter(t => t.pinned);
@@ -480,16 +300,11 @@ export function orderTabs<P extends string>(tabs: Tab<P>[]): Tab<P>[] {
  * selection out (see `toggleGroupCollapsed`), so by the time this runs the
  * invariant already holds; the guard is here anyway because a strip that hides
  * the page the reader is looking at is worse than a strip with one extra tab.
- *
- * Neither is a pinned member. A pin is a promise that the tab stays on screen,
- * and a collapse that broke it would make the two features quietly incompatible
- * — the user would pin a tab, collapse its group, and watch the pin fail.
  */
 export function visibleTabs<P extends string>(state: TabsState<P>): Tab<P>[] {
   const collapsed = new Set(state.groups.filter(g => g.collapsed).map(g => g.id));
   if (!collapsed.size) return state.tabs;
-  return state.tabs.filter(t =>
-    !t.groupId || !collapsed.has(t.groupId) || t.pinned || t.id === state.activeTab);
+  return state.tabs.filter(t => !t.groupId || !collapsed.has(t.groupId) || t.id === state.activeTab);
 }
 
 /* --------------------------------------------------------------- overflow -- */
@@ -797,20 +612,16 @@ export function duplicateTab<P extends string>(state: TabsState<P>, id: string):
 }
 
 /**
- * Pin or unpin, keeping the tab's group membership either way.
- *
- * Layout already moves a pinned tab ahead of every group run, so it is not
- * drawn inside a collapsible header; what it keeps is the *record* of which
- * group it belongs to, so unpinning returns it to that group rather than
- * dropping it loose. Erasing membership on pin would make "pin this group" a
- * one-way door — the group would empty as it was pinned, and there would be
- * nothing left to unpin back into.
+ * Pin or unpin. Pinning takes the tab out of its group: the pinned region is a
+ * fixed row that must stay visible when everything else overflows, and a member
+ * of a collapsible group cannot promise that.
  */
 export function togglePin<P extends string>(state: TabsState<P>, id: string): TabsState<P> {
   if (!state.tabs.some(t => t.id === id)) return state;
   return {
     ...state,
-    tabs: orderTabs(state.tabs.map(t => (t.id === id ? { ...t, pinned: !t.pinned } : t))),
+    tabs: orderTabs(state.tabs.map(t =>
+      (t.id === id ? { ...t, pinned: !t.pinned, groupId: t.pinned ? t.groupId : undefined } : t))),
   };
 }
 
@@ -818,10 +629,6 @@ export function togglePin<P extends string>(state: TabsState<P>, id: string): Ta
  * Drag reorder. Dropping onto a tab adopts that tab's group, which is how a
  * drag into a group's run is meant to read; dropping outside every group leaves
  * the group behind.
- *
- * A pinned tab keeps its own membership instead of adopting the target's: the
- * pinned region is one contiguous row of tabs from every group at once, so
- * "what you dropped next to" says nothing there about which group you meant.
  */
 export function moveTab<P extends string>(state: TabsState<P>, fromId: string, toId: string): TabsState<P> {
   if (!fromId || fromId === toId) return state;
@@ -831,7 +638,7 @@ export function moveTab<P extends string>(state: TabsState<P>, fromId: string, t
   if (from < 0 || to < 0) return state;
   const [moved] = tabs.splice(from, 1);
   const target = tabs[to > from ? to - 1 : to];
-  tabs.splice(to, 0, { ...moved, groupId: moved.pinned ? moved.groupId : target?.groupId });
+  tabs.splice(to, 0, { ...moved, groupId: moved.pinned ? undefined : target?.groupId });
   return { ...state, tabs: orderTabs(tabs) };
 }
 
@@ -886,7 +693,8 @@ export function createGroup<P extends string>(
   return {
     ...state,
     groups: state.groups.concat([group]),
-    tabs: orderTabs(state.tabs.map(t => (members.has(t.id) ? { ...t, groupId: id } : t))),
+    // Pinned tabs stay out of groups; see `orderTabs`.
+    tabs: orderTabs(state.tabs.map(t => (members.has(t.id) && !t.pinned ? { ...t, groupId: id } : t))),
   };
 }
 
@@ -908,49 +716,6 @@ export function setGroupStyle<P extends string>(state: TabsState<P>, id: string,
 }
 
 /**
- * Merge a decoration patch. `undefined` in the patch clears the property, which
- * `readGroupDecor` then drops entirely — so a cleared property falls back to the
- * theme rather than to a stored copy of what the theme said when it was cleared.
- */
-export function setGroupDecor<P extends string>(state: TabsState<P>, id: string, patch: Partial<GroupDecor>): TabsState<P> {
-  if (!state.groups.some(g => g.id === id)) return state;
-  return {
-    ...state,
-    groups: state.groups.map(g => (g.id === id ? { ...g, decor: readGroupDecor({ ...g.decor, ...patch }) } : g)),
-  };
-}
-
-/**
- * Pin or unpin every member of a group at once.
- *
- * `pinned` is passed rather than toggled, because toggling a half-pinned group
- * member by member would simply swap which half is pinned — which is nobody's
- * intent. The caller reads `groupPinState` to decide which way the one control
- * should go.
- *
- * Membership survives both directions (see `togglePin`), so pinning a group and
- * unpinning it again returns exactly the tabs that were in it.
- */
-export function setGroupPinned<P extends string>(state: TabsState<P>, id: string, pinned: boolean): TabsState<P> {
-  const members = state.tabs.filter(t => t.groupId === id && t.pinned !== pinned);
-  if (!members.length) return state;
-  const ids = new Set(members.map(t => t.id));
-  return {
-    ...state,
-    tabs: orderTabs(state.tabs.map(t => (ids.has(t.id) ? { ...t, pinned } : t))),
-  };
-}
-
-/** Whether a group is entirely pinned, entirely loose, or a mixture of both. */
-export function groupPinState<P extends string>(tabs: Tab<P>[], id: string): "none" | "some" | "all" {
-  const members = tabs.filter(t => t.groupId === id);
-  if (!members.length) return "none";
-  const pinned = members.filter(t => t.pinned).length;
-  if (pinned === 0) return "none";
-  return pinned === members.length ? "all" : "some";
-}
-
-/**
  * Collapse or expand, moving the selection out of a group being collapsed.
  *
  * Without the move, collapsing the group holding the current page would hide the
@@ -963,10 +728,8 @@ export function toggleGroupCollapsed<P extends string>(state: TabsState<P>, id: 
   const groups = state.groups.map(g => (g.id === id ? { ...g, collapsed: !g.collapsed } : g));
   if (group.collapsed) return { ...state, groups };
   const active = state.tabs.find(t => t.id === state.activeTab);
-  // A pinned member stays on the strip through a collapse, so the selection has
-  // nowhere it needs to go — moving it would be the surprise, not the fix.
-  if (!active || active.groupId !== id || active.pinned) return { ...state, groups };
-  const outside = state.tabs.find(t => t.groupId !== id || t.pinned);
+  if (!active || active.groupId !== id) return { ...state, groups };
+  const outside = state.tabs.find(t => t.groupId !== id);
   return { ...state, groups, activeTab: outside ? outside.id : state.activeTab };
 }
 
@@ -1008,7 +771,7 @@ export function moveGroup<P extends string>(state: TabsState<P>, fromId: string,
 /** Move a tab into a group, or out of every group when `groupId` is undefined. */
 export function assignGroup<P extends string>(state: TabsState<P>, tabId: string, groupId?: string): TabsState<P> {
   const tab = state.tabs.find(t => t.id === tabId);
-  if (!tab) return state;
+  if (!tab || tab.pinned) return state;
   if (groupId && !state.groups.some(g => g.id === groupId)) return state;
   if (tab.groupId === groupId) return state;
   return { ...state, tabs: orderTabs(state.tabs.map(t => (t.id === tabId ? { ...t, groupId } : t))) };

@@ -34,10 +34,6 @@ export const PREFS_KEY = "ocx-m3:v1";
 export const ELEMENT_TARGETS = [
   { id: "navRail", tkey: "appearance.elNavRail" },
   { id: "tabStrip", tkey: "appearance.elTabStrip" },
-  // Every group header at once. Per-group decoration lives on the group record
-  // instead (it has to survive being drawn in the search panel too); this is the
-  // surface-wide default those overrides sit on top of.
-  { id: "tabGroup", tkey: "appearance.elTabGroup" },
   { id: "appBar", tkey: "appearance.elAppBar" },
   { id: "card", tkey: "appearance.elCard" },
   { id: "table", tkey: "appearance.elTable" },
