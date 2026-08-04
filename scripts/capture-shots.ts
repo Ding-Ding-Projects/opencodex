@@ -693,20 +693,13 @@ const surfaces: Target[] = [
       + "It is the only prompt in the app reachable without a signed-in account: the only other\n"
       + "usePrompt() caller is the Codex account pool, which needs a real OpenAI account.\n"
       + "\n"
-      + "It cannot be opened on demand, and the reason is worth writing down because it looks\n"
-      + "like flakiness. The GUI session the proxy mints lasts five minutes\n"
-      + "(GUI_SESSION_TTL_MS, src/server/management-auth.ts), and the desktop app renews it by\n"
-      + "loading the page. So a privileged call raises this dialog only once a run has been\n"
-      + "going for longer than the session lived, which is why it appeared under a probe left\n"
-      + "open for ten minutes and never under a five-target test run.\n"
+      + "It cannot be opened on demand, so it is raised on purpose rather than faked\n"
+      + "(waitForSessionLapse). GUI sessions do not expire on a clock -- they used to, and that\n"
+      + "clock was a bug that 401'd live dashboards after five minutes -- so the harness evicts\n"
+      + "this page's session instead, by minting past GUI_SESSION_LIMIT\n"
+      + "(src/server/management-auth.ts). The next privileged call then 401s for real.\n"
       + "\n"
-      + "Simply running long enough does not do it either: clearing a stuck overlay reloads the\n"
-      + "page, and every reload mints a fresh session. A ten-minute sweep raised it exactly\n"
-      + "never for that reason.\n"
-      + "\n"
-      + "So it is captured last, by waiting the session out on purpose (waitForSessionLapse)\n"
-      + "rather than faking a 401. That costs about five minutes, which is why it goes at the\n"
-      + "end: it is also the only target whose side effect -- storing an admin token -- would\n"
+      + "It is still captured last, because its side effect -- storing an admin token -- would\n"
       + "change what every later capture sees.",
   },
   {
@@ -1005,42 +998,65 @@ async function forceDimSum(): Promise<() => Promise<void>> {
 }
 
 /**
- * Sit still until the GUI session dies, then make a privileged call.
+ * Evict this page's GUI session, then make a privileged call so the app asks.
  *
- * `issueGuiSession` stamps a fixed five-minute `expiresAt` and nothing ever
- * extends it (`src/server/management-auth.ts`), but loading the page mints a new
- * one. So the dialog cannot be summoned, only waited for, and the wait has to be
- * free of reloads -- which is why a ten-minute sweep never raised it: clearing a
- * stuck overlay reloads, and every reload restarted the clock.
+ * This used to wait out a five-minute `expiresAt` that `issueGuiSession` stamped
+ * and nothing extended. That clock is gone -- it was expiring live dashboards
+ * mid-use, which is a bug and not a feature to photograph -- so waiting now
+ * never raises the dialog at all.
  *
- * Navigating by hash does not reload, so the poll below can keep forcing
- * authenticated calls without ever refreshing the session it is waiting to lose.
+ * What is left is the only other way a session legitimately dies: the
+ * `GUI_SESSION_LIMIT` cap in `src/server/management-auth.ts`. Loading the page
+ * mints a session, so requesting the document that many times pushes this page's
+ * own session out of the map. Each request is a real page load minting a real
+ * session, and the 401 that follows is a real eviction -- nothing here fakes a
+ * response or plants a bad token.
+ *
+ * Two things the loop must not do. It must not reload this page, which would
+ * mint a replacement session for the tab we are trying to strand; `fetch` leaves
+ * the document alone. And it must not touch `/api/*` while filling the map,
+ * because a successful management call re-inserts this session at the fresh end
+ * of the LRU and saves it from the very eviction we want.
  */
 async function waitForSessionLapse(): Promise<void> {
-  const TTL_MS = 5 * 60_000;
-  const MARGIN_MS = 90_000;
+  // Mirrors GUI_SESSION_LIMIT. One extra guarantees the wrap even if the map
+  // already held entries from earlier captures.
+  const SESSIONS_TO_MINT = 129;
 
-  // Start from a known-fresh session so the wait is bounded rather than lucky.
+  // Start from a known-fresh session so the eviction is bounded rather than lucky.
   await send("Page.reload");
   await Bun.sleep(2500);
   await settle();
+
+  console.log(`  ${"prompt".padEnd(20)} minting ${SESSIONS_TO_MINT} sessions to evict this page's...`);
+
+  // Same-origin document requests. `needsApiAuth` ignores anything outside
+  // `/api/`, so these carry no token and cannot refresh what they are displacing.
+  await evaluate(`
+    (async () => {
+      for (let i = 0; i < ${SESSIONS_TO_MINT}; i++) {
+        await fetch("/?evict=" + i, { cache: "no-store" });
+      }
+    })()
+  `);
+
   const startedAt = Date.now();
+  const DEADLINE_MS = 90_000;
 
-  console.log(`  ${"prompt".padEnd(20)} waiting out the ${TTL_MS / 60_000}-minute GUI session...`);
-
-  while (Date.now() - startedAt < TTL_MS + MARGIN_MS) {
+  while (Date.now() - startedAt < DEADLINE_MS) {
     if ((await probe()).overlays.some(o => names(o).some(n => eq(n, "Admin token needed")))) return;
-    // Bounce between two pages that both make authenticated calls. Once the
-    // session has expired one of these 401s, and the app asks.
+    // Bounce between two pages that both make authenticated calls. The evicted
+    // session now 401s, and the app asks. Hash navigation does not reload, so
+    // this cannot accidentally mint a replacement.
     await evaluate(`location.hash = "#/claude"`);
-    await Bun.sleep(4000);
+    await Bun.sleep(3000);
     await evaluate(`location.hash = "#/usage"`);
-    await Bun.sleep(4000);
+    await Bun.sleep(3000);
   }
   throw new Error(
-    `no admin-token prompt after ${Math.round((Date.now() - startedAt) / 1000)}s of an expired session. `
-    + "Either the proxy is running with OPENCODEX_ADMIN_AUTH_TOKEN unset for the GUI, or the session "
-    + "TTL changed and this wait needs to change with it.",
+    `no admin-token prompt ${Math.round((Date.now() - startedAt) / 1000)}s after evicting the GUI session. `
+    + "Either the proxy is running with OPENCODEX_ADMIN_AUTH_TOKEN unset for the GUI, or GUI_SESSION_LIMIT "
+    + "changed and SESSIONS_TO_MINT needs to change with it.",
   );
 }
 

@@ -31,8 +31,12 @@ must be checked explicitly because an `icacls` timeout is a soft failure in the 
 
 Local dashboard page entry requires a loopback binding, a valid parseable loopback `Host`, and an
 exact request origin. A non-loopback dashboard uses the management token flow instead. The server
-issues an in-memory session for five minutes, capped at 128 live sessions. The session is bound to the
+issues an in-memory session that lives as long as the process, capped at 128 live sessions and evicted
+least-recently-used. The session is bound to the
 exact protocol, host, and port; state-changing requests additionally require the session CSRF token.
+There is no session TTL: the token is delivered in the page HTML with no refresh endpoint, so a clock
+expiry could only be recovered from by a full reload and made an open dashboard start answering 401 to
+every `/api/*` call. The map is in-memory, so a restart still invalidates every session.
 The dashboard never attaches its management session to `/v1/*` requests, and pages containing a
 session bootstrap are served with `Cache-Control: no-store`.
 

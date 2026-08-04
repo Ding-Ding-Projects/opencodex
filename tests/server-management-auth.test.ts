@@ -333,6 +333,73 @@ describe("management and data-plane credential separation", () => {
     expect(issueGuiSession(new Request("http://localhost:10100/"), config, state)).toBeNull();
   });
 
+  test("a GUI session does not expire on a clock", () => {
+    const config = remoteConfig();
+    config.hostname = "127.0.0.1";
+    const state = initializeManagementAuthState(config);
+    const session = issueGuiSession(
+      new Request("http://localhost:10100/", { headers: { Host: "localhost:10100" } }),
+      config,
+      state,
+    );
+    expect(session).not.toBeNull();
+
+    const read = () => new Request("http://localhost:10100/api/config", {
+      headers: {
+        Host: "localhost:10100",
+        "x-opencodex-api-key": session?.token ?? "",
+        "x-opencodex-gui-origin": "http://localhost:10100",
+      },
+    });
+
+    // The old five-minute TTL made this the exact point an open dashboard began
+    // answering 401 to every /api/* call, recoverable only by a full reload.
+    const realNow = Date.now;
+    try {
+      Date.now = () => realNow() + 6 * 60_000;
+      expect(requireManagementAuth(read(), state, config)).toBeNull();
+      Date.now = () => realNow() + 30 * 24 * 60 * 60_000;
+      expect(requireManagementAuth(read(), state, config)).toBeNull();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test("the session cap evicts least-recently-used, sparing a session still in use", () => {
+    const config = remoteConfig();
+    config.hostname = "127.0.0.1";
+    const state = initializeManagementAuthState(config);
+    const pageRequest = () => new Request("http://localhost:10100/", {
+      headers: { Host: "localhost:10100" },
+    });
+    const read = (token: string) => new Request("http://localhost:10100/api/config", {
+      headers: {
+        Host: "localhost:10100",
+        "x-opencodex-api-key": token,
+        "x-opencodex-gui-origin": "http://localhost:10100",
+      },
+    });
+
+    const inUse = issueGuiSession(pageRequest(), config, state);
+    expect(inUse).not.toBeNull();
+    const inUseToken = inUse?.token ?? "";
+
+    const idle = issueGuiSession(pageRequest(), config, state);
+    expect(idle).not.toBeNull();
+    const idleToken = idle?.token ?? "";
+
+    // Fill well past the 128 cap, using the first session throughout. Without the
+    // LRU touch the cap is just the old expiry wearing a different hat: a live
+    // dashboard would be evicted for being old rather than for being unused.
+    for (let i = 0; i < 200; i++) {
+      issueGuiSession(pageRequest(), config, state);
+      expect(requireManagementAuth(read(inUseToken), state, config)).toBeNull();
+    }
+
+    expect(requireManagementAuth(read(inUseToken), state, config)).toBeNull();
+    expect(requireManagementAuth(read(idleToken), state, config)?.status).toBe(401);
+  });
+
   test("a non-loopback binding never issues a GUI session from a forged loopback Host", () => {
     const config = remoteConfig();
     const state = initializeManagementAuthState(config);

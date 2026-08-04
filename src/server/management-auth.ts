@@ -24,13 +24,28 @@ import {
   parseHttpHost,
 } from "./auth-cors";
 
-const GUI_SESSION_TTL_MS = 5 * 60_000;
 const GUI_SESSION_LIMIT = 128;
 
+/**
+ * GUI sessions do not expire on a clock.
+ *
+ * They used to carry a fixed five-minute `expiresAt` that nothing ever extended,
+ * so an open dashboard started answering 401 to every `/api/*` call five minutes
+ * after it loaded and stayed that way — the session token arrives in the page's
+ * HTML, so only a full reload could mint another one. What made it read as a
+ * random fault rather than a timer was that nobody watches an idle panel for
+ * five minutes: you would tab away, come back, and find the banner already up.
+ *
+ * The lifetime is now the process. That is the honest bound anyway — the map is
+ * in-memory, so every session dies when the proxy stops, and the credential was
+ * never persisted anywhere a restart could recover it. The security properties
+ * that actually do the work are unchanged: a session is only ever minted for a
+ * same-origin loopback page, it stays bound to the exact protocol/host/port it
+ * was issued to, and state-changing requests still need its CSRF token.
+ */
 interface GuiSessionRecord {
   csrfToken: string;
   origin: string;
-  expiresAt: number;
 }
 
 export interface GuiSessionBootstrap extends GuiSessionRecord {
@@ -147,10 +162,23 @@ function equalSecret(actual: string, expected: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function removeExpiredSessions(state: Extract<ManagementAuthState, { available: true }>, now = Date.now()): void {
-  for (const [token, session] of state.sessions) {
-    if (session.expiresAt <= now) state.sessions.delete(token);
-  }
+/**
+ * Move a session to the end of the map so the `GUI_SESSION_LIMIT` eviction below
+ * drops the least *recently used* rather than the least recently issued.
+ *
+ * Without this the cap quietly becomes the expiry it replaced: a dashboard left
+ * open while 128 other pages load would have its still-in-use session evicted
+ * purely for being old, which is the same 401 by another route. `Map` iterates
+ * in insertion order, so re-inserting on each successful validation is the whole
+ * of the LRU.
+ */
+function touchSession(
+  state: Extract<ManagementAuthState, { available: true }>,
+  token: string,
+  session: GuiSessionRecord,
+): void {
+  state.sessions.delete(token);
+  state.sessions.set(token, session);
 }
 
 function randomSessionSecret(prefix: "ocx_session_"): string {
@@ -167,18 +195,15 @@ export function issueGuiSession(
   if (!host || !isLoopbackHostname(host.hostname)) return null;
   const origin = managementRequestOrigin(req, config);
   if (!origin) return null;
-  const now = Date.now();
-  removeExpiredSessions(state, now);
   while (state.sessions.size >= GUI_SESSION_LIMIT) {
-    const oldest = state.sessions.keys().next().value as string | undefined;
-    if (!oldest) break;
-    state.sessions.delete(oldest);
+    const leastRecentlyUsed = state.sessions.keys().next().value as string | undefined;
+    if (!leastRecentlyUsed) break;
+    state.sessions.delete(leastRecentlyUsed);
   }
   const token = randomSessionSecret("ocx_session_");
   const session: GuiSessionRecord = {
     csrfToken: randomBytes(32).toString("base64url"),
     origin,
-    expiresAt: now + GUI_SESSION_TTL_MS,
   };
   state.sessions.set(token, session);
   return { token, ...session };
@@ -196,7 +221,6 @@ export function requireManagementAuth(
     || req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
   if (actual && equalSecret(actual, state.token)) return null;
   if (actual && config) {
-    removeExpiredSessions(state);
     const session = state.sessions.get(actual);
     if (session) {
       const requestOrigin = managementRequestOrigin(req, config);
@@ -208,6 +232,7 @@ export function requireManagementAuth(
       const safeMethod = req.method === "GET" || req.method === "HEAD";
       const csrf = req.headers.get("x-opencodex-csrf-token")?.trim();
       if (sameOrigin && (safeMethod || (browserOrigin === session.origin && !!csrf && equalSecret(csrf, session.csrfToken)))) {
+        touchSession(state, actual, session);
         return null;
       }
     }
