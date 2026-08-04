@@ -1,5 +1,53 @@
 # Handoff
 
+## The tab branch is a rival implementation, not pending work — 2026-08-03
+
+A second integrate-and-clean pass, authorized to delete. **Nothing merged and
+nothing deleted**, and both halves of that are the finding.
+
+`claude/keen-dijkstra-a12563` (`40aa982f`, 4,875 lines) was trial-merged into
+`main` at `1ecb39e9`. It produced **31 conflict hunks across 7 files, including
+an add/add on `gui/src/shell/TabSearchPanel.tsx`** — the shape git produces when
+two branches answer the same question rather than when one extends the other.
+
+**It is the same feature, built twice on the same day.** `main` shipped tab
+groups and all four tab searches in `d15c7423` (13:22) and `1542b440` (13:43);
+the branch built its own in `40aa982f` (18:06). Both name the same concepts
+differently — the branch's `shell/tab-registry.ts` against `main`'s
+`shell/use-tab-registry.ts` + `shared/m3/tab-registry.ts`. `main`'s version is
+the one that is screenshotted and 48dp-audited (`da02350f`).
+
+**The genuinely unique files are dead, not missing.** The branch carries
+`.github/workflows/issue-triage.yml` and six `.github/scripts/*.cjs` that `main`
+does not have — because `main` *deleted them on purpose* in `8c05ce25`
+(2026-08-01, after the branch was written): they call `actions/ai-inference`,
+GitHub Models is retired, and it answers `410`. Restoring them would redden every
+newly opened issue by calling a service that no longer exists. Verified file by
+file rather than assumed from the directory's history, which does exist.
+
+`ColorField.tsx` and `GroupAppearanceEditor.tsx` are also branch-only, but
+`GroupAppearanceEditor` imports `groupDecorProps`/`readGroupDecor` from the
+branch's rival `use-tabs.ts`, so it cannot be lifted out without dragging the
+competing design with it. `main` covers the capability with
+`shell/TabAppearanceEditor.tsx` and the element appearance editor, both
+screenshotted.
+
+### Why it was not deleted
+
+Deletion was authorized, and is still refused. That authorization covers branches
+an integration has genuinely emptied; this one was never emptied, because nothing
+could be merged out of it. Removing it would destroy 4,875 unmerged lines rather
+than tidy up after an integration — the blocker is the unmerged work, not a
+missing permission.
+
+It is fully dewed (local and hui tips both `40aa982f`), so nothing is at risk
+where it stands. `git merge-base --is-ancestor` against `origin/main`: **not an
+ancestor**, which is the proof it still holds unintegrated commits.
+
+**For whoever picks this up:** the decision is which tab implementation the
+project wants, and that is a design call, not a merge. Deleting the branch only
+becomes safe once that is settled in `main`'s favour deliberately.
+
 ## Integrate-and-clean pass: nothing merged, and that is the finding — 2026-08-02
 
 Four unmerged refs, two stashes and one linked worktree, each surveyed by its own
