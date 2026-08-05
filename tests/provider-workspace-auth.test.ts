@@ -4,6 +4,7 @@ import {
   providerAuthSurface,
 } from "../gui/src/provider-workspace/auth";
 import type { WorkspaceItem } from "../gui/src/provider-workspace/catalog";
+import { isLocalProvider, providerKind } from "../gui/src/provider-workspace/kind";
 import type { TFn } from "../gui/src/i18n";
 
 function provider(name: string, overrides: Partial<WorkspaceItem> = {}): WorkspaceItem {
@@ -39,6 +40,32 @@ describe("provider workspace auth surface", () => {
     expect(providerAuthSurface(provider("configured", { hasApiKey: true }))).toBe("api-keys");
     expect(providerAuthSurface(provider("free", { keyOptional: true }))).toBeNull();
     expect(providerAuthSurface(provider("ollama", { authMode: "local", baseUrl: "http://127.0.0.1:11434/v1" }))).toBeNull();
+  });
+
+  test("server reasons protect local providers while keeping Vertex optional keys manageable", () => {
+    const lanLocal = provider("ollama", {
+      baseUrl: "http://192.168.50.20:11434/v1",
+      configurationStatus: "ready",
+      configurationReason: "local",
+    });
+    const loopbackLocal = provider("vllm", {
+      baseUrl: "http://127.0.0.1:8000/v1",
+      configurationStatus: "ready",
+      configurationReason: "loopback",
+    });
+    const vertex = provider("google-vertex", {
+      adapter: "google",
+      authMode: "key",
+      configurationStatus: "ready",
+      configurationReason: "vertex_auth",
+    });
+
+    expect(isLocalProvider(lanLocal)).toBe(true);
+    expect(providerKind(lanLocal)).toBe("local");
+    expect(providerAuthSurface(lanLocal)).toBeNull();
+    expect(providerAuthSurface(loopbackLocal)).toBeNull();
+    expect(providerAuthSurface(vertex)).toBe("api-keys");
+    expect(providerAuthSurface({ ...vertex, hasApiKey: true })).toBe("api-keys");
   });
 });
 

@@ -11,6 +11,8 @@ export type TcpQuad = {
   remoteAddr: string;
   remotePort: number;
   state: string;
+  /** PID reported by the same fresh netstat row, or null when it cannot be trusted. */
+  owningPid: number | null;
 };
 
 /** Parse netstat -ano rows whose local address uses `port`. Exported for tests. */
@@ -25,6 +27,8 @@ export function parseTcpQuadsForLocalPort(output: string, port: number): TcpQuad
     const local = parts[1]!;
     const remote = parts[2]!;
     const state = parts[3]!;
+    const pidText = parts[parts.length - 1] ?? "";
+    const owningPid = /^\d+$/.test(pidText) && Number(pidText) > 0 ? Number(pidText) : null;
     if (!local.endsWith(portSuffix) && !local.endsWith(`]:${port}`)) continue;
     const localAddr = stripPort(local, port);
     const remoteParsed = splitHostPort(remote);
@@ -35,6 +39,7 @@ export function parseTcpQuadsForLocalPort(output: string, port: number): TcpQuad
       remoteAddr: remoteParsed.host,
       remotePort: remoteParsed.port,
       state,
+      owningPid,
     });
   }
   return rows;
@@ -81,6 +86,32 @@ export type WindowsTcpDropResult = {
   skippedIpv6: number;
 };
 
+/**
+ * Fail-closed row selection for SetTcpEntry.
+ *
+ * The dropper evaluates one fresh all-state netstat snapshot immediately before
+ * deletion. Every row in that snapshot must have a parseable, non-current, dead
+ * owner; otherwise no row on the port may be touched. The earlier LISTEN-only
+ * scan is advisory because a stale CLOSE_WAIT/ESTABLISHED row can outlive its
+ * LISTEN row and must be able to authorize itself from this fresher snapshot.
+ */
+export function safeDroppableTcpRows(
+  rows: TcpQuad[],
+  _previouslyObservedDeadOwnerPids: readonly number[],
+  isAliveFn: (pid: number) => boolean,
+): TcpQuad[] {
+  if (rows.length === 0) return [];
+  for (const row of rows) {
+    if (row.owningPid === null || row.owningPid === process.pid) return [];
+    try {
+      if (isAliveFn(row.owningPid)) return [];
+    } catch {
+      return [];
+    }
+  }
+  return rows;
+}
+
 function htons(port: number): number {
   return (((port & 0xff) << 8) | ((port >> 8) & 0xff)) >>> 0;
 }
@@ -126,12 +157,19 @@ function readNetstatAno(): string {
 }
 
 /**
- * Force-delete IPv4 TCP rows bound to `localPort` via SetTcpEntry(DELETE_TCB).
- * Does not kill foreign processes — only resets sockets so the listen port can bind again.
+ * Force-delete freshly authorized, dead-owner IPv4 TCP rows bound to `localPort`
+ * via SetTcpEntry(DELETE_TCB). Rows are deleted only when this fresh netstat
+ * snapshot contains no current, unparseable, or live owner. The previous
+ * LISTEN-only owner list is retained as a compatibility argument but is never
+ * trusted over this all-state snapshot.
  * Bare IPv6 rows (`::1`, `::`, etc.) are skipped (not coerced into IPv4 wildcards);
  * IPv6 TCB reclamation is unsupported on this path.
  */
-export function dropWindowsTcpRowsForLocalPort(port: number): WindowsTcpDropResult {
+export function dropWindowsTcpRowsForLocalPort(
+  port: number,
+  expectedDeadOwnerPids: readonly number[] = [],
+  isAliveFn: (pid: number) => boolean = () => true,
+): WindowsTcpDropResult {
   if (process.platform !== "win32" || !Number.isFinite(port) || port <= 0) {
     return { dropped: 0, skippedIpv6: 0 };
   }
@@ -146,9 +184,10 @@ export function dropWindowsTcpRowsForLocalPort(port: number): WindowsTcpDropResu
   }
 
   const rows = parseTcpQuadsForLocalPort(output, Math.trunc(port));
+  const droppableRows = safeDroppableTcpRows(rows, expectedDeadOwnerPids, isAliveFn);
   let dropped = 0;
   let skippedIpv6 = 0;
-  for (const row of rows) {
+  for (const row of droppableRows) {
     const localDw = ipv4ToWinUint32(row.localAddr);
     const remoteDw = ipv4ToWinUint32(row.remoteAddr);
     if (localDw === null || remoteDw === null) {

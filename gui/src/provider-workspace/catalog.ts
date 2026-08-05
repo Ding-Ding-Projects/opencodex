@@ -5,23 +5,22 @@
  * No network calls, no React — transforms the proxy config `providers` map
  * into stable UI sections and tier tags.
  *
- * Binning rules (applied in priority order):
- *  1. disabled === true              -> disabled
- *  2. keyOptional === true           -> ready  (key not required — not the same as free pricing)
- *  3. authMode === "oauth"           -> ready  (credentials managed externally)
- *  4. authMode === "forward"         -> ready  (passes caller credentials through)
- *  5. authMode === "local"           -> ready  (local runtime, no key required)
- *  6. loopback base URL              -> ready  (local runtime, auth mode may be stripped)
- *  7. hasApiKey === true             -> ready  (key-auth with credential present)
- *  8. everything else                -> needsSetup
+ * The management API's configurationStatus/configurationReason pair is the
+ * authority for configuration readiness. The old field-derived rules remain
+ * only as a compatibility fallback for older payloads and focused fixtures.
  *
  * Live-auth overlay: `applyActiveAccountReauth` may demote ready → needs-setup
- * when the active account needs reauth (config binning rules above unchanged).
+ * when the active account needs reauth (the configuration DTO stays unchanged).
  *
  * Tiers (three-way, interview 2026-07-17): "accounts" (the canonical OpenAI forward
  * provider), "free" (free pricing), "paid" (everything else). Accounts wins
  * over free.
  */
+
+import type {
+  ProviderConfigurationReason,
+  ProviderConfigurationStatus,
+} from "../provider-configuration";
 
 /**
  * Shape of a single provider value as it appears in the proxy config map.
@@ -30,6 +29,10 @@
 export interface WorkspaceProvider {
   adapter: string;
   baseUrl: string;
+  /** Server-authored configuration state; this is not a live health result. */
+  configurationStatus?: ProviderConfigurationStatus;
+  /** Machine-readable reason for the server-authored configuration state. */
+  configurationReason?: ProviderConfigurationReason;
   hasApiKey?: boolean;
   hasHeaders?: boolean;
   defaultModel?: string;
@@ -64,9 +67,9 @@ export interface WorkspaceItem extends WorkspaceProvider {
 
 /** The three sections rendered in the Providers workspace. */
 export interface WorkspaceSections {
-  /** Providers that are enabled and have all credentials needed to route requests. */
+  /** Providers the management API marks configuration-ready (not live-health verified). */
   ready: WorkspaceItem[];
-  /** Enabled providers that are missing required credentials (e.g. an API key). */
+  /** Enabled providers the management API says still need configuration. */
   needsSetup: WorkspaceItem[];
   /** Providers explicitly disabled by the user. */
   disabled: WorkspaceItem[];
@@ -105,13 +108,30 @@ export function hasLoopbackBaseUrl(baseUrl: string): boolean {
   }
 }
 
-function isConfigurationReady(p: WorkspaceProvider): boolean {
-  return p.keyOptional === true ||
-    p.authMode === "oauth" ||
-    p.authMode === "forward" ||
-    p.authMode === "local" ||
-    hasLoopbackBaseUrl(p.baseUrl) ||
-    p.hasApiKey === true;
+function legacyIsConfigurationReady(p: WorkspaceProvider): boolean {
+  if (p.keyOptional === true
+    || p.authMode === "oauth"
+    || p.authMode === "forward"
+    || p.authMode === "local") return true;
+  // Even the compatibility path must respect an explicit key contract: a
+  // loopback gateway can require credentials just like a hosted one.
+  if (p.authMode === "key") return p.hasApiKey === true;
+  return hasLoopbackBaseUrl(p.baseUrl) || p.hasApiKey === true;
+}
+
+/**
+ * Prefer the management API's explicit configuration status. The fallback is
+ * intentionally limited to older responses and test fixtures that predate the
+ * DTO; it must not be interpreted as an upstream availability check.
+ */
+function effectiveConfigurationStatus(p: WorkspaceProvider): ProviderConfigurationStatus {
+  if (p.configurationStatus === "ready"
+    || p.configurationStatus === "needs_setup"
+    || p.configurationStatus === "disabled") {
+    return p.configurationStatus;
+  }
+  if (p.disabled) return "disabled";
+  return legacyIsConfigurationReady(p) ? "ready" : "needs_setup";
 }
 
 /**
@@ -203,11 +223,12 @@ export function buildProviderWorkspace(
   const disabled: WorkspaceItem[] = [];
 
   for (const [name, p] of Object.entries(providers)) {
-    if (p.disabled) {
+    const configurationStatus = effectiveConfigurationStatus(p);
+    if (configurationStatus === "disabled") {
       disabled.push({ name, ...p });
       continue;
     }
-    if (isConfigurationReady(p)) {
+    if (configurationStatus === "ready") {
       ready.push({ name, ...p, tier: providerTier(name, p) });
     } else {
       needsSetup.push({ name, ...p });
@@ -256,10 +277,10 @@ export type ProviderStatus = "ready" | "needs-setup" | "disabled";
  * live-auth overlay when `activeNeedsReauth` is set on a WorkspaceItem.
  */
 export function binProviderStatus(p: WorkspaceProvider | WorkspaceItem): ProviderStatus {
-  if (p.disabled) return "disabled";
+  const configurationStatus = effectiveConfigurationStatus(p);
+  if (configurationStatus === "disabled") return "disabled";
   if ("activeNeedsReauth" in p && p.activeNeedsReauth) return "needs-setup";
-  if (isConfigurationReady(p)) return "ready";
-  return "needs-setup";
+  return configurationStatus === "ready" ? "ready" : "needs-setup";
 }
 
 /**

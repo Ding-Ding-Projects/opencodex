@@ -1,7 +1,7 @@
 import { Trans } from "../i18n/provider";
 import type { TFn } from "../i18n/shared";
 import { Card, Empty } from "../shell/m3-ui";
-import type { ProviderInfo } from "./dashboard-shared";
+import { providerStatusPresentation, type ProviderInfo } from "./dashboard-shared";
 
 export function DashboardProvidersSection({
   t,
@@ -30,12 +30,12 @@ export function DashboardProvidersSection({
                 // Status is a functional data colour, so the dot also carries its
                 // own name: colour alone would leave "needs setup" invisible to a
                 // screen reader and to anyone who cannot separate the two hues.
-                const status = t(p.hasApiKey ? "pws.status.ready" : "pws.status.needsSetup");
+                const status = providerStatusPresentation(p, t);
                 return (
-                  <tr key={p.name}>
+                  <tr key={p.name} data-configuration-reason={p.configurationReason}>
                     <td className="font-semibold">
                       <span className="m3-row" style={{ gap: 8 }}>
-                        <span className={`dot ${p.hasApiKey ? "dot-green" : "dot-amber"}`} role="img" aria-label={status} />
+                        <span className={`dot ${status.dotClass}`} role="img" aria-label={status.label} />
                         {p.name}
                       </span>
                     </td>

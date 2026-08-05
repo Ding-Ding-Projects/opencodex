@@ -7,13 +7,17 @@ opencodex를 설치하면 같은 실행 파일을 가리키는 `ocx`와 `opencod
 둘 다 Bun 기반의 작은 로컬 HTTP 서버를 실행합니다. 모델 요청은 라우팅으로 선택된 프로바이더에
 전달되며, 필요할 때 vision 및 웹 검색 sidecar가 ChatGPT 로그인을 사용할 수도 있습니다.
 
+기본 로컬 경로는 기존 ChatGPT/Codex 로그인만으로 바로 사용할 수 있습니다. OpenAI API 키를
+포함한 어떤 프로바이더 API 키도 필요하지 않습니다.
+
 ## 사전 요구 사항
 
 | 요구 사항 | 이유 |
 | --- | --- |
 | **[Node](https://nodejs.org) ≥ 18** | `ocx`는 Bun 런타임에서 실행되지만, 런타임이 `npm install` 시 자동으로 번들되므로 Bun을 직접 설치할 필요가 **없습니다**. |
 | **[OpenAI Codex](https://openai.com/codex)**(CLI, App, 또는 SDK) | opencodex가 앞단에 위치하는 클라이언트입니다. opencodex는 `$CODEX_HOME/config.toml`(기본값 `~/.codex/config.toml`)에 기록합니다. |
-| 프로바이더 계정 또는 API 키 | Anthropic, xAI, Kimi, Ollama Cloud, OpenRouter, OpenAI API 키, OpenAI 호환 엔드포인트, 또는 ChatGPT 로그인. |
+| ChatGPT/Codex 로그인 | 기본 내장 `openai` 경로는 `codex login` 또는 Codex 앱이 만든 계정 세션을 전달합니다. API 키가 아닙니다. |
+| 업스트림 프로바이더 계정 또는 API 키(선택 사항) | Anthropic, xAI, Kimi, Ollama Cloud, OpenRouter, 다른 호스팅 프로바이더 또는 인증이 필요한 사용자 지정 경로를 직접 추가한 경우에만 필요합니다. |
 
 ## 설치
 
@@ -42,6 +46,22 @@ sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
 ocx --version
 opencodex --version
 ```
+
+기본 로컬 경로를 즉시 시작할 수 있습니다:
+
+```bash
+ocx start
+```
+
+이 터미널을 열어 둔 채 다른 터미널에서 `ocx codex`를 실행하세요. Codex에 로그인한 적이 없다면
+`codex login`을 한 번 실행합니다. `ocx gui`는 실제 프록시 포트에서 대시보드를 열고 필요하면
+프록시를 먼저 시작합니다.
+
+:::note[로컬 시작에는 API 키가 필요 없음]
+**업스트림 프로바이더 API 키**는 직접 추가한 선택적 프로바이더를 인증합니다.
+**OpenCodex 접근 키**는 프록시를 비루프백 주소로 공개할 때만 `/v1/*`를 보호합니다.
+`localhost`와 ChatGPT/Codex 로그인을 사용하는 기본 경로에는 둘 다 필요하지 않습니다.
+:::
 
 ### 배포 채널
 
@@ -94,5 +114,5 @@ opencodex는 절대 Codex 설정을 삭제하지 않습니다. 모든 주입은 
 
 ## 다음
 
-[Quickstart](/ko/getting-started/quickstart/)로 이동해 첫 프로바이더를 설정하거나,
+[Quickstart](/ko/getting-started/quickstart/)로 이동해 키가 필요 없는 로컬 기본값을 시작하거나,
 아키텍처를 알아보려면 [작동 방식](/ko/getting-started/how-it-works/)을 읽어 보세요.

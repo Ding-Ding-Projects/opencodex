@@ -8,6 +8,23 @@ file says so instead of implying users have it.
 Release state at the time of writing: the newest non-preview tag is **v2.7.42** (2026-07-28). Every
 feature commit listed as "on `main`" below landed after it and has not shipped in a tagged release.
 
+## Completed — plug-and-play local startup (2026-08-04)
+
+This refresh was implemented and verified on `codex/plug-and-play-startup` for integration into
+`main`. The older roadmap rows retain their original 2026-07-30 audit date.
+
+| Work | Current state |
+| --- | --- |
+| Fresh local default | Already present in `getDefaultConfig()`: built-in `openai` ChatGPT-forward route, no provider API key. `ocx start` is the primary first-run command. |
+| `ocx init` default | An empty selection resolves to provider 1, the keyless OpenAI/ChatGPT route. Covered by the focused startup verification. |
+| Provider readiness | The shared configuration-state helper, management-API fields, and GUI consumers distinguish forward, OAuth, local, key-optional, loopback, Vertex external-auth, and keyed routes instead of reducing them to `hasApiKey`. A non-empty configured environment reference counts without probing whether that variable exists (preventing an environment-existence oracle); only the active mirrored `apiKey` counts, and explicit key auth still requires a key on loopback. |
+| Windows pinned-port recovery | Reclamation is non-terminating. A fresh all-state snapshot reaches dead CLOSE_WAIT/ESTABLISHED-only rows after LISTEN disappears, while current, live, unparseable, protected, or indeterminate owners fail the whole deletion set closed. |
+| Reader path | README plus English, Japanese, Korean, Russian, and Simplified Chinese installation and quickstart guides distinguish ChatGPT/Codex login, optional upstream credentials, and the non-loopback OpenCodex admission key. English provider and dashboard guides carry the detailed readiness model; translated counterparts were audited and did not contradict the keyless default. |
+| Implementation verification | Independent review reran 125 focused root tests with 0 failures; the final reclaim subset was 29/29. The complete GUI suite was 874/874 with 10,221 assertions across 131 files. A 474-file root campaign reached every file, but its outer shell lost the first 396 files' buffered verdicts at timeout, so only the explicitly captured final 78-file range is claimed green: 1,030/1,030 after replacing a flaky 1-second subprocess-output test budget; its exact 12-file rerun was 164/164. TypeScript, privacy scan, GUI build, documentation build, and diff checks passed; GUI lint had 0 errors and one pre-existing hook warning. Exact-commit CI remains the authoritative whole-suite verdict. |
+| Runtime verification | An isolated source run returned a healthy keyless OpenAI forward route and HTTP 400—not an admission-key 401—for malformed unauthenticated loopback input. A real Electron launch on an off-screen Windows desktop with a fresh profile rendered Online, 1 Ready, 0 Needs setup, and OpenAI (Codex login), with no provider-key prompt. |
+| Documentation verification | `bun install --frozen-lockfile` succeeded; the final post-localization `bun run build` completed 186 pages and indexed 190 HTML files. `check-dist` reported 190 pages OK and 186 carrying the tab strip, and the rendered credential/admission-key content was checked in every updated locale. |
+| Review | Two independent final reviews found no remaining concrete integration blocker and no P0–P2 security finding. The GitHub release/workflow result remains an external exact-commit verdict rather than a predicted success. |
+
 ## Done and released
 
 Behaviour documented on [opencodex.me](https://opencodex.me/) and shipped in a tagged release.
@@ -18,7 +35,7 @@ Behaviour documented on [opencodex.me](https://opencodex.me/) and shipped in a t
 | Clients | Claude Code (`/v1/messages`), opencode, Grok Build, GitHub Copilot App integrations |
 | Accounts | OAuth multiauth store, Codex account pool, API-key pools, Token Guardian refresh |
 | Anthropic | Opt-in experimental Anthropic OAuth account pool (`anthropicAccountPool`, #294) |
-| Dashboard | Web dashboard on the proxy port, management API behind an admin credential |
+| Dashboard | Web dashboard on the proxy port; management routes are open, while non-loopback `/v1/*` traffic uses a separate OpenCodex admission key |
 | Ops | `ocx service` (launchd / systemd / Task Scheduler), `ocx doctor`, usage log |
 
 ## Done, on `main`, not yet in a tagged release

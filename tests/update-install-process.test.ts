@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +9,12 @@ import {
   runProcessTreeCommand,
   terminateInstallerProcessTree,
 } from "../src/update/install-process.mjs";
+
+// These tests deliberately spawn, drain, and tear down real process trees.
+// Shared Windows runners can spend more than Bun's 5 s default under I/O
+// contention even when the child is healthy, so keep the suite-level guard
+// comfortably below a genuine hang while giving the behavior room to finish.
+setDefaultTimeout(30_000);
 
 const cleanupPids = new Set<number>();
 const cleanupDirs = new Set<string>();
@@ -124,7 +130,7 @@ describe("update installer process isolation", () => {
     const result = await runProcessTreeCommand(
       process.execPath,
       ["-e", `process.stdout.write(${JSON.stringify(stdoutPayload)}); process.stderr.write(${JSON.stringify(stderrPayload)})`],
-      { stdio: "pipe", timeoutMs: 1_000 },
+      { stdio: "pipe", timeoutMs: 10_000 },
     );
 
     expect(result.status).toBe(0);

@@ -7,13 +7,17 @@ opencodex をインストールすると同じ実行ファイルを指す `ocx` 
 どちらも Bun ベースの小さなローカル HTTP サーバーを実行します。モデルリクエストはルーティングで選ばれたプロバイダーに
 転送され、必要に応じて vision とウェブ検索のサイドカーが ChatGPT ログインを使うこともあります。
 
+デフォルトのローカル経路は、既存の ChatGPT/Codex ログインだけですぐ使えます。OpenAI API
+キーを含むプロバイダー API キーは必要ありません。
+
 ## 前提条件
 
 | 要件 | 理由 |
  --- | --- |
 | **[Node](https://nodejs.org) ≥ 18** | `ocx` は Bun ランタイムで実行されますが、ランタイムは `npm install` 時に自動でバンドルされるため、Bun を自分でインストールする必要は**ありません**。 |
 | **[OpenAI Codex](https://openai.com/codex)**(CLI、App、または SDK) | opencodex が前に立つクライアントです。opencodex は `$CODEX_HOME/config.toml`(デフォルト `~/.codex/config.toml`)に書き込みます。 |
-| プロバイダーアカウントまたは API キー | Anthropic、xAI、Kimi、Ollama Cloud、OpenRouter、OpenAI API キー、OpenAI 互換エンドポイント、または ChatGPT ログイン。 |
+| ChatGPT/Codex ログイン | デフォルトの組み込み `openai` 経路は、`codex login` または Codex App が作成したアカウントセッションを転送します。これは API キーではありません。 |
+| 上流プロバイダーのアカウントまたは API キー（任意） | Anthropic、xAI、Kimi、Ollama Cloud、OpenRouter、その他のホスト型または認証付きカスタム経路を自分で追加した場合だけ必要です。 |
 
 ## インストール
 
@@ -42,6 +46,22 @@ sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
 ocx --version
 opencodex --version
 ```
+
+デフォルトのローカル経路をすぐ起動できます:
+
+```bash
+ocx start
+```
+
+このターミナルを開いたまま、別のターミナルで `ocx codex` を実行します。Codex にまだログイン
+していなければ `codex login` を一度実行してください。`ocx gui` は実際のプロキシポートで
+ダッシュボードを開き、必要なら先にプロキシを起動します。
+
+:::note[ローカル起動に API キーは不要]
+**上流プロバイダー API キー**は、自分で追加した任意プロバイダーの認証に使います。
+**OpenCodex アドミッションキー**は、プロキシを非ループバックへ公開した場合にだけ `/v1/*`
+を保護します。`localhost` と ChatGPT/Codex ログインを使うデフォルト経路にはどちらも不要です。
+:::
 
 ### 配布チャネル
 
@@ -94,5 +114,5 @@ opencodex は決して Codex 設定を削除しません。すべての注入は
 
 ## 次へ
 
-[クイックスタート](/ja/getting-started/quickstart/)に進んで最初のプロバイダーを設定するか、
+[クイックスタート](/ja/getting-started/quickstart/)に進んでキー不要のローカルデフォルトを起動するか、
 アーキテクチャを知るには[仕組み](/ja/getting-started/how-it-works/)をお読みください。

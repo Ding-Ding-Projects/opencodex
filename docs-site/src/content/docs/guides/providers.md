@@ -6,11 +6,26 @@ description: Every way opencodex authenticates and talks to an LLM provider — 
 A **provider** is one upstream LLM endpoint plus how to reach it: an adapter, a base URL, an auth
 mode, and an optional model list. Providers live under `providers` in `~/.opencodex/config.json`.
 
+## Which credential do I need?
+
+For a fresh local install, usually only the first row applies:
+
+| Credential | Scope | When it is required |
+| --- | --- | --- |
+| **ChatGPT/Codex login** | Upstream OpenAI ChatGPT/Codex account | Default `openai` forward route. Sign in with `codex login` or the Codex app; no API key is stored. |
+| **Upstream provider credential** | One optional provider | That provider's API key, OAuth login, or local runtime. Add one only when you want that route. |
+| **OpenCodex admission key** | Your own opencodex proxy | Required for data-plane clients on a non-loopback/LAN bind. `ocx host enable --new-key --yes` generates it; local loopback traffic does not need it. |
+
+The admission key never authenticates to OpenAI, Anthropic, or another upstream and does not pay for
+model usage. Conversely, a provider API key does not satisfy the proxy's non-loopback admission gate.
+If a client says **`opencodex API key required`**, see
+[Remote access and admission keys](/guides/web-dashboard/#remote-access-and-admission-keys).
+
 ## OpenAI account modes
 
 | Provider id | Use | Credential/account rule |
 | --- | --- | --- |
-| `openai` | Codex login | Pool(default) selects main plus added accounts; Direct uses the current caller/main login only. |
+| `openai` | Codex login | The fresh-install default. Pool (default) selects main plus added accounts; Direct uses the current caller/main login only. No provider API key. |
 | `openai-apikey` | OpenAI API | Configured API key/key pool only; never reads Codex accounts. |
 
 Use bare `gpt-5.6-sol` with the Pool/Direct option on the Providers page, or
@@ -53,6 +68,10 @@ The `openai` provider needs **no API key**. Direct forwards credentials from you
   }
 }
 ```
+
+That provider is configuration-ready on a fresh install even though it has no `apiKey` field. Live
+requests still need a valid ChatGPT/Codex login and access to the requested model; configuration
+readiness is not a promise that the upstream account is healthy.
 
 Only a curated set of headers is forwarded (`FORWARD_HEADERS`: authorization, ChatGPT account id,
 OpenAI beta/originator/session — see [Adapters](/reference/adapters/)). This path is also

@@ -26,6 +26,11 @@ export function statusLabel(p: WorkspaceProvider, t: TFn): string {
 }
 
 export function authModeLabel(item: WorkspaceItem, t: TFn): string {
+  if (item.configurationReason === "vertex_auth") return t("pws.auth.vertexExternal");
+  if (item.configurationReason === "key_optional") return t("pws.auth.noKey");
+  if (item.configurationReason === "local" || item.configurationReason === "loopback") {
+    return t("modal.badge.local");
+  }
   switch (item.authMode) {
     case "oauth": return t("modal.badge.oauth");
     case "forward": return t("pws.auth.chatgptPassthrough");
@@ -97,6 +102,7 @@ export function RailRow({ item, selected, tabbable, modelCount, isDefault, showC
       tabIndex={tabbable ? 0 : -1}
       aria-label={t("pws.rail.selectAria", { name: nameTitle, status, suffix })}
       title={nameTitle}
+      data-configuration-reason={item.configurationReason}
       onFocus={onFocus}
     >
       <ProviderIcon

@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 import { useEffect, useRef } from "react";
 import { readJsonOrThrow } from "../fetch-json";
 import type { TFn, TKey } from "../i18n/shared";
+import type { ProviderConfigurationState } from "../provider-configuration";
 import type { StartupHealthStatus } from "../startup-health-ui";
 import { fmtK } from "./models-shared";
 
@@ -41,7 +42,13 @@ export async function requireJson<T>(res: Response, fallbackMessage?: string): P
 }
 
 export interface HealthData { status: string; version: string; uptime: number }
-export interface ProviderInfo { name: string; adapter: string; baseUrl: string; defaultModel?: string; hasApiKey: boolean }
+export interface ProviderInfo extends ProviderConfigurationState {
+  name: string;
+  adapter: string;
+  baseUrl: string;
+  defaultModel?: string;
+  hasApiKey: boolean;
+}
 /**
  * `/api/models` already returns the context/capability metadata the Models screen
  * renders; the Dashboard used to drop it on the floor, which is why its model list
@@ -184,16 +191,30 @@ export function modelMetaLabel(model: ModelInfo, t: TFn): string {
 }
 
 /**
- * `Ready (9) · Needs setup (2)` under the providers stat, mirroring the prototype's
- * hint. Derived from the same `hasApiKey` flag the providers table already renders a
- * status dot from, so the two can never disagree.
+ * `Ready (9) · Needs setup (2) · Disabled (1)` under the providers stat.
+ * The server-authored configuration status is shared with the provider rows, so
+ * no-key forward/OAuth/local providers cannot be mislabeled as missing a key.
  */
 export function providersStatHint(providers: ProviderInfo[], t: TFn): string {
   if (providers.length === 0) return "";
-  const ready = providers.filter(p => p.hasApiKey).length;
+  const ready = providers.filter(p => p.configurationStatus === "ready").length;
+  const needsSetup = providers.filter(p => p.configurationStatus === "needs_setup").length;
+  const disabled = providers.filter(p => p.configurationStatus === "disabled").length;
   const parts = [t("pws.groupReady", { count: ready })];
-  if (ready < providers.length) parts.push(t("pws.groupNeedsSetup", { count: providers.length - ready }));
+  if (needsSetup > 0) parts.push(t("pws.groupNeedsSetup", { count: needsSetup }));
+  if (disabled > 0) parts.push(t("pws.groupDisabled", { count: disabled }));
   return parts.join(META_SEPARATOR);
+}
+
+export function providerStatusPresentation(provider: ProviderInfo, t: TFn): { label: string; dotClass: string } {
+  switch (provider.configurationStatus) {
+    case "ready":
+      return { label: t("pws.status.ready"), dotClass: "dot-green" };
+    case "disabled":
+      return { label: t("prov.disabledBadge"), dotClass: "dot-muted" };
+    case "needs_setup":
+      return { label: t("pws.status.needsSetup"), dotClass: "dot-amber" };
+  }
 }
 
 export function sidecarModelOptions(models: ModelInfo[]) {

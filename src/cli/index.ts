@@ -125,7 +125,10 @@ async function chooseListenPort(requestedPort?: number): Promise<number> {
   const hardPin = requestedPort !== undefined && requestedPort > 0;
   // Soft start: brief prefer-retry then ephemeral hop.
   // Explicit `--port` (service wrappers / update restart): wait for the pinned port
-  // to free without killing any listener (healthy ocx / foreign). Never hop.
+  // to free without killing any live listener (healthy ocx / foreign). Never hop.
+  // On Windows, keep reclaimListenPort's default dead-row cleanup enabled: an
+  // orphaned LISTEN row has no process to kill, but otherwise blocks every service
+  // restart until reboot. The reclaimer proves the owner is dead before touching it.
   if (hardPin && preferred > 0) {
     const { reclaimListenPort } = await import("../server/port-reclaim");
     await reclaimListenPort(preferred, config.hostname ?? "127.0.0.1", {
@@ -133,7 +136,6 @@ async function chooseListenPort(requestedPort?: number): Promise<number> {
       intervalMs: 100,
       scanIntervalMs: 500,
       killOcxHolders: false,
-      dropTcpRows: false,
     });
   }
   try {

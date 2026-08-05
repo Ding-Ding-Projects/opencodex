@@ -107,7 +107,7 @@ describe("catalog: section membership", () => {
     expect(sections.ready).toEqual([]);
   });
 
-  test("readiness rules: keyOptional/oauth/forward/local/loopback/hasApiKey are ready; bare key is needsSetup", () => {
+  test("legacy fallback keeps older payloads compatible when the status DTO is absent", () => {
     const sections = buildProviderWorkspace({
       keyless: prov({ keyOptional: true }),
       oauth: prov({ authMode: "oauth" }),
@@ -117,9 +117,44 @@ describe("catalog: section membership", () => {
       loopback: prov({ baseUrl: "http://127.0.0.1:8000/v1" }),
       keyed: prov({ authMode: "key", hasApiKey: true }),
       missing: prov({ authMode: "key", hasApiKey: false }),
+      keyedLoopbackMissing: prov({ authMode: "key", hasApiKey: false, baseUrl: "http://127.0.0.1:8001/v1" }),
     });
     expect(sections.ready.map(p => p.name)).toEqual(["keyless", "oauth", "forward", "local", "loopback", "keyed"]);
-    expect(sections.needsSetup.map(p => p.name)).toEqual(["missing"]);
+    expect(sections.needsSetup.map(p => p.name)).toEqual(["missing", "keyedLoopbackMissing"]);
+  });
+
+  test("authoritative configuration status wins over legacy key and header hints", () => {
+    const sections = buildProviderWorkspace({
+      noKeyReady: prov({
+        authMode: "key",
+        hasApiKey: false,
+        configurationStatus: "ready",
+        configurationReason: "key_optional",
+      }),
+      keyedNeedsSetup: prov({
+        hasApiKey: true,
+        configurationStatus: "needs_setup",
+        configurationReason: "missing_api_key",
+      }),
+      headersNeedSetup: prov({
+        hasHeaders: true,
+        configurationStatus: "needs_setup",
+        configurationReason: "missing_api_key",
+      }),
+      statusDisabled: prov({
+        disabled: false,
+        configurationStatus: "disabled",
+        configurationReason: "disabled",
+      }),
+    });
+
+    expect(sections.ready.map(p => p.name)).toEqual(["noKeyReady"]);
+    expect(sections.needsSetup.map(p => p.name)).toEqual(["keyedNeedsSetup", "headersNeedSetup"]);
+    expect(sections.disabled.map(p => p.name)).toEqual(["statusDisabled"]);
+    expect(sections.ready[0]?.configurationReason).toBe("key_optional");
+    expect(binProviderStatus(sections.ready[0]!)).toBe("ready");
+    expect(binProviderStatus(sections.needsSetup[0]!)).toBe("needs-setup");
+    expect(binProviderStatus(sections.disabled[0]!)).toBe("disabled");
   });
 
   test("binProviderStatus matches buildProviderWorkspace binning", () => {

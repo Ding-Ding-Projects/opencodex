@@ -1,12 +1,27 @@
 import { execFileSync } from "node:child_process";
 import { loadConfig, readRuntimePort } from "../config";
 
-export function isProcessAlive(pid: number): boolean {
+export type ProcessSignalProbe = (pid: number, signal: 0) => boolean;
+
+export function isProcessAlive(
+  pid: number,
+  signalProbe: ProcessSignalProbe = (candidate, signal) => process.kill(candidate, signal),
+): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
-    process.kill(pid, 0);
+    signalProbe(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // EPERM/access denied means the process exists but this caller cannot signal
+    // it (notably Windows System/HTTP.sys PID 4). Treat every indeterminate probe
+    // conservatively as alive; only the OS's explicit no-such-process result is
+    // proof that a PID is dead and its TCP rows may be considered for cleanup.
+    return !(
+      error !== null
+      && typeof error === "object"
+      && "code" in error
+      && (error as { code?: unknown }).code === "ESRCH"
+    );
   }
 }
 
@@ -112,17 +127,16 @@ export async function stopProxy(pid: number): Promise<void> {
     );
   }
   if (graceful) {
-    await waitForStoppedPort(runtime, pid);
+    await waitForStoppedPort(runtime);
     return;
   }
   killProxy(pid);
-  await waitForStoppedPort(runtime, pid);
+  await waitForStoppedPort(runtime);
 }
 
 /** After stop/kill, wait for the former listen port to become bindable (Windows drain). */
 async function waitForStoppedPort(
   runtime: { port: number; hostname?: string } | null | undefined,
-  stoppedPid?: number,
 ): Promise<void> {
   if (!runtime?.port) return;
   try {
@@ -131,9 +145,9 @@ async function waitForStoppedPort(
       timeoutMs: 15_000,
       intervalMs: 100,
       scanIntervalMs: 500,
-      // Only the process we just stopped — never kill a newly started twin proxy.
-      killOcxHolders: !!(stoppedPid && stoppedPid > 0),
-      onlyKillPids: stoppedPid && stoppedPid > 0 ? [stoppedPid] : [],
+      // Reclaim only waits and clears rows whose owners are already dead. The
+      // stop path above owns termination; numeric PIDs are never reused as kill
+      // authorization here.
     });
   } catch {
     /* best-effort — callers that need a hard guarantee reclaim again before bind */

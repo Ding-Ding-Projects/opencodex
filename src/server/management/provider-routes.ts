@@ -28,6 +28,7 @@ import { providerOutboundGet, providerRedirectError } from "../../lib/provider-o
 import { enrichProviderFromCatalog, listKeyLoginProviders } from "../../oauth/key-providers";
 import { deriveProviderPresets } from "../../providers/derive";
 import { providerCodexAccountMode } from "../../providers/registry";
+import { providerConfigurationState, providerHasConfiguredApiKey } from "../../providers/setup-status";
 import { routedSlug, slugEquals } from "../../providers/slug-codec";
 import { clearProviderQuotaCache, fetchProviderQuotaReports } from "../../providers/quota";
 import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
@@ -72,27 +73,34 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
   }
 
   if (url.pathname === "/api/providers" && req.method === "GET") {
-    return jsonResponse(Object.entries(config.providers).map(([name, p]) => ({
-      name, adapter: p.adapter, baseUrl: publicProviderBaseUrl(p.baseUrl), defaultModel: p.defaultModel,
-      hasApiKey: !!p.apiKey,
-      allowPrivateNetwork: p.allowPrivateNetwork === true,
-      liveModels: p.liveModels !== false,
-      models: p.models ?? [],
-      authMode: p.authMode,
-      apiKeyTransport: p.apiKeyTransport,
-      disabled: p.disabled === true,
-      codexAccountMode: providerCodexAccountMode(name, p),
-      discovery: p.liveModels === false ? undefined : getProviderDiscoveryStatus(name),
-      // How many models this provider actually exposes. `models` alone cannot answer
-      // it: a live-discovery provider carries an empty configured list while serving
-      // dozens, so a count taken from that array reads "0 models" for exactly the
-      // providers with the most. Live count first, configured list as the fallback,
-      // and undefined when discovery has never succeeded — which the GUI shows as
-      // "unknown" rather than inventing a zero.
-      modelCount: p.liveModels === false
-        ? (p.models?.length ?? 0)
-        : getProviderLiveModelCount(name) ?? (p.models?.length ? p.models.length : undefined),
-    })));
+    return jsonResponse(Object.entries(config.providers).map(([name, p]) => {
+      const configuration = providerConfigurationState(p, name);
+      return {
+        name, adapter: p.adapter, baseUrl: publicProviderBaseUrl(p.baseUrl), defaultModel: p.defaultModel,
+        hasApiKey: providerHasConfiguredApiKey(p),
+        hasHeaders: !!p.headers && Object.keys(p.headers).length > 0,
+        allowPrivateNetwork: p.allowPrivateNetwork === true,
+        liveModels: p.liveModels !== false,
+        models: p.models ?? [],
+        authMode: p.authMode,
+        apiKeyTransport: p.apiKeyTransport,
+        keyOptional: p.keyOptional === true,
+        disabled: p.disabled === true,
+        configurationStatus: configuration.status,
+        configurationReason: configuration.reason,
+        codexAccountMode: providerCodexAccountMode(name, p),
+        discovery: p.liveModels === false ? undefined : getProviderDiscoveryStatus(name),
+        // How many models this provider actually exposes. `models` alone cannot answer
+        // it: a live-discovery provider carries an empty configured list while serving
+        // dozens, so a count taken from that array reads "0 models" for exactly the
+        // providers with the most. Live count first, configured list as the fallback,
+        // and undefined when discovery has never succeeded — which the GUI shows as
+        // "unknown" rather than inventing a zero.
+        modelCount: p.liveModels === false
+          ? (p.models?.length ?? 0)
+          : getProviderLiveModelCount(name) ?? (p.models?.length ? p.models.length : undefined),
+      };
+    }));
   }
 
   // NOTE for anyone told the "Test connection" button needs a new endpoint: it does
