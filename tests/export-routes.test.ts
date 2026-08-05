@@ -251,12 +251,12 @@ test("the CLI and the route offer the same lists, from one registry", async () =
   }
 });
 
-test("the export routes sit behind management auth like everything else", async () => {
+test("the export routes stay reachable on the intentionally open management plane", async () => {
   const server = startServer(0);
   try {
-    // No credential at all. `/api/export` must not be the one route that forgot.
+    // Management routes intentionally do not require the retired admin credential.
     const res = await globalThis.fetch(new URL("/api/export/capabilities", server.url));
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
   } finally {
     await server.stop(true);
   }

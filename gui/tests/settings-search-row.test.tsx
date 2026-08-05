@@ -97,7 +97,7 @@ function typeInto(el: HTMLInputElement | HTMLTextAreaElement, value: string): vo
 
 test("typing narrows the surface to the settings that matched", async () => {
   const { container, root } = await mount(<Surface />);
-  expect(visibleIds(container)).toEqual(["theme", "density", "token"]);
+  expect(visibleIds(container)).toEqual(["theme", "density", "data-key"]);
 
   await act(async () => { typeInto(field(container), "density"); });
   expect(visibleIds(container)).toEqual(["density"]);
@@ -107,8 +107,8 @@ test("typing narrows the surface to the settings that matched", async () => {
 
 test("a setting is reachable by the value it currently reads", async () => {
   const { container, root } = await mount(<Surface />);
-  await act(async () => { typeInto(field(container), "hidden"); });
-  expect(visibleIds(container)).toEqual(["token"]);
+  await act(async () => { typeInto(field(container), "configured"); });
+  expect(visibleIds(container)).toEqual(["data-key"]);
   await act(async () => { root.unmount(); });
 });
 
@@ -119,7 +119,7 @@ test("a setting is reachable by the value it currently reads", async () => {
 test("a match on another tab is stated in words, naming the tab", async () => {
   const { container, root } = await mount(<Surface activeTab="Look" />);
 
-  await act(async () => { typeInto(field(container), "token"); });
+  await act(async () => { typeInto(field(container), "data-plane"); });
 
   expect(visibleIds(container)).toEqual([]);
   const status = statusOf(container).textContent ?? "";
@@ -271,7 +271,7 @@ test("two search bars on one screen do not share state", async () => {
   // The second bar has not been touched: empty query, plain text, nothing hidden.
   expect(field(second).value).toBe("");
   expect(regexChip(second).getAttribute("aria-pressed")).toBe("false");
-  expect(visibleIds(second)).toEqual(["theme", "density", "token"]);
+  expect(visibleIds(second)).toEqual(["theme", "density", "data-key"]);
 
   await act(async () => { root.unmount(); });
 });
@@ -289,14 +289,14 @@ test("each search bar gets its own builder, bound to its own query", async () =>
   const first = container.querySelector<HTMLElement>('[data-row="first"]')!;
   const second = container.querySelector<HTMLElement>('[data-row="second"]')!;
 
-  await act(async () => { typeInto(field(second), "token"); });
+  await act(async () => { typeInto(field(second), "data-plane"); });
   await act(async () => { builderTrigger(second).click(); });
 
   // Exactly one panel is open, and it is inside the second row, seeded from the
   // second query — not from whichever field was touched last in some shared store.
   expect(panel(first)).toBeNull();
   expect(panel(second)).not.toBeNull();
-  expect(panel(second)!.querySelector<HTMLInputElement>("input[aria-invalid]")!.value).toBe("token");
+  expect(panel(second)!.querySelector<HTMLInputElement>("input[aria-invalid]")!.value).toBe("data-plane");
 
   await act(async () => { root.unmount(); });
 });

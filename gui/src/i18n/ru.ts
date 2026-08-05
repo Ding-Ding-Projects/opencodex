@@ -237,6 +237,7 @@ export const ru: Record<TKey, string> = {
   "dash.updateRecheck": "Проверить снова",
   "dash.updateCannotAuto": "Обновление в один клик недоступно ({reason}).",
   "dash.updateReason.source_checkout": "установка из исходного кода",
+  "dash.updateReason.desktop_installer": "установлено через установщик для рабочего стола — скачайте последнюю версию",
   "dash.updateReason.latest_unavailable": "реестр npm недоступен",
   "dash.updateReason.already_latest": "уже установлена последняя версия",
   "dash.updateReason.unknown": "обновление недоступно",

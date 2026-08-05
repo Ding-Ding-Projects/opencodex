@@ -232,6 +232,7 @@ export const ko: Record<TKey, string> = {
   "dash.updateRecheck": "다시 확인",
   "dash.updateCannotAuto": "원클릭 업데이트를 사용할 수 없습니다 ({reason}).",
   "dash.updateReason.source_checkout": "소스 체크아웃",
+  "dash.updateReason.desktop_installer": "데스크톱 설치 프로그램으로 설치됨 — 최신 버전 다운로드",
   "dash.updateReason.latest_unavailable": "npm 레지스트리에 연결할 수 없음",
   "dash.updateReason.already_latest": "이미 최신 버전",
   "dash.updateReason.unknown": "업데이트 불가",

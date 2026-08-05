@@ -232,6 +232,7 @@ export const zh: Record<TKey, string> = {
   "dash.updateRecheck": "重新检查",
   "dash.updateCannotAuto": "无法一键更新（{reason}）。",
   "dash.updateReason.source_checkout": "源码检出",
+  "dash.updateReason.desktop_installer": "通过桌面安装程序安装 — 下载最新版本",
   "dash.updateReason.latest_unavailable": "无法连接 npm 注册表",
   "dash.updateReason.already_latest": "已是最新版本",
   "dash.updateReason.unknown": "无法更新",

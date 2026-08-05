@@ -85,14 +85,14 @@ test("a match on another tab of this surface is counted and its tab named", () =
     { id: "port", label: "Port", tab: "Connection" },
     { id: "data-key", label: "Data-plane key", tab: "Security" },
   ];
-  const result = runSettingsSearch({ options: tabbed, activeTab: "Connection", query: "token", useRegex: false });
+  const result = runSettingsSearch({ options: tabbed, activeTab: "Connection", query: "data-plane", useRegex: false });
 
   expect(result.hits).toBe(0);
   expect(result.otherTabHits).toBe(1);
   expect(result.otherTabs).toEqual(["Security"]);
   // It matched — it is simply not on screen. A surface that asked `matches` would
   // otherwise be told the setting failed the query.
-  expect(result.matches("token")).toBe(true);
+  expect(result.matches("data-key")).toBe(true);
 });
 
 test("an option with no tab is visible whatever tab is showing", () => {

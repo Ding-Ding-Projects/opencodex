@@ -3,20 +3,17 @@
  *
  * `tests/pairing.test.ts` pins the token itself — 256 bits, single use, five
  * minutes, one at a time, never an admin token. This file pins the thing that
- * makes those properties reachable: three routes, one of which answers WITHOUT a
- * credential, and does so through a gate that refuses every other `/api/*` path
- * in the process.
+ * makes those properties reachable: three routes, with the claim deliberately
+ * answering WITHOUT a credential because receiving a credential is its purpose.
  *
- * The exemption is the reason this file exists. `src/server/index.ts` runs
- * `requireManagementAuth` across the whole of `/api/*` before dispatch, so
- * `POST /api/host/pair/claim` is served only because a predicate says it may be.
- * A regression there is silent in both directions and expensive in both: widen
- * it and the management API is open; narrow it and a phone can never pair, with
- * a 401 that looks like a bad token.
+ * The claim's token-bound validation is the reason this file exists. The
+ * management plane is intentionally open, while `POST /api/host/pair/claim`
+ * still has its own 400/429/413 contract and never treats a malformed scan as
+ * an authentication failure.
  *
  * Every request below goes over a real socket through the real server, because
- * the gate lives above the route handlers and calling a handler directly would
- * test the half that was never in doubt.
+ * route dispatch and the HTTP status contract are part of the behavior under
+ * test; calling a handler directly would skip that wiring.
  */
 
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
@@ -77,7 +74,7 @@ afterEach(() => {
   if (testDir) removeTempDir(testDir);
 });
 
-/** Mint through the admin-authenticated route, the way the dashboard does. */
+/** Mint through the management route, the way the dashboard does. */
 async function mintToken(base: string): Promise<{ token: string; expiresAt: number }> {
   const res = await managementFetch(new URL("/api/host/pair", base), { method: "POST" });
   expect(res.status).toBe(200);
@@ -98,18 +95,16 @@ function claim(base: string, token: unknown): Promise<Response> {
 }
 
 describe("the unauthenticated claim", () => {
-  test("is the ONLY /api/ path served without a credential", async () => {
+  test("is reachable without a credential on the open management plane", async () => {
     saveConfig(baseConfig());
     const server = startServer(0);
     try {
-      // The control: a sibling route under the same prefix, same transport, no
-      // credential. 401 here is what proves the gate is on at all, so the claim
-      // answering anything else is a real exemption and not a broken gate.
-      const gated = await globalThis.fetch(new URL("/api/host", server.url));
-      expect(gated.status).toBe(401);
+      // A sibling management route is also open by design; an invalid claim is
+      // refused by the pairing handler itself, not by an auth gate.
+      const management = await globalThis.fetch(new URL("/api/host", server.url));
+      expect(management.status).toBe(200);
 
       const claimed = await claim(server.url, "no-such-token");
-      expect(claimed.status).not.toBe(401);
       expect(claimed.status).toBe(400);
     } finally {
       await server.stop(true);
@@ -276,12 +271,12 @@ describe("the unauthenticated claim", () => {
     }
   });
 
-  test("only POST is exempt — the path alone does not open the gate", async () => {
+  test("only POST is a claim handler — the path alone does not create another route", async () => {
     saveConfig(baseConfig());
     const server = startServer(0);
     try {
       const res = await globalThis.fetch(new URL("/api/host/pair/claim", server.url), { method: "GET" });
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(404);
     } finally {
       await server.stop(true);
     }
@@ -289,14 +284,14 @@ describe("the unauthenticated claim", () => {
 });
 
 describe("minting and cancelling", () => {
-  test("both require the management credential", async () => {
+  test("both are available on the intentionally open management plane", async () => {
     saveConfig(baseConfig());
     const server = startServer(0);
     try {
       const mint = await globalThis.fetch(new URL("/api/host/pair", server.url), { method: "POST" });
-      expect(mint.status).toBe(401);
+      expect(mint.status).toBe(200);
       const cancel = await globalThis.fetch(new URL("/api/host/pair", server.url), { method: "DELETE" });
-      expect(cancel.status).toBe(401);
+      expect(cancel.status).toBe(200);
     } finally {
       await server.stop(true);
     }

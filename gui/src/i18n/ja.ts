@@ -237,6 +237,7 @@ export const ja: Record<TKey, string> = {
   "dash.updateRecheck": "再確認",
   "dash.updateCannotAuto": "ワンクリック更新は利用できません({reason})。",
   "dash.updateReason.source_checkout": "ソースチェックアウト",
+  "dash.updateReason.desktop_installer": "デスクトップインストーラーからインストール — 最新版をダウンロード",
   "dash.updateReason.latest_unavailable": "npm レジストリに到達できません",
   "dash.updateReason.already_latest": "最新です",
   "dash.updateReason.unknown": "更新は利用できません",

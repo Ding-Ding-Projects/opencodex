@@ -228,6 +228,7 @@ export const de: Record<TKey, string> = {
   "dash.updateRecheck": "Erneut prüfen",
   "dash.updateCannotAuto": "Ein-Klick-Update ist nicht verfügbar ({reason}).",
   "dash.updateReason.source_checkout": "Quellcode-Checkout",
+  "dash.updateReason.desktop_installer": "über den Desktop-Installer installiert — neueste Version herunterladen",
   "dash.updateReason.latest_unavailable": "npm-Registry nicht erreichbar",
   "dash.updateReason.already_latest": "bereits auf dem neuesten Stand",
   "dash.updateReason.unknown": "Update nicht verfügbar",
