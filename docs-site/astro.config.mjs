@@ -207,6 +207,7 @@ export default defineConfig({
             { label: "Docker", translations: { ko: "Docker", "zh-CN": "Docker", ru: "Docker", ja: "Docker" }, slug: "guides/docker" },
             { label: "Sub-agent Surface", translations: { ko: "서브에이전트 서피스", "zh-CN": "子代理界面", ru: "Интерфейс подагентов", ja: "サブエージェントサーフェス" }, slug: "guides/sub-agent-surface" },
             { label: "Export & Bulk Actions", translations: { ko: "내보내기 & 일괄 작업", "zh-CN": "导出与批量操作", ru: "Экспорт и массовые действия", ja: "エクスポート & 一括操作" }, slug: "guides/export-and-bulk-actions" },
+            { label: "Super express release", translations: { ko: "슈퍼 익스프레스 릴리스", "zh-CN": "超级快速发布", ru: "Суперэкспресс-релиз", ja: "スーパーエクスプレスリリース" }, slug: "guides/super-express-release" },
           ],
         },
         {

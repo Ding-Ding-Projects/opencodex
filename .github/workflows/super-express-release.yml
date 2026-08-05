@@ -1,0 +1,187 @@
+name: Super express release
+
+# This is the deliberately impatient manual release door. It packages the
+# selected commit directly and publishes a normal GitHub release without
+# waiting for, or invoking, any test workflow. Use the regular CI and Auto
+# release workflows when verification is part of the release decision.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit, branch or tag to build (blank = the dispatched commit)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: super-express-release-${{ inputs.ref || github.sha }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout the commit being built
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Resolve the commit being released
+        shell: bash
+        run: echo "SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: Pick the dim sum codename
+        shell: bash
+        run: bun scripts/release-codename.ts "$SHA" "${{ github.repository }}" >> "$GITHUB_ENV"
+
+      - name: Install proxy dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify the Bun runtime was unpacked
+        shell: bash
+        run: |
+          set -euo pipefail
+          size=$(wc -c < node_modules/bun/bin/bun.exe 2>/dev/null || echo 0)
+          echo "bun.exe is $size bytes"
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error::Bun binary is the placeholder stub — the installer would not start."
+            exit 1
+          fi
+
+      - name: Install dashboard dependencies
+        working-directory: gui
+        run: bun install --frozen-lockfile
+
+      - name: Build the dashboard
+        working-directory: gui
+        env:
+          OCX_BUILD: super-express-${{ github.run_number }}
+          OCX_COMMIT: ${{ env.SHA }}
+        run: bun run build
+
+      - name: Stamp the build on disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '{"build":"super-express-%s","commit":"%s"}\n' "${{ github.run_number }}" "${SHA}" > build-info.json
+          cat build-info.json
+
+      - name: Pack the dashboard bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd gui/dist
+          7z a ../../opencodex-dashboard.zip . > /dev/null
+          echo "packed $(du -h ../../opencodex-dashboard.zip | cut -f1)"
+
+      - name: Build the Windows installer
+        run: npx --yes electron-builder@26.15.3 --win --publish never
+
+      - name: Validate release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer=$(find dist-desktop -type f -name '*Setup*.exe' 2>/dev/null | head -1)
+          [ -n "$installer" ] || installer=$(find dist-desktop -type f -name '*.exe' ! -name 'Update.exe' 2>/dev/null | head -1)
+          if [ -z "$installer" ] || [ ! -s "$installer" ]; then
+            echo "::error::No Windows installer was produced in dist-desktop/."
+            find dist-desktop -maxdepth 3 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+
+          feed_count=$(find dist-desktop -type f \( -name RELEASES -o -name '*.nupkg' \) -size +0c 2>/dev/null | wc -l)
+          if [ "$feed_count" -lt 2 ]; then
+            echo "::error::Squirrel update feed is incomplete: expected RELEASES and a full .nupkg."
+            find dist-desktop -maxdepth 3 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+          [ -s opencodex-dashboard.zip ] || { echo "::error::Dashboard bundle is missing."; exit 1; }
+          photo="gui/public/dimsum/${DISH_ID}.webp"
+          [ -s "$photo" ] || { echo "::error::Dim sum photo is missing: $photo"; exit 1; }
+          echo "installer=$installer"
+          echo "squirrel feed assets=$feed_count"
+          echo "photo=$photo"
+
+      - name: Keep the installer as an artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencodex-super-express-${{ github.run_number }}
+          path: |
+            dist-desktop/**/*.exe
+            dist-desktop/**/*.nupkg
+            dist-desktop/**/RELEASES
+            opencodex-dashboard.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Create the full GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          tag="super-express-${{ github.run_number }}-attempt-${{ github.run_attempt }}"
+          version=$(node -p "require('./package.json').version")
+          installer=$(find dist-desktop -type f -name '*Setup*.exe' 2>/dev/null | head -1)
+          [ -n "$installer" ] || installer=$(find dist-desktop -type f -name '*.exe' ! -name 'Update.exe' 2>/dev/null | head -1)
+
+          feed=()
+          while IFS= read -r file; do
+            [ -s "$file" ] && feed+=("$file")
+          done < <(find dist-desktop -type f \( -name RELEASES -o -name '*.nupkg' \) 2>/dev/null)
+          [ "${#feed[@]}" -ge 2 ] || { echo "::error::Squirrel feed vanished before publishing."; exit 1; }
+
+          photo="gui/public/dimsum/${DISH_ID}.webp"
+          lines=$(bun run scripts/count-lines.ts)
+          notes=$(cat <<NOTES
+          ### ⚡ Super express build — **$DISH_ZH $DISH_NAME**
+
+          <img src="$DISH_PHOTO" alt="$DISH_NAME ($DISH_ZH)" width="360">
+
+          *$DISH_ZH · $DISH_NAME · \`$DISH_JYUTPING\`*
+
+          Manual \`workflow_dispatch\` build of \`${SHA:0:9}\` (v${version}).
+          This workflow intentionally performs packaging only: no test jobs were run.
+          The normal CI and Auto release workflows remain the verification path.
+
+          | Asset | What it is |
+          | --- | --- |
+          | **opencodex-setup.exe** | Windows desktop app installer |
+          | **RELEASES + .nupkg** | Squirrel.Windows update feed |
+          | **opencodex-dashboard.zip** | Built dashboard bundle |
+          | **${DISH_ID}.webp** | The build's dim sum photo |
+
+          <details>
+          <summary>📏 <strong>Lines of code at this commit</strong></summary>
+
+          $lines
+
+          Produced by this run with \`bun run scripts/count-lines.ts\` over \`${SHA:0:9}\`.
+
+          </details>
+          NOTES
+          )
+
+          # No --prerelease flag: this is a normal, full GitHub release.
+          gh release create "$tag" \
+            --target "$SHA" \
+            --title "super express ${{ github.run_number }} · $DISH_ZH $DISH_NAME — v${version} @ ${SHA:0:9}" \
+            --notes "$notes" \
+            "$installer#opencodex-setup.exe" \
+            "opencodex-dashboard.zip" \
+            "${feed[@]}" \
+            "$photo#${DISH_ID}.webp"

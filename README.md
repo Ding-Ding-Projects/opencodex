@@ -491,6 +491,7 @@ Everything is on the docs site: **<https://ding-ding-projects.github.io/opencode
 - [Providers](https://ding-ding-projects.github.io/opencodex/guides/providers/)
 - [Claude Code](https://ding-ding-projects.github.io/opencodex/guides/claude-code/)
 - [Docker](https://ding-ding-projects.github.io/opencodex/guides/docker/)
+- [Super express release](https://ding-ding-projects.github.io/opencodex/guides/super-express-release/)
 - [Configuration reference](https://ding-ding-projects.github.io/opencodex/reference/configuration/)
 - [Architecture](https://ding-ding-projects.github.io/opencodex/reference/architecture/)
 

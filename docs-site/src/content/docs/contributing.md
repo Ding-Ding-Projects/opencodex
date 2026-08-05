@@ -71,6 +71,10 @@ GitHub Actions intentionally stay small:
 - **Release** (`.github/workflows/release.yml`) is manual. It does not act as a second full CI
   pipeline; before dry-run or publish it requires the exact release commit (`GITHUB_SHA`) to already
   have a successful Cross-platform CI run.
+- **Super express release** (`.github/workflows/super-express-release.yml`) is manual and
+  `workflow_dispatch`-only. It builds the Windows installer and publishes a normal, full GitHub
+  release directly, intentionally without running any test jobs. Use it when an installable build
+  must be available immediately; use the regular CI and Auto release workflows for verification.
 - **Stale needs-info** (`.github/workflows/stale-needs-info.yml`) runs daily on the default branch.
   Open issues labeled `needs-info` with no activity for 14 days get a warning; after 7 more idle
   days they close as not planned. Any update clears the stale warning. To keep long-lived work open,
@@ -83,6 +87,12 @@ bun run release <version>           # commits/pushes the bump; publish workflow 
 bun run release <version> --publish # publish after the CI-gated dry run is understood
 bun run release:watch               # watch the newest Release workflow run
 ```
+
+For the test-free packaging path, open **Actions → Super express release → Run workflow** and
+optionally provide the commit, branch or tag to build. The workflow attaches the Windows Squirrel
+installer and update feed, the dashboard bundle, the release's dim sum photo, and the generated line
+count. It does not make the release a prerelease; the absence of test jobs is deliberate and is
+called out in the release notes.
 
 ## Branches
 
