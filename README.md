@@ -14,6 +14,11 @@ npm install -g @bitkyc08/opencodex
 ocx start        # proxy + dashboard on localhost:10100
 ```
 
+On Windows, `scripts/install.ps1` also repairs the current user's PATH using the directory reported by
+`npm.cmd prefix -g`; it never changes the machine PATH. If a manually installed global package still
+reports that `ocx` is not recognized, add that exact prefix to the user PATH and open a new PowerShell
+window before retrying.
+
 <table align="center">
   <tr>
     <td width="50%" align="center">
