@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { loadConfig } from "../config";
 import { injectClaudeAgentDefs } from "../claude/agents-inject";
 import { effectiveModelEnv, resolveAutoContext } from "../claude/context-windows";
+import { fixedContextEnv } from "../claude/context-env";
 import { refreshGatewayModelCacheFromProxy } from "../claude/gateway-cache";
 import { commandInvocation } from "../lib/win-exec";
 import { findLiveProxy } from "../server/proxy-liveness";
@@ -121,10 +122,8 @@ export function buildClaudeEnv(
   }
   // Context-window override: the official pair — MAX_CONTEXT_TOKENS alone is ignored
   // for recognized claude-shaped ids unless DISABLE_COMPACT=1 rides along (devlog 135).
-  const maxCtx = config.claudeCode?.maxContextTokens;
-  if (typeof maxCtx === "number" && Number.isFinite(maxCtx) && maxCtx > 0) {
-    setDefault("CLAUDE_CODE_MAX_CONTEXT_TOKENS", String(Math.floor(maxCtx)));
-    setDefault("DISABLE_COMPACT", "1");
+  for (const [name, value] of Object.entries(fixedContextEnv(config.claudeCode?.maxContextTokens))) {
+    setDefault(name, value);
   }
   // Auto-context (devlog 260712 020): min(believed window, env) inside the CLI means
   // one global env acts as a per-model floor — [1m]-marked models compact here while

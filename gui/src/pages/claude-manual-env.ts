@@ -4,6 +4,8 @@
  * copy-paste shell block is directly unit-testable (tests/claude-manual-env.test.ts).
  */
 
+import { automaticContextResetShellLines, fixedContextShellLines } from "../claude-shell-env";
+
 export type SidecarBackend = "openai" | "anthropic";
 export interface SidecarOverride { backend?: SidecarBackend; model?: string }
 
@@ -40,6 +42,8 @@ export function buildManualEnv(state: ClaudeManualEnvState): string {
   const modelEnvExports = MODEL_ENV_NAMES
     .filter(name => state.effectiveModelEnv[name])
     .map(name => `export ${name}=${state.effectiveModelEnv[name]}`);
+  const fixedContextExports = fixedContextShellLines(state.maxContextTokens);
+  const automaticContextReset = automaticContextResetShellLines(state.maxContextTokens);
 
   return [
     `export ANTHROPIC_BASE_URL=${baseUrl}`,
@@ -53,6 +57,8 @@ export function buildManualEnv(state: ClaudeManualEnvState): string {
     ...(marker === "proxy"
       ? ['[ -z "${CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST+x}" ] && export CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1']
       : []),
+    ...automaticContextReset,
+    ...fixedContextExports,
     ...(autoCompactActive ? [`export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${state.autoCompactWindow ?? 350000}`] : []),
     ...modelEnvExports,
     "claude",

@@ -17,11 +17,34 @@ import { SmallFastModelSetting } from "./claude-code-settings";
 
 export { AutoConnectSetting, SmallFastModelSetting } from "./claude-code-settings";
 
+const CONTEXT_WINDOW_PRESETS = [100_000, 200_000, 250_000, 300_000, 350_000, 400_000, 500_000, 600_000, 750_000, 900_000, 1_000_000];
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function buildWindowOptions(current: number | null, automaticLabel: string, locale: string) {
+  const values = current !== null && !CONTEXT_WINDOW_PRESETS.includes(current)
+    ? [...CONTEXT_WINDOW_PRESETS, current].sort((a, b) => a - b)
+    : CONTEXT_WINDOW_PRESETS;
+  return [
+    { value: "", label: automaticLabel },
+    ...values.map(value => ({
+      value: String(value),
+      label: current === value && !CONTEXT_WINDOW_PRESETS.includes(value)
+        ? new Intl.NumberFormat(locale).format(value)
+        : formatCompactWindow(value, locale),
+    })),
+  ];
+}
+
 export default function ClaudeCode({ apiBase }: { apiBase: string }) {
   const t = useT();
   const { locale } = useI18n();
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang ?? "en";
   const [state, setState] = useState<ClaudeCodeState | null>(null);
+  const [persistedMaxContextTokens, setPersistedMaxContextTokens] = useState<number | null>(null);
+  const [invalidStoredMaxContext, setInvalidStoredMaxContext] = useState(false);
   const [rows, setRows] = useState<MapRow[]>([]);
   const [status, setStatus] = useState("");
   const [ok, setOk] = useState(false);
@@ -39,6 +62,9 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         setStatus(t("claude.loadFail"));
         return;
       }
+      const maxContextTokens = isPositiveInteger(r.maxContextTokens) ? r.maxContextTokens : null;
+      setPersistedMaxContextTokens(maxContextTokens);
+      setInvalidStoredMaxContext(r.maxContextTokens !== null && r.maxContextTokens !== undefined && maxContextTokens === null);
       setState({
         ...r,
         // No coercion: an absent config key is AUTO, and coercing it to subscription is
@@ -46,7 +72,7 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         authMode: r.authMode === "proxy" || r.authMode === "subscription" ? r.authMode : "auto",
         ...reconcileAutoConnectState(r),
         fastMode: r.fastMode ?? null,
-        maxContextTokens: r.maxContextTokens ?? null,
+        maxContextTokens,
         autoContext: r.autoContext !== false,
         autoCompactWindow: r.autoCompactWindow ?? null,
         injectAgents: r.injectAgents !== false,
@@ -75,16 +101,15 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
 
   // Auto-compact window presets (devlog 020 + user request): dropdown like the model
   // pickers. "" = 350k default; a saved off-ladder value is surfaced as its own option.
-  const autoCompactOptions = useMemo(() => {
-    const ladder = [100_000, 200_000, 250_000, 300_000, 350_000, 400_000, 500_000, 600_000, 750_000, 900_000, 1_000_000];
-    // Compact SI-style units (1M / 350k) — technical number format, not prose.
-    const current = state?.autoCompactWindow ?? null;
-    const values = current !== null && !ladder.includes(current) ? [...ladder, current].sort((a, b) => a - b) : ladder;
-    return [
-      { value: "", label: t("claude.autoCompactDefault") },
-      ...values.map(value => ({ value: String(value), label: formatCompactWindow(value, localeTag) })),
-    ];
-  }, [state?.autoCompactWindow, t, localeTag]);
+  const autoCompactOptions = useMemo(
+    () => buildWindowOptions(state?.autoCompactWindow ?? null, t("claude.autoCompactDefault"), localeTag),
+    [state?.autoCompactWindow, t, localeTag],
+  );
+
+  const contextWindowOptions = useMemo(
+    () => buildWindowOptions(state?.maxContextTokens ?? null, t("claude.maxContextAutomatic"), localeTag),
+    [state?.maxContextTokens, t, localeTag],
+  );
 
   const save = async () => {
     if (!state) return;
@@ -102,6 +127,7 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
           authMode: state.authMode,
           systemEnv: state.systemEnv,
           fastMode: state.fastMode,
+          maxContextTokens: state.maxContextTokens,
           autoContext: state.autoContext,
           autoCompactWindow: state.autoCompactWindow,
           injectAgents: state.injectAgents,
@@ -129,7 +155,14 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
       <div className="page-head"><h2>{t("claude.pageTitle")}</h2></div>
       <p className="page-sub">{t("claude.subtitle")}</p>
       {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
-      <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} />
+      <ClaudeCodeSettingsCard
+        state={state}
+        persistedMaxContextTokens={persistedMaxContextTokens}
+        invalidStoredMaxContext={invalidStoredMaxContext}
+        contextWindowOptions={contextWindowOptions}
+        autoCompactOptions={autoCompactOptions}
+        onStateChange={setState}
+      />
       <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />
       <SmallFastModelSetting
         value={state.smallFastModel}

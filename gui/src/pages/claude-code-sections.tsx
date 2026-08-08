@@ -26,14 +26,31 @@ function authSourceLabel(source: string | undefined, t: TFn): string {
 
 export function ClaudeCodeSettingsCard({
   state,
+  persistedMaxContextTokens,
+  invalidStoredMaxContext = false,
+  contextWindowOptions,
   autoCompactOptions,
   onStateChange,
 }: {
   state: ClaudeCodeState;
+  persistedMaxContextTokens?: number | null;
+  invalidStoredMaxContext?: boolean;
+  contextWindowOptions: { value: string; label: string }[];
   autoCompactOptions: { value: string; label: string }[];
   onStateChange: (next: ClaudeCodeState) => void;
 }) {
   const t = useT();
+  const savedMaxContextTokens = persistedMaxContextTokens === undefined
+    ? state.maxContextTokens
+    : persistedMaxContextTokens;
+  const hasMaxContextOverride = state.maxContextTokens !== null;
+  const savedMaxContextOverride = savedMaxContextTokens !== null;
+  const maxContextDraftChanged = state.maxContextTokens !== savedMaxContextTokens;
+  const maxContextDescriptionIds = [
+    "claude-max-context-description",
+    "claude-max-context-provenance",
+    ...(hasMaxContextOverride ? ["claude-max-context-warning"] : []),
+  ].join(" ");
 
   return (
     <div className="card" style={{ overflow: "hidden" }}>
@@ -113,9 +130,48 @@ export function ClaudeCodeSettingsCard({
 
       <div className="setting-row">
         <div className="setting-label">
+          <span className="title">{t("claude.maxContext")}</span>
+          <span className="desc" id="claude-max-context-description">{t("claude.maxContextDesc")}</span>
+          {hasMaxContextOverride && (
+            <span className="desc" id="claude-max-context-warning" style={{ color: "var(--red)" }}>
+              {t("claude.maxContextWarn")}
+            </span>
+          )}
+          <span className="desc" id="claude-max-context-provenance" style={{ color: "var(--muted)" }}>
+            {maxContextDraftChanged
+              ? t("claude.maxContextDraftProvenance", {
+                value: invalidStoredMaxContext
+                  ? t("claude.maxContextInvalidStoredValue")
+                  : savedMaxContextOverride
+                    ? String(savedMaxContextTokens)
+                    : t("claude.maxContextAutomaticValue"),
+              })
+              : invalidStoredMaxContext
+                ? t("claude.maxContextInvalidStoredProvenance")
+                : savedMaxContextOverride
+                  ? t("claude.maxContextFileProvenance")
+                  : t("claude.maxContextDefaultProvenance")}
+          </span>
+        </div>
+        <Select
+          value={state.maxContextTokens === null ? "" : String(state.maxContextTokens)}
+          options={contextWindowOptions}
+          onChange={value => onStateChange({
+            ...state,
+            maxContextTokens: value === "" ? null : Number(value),
+          })}
+          label={t("claude.maxContext")}
+          describedBy={maxContextDescriptionIds}
+          style={{ minWidth: 190 }}
+          portal
+        />
+      </div>
+
+      <div className="setting-row">
+        <div className="setting-label">
           <span className="title">{t("claude.autoContext")}</span>
           <span className="desc">{t("claude.autoContextDesc")}</span>
-          {state.maxContextTokens !== null && <span className="desc" style={{ color: "var(--muted)" }}>{t("claude.autoContextInert")}</span>}
+          {hasMaxContextOverride && <span className="desc" style={{ color: "var(--muted)" }}>{t("claude.autoContextInert")}</span>}
         </div>
         <SettingToggle label={t("claude.autoContext")} checked={state.autoContext} onChange={autoContext => onStateChange({ ...state, autoContext })} />
       </div>
