@@ -40,4 +40,7 @@ if (manifest.sourceHash !== currentHash) {
   fail("dashboard sources changed after gui/dist was built");
 }
 
-console.log(`GUI package gate passed: ${manifest.uiGeneration}, package ${manifest.packageVersion}.`);
+// `npm pack --json` reserves stdout for its machine-readable JSON document.
+// This script runs from `prepack`, so even a success diagnostic on stdout
+// corrupts the redirected pack manifest on every platform.
+console.error(`GUI package gate passed: ${manifest.uiGeneration}, package ${manifest.packageVersion}.`);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -31,6 +31,15 @@ function fixture(version = "9.8.7"): string {
 }
 
 describe("GUI build identity", () => {
+  test("keeps npm pack JSON stdout machine-readable", async () => {
+    const gate = await Bun.file(new URL("../scripts/verify-gui-dist.ts", import.meta.url)).text();
+    const workflow = await Bun.file(new URL("../.github/workflows/ci.yml", import.meta.url)).text();
+
+    expect(workflow).toContain("npm pack --json > pack.json");
+    expect(gate).toContain("console.error(`GUI package gate passed:");
+    expect(gate).not.toContain("console.log(`GUI package gate passed:");
+  });
+
   test("accepts only a matching Material 3 manifest and index marker", () => {
     const root = fixture();
     expect(isCompatibleGuiDist(root, "9.8.7")).toBe(true);
@@ -104,7 +113,10 @@ describe("GUI build identity", () => {
       packageVersion: "9.8.7",
       sourceHash: `sha256:${"a".repeat(64)}`,
     }));
-    expect(findPackagedGuiDist(serverDir, "9.8.7")).toBe(owned);
+    // macOS spells its temporary directory through `/var`, whose canonical
+    // path is `/private/var`. The production lookup intentionally returns the
+    // real path so its containment check cannot be bypassed by a symlink.
+    expect(findPackagedGuiDist(serverDir, "9.8.7")).toBe(realpathSync(owned));
   });
 
   test("does not follow a dashboard asset symlink outside gui/dist", () => {
