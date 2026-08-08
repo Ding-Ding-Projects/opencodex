@@ -5,7 +5,16 @@
  * Same translate-and-replay pattern as Claude Messages: the produced body must pass
  * responsesRequestSchema so routing/OAuth/pool/sidecars are inherited unchanged.
  */
-export class ChatCompletionsRequestError extends Error {}
+export class ChatCompletionsRequestError extends Error {
+  constructor(message: string, readonly status = 400, readonly code: string | null = null) {
+    super(message);
+    this.name = "ChatCompletionsRequestError";
+  }
+}
+
+export interface ChatCompletionsInboundOptions {
+  profile?: "github-copilot-desktop";
+}
 
 type Rec = Record<string, unknown>;
 
@@ -14,6 +23,183 @@ function isRec(v: unknown): v is Rec {
 }
 
 const OUTPUT_CONFIG_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+const COPILOT_MESSAGE_ROLES = new Set(["system", "developer", "user", "assistant", "tool"]);
+const COPILOT_REQUEST_FIELDS = new Set([
+  "model", "messages", "stream", "stream_options", "tools", "tool_choice", "parallel_tool_calls",
+  "max_tokens", "max_completion_tokens", "temperature", "top_p", "stop", "user", "metadata",
+  "prompt_cache_key", "reasoning_effort", "reasoning", "response_format", "n", "logprobs", "top_logprobs",
+  "presence_penalty", "frequency_penalty", "functions", "function_call", "audio", "modalities", "prediction",
+  "seed", "logit_bias", "service_tier", "web_search_options",
+]);
+const COPILOT_MAX_STRING_BYTES = 8 * 1024 * 1024;
+
+function requireFiniteNumber(value: unknown, field: string, min: number, max: number, integer = false): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+    throw new ChatCompletionsRequestError(`${field} must be ${integer ? "an integer" : "a number"} from ${min} through ${max}`);
+  }
+}
+
+function validateTextPart(part: Rec, allowed: ReadonlySet<string>, field: string): void {
+  if (typeof part.type !== "string" || !allowed.has(part.type)) {
+    throw new ChatCompletionsRequestError(`${field} contains unsupported content type: ${String(part.type)}`);
+  }
+  if (typeof part.text !== "string") throw new ChatCompletionsRequestError(`${field}.${part.type}.text must be a string`);
+}
+
+function validateImagePart(part: Rec, field: string): void {
+  const image = part.image_url;
+  const url = typeof image === "string" ? image : isRec(image) && typeof image.url === "string" ? image.url : "";
+  if (!url) throw new ChatCompletionsRequestError(`${field}.image_url.url must be a non-empty string`);
+  if (new TextEncoder().encode(url).byteLength > COPILOT_MAX_STRING_BYTES) {
+    throw new ChatCompletionsRequestError(`${field}.image_url.url is too large`, 413, "request_too_large");
+  }
+  const dataImage = /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i.test(url);
+  let httpsImage = false;
+  try { httpsImage = new URL(url).protocol === "https:"; } catch { /* invalid below */ }
+  if (!dataImage && !httpsImage) {
+    throw new ChatCompletionsRequestError(`${field}.image_url.url must be an HTTPS URL or a base64 image data URL`);
+  }
+  if (isRec(image) && image.detail !== undefined && image.detail !== "auto" && image.detail !== "low" && image.detail !== "high") {
+    throw new ChatCompletionsRequestError(`${field}.image_url.detail must be auto, low, or high`);
+  }
+}
+
+function validateContent(content: unknown, role: string, field: string): void {
+  if (content === null && role === "assistant") return;
+  if (typeof content === "string") return;
+  if (!Array.isArray(content)) throw new ChatCompletionsRequestError(`${field} must be a string or content array`);
+  for (let index = 0; index < content.length; index += 1) {
+    const raw = content[index];
+    if (typeof raw === "string") continue;
+    if (!isRec(raw)) throw new ChatCompletionsRequestError(`${field}[${index}] must be an object`);
+    if (raw.type === "audio" || raw.type === "input_audio" || raw.type === "file" || raw.type === "input_file") {
+      throw new ChatCompletionsRequestError(`${field}[${index}] ${String(raw.type)} content is not supported`);
+    }
+    if (raw.type === "image_url") {
+      if (role !== "user") throw new ChatCompletionsRequestError(`${field}[${index}] image_url is supported only for user messages`);
+      validateImagePart(raw, `${field}[${index}]`);
+      continue;
+    }
+    const allowed = role === "assistant"
+      ? new Set(["text", "output_text"])
+      : new Set(["text", "input_text"]);
+    validateTextPart(raw, allowed, `${field}[${index}]`);
+  }
+}
+
+function validateAssistantToolCalls(toolCalls: unknown, field: string): void {
+  if (toolCalls === undefined) return;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) throw new ChatCompletionsRequestError(`${field} must be a non-empty array`);
+  for (let index = 0; index < toolCalls.length; index += 1) {
+    const call = toolCalls[index];
+    if (!isRec(call) || call.type !== "function" || typeof call.id !== "string" || !call.id.trim()) {
+      throw new ChatCompletionsRequestError(`${field}[${index}] must be a named function call with an id`);
+    }
+    if (!isRec(call.function) || typeof call.function.name !== "string" || !call.function.name.trim()) {
+      throw new ChatCompletionsRequestError(`${field}[${index}].function.name is required`);
+    }
+    if (typeof call.function.arguments !== "string") {
+      throw new ChatCompletionsRequestError(`${field}[${index}].function.arguments must be a JSON string`);
+    }
+    try { JSON.parse(call.function.arguments); } catch {
+      throw new ChatCompletionsRequestError(`${field}[${index}].function.arguments must contain valid JSON`);
+    }
+  }
+}
+
+function validateCopilotTools(tools: unknown): void {
+  if (tools === undefined) return;
+  if (!Array.isArray(tools)) throw new ChatCompletionsRequestError("tools must be an array");
+  for (let index = 0; index < tools.length; index += 1) {
+    const tool = tools[index];
+    if (!isRec(tool) || tool.type !== "function" || !isRec(tool.function)) {
+      throw new ChatCompletionsRequestError(`tools[${index}] must be an OpenAI function tool`);
+    }
+    if (typeof tool.function.name !== "string" || !tool.function.name.trim()) {
+      throw new ChatCompletionsRequestError(`tools[${index}].function.name is required`);
+    }
+    if (tool.function.description !== undefined && typeof tool.function.description !== "string") {
+      throw new ChatCompletionsRequestError(`tools[${index}].function.description must be a string`);
+    }
+    if (tool.function.parameters !== undefined && !isRec(tool.function.parameters)) {
+      throw new ChatCompletionsRequestError(`tools[${index}].function.parameters must be an object`);
+    }
+    if (tool.function.strict !== undefined && typeof tool.function.strict !== "boolean") {
+      throw new ChatCompletionsRequestError(`tools[${index}].function.strict must be a boolean`);
+    }
+  }
+}
+
+function validateCopilotToolChoice(choice: unknown): void {
+  if (choice === undefined) return;
+  if (choice === "auto" || choice === "none" || choice === "required") return;
+  if (!isRec(choice) || choice.type !== "function" || !isRec(choice.function)
+    || typeof choice.function.name !== "string" || !choice.function.name.trim()) {
+    throw new ChatCompletionsRequestError("tool_choice must be auto, none, required, or a named function choice");
+  }
+}
+
+function validateCopilotRequest(raw: Rec): void {
+  const unknownField = Object.keys(raw).find(field => !COPILOT_REQUEST_FIELDS.has(field));
+  if (unknownField) throw new ChatCompletionsRequestError(`unsupported request field: ${unknownField}`);
+  if (raw.functions !== undefined || raw.function_call !== undefined) {
+    throw new ChatCompletionsRequestError("legacy functions and function_call are not supported; use tools and tool_choice");
+  }
+  if (raw.n !== undefined && raw.n !== 1) throw new ChatCompletionsRequestError("n must be 1");
+  if (raw.logprobs !== undefined && raw.logprobs !== false) throw new ChatCompletionsRequestError("logprobs are not supported");
+  if (raw.top_logprobs !== undefined && raw.top_logprobs !== 0) throw new ChatCompletionsRequestError("top_logprobs are not supported");
+  for (const field of ["audio", "modalities", "prediction", "seed", "logit_bias", "service_tier", "web_search_options"] as const) {
+    if (raw[field] !== undefined) throw new ChatCompletionsRequestError(`${field} is not supported by the GitHub Copilot Desktop profile`);
+  }
+  if (raw.presence_penalty !== undefined || raw.frequency_penalty !== undefined) {
+    throw new ChatCompletionsRequestError("presence_penalty and frequency_penalty are not supported by the GitHub Copilot Desktop profile");
+  }
+  if (raw.stream !== undefined && typeof raw.stream !== "boolean") throw new ChatCompletionsRequestError("stream must be a boolean");
+  if (raw.stream_options !== undefined) {
+    if (!isRec(raw.stream_options)) throw new ChatCompletionsRequestError("stream_options must be an object");
+    const keys = Object.keys(raw.stream_options);
+    if (keys.some(key => key !== "include_usage") || typeof raw.stream_options.include_usage !== "boolean") {
+      throw new ChatCompletionsRequestError("stream_options supports only the boolean include_usage field");
+    }
+    if (raw.stream !== true) throw new ChatCompletionsRequestError("stream_options requires stream: true");
+  }
+  requireFiniteNumber(raw.max_completion_tokens, "max_completion_tokens", 1, 1_000_000, true);
+  requireFiniteNumber(raw.max_tokens, "max_tokens", 1, 1_000_000, true);
+  requireFiniteNumber(raw.temperature, "temperature", 0, 2);
+  requireFiniteNumber(raw.top_p, "top_p", 0, 1);
+  if (raw.stop !== undefined) {
+    const valid = typeof raw.stop === "string"
+      || (Array.isArray(raw.stop) && raw.stop.length > 0 && raw.stop.length <= 4 && raw.stop.every(value => typeof value === "string"));
+    if (!valid) throw new ChatCompletionsRequestError("stop must be a string or an array of 1 through 4 strings");
+  }
+  if (raw.parallel_tool_calls !== undefined && typeof raw.parallel_tool_calls !== "boolean") {
+    throw new ChatCompletionsRequestError("parallel_tool_calls must be a boolean");
+  }
+  if (raw.metadata !== undefined && !isRec(raw.metadata)) throw new ChatCompletionsRequestError("metadata must be an object");
+  if (raw.user !== undefined && typeof raw.user !== "string") throw new ChatCompletionsRequestError("user must be a string");
+  if (!Array.isArray(raw.messages) || raw.messages.length === 0) return;
+  for (let index = 0; index < raw.messages.length; index += 1) {
+    const message = raw.messages[index];
+    if (!isRec(message) || typeof message.role !== "string" || !COPILOT_MESSAGE_ROLES.has(message.role)) {
+      throw new ChatCompletionsRequestError(`messages[${index}] has an unsupported role`);
+    }
+    if (message.role === "tool") {
+      if (typeof message.tool_call_id !== "string" || !message.tool_call_id.trim()) {
+        throw new ChatCompletionsRequestError(`messages[${index}].tool_call_id is required`);
+      }
+    }
+    validateContent(message.content, message.role, `messages[${index}].content`);
+    if (message.role === "assistant") validateAssistantToolCalls(message.tool_calls, `messages[${index}].tool_calls`);
+    else if (message.tool_calls !== undefined) throw new ChatCompletionsRequestError(`messages[${index}].tool_calls is valid only for assistant messages`);
+  }
+  validateCopilotTools(raw.tools);
+  validateCopilotToolChoice(raw.tool_choice);
+}
+
+export function copilotStreamIncludesUsage(raw: unknown): boolean {
+  return isRec(raw) && isRec(raw.stream_options) && raw.stream_options.include_usage === true;
+}
 
 function contentToText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -209,8 +395,9 @@ function resolveReasoningEffort(raw: Rec): string | undefined {
  * Translate an OpenAI Chat Completions request body into a /v1/responses request body.
  * Throws ChatCompletionsRequestError (-> 400) on malformed input.
  */
-export function chatCompletionsToResponsesBody(raw: unknown): Rec {
+export function chatCompletionsToResponsesBody(raw: unknown, options: ChatCompletionsInboundOptions = {}): Rec {
   if (!isRec(raw)) throw new ChatCompletionsRequestError("request body must be a JSON object");
+  if (options.profile === "github-copilot-desktop") validateCopilotRequest(raw);
   if (typeof raw.model !== "string" || raw.model.length === 0) {
     throw new ChatCompletionsRequestError("model is required");
   }

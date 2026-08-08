@@ -696,6 +696,14 @@ const configSchema = z.object({
   // parse: a hand-edited typo must never trip the backup-and-defaults repair
   // path below and wipe providers/pool accounts. Warning emitted in loadConfig.
   streamMode: z.enum(["auto", "legacy-tee", "eager-relay"]).optional().catch(undefined),
+  apiKeys: z.array(z.object({
+    id: z.string().min(1).max(128),
+    name: z.string().min(1).max(80),
+    key: z.string().min(1).max(512),
+    createdAt: z.string().min(1).max(64),
+    // Unknown hand-edited metadata remains present so the key stays scoped and fails closed.
+    purpose: z.string().trim().min(1).max(64).optional().catch("invalid"),
+  }).passthrough()).optional(),
 }).passthrough().superRefine((config, ctx) => {
   const claudeCode = (config as { claudeCode?: unknown }).claudeCode;
   if (claudeCode !== undefined && (!claudeCode || typeof claudeCode !== "object" || Array.isArray(claudeCode))) {

@@ -38,7 +38,7 @@ export interface RequestLogContext {
   firstOutputMs?: number;
   /** Best-effort chat/session correlation for Logs grouping (#330). Opaque; omit when unknown. */
   conversationId?: string;
-  surface?: "claude" | "claude-desktop" | "grok";
+  surface?: "claude" | "claude-desktop" | "github-copilot-desktop" | "grok";
   requestedModel?: string;
   /** Internal structural combo identity; omitted from RequestLogEntry/JSONL. */
   comboId?: string;
@@ -91,7 +91,7 @@ export interface RequestLogEntry {
   provider: string;
   /** TTFT: ms from request start to the first non-empty model output delta; unset for non-streaming/tool-only. */
   firstOutputMs?: number;
-  surface?: "claude" | "claude-desktop" | "grok";
+  surface?: "claude" | "claude-desktop" | "github-copilot-desktop" | "grok";
   /** Best-effort chat/session correlation for Logs grouping (#330). */
   conversationId?: string;
   requestedModel?: string;

@@ -78,8 +78,15 @@ export function decodeRequestBody(
 }
 
 /** Parse a JSON request body, transparently decoding compressed payloads. */
-export async function readJsonRequestBody(req: Request): Promise<unknown> {
+export async function readJsonRequestBody(
+  req: Request,
+  maxBytes: number = MAX_DECOMPRESSED_BODY_BYTES,
+): Promise<unknown> {
+  const contentLength = Number(req.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new DecompressedBodyTooLargeError(contentLength, maxBytes);
+  }
   const encoding = req.headers.get("content-encoding");
-  const decoded = decodeRequestBody(new Uint8Array(await req.arrayBuffer()), encoding);
+  const decoded = decodeRequestBody(new Uint8Array(await req.arrayBuffer()), encoding, maxBytes);
   return JSON.parse(new TextDecoder().decode(decoded));
 }

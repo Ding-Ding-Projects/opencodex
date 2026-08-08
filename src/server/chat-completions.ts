@@ -6,7 +6,13 @@
  * then bridge the Responses output back to Chat Completions SSE/JSON.
  */
 import { FORWARD_HEADERS } from "../adapters/openai-responses";
-import { ChatCompletionsRequestError, chatCompletionsToResponsesBody } from "../chat/inbound";
+import { ChatCompletionsRequestError, chatCompletionsToResponsesBody, copilotStreamIncludesUsage } from "../chat/inbound";
+import {
+  conservativeCopilotCapabilities,
+  copilotRouteReadiness,
+  GITHUB_COPILOT_DESKTOP_SURFACE,
+  recordCopilotObservedRequest,
+} from "../chat/copilot-profile";
 import {
   chatCompletionsErrorResponse,
   collectChatCompletion,
@@ -21,7 +27,11 @@ import { estimateTokens } from "../lib/token-estimate";
 import { routeModel } from "../router";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
 import type { OcxConfig } from "../types";
-import { readJsonRequestBody } from "./request-decompress";
+import {
+  DecompressedBodyTooLargeError,
+  UnsupportedContentEncodingError,
+  readJsonRequestBody,
+} from "./request-decompress";
 import {
   addFinalRequestLog,
   httpStatusForTerminalStatus,
@@ -33,14 +43,25 @@ import { responseWithDeferredRequestLog } from "./relay";
 import { handleResponses } from "./responses";
 
 type Rec = Record<string, unknown>;
+const COPILOT_CHAT_BODY_MAX_BYTES = 16 * 1024 * 1024;
+
+export interface ChatCompletionsHandleOptions {
+  profile?: "github-copilot-desktop";
+}
 
 function isRec(v: unknown): v is Rec {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
-async function readChatBody(req: Request): Promise<unknown> {
+async function readChatBody(req: Request, profile?: ChatCompletionsHandleOptions["profile"]): Promise<unknown> {
   try {
-    return await readJsonRequestBody(req);
+    return await readJsonRequestBody(req, profile ? COPILOT_CHAT_BODY_MAX_BYTES : undefined);
   } catch (err) {
+    if (err instanceof DecompressedBodyTooLargeError) {
+      throw new ChatCompletionsRequestError(err.message, 413, "request_too_large");
+    }
+    if (err instanceof UnsupportedContentEncodingError) {
+      throw new ChatCompletionsRequestError(err.message, 415, "unsupported_content_encoding");
+    }
     throw new ChatCompletionsRequestError(err instanceof Error && err.message ? err.message : "Invalid JSON body");
   }
 }
@@ -50,24 +71,39 @@ export async function handleChatCompletions(
   config: OcxConfig,
   logCtx: RequestLogContext,
   logIds?: { requestId: string; start: number },
+  options: ChatCompletionsHandleOptions = {},
 ): Promise<Response> {
+  const copilotProfile = options.profile === "github-copilot-desktop";
+  if (copilotProfile) logCtx.surface = GITHUB_COPILOT_DESKTOP_SURFACE;
+  const finalizeCopilotObservation = (status: number) => {
+    if (!copilotProfile) return;
+    recordCopilotObservedRequest({
+      endpoint: "chat-completions",
+      status,
+      ...(logCtx.requestedModel ? { model: logCtx.requestedModel } : {}),
+      ...(logCtx.provider && logCtx.provider !== "unknown" ? { provider: logCtx.provider } : {}),
+    });
+  };
   let chatBody: unknown;
   let internalBody: Rec;
   try {
-    chatBody = await readChatBody(req);
-    internalBody = chatCompletionsToResponsesBody(chatBody);
+    chatBody = await readChatBody(req, options.profile);
+    internalBody = chatCompletionsToResponsesBody(chatBody, options);
   } catch (err) {
-    const status = err instanceof ChatCompletionsRequestError ? 400 : 500;
+    const status = err instanceof ChatCompletionsRequestError ? err.status : 500;
     if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, status, { closeReason: "non_stream" });
-    return chatCompletionsErrorResponse(status, err instanceof Error ? err.message : String(err));
+    finalizeCopilotObservation(status);
+    const code = err instanceof ChatCompletionsRequestError ? err.code : null;
+    return chatCompletionsErrorResponse(status, err instanceof Error ? err.message : String(err), "invalid_request_error", code);
   }
 
   const requestedModel = (chatBody as Rec).model as string;
   const stream = internalBody.stream === true;
   // Best-effort Grok attribution: the managed fence stamps this header on every model
   // it registers (extra_headers, sent verbatim by upstream Grok). Dashboard usage
-  // bucketing only — never an auth or billing signal.
-  if (req.headers.get("x-opencodex-grok") === "1") logCtx.surface = "grok";
+  // bucketing only — never an auth or billing signal. A credential-selected Copilot
+  // profile has stronger provenance and cannot be relabelled by this caller header.
+  if (!copilotProfile && req.headers.get("x-opencodex-grok") === "1") logCtx.surface = "grok";
   // Routed adapters only support streamed turns; always stream internally and fold
   // for non-streaming clients.
   internalBody.stream = true;
@@ -83,6 +119,48 @@ export async function handleChatCompletions(
     logCtx.providerAdapter = route.provider.adapter;
     logCtx.requestedModel = requestedModel;
     logCtx.provider = route.providerName;
+    if (copilotProfile) {
+      const readiness = copilotRouteReadiness(config, route.providerName, route.provider);
+      if (readiness !== "ready") {
+        const status = 400;
+        if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, status, { closeReason: "non_stream" });
+        finalizeCopilotObservation(status);
+        const message = readiness === "direct-mode-unsupported"
+          ? "GitHub Copilot Desktop cannot use OpenAI Direct mode because its bearer credential is reserved for local client admission. Switch OpenAI Codex to managed Pool mode."
+          : readiness === "cursor-native-execution-unavailable"
+            ? "Cursor native execution is unavailable to the GitHub Copilot Desktop profile. Choose a model routed through another provider."
+            : `Model ${requestedModel} is unavailable to the GitHub Copilot Desktop profile: ${readiness}`;
+        return chatCompletionsErrorResponse(status, message, "invalid_request_error", readiness.replaceAll("-", "_"));
+      }
+      const raw = chatBody as Rec;
+      const catalogModel = {
+        id: route.modelId,
+        provider: route.providerName,
+        inputModalities: route.provider.modelInputModalities?.[route.modelId],
+        reasoningEfforts: route.provider.modelReasoningEfforts?.[route.modelId] ?? route.provider.reasoningEfforts,
+      };
+      const capabilities = conservativeCopilotCapabilities(catalogModel, route.provider);
+      const userUsesImages = JSON.stringify(raw.messages).includes('"image_url"');
+      const requestedStructuredOutput = raw.response_format !== undefined && (raw.response_format as Rec)?.type !== "text";
+      const requestedReasoning = raw.reasoning_effort !== undefined || raw.reasoning !== undefined;
+      const requestedTools = Array.isArray(raw.tools) && raw.tools.length > 0;
+      const rejectedCapability = userUsesImages && capabilities.images === "unsupported" ? "images"
+        : requestedTools && capabilities.tools === "unsupported" ? "tools"
+          : requestedReasoning && capabilities.reasoning === "unsupported" ? "reasoning"
+            : requestedStructuredOutput && capabilities.structuredOutput === "unsupported" ? "structured output"
+              : null;
+      if (rejectedCapability) {
+        const status = 400;
+        if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, status, { closeReason: "non_stream" });
+        finalizeCopilotObservation(status);
+        return chatCompletionsErrorResponse(
+          status,
+          `${rejectedCapability} is not supported for model ${requestedModel} in the GitHub Copilot Desktop profile`,
+          "invalid_request_error",
+          "unsupported_model_capability",
+        );
+      }
+    }
     if (route.provider.adapter === "openai-responses") {
       nativeRoute = true;
       directRoute = route.codexAccountMode === "direct";
@@ -112,8 +190,19 @@ export async function handleChatCompletions(
       const ladder = supportedLadderFor({ provider: route.provider, modelId: route.modelId });
       if (ladder !== undefined && ladder.length === 0) delete internalBody.reasoning;
     }
-  } catch {
-    /* unknown model: let handleResponses shape the 404 */
+  } catch (error) {
+    if (copilotProfile) {
+      const status = 404;
+      if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, status, { closeReason: "non_stream" });
+      finalizeCopilotObservation(status);
+      return chatCompletionsErrorResponse(
+        status,
+        error instanceof Error ? error.message : `Model ${requestedModel} is unavailable`,
+        "invalid_request_error",
+        "model_not_found",
+      );
+    }
+    /* Generic compatibility: let handleResponses shape the existing route error. */
   }
   void nativeRoute;
 
@@ -206,6 +295,7 @@ export async function handleChatCompletions(
       classified.code = upstreamCode;
     }
     const status = isCyberPolicyCode(classified.code) ? 400 : upstream.status;
+    finalizeCopilotObservation(status);
     const rewritten = new Response(JSON.stringify({
       error: {
         message: classified.message,
@@ -231,8 +321,13 @@ export async function handleChatCompletions(
 
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("text/event-stream") && response.body) {
-    const chatSse = responsesSseToChatCompletionsSse(response.body, requestedModel);
+    const includeCopilotUsage = copilotProfile && stream && copilotStreamIncludesUsage(chatBody);
+    const chatSse = responsesSseToChatCompletionsSse(response.body, requestedModel, {
+      includeUsage: !copilotProfile || !stream || includeCopilotUsage,
+      separateUsageChunk: includeCopilotUsage,
+    });
     if (stream) {
+      finalizeCopilotObservation(200);
       // Stream failures surface as an error SSE frame then abort the body — never a
       // success completion that embeds `[error] ...` + clean [DONE].
       return new Response(chatSse, {
@@ -246,6 +341,7 @@ export async function handleChatCompletions(
     }
     try {
       const completion = await collectChatCompletion(chatSse, requestedModel);
+      finalizeCopilotObservation(200);
       return new Response(JSON.stringify(completion), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -291,6 +387,7 @@ export async function handleChatCompletions(
   }
   const completion = responsesJsonToChatCompletion(json, requestedModel);
   if (!stream) {
+    finalizeCopilotObservation(200);
     return new Response(JSON.stringify(completion), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -313,6 +410,7 @@ export async function handleChatCompletions(
     `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model: requestedModel, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: completion.usage })}\n\n`,
     "data: [DONE]\n\n",
   ];
+  finalizeCopilotObservation(200);
   return new Response(encoder.encode(frames.join("")), {
     status: 200,
     headers: {

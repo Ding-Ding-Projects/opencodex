@@ -14,7 +14,7 @@ import {
 import { providerDestinationConfigError } from "../lib/destination-policy";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "../providers/registry";
 import { providerConfigSeed } from "../providers/derive";
-import type { OcxConfig, OcxProviderConfig } from "../types";
+import type { DataPlaneApiKeyPurpose, OcxConfig, OcxProviderConfig } from "../types";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 
 let _corsOrigin = "http://localhost:10100";
@@ -194,7 +194,7 @@ export function isApiAuthRequired(config: OcxConfig): boolean {
 
 export function assertServerAuthConfig(config: OcxConfig): void {
   const hasConfiguredDataCredential = !!configuredApiAuthToken(config)
-    || (config.apiKeys ?? []).some(entry => !!entry.key.trim());
+    || (config.apiKeys ?? []).some(entry => entry.purpose === undefined && !!entry.key.trim());
   if (isApiAuthRequired(config) && !hasConfiguredDataCredential) {
     throw new Error(
       "A data-plane credential (OPENCODEX_API_AUTH_TOKEN or config.apiKeys) is required when binding opencodex to a non-loopback hostname",
@@ -210,13 +210,75 @@ function secretEquals(actual: string, expected: string | undefined): boolean {
   return expectedBytes.length === actualBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
-/** Whether `token` is a data-plane admission secret. */
+export type DataPlaneCredentialChannel = "x-opencodex-api-key" | "authorization" | "x-api-key";
+
+export interface ClassifiedDataPlaneCredential {
+  channel: DataPlaneCredentialChannel;
+  source: "environment" | "configured";
+  keyId?: string;
+  purpose?: DataPlaneApiKeyPurpose;
+}
+
+function requestCredentials(req: Request): Array<{ channel: DataPlaneCredentialChannel; value: string }> {
+  const candidates: Array<{ channel: DataPlaneCredentialChannel; value: string }> = [];
+  const dedicated = req.headers.get("x-opencodex-api-key")?.trim();
+  if (dedicated) candidates.push({ channel: "x-opencodex-api-key", value: dedicated });
+  const authorization = req.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (authorization) candidates.push({ channel: "authorization", value: authorization });
+  const apiKey = req.headers.get("x-api-key")?.trim();
+  if (apiKey) candidates.push({ channel: "x-api-key", value: apiKey });
+  return candidates;
+}
+
+/** Classify a recognized data-plane credential without returning or retaining its secret. */
+export function classifyDataPlaneCredential(req: Request, config: OcxConfig): ClassifiedDataPlaneCredential | null {
+  const candidates = requestCredentials(req);
+  if (candidates.length === 0) return null;
+
+  // A purpose credential in ANY accepted channel activates the stricter profile. This prevents a
+  // second generic admission header from masking a purpose bearer and letting Direct mode treat it
+  // as upstream ChatGPT identity. Compare every candidate to every scoped key before generic
+  // precedence; only the exact approved purpose literal is recognized.
+  let scopedMatch: { channel: DataPlaneCredentialChannel; keyId: string } | null = null;
+  for (const candidate of candidates) {
+    for (const entry of config.apiKeys ?? []) {
+      const matches = secretEquals(candidate.value, entry.key);
+      if (matches && entry.purpose === "github-copilot-desktop" && scopedMatch === null) {
+        scopedMatch = { channel: candidate.channel, keyId: entry.id };
+      }
+    }
+  }
+  if (scopedMatch) {
+    return {
+      channel: scopedMatch.channel,
+      source: "configured",
+      keyId: scopedMatch.keyId,
+      purpose: "github-copilot-desktop",
+    };
+  }
+
+  // Preserve the established dedicated-header → bearer → x-api-key precedence for generic keys.
+  for (const candidate of candidates) {
+    if (secretEquals(candidate.value, configuredApiAuthToken(config))) {
+      return { channel: candidate.channel, source: "environment" };
+    }
+    for (const entry of config.apiKeys ?? []) {
+      if (secretEquals(candidate.value, entry.key)) {
+        return { channel: candidate.channel, source: "configured", keyId: entry.id };
+      }
+    }
+  }
+  return null;
+}
+
+/** Whether `token` is a data-plane admission secret valid for the current bind. */
 export function isDataPlaneAdmissionSecret(token: string, config: OcxConfig): boolean {
   const actual = token.trim();
   if (!actual) return false;
   if (secretEquals(actual, configuredApiAuthToken(config))) return true;
-  for (const k of config.apiKeys ?? []) {
-    if (secretEquals(actual, k.key)) return true;
+  for (const entry of config.apiKeys ?? []) {
+    if (entry.purpose !== undefined && isApiAuthRequired(config)) continue;
+    if (secretEquals(actual, entry.key)) return true;
   }
   return false;
 }

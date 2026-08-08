@@ -511,6 +511,18 @@ export interface OcxCustomModel {
   addedAt?: string;
 }
 
+export const DATA_PLANE_API_KEY_PURPOSES = ["github-copilot-desktop"] as const;
+export type DataPlaneApiKeyPurpose = typeof DATA_PLANE_API_KEY_PURPOSES[number];
+
+export interface DataPlaneApiKey {
+  id: string;
+  name: string;
+  key: string;
+  createdAt: string;
+  /** Creation accepts only known purposes; unknown hand-edited values remain scoped and fail closed. */
+  purpose?: DataPlaneApiKeyPurpose | (string & {});
+}
+
 export interface OcxConfig {
   port: number;
   providers: Record<string, OcxProviderConfig>;
@@ -658,8 +670,8 @@ export interface OcxConfig {
    * See `src/storage/policy.ts`.
    */
   storageCleanupPolicy?: StorageCleanupPolicy;
-  /** Generated API keys for external access to the proxy's /v1/responses endpoint. */
-  apiKeys?: Array<{ id: string; name: string; key: string; createdAt: string }>;
+  /** Generated data-plane API keys. Purpose metadata is optional for backward compatibility. */
+  apiKeys?: DataPlaneApiKey[];
   /** Auto-start/sync the proxy from the Codex shim before launching Codex. Default true. */
   codexAutoStart?: boolean;
   /** Restore an installed shim after a stable external Codex update replaces it. Default true. */
