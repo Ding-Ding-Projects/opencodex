@@ -15,6 +15,10 @@ name: React Doctor
 on:
   # Scans the PR's changed files relative to the merge base of the target branch.
   pull_request:
+    # A non-GUI change has no React surface to inspect. The action's changed-file
+    # fallback treats an empty GUI set as a full scan, so scope the PR trigger to
+    # GUI paths; the main push trigger below remains the full-tree health scan.
+    paths: ["gui/**"]
     types: [opened, synchronize, reopened, ready_for_review]
   # Scans `main` on every push to track the health-score trend.
   push:
