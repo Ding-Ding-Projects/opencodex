@@ -96,6 +96,56 @@ jobs:
       - name: CLI help smoke
         run: bun run src/cli/index.ts help
 
+      # Preserve build outputs and failure context even when an earlier gate fails.
+      # The collector is deliberately defensive and never changes the original
+      # test verdict; only explicitly safe paths are copied.
+      - name: Collect Windows CI artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $root = Join-Path $env:GITHUB_WORKSPACE "ci-artifacts\full"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            sha = $env:GITHUB_SHA
+            jobStatus = $env:JOB_STATUS
+            runnerOs = $env:RUNNER_OS
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
+
+          $workspace = $env:GITHUB_WORKSPACE
+          $safeDirectories = @(
+            @{ Source = (Join-Path $workspace "gui\dist"); Destination = (Join-Path $root "gui-dist") },
+            @{ Source = (Join-Path $workspace ".tmp\ci-release-script-check"); Destination = (Join-Path $root "release-script-check") }
+          )
+          foreach ($item in $safeDirectories) {
+            if (Test-Path -LiteralPath $item.Source) {
+              Copy-Item -LiteralPath $item.Source -Destination $item.Destination -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          foreach ($pattern in @("pack.json", "*.tgz", "npm-debug.log*")) {
+            Get-ChildItem -Path $workspace -Filter $pattern -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination $root -Force -ErrorAction SilentlyContinue
+          }
+          if (-not (Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue)) {
+            Set-Content -Encoding utf8 (Join-Path $root "NO_SAFE_ARTIFACTS.txt") "No safe build output was present; metadata records the original job status."
+          }
+
+      - name: Upload Windows CI artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-ci-full-${{ github.run_id }}
+          path: ci-artifacts/full
+          if-no-files-found: warn
+          retention-days: 14
+
   npm-global-smoke:
     name: npm-global windows-latest
     runs-on: windows-latest
@@ -130,3 +180,43 @@ jobs:
 
       - name: ocx help via bundled bun
         run: ocx help
+
+      - name: Collect npm global smoke artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $root = Join-Path $env:GITHUB_WORKSPACE "ci-artifacts\npm-global"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            sha = $env:GITHUB_SHA
+            jobStatus = $env:JOB_STATUS
+            runnerOs = $env:RUNNER_OS
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
+          foreach ($pattern in @("pack.json", "*.tgz", "npm-debug.log*")) {
+            Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter $pattern -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination $root -Force -ErrorAction SilentlyContinue
+          }
+          $guiDist = Join-Path $env:GITHUB_WORKSPACE "gui\dist"
+          if (Test-Path -LiteralPath $guiDist) {
+            Copy-Item -LiteralPath $guiDist -Destination (Join-Path $root "gui-dist") -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if (-not (Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue)) {
+            Set-Content -Encoding utf8 (Join-Path $root "NO_SAFE_ARTIFACTS.txt") "No safe package output was present; metadata records the original job status."
+          }
+
+      - name: Upload npm global smoke artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-ci-npm-global-${{ github.run_id }}
+          path: ci-artifacts/npm-global
+          if-no-files-found: warn
+          retention-days: 14

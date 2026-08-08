@@ -129,6 +129,34 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("bun run build");
   });
 
+  test("Windows producers retain safe artifacts after failures", async () => {
+    const uploadAction = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+    const producers = [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml",
+      ".github/workflows/service-lifecycle.yml",
+      ".github/workflows/deploy-docs.yml",
+      ".github/workflows/react-doctor.yml",
+    ];
+
+    for (const path of producers) {
+      const workflow = await readText(path);
+      expect(workflow, `${path} must run only on Windows`).toContain("runs-on: windows-latest");
+      expect(workflow, `${path} must pin upload-artifact`).toContain(uploadAction);
+      expect(workflow, `${path} must collect after any prior result`).toContain("if: ${{ always() }}");
+      expect(workflow, `${path} must warn when no safe file exists`).toContain("if-no-files-found: warn");
+      expect(workflow, `${path} must not mask the original result`).toContain("continue-on-error: true");
+      expect(workflow, `${path} must not run another operating system`).not.toMatch(/ubuntu-latest|macos-latest/);
+    }
+
+    const ci = await readText(".github/workflows/ci.yml");
+    expect(count(ci, "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02")).toBe(2);
+    const release = await readText(".github/workflows/release.yml");
+    expect(release).toContain("Setup.exe");
+    expect(release).toContain("*.nupkg");
+    expect(release).toContain("*.tgz");
+  });
+
   test("stale needs-info workflow is schedule-only and least-privilege", async () => {
     const text = await readText(".github/workflows/stale-needs-info.yml");
     const workflow = Bun.YAML.parse(text) as {
@@ -189,7 +217,7 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("cancel-in-progress: true");
     expect(count(workflow, "timeout-minutes: 10")).toBe(1);
     expect(count(workflow, "if: ${{ !cancelled() }}")).toBe(1);
-    expect(workflow).not.toContain("always()");
+    expect(workflow).toContain("if: ${{ always() }}");
     expect(workflow).not.toContain('healthz || echo "healthz not ready yet"');
     expect(workflow).not.toContain("sleep 8");
     expect(workflow).toContain("windows-schtasks:");
