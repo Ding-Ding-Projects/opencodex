@@ -129,3 +129,44 @@ jobs:
             Get-Content "$env:USERPROFILE\.opencodex\service.log" -Tail 200 -ErrorAction SilentlyContinue
             throw "scheduled task or proxy survived uninstall"
           }
+
+      - name: Collect service lifecycle artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $root = Join-Path $env:GITHUB_WORKSPACE "service-artifacts"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            sha = $env:GITHUB_SHA
+            jobStatus = $env:JOB_STATUS
+            runnerOs = $env:RUNNER_OS
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
+          $log = Join-Path $env:USERPROFILE ".opencodex\service.log"
+          if (Test-Path -LiteralPath $log) {
+            Copy-Item -LiteralPath $log -Destination (Join-Path $root "service.log") -Force -ErrorAction SilentlyContinue
+          }
+          & schtasks.exe /Query /TN opencodex-proxy /XML 2>$null |
+            Set-Content -Encoding utf8 (Join-Path $root "scheduled-task.xml")
+          if ($LASTEXITCODE -ne 0) {
+            Set-Content -Encoding utf8 (Join-Path $root "scheduled-task-query.txt") "The scheduled task was not present after cleanup."
+          }
+          if (-not (Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue)) {
+            Set-Content -Encoding utf8 (Join-Path $root "NO_SAFE_ARTIFACTS.txt") "No safe service output was present; metadata records the original job status."
+          }
+
+      - name: Upload service lifecycle artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: service-lifecycle-${{ github.run_id }}
+          path: service-artifacts
+          if-no-files-found: warn
+          retention-days: 14

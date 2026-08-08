@@ -31,6 +31,42 @@ jobs:
           node-version: 22
           package-manager: bun@latest
 
+      - name: Collect docs build artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $root = Join-Path $env:GITHUB_WORKSPACE "docs-artifacts"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            sha = $env:GITHUB_SHA
+            jobStatus = $env:JOB_STATUS
+            runnerOs = $env:RUNNER_OS
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
+          $dist = Join-Path $env:GITHUB_WORKSPACE "docs-site\dist"
+          if (Test-Path -LiteralPath $dist) {
+            Copy-Item -LiteralPath $dist -Destination (Join-Path $root "dist") -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if (-not (Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue)) {
+            Set-Content -Encoding utf8 (Join-Path $root "NO_SAFE_ARTIFACTS.txt") "No safe docs output was present; metadata records the original job status."
+          }
+
+      - name: Upload docs build artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: docs-build-${{ github.run_id }}
+          path: docs-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+
   deploy:
     needs: build
     runs-on: windows-latest
