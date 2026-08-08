@@ -1576,6 +1576,148 @@ missing `gui/node_modules` (worktrees do not share it). Fixed with `cd gui && bu
 
 ## Earlier session — written 2026-07-30 against branch `main`
 
+# ⚠️ ACTIVE HANDOFF — tab groups and the four tab searches (2026-07-31)
+
+**Branch `claude/keen-dijkstra-a12563`, worktree `.claude/worktrees/keen-dijkstra-a12563`.**
+Handed off mid-review at the user's request. The feature is **built and green, and it is NOT
+finished**: an adversarial review raised 66 findings and only 2 of them were adversarially verified
+before the session ran out. Read *Known defects* before deciding this is done.
+
+## What was asked
+
+Close two parity gaps in the GUI tab system (`gui/src/shell/`):
+
+1. **Tab grouping**, which did not exist at all — create/name/rename/colour/reorder/collapse/remove,
+   drag or keyboard membership, pin a whole group or individual members, full persistence, and a
+   per-group appearance editor reached by right-click and by Shift+right-click covering typography,
+   text and highlight colours, icon/emoji, badges, borders, shape, radius, spacing, separators and
+   the expanded/collapsed/hover/focus states.
+2. **Three of the four required tab searches**, which were missing — strip, per-group, group-by-name
+   and a master search over every window — each with its own anchored regex builder and no shared
+   hidden state.
+
+## What is in the tree
+
+| File | State |
+| --- | --- |
+| `shared/m3/tabs.ts` | modified — `GroupDecor`, `readGroupDecor`, `groupDecorProps`, `setGroupDecor`, `setGroupPinned`, `groupPinState`; `togglePin` / `orderTabs` / `visibleTabs` / `moveTab` / `assignGroup` / `createGroup` / `toggleGroupCollapsed` / `reviveTabs` changed |
+| `gui/src/shell/use-tabs.ts` | rewritten onto the shared engine; pure search projections (`stripResults`, `groupResults`, `masterResults`, `matchRows`, `revealsWithoutExpanding`, `tabPanelId`) |
+| `gui/src/shell/use-search-query.ts` | **new** — one query object per field |
+| `gui/src/shell/tab-registry.ts` | **new** — `BroadcastChannel` cross-window registry |
+| `gui/src/shell/TabSearchPanel.tsx` | **new** — the four searches |
+| `gui/src/shell/GroupAppearanceEditor.tsx` | **new** |
+| `gui/src/shell/ColorField.tsx` | **new** — continuous picker, 14-notation translator, WCAG readout |
+| `gui/src/shell/TabStrip.tsx` | group runs, headers, group menu, drag-into-group, Alt+Arrow, panel wiring |
+| `gui/src/styles/m3-shell.css` | group + panel + colour CSS, `.m3-sr-only`, narrow-width and coarse-pointer blocks |
+| `gui/src/App.tsx` | `role="tabpanel"` + per-tab id, for live `aria-controls` |
+| `gui/src/theme/prefs-context.ts` | `tabGroup` element target |
+| `gui/src/i18n/m3.ts`, `gui/src/i18n/yue.ts` | 114 new keys in both |
+| `gui/tests/tab-groups.test.ts`, `gui/tests/tab-group-strip.test.tsx` | **new** — 44 tests |
+| `docs-site/.../guides/tab-groups-and-search.md` + `astro.config.mjs` + `web-dashboard.md` | new guide, sidebar entry, cross-link |
+| `structure/05_gui-and-management-api.md` | the strip's invariants, written down |
+
+## What was actually verified
+
+Every line below is a command that was run, with the output it produced.
+
+```
+cd gui && ./node_modules/.bin/tsc -p tsconfig.app.json --noEmit   → clean
+cd gui && ./node_modules/.bin/eslint src --max-warnings=0         → clean
+cd gui && bun test tests                                          → 734 pass / 0 fail (was 690)
+cd docs-site && bun test tests                                    → 267 pass / 0 fail
+```
+
+The three named must-stay-green files (`dashboard-tabs`, `tab-context-menu`, `tab-routing-loop`) pass
+unmodified. `tab-context-menu`'s exact-eight-entries assertion is why grouping was deliberately kept
+*out* of the tab context menu — see `structure/05_gui-and-management-api.md`.
+
+**Visual validation was run against the real desktop app**, not a browser: Electron on an isolated
+`CODEX_HOME` and port 10399, driven over CDP the way `scripts/capture-shots.ts` does, in bilingual
+mode with two groups (one collapsed, one decorated) and a pinned member. Measured at 1440/1152/960/720
+widths and 1×/1.25×/1.5×/2× scale: `document.scrollWidth === window.innerWidth` at every one, and the
+overflow menu engaged correctly (0 → 2 → 3 hidden tabs). The search panel rendered all five fields
+with five builders; the group menu rendered its seven entries; the translator rendered 14 notations.
+
+**That same run found a defect the tests did not** — see the first entry below.
+
+## Known defects — READ THIS FIRST
+
+Two were adversarially verified as real. The rest were raised by five independent review lenses and
+**33 verification passes were killed by the session limit**, so treat them as unverified leads, not
+as a defect list. Full detail with proposed fixes:
+`~/.claude/projects/…-keen-dijkstra-a12563/…/subagents/workflows/wf_d4081abe-dbf/journal.jsonl`.
+
+### Confirmed, and blocking
+
+1. **A collapsed group's header is drawn at the end of the strip, overlapping the app bar.**
+   Found visually and raised independently by three review lenses. `buildRuns` in `TabStrip.tsx`
+   appends a collapsed group after every other run because it has no visible members, so collapsing
+   a group in the middle of the strip teleports its header to the far right, where it paints over
+   the app bar. Screenshot: `shots/strip-1440-100pct.png` in the scratchpad. A group whose members
+   have all overflowed loses its header entirely — same cause, and it makes every header-anchored
+   group command unreachable. **Fix direction:** emit the header at the position its first member
+   occupies in the *full* tab order, not at the end, and keep drawing it when the run is empty.
+
+2. **`Delete` on a focused group header closes the active tab.** `high`. The header's `onKeyDown`
+   stops propagation only for ContextMenu/Shift+F10/Alt+Arrow; everything else bubbles to the
+   tablist handler, which reads `Delete` as "close the active tab" and Arrow/Home/End as "change the
+   selection, then move focus". Headers are ordinary Tab stops and sit *before* their members, so
+   this is the first thing a keyboard user reaches. **Fix:** either a default branch on the header
+   that stops the keys the tablist claims, or scope the tablist handler to `role="tab"` targets.
+
+3. **Export omits the group accent.** `medium`. `GroupAppearanceEditor` exports `decor` only, and
+   `group.color` lives outside it — so a copied appearance reproduces every border and radius and
+   loses the colour, while "Reset all" clears both. Export/import and reset disagree about what a
+   group's appearance *is*.
+
+### Raised but unverified — highest-severity first
+
+`moveGroup` relocates every ungrouped tab to the end of the strip · reorder commands computed against
+`groups` order which can disagree with the drawn order · clicking inside the group editor opened from
+the search panel dismisses the panel and discards all four queries · closing a tab from a search
+result drops focus to `<body>` · loose-tab runs returned as unkeyed arrays (remount → focus loss) ·
+pinning a whole group removes its header · `.m3-tsr-go` is nowrap so bilingual master-search rows
+lose their label · `.m3-tsr-note` rendered inside a non-wrapping button · `DecorSlider` puts
+"inherits the theme" into a 48px numeric slot (the default state of all nine sliders) ·
+`applyTransfer`'s catch is dead code and two of its comments describe behaviour that does not happen ·
+`gui/src/shell/tab-registry.ts` duplicates `docs-site/src/lib/tab-registry.ts` — exactly the
+duplication `shared/m3/tabs.ts` exists to stop, and it should probably move into `shared/m3/`.
+
+Then ~50 medium/low findings: fixed-px sizes against scaling type (`.m3-tabgroup-head` 160px,
+`.m3-color-space` 84px, `.m3-tsr-badge` line-height, `GroupSelect` 132px, the 380px editor panel),
+`aria-controls` on an unlabelled div, `aria-haspopup="menu"` + `aria-expanded` on one header
+reporting the menu as open, untranslated WCAG grades and gamut names reaching Cantonese, three
+Cantonese entries drifting from HK usage (讀屏軟件, 唔透明度, 隻手指埋嚟), `tabs.stripName` left as
+byte-identical English in `yue.ts`, dead `TabGroup.style`/`setGroupStyle`, and a stale comment or two.
+
+## Where the loose material is
+
+Under the session scratchpad (`…/cd827a3d-…/scratchpad/`), none of it committed:
+
+- `verify-tab-groups.ts` — the CDP visual-validation driver. Re-runnable; it is how the strip was
+  measured at every width and scale.
+- `probe.ts` — geometry probe, written to pin down defect 1 and never run.
+- `shots/` — 10 PNGs of the strip, the search panel, the group menu and the editor.
+- `review-scratch/` — two scratch test files review subagents left in `gui/tests/`, moved out so the
+  tree is clean. `zz-tmp-mg.test.ts` contains a **candidate fix for the `moveGroup` defect** and is
+  worth reading before rewriting it from scratch.
+
+To re-run the visual pass: build (`cd gui && ./node_modules/.bin/vite.exe build`), then
+`OPENCODEX_PORT=10399 CODEX_HOME=<scratch>/home npx --yes electron@43.2.0 electron/main.mjs
+--remote-debugging-port=9222 --user-data-dir=<scratch>/edata`, then `bun run verify-tab-groups.ts`.
+Both the isolated port and the isolated home are load-bearing: the installed opencodex holds a state
+file claiming port 10188, and without them the desktop entry refuses to open a window at all.
+
+## What a successor should do next
+
+1. Fix the three confirmed defects. Defect 1 is the one a user would hit first.
+2. Re-run the verification block above, and re-run the visual pass — the tests did not catch defect 1
+   and will not catch its recurrence without a case that asserts header *position*.
+3. Triage the unverified list. Several are the same defect seen through different lenses.
+4. Nothing here has been released, and no GitHub issue or Discussion has been opened for it.
+
+---
+
 ## Where the work is
 
 `main`, uncommitted, in the single checkout — `git worktree list` shows no linked worktree. The last
