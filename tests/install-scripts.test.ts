@@ -91,6 +91,57 @@ describe("install scripts", () => {
     expect(script).not.toContain("bun.sh/install.ps1");
   });
 
+  test("PowerShell installer repairs a missing npm global PATH entry", async () => {
+    const script = await readText("scripts/install.ps1");
+
+    expect(script).toContain("function Add-NpmGlobalBinToPath");
+    expect(script).toContain('$userPath = [Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::User)');
+    expect(script).toContain('[Environment]::SetEnvironmentVariable("Path", $updatedUserPath, [System.EnvironmentVariableTarget]::User)');
+    expect(script).toContain("$env:Path = Add-PathEntry -PathValue $env:Path -Entry $npmPrefix");
+    expect(script).toContain("Get-Command ocx.cmd -ErrorAction SilentlyContinue");
+    expect(script).toContain("Get-Command ocx -ErrorAction SilentlyContinue");
+    expect(script).toContain("& $ocx.Source help");
+  });
+
+  test("PowerShell installer keeps PATH entries and avoids case-insensitive duplicates", async () => {
+    const script = await readText("scripts/install.ps1");
+
+    expect(script).toContain('$existingPath -split ";"');
+    expect(script).toContain(".Trim().TrimEnd(\"\\\") -ieq $normalizedEntry");
+    expect(script).toContain("return $existingPath");
+    expect(script).toContain('return "$existingPath;$Entry"');
+    expect(script).toContain('return "$existingPath$Entry"');
+    expect(script).toContain("$updatedUserPath -cne $userPath");
+  });
+
+  test("PowerShell installer fails closed for invalid prefixes and PATH writes", async () => {
+    const script = await readText("scripts/install.ps1");
+
+    expect(script).toContain("$prefixExitCode = $LASTEXITCODE");
+    expect(script).toContain("npm prefix -g returned an empty global bin directory");
+    expect(script).toContain("npm prefix -g returned a non-absolute global bin directory");
+    expect(script).toContain("-not (Test-Path -LiteralPath $npmPrefix -PathType Container)");
+    expect(script).toContain("could not write the current user's PATH or update this process");
+    expect(script).toContain("exit 1");
+    expect(script).not.toContain("EnvironmentVariableTarget]::Machine");
+    expect(script).not.toContain("setx");
+  });
+
+  test("PowerShell installer reports unresolved ocx after PATH repair", async () => {
+    const script = await readText("scripts/install.ps1");
+
+    expect(script).toContain("could not be resolved after adding npm's global bin directory");
+    expect(script).toContain("'ocx.cmd'/'ocx'");
+  });
+
+  test("PowerShell installer documentation explains current-user PATH repair", async () => {
+    const docs = await readText("docs-site/src/content/docs/getting-started/installation.md");
+
+    expect(docs).toContain(".\\scripts\\install.ps1");
+    expect(docs).toContain("current user's npm global");
+    expect(docs).toContain("does not require administrator");
+  });
+
   test("Node launcher handles npm self-update before starting Bun", async () => {
     const launcher = await readText("bin/ocx.mjs");
 

@@ -20,10 +20,10 @@ ocx start        # proxy + dashboard on localhost:10100
 ```
 
 <p align="center">
-  <b>📖 <a href="https://ding-ding-projects.github.io/opencodex/">Documentation &amp; guides</a></b>
-  · <a href="https://ding-ding-projects.github.io/opencodex/getting-started/">Getting started</a>
-  · <a href="https://ding-ding-projects.github.io/opencodex/reference/cli/">CLI reference</a>
-  · <a href="https://ding-ding-projects.github.io/opencodex/reference/configuration/">Configuration</a>
+  <b>📖 <a href="https://opencodex.me/">Documentation &amp; guides</a></b>
+  · <a href="https://opencodex.me/getting-started/">Getting started</a>
+  · <a href="https://opencodex.me/reference/cli/">CLI reference</a>
+  · <a href="https://opencodex.me/reference/configuration/">Configuration</a>
 </p>
 
 ---
@@ -476,24 +476,25 @@ npm install -g @bitkyc08/opencodex --foreground-scripts
 | `ocx combo <sub>` | Failover and round-robin routing |
 | `ocx launch [target]` | Open an agent CLI or desktop app |
 | `ocx host <sub>` | Expose the proxy to other devices |
+| `ocx memory-sync <sub>` | Safely sync canonical agent memory or read project profiles |
 | `ocx export <path> --yes` | Full state backup — **contains secrets** |
 | `ocx claude` / `ocx codex` / `ocx grok` | Launch a client wired to the proxy |
 
-Full reference: **[CLI documentation](https://ding-ding-projects.github.io/opencodex/reference/cli/)**.
+Full reference: **[CLI documentation](https://opencodex.me/reference/cli/)**.
 
 ---
 
 ## Documentation
 
-Everything is on the docs site: **<https://ding-ding-projects.github.io/opencodex/>**
+Everything is on the docs site: **<https://opencodex.me/>**
 
-- [Getting started](https://ding-ding-projects.github.io/opencodex/getting-started/)
-- [Providers](https://ding-ding-projects.github.io/opencodex/guides/providers/)
-- [Claude Code](https://ding-ding-projects.github.io/opencodex/guides/claude-code/)
-- [Docker](https://ding-ding-projects.github.io/opencodex/guides/docker/)
-- [Super express release](https://ding-ding-projects.github.io/opencodex/guides/super-express-release/)
-- [Configuration reference](https://ding-ding-projects.github.io/opencodex/reference/configuration/)
-- [Architecture](https://ding-ding-projects.github.io/opencodex/reference/architecture/)
+- [Getting started](https://opencodex.me/getting-started/)
+- [Providers](https://opencodex.me/guides/providers/)
+- [Claude Code](https://opencodex.me/guides/claude-code/)
+- [Docker](https://opencodex.me/guides/docker/)
+- [Super express release](https://opencodex.me/guides/super-express-release/)
+- [Configuration reference](https://opencodex.me/reference/configuration/)
+- [Architecture](https://opencodex.me/reference/architecture/)
 
 In the repository: [`ROADMAP.md`](./ROADMAP.md) for what is done and what is missing,
 [`HANDOFF.md`](./HANDOFF.md) for work in flight, and [`AGENTS.md`](./AGENTS.md) for the conventions

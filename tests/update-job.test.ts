@@ -25,6 +25,7 @@ import {
   type UpdateJobState,
 } from "../src/update/job";
 import { checkUpdatePackageIntegrity, updateCommand, updateCommandStr, updateSpawnTarget } from "../src/update/index";
+import { OPENCODEX_RELEASE_NOTES_URL, OPENCODEX_RELEASE_NOTES_URL as RELEASE_NOTES_URL } from "../src/update/links";
 import { isRealBunBinary, resolveBunCommand } from "../src/lib/bun-runtime";
 import { removeTempDir } from "./helpers/temp-dir";
 
@@ -145,6 +146,50 @@ describe("GUI update execution decisions", () => {
     expect(persisted).not.toContain("uid=1001");
     expect(persisted).not.toContain("alice");
     expect(readUpdateJob(job.id)?.command).toContain("ocx.mjs update --tag latest");
+  });
+
+  test("normalizes the exact legacy release-notes URL without changing other job fields", () => {
+    const now = new Date().toISOString();
+    const legacy = {
+      id: "legacy-url",
+      status: "succeeded" as const,
+      startedAt: now,
+      updatedAt: now,
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest" as const,
+      installer: "npm" as const,
+      restart: false,
+      command: "npm install -g @bitkyc08/opencodex@2.7.41",
+      releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+      log: ["done"],
+      exitCode: 0,
+      restarted: true,
+    };
+    writeFileSync(updateJobPath(), `${JSON.stringify(legacy)}\n`);
+    const loaded = readUpdateJob("legacy-url");
+    expect(loaded?.releaseNotesUrl).toBe(OPENCODEX_RELEASE_NOTES_URL);
+    expect(loaded).toMatchObject({ ...legacy, releaseNotesUrl: OPENCODEX_RELEASE_NOTES_URL });
+    expect(Object.keys(loaded ?? {}).sort()).toEqual(Object.keys(legacy).sort());
+  });
+
+  test("new update results use the transferred repository release notes URL", () => {
+    const result = checkForUpdate("latest", {
+      currentVersion: () => "2.7.40",
+      detectInstall: () => "desktop",
+      latestVersion: () => null,
+    });
+    expect(result.releaseNotesUrl).toBe(OPENCODEX_RELEASE_NOTES_URL);
+  });
+
+  test("source update advice keeps the checkout-native Bun command", () => {
+    const result = checkForUpdate("latest", {
+      currentVersion: () => "0.0.0",
+      detectInstall: () => "source",
+      latestVersion: () => null,
+    });
+    expect(result.command).toBe("git pull && bun install && bun run build:gui");
+    expect(result.command).not.toContain("lidge-jun");
   });
 
   test("recovery start logs label candidates without persisting launcher paths", () => {
@@ -1571,7 +1616,7 @@ describe("GUI update execution decisions", () => {
       installer: "npm",
       restart: true,
       command: "node /pkg/bin/ocx.mjs update --tag latest",
-      releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+      releaseNotesUrl: OPENCODEX_RELEASE_NOTES_URL,
       log: [],
     };
     writeFileSync(updateJobPath(), `${JSON.stringify(job)}\n`);
@@ -1607,7 +1652,7 @@ describe("GUI update execution decisions", () => {
       installer: "bun",
       restart: true,
       command: "bun add -g @bitkyc08/opencodex@2.7.41",
-      releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+      releaseNotesUrl: OPENCODEX_RELEASE_NOTES_URL,
       log: [],
       pid: 777,
     };
@@ -1625,7 +1670,7 @@ describe("GUI update execution decisions", () => {
         updateAvailable: true,
         canUpdate: true,
         command: "bun add -g @bitkyc08/opencodex@2.7.41",
-        releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+        releaseNotesUrl: OPENCODEX_RELEASE_NOTES_URL,
       }),
       spawnWorkerFn: () => ({
         pid: 888,
@@ -1650,7 +1695,7 @@ describe("GUI update execution decisions", () => {
         updateAvailable: true,
         canUpdate: true,
         command: "bun add -g @bitkyc08/opencodex@2.7.41",
-        releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+        releaseNotesUrl: OPENCODEX_RELEASE_NOTES_URL,
       }),
       spawnWorkerFn: () => { throw new Error("spawn denied"); },
     })).toThrow("Could not start update worker");

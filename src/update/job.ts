@@ -43,6 +43,7 @@ import {
   updateCommandStr,
 } from "./index";
 import { isNewer } from "./notify";
+import { OPENCODEX_RELEASE_NOTES_URL } from "./links";
 import {
   INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE,
   runProcessTreeCommand,
@@ -50,7 +51,8 @@ import {
 import { RECOVERY_TREE_SCAN_WORKER_ARG } from "./recovery-tree-scan.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "./tray-update-plan.mjs";
 
-const RELEASE_NOTES_URL = "https://github.com/lidge-jun/opencodex/releases/latest";
+const RELEASE_NOTES_URL = OPENCODEX_RELEASE_NOTES_URL;
+const LEGACY_RELEASE_NOTES_URL = "https://github.com/lidge-jun/opencodex/releases/latest";
 const UPDATE_JOB_FILENAME = "update-job.json";
 const UPDATE_TIMEOUT_MS = 360_000;
 const RESTART_TIMEOUT_MS = 60_000;
@@ -338,6 +340,9 @@ export function readUpdateJob(jobId?: string | null): UpdateJobState | null {
     const parsed = JSON.parse(readFileSync(updateJobPath(), "utf8")) as UpdateJobState;
     if (jobId && parsed.id !== jobId) return null;
     if (!parsed || typeof parsed.id !== "string" || typeof parsed.status !== "string") return null;
+    if (parsed.releaseNotesUrl === LEGACY_RELEASE_NOTES_URL) {
+      return { ...parsed, releaseNotesUrl: RELEASE_NOTES_URL };
+    }
     return parsed;
   } catch {
     return null;

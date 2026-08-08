@@ -1016,6 +1016,11 @@ switch (command) {
     process.exitCode = await handleAgentCommand(args.slice(1));
     break;
   }
+  case "memory-sync": {
+    const { handleGlobalMemoryCommand } = await import("./global-memory");
+    process.exitCode = await handleGlobalMemoryCommand(args.slice(1));
+    break;
+  }
   case "observe": {
     const { handleObserveCommand } = await import("./observe");
     process.exitCode = await handleObserveCommand(args.slice(1));

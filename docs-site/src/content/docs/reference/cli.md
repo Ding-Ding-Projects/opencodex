@@ -7,6 +7,26 @@ The opencodex CLI is `ocx`. Run `ocx help` (or `--help` / `-h`) for top-level us
 Run `ocx help <command>` for commands registered in the help table. Help and version commands are
 read-only and do not start, stop, install, uninstall, or rewrite Codex/opencodex state.
 
+## Global agent memory
+
+### `ocx memory` versus `ocx memory-sync`
+
+`ocx memory [--json]` remains the runtime observability alias for `ocx observe memory`; it reads proxy-process memory state and does not manage global agent files. `ocx memory-sync` is the separate, provenance-checked integration with `https://github.com/Ding-Ding-Projects/agent-global-memory`.
+
+```text
+ocx memory-sync status [--repo PATH] [--target all|claude,codex,opencode] [--home PATH]
+ocx memory-sync install [--repo PATH] [--target all|claude,codex,opencode] [--home PATH] [--dry-run] [--yes]
+ocx memory-sync uninstall [--repo PATH] [--target all|claude,codex,opencode] [--home PATH] [--dry-run] [--yes]
+ocx memory-sync profile list [--repo PATH] [--json]
+ocx memory-sync profile show <slug> [--repo PATH] [--json]
+```
+
+Repository resolution is `--repo`, then `OPENCODEX_GLOBAL_MEMORY_REPO`, then `../agent-global-memory` beside a source checkout. OpenCodex never clones or downloads a repository. The repository must have the exact canonical `origin` URL (optional `.git` suffix), a matching Git root, the canonical payload and skill, and the platform synchronizer inside the repository boundary. Symlinks and Windows reparse-point escapes fail closed.
+
+`all`, `claude`, `codex`, and `opencode` select synchronizer targets. `--home` is passed to the canonical script for target-home resolution and is never persisted in `config.json`. Install and uninstall require `--yes` unless `--dry-run` is supplied. The canonical exit contract is preserved: `0` means current/success, `1` means missing or drifted status (or cancellation), and `2` means conflict or operational error. The adapter launches PowerShell or Bash with `shell: false` and bounded output.
+
+Profiles are read-only Markdown files under `memory/projects/*.md`. `profile list` returns sorted safe slugs and relative paths; `profile show` returns the bounded UTF-8 Markdown text. Profiles are project-scoped reference material and are not automatically applied to Claude, Codex, OpenCode, or OpenCodex prompts. Slugs must match `^[a-z0-9][a-z0-9-]*$`; traversal, symlinks/reparse points, escapes, and files larger than 256 KiB are rejected. Use `--json` for the versioned `{ schemaVersion: 1, repository, profiles }` or profile-show result.
+
 ## Setup & lifecycle
 
 ### `ocx setup` · `ocx init`

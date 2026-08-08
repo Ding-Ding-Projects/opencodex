@@ -164,6 +164,15 @@ const helpEntries: Record<string, HelpEntry> = {
   usage: { usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", summary: "Alias of ocx observe usage." },
   storage: { usage: "ocx storage [--json]", summary: "Alias of ocx observe storage." },
   memory: { usage: "ocx memory [--json]", summary: "Alias of ocx observe memory." },
+  "memory-sync": {
+    usage: "ocx memory-sync <status|install|uninstall|profile> ...",
+    summary: "Synchronize canonical global agent memory or inspect project profiles without injecting them.",
+    details: [
+      "Repository options: --repo PATH, OPENCODEX_GLOBAL_MEMORY_REPO, or ../agent-global-memory from a source checkout.",
+      "Mutations require --yes unless --dry-run is supplied. The repository origin must be Ding-Ding-Projects/agent-global-memory.",
+      "Profiles: ocx memory-sync profile list|show <slug> [--json] (read-only project-scoped reference material).",
+    ],
+  },
   access: {
     usage: "ocx access <key|endpoints|models|test> ...",
     summary: "Manage OpenCodex admission API keys and inspect external endpoints.",
@@ -342,6 +351,7 @@ Usage:
   ocx combo <sub>             Combo failover/round-robin routing
   ocx agent <sub>             Subagents, injection, effort caps, and sidecars
   ocx observe <sub>           Logs, usage, storage, memory, and debug data
+  ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply
   ocx changelog [opts]        Released versions and their changes

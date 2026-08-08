@@ -13,10 +13,11 @@ import {
   updateCommandStr,
   updateTag,
 } from "./index";
+import { OPENCODEX_RELEASE_NOTES_URL } from "./links";
 
 const VERSION_FILENAME = "version.json";
 const REFRESH_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20h, matching codex-rs
-const RELEASE_NOTES_URL = "https://github.com/lidge-jun/opencodex/releases/latest";
+const RELEASE_NOTES_URL = OPENCODEX_RELEASE_NOTES_URL;
 
 export interface VersionCache {
   latest_version: string;
