@@ -138,6 +138,175 @@ test("ClaudeCode save surfaces the server error message from a failed PUT", asyn
   }
 });
 
+test("ClaudeCode ignores a malformed legacy context value without blocking unrelated saves", async () => {
+  const putBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (url.endsWith("/api/claude-code") && method === "GET") {
+      return Response.json({ ...CLAUDE_OK, maxContextTokens: "1000000" });
+    }
+    if (url.endsWith("/api/claude-code") && method === "PUT") {
+      putBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ ok: true });
+    }
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+
+  const { container, root, testWindow } = await mountClaudeCode();
+  try {
+    const contextWindow = container.querySelector<HTMLButtonElement>(
+      '[role="combobox"][aria-label="Context size override"]',
+    );
+    expect(contextWindow?.textContent).toContain("Automatic");
+    expect(container.textContent).toContain("config file contains an invalid context-size override");
+    await act(async () => { contextWindow!.click(); });
+    const oneMillion = [...testWindow.document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find(option => option.textContent?.trim() === "1M");
+    await act(async () => { oneMillion!.click(); });
+    expect(container.textContent).toContain("Unsaved selection");
+    expect(container.textContent).toContain("still uses an invalid stored value");
+
+    const save = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find(button => /save/i.test(button.textContent ?? ""));
+    await act(async () => {
+      save!.click();
+      await new Promise<void>(resolve => testWindow.setTimeout(resolve, 0));
+    });
+    expect(putBodies[0]?.maxContextTokens).toBe(1_000_000);
+  } finally {
+    await act(async () => root.unmount());
+    testWindow.close();
+  }
+});
+
+test("ClaudeCode gives colliding off-preset context values an exact label", async () => {
+  globalThis.fetch = (async (input) => {
+    if (String(input).endsWith("/api/claude-code")) {
+      return Response.json({ ...CLAUDE_OK, maxContextTokens: 100_001 });
+    }
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+
+  const { container, root, testWindow } = await mountClaudeCode();
+  try {
+    const contextWindow = container.querySelector<HTMLButtonElement>(
+      '[role="combobox"][aria-label="Context size override"]',
+    );
+    expect(contextWindow?.textContent).toContain("100,001");
+    await act(async () => { contextWindow!.click(); });
+    const labels = [...testWindow.document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .map(option => option.textContent?.trim());
+    expect(labels).toContain("100k");
+    expect(labels).toContain("100,001");
+  } finally {
+    await act(async () => root.unmount());
+    testWindow.close();
+  }
+});
+
+test("ClaudeCode reports an unsaved context selection without claiming persistence", async () => {
+  globalThis.fetch = (async (input) => {
+    if (String(input).endsWith("/api/claude-code")) return Response.json(CLAUDE_OK);
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+
+  const { container, root, testWindow } = await mountClaudeCode();
+  try {
+    const contextWindow = container.querySelector<HTMLButtonElement>(
+      '[role="combobox"][aria-label="Context size override"]',
+    );
+    await act(async () => { contextWindow!.click(); });
+    const oneMillion = [...testWindow.document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find(option => option.textContent?.trim() === "1M");
+    await act(async () => { oneMillion!.click(); });
+    expect(container.textContent).toContain("Unsaved selection");
+    expect(container.textContent).toContain("still uses Automatic");
+    expect(container.textContent).not.toContain("Saved in the opencodex config file");
+  } finally {
+    await act(async () => root.unmount());
+    testWindow.close();
+  }
+});
+
+test("ClaudeCode preserves a custom context value and PUTs preset and Automatic selections", async () => {
+  const putBodies: Array<Record<string, unknown>> = [];
+  let persistedContext: number | null = 1_040_000;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (url.endsWith("/api/claude-code") && method === "GET") {
+      return Response.json({ ...CLAUDE_OK, maxContextTokens: persistedContext });
+    }
+    if (url.endsWith("/api/claude-code") && method === "PUT") {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      putBodies.push(body);
+      persistedContext = body.maxContextTokens as number | null;
+      return Response.json({ ok: true });
+    }
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+
+  const { container, root, testWindow } = await mountClaudeCode();
+  try {
+    const contextWindow = container.querySelector<HTMLButtonElement>(
+      '[role="combobox"][aria-label="Context size override"]',
+    );
+    expect(contextWindow).toBeTruthy();
+    expect(contextWindow!.textContent).toContain("1,040,000");
+    expect(contextWindow!.getAttribute("aria-describedby")).toBe(
+      "claude-max-context-description claude-max-context-provenance claude-max-context-warning",
+    );
+    expect(container.textContent).toContain("Saved in the opencodex config file");
+
+    await act(async () => {
+      contextWindow!.click();
+    });
+    const optionLabels = [...testWindow.document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .map(option => option.textContent?.trim());
+    expect(optionLabels).toContain("1,040,000");
+    expect(optionLabels).toContain("1M");
+    const oneMillion = [...testWindow.document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find(option => option.textContent?.trim() === "1M");
+    await act(async () => {
+      oneMillion!.click();
+    });
+
+    const save = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find(button => /save/i.test(button.textContent ?? ""));
+    expect(save).toBeTruthy();
+    await act(async () => {
+      save!.click();
+      await new Promise<void>(resolve => testWindow.setTimeout(resolve, 0));
+    });
+    expect(putBodies[0]?.maxContextTokens).toBe(1_000_000);
+
+    const reloadedContextWindow = container.querySelector<HTMLButtonElement>(
+      '[role="combobox"][aria-label="Context size override"]',
+    );
+    await act(async () => {
+      reloadedContextWindow!.click();
+    });
+    const automatic = [...testWindow.document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find(option => option.textContent?.includes("Automatic"));
+    expect(automatic).toBeTruthy();
+    await act(async () => {
+      automatic!.click();
+    });
+    await act(async () => {
+      save!.click();
+      await new Promise<void>(resolve => testWindow.setTimeout(resolve, 0));
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1]?.maxContextTokens).toBeNull();
+    expect(container.textContent).toContain("Using the compiled-in Automatic default");
+  } finally {
+    await act(async () => root.unmount());
+    testWindow.close();
+  }
+});
+
 test("ClaudeCode save treats an empty 200 body as success", async () => {
   let putCount = 0;
   globalThis.fetch = (async (input, init) => {

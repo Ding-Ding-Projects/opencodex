@@ -32,6 +32,21 @@ test("subscription mode keeps the login comment without asserting host-managed a
   expect(env).not.toContain(CONDITIONAL_FLAG_LINE);
 });
 
+test("fixed context override updates only values still owned by a previous manual block", () => {
+  const env = buildManualEnv(state({ maxContextTokens: 1_000_000 }));
+  expect(env).toContain('{ [ -z "${CLAUDE_CODE_MAX_CONTEXT_TOKENS+x}" ] || [ "${OPENCODEX_MANAGED_CLAUDE_CODE_MAX_CONTEXT_TOKENS:-}" = "${CLAUDE_CODE_MAX_CONTEXT_TOKENS}" ]; } && { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000; export OPENCODEX_MANAGED_CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000; }');
+  expect(env).toContain('{ [ -z "${DISABLE_COMPACT+x}" ] || [ "${OPENCODEX_MANAGED_DISABLE_COMPACT:-}" = "${DISABLE_COMPACT}" ]; } && { export DISABLE_COMPACT=1; export OPENCODEX_MANAGED_DISABLE_COMPACT=1; }');
+  expect(env).not.toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW");
+  expect(env.split("\n").at(-1)).toBe("claude");
+});
+
+test("automatic context clears only values unchanged since a previous manual block", () => {
+  const env = buildManualEnv(state());
+  expect(env).toContain('[ -n "${OPENCODEX_MANAGED_CLAUDE_CODE_MAX_CONTEXT_TOKENS:-}" ] && [ "${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-}" = "${OPENCODEX_MANAGED_CLAUDE_CODE_MAX_CONTEXT_TOKENS}" ] && unset CLAUDE_CODE_MAX_CONTEXT_TOKENS; unset OPENCODEX_MANAGED_CLAUDE_CODE_MAX_CONTEXT_TOKENS');
+  expect(env).toContain('[ -n "${OPENCODEX_MANAGED_DISABLE_COMPACT:-}" ] && [ "${DISABLE_COMPACT:-}" = "${OPENCODEX_MANAGED_DISABLE_COMPACT}" ] && unset DISABLE_COMPACT; unset OPENCODEX_MANAGED_DISABLE_COMPACT');
+  expect(env).toContain("export CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000");
+});
+
 test("model env slots and auto-compact window are appended before the claude launch line", () => {
   const env = buildManualEnv(state({
     effectiveModelEnv: { ANTHROPIC_MODEL: "mock/test-model" },

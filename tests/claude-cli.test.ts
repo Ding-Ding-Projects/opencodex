@@ -127,7 +127,7 @@ describe("ocx claude env assembly", () => {
   });
 
   test("invalid maxContextTokens values inject nothing", () => {
-    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const bad of [0, -5, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
       const env = buildClaudeEnv(cfg({ claudeCode: { maxContextTokens: bad } }), 10100, {});
       expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
       expect(env.DISABLE_COMPACT).toBeUndefined();

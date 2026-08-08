@@ -689,12 +689,12 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     });
   }
   if (url.pathname === "/api/claude-code" && req.method === "PUT") {
-    // NOTE: model / tierModels / maxContextTokens / alwaysEnableEffort are
-    // CONFIG-ONLY back-compat fields — the GUI no longer offers controls for them
-    // (default model is owned by Claude Code's /model picker; roster agents
-    // supersede tiers; auto-context supersedes the max-context pair; effort rides
-    // regardless on 2.1.207). PUT keeps validating them so hand-written configs
-    // and older GUIs stay safe; GUI saves omit them and the spread preserves them.
+    // NOTE: model / tierModels / alwaysEnableEffort are CONFIG-ONLY back-compat
+    // fields (default model is owned by Claude Code's /model picker; roster agents
+    // supersede tiers; effort rides regardless on 2.1.207). maxContextTokens is
+    // user-facing again because it is the official fixed-window pair consumed by
+    // new Claude Code sessions. PUT keeps validating every field so hand-written
+    // configs and older GUIs stay safe; omitted fields remain preserved by the spread.
     let parsedBody: unknown;
     try { parsedBody = await req.json(); } catch { return jsonResponse({ error: "invalid JSON body" }, 400); }
     const isPlainObject = (value: unknown): value is Record<string, unknown> => {
@@ -759,11 +759,11 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
       else delete next.alwaysEnableEffort;
     }
     if (body.maxContextTokens !== undefined) {
-      // CONFIG-ONLY back-compat (GUI control removed — superseded by auto-context):
-      // null clears; otherwise a positive integer (devlog 136 B6).
+      // null restores the client/model default; otherwise persist the positive
+      // integer consumed by the official MAX_CONTEXT_TOKENS + DISABLE_COMPACT pair.
       if (body.maxContextTokens === null) {
         delete next.maxContextTokens;
-      } else if (typeof body.maxContextTokens !== "number" || !Number.isInteger(body.maxContextTokens) || body.maxContextTokens <= 0) {
+      } else if (typeof body.maxContextTokens !== "number" || !Number.isSafeInteger(body.maxContextTokens) || body.maxContextTokens <= 0) {
         return jsonResponse({ error: "maxContextTokens must be a positive integer or null" }, 400);
       } else {
         next.maxContextTokens = body.maxContextTokens;
