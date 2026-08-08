@@ -63,14 +63,13 @@ bun run build
 
 GitHub Actions intentionally stay small:
 
-- **Cross-platform CI** (`.github/workflows/ci.yml`) runs on pull requests and `main` pushes that
-  touch runtime, tests, package, script, TypeScript, or workflow files. Its Bun matrix covers Linux,
-  Windows, and macOS with install, typecheck, tests, privacy scan, a release-helper build smoke, GUI
-  build, and `ocx help`. A second three-OS lane proves npm global install works without a separately
-  installed Bun by using the package's bundled runtime.
+- **Windows CI** (`.github/workflows/ci.yml`) runs on pull requests and `main` pushes that touch
+  runtime, tests, package, script, TypeScript, or workflow files. Its Windows jobs cover install,
+  typecheck, tests, privacy scan, a release-helper build smoke, GUI build, `ocx help`, and npm global
+  install without a separately installed Bun by using the package's bundled runtime.
 - **Release** (`.github/workflows/release.yml`) is manual. It does not act as a second full CI
   pipeline; before dry-run or publish it requires the exact release commit (`GITHUB_SHA`) to already
-  have a successful Cross-platform CI run.
+  have a successful Windows CI run.
 - **Stale needs-info** (`.github/workflows/stale-needs-info.yml`) runs daily on the default branch.
   Open issues labeled `needs-info` with no activity for 14 days get a warning; after 7 more idle
   days they close as not planned. Any update clears the stale warning. To keep long-lived work open,

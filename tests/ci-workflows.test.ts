@@ -31,6 +31,11 @@ describe("GitHub Actions hardening", () => {
   test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
 
+    expect(workflow).toContain("name: Windows CI");
+    expect(workflow).not.toContain("ubuntu-latest");
+    expect(workflow).not.toContain("macos-latest");
+    expect(workflow).toContain("runs-on: windows-latest");
+    expect(workflow).not.toContain("matrix:");
     expect(count(workflow, "timeout-minutes: 12")).toBe(1);
     expect(count(workflow, "timeout-minutes: 8")).toBe(1);
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");

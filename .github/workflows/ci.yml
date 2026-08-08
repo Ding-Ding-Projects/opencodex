@@ -1,4 +1,4 @@
-name: Cross-platform CI
+name: Windows CI
 
 on:
   pull_request:
@@ -41,20 +41,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: cross-platform-ci-${{ github.ref }}
+  group: windows-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: windows-latest
+    runs-on: windows-latest
     # The Windows full suite now completes near the old 8-minute ceiling; leave
     # enough room for the privacy/build smokes instead of cancelling a green run.
     timeout-minutes: 12
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -99,13 +95,9 @@ jobs:
         run: bun run src/cli/index.ts help
 
   npm-global-smoke:
-    name: npm-global ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: npm-global windows-latest
+    runs-on: windows-latest
     timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

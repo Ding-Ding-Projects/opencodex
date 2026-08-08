@@ -58,13 +58,12 @@ bun run build
 
 GitHub Actions 有意只保留必要步骤：
 
-- **Cross-platform CI**（`.github/workflows/ci.yml`）会在改动 runtime、test、package、script、
-  TypeScript 或 workflow 文件的 pull request 与 `main` push 上运行。Bun matrix 覆盖 Linux、
-  Windows 和 macOS，执行 install、typecheck、test、privacy scan、release-helper build smoke、GUI
-  build 和 `ocx help`。另一个三系统 lane 使用 package 内置 runtime，验证无需单独安装 Bun 也能
-  完成 npm global install。
+- **Windows CI**（`.github/workflows/ci.yml`）会在改动 runtime、test、package、script、TypeScript
+  或 workflow 文件的 pull request 与 `main` push 上运行。Windows jobs 执行 install、typecheck、test、
+  privacy scan、release-helper build smoke、GUI build、`ocx help`，并使用 package 内置 runtime 验证
+  无需单独安装 Bun 也能完成 npm global install。
 - **Release**（`.github/workflows/release.yml`）只能手动运行。它不是第二套完整 CI；dry-run 或
-  publish 前，精确的 release commit（`GITHUB_SHA`）必须已有成功的 Cross-platform CI run。
+  publish 前，精确的 release commit（`GITHUB_SHA`）必须已有成功的 Windows CI run。
 
 发布请使用 helper：
 
