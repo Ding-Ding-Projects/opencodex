@@ -19,6 +19,11 @@ npm install -g @bitkyc08/opencodex
 ocx start        # proxy + dashboard on localhost:10100
 ```
 
+On Windows, `scripts/install.ps1` also repairs the current user's PATH using the directory reported by
+`npm.cmd prefix -g`; it never changes the machine PATH. If a manually installed global package still
+reports that `ocx` is not recognized, add that exact prefix to the user PATH and open a new PowerShell
+window before retrying.
+
 <p align="center">
   <b>📖 <a href="https://ding-ding-projects.github.io/opencodex/">Documentation &amp; guides</a></b>
   · <a href="https://ding-ding-projects.github.io/opencodex/getting-started/">Getting started</a>
@@ -445,6 +450,10 @@ and restarts. Append-only throughout: an undo can be undone, and that undo undon
 npm install -g @bitkyc08/opencodex
 ocx start
 ```
+
+On Windows, use `scripts/install.ps1` to add npm's global prefix to the current user's PATH without
+changing the machine PATH. If `ocx` is still unavailable after installation, open a new PowerShell
+window before retrying.
 
 Open `http://localhost:10100`, add a provider, and point your client at the proxy. `ocx codex`,
 `ocx claude` and `ocx grok` launch each client already wired to it.

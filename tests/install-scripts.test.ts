@@ -87,8 +87,103 @@ describe("install scripts", () => {
     expect(script).toContain("Get-Command ocx.cmd");
     expect(script).toContain("Get-Command ocx");
     expect(script).toContain("& $ocx.Source help");
+    expect(script).toContain("install-path.ps1");
     expect(script).not.toContain("bun install -g @bitkyc08/opencodex");
     expect(script).not.toContain("bun.sh/install.ps1");
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell installer repairs npm global PATH safely", async () => {
+    const script = await readText("scripts/install-path.ps1");
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $directory = 'C:\\Users\\tester\\AppData\\Roaming\\npm'
+      $state = @{ UserPath = 'C:\\Windows\\System32;C:\\Tools'; ProcessPath = 'C:\\Windows\\System32'; WrittenUserPath = $null; WrittenProcessPath = $null }
+      $result = Add-NpmGlobalBinToUserPath -NpmGlobalBin $directory -TestDirectory { param($path) $path -eq $directory } -ReadUserPath { $state.UserPath } -WriteUserPath { param($path) $state.WrittenUserPath = $path } -ReadProcessPath { $state.ProcessPath } -WriteProcessPath { param($path) $state.WrittenProcessPath = $path }
+      [pscustomobject]@{ UserPath = $state.WrittenUserPath; ProcessPath = $state.WrittenProcessPath; UserChanged = $result.UserPathChanged; ProcessChanged = $result.ProcessPathChanged } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      UserPath: "C:\\Windows\\System32;C:\\Tools;C:\\Users\\tester\\AppData\\Roaming\\npm",
+      ProcessPath: "C:\\Users\\tester\\AppData\\Roaming\\npm;C:\\Windows\\System32",
+      UserChanged: true,
+      ProcessChanged: true,
+    });
+    expect(script).toContain('[Environment]::SetEnvironmentVariable("Path", $Path, "User")');
+    expect(script).not.toContain('SetEnvironmentVariable("Path", $Path, "Machine")');
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell PATH repair is idempotent and case-insensitive", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $directory = 'C:\\Users\\tester\\AppData\\Roaming\\npm'
+      $state = @{ UserPath = 'C:\\Tools; c:\\users\\TESTER\\appdata\\roaming\\NPM\\;C:\\TOOLS;C:\\Users\\tester\\AppData\\Roaming\\npm'; ProcessPath = 'C:\\Tools; C:\\USERS\\tester\\AppData\\Roaming\\npm' ; WriteCount = 0 }
+      $result = Add-NpmGlobalBinToUserPath -NpmGlobalBin $directory -TestDirectory { $true } -ReadUserPath { $state.UserPath } -WriteUserPath { $state.WriteCount++ } -ReadProcessPath { $state.ProcessPath } -WriteProcessPath { $state.WriteCount++ }
+      [pscustomobject]@{ WriteCount = $state.WriteCount; UserChanged = $result.UserPathChanged; ProcessChanged = $result.ProcessPathChanged } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      WriteCount: 0,
+      UserChanged: false,
+      ProcessChanged: false,
+    });
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell PATH repair leaves the user update failure visible", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      try {
+        Add-NpmGlobalBinToUserPath -NpmGlobalBin 'C:\\Users\\tester\\AppData\\Roaming\\npm' -TestDirectory { $true } -ReadUserPath { 'C:\\Windows\\System32' } -WriteUserPath { throw 'access denied' } -ReadProcessPath { 'C:\\Windows\\System32' } -WriteProcessPath { throw 'should not run' }
+        'unexpected-success'
+      } catch {
+        $_.Exception.Message
+      }
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("access denied");
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell PATH repair reports a process refresh failure without undoing the user repair", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ WrittenUserPath = $null }
+      $result = Add-NpmGlobalBinToUserPath -NpmGlobalBin 'C:\\Users\\tester\\AppData\\Roaming\\npm' -TestDirectory { $true } -ReadUserPath { 'C:\\Windows\\System32' } -WriteUserPath { param($path) $state.WrittenUserPath = $path } -ReadProcessPath { 'C:\\Windows\\System32' } -WriteProcessPath { throw 'process environment unavailable' }
+      [pscustomobject]@{ UserPath = $state.WrittenUserPath; UserChanged = $result.UserPathChanged; ProcessChanged = $result.ProcessPathChanged; ProcessRefreshFailed = $result.ProcessPathRefreshFailed } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      UserPath: "C:\\Windows\\System32;C:\\Users\\tester\\AppData\\Roaming\\npm",
+      UserChanged: true,
+      ProcessChanged: false,
+      ProcessRefreshFailed: true,
+    });
   });
 
   test("Node launcher handles npm self-update before starting Bun", async () => {

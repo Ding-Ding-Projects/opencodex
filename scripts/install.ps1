@@ -1,6 +1,9 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $scriptRoot "install-path.ps1")
+
 Write-Host "Installing opencodex..." -ForegroundColor Cyan
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -36,13 +39,29 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+$npmPrefix = (& $npm.Source prefix -g).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($npmPrefix)) {
+    Write-Error "opencodex installed, but npm could not report its global prefix. Run 'npm.cmd prefix -g' and add that directory to your user PATH."
+    exit 1
+}
+
+try {
+    $pathRepair = Add-NpmGlobalBinToUserPath -NpmGlobalBin $npmPrefix
+} catch {
+    Write-Error "opencodex installed, but the user PATH could not be updated for '$npmPrefix'. No machine PATH was changed. Add this directory to your user PATH, then reopen PowerShell: $($_.Exception.Message)"
+    exit 1
+}
+
 $ocx = Get-Command ocx.cmd -ErrorAction SilentlyContinue
 if (-not $ocx) {
     $ocx = Get-Command ocx -ErrorAction SilentlyContinue
 }
 if (-not $ocx) {
-    $npmPrefix = & $npm.Source prefix -g
-    Write-Error "opencodex installed, but 'ocx' is not on PATH. Add your npm global bin directory to PATH, then reopen PowerShell: $npmPrefix"
+    if ($pathRepair.ProcessPathRefreshFailed) {
+        Write-Error "opencodex installed and the user PATH includes '$npmPrefix', but this PowerShell process could not be refreshed. Open a new PowerShell window and run 'ocx help'."
+    } else {
+        Write-Error "opencodex installed and the user PATH includes '$npmPrefix', but 'ocx' is still unavailable in this PowerShell process. Open a new PowerShell window and run 'ocx help'."
+    }
     exit 1
 }
 
