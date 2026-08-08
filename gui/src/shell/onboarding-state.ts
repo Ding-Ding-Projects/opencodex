@@ -16,6 +16,7 @@
  */
 
 import { PREFS_KEY } from "../theme/prefs-context";
+import { isProviderConfigurationState } from "../provider-configuration";
 import { readRevisions } from "./revisions";
 
 export const ONBOARDING_KEY = "ocx-m3:onboarding";
@@ -94,16 +95,12 @@ export function closeForLaunch(): void { launchClosed = true; }
 /** Test seam: forget the per-launch latch. */
 export function resetLaunchLatch(): void { launchClosed = false; }
 
-interface ProviderRow { hasApiKey?: unknown }
-
 /**
- * True when at least one provider carries a credential, false when none does,
- * and `null` when the answer is unknown — the proxy is not up yet, the
- * management API refused, or the payload was not the expected shape.
- *
- * A provider row with no key is not "configured": a fresh install can already
- * list catalogue entries, and treating those as setup would hide the wizard
- * from exactly the user it exists for.
+ * True when at least one provider is configuration-ready, false when none is,
+ * and `null` when the answer is unknown. Readiness comes from the management
+ * API's authoritative configuration status, not from API-key presence: forward,
+ * OAuth, local, loopback, and explicitly key-optional providers need no key.
+ * This does not claim that an upstream service answered a live health probe.
  */
 export async function hasConfiguredProvider(apiBase: string, signal?: AbortSignal): Promise<boolean | null> {
   try {
@@ -116,7 +113,8 @@ export async function hasConfiguredProvider(apiBase: string, signal?: AbortSigna
         ? (data as { providers: unknown[] }).providers
         : null;
     if (!rows) return null;
-    return rows.some(row => !!row && typeof row === "object" && (row as ProviderRow).hasApiKey === true);
+    if (!rows.every(isProviderConfigurationState)) return null;
+    return rows.some(row => row.configurationStatus === "ready");
   } catch {
     return null;
   }
@@ -125,7 +123,8 @@ export async function hasConfiguredProvider(apiBase: string, signal?: AbortSigna
 /**
  * The full decision. Resolves true only when the profile looks new *and* the
  * probe came back saying nothing is connected yet. Anything else — an existing
- * credential, a refused request, an abort, a broken payload — resolves false,
+ * configuration-ready provider, a refused request, an abort, or a broken
+ * payload — resolves false,
  * because the wizard must never be the reason a user cannot reach the app.
  */
 export async function decideFirstRun(apiBase: string, signal?: AbortSignal): Promise<boolean> {

@@ -7,13 +7,17 @@ opencodex installs two equivalent command names, `ocx` and `opencodex`. Both lau
 local HTTP server (built on Bun). Model requests go to the provider selected by routing; optional
 vision and web-search sidecars can also use your ChatGPT login when a routed model needs them.
 
+The default local route is plug-and-play with an existing ChatGPT/Codex login. It does **not** require
+an OpenAI API key or any other provider API key.
+
 ## Prerequisites
 
 | Requirement | Why |
 | --- | --- |
 | **[Node](https://nodejs.org) ≥ 18** | `ocx` runs on the Bun runtime, but the runtime is bundled automatically on `npm install` — you do **not** need to install Bun yourself. |
 | **[OpenAI Codex](https://openai.com/codex)** (CLI, App, or SDK) | The client opencodex sits in front of. opencodex writes to `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). |
-| A provider account or API key | Anthropic, xAI, Kimi, Ollama Cloud, OpenRouter, an OpenAI-compatible endpoint, or your ChatGPT login. |
+| A ChatGPT/Codex login | The default built-in `openai` route forwards the account session created by `codex login` or the Codex app. This is not an API key. |
+| An upstream provider account or API key *(optional)* | Needed only when you deliberately add Anthropic, xAI, Kimi, Ollama Cloud, OpenRouter, another hosted provider, or a custom authenticated endpoint. |
 
 ## Install
 
@@ -75,6 +79,22 @@ ocx --version
 opencodex --version
 ```
 
+Start the default local route immediately:
+
+```bash
+ocx start
+```
+
+Keep that terminal running, then use `ocx codex` from another terminal. If Codex has not been signed
+in before, run `codex login` once. `ocx gui` opens the dashboard on the live proxy port and starts the
+proxy automatically when needed.
+
+:::note[Local startup does not need an API key]
+An **upstream provider API key** pays for/authenticates an optional provider. An **OpenCodex admission
+key** protects `/v1/*` only when you expose the proxy beyond loopback. Neither is required for the
+default `localhost` + ChatGPT/Codex-login path. See the [Quickstart credential table](/getting-started/quickstart/#which-credential-is-it-asking-about).
+:::
+
 ### Release channels
 
 The stable `latest` channel already includes GPT-5.6 Sol/Terra/Luna catalog support for ChatGPT,
@@ -127,5 +147,5 @@ or `ocx eject` strip exactly the lines opencodex added and restore native Codex.
 
 ## Next
 
-Continue to the [Quickstart](/getting-started/quickstart/) to configure your first provider,
+Continue to the [Quickstart](/getting-started/quickstart/) to run the keyless local default,
 or read [How It Works](/getting-started/how-it-works/) for the architecture.

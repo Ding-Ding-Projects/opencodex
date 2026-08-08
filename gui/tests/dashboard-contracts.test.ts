@@ -3,7 +3,13 @@ import { en } from "../src/i18n/en";
 import { M3_EN } from "../src/i18n/m3";
 import { interpolate, type TFn } from "../src/i18n/shared";
 import { normalizeInjectionSelection } from "../src/pages/dashboard-core-poll";
-import { defaultUpdateChannel, modelMetaLabel, providersStatHint } from "../src/pages/dashboard-shared";
+import {
+  defaultUpdateChannel,
+  modelMetaLabel,
+  providerStatusPresentation,
+  providersStatHint,
+  type ProviderInfo,
+} from "../src/pages/dashboard-shared";
 import { PROJECT_CONFIG_DIAGNOSTICS_POLL_MS } from "../src/startup-health-ui";
 
 /** English resolver, enough for the pure label helpers below. */
@@ -123,17 +129,37 @@ test("Dashboard model meta is built from the payload, never invented", () => {
 });
 
 /**
- * The providers stat hint is computed from the same `hasApiKey` flag the providers
- * table draws its status dot from, so the two surfaces cannot disagree.
+ * The providers stat hint and row presentation consume the same server-authored
+ * configuration status, so no-key routes and disabled providers stay distinct.
  */
-test("Dashboard providers stat hint counts ready vs needs-setup", () => {
-  const provider = (name: string, hasApiKey: boolean) =>
-    ({ name, adapter: "openai", baseUrl: "https://example.invalid", hasApiKey });
-  expect(providersStatHint([provider("a", true), provider("b", true), provider("c", false)], t))
-    .toBe("Ready (2) · Needs setup (1)");
-  // Nothing to split: the "needs setup" half is omitted rather than shown as zero.
-  expect(providersStatHint([provider("a", true)], t)).toBe("Ready (1)");
+test("Dashboard provider summary and rows use authoritative configuration status", () => {
+  const provider = (
+    name: string,
+    configurationStatus: ProviderInfo["configurationStatus"],
+    configurationReason: ProviderInfo["configurationReason"],
+    hasApiKey = false,
+  ): ProviderInfo => ({
+    name,
+    adapter: "openai",
+    baseUrl: "https://example.invalid",
+    hasApiKey,
+    configurationStatus,
+    configurationReason,
+  });
+  const forward = provider("forward", "ready", "forward");
+  const keyed = provider("keyed", "ready", "api_key", true);
+  const missing = provider("missing", "needs_setup", "missing_api_key", true);
+  const disabled = provider("disabled", "disabled", "disabled", true);
+
+  expect(providersStatHint([forward, keyed, missing, disabled], t))
+    .toBe("Ready (2) · Needs setup (1) · Disabled (1)");
+  // Nothing to split: zero-count setup and disabled fragments stay omitted.
+  expect(providersStatHint([forward], t)).toBe("Ready (1)");
   expect(providersStatHint([], t)).toBe("");
+
+  expect(providerStatusPresentation(forward, t)).toEqual({ label: "Ready", dotClass: "dot-green" });
+  expect(providerStatusPresentation(missing, t)).toEqual({ label: "Needs setup", dotClass: "dot-amber" });
+  expect(providerStatusPresentation(disabled, t)).toEqual({ label: "Disabled", dotClass: "dot-muted" });
 });
 
 /**

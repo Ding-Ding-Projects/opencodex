@@ -15,6 +15,7 @@ import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
+import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 
 interface PoolAccount {
   id: string;
@@ -60,6 +61,8 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuPlacement = useAnchoredPlacement(wrapRef, menuRef, menuOpen, 260);
 
   const poll = useKeyedClientResource(
     `app-codex-pool:${apiBase}`,
@@ -184,10 +187,11 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
       </button>
       {menuOpen && (
         <div
+          ref={menuRef}
           className="m3-menu"
           role="menu"
           aria-label={t("switcher.title")}
-          style={{ top: "100%", right: 0, minWidth: 260 }}
+          style={{ ...fixedPanelStyle(menuPlacement), zIndex: 70, minWidth: "min(260px, calc(100vw - 16px))" }}
           onKeyDown={onMenuKeyDown}
         >
           <div className="m3-menu-heading">{t("switcher.title")}</div>

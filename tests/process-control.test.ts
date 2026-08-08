@@ -12,4 +12,12 @@ describe("process control helpers", () => {
     expect(isProcessAlive(invalidPid)).toBe(false);
     expect(waitForExit(invalidPid, 1)).toBe(true);
   });
+
+  test("treats access-denied probes as alive and only ESRCH as exited", () => {
+    const denied = Object.assign(new Error("access denied"), { code: "EPERM" });
+    const missing = Object.assign(new Error("no such process"), { code: "ESRCH" });
+
+    expect(isProcessAlive(4, () => { throw denied; })).toBe(true);
+    expect(isProcessAlive(424242, () => { throw missing; })).toBe(false);
+  });
 });

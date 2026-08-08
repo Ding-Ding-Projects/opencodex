@@ -5,7 +5,7 @@
  * showing up on a profile that has already been used, or on every launch. Every
  * case below is therefore about *when* it appears as much as what it renders —
  * an upgrading user, a proxy that will not answer, and an install that already
- * has a credential all have to end with nothing on screen.
+ * has a configuration-ready provider all have to end with nothing on screen.
  *
  * The wizard renders through the shared `Dialog`, so it is a native `<dialog>`
  * opened with `showModal()`. Two consequences run through every case here:
@@ -24,7 +24,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import OnboardingWizard from "../src/shell/OnboardingWizard";
-import { resetLaunchLatch } from "../src/shell/onboarding-state";
+import { hasConfiguredProvider, resetLaunchLatch } from "../src/shell/onboarding-state";
 import { LanguageProvider } from "../src/i18n/provider";
 import { NotificationsProvider } from "../src/shell/notifications";
 
@@ -179,8 +179,57 @@ test("stays shut when the provider probe fails", async () => {
   await act(async () => { root.unmount(); });
 });
 
+test("provider readiness follows the authoritative configuration DTO, including no-key routes", async () => {
+  const readyReasons = ["key_optional", "forward", "oauth", "local", "loopback", "vertex_auth"] as const;
+  for (const configurationReason of readyReasons) {
+    stubProviders([{
+      configurationStatus: "ready",
+      configurationReason,
+      hasApiKey: false,
+    }]);
+    expect(await hasConfiguredProvider("")).toBe(true);
+  }
+
+  stubProviders([{
+    configurationStatus: "ready",
+    configurationReason: "api_key",
+    hasApiKey: true,
+  }]);
+  expect(await hasConfiguredProvider("")).toBe(true);
+
+  // Generic headers are not credentials. The server's needs_setup result wins
+  // over incidental fields that previously made the GUI guess.
+  stubProviders([{
+    configurationStatus: "needs_setup",
+    configurationReason: "missing_api_key",
+    hasHeaders: true,
+  }]);
+  expect(await hasConfiguredProvider("")).toBe(false);
+
+  stubProviders([{
+    configurationStatus: "disabled",
+    configurationReason: "disabled",
+    hasApiKey: true,
+  }]);
+  expect(await hasConfiguredProvider("")).toBe(false);
+
+  stubProviders([
+    { configurationStatus: "disabled", configurationReason: "disabled" },
+    { configurationStatus: "ready", configurationReason: "forward" },
+  ]);
+  expect(await hasConfiguredProvider("")).toBe(true);
+
+  stubProviders([{ configurationStatus: "ready" }]);
+  expect(await hasConfiguredProvider("")).toBeNull();
+});
+
 test("stays shut when a provider is already configured, and remembers it", async () => {
-  stubProviders([{ name: "openai", hasApiKey: true }]);
+  stubProviders([{
+    name: "openai",
+    hasApiKey: false,
+    configurationStatus: "ready",
+    configurationReason: "forward",
+  }]);
   const { container, root } = await mount();
 
   expect(dialogOf(container)).toBeNull();
@@ -189,10 +238,15 @@ test("stays shut when a provider is already configured, and remembers it", async
   await act(async () => { root.unmount(); });
 });
 
-// A listed provider with no credential is not a configured one — that is exactly
-// the state the wizard exists for.
-test("opens when providers are listed but none carries a credential", async () => {
-  stubProviders([{ name: "openai", hasApiKey: false }]);
+// A listed bare key provider that still needs setup is not configured — that is
+// exactly the state the wizard exists for.
+test("opens when listed providers still need configuration", async () => {
+  stubProviders([{
+    name: "openai",
+    hasApiKey: false,
+    configurationStatus: "needs_setup",
+    configurationReason: "missing_api_key",
+  }]);
   const { container, root } = await mount();
 
   expect(dialogOf(container)).toBeTruthy();

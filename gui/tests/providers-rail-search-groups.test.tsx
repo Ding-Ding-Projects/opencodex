@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import ProviderWorkspaceShell from "../src/components/provider-workspace/ProviderWorkspaceShell";
+import type { ProviderUpdatePatch, WorkspaceItem } from "../src/components/provider-workspace/types";
 import { LanguageProvider } from "../src/i18n/provider";
 
 /**
@@ -26,10 +27,34 @@ let root: Root | null = null;
 let originalFetch: typeof globalThis.fetch;
 
 const providers = {
-  alpha: { adapter: "openai-chat", baseUrl: "https://alpha.invalid/v1", hasApiKey: true },
-  beta: { adapter: "anthropic", baseUrl: "https://beta.invalid/v1", authMode: "oauth" },
-  gamma: { adapter: "openai-chat", baseUrl: "https://gamma.invalid/v1" },
-  delta: { adapter: "openai-chat", baseUrl: "https://delta.invalid/v1", hasApiKey: true, disabled: true },
+  alpha: {
+    adapter: "openai-chat",
+    baseUrl: "https://alpha.invalid/v1",
+    hasApiKey: true,
+    configurationStatus: "ready",
+    configurationReason: "api_key",
+  },
+  beta: {
+    adapter: "anthropic",
+    baseUrl: "https://beta.invalid/v1",
+    authMode: "oauth",
+    configurationStatus: "ready",
+    configurationReason: "oauth",
+  },
+  gamma: {
+    adapter: "openai-chat",
+    baseUrl: "https://gamma.invalid/v1",
+    configurationStatus: "needs_setup",
+    configurationReason: "missing_api_key",
+  },
+  delta: {
+    adapter: "openai-chat",
+    baseUrl: "https://delta.invalid/v1",
+    hasApiKey: true,
+    disabled: true,
+    configurationStatus: "disabled",
+    configurationReason: "disabled",
+  },
 } as unknown as Parameters<typeof ProviderWorkspaceShell>[0]["providers"];
 
 beforeEach(() => {
@@ -138,6 +163,9 @@ test("a healthy tree groups into ready / needs setup / disabled only", async () 
   // No account is broken, so the attention group must not appear at all — an empty
   // group would read as a permanent warning about nothing.
   expect(groupLabels()).toEqual(["Ready", "Needs setup", "Disabled"]);
+  expect(Array.from(host.querySelectorAll(".providers-workspace-rail-row"))
+    .map((row) => row.getAttribute("data-configuration-reason")))
+    .toEqual(["api_key", "oauth", "missing_api_key", "disabled"]);
 });
 
 test("an active account that needs re-auth gets its own group, not the setup pile", async () => {
@@ -226,22 +254,30 @@ test("the search bar carries a builder anchored to the field, not a link away fr
 // with the rail search above it.
 // ---------------------------------------------------------------------------
 
-async function mountSettings() {
+const DEFAULT_SETTINGS_ITEM: WorkspaceItem = {
+  name: "gamma",
+  adapter: "openai-chat",
+  baseUrl: "https://gamma.invalid/v1",
+  authMode: "key",
+  note: "staging endpoint",
+};
+
+async function mountSettings({
+  item = DEFAULT_SETTINGS_ITEM,
+  onUpdateProvider,
+}: {
+  item?: WorkspaceItem;
+  onUpdateProvider?: (name: string, patch: ProviderUpdatePatch) => Promise<{ ok: boolean; error?: string }>;
+} = {}) {
   const { createRoot } = await import("react-dom/client");
   const ProviderSettings = (await import("../src/components/provider-workspace/ProviderSettings")).default;
-  const item = {
-    name: "gamma",
-    adapter: "openai-chat",
-    baseUrl: "https://gamma.invalid/v1",
-    authMode: "key",
-    note: "staging endpoint",
-  } as unknown as Parameters<typeof ProviderSettings>[0]["item"];
   await act(async () => {
     root = createRoot(host);
     root.render(
       <LanguageProvider>
         <ProviderSettings
           item={item}
+          onUpdateProvider={onUpdateProvider}
           otherTabSettings={[{ tab: "Accounts", text: "Accounts Add account Add API key" }]}
         />
       </LanguageProvider>,
@@ -307,4 +343,68 @@ test("a query that matches nothing anywhere says so", async () => {
   expect(fieldLabels()).toEqual([]);
   const status = Array.from(host.querySelectorAll('[role="status"]')).map((el) => el.textContent);
   expect(status).toContain("No settings match on this surface.");
+});
+
+test("a hosted key-optional preset stays labelled No key in Settings", async () => {
+  await mountSettings({
+    item: {
+      name: "opencode-free",
+      adapter: "openai-chat",
+      baseUrl: "https://opencode.ai/zen/v1",
+      keyOptional: true,
+      configurationStatus: "ready",
+      configurationReason: "key_optional",
+    },
+  });
+
+  const authField = Array.from(host.querySelectorAll(".pwi-settings-field"))
+    .find((field) => field.querySelector(".pwi-settings-label")?.textContent?.includes("Auth mode"));
+  expect((authField?.querySelector("input") as HTMLInputElement | null)?.value).toBe("No key needed");
+});
+
+test.each([
+  ["ollama", "local", "http://192.168.50.20:11434/v1"],
+  ["ollama", "loopback", "http://127.0.0.1:11434/v1"],
+  ["xai", "loopback", "http://127.0.0.1:11434/v1"],
+] as const)("a built-in %s row with an inferred %s mode does not persist that inference on unrelated save", async (name, configurationReason, baseUrl) => {
+  let saved: { name: string; patch: ProviderUpdatePatch } | undefined;
+  await mountSettings({
+    item: {
+      name,
+      adapter: "openai-chat",
+      baseUrl,
+      configurationStatus: "ready",
+      configurationReason,
+      note: "before",
+    },
+    onUpdateProvider: async (name, patch) => {
+      saved = { name, patch };
+      return { ok: true };
+    },
+  });
+
+  const authField = Array.from(host.querySelectorAll(".pwi-settings-field"))
+    .find((field) => field.querySelector(".pwi-settings-label")?.textContent?.includes("Auth mode"));
+  expect((authField?.querySelector("input") as HTMLInputElement | null)?.value).toBe("Local");
+
+  const privateNetworkField = Array.from(host.querySelectorAll(".pwi-settings-field"))
+    .find((field) => field.textContent?.includes("Allow local/private network"));
+  const privateNetwork = privateNetworkField?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+  expect(privateNetwork).toBeTruthy();
+  await act(async () => {
+    privateNetwork.click();
+  });
+
+  const save = Array.from(host.querySelectorAll("button"))
+    .find((button) => button.textContent === "Save") as HTMLButtonElement;
+  expect(save).toBeTruthy();
+  await act(async () => {
+    save.click();
+    await Promise.resolve();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(saved?.name).toBe(name);
+  expect(saved?.patch.allowPrivateNetwork).toBe(true);
+  expect(saved?.patch).not.toHaveProperty("authMode");
 });

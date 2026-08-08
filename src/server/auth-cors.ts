@@ -19,6 +19,7 @@ import { providerDestinationConfigError } from "../lib/destination-policy";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "../providers/registry";
 import { providerConfigSeed } from "../providers/derive";
 import type { OcxConfig, OcxProviderConfig } from "../types";
+import { providerConfigurationState, providerHasConfiguredApiKey } from "../providers/setup-status";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 
 let _corsOrigin = "http://localhost:10100";
@@ -428,11 +429,14 @@ export function copyIfDefined<K extends keyof OcxProviderConfig>(
 export function safeConfigDTO(config: OcxConfig): unknown {
   const providers: Record<string, Record<string, unknown>> = {};
   for (const [name, provider] of Object.entries(config.providers)) {
+    const configuration = providerConfigurationState(provider, name);
     const dto: Record<string, unknown> = {
       adapter: provider.adapter,
       baseUrl: publicProviderBaseUrl(provider.baseUrl),
-      hasApiKey: !!provider.apiKey,
+      hasApiKey: providerHasConfiguredApiKey(provider),
       hasHeaders: !!provider.headers && Object.keys(provider.headers).length > 0,
+      configurationStatus: configuration.status,
+      configurationReason: configuration.reason,
     };
     for (const key of [
       "defaultModel",

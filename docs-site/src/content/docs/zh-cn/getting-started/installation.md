@@ -7,13 +7,17 @@ description: 安装 opencodex(ocx)代理及其前置条件,并验证它能够运
 小型本地 HTTP 服务器。模型请求会发往路由所选的 provider；当已路由模型需要时，可选的
 vision 和网络搜索 sidecar 也可以使用你的 ChatGPT 登录凭据。
 
+默认本地路径可直接使用现有 ChatGPT/Codex 登录，无需 OpenAI API key 或任何其他 provider
+API key。
+
 ## 前置条件
 
 | 要求 | 原因 |
 | --- | --- |
 | **[Node](https://nodejs.org) ≥ 18** | `ocx` 运行在 Bun 运行时上，但运行时会在 `npm install` 时自动打包，你**无需**自己安装 Bun。 |
 | **[OpenAI Codex](https://openai.com/codex)**(CLI、App 或 SDK) | opencodex 所代理的客户端。opencodex 会写入 `$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`）。 |
-| 一个 provider 账号或 API key | Anthropic、xAI、Kimi、Ollama Cloud、OpenRouter、OpenAI API key、一个 OpenAI 兼容端点,或你的 ChatGPT 登录凭据。 |
+| ChatGPT/Codex 登录 | 默认内置 `openai` 路径会转发由 `codex login` 或 Codex App 创建的账号会话；它不是 API key。 |
+| 上游 provider 账号或 API key（可选） | 仅当你主动添加 Anthropic、xAI、Kimi、Ollama Cloud、OpenRouter、其他托管 provider 或需要认证的自定义 endpoint 时才需要。 |
 
 ## 安装
 
@@ -41,6 +45,21 @@ sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
 ocx --version
 opencodex --version
 ```
+
+立即启动默认本地路径：
+
+```bash
+ocx start
+```
+
+保持这个终端运行，然后在另一个终端执行 `ocx codex`。如果 Codex 尚未登录，只需运行一次
+`codex login`。`ocx gui` 会在实际代理端口打开仪表盘，并在需要时先启动代理。
+
+:::note[本地启动不需要 API key]
+**上游 provider API key** 仅用于认证你主动添加的可选 provider。**OpenCodex 准入密钥**
+只在把代理公开到非回环地址时保护 `/v1/*`。默认的 `localhost` + ChatGPT/Codex 登录路径
+两者都不需要。
+:::
 
 ### 发布渠道
 
@@ -92,5 +111,5 @@ opencodex 绝不会删除你的 Codex 配置。每次注入都是可逆的 —�
 
 ## 下一步
 
-继续阅读 [快速开始](/zh-cn/getting-started/quickstart/) 以配置你的第一个 provider,
+继续阅读 [快速开始](/zh-cn/getting-started/quickstart/) 以启动无需 key 的本地默认路径，
 或阅读 [工作原理](/zh-cn/getting-started/how-it-works/) 了解其架构。

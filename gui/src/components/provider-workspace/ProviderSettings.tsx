@@ -29,6 +29,18 @@ const SEARCH_INPUT: CSSProperties = { flex: "1 1 200px", width: "auto", minWidth
 const SEARCH_NOTE: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" };
 const SEARCH_ERROR: CSSProperties = { color: "var(--m3-error)", fontSize: "var(--t-label-m)" };
 
+/**
+ * Older rows may intentionally omit raw authMode. The management DTO carries a
+ * configuration reason so the form can render their effective mode honestly.
+ * This is display state only: a generic built-in provider pointed at loopback is
+ * not allowed to persist the registry-restricted `local` mode.
+ */
+function providerSettingsAuthMode(item: WorkspaceItem): string {
+  if (item.authMode) return item.authMode;
+  if (item.configurationReason === "local" || item.configurationReason === "loopback") return "local";
+  return item.keyOptional ? "local" : "key";
+}
+
 /** Every control this form owns, addressable by the settings search. */
 type SettingId =
   | "providerId" | "adapter" | "endpoint" | "baseUrl" | "defaultModel"
@@ -64,7 +76,7 @@ export default function ProviderSettings({
   otherTabSettings?: OtherTabSetting[];
 }) {
   const t = useT();
-  const initialAuth = String(item.authMode ?? (item.keyOptional ? "local" : "key"));
+  const initialAuth = providerSettingsAuthMode(item);
   const [adapter, setAdapter] = useState(item.adapter);
   const [baseUrl, setBaseUrl] = useState(item.baseUrl);
   const [defaultModel, setDefaultModel] = useState(item.defaultModel ?? "");
@@ -87,14 +99,14 @@ export default function ProviderSettings({
     setAdapter(item.adapter);
     setBaseUrl(item.baseUrl);
     setDefaultModel(item.defaultModel ?? "");
-    setAuthMode(String(item.authMode ?? (item.keyOptional ? "local" : "key")));
+    setAuthMode(initialAuth);
     setApiKeyTransport(item.apiKeyTransport ?? "x-api-key");
     setNote(item.note ?? "");
     setAllowPrivateNetwork(item.allowPrivateNetwork ?? false);
     setLiveModels(item.liveModels !== false);
     setMsg(null);
     queueMicrotask(() => setEndpointChoice(matchChoiceId(baseUrlChoices, item.baseUrl)));
-  }, [item.adapter, item.baseUrl, item.defaultModel, item.authMode, item.apiKeyTransport, item.keyOptional, item.note, item.allowPrivateNetwork, item.liveModels, baseUrlChoices]);
+  }, [item.adapter, item.baseUrl, item.defaultModel, item.apiKeyTransport, item.note, item.allowPrivateNetwork, item.liveModels, initialAuth, baseUrlChoices]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -130,7 +142,7 @@ export default function ProviderSettings({
   const dirty = adapter.trim() !== item.adapter
     || baseUrl.trim() !== item.baseUrl
     || defaultModel.trim() !== (item.defaultModel ?? "")
-    || authMode !== String(item.authMode ?? (item.keyOptional ? "local" : "key"))
+    || authMode !== initialAuth
     || (adapter.trim() === "anthropic" && authMode === "key" && apiKeyTransport !== (item.apiKeyTransport ?? "x-api-key"))
     || note.trim() !== (item.note ?? "")
     || allowPrivateNetwork !== (item.allowPrivateNetwork ?? false)
@@ -175,7 +187,7 @@ export default function ProviderSettings({
     }
     rows.push(
       { id: "defaultModel", text: `${t("pws.cell.defaultModel")} ${t("pws.defaultModelNone")} ${defaultModel}` },
-      { id: "authMode", text: `${t("pws.authMode")} ${authModeLabel(item, t)} ${authMode}` },
+      { id: "authMode", text: `${t("pws.authMode")} ${authModeLabel({ ...item, authMode }, t)} ${authMode}` },
     );
     if (supportsApiKeyTransport) {
       rows.push({
@@ -216,7 +228,11 @@ export default function ProviderSettings({
     setSaving(true);
     setMsg(null);
     try {
-      const patch: ProviderUpdatePatch = { adapter: adapter.trim(), baseUrl: nextBaseUrl, defaultModel: defaultModel.trim(), authMode, note: note.trim(), allowPrivateNetwork, liveModels };
+      const patch: ProviderUpdatePatch = { adapter: adapter.trim(), baseUrl: nextBaseUrl, defaultModel: defaultModel.trim(), note: note.trim(), allowPrivateNetwork, liveModels };
+      // Preserve an omitted mode on unrelated saves. `initialAuth` can be an
+      // effective display value inferred from a loopback endpoint; serializing
+      // that inference as `local` would be rejected for non-local registry rows.
+      if (item.authMode !== undefined || authMode !== initialAuth) patch.authMode = authMode;
       if (supportsApiKeyTransport) patch.apiKeyTransport = apiKeyTransport;
       else if (item.apiKeyTransport !== undefined) patch.apiKeyTransport = "";
       const res = await onUpdateProvider(item.name, patch);
@@ -364,7 +380,7 @@ export default function ProviderSettings({
       {show("authMode") && (
       <label className="pwi-settings-field">
         <span className="pwi-settings-label">{t("pws.authMode")}</span>
-        {isPreset ? <input className="m3-input" value={authModeLabel(item, t)} readOnly disabled /> : (
+        {isPreset ? <input className="m3-input" value={authModeLabel({ ...item, authMode }, t)} readOnly disabled /> : (
           <select className="m3-input" value={authMode} onChange={e => setAuthMode(e.target.value)}>
             <option value="key">{t("modal.badge.apiKey")}</option>
             <option value="forward">{t("pws.auth.chatgptPassthrough")}</option>

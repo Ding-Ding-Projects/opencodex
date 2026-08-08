@@ -8,9 +8,12 @@ import { hasLoopbackBaseUrl, type WorkspaceProvider } from "./catalog";
 
 export type ProviderKind = "cloud" | "local" | "selfHosted" | "login";
 
-/** Local runtime: explicit local auth mode or a loopback base URL. */
+/** Local runtime: server reason, explicit local auth mode, or a loopback base URL. */
 export function isLocalProvider(item: WorkspaceProvider): boolean {
-  return item.authMode === "local" || hasLoopbackBaseUrl(item.baseUrl);
+  return item.configurationReason === "local"
+    || item.configurationReason === "loopback"
+    || item.authMode === "local"
+    || hasLoopbackBaseUrl(item.baseUrl);
 }
 
 export const SELF_HOSTED_HINTS = ["ollama", "vllm", "lm-studio", "lmstudio", "litellm", "localai"];

@@ -18,6 +18,14 @@ export interface OAuthAccountIdentity {
 export function providerAuthSurface(item: WorkspaceItem): ProviderAuthSurface {
   if (isAccountProvider(item.name, item)) return "codex-accounts";
 
+  // Configuration reasons are server-authored and survive older rows whose raw
+  // authMode was omitted. Local runtimes own no credential panel. Vertex is
+  // ready through ADC, but keeps the API-key surface available for users who
+  // deliberately choose its optional express-key path.
+  if (item.configurationReason === "local"
+    || item.configurationReason === "loopback") return null;
+  if (item.configurationReason === "vertex_auth") return "api-keys";
+
   const mode = (item.authMode ?? "").toLowerCase();
   if (mode === "forward" || mode === "local" || isLocalProvider(item)) return null;
   if (mode === "oauth") return "oauth-accounts";

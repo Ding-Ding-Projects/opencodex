@@ -141,3 +141,52 @@ test("notes save closes editor only after an acknowledged success", async () => 
 
   await act(async () => { root.unmount(); });
 });
+
+test.each([
+  [
+    "registry local",
+    {
+      ...item,
+      name: "ollama",
+      adapter: "openai-chat",
+      baseUrl: "http://192.168.50.20:11434/v1",
+      configurationStatus: "ready",
+      configurationReason: "local",
+    } as WorkspaceItem,
+    "Local",
+  ],
+  [
+    "loopback local",
+    {
+      ...item,
+      name: "vllm",
+      adapter: "openai-chat",
+      baseUrl: "http://127.0.0.1:8000/v1",
+      configurationStatus: "ready",
+      configurationReason: "loopback",
+    } as WorkspaceItem,
+    "Local",
+  ],
+  [
+    "Vertex external auth",
+    {
+      ...item,
+      name: "google-vertex",
+      adapter: "google",
+      baseUrl: "https://aiplatform.googleapis.com",
+      authMode: "key",
+      configurationStatus: "ready",
+      configurationReason: "vertex_auth",
+    } as WorkspaceItem,
+    "Vertex auth (ADC or optional API key)",
+  ],
+] as const)("overview labels %s without inventing required API-key setup", async (_case, providerItem, expected) => {
+  const { root, container } = await mountOverview(async () => ({ ok: true }), providerItem);
+  const authRow = Array.from(container.querySelectorAll(".pws-kv-row"))
+    .find((row) => row.querySelector("dt")?.textContent === "Authentication");
+
+  expect(authRow?.querySelector("dd")?.textContent).toBe(expected);
+  expect(container.querySelector(".pws-auth-summary")?.textContent).toContain(expected);
+
+  await act(async () => { root.unmount(); });
+});

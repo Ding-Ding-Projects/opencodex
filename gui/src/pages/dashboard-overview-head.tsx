@@ -62,8 +62,8 @@ export function DashboardOverviewHead({
           <div className="dash-stat-card">
             <div className="dash-stat-card__label"><IconServer {...STAT_ICON} />{t("dash.providers")}</div>
             <div className="dash-stat-card__value">{providers.length}</div>
-            {/* Same `hasApiKey` flag the providers table draws its status dot from, so
-                the split can never disagree with the rows one tab away. */}
+            {/* Same server-authored configuration status the providers table uses, so
+                key, no-key, and disabled rows cannot disagree with this split. */}
             <div className="dash-stat-card__hint">{providersStatHint(providers, t) || " "}</div>
           </div>
           <div className="dash-stat-card">

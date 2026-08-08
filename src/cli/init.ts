@@ -35,6 +35,12 @@ export function buildInitProviders(): InitProvider[] {
   return deriveInitProviders();
 }
 
+/** Resolve the menu choice; pressing Enter selects the first, keyless provider. */
+export function initProviderIndex(choice: string): number {
+  const normalized = choice.trim();
+  return (normalized === "" ? 1 : Number.parseInt(normalized, 10)) - 1;
+}
+
 const KIND_HEADING: Record<InitKind, string> = {
   forward: "ChatGPT login",
   oauth: "Account login (OAuth — then run: ocx login <id>)",
@@ -88,8 +94,8 @@ export async function runInit(): Promise<void> {
   const providers = buildInitProviders();
   printMenu(providers);
 
-  const choice = await prompt.ask("\nSelect default provider (number): ");
-  const idx = parseInt(choice, 10) - 1;
+  const choice = await prompt.ask("\nSelect default provider [1]: ");
+  const idx = initProviderIndex(choice);
 
   let providerName: string;
   let providerConfig: OcxProviderConfig;
