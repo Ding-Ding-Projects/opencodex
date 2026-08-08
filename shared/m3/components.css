@@ -1,0 +1,860 @@
+/* ============================================================================
+   M3 component anatomy, shared by every surface in this repository.
+
+   The portable half of `gui/src/styles/m3-shell.css`. That file mixes two
+   things: component anatomy (a tab, a menu, a button) and an application frame
+   (`.m3-app` / `.m3-page`, ten `dvh` units and five `position: fixed` rules that
+   assume a full-height desktop window, not a scrolling document). Only the
+   first half is portable, so only the first half is here — importing the whole
+   sheet into a documentation site would pin its body to the viewport and break
+   scrolling on every page.
+
+   Every value resolves to a role token written by `applyTokens`: no raw hex, no
+   `!important`, nothing that has to out-specify a sheet it is layered over.
+   That is the point of the rewrite — there is no other sheet to beat.
+
+   `--mono` is DEFINED here rather than inherited. In the dashboard it is
+   declared in the legacy stylesheet, so any consumer that imported the
+   components without that file silently lost the monospace face in the regex
+   builder's pattern field and every numeric readout. A component sheet that
+   depends on a file it does not name is not portable.
+
+   Deliberately absent: colour values, page layout, and anything a specific
+   product surface owns. A consumer positions these components; it does not have
+   to restyle them.
+   ============================================================================ */
+
+:root {
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+/* ------------------------------------------------------------- tab strip -- */
+
+.m3-tabstrip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--el-tabStrip-pad, 6px) 8px 0;
+  background: var(--el-tabStrip-bg, var(--m3-surface-container-low));
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-tablist {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.m3-tab {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 220px;
+  flex: 1 1 auto;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: transparent;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-tab:hover { background: var(--m3-surface-container); }
+.m3-tab.selected { background: var(--m3-surface); box-shadow: var(--e1); }
+.m3-tab.dragging { opacity: 0.5; }
+.m3-tab.drop-target { outline: 2px solid var(--m3-primary); outline-offset: -2px; }
+
+.m3-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: var(--h-tab);
+  padding: 0 4px 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+  border-radius: var(--r-m) 0 0 0;
+}
+.m3-tab.selected .m3-tab-btn { color: var(--m3-on-surface); font-weight: 500; }
+.m3-tab-btn svg { flex: 0 0 auto; width: 18px; height: 18px; }
+/* Specific enough to beat `.m3-tab-btn svg` on its own terms rather than with
+   `!important` — the pin is a status marker, not an icon at icon size. */
+.m3-tab-btn svg.m3-tab-pin { width: 14px; height: 14px; color: var(--m3-primary); }
+.m3-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tab-badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font-size: var(--t-label-s);
+  line-height: 1.6;
+}
+
+.m3-tab-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  align-self: center;
+  height: 28px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-tab-close:hover { background: var(--m3-surface-container-highest); }
+.m3-tab-close svg { width: 16px; height: 16px; }
+.m3-tab-close[hidden] { display: none; }
+
+.m3-tabstrip-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 10px;
+  margin-bottom: 6px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.m3-tabstrip-btn:hover { background: var(--m3-surface-container-highest); }
+.m3-tabstrip-btn[aria-expanded='true'] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+.m3-tabstrip-btn svg { width: 20px; height: 20px; }
+
+/* ---- groups -------------------------------------------------------------
+
+   A group is a coloured header immediately before its members' run. The header
+   is a real button (collapse/expand) carrying the group's accessible name, so
+   the colour is decoration and never the only way to tell two groups apart.
+   ------------------------------------------------------------------------- */
+
+.m3-tabgroup {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  padding-inline: 4px;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 14%, transparent);
+  box-shadow: inset 0 -2px 0 0 var(--m3-group-color, var(--m3-tertiary));
+}
+.m3-tabgroup-head {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 30%, transparent);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-weight: 500;
+  cursor: pointer;
+}
+.m3-tabgroup-head:hover { background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 46%, transparent); }
+.m3-tabgroup-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tabgroup-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.m3-tabgroup.collapsed { flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------- menus -- */
+
+.m3-menu {
+  position: absolute;
+  z-index: 70;
+  min-width: 220px;
+  max-width: min(92vw, 380px);
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+}
+.m3-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: left;
+  cursor: pointer;
+}
+.m3-menu-item:hover { background: var(--m3-surface-container-highest); }
+.m3-menu-item svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+.m3-menu-item--danger { color: var(--m3-error); }
+.m3-menu-item--danger svg { color: var(--m3-error); }
+.m3-menu-heading {
+  padding: 8px 12px 4px;
+  font-size: var(--t-label-m);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.m3-menu-sep { height: 1px; margin: 6px 4px; background: var(--m3-outline-variant); }
+.m3-menu-item:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-menu-item:disabled:hover { background: transparent; }
+
+/* A menu that turns into a one-field form in place — renaming a group, naming a
+   new one. In place rather than in a dialog because the thing being named is
+   the element the menu is anchored to, and a modal would cover it. */
+.m3-menu-form { display: grid; gap: var(--sp-2); padding: 8px 12px 4px; }
+.m3-menu-form .m3-btn { min-height: 40px; padding: 0 16px; }
+
+/* ----------------------------------------------------------- primitives -- */
+
+.m3-card {
+  padding: var(--el-card-pad, var(--pad-card));
+  border-radius: var(--el-card-radius, var(--r-l));
+  background: var(--el-card-bg, var(--m3-surface-container-low));
+  color: var(--el-card-color, var(--m3-on-surface));
+  font-family: var(--el-card-font, inherit);
+}
+
+.m3-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--el-button-size, var(--h-btn));
+  padding: 0 var(--el-button-pad, 24px);
+  border: none;
+  border-radius: var(--el-button-radius, var(--r-pill));
+  font: inherit;
+  font-family: var(--el-button-font, inherit);
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms;
+}
+.m3-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-btn svg { width: 18px; height: 18px; }
+.m3-btn--filled { background: var(--el-button-bg, var(--m3-primary)); color: var(--m3-on-primary); }
+.m3-btn--filled:hover:not(:disabled) { box-shadow: var(--e1); }
+.m3-btn--tonal { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-btn--outlined { background: transparent; color: var(--m3-primary); box-shadow: inset 0 0 0 1px var(--m3-outline); }
+.m3-btn--text { background: transparent; color: var(--m3-primary); padding: 0 12px; }
+.m3-btn--text:hover:not(:disabled) { background: color-mix(in oklab, var(--m3-primary) 10%, transparent); }
+.m3-btn--danger { background: var(--m3-error); color: var(--m3-on-error); }
+
+.m3-segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.m3-segment {
+  min-height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.m3-segment.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); font-weight: 500; }
+
+.m3-field { display: grid; gap: 6px; }
+.m3-field-label {
+  display: block;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.m3-field-hint { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+
+.m3-input {
+  width: 100%;
+  min-height: var(--h-btn);
+  padding: 0 16px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container-lowest);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-body-m);
+}
+.m3-input:focus { border-color: var(--m3-primary); }
+.m3-input--mono { font-family: var(--mono); }
+
+/* 44px tall so the whole control clears the minimum hit target, not just the thumb. */
+.m3-slider-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.m3-slider {
+  flex: 1 1 160px;
+  height: 48px;
+  accent-color: var(--m3-primary);
+  background: transparent;
+  cursor: pointer;
+}
+.m3-slider-value {
+  flex: 0 0 auto;
+  min-width: 48px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+
+.m3-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.m3-chip.selected {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  border-color: transparent;
+  font-weight: 500;
+}
+
+.m3-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--m3-outline);
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container-highest);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.m3-switch.on { background: var(--m3-primary); border-color: var(--m3-primary); }
+.m3-switch:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-switch-thumb {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: var(--m3-outline);
+  transform: translateY(-50%);
+  transition: left 150ms cubic-bezier(0.2, 0, 0, 1), width 150ms, height 150ms, background 150ms;
+}
+.m3-switch.on .m3-switch-thumb { left: 26px; width: 20px; height: 20px; background: var(--m3-on-primary); }
+
+.m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.m3-row--split { justify-content: space-between; }
+.m3-stack { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* --------------------------------------------------------- accessibility -- */
+
+/* Reachable by a screen reader, invisible to everyone else. Used for the live
+   region that announces what a tab action just did. */
+.m3-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m3-tab,
+  .m3-btn,
+  .m3-switch,
+  .m3-switch-thumb { transition: none; }
+}
+
+/* ============================================================================
+   Search: the anchored regex builder, the search bars that open it, the tab
+   search panel and the site search panel.
+
+   All the anchored surfaces below are `position: fixed` and take their
+   coordinates from `shared/m3/anchor.ts` at runtime. That is not a style choice:
+   two of the places they open from are inside `overflow: auto` containers (the
+   tab strip scrolls horizontally on a phone, and the tab-search panel's own body
+   scrolls vertically), and an absolutely positioned descendant of a scroll
+   container is clipped by it. `fixed` is the only positioning that escapes the
+   clip, which is why none of these rules set `top`, `left` or `bottom` — the
+   component does, from measured rects, on every scroll and resize.
+
+   Widths are `min(<ideal>, calc(100vw - 16px))` throughout, so the same panel is
+   a 480px popover on a desktop and a full-width sheet on a 320px phone without a
+   second design. Bodies scroll inside themselves with
+   `overscroll-behavior: contain`, so reaching the end of a result list does not
+   start scrolling the documentation behind it.
+   ============================================================================ */
+
+/* ------------------------------------------------------- extra primitives -- */
+
+/* 44px because that is the hit-target floor, not because it looks balanced. */
+.m3-icon-btn {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-icon-btn:hover { background: var(--m3-surface-container-high); }
+.m3-icon-btn[aria-expanded='true'] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-icon-btn svg { width: 20px; height: 20px; }
+
+.m3-textarea {
+  min-height: 96px;
+  padding: 12px 16px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: var(--t-body-s);
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------- the search bar -- */
+
+.m3-searchbar { display: grid; gap: 4px; min-width: 0; }
+.m3-searchbar-row { gap: var(--sp-2); flex-wrap: nowrap; align-items: center; min-width: 0; }
+
+/* The field grows, the mode chip and the builder trigger do not. Without the
+   `min-width: 0` the input's intrinsic width wins and the trigger is pushed off
+   the end of a narrow row — where it is still focusable and no longer visible. */
+.m3-searchbar-field { position: relative; flex: 1 1 auto; min-width: 0; display: flex; }
+.m3-searchbar-field .m3-input { padding-inline: 40px 40px; }
+.m3-searchbar-icon {
+  position: absolute;
+  inset-inline-start: 12px;
+  top: 50%;
+  translate: 0 -50%;
+  display: inline-flex;
+  color: var(--m3-on-surface-variant);
+  pointer-events: none;
+}
+.m3-searchbar-icon svg { width: 18px; height: 18px; }
+.m3-searchbar-clear {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-searchbar-clear:hover { background: var(--m3-surface-container-highest); }
+.m3-searchbar-clear svg { width: 16px; height: 16px; }
+.m3-searchbar-error { margin: 0; color: var(--m3-error); font-size: var(--t-label-m); }
+
+/* The mode label is the first thing to go when the row runs out of room: the
+   chip keeps its glyph and its pressed state, which is enough to read the mode
+   at a glance, and the accessible name still says it in words. */
+@media (max-width: 30em) {
+  .m3-searchbar-modelabel { display: none; }
+}
+
+/* ----------------------------------------------- the regex builder popover -- */
+
+.m3-rxpop-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+
+.m3-rxpop {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 16px));
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+  animation: m3-rxpop-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes m3-rxpop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .m3-rxpop,
+  .m3-tspanel,
+  .m3-searchpanel { animation-duration: 1ms; }
+}
+
+.m3-rxpop-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 12px 8px 4px 20px;
+}
+.m3-rxpop-title { flex: 1 1 auto; margin: 0; font-size: var(--t-title-m); font-weight: 500; }
+
+/* The body scrolls, not the panel: the heading and the apply button stay put so
+   the control that commits the pattern is never scrolled out of reach. */
+.m3-rxpop-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px 12px;
+}
+
+.m3-rxpop-engine {
+  margin: 0 0 var(--sp-3);
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-patternrow { gap: 8px; flex-wrap: nowrap; }
+.m3-rxpop-chiprow { gap: 6px; }
+.m3-rxpop-slash {
+  font-family: var(--mono);
+  font-size: var(--t-title-m);
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-error {
+  min-height: 22px;
+  margin: 0 0 var(--sp-2);
+  color: var(--m3-error);
+  font-size: var(--t-label-m);
+}
+
+.m3-rxpop-section { margin-bottom: var(--sp-3); }
+.m3-rxpop-heading {
+  margin: 0 0 6px;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  color: var(--m3-on-surface);
+}
+.m3-rxpop-subheading {
+  margin: 0 0 4px;
+  font-size: var(--t-label-s);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-tokgroup { margin-bottom: 10px; }
+.m3-rxpop-tokdesc { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-rxpop-list { margin: 0; padding: 0; list-style: none; }
+.m3-rxpop-row {
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-rxpop-row:last-child { border-bottom: none; }
+.m3-rxpop-at {
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+.m3-rxpop-hit {
+  padding: 1px 6px;
+  border-radius: var(--r-s);
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  font-family: var(--mono);
+  font-size: var(--t-label-m);
+}
+.m3-rxpop-name { font-family: var(--mono); font-size: var(--t-label-m); font-weight: 600; }
+.m3-rxpop-caps {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-rxpop-empty { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.m3-rxpop-safety { margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-rxpop-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.m3-rxpop-hint { flex: 1 1 auto; margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+/* --------------------------------------------------- the tab search panel -- */
+
+.m3-tabsearch-wrap { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; }
+
+.m3-tspanel,
+.m3-searchpanel {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+  animation: m3-rxpop-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-tspanel { width: min(560px, calc(100vw - 16px)); }
+.m3-searchpanel { width: min(640px, calc(100vw - 16px)); }
+
+.m3-tspanel-head,
+.m3-searchpanel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 10px 8px 4px 20px;
+}
+.m3-tspanel-title,
+.m3-searchpanel-title { flex: 1 1 auto; margin: 0; font-size: var(--t-title-m); font-weight: 500; }
+
+.m3-tspanel-body,
+.m3-searchpanel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px 16px;
+}
+
+.m3-ts-section { padding-block: var(--sp-3); border-top: 1px solid var(--m3-outline-variant); }
+.m3-ts-section:first-child { border-top: none; padding-top: 4px; }
+.m3-ts-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 0 0 6px;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+}
+.m3-ts-subheading {
+  margin: var(--sp-2) 0 4px;
+  font-size: var(--t-label-s);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+.m3-ts-count {
+  margin-inline-start: auto;
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+.m3-ts-empty { margin: 6px 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); list-style: none; }
+.m3-ts-note { margin: 6px 0 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-ts-mode { margin: var(--sp-2) 0 4px; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-ts-pinned { margin: 0 0 var(--sp-2); font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.m3-ts-pinned.danger { color: var(--m3-error); }
+.m3-ts-pinnames { font-family: var(--mono); font-size: var(--t-label-s); overflow-wrap: anywhere; }
+
+.m3-ts-list { margin: 6px 0 0; padding: 0; list-style: none; }
+
+.m3-tsr { display: flex; align-items: stretch; gap: 4px; border-radius: var(--r-s); }
+.m3-tsr:hover { background: var(--m3-surface-container-highest); }
+.m3-tsr.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-tsr-go {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: start;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.m3-tsr-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tsr-badge {
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-s);
+  line-height: 1.8;
+}
+.m3-tsr-note { flex: 1 1 100%; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-tsr-close { width: 48px; height: 48px; align-self: center; }
+
+.m3-ts-group {
+  margin-top: var(--sp-3);
+  padding: var(--sp-2);
+  border-radius: var(--r-m);
+  background: var(--m3-surface-container);
+}
+.m3-ts-grouphead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.m3-ts-groupdot { width: 10px; height: 10px; border-radius: var(--r-pill); flex: 0 0 auto; }
+.m3-ts-grouptitle { margin: 0; font-size: var(--t-label-l); font-weight: 600; }
+
+.m3-ts-bulkopts { display: grid; gap: 6px; margin-top: var(--sp-2); }
+.m3-ts-check { display: flex; align-items: center; gap: 8px; min-height: 48px; font-size: var(--t-body-m); cursor: pointer; }
+.m3-ts-check input { width: 20px; height: 20px; accent-color: var(--m3-primary); }
+.m3-ts-bulkrow { gap: var(--sp-2); margin-top: var(--sp-2); }
+.m3-ts-preview { margin-top: var(--sp-2); }
+.m3-ts-previewblock { margin-bottom: var(--sp-2); }
+.m3-ts-previewtitle { margin: 0; font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.m3-ts-previewlist {
+  margin: 4px 0 0;
+  padding-inline-start: 20px;
+  font-size: var(--t-body-s);
+  max-height: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ------------------------------------------------------- the site search -- */
+
+.m3-sitesearch { position: relative; display: flex; align-items: center; min-width: 0; width: 100%; }
+.m3-sitesearch-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 22rem;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.m3-sitesearch-trigger:hover { background: var(--m3-surface-container-highest); border-color: var(--m3-outline); }
+.m3-sitesearch-icon { display: inline-flex; }
+.m3-sitesearch-icon svg { width: 18px; height: 18px; }
+.m3-sitesearch-text { flex: 1 1 auto; text-align: start; }
+.m3-sitesearch-kbd {
+  flex: 0 0 auto;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container);
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+}
+
+/* On a phone the bar has no room for a labelled field, so the trigger collapses
+   to its icon. It keeps its 44px box and its accessible name, so nothing but a
+   word the icon already says is lost. */
+@media (max-width: 50em) {
+  .m3-sitesearch-trigger { width: 48px; justify-content: center; padding: 0; }
+  .m3-sitesearch-text,
+  .m3-sitesearch-kbd { display: none; }
+}
+
+.m3-searchpanel-engine { margin: var(--sp-2) 0 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-searchpanel-warn { margin: var(--sp-2) 0 0; font-size: var(--t-label-m); color: var(--m3-warn); }
+.m3-searchpanel-status { margin: var(--sp-2) 0 0; font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.m3-searchpanel-more { margin: var(--sp-2) 0 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+.m3-searchpanel-list { margin: 6px 0 0; padding: 0; list-style: none; }
+
+.m3-searchhit + .m3-searchhit { border-top: 1px solid var(--m3-outline-variant); }
+.m3-searchhit a {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border-radius: var(--r-s);
+  color: inherit;
+  text-decoration: none;
+}
+.m3-searchhit a:hover { background: var(--m3-surface-container-highest); }
+.m3-searchhit-title { font-size: var(--t-body-m); font-weight: 600; color: var(--m3-on-surface); }
+.m3-searchhit-section { font-size: var(--t-label-s); color: var(--m3-primary); }
+.m3-searchhit-count { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); font-variant-numeric: tabular-nums; }
+.m3-searchhit-excerpt {
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-searchhit-excerpt mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+}
+
+/* --------------------------------------------------- the settings search -- */
+
+.m3-settings-search { display: grid; gap: 4px; margin-bottom: var(--sp-2); }
+.m3-settings-searchstatus { margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+/* -------------------------------------------------------- touch targets -- */
+
+/* A finger is not a pointer. Gated on `pointer: coarse` so a desktop keeps the
+   compact density these controls were sized for. */
+@media (pointer: coarse) {
+  /* The base controls too, not only chips and segments. `.m3-btn` and
+     `.m3-input` size from `--h-btn`, which is a density value — 41px on the
+     documentation site, where there is no density control to raise it. Measured
+     at 165.7x41 and 166.4x41 on the settings page at 320px. */
+  .m3-btn,
+  .m3-input,
+  .m3-chip,
+  .m3-segment { min-height: 48px; }
+  .m3-searchbar-clear { width: 48px; height: 48px; inset-inline-end: 0; }
+  .m3-searchbar-field .m3-input { padding-inline-end: 48px; }
+}

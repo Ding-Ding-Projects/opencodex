@@ -254,7 +254,8 @@ Cursor OAuth とライブモデルディスカバリは実験的 Cursor アダ�
 
 ```bash
 ocx init                       # 対話型セットアップ
-ocx start [--port 10100]       # プロキシ起動; ポートが使用中なら空きポートに自動切替
+ocx start                      # 自動起動; 優先ポートが使用中なら空きポートへ切替
+ocx start --port 10100         # 明示固定; 別ポートへは移動しない
 ocx stop                       # プロキシ停止 + Codex を元の設定に復元
 ocx restore                    # 停止せずに復元(エイリアス: ocx eject)
 ocx uninstall                  # service/shim/config を削除 + Codex をオリジナルに復元
@@ -291,8 +292,10 @@ opencodex にはプロキシを自動起動する方法が 2 つあります:
 代替手段は `ocx codex-shim install` です。自動修復を無効にするには
 `codexShimAutoRestore` を `false` にするか、プロセスで
 `OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0` を設定します。
-shim 自動起動はデフォルトでオンで、GUI ダッシュボードからオフにできます。設定されたプロキシポートが既に使用
-中の場合、`ocx start` が自動的に別の空きローカルポートを選び、Codex の設定もそのポートに更新します。
+shim 自動起動はデフォルトでオンで、GUI ダッシュボードからオフにできます。`--port` なしの自動起動では
+設定ポートを優先値として扱い、使用中なら別の空きポートを runtime state に記録して Codex を実際の
+listener へ向けます。明示的な `ocx start --port`、更新ハンドオフ、ダッシュボード再起動は同じポートを固定し、
+別ポートへ移らず失敗します。
 
 ### アンインストール
 
@@ -378,9 +381,9 @@ WebSocket トランスポートはデフォルトでオフです。Codex が HTT
 
 ### リモートアクセス
 
-デフォルトで opencodex は `127.0.0.1`(ループバック)にバインドされ、追加の認証は不要です。
-`"hostname": "0.0.0.0"` で LAN に公開する場合、opencodex は管理 API(`/api/*`)とデータプレーン
-(`/v1/responses`、`/v1/images/generations`、`/v1/images/edits`)の両方に bearer トークンを要求します:
+デフォルトで opencodex は `127.0.0.1`(ループバック)にバインドされます。`"hostname": "0.0.0.0"`
+で LAN に公開する場合、データプレーン(`/v1/responses`、`/v1/images/generations`、
+`/v1/images/edits`)には専用の bearer credential が必要です:
 
 ```bash
 export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
@@ -395,7 +398,12 @@ ocx start
 x-opencodex-api-key: your-secret-token
 ```
 
-トークンはタイミング攻撃を防ぐため定数時間で比較されます。
+ダッシュボードと `/api/*` は別の ADMIN token を使います。別の OpenCodex へ接続するときは相手の
+IP/ホスト名と `ocx host status`（または `ocx status`）が示す実行中ポートを入力し、移動先の
+prompt にそのプロキシの ADMIN token を入力します。
+data-plane key は ADMIN 認証に使えず、接続 dialog は token を URL に入れたり保存したりしません。
+HTTP は暗号化されないため信頼できる LAN だけで直接使い、それ以外では SSH tunnel を推奨します。
+token はタイミング攻撃を防ぐため定数時間で比較されます。
 
 opencodex は Codex resume 履歴を自動でリマップし、古い OpenAI チャットと opencodex が作成したプロジェクト
 スレッドがプロキシ有効中に Codex App に表示され続けるようにします。オリジナルの provider/source メタデータは

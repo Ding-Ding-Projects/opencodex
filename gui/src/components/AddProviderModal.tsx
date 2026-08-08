@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useEffect, useId, useMemo, useReducer, useRef } from "react";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
+import { Dialog } from "../shell/m3-ui";
 import { useKeyedClientResource } from "../client-resource";
 import {
   buildProviderPostBody,
@@ -54,8 +55,16 @@ export default function AddProviderModal({
     (custom) => createInitialAddProviderState(custom, t("modal.customProvider")),
   );
   const aliveRef = useRef(true);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const headingId = useId();
+  /**
+   * Captured while rendering, not in a mount effect: `Dialog` calls
+   * `showModal()` from its own effect, and a child's effect runs before this
+   * one, so by then focus has already moved inside the dialog and the element
+   * that opened it would be lost.
+   */
+  const previousFocusRef = useRef<HTMLElement | null>(
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
+  );
 
   const oauthPoll = useKeyedClientResource(
     `add-provider-oauth:${apiBase}`,
@@ -101,29 +110,29 @@ export default function AddProviderModal({
 
   useEffect(() => {
     aliveRef.current = true;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
     onOpen?.();
-    const dialog = dialogRef.current;
-    if (dialog) {
-      const focusable = dialog.querySelector<HTMLElement>(
-        "input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-      );
-      if (focusable) focusable.focus();
-    }
+    const previouslyFocused = previousFocusRef.current;
     return () => {
       aliveRef.current = false;
-      previousFocusRef.current?.focus();
+      // Opening, the focus trap and the initial focus all belong to `Dialog`
+      // now. Returning focus stays here: closing unmounts this component, which
+      // removes the <dialog> without running the native close that would
+      // otherwise restore focus to whatever opened it.
+      previouslyFocused?.focus();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only open hook
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !oauthTosPending) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, oauthTosPending]);
+  /**
+   * Escape now reaches us through `Dialog` instead of a window-level keydown
+   * listener, and it keeps that listener's guard: while the OAuth ToS warning
+   * is up it owns the key, and this dialog must not close out from under it.
+   * The close button stays unguarded, exactly as before — the warning is a
+   * modal on top, so the button is inert whenever the guard would matter.
+   */
+  const requestClose = () => {
+    if (!oauthTosPending) onClose();
+  };
 
   const presetDescription = (candidate: Preset): string | undefined => {
     const key = codexPresetDescriptionKey(candidate);
@@ -227,71 +236,77 @@ export default function AddProviderModal({
 
   return (
     <>
-    <div role="dialog" aria-modal="true" aria-label={t("modal.add")} className="modal-overlay" onClick={onClose}>
-      <div ref={dialogRef} className="modal-card" onClick={e => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{preset ? t("modal.addNamed", { label: preset.label }) : t("modal.add")}</h3>
-          <button type="button" className="btn btn-ghost btn-icon" aria-label={t("common.close")} onClick={onClose}><IconX /></button>
-        </div>
-
-        {!preset ? (
-          <ProviderCatalog
-            presets={presets}
-            usageRank={usageRank}
-            presetsLoading={presetsLoading}
-            initialTier={initialTier}
-            onSelectPreset={p => choosePreset(p)}
-            onSelectCustom={() => choosePreset(fallbackPresets[0]!)}
-            accountRows={accountRows}
-            accountStatus={accountStatus}
-            busyProvider={accountBusy}
-            onLogin={onAccountLogin}
-            onCancelLogin={onAccountCancelLogin}
-            onLogout={onAccountLogout}
-          />
-        ) : form && (
-          preset.auth === "oauth" && form.authMode === "oauth" ? (
-            <AddProviderOAuthPane
-              preset={preset}
-              oauthSupported={oauthSupported}
-              oauthBusy={oauthBusy}
-              oauthMsg={oauthMsg}
-              oauthMsgTone={oauthMsgTone}
-              oauthUrl={oauthUrlProvider === preset.oauthProvider ? oauthUrl : ""}
-              manualCode={manualCode}
-              manualCodeBusy={manualCodeBusy}
-              manualCodeMsg={manualCodeMsg}
-              manualCodeOk={manualCodeOk}
-              onRequestLogin={requestLoginOAuth}
-              onUseApiKeyInstead={() => {
-                dispatch({ type: "use-api-key-instead", form: { ...form, authMode: "key" } });
-              }}
-              onManualCodeChange={code => dispatch({ type: "set-manual-code", code })}
-              onSubmitManualCode={providerId => { void submitManualCode(providerId); }}
-              onBack={() => dispatch({ type: "back" })}
-            />
-          ) : (
-            <AddProviderFormPane
-              preset={preset}
-              form={form}
-              endpointChoice={endpointChoice}
-              error={error}
-              saving={saving}
-              dup={dup}
-              isCustom={isCustom}
-              isLocal={isLocal}
-              isReservedForward={isReservedForward}
-              presetDescription={presetDescription}
-              onFormChange={next => dispatch({ type: "set-form", form: next })}
-              onEndpointChoiceChange={choice => dispatch({ type: "set-endpoint-choice", choice })}
-              onSubmit={() => { void submit(); }}
-              onUseOauthLogin={() => dispatch({ type: "use-oauth-login", form: { ...form, authMode: "oauth" } })}
-              onBack={() => dispatch({ type: "back" })}
-            />
-          )
-        )}
+    <Dialog
+      onClose={requestClose}
+      // The heading carries the close button beside it, so this owns its own
+      // heading and hands `Dialog` the id to be labelled by.
+      labelledBy={headingId}
+      // The form pane holds a typed name, base URL and API key; a stray click
+      // on the scrim must not throw that away.
+      dismissOnScrim={false}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <h2 id={headingId} className="m3-dialog__title">{preset ? t("modal.addNamed", { label: preset.label }) : t("modal.add")}</h2>
+        <button type="button" className="btn btn-ghost btn-icon" aria-label={t("common.close")} onClick={onClose}><IconX /></button>
       </div>
-    </div>
+
+      {!preset ? (
+        <ProviderCatalog
+          presets={presets}
+          usageRank={usageRank}
+          presetsLoading={presetsLoading}
+          initialTier={initialTier}
+          onSelectPreset={p => choosePreset(p)}
+          onSelectCustom={() => choosePreset(fallbackPresets[0]!)}
+          accountRows={accountRows}
+          accountStatus={accountStatus}
+          busyProvider={accountBusy}
+          onLogin={onAccountLogin}
+          onCancelLogin={onAccountCancelLogin}
+          onLogout={onAccountLogout}
+        />
+      ) : form && (
+        preset.auth === "oauth" && form.authMode === "oauth" ? (
+          <AddProviderOAuthPane
+            preset={preset}
+            oauthSupported={oauthSupported}
+            oauthBusy={oauthBusy}
+            oauthMsg={oauthMsg}
+            oauthMsgTone={oauthMsgTone}
+            oauthUrl={oauthUrlProvider === preset.oauthProvider ? oauthUrl : ""}
+            manualCode={manualCode}
+            manualCodeBusy={manualCodeBusy}
+            manualCodeMsg={manualCodeMsg}
+            manualCodeOk={manualCodeOk}
+            onRequestLogin={requestLoginOAuth}
+            onUseApiKeyInstead={() => {
+              dispatch({ type: "use-api-key-instead", form: { ...form, authMode: "key" } });
+            }}
+            onManualCodeChange={code => dispatch({ type: "set-manual-code", code })}
+            onSubmitManualCode={providerId => { void submitManualCode(providerId); }}
+            onBack={() => dispatch({ type: "back" })}
+          />
+        ) : (
+          <AddProviderFormPane
+            preset={preset}
+            form={form}
+            endpointChoice={endpointChoice}
+            error={error}
+            saving={saving}
+            dup={dup}
+            isCustom={isCustom}
+            isLocal={isLocal}
+            isReservedForward={isReservedForward}
+            presetDescription={presetDescription}
+            onFormChange={next => dispatch({ type: "set-form", form: next })}
+            onEndpointChoiceChange={choice => dispatch({ type: "set-endpoint-choice", choice })}
+            onSubmit={() => { void submit(); }}
+            onUseOauthLogin={() => dispatch({ type: "use-oauth-login", form: { ...form, authMode: "oauth" } })}
+            onBack={() => dispatch({ type: "back" })}
+          />
+        )
+      )}
+    </Dialog>
     {oauthTosPending && (
       <OAuthTosWarningModal
         key={oauthTosPending}

@@ -2,6 +2,11 @@ import type { Locale } from "./i18n/shared";
 
 const UPTIME_UNITS: Record<Locale, { day: string; hour: string; minute: string; second: string }> = {
   en: { day: "d", hour: "h", minute: "m", second: "s" },
+  // Cantonese uses the same units as written Chinese; bilingual mode keeps the
+  // English abbreviations, because "3d · 3天" beside a number reads as clutter
+  // rather than as a translation.
+  yue: { day: "日", hour: "小時", minute: "分鐘", second: "秒" },
+  bi: { day: "d", hour: "h", minute: "m", second: "s" },
   de: { day: "T", hour: "Std", minute: "Min", second: "Sek" },
   ko: { day: "일", hour: "시간", minute: "분", second: "초" },
   zh: { day: "天", hour: "小时", minute: "分钟", second: "秒" },

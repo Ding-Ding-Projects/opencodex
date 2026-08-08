@@ -1,8 +1,9 @@
 import { type ReactNode } from "react";
 import { IconAlert } from "../icons";
+import LaunchCard from "../components/LaunchCard";
+import { StartProxyButton } from "../components/StartProxyButton";
 import { Trans } from "../i18n/provider";
 import { navigateHash } from "../hash-routing";
-import { EmptyState } from "../ui";
 import { DashboardDialogs } from "./dashboard-dialogs";
 import { DashboardModelsSection } from "./dashboard-models-section";
 import { DashboardOverviewSection } from "./dashboard-overview-section";
@@ -12,6 +13,9 @@ import {
   type DashboardSection,
 } from "./dashboard-shared";
 import { useDashboardData } from "./use-dashboard-data";
+
+/** The lead paragraph names the screen's landmark; both ends must agree on the id. */
+const DASHBOARD_LEAD_ID = "dashboard-lead";
 
 function selectDashboardTab(next: DashboardSection) {
   // Deliberate navigation: push a history entry so Back/Forward restore the tab.
@@ -23,15 +27,29 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
   const {
     t, error, selectedSection,
     providers, models, modelsLoading, modelQuery, setModelQuery,
+    modelRegex, setModelRegex, modelRegexError,
     filteredGroups, expandedProviders, setExpandedProviders,
   } = d;
 
   if (error) {
     return (
-      <EmptyState style={{ marginTop: 40 }} icon={<IconAlert />}
-        title={<span style={{ color: "var(--red)" }}>{t("dash.cannotConnect")}</span>}>
-        <Trans k="dash.runStart" cmd="ocx start" />
-      </EmptyState>
+      <div className="dash-banner" role="alert">
+        <IconAlert aria-hidden="true" />
+        <div>
+          <div className="dash-banner__title">{t("dash.cannotConnect")}</div>
+          {/* The command stays visible even beside the button: in a browser the
+              button renders nothing, and if starting fails the command is the
+              fallback that has to still be there. */}
+          <div className="dash-banner__body"><Trans k="dash.runStart" cmd="ocx start" /></div>
+          <div className="dash-banner__actions">
+            {/* A reload rather than a refetch: every poll on this screen failed
+                while the proxy was down, and the hook has no way to restart them
+                individually. It is also what `use-dashboard-data` already does
+                after an update lands, so the two recovery paths behave alike. */}
+            <StartProxyButton onStarted={() => window.location.reload()} />
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -44,6 +62,9 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
       modelsLoading={modelsLoading}
       modelQuery={modelQuery}
       setModelQuery={setModelQuery}
+      modelRegex={modelRegex}
+      setModelRegex={setModelRegex}
+      modelRegexError={modelRegexError}
       filteredGroups={filteredGroups}
       expandedProviders={expandedProviders}
       setExpandedProviders={setExpandedProviders}
@@ -73,12 +94,16 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
   };
 
   return (
-    <div className="dashboard-workspace-shell">
-      <div className="page-head">
-        <h2>{t("nav.dashboard")}</h2>
-      </div>
-      <p className="page-sub">{t("dash.subtitle")}</p>
-      <div className="page-tabs" role="tablist" aria-label={t("dash.workspace.sections")}>
+    // The prototype wraps each screen in a section named by its lead paragraph, so the
+    // screen is one labelled landmark a screen reader can jump to and announce, rather
+    // than an anonymous div whose only name is the nav item that opened it.
+    <section className="dashboard-workspace-shell" aria-labelledby={DASHBOARD_LEAD_ID}>
+      {/* The prototype leads every screen with body-large copy at a 74ch measure. */}
+      <p id={DASHBOARD_LEAD_ID} className="m3-page-lead dash-subtitle">{t("dash.subtitle")}</p>
+      {/* Above the section tabs on purpose: launching an agent is a one-press action
+          from the landing screen, not something to navigate to. */}
+      <LaunchCard apiBase={apiBase} />
+      <div className="dash-tabs" role="tablist" aria-label={t("dash.workspace.sections")}>
         {sections.map(s => (
           <button
             key={s.id}
@@ -88,7 +113,7 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
             aria-selected={selectedSection === s.id}
             aria-controls={`dashboard-panel-${s.id}`}
             tabIndex={selectedSection === s.id ? 0 : -1}
-            className={`page-tab${selectedSection === s.id ? " page-tab--active" : ""}`}
+            className={`dash-tab${selectedSection === s.id ? " dash-tab--active" : ""}`}
             onClick={() => selectTab(s.id)}
             onKeyDown={onTabKeyDown}
           >
@@ -106,6 +131,6 @@ export default function Dashboard({ apiBase }: { apiBase: string }) {
         {selected.body}
       </section>
       {updateDialog}
-    </div>
+    </section>
   );
 }

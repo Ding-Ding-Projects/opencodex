@@ -8,6 +8,8 @@
  * the data.
  */
 
+import { makeMatcher } from "./models-shared";
+
 /** Cards rendered per lane before the pager appears. */
 export const LANE_PAGE = 6;
 /** Lanes shorter than this need no filter — showing one would be pure noise. */
@@ -30,12 +32,25 @@ export interface LaneView<T extends LaneModel> {
   hidden: number;
   /** The lane has models, but none match the current query. */
   noMatch: boolean;
+  /** Regex compile failure verbatim from the engine; `null` while the pattern is usable. */
+  regexError: string | null;
 }
 
-export function laneView<T extends LaneModel>(models: T[], search: string, limit: number): LaneView<T> {
-  const query = search.trim().toLowerCase();
-  const matched = query
-    ? models.filter(model => model.label.toLowerCase().includes(query) || model.route.toLowerCase().includes(query))
+/**
+ * Plain text is the default and `useRegex` is the caller's explicit opt-in, evaluated
+ * locally through the same capped ECMAScript matcher every other search bar uses. An
+ * invalid pattern matches nothing and reports itself rather than silently reverting to
+ * plain text, so the message and the visible rows always agree.
+ */
+export function laneView<T extends LaneModel>(
+  models: T[],
+  search: string,
+  limit: number,
+  useRegex = false,
+): LaneView<T> {
+  const matcher = makeMatcher(search, useRegex);
+  const matched = search.trim()
+    ? models.filter(model => matcher.test(model.label) || matcher.test(model.route))
     : models;
   // Stable partition: available first, server order preserved inside each half.
   const ordered = matched.toSorted((a, b) => Number(!a.available) - Number(!b.available));
@@ -45,7 +60,10 @@ export function laneView<T extends LaneModel>(models: T[], search: string, limit
     showSearch: models.length > LANE_SEARCH_MIN,
     shown,
     hidden: ordered.length - shown.length,
-    noMatch: models.length > 0 && ordered.length === 0,
+    // A broken pattern is its own state: reporting it as "no matches" would blame the
+    // catalogue for a typo in the box.
+    noMatch: matcher.error === null && models.length > 0 && ordered.length === 0,
+    regexError: matcher.error,
   };
 }
 

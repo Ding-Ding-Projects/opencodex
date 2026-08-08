@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { grokGroupView, type GrokCandidate } from "../src/pages/grok-groups";
+import { grokGroupView, grokRowHaystack, type GrokCandidate } from "../src/pages/grok-groups";
 
 const CANDIDATES: GrokCandidate[] = [
   { id: "gpt-5.6-sol", contextWindow: 372_000, native: true },
@@ -42,4 +42,28 @@ test("a model not in the fence has a null alias", () => {
   const cursor = view.rows.find(r => r.id === "cursor/grok-4.5");
   expect(kimi!.alias).toBeNull();
   expect(cursor!.alias).toBe("ocx-cursor-grok-4-5");
+});
+
+// The settings search runs after the alias is attached, so a user can find a model by the
+// name opencodex actually registered it under — not only by the raw provider id.
+test("the settings search filters on the id and on the written alias", () => {
+  const byId = grokGroupView(CANDIDATES, ALIASES, new Set(), "native",
+    row => grokRowHaystack(row).includes("5.5"));
+  expect(byId.rows.map(r => r.id)).toEqual(["gpt-5.5"]);
+  expect(byId.total).toBe(1);
+
+  const byAlias = grokGroupView(CANDIDATES, ALIASES, new Set(), "routed",
+    row => grokRowHaystack(row).includes("ocx-cursor"));
+  expect(byAlias.rows.map(r => r.id)).toEqual(["cursor/grok-4.5"]);
+
+  // A model with no alias must not be matched by an empty alias slot swallowing the query.
+  const noMatch = grokGroupView(CANDIDATES, ALIASES, new Set(), "routed",
+    row => grokRowHaystack(row).includes("ocx-kimi"));
+  expect(noMatch.total).toBe(0);
+});
+
+// An unfiltered call must behave exactly as before the search existed.
+test("the group view keeps every row when no search predicate is passed", () => {
+  expect(grokGroupView(CANDIDATES, ALIASES, new Set(), "native").total).toBe(2);
+  expect(grokGroupView(CANDIDATES, ALIASES, new Set(), "routed").total).toBe(2);
 });

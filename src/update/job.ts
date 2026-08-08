@@ -276,7 +276,7 @@ const defaultStartUpdateJobDeps: StartUpdateJobDeps = {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, OCX_SERVICE: "1" },
+      env: { ...process.env, OCX_BACKGROUND: "1" },
     },
   ),
   isProcessAliveFn: isProcessAlive,

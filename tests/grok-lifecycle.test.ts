@@ -31,70 +31,64 @@ describe("Grok fence lifecycle wiring", () => {
     expect(grokSyncAt).toBeGreaterThan(registryCatchAt);
   });
 
-  test("ensure passes the observed bind host on the live branch and the configured host after spawning", () => {
+  test("ensure uses a soft direct start and syncs the observed/configured host on each branch", () => {
     const ensureFn = sliceFn(CLI_SOURCE, "async function handleEnsure(", "async function handleTrayProxyStart(");
-    const liveBranch = ensureFn.slice(0, ensureFn.indexOf("const pinPort"));
-    const spawnBranch = ensureFn.slice(ensureFn.indexOf("const pinPort"));
+    const spawnAt = ensureFn.indexOf("const child = spawn");
+    const liveBranch = ensureFn.slice(0, spawnAt);
+    const spawnBranch = ensureFn.slice(spawnAt);
 
     // live.hostname is what the proxy ACTUALLY bound; config.hostname may have drifted.
     expect(liveBranch).toContain("live.hostname ? { hostname: live.hostname }");
     expect(spawnBranch).toContain("config.hostname ? { hostname: config.hostname }");
+    expect(spawnBranch).toContain("proxyStartArgv(process.argv[1])");
+    expect(spawnBranch).toContain("env: directProxyEnv()");
+    expect(spawnBranch).not.toContain('"--port"');
   });
 
-  test("handleStop gates shared teardown on ownership but still reverts system env", () => {
+  test("handleStop gates proxy/config teardown behind verified manager and proxy stops", () => {
     const stopFn = sliceFn(CLI_SOURCE, "async function handleStop(", "async function handleUninstall(");
-
-    expect(stopFn).toContain("isServiceOwnershipError(err)");
-    expect(stopFn).toContain("ownershipBlocked = true");
-
-    const gateAt = stopFn.indexOf("if (!ownershipBlocked)");
-    const stripAt = stopFn.indexOf("stripGrokConfig()");
-    const restoreAt = stopFn.indexOf("restoreNativeCodex()");
-    const revertAt = stopFn.indexOf("revertSystemEnv()");
-
-    expect(gateAt).toBeGreaterThan(-1);
-    expect(stripAt).toBeGreaterThan(gateAt);
-    expect(restoreAt).toBeGreaterThan(gateAt);
-    // revertSystemEnv carries its own ownership check and concerns launchctl env, not
-    // CODEX_HOME — gating it too would be over-broad.
-    expect(stopFn.slice(revertAt - 200, revertAt)).toContain("NOT gated");
+    const managerAt = stopFn.indexOf("stopManager:");
+    const proxyAt = stopFn.indexOf("stopProxy:");
+    const teardownAt = stopFn.indexOf("teardown:");
+    expect(stopFn).toContain("await runStopSequence({");
+    expect(managerAt).toBeGreaterThan(-1);
+    expect(proxyAt).toBeGreaterThan(managerAt);
+    expect(teardownAt).toBeGreaterThan(proxyAt);
+    expect(stopFn).toContain("if (!outcome.safeToRestart) reportUnsafeStop(outcome)");
   });
 
   test("a refused Grok strip makes ocx stop fail instead of reporting success", () => {
     const stopFn = sliceFn(CLI_SOURCE, "async function handleStop(", "async function handleUninstall(");
-    expect(stopFn).toContain("else if (!g.ok) { stopFailed = true;");
+    expect(stopFn).toContain("else if (!g.ok)");
+    expect(stopFn).toContain("clean = false");
   });
 
   test("a refused proxy stop reports WHY, not just that it failed", () => {
-    const stopFn = sliceFn(CLI_SOURCE, "async function handleStop(", "async function handleUninstall(");
-    // stopProxy throws the ownership refusal ("run the stop from that home"). A bare
-    // `catch {}` on these call sites strands the operator on a generic failure line, whose
-    // natural next move is a manual kill — the teardown the 409 guard exists to prevent.
-    const bareCatchAfterStopProxy = /await stopProxy\([^)]*\);[\s\S]{0,400}?\}\s*catch\s*\{/;
-    expect(stopFn).not.toMatch(bareCatchAfterStopProxy);
-
-    // Both proxy-stop call sites (tracked pid, and the orphan-recovery pid) bind the error
-    // and echo its message.
-    const detailEchoes = stopFn.match(/const detail = err instanceof Error \? err\.message : String\(err\);/g);
-    expect(detailEchoes).toHaveLength(2);
-    expect(stopFn.match(/if \(detail\) console\.error\(`   \$\{detail\}`\);/g)).toHaveLength(2);
+    const proxyFn = sliceFn(CLI_SOURCE, "async function stopTrackedProxyForCli(", "function reportUnsafeStop(");
+    const reportFn = sliceFn(CLI_SOURCE, "function reportUnsafeStop(", "async function handleStop(");
+    // Stop errors escape to runStopSequence, which blocks teardown and preserves the detail.
+    expect(proxyFn).toContain("await stopProxy(pid)");
+    expect(proxyFn).not.toContain("catch {");
+    expect(reportFn).toContain("outcome.error instanceof Error ? outcome.error.message");
+    expect(reportFn).toContain("Proxy stop is not verified: ${detail}");
   });
 
   test("handleStop returns its outcome so restart and the tray can react", () => {
     const stopFn = sliceFn(CLI_SOURCE, "async function handleStop(", "async function handleUninstall(");
     // process.exit() inside handleStop would strand runTrayProxyRestart's start() half.
     expect(stopFn).toContain("process.exitCode = 1");
-    expect(stopFn).toContain("return !stopFailed");
+    expect(stopFn).toContain("return outcome");
     expect(stopFn).not.toContain("process.exit(1)");
 
     const restartCase = sliceFn(CLI_SOURCE, 'case "restart"', 'case "health"');
-    expect(restartCase).toContain("if (await handleStop()) await handleEnsure()");
+    expect(restartCase).toContain("await handleTrayProxyRestart()");
+    expect(restartCase).not.toContain("handleEnsure()");
   });
 
   test("handleStop treats an incomplete native Codex restore as a stop failure", () => {
     const stopFn = sliceFn(CLI_SOURCE, "async function handleStop(", "async function handleUninstall(");
     expect(stopFn).toContain("if (r.success) console.log");
-    expect(stopFn).toContain("stopFailed = true");
+    expect(stopFn).toContain("clean = false");
     expect(stopFn).toContain("console.error(`⚠️  ${r.message}`)");
   });
 
@@ -117,9 +111,10 @@ describe("service teardown owns both managed configs", () => {
   test("service stop strips the Grok fence and guards the platform stop on installation", () => {
     const stopCase = sliceFn(SERVICE_SOURCE, 'case "stop":', 'case "status":');
     expect(stopCase).toContain("assertServiceEnvironmentMatchesInstall()");
-    // An unguarded ops.stop() ran a real launchctl unload even with nothing installed.
-    expect(stopCase).toContain("isServiceInstalled()");
+    expect(stopCase).toContain("stopServiceCommandSafely()");
+    expect(stopCase).toContain("return false");
     expect(stopCase).toContain("stripGrokConfig()");
+    expect(stopCase).toContain("revertSystemEnv()");
   });
 
   test("service uninstall strips the Grok fence too", () => {

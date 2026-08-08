@@ -1,9 +1,16 @@
+import type {
+  ProviderConfigurationReason,
+  ProviderConfigurationStatus,
+} from "../provider-configuration";
+
 export interface ProvidersConfig {
   port: number;
   defaultProvider: string;
   providers: Record<string, {
     adapter: string;
     baseUrl: string;
+    configurationStatus: ProviderConfigurationStatus;
+    configurationReason: ProviderConfigurationReason;
     hasApiKey?: boolean;
     hasHeaders?: boolean;
     defaultModel?: string;

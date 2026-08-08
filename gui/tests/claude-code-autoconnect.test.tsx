@@ -54,17 +54,25 @@ test("Auto-connect reconciliation fails closed when the capability field is miss
   });
 });
 
+// The M3 restyle replaced the checkbox-in-a-label with the `role="switch"` +
+// `aria-checked` pair the accessibility contract requires, so there is no longer a
+// native `checked=""` attribute to assert. These pin the equivalent M3 invariant:
+// the switch reports its state through aria-checked, and still carries the
+// disabled/aria-describedby wiring that the unsupported-host case depends on.
 test("Auto-connect renders enabled and checked on a supported host", () => {
   const html = renderAutoConnect(true, true);
-  expect(html).toContain('checked=""');
+  expect(html).toContain('role="switch"');
+  expect(html).toContain('aria-checked="true"');
   expect(html).not.toContain('disabled=""');
   expect(html).not.toContain("macOS only");
 });
 
 test("Auto-connect renders disabled, unchecked, and explained on an unsupported host", () => {
   const html = renderAutoConnect(false, false);
+  expect(html).toContain('role="switch"');
   expect(html).toContain('disabled=""');
-  expect(html).not.toContain('checked=""');
+  expect(html).toContain('aria-checked="false"');
+  expect(html).not.toContain('aria-checked="true"');
   expect(html).toContain('aria-describedby="claude-system-env-unsupported"');
   expect(html).toContain("macOS only");
   expect(html).toContain('<code class="chip">ocx claude</code>');

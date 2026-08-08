@@ -50,6 +50,7 @@ import {
 import {
   currentUsageLogRevision,
   readUsageSnapshotForManagement,
+  usageLogPath,
   usageLogRevisionKey,
   type PersistedUsageEntry,
 } from "../../usage/log";
@@ -57,7 +58,8 @@ import { getUsageDebugLogEntries } from "../../usage/debug";
 import { parseRange, parseUsageSurface, summarizeUsage, type UsageRange, type UsageSummary, type UsageSurface } from "../../usage/summary";
 import { stripCodexRuntimeProviderFields } from "../../codex/auth-context";
 import { getProviderRegistryEntry } from "../../providers/registry";
-import { getDebugLogEntries } from "../../lib/debug-log-buffer";
+import { clearDebugLogBuffer, getDebugLogEntries, hydrateDebugLogFromDisk } from "../../lib/debug-log-buffer";
+import { MAX_LOG_BYTES, MAX_ROTATED_FILES, MAX_TOTAL_BYTES } from "../../lib/app-log-file";
 import { getInjectionDebugLogEntries } from "../../lib/injection-debug-log";
 import {
   clearDebugSettings,
@@ -68,7 +70,13 @@ import {
 } from "../../lib/debug-settings";
 import type { OcxClaudeCodeConfig, OcxConfig, OcxCustomModel, OcxProviderConfig } from "../../types";
 import { drainAndShutdown } from "../lifecycle";
-import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
+import {
+  filterRequestLogs,
+  getRequestLogEntries,
+  hydrateRequestLogsFromDisk,
+  resetRequestLogsForReload,
+  type RequestLogEntry,
+} from "../request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
@@ -84,6 +92,21 @@ const usageSummaryCache = new Map<string, {
   expiresAt: number;
   summary: UsageSummary;
 }>();
+
+function reloadLogBuffers(): void {
+  resetRequestLogsForReload();
+  hydrateRequestLogsFromDisk();
+  clearDebugLogBuffer();
+  hydrateDebugLogFromDisk();
+}
+
+function logRetentionFacts(): { maxLogBytes: number; maxRotatedFiles: number; maxTotalBytes: number } {
+  return {
+    maxLogBytes: MAX_LOG_BYTES,
+    maxRotatedFiles: MAX_ROTATED_FILES,
+    maxTotalBytes: MAX_TOTAL_BYTES,
+  };
+}
 
 function usageEntryMatchesSurface(entry: PersistedUsageEntry, surface: UsageSurface): boolean {
   if (surface === "claude") return entry.surface === "claude" || entry.surface === "claude-desktop";
@@ -126,6 +149,32 @@ export async function handleLogsUsageRoutes(ctx: ManagementContext): Promise<Res
   if (url.pathname === "/api/logs" && req.method === "GET") {
     const logs = filterRequestLogs(getRequestLogEntries(), url.searchParams);
     return jsonResponse(logs.map(requestLogDto));
+  }
+
+  if (url.pathname === "/api/logs/footprint" && req.method === "GET") {
+    const { measurePersistedLogs } = await import("../../lib/log-store");
+    const { appLogPath } = await import("../../lib/app-log-file");
+    return jsonResponse({
+      ...measurePersistedLogs(),
+      appLogPath: appLogPath(),
+      usageLogPath: usageLogPath(),
+      retention: logRetentionFacts(),
+    });
+  }
+
+  if (url.pathname === "/api/logs" && req.method === "DELETE") {
+    const { clearPersistedLogs } = await import("../../lib/log-store");
+    return jsonResponse(await clearPersistedLogs({ reload: reloadLogBuffers }));
+  }
+
+  if (url.pathname === "/api/logs/restore" && req.method === "POST") {
+    let body: { commit?: unknown };
+    try { body = await req.json(); } catch { return jsonResponse({ error: "invalid_json" }, 400); }
+    const commit = typeof body.commit === "string" ? body.commit.trim() : "";
+    if (!commit) return jsonResponse({ error: "commit is required" }, 400);
+    const { restorePersistedLogs } = await import("../../lib/log-store");
+    const result = await restorePersistedLogs(commit, { reload: reloadLogBuffers });
+    return jsonResponse({ success: result.ok, ...result }, result.ok ? 200 : 400);
   }
 
   if (url.pathname === "/api/debug" && req.method === "GET") {

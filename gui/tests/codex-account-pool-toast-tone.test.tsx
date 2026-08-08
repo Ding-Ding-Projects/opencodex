@@ -5,9 +5,18 @@ import type { Root } from "react-dom/client";
 import CodexAccountPool from "../src/components/CodexAccountPool";
 import type { CodexAccountEntry, CodexAccountPoolController } from "../src/hooks/useCodexAccountPool";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
+import { NotificationsContext, type Notice, type NotificationsApi } from "../src/shell/notifications-context";
 
 /**
- * Stale toastError must not paint a successful redeem as notice-err (PR #475).
+ * A stale error flag must not paint a successful redeem as a failure (PR #475).
+ *
+ * The original defect: the surface kept the message text and its error flag in
+ * two separate pieces of state, so a later success reused the earlier failure's
+ * colour. The inline notice is now a snackbar, and each `notify()` call carries
+ * its own tone in the same call as its text — so the assertion moved from "which
+ * CSS class is on screen" to "which tone was reported", which is the same
+ * contract expressed against the component that actually renders it now.
  */
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -16,7 +25,6 @@ let win: Window;
 let host: HTMLElement;
 let root: Root | null = null;
 let originalFetch: typeof globalThis.fetch;
-let originalConfirm: typeof window.confirm;
 
 const account: CodexAccountEntry = {
   id: "pool-1",
@@ -67,8 +75,15 @@ beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   originalFetch = globalThis.fetch;
-  originalConfirm = window.confirm;
-  window.confirm = () => true;
+  // Removing an account asks through the M3 confirmation now, not `window.confirm`.
+  // happy-dom has no top layer, so the native modal methods are stubbed to the one
+  // thing a test can observe: the `open` attribute.
+  const dialogProto = win.HTMLDialogElement?.prototype as unknown as Record<string, unknown> | undefined;
+  if (dialogProto) {
+    dialogProto.showModal = function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+    dialogProto.show = function show(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+    dialogProto.close = function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
+  }
 
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
@@ -97,7 +112,6 @@ afterEach(async () => {
     await act(async () => { current.unmount(); });
     root = null;
   }
-  window.confirm = originalConfirm;
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   for (const key of globals) {
     Object.defineProperty(globalThis, key, { configurable: true, value: previous[key] });
@@ -106,20 +120,41 @@ afterEach(async () => {
   await win.happyDOM?.close?.();
 });
 
+/** Every notification the surface raised, in order, with its tone. */
+let notices: Notice[] = [];
+
 async function mountPool(controller: CodexAccountPoolController) {
   const { createRoot } = await import("react-dom/client");
+  notices = [];
+  const api: NotificationsApi = {
+    live: [],
+    history: [],
+    unreadCount: 0,
+    notify: (input) => {
+      const id = `n${notices.length}`;
+      notices.push({ ...input, id, at: 0, read: false });
+      return id;
+    },
+    dismiss: () => {},
+    markAllRead: () => {},
+    clearHistory: () => {},
+  };
   await act(async () => {
     root = createRoot(host);
     root.render(
       <LanguageProvider>
-        <CodexAccountPool apiBase="" controller={controller} />
+        <NotificationsContext.Provider value={api}>
+          <ConfirmProvider>
+            <CodexAccountPool apiBase="" controller={controller} />
+          </ConfirmProvider>
+        </NotificationsContext.Provider>
       </LanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
 }
 
-test("successful redeem clears a stale error toast tone", async () => {
+test("a successful redeem reports its own tone, not the failed remove's", async () => {
   await mountPool(makeController());
 
   // Seed toastError=true via a failed remove.
@@ -129,10 +164,15 @@ test("successful redeem clears a stale error toast tone", async () => {
   );
   expect(removeBtn).toBeTruthy();
   await act(async () => { removeBtn!.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
+  // The removal is a decision, so it opens the M3 confirmation rather than
+  // running straight away. Agreeing to it is what makes the request fail.
+  const confirmRemove = [...host.querySelectorAll("dialog button")]
+    .find((btn) => btn.textContent === "Remove");
+  expect(confirmRemove).toBeTruthy();
+  await act(async () => { confirmRemove!.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 
-  const errNotice = host.querySelector(".notice-err");
-  expect(errNotice).toBeTruthy();
+  expect(notices.map((notice) => notice.tone)).toEqual(["error"]);
 
   const resetBtn = host.querySelector('button[aria-label="2 reset credit(s)"]') as HTMLButtonElement | null;
   expect(resetBtn).toBeTruthy();
@@ -154,6 +194,8 @@ test("successful redeem clears a stale error toast tone", async () => {
   await act(async () => { confirmReset!.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
 
-  expect(host.querySelector(".notice-err")).toBeNull();
-  expect(host.querySelector(".notice-ok")).toBeTruthy();
+  // The redeem succeeded, so the message it raised is a success — the earlier
+  // failure is still in the list (it happened) but cannot colour this one.
+  expect(notices.map((notice) => notice.tone)).toEqual(["error", "success"]);
+  expect(notices.at(-1)!.title).toContain("reset");
 });

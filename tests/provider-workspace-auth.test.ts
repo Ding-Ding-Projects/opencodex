@@ -120,7 +120,9 @@ describe("workspace account integration seam", () => {
     expect(page).toContain('notify(t("prov.logoutFail"');
     expect(page).toContain('notify(t("prov.accountRemoveFail"');
     expect(page).toContain("await fetchAccountSets([provider])");
-    expect(codexPool).toContain('setToast(t("codexAuth.removeFailed"))');
+    // Failure copy and tone travel in one snackbar call. This pins the error
+    // treatment as well as the message after retiring hand-rolled toast state.
+    expect(codexPool).toContain('notify({ tone: "error", title: t("codexAuth.removeFailed") })');
     expect(hook).toContain("pauseTokensRef");
   });
 

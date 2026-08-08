@@ -1,13 +1,14 @@
 import { useI18n } from "../i18n/shared";
 import { IconRefresh } from "../icons";
-import { Switch } from "../ui";
-import type { DebugSettings, LogStream } from "./debug-shared";
-import { isDebugFlagEnabled } from "./debug-shared";
+import { Button, Toggle } from "../shell/m3-ui";
+import type { DebugFlag, DebugSettings, LogStream } from "./debug-shared";
+import { DEBUG_FLAGS, M3_TABLIST_STYLE, isDebugFlagEnabled, m3TabStyle } from "./debug-shared";
 
 export function DebugSettingsPanel({
   debug,
   debugBusy,
   stream,
+  matches,
   onSetFlag,
   onReset,
   onStreamChange,
@@ -15,42 +16,62 @@ export function DebugSettingsPanel({
   debug: DebugSettings;
   debugBusy: boolean;
   stream: LogStream;
-  onSetFlag: (flag: "debug" | "usage" | "injection" | "claude", enabled: boolean) => void;
+  /** The surface's settings search. Answers true for everything until the user types. */
+  matches: (id: string) => boolean;
+  onSetFlag: (flag: DebugFlag, enabled: boolean) => void;
   onReset: () => void;
   onStreamChange: (stream: LogStream) => void;
 }) {
   const { t } = useI18n();
 
   return (
-    <div className="card" style={{ marginBottom: 16, padding: "12px 14px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-          {(["debug", "usage", "injection", "claude"] as const).map(flag => {
-            const checked = isDebugFlagEnabled(debug, flag);
-            return (
-              <div key={flag} style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 220 }}>
-                <Switch
-                  on={checked}
-                  disabled={debugBusy}
-                  label={t(`debug.${flag}`)}
-                  onClick={() => onSetFlag(flag, !checked)}
-                />
-                <span className="text-control">{t(`debug.${flag}`)}</span>
-              </div>
-            );
-          })}
+    <section className="m3-card">
+      {/* The heading and its subtitle stay put whatever the search hides: they
+          name the card the user is searching inside, and a filtered card with no
+          title reads as a different card rather than a narrowed one. */}
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h3 className="m3-card-title">{t("debug.captureTitle")}</h3>
+          <p className="m3-card-sub">{t("debug.captureSub")}</p>
         </div>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={debugBusy} onClick={onReset}>
-          {t("debug.reset")}
-        </button>
+        {matches("reset") && (
+          <div className="m3-card-actions">
+            <Button variant="text" disabled={debugBusy} onClick={onReset}>
+              {t("debug.reset")}
+            </Button>
+          </div>
+        )}
+      </header>
+
+      <div className="m3-grid">
+        {DEBUG_FLAGS.filter(flag => matches(flag)).map(flag => {
+          const checked = isDebugFlagEnabled(debug, flag);
+          return (
+            <div key={flag} className="m3-row" style={{ gap: 10, minHeight: 48 }}>
+              <Toggle
+                on={checked}
+                disabled={debugBusy}
+                label={t(`debug.${flag}`)}
+                onChange={next => onSetFlag(flag, next)}
+              />
+              <span style={{ fontSize: "var(--t-body-m)" }}>{t(`debug.${flag}`)}</span>
+            </div>
+          );
+        })}
       </div>
 
-      {(debug.enabled || debug.usage || debug.injection) && (
-        <div style={{ display: "inline-flex", gap: 6, marginTop: 12 }}>
+      {matches("stream") && (debug.enabled || debug.usage || debug.injection) && (
+        <div
+          role="tablist"
+          aria-label={t("debug.streamsAria")}
+          style={{ ...M3_TABLIST_STYLE, marginTop: 16 }}
+        >
           {debug.enabled && (
             <button
               type="button"
-              className={`btn btn-sm${stream === "provider" ? " btn-primary" : " btn-ghost"}`}
+              role="tab"
+              aria-selected={stream === "provider"}
+              style={m3TabStyle(stream === "provider")}
               onClick={() => onStreamChange("provider")}
             >
               {t("debug.streamProvider")}
@@ -59,7 +80,9 @@ export function DebugSettingsPanel({
           {debug.usage && (
             <button
               type="button"
-              className={`btn btn-sm${stream === "usage" ? " btn-primary" : " btn-ghost"}`}
+              role="tab"
+              aria-selected={stream === "usage"}
+              style={m3TabStyle(stream === "usage")}
               onClick={() => onStreamChange("usage")}
             >
               {t("debug.streamUsage")}
@@ -68,7 +91,9 @@ export function DebugSettingsPanel({
           {debug.injection && (
             <button
               type="button"
-              className={`btn btn-sm${stream === "injection" ? " btn-primary" : " btn-ghost"}`}
+              role="tab"
+              aria-selected={stream === "injection"}
+              style={m3TabStyle(stream === "injection")}
               onClick={() => onStreamChange("injection")}
             >
               {t("debug.streamInjection")}
@@ -76,7 +101,7 @@ export function DebugSettingsPanel({
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -85,6 +110,7 @@ export function DebugPageHeader({
   refreshing,
   streamEnabled,
   follow,
+  matches,
   onRefresh,
   onFollowChange,
 }: {
@@ -92,31 +118,50 @@ export function DebugPageHeader({
   refreshing: boolean;
   streamEnabled: boolean;
   follow: boolean;
+  /** The surface's settings search. Answers true for everything until the user types. */
+  matches: (id: string) => boolean;
   onRefresh: () => void;
   onFollowChange: (follow: boolean) => void;
 }) {
   const { t } = useI18n();
+  const showRefresh = matches("refresh");
+  const showFollow = matches("follow");
 
   return (
     <>
-      <div className={embedded ? "row" : "page-head"} style={embedded ? { justifyContent: "flex-end", marginBottom: 4 } : undefined}>
-        {!embedded && <h2>{t("debug.title")}</h2>}
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={refreshing || !streamEnabled}
-            onClick={onRefresh}
-          >
-            <IconRefresh /> {t("debug.refresh")}
-          </button>
-          <label className="muted text-control" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <input type="checkbox" checked={follow} onChange={e => onFollowChange(e.target.checked)} />
-            {t("debug.follow")}
-          </label>
+      {/* Standalone the row still has to render, filtered or not, because the
+          page heading lives in it. Embedded there is no heading and the row holds
+          nothing but these two controls, so a search that filters both away would
+          otherwise leave an empty flex row pushing the card down by its margin. */}
+      {(!embedded || showRefresh || showFollow) && (
+      <div
+        className={embedded ? "m3-row" : "m3-row m3-row--split"}
+        style={embedded ? { justifyContent: "flex-end", marginBottom: 4 } : { marginBottom: 4 }}
+      >
+        {!embedded && (
+          <h2 style={{ margin: 0, fontSize: "var(--t-headline-s)", fontWeight: 400 }}>{t("debug.title")}</h2>
+        )}
+        <div className="m3-row" style={{ gap: 12 }}>
+          {showRefresh && (
+            <Button variant="text" disabled={refreshing || !streamEnabled} onClick={onRefresh}>
+              <IconRefresh aria-hidden="true" /> {t("debug.refresh")}
+            </Button>
+          )}
+          {showFollow && (
+            <label
+              className="m3-row"
+              style={{ cursor: "pointer", gap: 8, minHeight: 48, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}
+            >
+              <input type="checkbox" checked={follow} onChange={e => onFollowChange(e.target.checked)} />
+              {t("debug.follow")}
+            </label>
+          )}
         </div>
       </div>
-      <p className="page-sub">{t("debug.subtitle")}</p>
+      )}
+      <p style={{ margin: "0 0 16px", maxWidth: "74ch", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-l)" }}>
+        {t("debug.subtitle")}
+      </p>
     </>
   );
 }

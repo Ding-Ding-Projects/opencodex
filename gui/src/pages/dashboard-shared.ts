@@ -1,10 +1,26 @@
 import type { RefObject } from "react";
 import { useEffect, useRef } from "react";
 import { readJsonOrThrow } from "../fetch-json";
-import type { TKey } from "../i18n/shared";
+import type { TFn, TKey } from "../i18n/shared";
+import type { ProviderConfigurationState } from "../provider-configuration";
 import type { StartupHealthStatus } from "../startup-health-ui";
+import { fmtK } from "./models-shared";
 
 export type DashboardSection = "overview" | "providers" | "models";
+
+/** Every settings control the Overview tab owns, addressable by the settings search. */
+export type DashboardSettingId =
+  | "effortCap"
+  | "injection"
+  | "codexAutoStart"
+  | "webSearch"
+  | "vision"
+  | "shadowCall"
+  | "memory"
+  | "maintenance";
+
+/** Middle dot the prototype uses between meta fragments. Punctuation, not prose. */
+const META_SEPARATOR = " · ";
 
 export function readDashboardSectionFromHash(): DashboardSection {
   const raw = window.location.hash.replace(/^#\/?/, "");
@@ -26,8 +42,27 @@ export async function requireJson<T>(res: Response, fallbackMessage?: string): P
 }
 
 export interface HealthData { status: string; version: string; uptime: number }
-export interface ProviderInfo { name: string; adapter: string; baseUrl: string; defaultModel?: string; hasApiKey: boolean }
-export interface ModelInfo { id: string; provider: string; owned_by?: string }
+export interface ProviderInfo extends ProviderConfigurationState {
+  name: string;
+  adapter: string;
+  baseUrl: string;
+  defaultModel?: string;
+  hasApiKey: boolean;
+}
+/**
+ * `/api/models` already returns the context/capability metadata the Models screen
+ * renders; the Dashboard used to drop it on the floor, which is why its model list
+ * showed a bare id where the prototype shows `provider · ctx · cap`.
+ */
+export interface ModelInfo {
+  id: string;
+  provider: string;
+  owned_by?: string;
+  contextWindow?: number;
+  contextCap?: number;
+  contextCapped?: boolean;
+  inputModalities?: string[];
+}
 export interface SettingsData {
   codexAutoStart: boolean;
   port: number;
@@ -135,6 +170,51 @@ export function mergeSidecarSetting(
   if (update?.backend === null) delete merged.backend;
   else if (update?.backend !== undefined) merged.backend = update.backend;
   return merged;
+}
+
+/**
+ * `provider · 400k ctx · 350k cap`, the per-model meta line the prototype puts under
+ * every model on the Models tab. Every part is real payload data — a model with no
+ * reported context window simply contributes nothing, rather than inventing a number.
+ */
+export function modelMetaLabel(model: ModelInfo, t: TFn): string {
+  const parts = [model.provider];
+  const ctx = model.contextWindow ?? model.contextCap;
+  if (ctx) parts.push(t("models.ctxValue", { value: fmtK(ctx) }));
+  if (model.contextCapped && model.contextCap) {
+    parts.push(t("models.contextCappedValue", { value: fmtK(model.contextCap) }));
+  }
+  if (model.inputModalities && model.inputModalities.length > 0) {
+    parts.push(model.inputModalities.join(", "));
+  }
+  return parts.join(META_SEPARATOR);
+}
+
+/**
+ * `Ready (9) · Needs setup (2) · Disabled (1)` under the providers stat.
+ * The server-authored configuration status is shared with the provider rows, so
+ * no-key forward/OAuth/local providers cannot be mislabeled as missing a key.
+ */
+export function providersStatHint(providers: ProviderInfo[], t: TFn): string {
+  if (providers.length === 0) return "";
+  const ready = providers.filter(p => p.configurationStatus === "ready").length;
+  const needsSetup = providers.filter(p => p.configurationStatus === "needs_setup").length;
+  const disabled = providers.filter(p => p.configurationStatus === "disabled").length;
+  const parts = [t("pws.groupReady", { count: ready })];
+  if (needsSetup > 0) parts.push(t("pws.groupNeedsSetup", { count: needsSetup }));
+  if (disabled > 0) parts.push(t("pws.groupDisabled", { count: disabled }));
+  return parts.join(META_SEPARATOR);
+}
+
+export function providerStatusPresentation(provider: ProviderInfo, t: TFn): { label: string; dotClass: string } {
+  switch (provider.configurationStatus) {
+    case "ready":
+      return { label: t("pws.status.ready"), dotClass: "dot-green" };
+    case "disabled":
+      return { label: t("prov.disabledBadge"), dotClass: "dot-muted" };
+    case "needs_setup":
+      return { label: t("pws.status.needsSetup"), dotClass: "dot-amber" };
+  }
 }
 
 export function sidecarModelOptions(models: ModelInfo[]) {

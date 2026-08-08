@@ -6,10 +6,16 @@ import type { CodexAccountModeState } from "../codex-multi-state";
 import QuotaBars from "./QuotaBars";
 import { CodexTicketBadge } from "./codex-account-pool-helpers";
 import {
+  ACCOUNT_META,
+  ACCOUNT_META_MONO,
+  ACCOUNT_TITLE,
+  accountCardStyle,
+  chipStyle,
+} from "./codex-account-pool-m3";
+import {
   doctorCopyButtonLabel,
   formatOAuthHealthLabel,
   formatOAuthHealthSummary,
-  oauthHealthBadgeClass,
   oauthHealthIsCooldown,
   oauthHealthShowsDoctor,
   oauthHealthShowsReauth,
@@ -60,73 +66,78 @@ export function CodexAccountPoolCards({
         const healthLabel = formatOAuthHealthLabel(t, a.health);
         const healthSummary = formatOAuthHealthSummary(t, "codex", a.id, a.health);
         return (
-        <div key={a.id} className={`card ${isNext(a) ? "card-active" : ""}`} style={{ marginBottom: 8 }}>
-          <div className="card-head">
-            <span className={`dot ${showReauth ? "dot-amber" : isNext(a) ? "dot-blue" : "dot-muted"}`} />
-            <strong>{a.alias ?? a.email}</strong>
-            <span className="card-badges">
-              {a.plan && <span className="badge badge-green">{a.plan}</span>}
-              {a.paused && <span className="badge badge-muted">{t("codexAuth.paused")}</span>}
+        <section key={a.id} className="m3-card" style={accountCardStyle(isNext(a))}>
+          <div className="m3-row" style={{ gap: 8, marginBottom: "var(--sp-2)", alignItems: "flex-start" }}>
+            <div style={{ minWidth: 0, flex: "1 1 180px" }}>
+              <div style={ACCOUNT_TITLE}>{a.alias ?? a.email}</div>
+              <div style={ACCOUNT_META}>{a.email}{a.plan ? ` · ${a.plan}` : ""}</div>
+              <div style={ACCOUNT_META_MONO}>{t("prov.accountId")}: {displayAccountId(a.id)}</div>
+            </div>
+            <span className="m3-row" style={{ gap: 6 }}>
+              {a.plan && <span className="m3-chip" style={chipStyle("ok")}>{a.plan}</span>}
+              {a.paused && <span className="m3-chip" style={chipStyle("neutral")}>{t("codexAuth.paused")}</span>}
               <CodexTicketBadge t={t} account={a} onClick={() => onOpenReset(a)} />
               {healthLabel && (
-                <span className={oauthHealthBadgeClass(healthStatus)}>{healthLabel}</span>
+                <span className="m3-chip" style={chipStyle(showReauth ? "error" : "warn")}>{healthLabel}</span>
               )}
-              {showReauth && !healthLabel && <span className="badge badge-amber">{t("codexAuth.needsReauth")}</span>}
+              {showReauth && !healthLabel && (
+                <span className="m3-chip" style={chipStyle("warn")}>{t("codexAuth.needsReauth")}</span>
+              )}
               {isNext(a) && !showReauth && !inCooldown && (
-                <span className="badge badge-primary">
+                <span className="m3-chip" style={chipStyle("primary")}>
                   {t(accountModeState === "direct" ? "codexAuth.poolPrepared" : "codexAuth.nextSession")}
                 </span>
               )}
             </span>
+            <button
+              type="button"
+              className="m3-btn m3-btn--text"
+              style={{ flex: "0 0 auto", minWidth: 48, padding: 0, color: "var(--m3-error)" }}
+              aria-label={`${t("common.remove")} — ${a.email}`}
+              title={`${t("common.remove")} — ${a.email}`}
+              onClick={e => { e.stopPropagation(); void onRemove(a.id); }}
+            >
+              <IconX width={14} aria-hidden="true" />
+            </button>
+          </div>
+
+          {healthSummary && <p className="m3-card-sub" style={{ marginTop: 0 }}>{healthSummary}</p>}
+          {a.paused && <p className="m3-card-sub" style={{ marginTop: 0 }}>{t("codexAuth.pausedHint")}</p>}
+          {inCooldown && <p className="m3-card-sub" style={{ marginTop: 0 }}>{t("pws.healthCooldownHint")}</p>}
+          {showReauth
+            ? <p className="m3-card-sub" style={{ marginTop: 0 }}>{t("codexAuth.tokenExpired")}</p>
+            : !inCooldown && <QuotaBars quota={a.quota} plan={a.plan} threshold={threshold} t={t} />}
+
+          <div className="m3-row" style={{ gap: 6, marginTop: "var(--sp-2)" }}>
             {!a.paused && !isNext(a) && !showReauth && !inCooldown && (
-              <button type="button" className="btn btn-ghost btn-sm codex-account-switch" onClick={() => onSwitch(a)}>
+              <button type="button" className="m3-btn m3-btn--tonal codex-account-switch" onClick={() => onSwitch(a)}>
                 {switchActionLabel}
               </button>
             )}
             {showReauth && (
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => onReauth(a.id)}>
+              <button type="button" className="m3-btn m3-btn--filled" onClick={() => onReauth(a.id)}>
                 {t("codexAuth.reauthenticate")}
               </button>
             )}
             {onCopyDoctor && oauthHealthShowsDoctor(healthStatus) && (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCopyDoctor(a.id)}>
+              <button type="button" className="m3-btn m3-btn--text" onClick={() => onCopyDoctor(a.id)}>
                 <span aria-live="polite">{doctorCopyButtonLabel(t, doctorCopyOutcomeFor?.(a.id))}</span>
               </button>
             )}
             <button
               type="button"
-              className={`btn btn-sm ${a.paused ? "btn-primary" : "btn-ghost"}`}
+              className={`m3-btn ${a.paused ? "m3-btn--filled" : "m3-btn--outlined"}`}
               onClick={() => onTogglePause(a)}
               disabled={pauseBusy}
             >
-              {a.paused ? <IconPlay width={14} /> : <IconPause width={14} />}
+              {a.paused ? <IconPlay width={14} aria-hidden="true" /> : <IconPause width={14} aria-hidden="true" />}
               {pauseUpdatingId === a.id ? t("common.saving") : t(a.paused ? "codexAuth.resume" : "codexAuth.pause")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void onEditAlias(a)}>
+            <button type="button" className="m3-btn m3-btn--text" onClick={() => void onEditAlias(a)}>
               {t("prov.editAlias")}
             </button>
-            <button
-              type="button"
-              className="btn-icon btn-icon-danger card-right"
-              aria-label={`${t("common.remove")} — ${a.email}`}
-              title={`${t("common.remove")} — ${a.email}`}
-              onClick={e => { e.stopPropagation(); void onRemove(a.id); }}
-            >
-              <IconX width={14} />
-            </button>
           </div>
-          <div className="card-sub">{a.email}{a.plan ? ` · ${a.plan}` : ""} · {t("prov.accountId")}: {displayAccountId(a.id)}</div>
-          {healthSummary && (
-            <div className="card-sub faint">{healthSummary}</div>
-          )}
-          {a.paused && <div className="card-sub faint">{t("codexAuth.pausedHint")}</div>}
-          {inCooldown && (
-            <div className="card-sub faint">{t("pws.healthCooldownHint")}</div>
-          )}
-          {showReauth
-            ? <div className="card-sub faint">{t("codexAuth.tokenExpired")}</div>
-            : !inCooldown && <QuotaBars quota={a.quota} plan={a.plan} threshold={threshold} t={t} />}
-        </div>
+        </section>
         );
       })}
     </>
@@ -140,9 +151,18 @@ export function CodexAccountPoolReauthBanner({
 }) {
   const t = useT();
   return (
-    <div className="notice-warn" style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-      <span><IconAlert width={14} /> {t("codexAuth.tokenExpired")}</span>
-      <button type="button" className="btn btn-primary btn-sm" onClick={onReauth}>
+    <div
+      className="m3-row m3-row--split"
+      style={{
+        marginBottom: "var(--sp-2)",
+        padding: "var(--sp-2)",
+        borderRadius: "var(--r-m)",
+        background: "var(--m3-warn-container)",
+        color: "var(--m3-on-warn-container)",
+      }}
+    >
+      <span><IconAlert width={14} aria-hidden="true" /> {t("codexAuth.tokenExpired")}</span>
+      <button type="button" className="m3-btn m3-btn--filled" onClick={onReauth}>
         {t("codexAuth.reauthenticate")}
       </button>
     </div>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  buildComboAttention,
   type ComboItem,
   comboModelId,
   comboPublicModelId,
@@ -7,11 +8,15 @@ import {
   intersectComboEfforts,
   validateComboDraft,
 } from "../combo-workspace-data";
-import { IconChevron, IconTrash } from "../icons";
+import { IconAlert, IconChevron, IconSearch, IconTrash } from "../icons";
 import { useT } from "../i18n/shared";
-import { Notice } from "../ui";
+import { Banner, Button, Card, Chip, TextInput } from "../shell/m3-ui";
+import { useNotifications } from "../shell/notifications-context";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
+import { attentionCopy } from "./combo-workspace-attention";
+import { comboSettingsSearch } from "./combo-workspace-settings-search";
 import { clampedNumberInput } from "./combo-workspace-utils";
 
 type DetailTab = "config" | "about";
@@ -21,6 +26,7 @@ export function DetailPanel({
   isCreate = false,
   otherIds,
   otherAliases,
+  cataloguedComboIds,
   providerMap,
   providers,
   models,
@@ -36,6 +42,8 @@ export function DetailPanel({
   otherIds: string[];
   /** Aliases of all OTHER combos — alias uniqueness validates against these. */
   otherAliases: string[];
+  /** Combo ids the live model catalog advertises — a missing one is flagged here. */
+  cataloguedComboIds?: ReadonlySet<string>;
   providerMap: Readonly<Record<string, { disabled?: boolean }>>;
   providers: ProviderOption[];
   models: ModelOption[];
@@ -46,11 +54,19 @@ export function DetailPanel({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const t = useT();
+  const { notify } = useNotifications();
   const [tab, setTab] = useState<DetailTab>("config");
   const [draft, setDraft] = useState<ComboItem>(baseline);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Failures only. A save that WORKED is a one-shot outcome and leaves as a
+  // snackbar; a save that was refused names a field the user still has to fix, so
+  // it stays on the panel until the next attempt gets past validation.
+  const [saveError, setSaveError] = useState("");
   const [copied, setCopied] = useState(false);
+  // This tab's own settings search. Bound to this field alone — it never shares state
+  // with the rail's combo search, which looks for a different kind of thing.
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
   const dirty = !draftEquals(draft, baseline);
   const baselineSyncKey = `${baseline.id}:${baseline.alias ?? ""}:${baseline.strategy}:${baseline.stickyLimit}:${baseline.defaultEffort}:${baseline.targets.map((t) => `${t.provider}/${t.model}:${t.weight ?? 1}`).join(",")}`;
   const effortMap = useMemo(() => {
@@ -64,6 +80,27 @@ export function DetailPanel({
     () => intersectComboEfforts(draft.targets, effortMap),
     [draft.targets, effortMap],
   );
+  // The prototype banners the selected combo's own warnings under its title. They were
+  // only reachable from the overview list before, so opening a combo hid the reason you
+  // opened it. Read from the saved baseline, matching what the overview reports.
+  const attention = useMemo(
+    () => (isCreate ? [] : buildComboAttention([baseline], { cataloguedComboIds })),
+    [isCreate, baseline, cataloguedComboIds],
+  );
+  const settingsSearch = useMemo(
+    () => comboSettingsSearch(settingsQuery, settingsRegex, t),
+    [settingsQuery, settingsRegex, t],
+  );
+  const settingsNote = settingsSearch.error
+    ? `${t("regex.invalid")}: ${settingsSearch.error}`
+    : settingsSearch.otherHits > 0
+      ? t("settings.otherTab", {
+        count: settingsSearch.otherHits,
+        tabs: settingsSearch.otherTabs.join(", "),
+      })
+      : settingsSearch.active && settingsSearch.hits === 0
+        ? t("settings.noMatch")
+        : "";
 
   const updateDraft = useCallback((updater: (prev: ComboItem) => ComboItem) => {
     const next = updater(draft);
@@ -74,8 +111,9 @@ export function DetailPanel({
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setDraft(baseline);
-      setMsg(null);
+      setSaveError("");
       setTab("config");
+      setSettingsQuery("");
       onDirtyChange(false);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -100,7 +138,7 @@ export function DetailPanel({
       providers: providerMap,
     });
     if (code) {
-      setMsg({ ok: false, text: t(`cws.err.${code}`) });
+      setSaveError(t(`cws.err.${code}`));
       return;
     }
     setBusy(true);
@@ -116,12 +154,13 @@ export function DetailPanel({
     try {
       const res = await onSave(item, isCreate, renameFrom);
       if (!res.ok) {
-        setMsg({ ok: false, text: res.error || t("cws.saveFailed") });
+        setSaveError(res.error || t("cws.saveFailed"));
         return;
       }
-      setMsg({
-        ok: true,
-        text: isCreate ? t("cws.created", { model: item.model }) : t("cws.saved"),
+      setSaveError("");
+      notify({
+        tone: "success",
+        title: isCreate ? t("cws.created", { model: item.model }) : t("cws.saved"),
       });
       onSaved(item);
     } finally {
@@ -137,32 +176,45 @@ export function DetailPanel({
     <div className="combos-workspace-detail">
       <div className="combos-workspace-detail-head">
         {onBack && (
-          <button type="button" className="btn btn-ghost btn-sm pwi-back-overview" onClick={onBack} aria-label={t("cws.backToAll")}>
-            <IconChevron style={{ width: 14, height: 14, transform: "rotate(180deg)" }} aria-hidden="true" />
+          <Button variant="text" className="pwi-back-overview" onClick={onBack} aria-label={t("cws.backToAll")}>
+            <IconChevron style={{ transform: "rotate(180deg)" }} aria-hidden="true" />
             {t("cws.allCombos")}
-          </button>
+          </Button>
         )}
         <h2 className="combos-workspace-detail-title">{headerModel}</h2>
         {!isCreate && (
-          <button type="button" className="chip cwi-copy-chip" onClick={() => { void copyModel(); }} title={t("cws.copyModel")}>
+          <Chip className="cwi-copy-chip" onClick={() => { void copyModel(); }} title={t("cws.copyModel")}>
             {copied ? t("cws.copied") : t("cws.copyModel")}
-          </button>
+          </Chip>
         )}
+        {dirty && <span className="m3-chip cwi-dirty-chip">{t("cws.unsavedTitle")}</span>}
         <div className="combos-workspace-detail-actions">
           {!isCreate && onRequestRemove && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onRequestRemove}>
-              <IconTrash width={14} height={14} /> {t("common.remove")}
-            </button>
+            <Button variant="outlined" onClick={onRequestRemove}>
+              <IconTrash aria-hidden="true" /> {t("common.remove")}
+            </Button>
           )}
-          <button type="button" className="btn btn-primary btn-sm" disabled={(!isCreate && !dirty) || busy} onClick={() => { void save(); }}>
+          <Button variant="filled" disabled={(!isCreate && !dirty) || busy} onClick={() => { void save(); }}>
             {busy ? t("common.saving") : t(isCreate ? "cws.create" : "common.save")}
-          </button>
+          </Button>
         </div>
       </div>
 
-      {msg && <Notice tone={msg.ok ? "ok" : "err"}>{msg.text}</Notice>}
+      {attention.map((item) => (
+        <div
+          key={item.reason}
+          className="dash-notice dash-notice--warn"
+          role="status"
+          style={{ display: "flex", alignItems: "center", gap: 10 }}
+        >
+          <IconAlert width={18} height={18} aria-hidden="true" style={{ flex: "0 0 auto" }} />
+          <span>{attentionCopy(item.reason, t)}</span>
+        </div>
+      ))}
 
-      <div className="combos-workspace-tabs" role="tablist">
+      {saveError && <Banner tone="error">{saveError}</Banner>}
+
+      <div className="combos-workspace-tabs" role="tablist" aria-label={t("cws.tabsAria")}>
         <button type="button" role="tab" aria-selected={tab === "config"} className={`combos-workspace-tab${tab === "config" ? " combos-workspace-tab--active" : ""}`} onClick={() => setTab("config")}>
           {t("cws.tab.config")}
         </button>
@@ -173,92 +225,148 @@ export function DetailPanel({
 
       <div className="combos-workspace-tab-content" role="tabpanel">
         {tab === "config" ? (
-          <div className="cwi-form-grid">
-            <div className="cwi-field">
-              <label htmlFor="cwi-edit-id">{t("cws.field.id")}</label>
-              <input
-                id="cwi-edit-id"
-                className="input mono"
-                value={draft.id}
-                disabled={busy}
-                onChange={(e) => updateDraft((d) => ({
-                  ...d,
-                  id: e.target.value,
-                  model: comboPublicModelId(e.target.value, d.alias),
-                }))}
+          <>
+            {/* Every settings surface carries its own search: plain text by default,
+                an explicit `.*` opt-in, and the full builder anchored beside the
+                field. A miss here still reports the sibling tab that does match. */}
+            <div className="m3-row" role="search" style={{ gap: 8 }}>
+              <IconSearch width={20} height={20} aria-hidden="true" />
+              <TextInput
+                type="search"
+                value={settingsQuery}
+                onChange={(e) => setSettingsQuery(e.target.value)}
+                placeholder={t("settings.search")}
+                aria-label={t("settings.search")}
+                aria-invalid={settingsSearch.error !== null}
+                style={{ flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 420 }}
               />
-              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
-                {isCreate
-                  ? t("cws.field.idInternalHint")
-                  : t("cws.field.idHintEdit", { model: comboPublicModelId(draft.id, draft.alias) })}
-              </p>
-            </div>
-            <div className="cwi-field">
-              <label htmlFor="cwi-edit-alias">{t("cws.field.alias")}</label>
-              <input
-                id="cwi-edit-alias"
-                className="input mono"
-                value={draft.alias ?? ""}
-                placeholder={comboModelId(draft.id.trim() || "…")}
-                disabled={busy}
-                onChange={(e) => updateDraft((d) => ({
-                  ...d,
-                  alias: e.target.value.trim() ? e.target.value : null,
-                  model: comboPublicModelId(d.id, e.target.value),
-                }))}
+              <Chip
+                selected={settingsRegex}
+                onClick={() => setSettingsRegex((on) => !on)}
+                title={t("regex.regexMode")}
+                aria-label={t("regex.regexMode")}
+              >
+                <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+              </Chip>
+              <RegexBuilderButton
+                value={settingsQuery}
+                onApply={(pattern) => setSettingsQuery(pattern)}
+                regex={settingsRegex}
+                onRegexChange={setSettingsRegex}
+                label={t("settings.openBuilder")}
               />
-              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
-                {t("cws.field.aliasHint")}
-              </p>
             </div>
-            <div className="cwi-field">
-              <span className="field-label">{t("cws.strategy")}</span>
-              <StrategySeg
-                value={draft.strategy}
-                disabled={busy}
-                onChange={(strategy) => updateDraft((d) => ({ ...d, strategy }))}
-              />
-              <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
-                {draft.strategy === "failover" ? t("cws.strategy.failoverHint") : t("cws.strategy.roundRobinHint")}
+            {settingsNote && (
+              <p
+                role={settingsSearch.error ? "alert" : "status"}
+                style={{
+                  margin: 0,
+                  color: settingsSearch.error ? "var(--m3-error)" : "var(--m3-on-surface-variant)",
+                  fontSize: "var(--t-label-m)",
+                }}
+              >
+                {settingsNote}
               </p>
-            </div>
-            <div className="cwi-field">
-              <label htmlFor="cwi-effort">{t("cws.field.defaultEffort")}</label>
-              <EffortSelect
-                id="cwi-effort"
-                value={draft.defaultEffort}
-                disabled={busy}
-                allowedEfforts={allowedEfforts}
-                onChange={(defaultEffort) => updateDraft((d) => ({ ...d, defaultEffort }))}
-              />
-              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
-                {t("cws.field.defaultEffortHint")}
-              </p>
-            </div>
-            {draft.strategy === "round-robin" && (
-              <div className="cwi-field">
-                <label htmlFor="cwi-sticky">{t("cws.field.stickyLimit")}</label>
-                <input
-                  id="cwi-sticky"
-                  className="input mono"
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={draft.stickyLimit}
-                  disabled={busy}
-                  onChange={(e) => {
-                    const stickyLimit = clampedNumberInput(e.target.value, 1, 100);
-                    if (stickyLimit === undefined) return;
-                    updateDraft((d) => ({ ...d, stickyLimit }));
-                  }}
-                />
-              </div>
             )}
-            <div className="cwi-field">
-              <span className="field-label">{t("cws.targets")}</span>
-              <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
-                {draft.strategy === "failover" ? t("cws.targets.failoverHint") : t("cws.targets.roundRobinHint")}
-              </p>
+            {settingsSearch.matches("identity") && (
+            <Card title={t("cws.tab.config")}>
+              <div className="cwi-form-grid">
+                <div className="cwi-field">
+                  <label htmlFor="cwi-edit-id">{t("cws.field.id")}</label>
+                  <TextInput
+                    id="cwi-edit-id"
+                    className="mono"
+                    value={draft.id}
+                    disabled={busy}
+                    onChange={(e) => updateDraft((d) => ({
+                      ...d,
+                      id: e.target.value,
+                      model: comboPublicModelId(e.target.value, d.alias),
+                    }))}
+                  />
+                  <p className="m3-field-hint">
+                    {isCreate
+                      ? t("cws.field.idInternalHint")
+                      : t("cws.field.idHintEdit", { model: comboPublicModelId(draft.id, draft.alias) })}
+                  </p>
+                </div>
+                <div className="cwi-field">
+                  <label htmlFor="cwi-edit-alias">{t("cws.field.alias")}</label>
+                  <TextInput
+                    id="cwi-edit-alias"
+                    className="mono"
+                    value={draft.alias ?? ""}
+                    placeholder={comboModelId(draft.id.trim() || "…")}
+                    disabled={busy}
+                    onChange={(e) => updateDraft((d) => ({
+                      ...d,
+                      alias: e.target.value.trim() ? e.target.value : null,
+                      model: comboPublicModelId(d.id, e.target.value),
+                    }))}
+                  />
+                  <p className="m3-field-hint">
+                    {t("cws.field.aliasHint")}
+                  </p>
+                </div>
+              </div>
+            </Card>
+            )}
+
+            {settingsSearch.matches("strategy") && (
+            <Card title={t("cws.strategy")}>
+              <div className="cwi-form-grid">
+                <div className="cwi-field">
+                  <StrategySeg
+                    value={draft.strategy}
+                    disabled={busy}
+                    onChange={(strategy) => updateDraft((d) => ({ ...d, strategy }))}
+                  />
+                  <p className="m3-field-hint">
+                    {draft.strategy === "failover" ? t("cws.strategy.failoverHint") : t("cws.strategy.roundRobinHint")}
+                  </p>
+                </div>
+                <div className="cwi-field">
+                  <label htmlFor="cwi-effort">{t("cws.field.defaultEffort")}</label>
+                  <EffortSelect
+                    id="cwi-effort"
+                    value={draft.defaultEffort}
+                    disabled={busy}
+                    allowedEfforts={allowedEfforts}
+                    onChange={(defaultEffort) => updateDraft((d) => ({ ...d, defaultEffort }))}
+                  />
+                  <p className="m3-field-hint">
+                    {t("cws.field.defaultEffortHint")}
+                  </p>
+                </div>
+                {draft.strategy === "round-robin" && (
+                  <div className="cwi-field">
+                    <label htmlFor="cwi-sticky">{t("cws.field.stickyLimit")}</label>
+                    <TextInput
+                      id="cwi-sticky"
+                      className="mono"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={draft.stickyLimit}
+                      disabled={busy}
+                      onChange={(e) => {
+                        const stickyLimit = clampedNumberInput(e.target.value, 1, 100);
+                        if (stickyLimit === undefined) return;
+                        updateDraft((d) => ({ ...d, stickyLimit }));
+                      }}
+                    />
+                    <p className="m3-field-hint">{t("cws.field.stickyLimitHint")}</p>
+                  </div>
+                )}
+              </div>
+            </Card>
+            )}
+
+            {settingsSearch.matches("targets") && (
+            <Card
+              title={t("cws.targets")}
+              subtitle={draft.strategy === "failover" ? t("cws.targets.failoverHint") : t("cws.targets.roundRobinHint")}
+            >
               <TargetEditor
                 targets={draft.targets}
                 strategy={draft.strategy}
@@ -266,13 +374,13 @@ export function DetailPanel({
                 models={models}
                 onChange={(targets) => updateDraft((d) => ({ ...d, targets }))}
               />
-            </div>
-          </div>
+            </Card>
+            )}
+          </>
         ) : (
-          <section className="pwi-section">
-            <h3 className="pwi-section-title">{t("cws.aboutTitle")}</h3>
-            <p className="muted" style={{ margin: 0 }}>{t("cws.aboutBody")}</p>
-          </section>
+          <Card title={t("cws.aboutTitle")}>
+            <p className="m3-card-sub" style={{ margin: 0 }}>{t("cws.aboutBody")}</p>
+          </Card>
         )}
       </div>
     </div>

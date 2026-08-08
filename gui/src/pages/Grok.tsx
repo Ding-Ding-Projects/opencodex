@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { EmptyState, Notice, Switch } from "../ui";
-import { IconChevron } from "../icons";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Button, Card, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconSearch } from "../icons";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 import { useT, type TKey } from "../i18n/shared";
 import { readJsonOrThrow } from "../fetch-json";
-import { makeCollapseStore, toggleInSet } from "./collapse-store";
-import { grokGroupView, type GrokCandidate } from "./grok-groups";
+import { grokGroupView, grokRowHaystack, type GrokCandidate, type GrokGroupRow } from "./grok-groups";
 
 type TFn = (key: TKey, vars?: Record<string, string | number>) => string;
 
@@ -23,13 +25,84 @@ interface GrokStatus {
   excluded: string[];
 }
 
-/** Same collapse store the Desktop page uses; Grok has only two groups, both open. */
-const GROUP_COLLAPSE = makeCollapseStore("ocx.grok.collapsedGroups.v1");
-
 const GROUPS = [
   { id: "native", tkey: "grok.groupNative" as TKey },
   { id: "routed", tkey: "grok.groupRouted" as TKey },
 ] as const;
+
+/** The lead paragraph is the shared `.m3-page-lead`; only the pre-line wrap is local,
+ *  because the funny-level copy for this screen can carry its own line breaks. */
+const leadStyle: CSSProperties = { whiteSpace: "pre-line" };
+
+const headRowStyle: CSSProperties = { gap: 12, marginBottom: "var(--sp-4)" };
+const searchRowStyle: CSSProperties = { marginBottom: "var(--sp-3)" };
+const searchInputStyle: CSSProperties = { flex: "1 1 240px", width: "auto", minWidth: 0 };
+const regexErrorStyle: CSSProperties = { color: "var(--m3-error)", fontSize: "var(--t-body-s)" };
+const monoStyle: CSSProperties = { fontFamily: "var(--mono)" };
+
+/** Pattern cap, mirroring the regex builder: a pasted novel can never become a
+ *  catastrophic-backtracking payload, and evaluation stays local to this page. */
+const PATTERN_CAP = 400;
+
+/**
+ * How many candidates the anchored builder is given as sample text. Bounded
+ * because the string is built on every render of the search row, not only when
+ * the panel is open.
+ */
+const SAMPLE_ROWS = 40;
+
+const spacerStyle: CSSProperties = { flex: "1 1 auto" };
+
+const endpointStyle: CSSProperties = {
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+  padding: "8px 12px",
+  borderRadius: "var(--r-s)",
+  background: "var(--m3-surface-container-highest)",
+};
+const configPathStyle: CSSProperties = {
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+  color: "var(--m3-on-surface-variant)",
+  overflowWrap: "anywhere",
+};
+const countStyle: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" };
+
+const groupHeadingStyle: CSSProperties = { margin: "0 0 12px", fontSize: "var(--t-title-m)", fontWeight: 600 };
+const groupListStyle: CSSProperties = {
+  marginBottom: "var(--sp-4)",
+  borderRadius: "var(--el-table-radius, var(--r-l))",
+  border: "1px solid var(--m3-outline-variant)",
+  background: "var(--el-table-bg, var(--m3-surface-container-lowest))",
+  fontFamily: "var(--el-table-font, inherit)",
+  color: "var(--el-table-color, var(--m3-on-surface))",
+  overflow: "hidden",
+};
+const modelRowStyle = (last: boolean): CSSProperties => ({
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 12,
+  minHeight: "var(--h-row)",
+  padding: "var(--el-table-pad, 10px 16px)",
+  // Only between rows: the container already draws its own bottom edge, and a
+  // trailing row border doubles it into a 2px line.
+  borderBottom: last ? undefined : "1px solid var(--m3-outline-variant)",
+});
+const modelIdStyle: CSSProperties = {
+  flex: "1 1 180px",
+  minWidth: 0,
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-l)",
+  overflowWrap: "anywhere",
+};
+const modelAliasStyle: CSSProperties = {
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+  color: "var(--m3-on-surface-variant)",
+  overflowWrap: "anywhere",
+};
+const modelContextStyle: CSSProperties = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" };
 
 /** Same context formatting the Desktop page uses, so the two surfaces read alike. */
 function formatContext(value: number | undefined, t: TFn): string {
@@ -52,16 +125,19 @@ function formatContext(value: number | undefined, t: TFn): string {
  */
 export default function Grok({ apiBase }: { apiBase: string }) {
   const t = useT();
+  const { notify } = useNotifications();
   const [status, setStatus] = useState<GrokStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [savedExcluded, setSavedExcluded] = useState<Set<string>>(new Set());
-  // null = no stored preference; both groups start open because Grok has only two.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => GROUP_COLLAPSE.read() ?? new Set());
   const [pending, setPending] = useState<"save" | "apply" | null>(null);
-  const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
-  const [announcement, setAnnouncement] = useState("");
+  // Settings search over this surface's per-model switches, worded in Grok's own copy
+  // (`grok.search`/`grok.noMatch`) rather than the generic settings strings — the rows
+  // are models and aliases, not settings. Plain text is the default; `.*` is an explicit
+  // opt-in, exactly as on every other search bar in the app.
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -100,11 +176,32 @@ export default function Grok({ apiBase }: { apiBase: string }) {
     [status],
   );
 
-  const toggleGroup = (id: string) => {
-    const next = toggleInSet(collapsed, id);
-    GROUP_COLLAPSE.write(next);
-    setCollapsed(next);
-  };
+  const candidates = status?.candidates ?? [];
+  const registered = candidates.reduce((count, c) => count + (excluded.has(c.id) ? 0 : 1), 0);
+
+  const { matchesRow, regexError } = useMemo(() => {
+    const trimmed = query.trim();
+    const all = { matchesRow: () => true, regexError: null as string | null };
+    if (!trimmed) return all;
+    if (useRegex) {
+      try {
+        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), "i");
+        return {
+          matchesRow: (row: GrokGroupRow) => re.test(grokRowHaystack(row)),
+          regexError: null as string | null,
+        };
+      } catch (e) {
+        // An invalid pattern matches nothing and says so, rather than silently
+        // falling back to plain text and showing rows the user did not ask for.
+        return { matchesRow: () => false, regexError: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    const needle = trimmed.toLowerCase();
+    return {
+      matchesRow: (row: GrokGroupRow) => grokRowHaystack(row).toLowerCase().includes(needle),
+      regexError: null as string | null,
+    };
+  }, [query, useRegex]);
 
   const toggleModel = (id: string, currentlyExcluded: boolean) => {
     setExcluded(current => {
@@ -118,7 +215,6 @@ export default function Grok({ apiBase }: { apiBase: string }) {
   const save = async (applyAfter: boolean) => {
     if (pending) return;
     setPending("save");
-    setMessage(null);
     try {
       const response = await fetch(`${apiBase}/api/grok/selection`, {
         method: "PUT",
@@ -126,6 +222,14 @@ export default function Grok({ apiBase }: { apiBase: string }) {
         body: JSON.stringify({ excluded: [...excluded] }),
       });
       await readJsonOrThrow<{ error?: string }>(response, t("grok.saveFailed"));
+      // The selection is a user-visible record, so the change is undoable from
+      // Version history — recorded with the exclusions that were replaced.
+      recordRevision({
+        scope: "settings",
+        label: t("grok.title"),
+        summary: t("grok.revisionSummary", { on: registered, total: candidates.length }),
+        before: JSON.stringify([...savedExcluded]),
+      });
       setSavedExcluded(new Set(excluded));
 
       if (applyAfter) {
@@ -143,135 +247,158 @@ export default function Grok({ apiBase }: { apiBase: string }) {
         };
         // A policy skip is not success theatre: the Grok config did NOT change
         // (non-loopback bind, or no ~/.grok), so say that instead of "applied".
+        // Error tone because only errors survive the snackbar auto-dismiss, and the
+        // reason is the one thing the user needs to keep reading.
         if (payload.skippedReason) {
-          setMessage({ tone: "err", text: payload.message ?? t("grok.applySkipped") });
-          setAnnouncement(payload.message ?? t("grok.applySkipped"));
+          notify({ tone: "error", title: t("grok.applySkipped"), body: payload.message });
         } else {
-          setMessage({ tone: "ok", text: t("grok.savedApplied") });
-          setAnnouncement(t("grok.savedApplied"));
+          notify({ tone: "success", title: t("grok.savedApplied"), body: status?.configPath });
         }
         await load();
       } else {
-        setMessage({ tone: "ok", text: t("grok.saved") });
-        setAnnouncement(t("grok.saved"));
+        notify({ tone: "success", title: t("grok.saved") });
       }
     } catch (err) {
-      const text = err instanceof Error ? err.message : t("grok.saveFailed");
-      setMessage({ tone: "err", text });
-      setAnnouncement(text);
+      notify({ tone: "error", title: err instanceof Error ? err.message : t("grok.saveFailed") });
     } finally {
       setPending(null);
     }
   };
 
-  if (loading) return <section className="grok-page"><p className="page-sub">{t("grok.loading")}</p></section>;
+  if (loading) return <p className="m3-card-sub">{t("grok.loading")}</p>;
 
   if (error) {
     return (
-      <section className="grok-page">
-        <div className="alert alert-err" role="alert">{error}</div>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => void load()}>{t("common.retry")}</button>
-      </section>
+      <Card title={t("grok.title")}>
+        <p role="alert" style={{ margin: 0, color: "var(--m3-error)", fontSize: "var(--t-body-m)" }}>{error}</p>
+        <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
+          <Button variant="tonal" onClick={() => void load()}>{t("common.retry")}</Button>
+        </div>
+      </Card>
     );
   }
 
+  // Groups are resolved once per render so the no-match state can tell "this surface has
+  // no models" apart from "the search hid all of them".
+  const groupViews = GROUPS.map(group => ({
+    ...group,
+    view: grokGroupView(candidates, aliasById, excluded, group.id, matchesRow),
+  }));
+  const anyVisible = groupViews.some(g => g.view.total > 0);
+
   return (
-    <section className="grok-page">
-      <h2 className="page-title">{t("grok.title")}</h2>
-      <p className="page-sub">{t("grok.subtitle")}</p>
+    <>
+      <p className="m3-page-lead" style={leadStyle}>{t("grok.subtitle")}</p>
 
-      <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
-      {message && <Notice tone={message.tone}>{message.text}</Notice>}
-
-      {status && status.candidates.length > 0 && (
-        <div className="claude-profile-bar">
-          <span className={`claude-dirty${dirty ? " active" : ""}`}>
-            {dirty ? t("grok.unsaved") : t("grok.upToDate")}
-          </span>
-          <div className="claude-save-actions">
-            <button type="button" className="btn btn-ghost" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
-              {pending === "save" ? t("grok.saving") : t("common.save")}
-            </button>
-            <button type="button" className="btn btn-primary" disabled={!dirty || pending !== null} onClick={() => void save(true)}>
-              {pending === "apply" ? t("grok.applying") : pending === "save" ? t("grok.saving") : t("grok.saveApply")}
-            </button>
-          </div>
+      {status && (status.present || candidates.length > 0) && (
+        <div className="m3-row" style={headRowStyle}>
+          {status.present && (
+            <>
+              <code style={endpointStyle}>{status.baseUrl ?? "—"}</code>
+              <code style={configPathStyle}>{status.configPath}</code>
+            </>
+          )}
+          <span style={spacerStyle} />
+          {candidates.length > 0 && (
+            <>
+              <span className={`m3-chip${dirty ? " selected" : ""}`}>
+                {dirty ? t("grok.unsaved") : t("grok.upToDate")}
+              </span>
+              <span style={countStyle}>{t("grok.enabledCount", { on: registered, total: candidates.length })}</span>
+              <Button variant="outlined" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
+                {pending === "save" ? t("grok.saving") : t("common.save")}
+              </Button>
+              <Button variant="filled" disabled={!dirty || pending !== null} onClick={() => void save(true)}>
+                {pending === "apply" ? t("grok.applying") : pending === "save" ? t("grok.saving") : t("grok.saveApply")}
+              </Button>
+            </>
+          )}
         </div>
       )}
 
-      {!status?.present ? (
+      {!status?.present && (
         // Absent is a normal state, not a failure: Grok simply is not wired up yet. Name the
         // action that wires it rather than leaving an empty panel.
-        <EmptyState title={t("grok.notConfiguredTitle")}>
+        <Empty title={t("grok.notConfiguredTitle")}>
           {t("grok.notConfiguredHint")}
           <br />
-          <code>{status?.configPath}</code>
-        </EmptyState>
-      ) : (
+          <code style={monoStyle}>{status?.configPath}</code>
+        </Empty>
+      )}
+
+      {candidates.length > 0 && (
         <>
-          <div className="grok-endpoint">
-            <span>{t("grok.endpoint")}</span>
-            <code>{status.baseUrl ?? "—"}</code>
+          <div className="m3-row" role="search" style={searchRowStyle}>
+            <IconSearch width={20} height={20} aria-hidden="true" className="muted" />
+            <TextInput
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={t("grok.search")}
+              aria-label={t("grok.search")}
+              aria-invalid={!!regexError}
+              style={searchInputStyle}
+            />
+            {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+            <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")}>
+              <code style={monoStyle}>.*</code>
+            </Chip>
+            <RegexBuilderButton
+              value={query}
+              onApply={pattern => setQuery(pattern)}
+              regex={useRegex}
+              onRegexChange={setUseRegex}
+              // The candidate ids and aliases this screen searches, so the pattern
+              // is tried against real model names rather than an empty box.
+              sample={candidates
+                .slice(0, SAMPLE_ROWS)
+                .map(c => `${c.id} ${aliasById.get(c.id) ?? ""}`.trim())
+                .join("\n")}
+              label={t("settings.openBuilder")}
+            />
           </div>
-          <p className="page-sub"><code>{status.configPath}</code></p>
+          {regexError && (
+            <p role="alert" style={regexErrorStyle}>{t("regex.invalid")}: {regexError}</p>
+          )}
         </>
       )}
 
-      {status && status.candidates.length > 0 && (
-        <div className="ocx-group-stack">
-          {GROUPS.map(group => {
-            const view = grokGroupView(status.candidates, aliasById, excluded, group.id);
-            if (view.total === 0) return null;
-            const isCollapsed = collapsed.has(group.id);
-            return (
-              <section key={group.id} className={`ocx-group${isCollapsed ? " collapsed" : ""}`} aria-labelledby={`grok-group-${group.id}`}>
-                <header className={`ocx-group-head${isCollapsed ? "" : " open"}`}>
-                  <h3 id={`grok-group-${group.id}`} className="ocx-group-heading">
-                    <button
-                      type="button"
-                      className="ocx-group-toggle"
-                      aria-expanded={!isCollapsed}
-                      aria-controls={`grok-group-body-${group.id}`}
-                      onClick={() => toggleGroup(group.id)}
-                    >
-                      <IconChevron
-                        className="ocx-chevron"
-                        width={14}
-                        height={14}
-                        aria-hidden="true"
-                        style={{ transform: isCollapsed ? "none" : "rotate(90deg)" }}
-                      />
-                      <span className="ocx-group-name">{t(group.tkey)}</span>
-                      <span className="ocx-group-count">
-                        {t("grok.enabledCount", { on: view.enabled, total: view.total })}
-                      </span>
-                    </button>
-                  </h3>
-                </header>
-                {!isCollapsed && (
-                  <div id={`grok-group-body-${group.id}`} className="grok-model-list">
-                    {view.rows.map(model => (
-                      <div key={model.id} className="grok-model-row">
-                        <Switch
-                          on={model.enabled}
-                          onClick={() => toggleModel(model.id, !model.enabled)}
-                          disabled={pending !== null}
-                          label={t("grok.toggleModel", { id: model.id })}
-                        />
-                        <span className="grok-model-names">
-                          <strong title={model.id}>{model.id}</strong>
-                          <code title={model.alias ?? undefined}>{model.alias ?? "—"}</code>
-                        </span>
-                        <span className="claude-model-context">{formatContext(model.contextWindow, t)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-        </div>
-      )}
-    </section>
+      {candidates.length > 0 && !anyVisible && <Empty title={t("grok.noMatch")} />}
+
+      {candidates.length > 0 && groupViews.map(({ id: groupId, tkey, view }) => {
+        if (view.total === 0) return null;
+        const headingId = `grok-group-${groupId}`;
+        return (
+          <section key={groupId}>
+            <h2 id={headingId} style={groupHeadingStyle}>{t(tkey)}</h2>
+            <div role="list" aria-labelledby={headingId} style={groupListStyle}>
+              {view.rows.map((model, index) => (
+                <div key={model.id} role="listitem" style={modelRowStyle(index === view.rows.length - 1)}>
+                  <Toggle
+                    on={model.enabled}
+                    onChange={() => toggleModel(model.id, !model.enabled)}
+                    disabled={pending !== null}
+                    label={t("grok.toggleModel", { id: model.id })}
+                  />
+                  {/* The prototype's row has no column headers, so each value carries its
+                      own screen-reader name instead of being read as a bare token. */}
+                  <code style={modelIdStyle}>
+                    <span className="sr-only">{t("grok.colModel")}</span>
+                    {model.id}
+                  </code>
+                  <code style={modelAliasStyle}>
+                    <span className="sr-only">{t("grok.colAlias")}</span>
+                    {model.alias ?? "—"}
+                  </code>
+                  <span style={modelContextStyle}>
+                    <span className="sr-only">{t("grok.colContext")}</span>
+                    {formatContext(model.contextWindow, t)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </>
   );
 }

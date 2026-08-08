@@ -7,7 +7,9 @@ import { setDraining } from "../src/server/lifecycle";
 import {
   MEMORY_DRAIN_RESTART_MS,
   acceptSystemRestart,
+  serviceSupervisorCanRespawn,
   setSystemRestartIoForTests,
+  waitForRestartChild,
 } from "../src/server/management/system-restart";
 import type { OcxConfig } from "../src/types";
 
@@ -32,6 +34,44 @@ afterEach(() => {
 });
 
 describe("acceptSystemRestart", () => {
+  test("only a running viable manager may own supervised respawn", () => {
+    const healthy = { installed: true, running: true, viable: true };
+    expect(serviceSupervisorCanRespawn("1", healthy)).toBe(true);
+    expect(serviceSupervisorCanRespawn(undefined, healthy)).toBe(false);
+    expect(serviceSupervisorCanRespawn("1", { ...healthy, installed: false })).toBe(false);
+    expect(serviceSupervisorCanRespawn("1", { ...healthy, running: false })).toBe(false);
+    expect(serviceSupervisorCanRespawn("1", { ...healthy, viable: false })).toBe(false);
+  });
+
+  test("direct replacement requires stable expected-PID identity health", async () => {
+    let now = 0;
+    const live = { pid: 8181, port: 10100, hostname: "127.0.0.1", source: "runtime" as const };
+    await waitForRestartChild(8181, {
+      timeoutMs: 100,
+      intervalMs: 10,
+      stabilityMs: 20,
+      now: () => now,
+      sleep: async ms => { now += ms; },
+      findLive: async () => live,
+    });
+
+    now = 0;
+    let probes = 0;
+    try {
+      await waitForRestartChild(8181, {
+        timeoutMs: 40,
+        intervalMs: 10,
+        stabilityMs: 20,
+        now: () => now,
+        sleep: async ms => { now += ms; },
+        findLive: async () => (++probes === 1 ? live : null),
+      });
+      throw new Error("expected unstable replacement to fail");
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("health_timeout");
+    }
+  });
+
   test("schedules a 60s drain, spawns start on the live port, marks recycle, then exits 0", async () => {
     const calls: string[] = [];
     let scheduled: (() => void | Promise<void>) | null = null;

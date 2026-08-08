@@ -1,14 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
-import { IconChevron } from "../icons";
-import { EmptyState, Notice } from "../ui";
+import { IconChevron, IconSearch } from "../icons";
+import { Banner, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { useNotifications } from "../shell/notifications-context";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { makeMatcher } from "./models-shared";
+import { claudeSettingLabels } from "./claude-settings-search";
 import { useT, type TFn, type TKey } from "../i18n/shared";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import { createBoundedFetch } from "../bounded-fetch";
 
 const FAMILIES = ["opus", "fable", "sonnet", "haiku"] as const;
 type Family = typeof FAMILIES[number];
+
+/**
+ * How many of a lane's models are handed to its anchored builder as sample text.
+ * Built on every render of the lane, so it is bounded: a catalogue of hundreds of
+ * models would otherwise be joined into a string for a panel that is usually shut.
+ */
+const LANE_SAMPLE_ROWS = 40;
 
 /**
  * Family collapse lives under its own key: the Models page collapses PROVIDERS, and a
@@ -62,12 +73,186 @@ interface DesktopResponse {
 
 type PendingAction = "save" | "apply" | null;
 
+/** Tonal badge containers for the model rows (M3 status vocabulary). */
+const BADGE_BASE = {
+  display: "inline-flex",
+  alignItems: "center",
+  height: "24px",
+  padding: "0 10px",
+  borderRadius: "999px",
+  border: "none",
+  fontSize: "var(--t-label-s)",
+  fontWeight: 500,
+  whiteSpace: "nowrap",
+} as const;
+
+const TONAL_BADGE = {
+  ok: { ...BADGE_BASE, background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
+  muted: { ...BADGE_BASE, background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
+  neutral: { ...BADGE_BASE, background: "var(--m3-secondary-container)", color: "var(--m3-on-secondary-container)" },
+  // Prototype's "accent" badge. A container pair, not primary-on-primary: the Default
+  // badge sits inside a row of tonal chips and a filled one reads as a button.
+  accent: { ...BADGE_BASE, background: "var(--m3-primary-container)", color: "var(--m3-on-primary-container)" },
+} as const;
+
+/** M3 tonal status container; the tone-specific colours are applied per render. */
+const STATUS_BAR_STYLE = {
+  borderRadius: "var(--r-l)",
+  borderWidth: "1px",
+  borderStyle: "solid",
+} as const;
+
+/**
+ * M3 paint for the three surfaces whose rules still live in the legacy `styles.css`
+ * block (glass panel, hairline card, dashed drop zone). The classes stay — they carry
+ * the layout and the tests' contract — and only the colour/shape roles are re-pointed
+ * here, because a per-screen port may not edit the shared stylesheet.
+ */
+const PROFILE_BAR_STYLE = {
+  background: "var(--m3-surface-container)",
+  border: "1px solid var(--m3-outline-variant)",
+  borderRadius: "var(--r-l)",
+  backdropFilter: "none",
+  WebkitBackdropFilter: "none",
+  boxShadow: "none",
+} as const;
+
+const MODEL_CARD_STYLE = {
+  background: "var(--m3-surface-container-lowest)",
+  border: "none",
+  borderRadius: "var(--r-m)",
+  boxShadow: "none",
+} as const;
+
+const LANE_EMPTY_STYLE = {
+  border: "1px dashed var(--m3-outline)",
+  borderRadius: "var(--r-m)",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-m)",
+} as const;
+
+/** "Needs your attention" text. The legacy rules paint these with `--amber`. */
+const WARN_TEXT_STYLE = { color: "var(--m3-warn)" } as const;
+
+const ALIAS_STYLE = {
+  border: "1px solid var(--m3-outline-variant)",
+  borderRadius: "var(--r-s)",
+  background: "var(--m3-surface-container-highest)",
+  color: "var(--m3-on-surface)",
+  fontSize: "var(--t-label-m)",
+} as const;
+
 const FAMILY_KEYS: Record<Family, TKey> = {
   opus: "claudeDesktop.family.opus",
   fable: "claudeDesktop.family.fable",
   sonnet: "claudeDesktop.family.sonnet",
   haiku: "claudeDesktop.family.haiku",
 };
+
+/** M3 paint for this tab's own settings search. Inline, because the shared stylesheets
+ *  are off-limits to a per-screen port. */
+const SETTINGS_HEADING_STYLE = {
+  margin: "var(--sp-4) 0 var(--sp-2)",
+  fontSize: "var(--t-title-m)",
+  fontWeight: 600,
+} as const;
+const SETTINGS_SEARCH_ROW = { gap: 8 } as const;
+const SETTINGS_SEARCH_INPUT = { flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 420 } as const;
+const SETTINGS_HIT_LIST = { display: "grid", gap: 6, marginBottom: "var(--sp-3)" } as const;
+const SETTINGS_HIT_ROW = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "baseline",
+  gap: 10,
+  padding: "10px 12px",
+  borderRadius: "var(--r-s)",
+  background: "var(--m3-surface-container-highest)",
+} as const;
+const SETTINGS_HIT_LABEL = { fontSize: "var(--t-body-m)", fontWeight: 500 } as const;
+const SETTINGS_HIT_DESC = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" } as const;
+const MONO_STYLE = { fontFamily: "var(--mono)" } as const;
+
+/** One hit of this surface's settings search — same row anatomy the Codex pool uses. */
+interface DesktopSettingHit {
+  id: string;
+  label: string;
+  desc: string;
+  /** Everything the query is tested against, including the option labels a user is
+      likelier to remember ("Sonnet") than the control's own name ("Move to"). */
+  haystack: string;
+}
+
+/**
+ * The settings this tab owns, in the order they render. A user who knows a setting's
+ * name types it here instead of scrolling four families looking for the control.
+ */
+function desktopSettingsIndex(t: TFn): DesktopSettingHit[] {
+  const families = FAMILIES.map(family => t(FAMILY_KEYS[family]));
+  const defaultsHaystack = [
+    t("claudeDesktop.defaultBadge"),
+    t("claudeDesktop.chooseDefault"),
+    t("claudeDesktop.temporaryDefault"),
+    ...FAMILIES.map(family => t("claudeDesktop.useAsDefault", { family: t(FAMILY_KEYS[family]) })),
+  ].join(" ");
+  return [
+    {
+      id: "importJson",
+      label: t("claudeDesktop.importJson"),
+      desc: t("claudeDesktop.importExpected"),
+      haystack: [t("claudeDesktop.importJson"), t("claudeDesktop.importExpected"), t("claudeDesktop.importReady")].join(" "),
+    },
+    {
+      id: "exportJson",
+      label: t("claudeDesktop.exportJson"),
+      desc: t("claudeDesktop.exported"),
+      haystack: [t("claudeDesktop.exportJson"), t("claudeDesktop.exported")].join(" "),
+    },
+    {
+      id: "familyDefault",
+      label: t("claudeDesktop.defaultBadge"),
+      desc: t("claudeDesktop.chooseDefault"),
+      haystack: defaultsHaystack,
+    },
+    {
+      id: "moveTo",
+      label: t("claudeDesktop.moveTo"),
+      desc: t("claudeDesktop.assignmentsLabel"),
+      haystack: [t("claudeDesktop.moveTo"), t("claudeDesktop.move"), t("claudeDesktop.assignmentsLabel"), ...families].join(" "),
+    },
+    {
+      id: "alias",
+      label: t("claudeDesktop.alias"),
+      desc: t("claudeDesktop.assignmentsLabel"),
+      haystack: [t("claudeDesktop.alias"), t("claudeDesktop.assignmentsLabel")].join(" "),
+    },
+    {
+      id: "saveApply",
+      label: t("claudeDesktop.saveApply"),
+      desc: t("claudeDesktop.status.notApplied"),
+      haystack: [
+        t("claudeDesktop.saveApply"),
+        t("common.save"),
+        t("claudeDesktop.status.applied"),
+        t("claudeDesktop.status.stale"),
+        t("claudeDesktop.status.notApplied"),
+      ].join(" "),
+    },
+  ];
+}
+
+/**
+ * Settings that live on the sibling Code tab. A miss here still points somewhere, which
+ * is why the row reports a cross-tab hit by name instead of claiming the setting is gone.
+ */
+/**
+ * The Claude Code tab's settings, for this surface's cross-tab search. Derived from
+ * the shared id list rather than hand-listed: the hand-written version held nine of
+ * fourteen, so five settings were unfindable from here and read as "no such setting".
+ */
+function desktopElsewhereIndex(t: TFn): { id: string; label: string; tab: string }[] {
+  const tab = t("claude.tabCode");
+  return claudeSettingLabels(t).map(({ id, label }) => ({ id, label, tab }));
+}
 
 function cloneProfile(profile: DesktopProfile): DesktopProfile {
   return {
@@ -122,6 +307,7 @@ function formatContextWindow(value: number | undefined, t: TFn): string | null {
 
 export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   const t = useT();
+  const { notify } = useNotifications();
   const [status, setStatus] = useState<DesktopStatus | null>(null);
   const [data, setData] = useState<DesktopResponse | null>(null);
   const [profile, setProfile] = useState<DesktopProfile | null>(null);
@@ -129,7 +315,6 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   const [destinations, setDestinations] = useState<Record<string, Family>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [pending, setPending] = useState<PendingAction>(null);
   // Lane density: search and paging are RENDER-ONLY. modelsByFamily and effectiveDefaults must
@@ -137,6 +322,9 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // the effective default, turning a view filter into a data mutation.
   const [laneSearch, setLaneSearch] = useState<Record<string, string>>({});
   const [laneLimit, setLaneLimit] = useState<Record<string, number>>({});
+  // Regex mode is per lane, never shared: each search bar owns its own query, pattern and
+  // mode, so turning `.*` on for Opus cannot silently reinterpret what Sonnet is filtering.
+  const [laneRegex, setLaneRegex] = useState<Record<string, boolean>>({});
   // Collapse is view state too. It is a plain user-owned Set rather than something
   // derived per render: modelsByFamily changes on every move, so deriving would fold a
   // section under the user's cursor the moment they moved the last model out of it.
@@ -145,6 +333,11 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // a family's fold is a durable preference, but which single model you were inspecting
   // is not, and restoring five open rows on reload would rebuild the wall this removes.
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
+  // This tab's own settings search, bound to this field alone. It never shares state with
+  // the per-lane model filters below it, so a query here cannot reinterpret what Opus is
+  // filtering — and the Code tab's search cannot reinterpret this one.
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -270,7 +463,6 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   const save = async (applyAfter: boolean) => {
     if (!profile || pending) return;
     setPending("save");
-    setMessage(null);
     try {
       const response = await fetch(`${apiBase}/api/claude-desktop`, {
         method: "PUT",
@@ -284,15 +476,15 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
         setPending("apply");
         const applyResponse = await fetch(`${apiBase}/api/claude-desktop/apply`, { method: "POST" });
         await readJsonOrThrow<{ error?: string }>(applyResponse, t("claudeDesktop.applyFailed"));
-        setMessage({ tone: "ok", text: t("claudeDesktop.savedApplied") });
+        notify({ tone: "success", title: t("claudeDesktop.savedApplied") });
         setAnnouncement(t("claudeDesktop.savedAppliedAnnounce"));
       } else {
-        setMessage({ tone: "ok", text: t("claudeDesktop.saved") });
+        notify({ tone: "success", title: t("claudeDesktop.saved") });
         setAnnouncement(t("claudeDesktop.savedAnnounce"));
       }
     } catch (error) {
       const text = error instanceof Error ? error.message : t("claudeDesktop.updateFailed");
-      setMessage({ tone: "err", text });
+      notify({ tone: "error", title: text });
       setAnnouncement(text);
     } finally {
       setPending(null);
@@ -320,11 +512,11 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
       if (candidate.version !== 1 || !candidate.assignments || !candidate.defaults) throw new Error(t("claudeDesktop.importExpected"));
       const imported = normalizeProfile({ ...data!, profile: candidate as DesktopProfile });
       setProfile(imported);
-      setMessage({ tone: "ok", text: t("claudeDesktop.importReady") });
+      notify({ tone: "success", title: t("claudeDesktop.importReady") });
       setAnnouncement(t("claudeDesktop.importedAnnounce"));
     } catch (error) {
       const text = error instanceof Error ? error.message : t("claudeDesktop.importInvalid");
-      setMessage({ tone: "err", text });
+      notify({ tone: "error", title: text });
       setAnnouncement(t("claudeDesktop.importFailed", { error: text }));
     }
   };
@@ -339,29 +531,77 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   if (loadError || !data || !profile) {
     return (
       <div className="claude-desktop-error">
-        <Notice tone="err">{loadError || t("claudeDesktop.loadFail")}</Notice>
-        <button type="button" className="btn btn-ghost" onClick={() => void load()}>{t("claudeDesktop.retry")}</button>
+        {/* Inline and permanent: the condition is "this screen has no data", which
+            only clears when a retry succeeds — not on a snackbar's timer. */}
+        <Banner
+          tone="error"
+          action={<Button variant="outlined" onClick={() => void load()}>{t("claudeDesktop.retry")}</Button>}
+        >
+          {loadError || t("claudeDesktop.loadFail")}
+        </Banner>
       </div>
     );
   }
+
+  const statusTone = status?.activeProfile === false
+    ? "not-applied"
+    : status?.stale ? "stale" : status?.applied ? "applied" : "not-applied";
+
+  // Plain text is the default; `.*` is the explicit opt-in, evaluated locally through the
+  // shared capped ECMAScript matcher (400 pattern chars). An invalid pattern matches
+  // nothing and says so, rather than silently reverting to substring search.
+  const settingsActive = settingsQuery.trim().length > 0;
+  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex);
+  // Held rather than rebuilt per use: the anchored builder hands the same rows back
+  // as its sample, and two calls could drift into two different indexes.
+  const settingsIndex = desktopSettingsIndex(t);
+  const settingsHits = settingsIndex.filter(row => settingsMatcher.test(row.haystack));
+  // Only claimed once something was typed: an untouched field has matched nothing, here
+  // or on the Code tab.
+  const settingsOtherHits = settingsActive
+    ? desktopElsewhereIndex(t).filter(row => settingsMatcher.test(row.label))
+    : [];
+  const settingsOtherTabs = [...new Set(settingsOtherHits.map(row => row.tab))].join(", ");
+  const settingsNote = settingsMatcher.error
+    ? `${t("regex.invalid")}: ${settingsMatcher.error}`
+    : settingsOtherHits.length > 0
+      ? t("settings.otherTab", { count: settingsOtherHits.length, tabs: settingsOtherTabs })
+      // "Nothing matched" is a different fact from "this tab has no settings", and this
+      // surface always has some — so the no-match wording is the honest one here.
+      : settingsActive && settingsHits.length === 0
+        ? t("settings.noMatch")
+        : "";
 
   return (
     <>
       <div className="page-head claude-desktop-head">
         <div>
-          <h2>{t("claudeDesktop.title")}</h2>
+          {/* Title dropped: the Desktop tab already names this panel, and the prototype's
+              desktop view opens on the toolbar. The lede stays — it carries the port. */}
           <p className="page-sub">{t("claudeDesktop.subtitle", { port: data.port })}</p>
         </div>
-        <div className="claude-profile-tools">
+        <div className="claude-profile-tools m3-row">
           <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={event => void importProfile(event)} />
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => importRef.current?.click()}>{t("claudeDesktop.importJson")}</button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={exportProfile}>{t("claudeDesktop.exportJson")}</button>
+          <Button variant="outlined" onClick={() => importRef.current?.click()}>{t("claudeDesktop.importJson")}</Button>
+          <Button variant="outlined" onClick={exportProfile}>{t("claudeDesktop.exportJson")}</Button>
         </div>
       </div>
 
       {status && (
-        <div className={`claude-status-bar ${status.activeProfile === false ? "not-applied" : status.stale ? "stale" : status.applied ? "applied" : "not-applied"}`}>
-          <span className="claude-status-dot" />
+        // Tonal status container: the applied/stale/ignored state carries the colour role,
+        // so the badge reads without depending on the dot alone.
+        <div
+          className={`claude-status-bar ${statusTone}`}
+          style={{
+            ...STATUS_BAR_STYLE,
+            background: statusTone === "applied" ? "var(--m3-ok-container)" : statusTone === "stale" ? "var(--m3-warn-container)" : "var(--m3-surface-container)",
+            borderColor: statusTone === "applied" ? "var(--m3-ok)" : statusTone === "stale" ? "var(--m3-warn)" : "var(--m3-outline-variant)",
+            // The container carries the tone, so the label has to take its on-colour with it —
+            // on-surface over a dark ok-container is the contrast failure this avoids.
+            color: statusTone === "applied" ? "var(--m3-on-ok-container)" : statusTone === "stale" ? "var(--m3-on-warn-container)" : "var(--m3-on-surface)",
+          }}
+        >
+          <span className="claude-status-dot" style={{ background: statusTone === "applied" ? "var(--m3-ok)" : statusTone === "stale" ? "var(--m3-warn)" : "var(--m3-outline)" }} />
           {/* Desktop serving another profile outranks content drift: stale config that is
               read still works, a config that is never read does not. */}
           <span>{status.activeProfile === false ? t("claudeDesktop.status.notActiveProfile") : status.stale ? t("claudeDesktop.status.stale") : status.applied ? t("claudeDesktop.status.applied") : t("claudeDesktop.status.notApplied")}</span>
@@ -371,22 +611,79 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
       )}
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
-      {message && <Notice tone={message.tone}>{message.text}</Notice>}
 
-      <div className="claude-profile-bar">
-        <span className={`claude-dirty${dirty ? " active" : ""}`}>{dirty ? t("claudeDesktop.unsaved") : t("claudeDesktop.upToDate")}</span>
-        <div className="claude-save-actions">
-          <button type="button" className="btn btn-ghost" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
+      {/* This tab's own settings search, above the controls it describes: plain text by
+          default, `.*` as an explicit opt-in, and the full builder one click away anchored
+          to this field rather than parked in a menu. A hit that lives on the Code tab is
+          named instead of being reported as "no such setting". */}
+      <h2 style={SETTINGS_HEADING_STYLE}>{t("common.settings")}</h2>
+      <div className="m3-row" role="search" style={SETTINGS_SEARCH_ROW}>
+        <IconSearch width={20} height={20} aria-hidden="true" />
+        <TextInput
+          type="search"
+          value={settingsQuery}
+          onChange={event => setSettingsQuery(event.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={settingsMatcher.error !== null}
+          style={SETTINGS_SEARCH_INPUT}
+        />
+        <Chip
+          selected={settingsRegex}
+          onClick={() => setSettingsRegex(on => !on)}
+          title={t("search.regexHint")}
+          aria-label={t("search.regexHint")}
+        >
+          <code style={MONO_STYLE}>.*</code>
+        </Chip>
+        <RegexBuilderButton
+          value={settingsQuery}
+          onApply={pattern => setSettingsQuery(pattern)}
+          regex={settingsRegex}
+          onRegexChange={setSettingsRegex}
+          sample={settingsIndex.map(row => row.haystack).join("\n")}
+        />
+      </div>
+      <p
+        role={settingsMatcher.error ? "alert" : "status"}
+        style={{
+          minHeight: 20,
+          margin: "4px 0 var(--sp-2)",
+          color: settingsMatcher.error ? "var(--m3-error)" : "var(--m3-on-surface-variant)",
+          fontSize: "var(--t-label-m)",
+        }}
+      >
+        {settingsNote}
+      </p>
+      {/* Hits appear only once something has been typed — an untouched field would
+          otherwise list every setting twice, above the controls that already show them. */}
+      {settingsActive && settingsHits.length > 0 && (
+        <div data-settings-hits="" style={SETTINGS_HIT_LIST}>
+          {settingsHits.map(row => (
+            <div key={row.id} style={SETTINGS_HIT_ROW}>
+              <span style={SETTINGS_HIT_LABEL}>{row.label}</span>
+              <span style={SETTINGS_HIT_DESC}>{row.desc}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="claude-profile-bar" style={PROFILE_BAR_STYLE}>
+        <span className={`claude-dirty${dirty ? " active" : ""}`} style={dirty ? WARN_TEXT_STYLE : undefined}>
+          {dirty ? t("claudeDesktop.unsaved") : t("claudeDesktop.upToDate")}
+        </span>
+        <div className="claude-save-actions m3-row">
+          <Button variant="outlined" disabled={!dirty || pending !== null} onClick={() => void save(false)}>
             {pending === "save" ? t("claudeDesktop.saving") : t("common.save")}
-          </button>
-          <button type="button" className="btn btn-primary" disabled={pending !== null} onClick={() => void save(true)}>
+          </Button>
+          <Button variant="filled" disabled={pending !== null} onClick={() => void save(true)}>
             {pending === "apply" ? t("claudeDesktop.applying") : pending === "save" ? t("claudeDesktop.saving") : t("claudeDesktop.saveApply")}
-          </button>
+          </Button>
         </div>
       </div>
 
       {data.models.length === 0 && (
-        <EmptyState title={t("claudeDesktop.emptyTitle")}>{t("claudeDesktop.emptyHint")}</EmptyState>
+        <Empty title={t("claudeDesktop.emptyTitle")}>{t("claudeDesktop.emptyHint")}</Empty>
       )}
 
       <div className="ocx-group-stack" aria-label={t("claudeDesktop.assignmentsLabel")}>
@@ -394,7 +691,7 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
           // Render-only narrowing: the lane header, effectiveDefaults and every assignment keep
           // reading the full list, so filtering can never change what Claude Desktop resolves.
           const all = modelsByFamily[family];
-          const lane = laneView(all, laneSearch[family] ?? "", laneLimit[family] ?? LANE_PAGE);
+          const lane = laneView(all, laneSearch[family] ?? "", laneLimit[family] ?? LANE_PAGE, laneRegex[family] ?? false);
           const isCollapsed = collapsedFamilies.has(family);
           const familyDefault = effectiveDefaults[family];
           return (
@@ -409,7 +706,9 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
               {/* The button goes INSIDE the heading: a heading is not phrasing content, so
                   nesting it the other way round is invalid. This keeps the family in the
                   a11y tree and gives the toggle its name. */}
-              <h3 id={`claude-lane-${family}`} className="ocx-group-heading">
+              {/* h2, not h3: with the duplicated panel title gone the families are the
+                  panel's top level, and h1 → h3 is a skipped heading level. */}
+              <h2 id={`claude-lane-${family}`} className="ocx-group-heading">
                 <button
                   type="button"
                   className="ocx-group-toggle"
@@ -432,38 +731,70 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       family to check, so it stays readable while folded. */}
                   {familyDefault && <code className="claude-lane-default" title={familyDefault}>{familyDefault}</code>}
                 </button>
-              </h3>
+              </h2>
               {/* Warnings stay outside the fold — never hide state the user must act on. */}
-              {all.length > 0 && profile.defaults[family] === null && <span className="claude-default-needed">{t("claudeDesktop.chooseDefault")}</span>}
+              {all.length > 0 && profile.defaults[family] === null && <span className="claude-default-needed" style={WARN_TEXT_STYLE}>{t("claudeDesktop.chooseDefault")}</span>}
               {familyDefault && familyDefault !== profile.defaults[family] && (
-                <span className="claude-default-needed" title={familyDefault}>{t("claudeDesktop.temporaryDefault")}</span>
+                <span className="claude-default-needed" style={WARN_TEXT_STYLE} title={familyDefault}>{t("claudeDesktop.temporaryDefault")}</span>
               )}
             </header>
 
             {!isCollapsed && (
             <div id={`claude-lane-body-${family}`}>
             {lane.showSearch && (
-              <input
-                className="input claude-lane-search"
-                type="search"
-                placeholder={t("models.search")}
-                aria-label={t("models.search")}
-                value={laneSearch[family] ?? ""}
-                onChange={event => {
-                  const next = event.target.value;
-                  setLaneSearch(current => ({ ...current, [family]: next }));
-                  // A new query starts from the first page; otherwise a previously expanded lane
-                  // would hide the very matches the user just searched for.
-                  setLaneLimit(current => ({ ...current, [family]: LANE_PAGE }));
-                }}
-              />
+              // Every search bar carries its own `.*` opt-in and its own builder shortcut,
+              // anchored to this field rather than parked in a menu somewhere else.
+              <div className="m3-row" role="search" style={{ gap: 8 }}>
+                <input
+                  className="m3-input claude-lane-search"
+                  type="search"
+                  placeholder={t("models.search")}
+                  aria-label={t("models.search")}
+                  aria-invalid={lane.regexError !== null}
+                  value={laneSearch[family] ?? ""}
+                  onChange={event => {
+                    const next = event.target.value;
+                    setLaneSearch(current => ({ ...current, [family]: next }));
+                    // A new query starts from the first page; otherwise a previously expanded lane
+                    // would hide the very matches the user just searched for.
+                    setLaneLimit(current => ({ ...current, [family]: LANE_PAGE }));
+                  }}
+                />
+                <Chip
+                  selected={laneRegex[family] ?? false}
+                  title={t("regex.regexMode")}
+                  aria-label={t("regex.regexMode")}
+                  onClick={() => setLaneRegex(current => ({ ...current, [family]: !(current[family] ?? false) }))}
+                >
+                  <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+                </Chip>
+                {/* One builder per lane, bound to that lane's own query: a shared
+                    instance would apply a pattern to whichever lane was touched last. */}
+                <RegexBuilderButton
+                  value={laneSearch[family] ?? ""}
+                  onApply={pattern => {
+                    setLaneSearch(current => ({ ...current, [family]: pattern }));
+                    // A new query starts from the first page, exactly as typing does —
+                    // otherwise an expanded lane hides the matches just asked for.
+                    setLaneLimit(current => ({ ...current, [family]: LANE_PAGE }));
+                  }}
+                  regex={laneRegex[family] ?? false}
+                  onRegexChange={next => setLaneRegex(current => ({ ...current, [family]: next }))}
+                  sample={all.slice(0, LANE_SAMPLE_ROWS).map(model => `${model.label} ${model.route}`).join("\n")}
+                />
+              </div>
+            )}
+            {lane.regexError && (
+              <p role="alert" style={{ margin: "4px 0 0", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
+                {t("regex.invalid")}: {lane.regexError}
+              </p>
             )}
 
             <div className="claude-lane-models">
               {all.length === 0 ? (
-                <div className="claude-lane-empty">{t("claudeDesktop.laneEmpty")}</div>
+                <div className="claude-lane-empty" style={LANE_EMPTY_STYLE}>{t("claudeDesktop.laneEmpty")}</div>
               ) : lane.noMatch ? (
-                <div className="claude-lane-empty">{t("claudeDesktop.laneNoMatch")}</div>
+                <div className="claude-lane-empty" style={LANE_EMPTY_STYLE}>{t("claudeDesktop.laneNoMatch")}</div>
               ) : lane.shown.map(model => {
                 const assignment = profile.assignments[model.route];
                 const context = formatContextWindow(model.contextWindow, t);
@@ -473,6 +804,7 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                   <article
                     key={model.route}
                     className={`claude-model-card${rowOpen ? " open" : ""}`}
+                    style={MODEL_CARD_STYLE}
                     draggable={model.available}
                     onDragStart={event => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", model.route); }}
                   >
@@ -504,13 +836,15 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       {/* Read-only view of the 1M capability the written config already
                           carries — distinct from the context number, because a 984k
                           model is below the threshold. */}
-                      {model.supports1m === true && <span className="claude-1m-chip">{t("claudeDesktop.supports1m")}</span>}
-                      {model.effortSupported === false && <span className="claude-effort-badge off">{t("claudeDesktop.effort.displayOnly")}</span>}
-                      {model.effortSupported === true && <span className="claude-effort-badge on">{t("claudeDesktop.effort.supported")}</span>}
+                      {/* Tonal containers per the M3 status vocabulary. The legacy class names
+                          stay: they are the row's a11y/test contract, only the paint changes. */}
+                      {model.supports1m === true && <span className="claude-1m-chip" style={TONAL_BADGE.neutral}>{t("claudeDesktop.supports1m")}</span>}
+                      {model.effortSupported === false && <span className="claude-effort-badge off" style={TONAL_BADGE.muted}>{t("claudeDesktop.effort.displayOnly")}</span>}
+                      {model.effortSupported === true && <span className="claude-effort-badge on" style={TONAL_BADGE.neutral}>{t("claudeDesktop.effort.supported")}</span>}
                       {profile.defaults[family] === model.route && (
-                        <span className="claude-row-default">{t("claudeDesktop.defaultBadge")}</span>
+                        <span className="claude-row-default" style={TONAL_BADGE.accent}>{t("claudeDesktop.defaultBadge")}</span>
                       )}
-                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`}>
+                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`} style={model.available ? TONAL_BADGE.ok : TONAL_BADGE.muted}>
                         {model.available ? t("claudeDesktop.available") : t("claudeDesktop.unavailable")}
                       </span>
                     </button>
@@ -518,12 +852,12 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                     {rowOpen && (
                     <div className="claude-model-body" id={`claude-model-body-${model.route}`}>
                     {effectiveDefaults[family] === model.route && profile.defaults[family] !== model.route && (
-                      <span className="claude-effective-default">{t("claudeDesktop.temporaryDefault")}</span>
+                      <span className="claude-effective-default" style={WARN_TEXT_STYLE}>{t("claudeDesktop.temporaryDefault")}</span>
                     )}
 
                     <div className="claude-field">
                       <span>{t("claudeDesktop.alias")}</span>
-                      <code className="claude-alias" title={assignment.alias}>{assignment.alias}</code>
+                      <code className="claude-alias" style={ALIAS_STYLE} title={assignment.alias}>{assignment.alias}</code>
                     </div>
 
                     <label className="claude-default-radio">
@@ -541,21 +875,22 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       <label htmlFor={`move-${model.route}`}>{t("claudeDesktop.moveTo")}</label>
                       <select
                         id={`move-${model.route}`}
-                        className="input"
+                        // m3-input, not the legacy `.input`: the old rule pinned this select to
+                        // 34px, below the 44px minimum hit target.
+                        className="m3-input"
                         value={destination}
                         disabled={!model.available}
                         onChange={event => setDestinations(current => ({ ...current, [model.route]: event.target.value as Family }))}
                       >
                         {FAMILIES.map(option => <option key={option} value={option}>{t(FAMILY_KEYS[option])}</option>)}
                       </select>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
+                      <Button
+                        variant="outlined"
                         disabled={!model.available || destination === family}
                         onClick={() => moveModel(model.route, destination)}
                       >
                         {t("claudeDesktop.move")}
-                      </button>
+                      </Button>
                     </div>
                     </div>
                     )}
@@ -563,13 +898,13 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                 );
               })}
               {lane.hidden > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm claude-lane-more"
+                <Button
+                  variant="text"
+                  className="claude-lane-more"
                   onClick={() => setLaneLimit(current => ({ ...current, [family]: (current[family] ?? LANE_PAGE) + LANE_PAGE }))}
                 >
                   {t("models.showMore", { n: lane.hidden })}
-                </button>
+                </Button>
               )}
             </div>
             </div>

@@ -4,6 +4,8 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import CodexAccountPool from "../src/components/CodexAccountPool";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = [
   "document",
@@ -172,7 +174,11 @@ async function mountHarness(): Promise<Harness> {
   await act(async () => {
     root.render(
       <LanguageProvider>
-        <CodexAccountPool apiBase="http://localhost" />
+        <NotificationsProvider>
+          <ConfirmProvider>
+            <CodexAccountPool apiBase="http://localhost" />
+          </ConfirmProvider>
+        </NotificationsProvider>
       </LanguageProvider>,
     );
     await flush();
@@ -235,7 +241,11 @@ describe("Codex auto-switch controller interactions", () => {
       await flush();
     });
     expect(harness.input.value).toBe("95");
-    expect(harness.container.querySelector('[role="status"]')?.textContent).toContain("updated");
+    // Addressed by id: the settings-search row below the pool keeps its own
+    // always-mounted `role="status"` live region, so a bare role selector would
+    // now pick up whichever region happens to render first.
+    expect(harness.container.querySelector('#codex-auto-switch-feedback[role="status"]')?.textContent)
+      .toContain("updated");
     expect(harness.writes).toEqual([95]);
   });
 
@@ -298,7 +308,7 @@ describe("Codex auto-switch controller interactions", () => {
 
     expect(harness.input.value).toBe("80");
     expect(harness.writes).toEqual([]);
-    expect(harness.container.querySelector('[role="status"]')).toBeNull();
+    expect(harness.container.querySelector("#codex-auto-switch-feedback")).toBeNull();
   });
 
   test("pointer toggle disables a dirty valid draft before blur can commit it", async () => {

@@ -1,3 +1,49 @@
+import type { CSSProperties } from "react";
+
+/**
+ * Pill tablist chrome shared by the Logs/Debug section tabs and the debug
+ * stream switcher, mirroring the LOGS section of the M3 prototype (4px inset,
+ * fully rounded track on `--m3-surface-container`).
+ */
+export const M3_TABLIST_STYLE: CSSProperties = {
+  display: "flex",
+  gap: 6,
+  padding: 4,
+  borderRadius: 999,
+  background: "var(--m3-surface-container)",
+  width: "fit-content",
+  flexWrap: "wrap",
+  rowGap: 4,
+};
+
+/**
+ * A 48px-tall pill, which is what "clears the minimum hit target" actually means.
+ *
+ * This said 44 and claimed to clear the minimum. It did not: Material's floor is
+ * 48dp, and measured on a 320px touch viewport these tabs came back 71x44 and
+ * 80.6x44 — the only controls in the app still under it after the rest of the
+ * sweep. Raising it by four pixels satisfies the intent the old comment already
+ * stated rather than changing any design decision.
+ *
+ * It is unconditional rather than behind `@media (pointer: coarse)` like the
+ * shared floor, because these are inline styles: a stylesheet cannot override
+ * one without `!important`, and reaching for that to win an argument with your
+ * own code is worse than four pixels on a desktop tab.
+ */
+export function m3TabStyle(selected: boolean): CSSProperties {
+  return {
+    minHeight: 48,
+    padding: "0 20px",
+    border: "none",
+    borderRadius: 999,
+    background: selected ? "var(--m3-secondary-container)" : "transparent",
+    color: selected ? "var(--m3-on-secondary-container)" : "var(--m3-on-surface-variant)",
+    font: "inherit",
+    fontWeight: selected ? 500 : 400,
+    cursor: "pointer",
+  };
+}
+
 export interface DebugSettings {
   enabled: boolean;
   usage: boolean;
@@ -35,6 +81,20 @@ export interface ClaudeInboundEntry {
 export type LogStream = "provider" | "usage" | "injection";
 
 export const DEBUG_STREAMS = ["provider", "usage", "injection"] as const;
+
+/**
+ * The Capture card's four switches, in the order the card renders them.
+ *
+ * One list rather than the two that used to exist — a literal tuple inside the
+ * panel's `.map` and the same union written out again in the page's mutation
+ * signature. The settings search is now a third reader of it, and a flag that
+ * the grid renders but the search never indexes is precisely the defect the
+ * search exists to remove: the user types the switch's name and is told this
+ * screen has no such setting. Adding a fifth capture flag should be one edit.
+ */
+export const DEBUG_FLAGS = ["debug", "usage", "injection", "claude"] as const;
+
+export type DebugFlag = (typeof DEBUG_FLAGS)[number];
 
 export function formatLogTime(at: number): string {
   return at > 0 ? `[${new Date(at).toLocaleTimeString()}] ` : "";

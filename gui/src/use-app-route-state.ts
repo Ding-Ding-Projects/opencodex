@@ -52,10 +52,12 @@ export function useAppRouteState() {
     setPageState(action.page);
   }, []);
 
-  const navigateToPage = (id: Page) => {
+  // Stable across renders: it is a dependency of the tab strip's push effect,
+  // and a fresh identity each render would re-run that effect constantly.
+  const navigateToPage = useCallback((id: Page) => {
     navigateHash(id);
     setPageState(id);
-  };
+  }, []);
 
   useEffect(() => {
     const onRouteHash = () => {

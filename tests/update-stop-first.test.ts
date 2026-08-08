@@ -96,7 +96,8 @@ describe("update stops the running proxy before replacing files", () => {
 
   test("GUI worker update children use pipe stdio so background updates do not open consoles", () => {
     expect(updateSource).toContain("function updateChildStdio()");
-    expect(updateSource).toContain('process.env.OCX_SERVICE === "1"');
+    expect(updateSource).toContain('process.env.OCX_BACKGROUND === "1"');
+    expect(updateSource).not.toContain('process.env.OCX_SERVICE === "1"');
     expect(updateSource).toContain('return "pipe"');
     // All three update children (stop, installer, service reinstall) go through it.
     expect(updateSource).toContain("stdio: stopStdio");

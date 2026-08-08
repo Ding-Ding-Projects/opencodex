@@ -1,0 +1,1871 @@
+/* ============================================================================
+   Material 3 Expressive shell — adaptive navigation, top app bar, browser-style
+   tab strip, snackbar host. Ported from `design/OpenCodex M3.dc.html`.
+
+   Every colour here is an `--m3-*` role token written by `theme/m3.ts`; every
+   dimension is a density token. Nothing in this file hard-codes a hex value, so
+   the seed picker and density slider retint the whole shell at once.
+   ============================================================================ */
+
+.m3-app {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: var(--nav-w, 300px) minmax(0, 1fr);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font);
+  font-weight: var(--m3-fw);
+  font-size: var(--t-body-m);
+  line-height: 1.45;
+}
+
+.m3-app--compact { grid-template-columns: minmax(0, 1fr); }
+
+/* ------------------------------------------------------------ navigation -- */
+
+.m3-nav {
+  grid-column: 1;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--el-navRail-pad, 12px) var(--nav-pad, 12px) 16px;
+  background: var(--el-navRail-bg, var(--m3-surface-container));
+  border-right: 1px solid var(--m3-outline-variant);
+  font-family: var(--el-navRail-font, var(--m3-font));
+  color: var(--el-navRail-color, var(--m3-on-surface));
+}
+
+.m3-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 var(--nav-brand-pad, 8px);
+  margin-bottom: 4px;
+}
+.m3-nav-brand img { width: 26px; height: 26px; flex: 0 0 auto; }
+.m3-nav-brand-text { min-width: 0; }
+.m3-nav-brand-name {
+  font-size: var(--t-title-m);
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+}
+.m3-nav-brand-meta {
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+
+.m3-nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--h-nav);
+  padding: 0;
+  border: none;
+  border-radius: var(--r-xl);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-nav-item:hover { background: var(--m3-surface-container-highest); }
+.m3-nav-item.active { color: var(--m3-on-secondary-container); }
+
+/* The active-state pill sits behind the icon, per M3 — not behind the whole row. */
+.m3-nav-pill {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 32px;
+  border-radius: var(--r-pill);
+  transition: background 200ms cubic-bezier(0.2, 0, 0, 1);
+  color: var(--m3-on-surface-variant);
+}
+.m3-nav-item.active .m3-nav-pill {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+.m3-nav-pill svg { width: 22px; height: 22px; }
+
+.m3-nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Rail mode: icon over label, no room for a trailing control. */
+.m3-nav--rail .m3-nav-item {
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  min-height: 64px;
+}
+.m3-nav--rail .m3-nav-label { font-size: var(--t-label-m); }
+
+.m3-nav-divider {
+  height: 1px;
+  margin: var(--sp-2) 8px;
+  background: var(--m3-outline-variant);
+  border: none;
+}
+
+.m3-nav-foot {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--el-navRail-bg, var(--m3-surface-container));
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.m3-nav-foot .m3-nav-item.danger { color: var(--m3-error); }
+.m3-nav-foot .m3-nav-item.danger:hover { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+
+/* Compact: modal drawer over a scrim, plus a persistent bottom bar. */
+.m3-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: color-mix(in oklab, var(--m3-scrim) 40%, transparent);
+}
+.m3-nav--drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 61;
+  width: min(320px, 88vw);
+  border-right: none;
+  border-radius: 0 var(--r-xl) var(--r-xl) 0;
+  box-shadow: var(--e3);
+}
+
+.m3-bottom-nav {
+  flex: 0 0 auto;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: stretch;
+  height: 80px;
+  padding: var(--el-bottomNav-pad, 12px 8px 16px);
+  background: var(--el-bottomNav-bg, var(--m3-surface-container));
+  color: var(--el-bottomNav-color, inherit);
+  font-family: var(--el-bottomNav-font, inherit);
+  border-top: 1px solid var(--m3-outline-variant);
+  border-radius: var(--el-bottomNav-radius, 0);
+}
+.m3-bottom-nav .m3-nav-item {
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+  min-height: 0;
+}
+.m3-bottom-nav .m3-nav-pill { width: 64px; height: 32px; }
+.m3-bottom-nav .m3-nav-label { font-size: var(--t-label-m); }
+
+/* -------------------------------------------------------------- main col -- */
+
+.m3-main-col {
+  grid-column: var(--main-col, 2);
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--m3-surface);
+}
+.m3-app--compact .m3-main-col { grid-column: 1; }
+
+.m3-appbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--h-appbar);
+  padding: 0 var(--el-appBar-pad, 8px) 0 4px;
+  background: var(--el-appBar-bg, var(--m3-surface));
+  color: var(--el-appBar-color, var(--m3-on-surface));
+  font-family: var(--el-appBar-font, var(--m3-font));
+  border-radius: var(--el-appBar-radius, 0);
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-appbar-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-left: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.m3-appbar-title h1 {
+  margin: 0;
+  font-size: var(--t-title-l);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/*
+  The build's dim sum code name.
+
+  Set apart from the monospaced build line beside it on purpose: the run number
+  and the port are machine facts and read as such, while this is what the release
+  is *called*. It shrinks in two steps rather than one — the English name goes
+  first, then the whole thing — so a narrow window drops detail instead of
+  clipping a name mid-character.
+*/
+.m3-appbar-codename {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--t-label-l);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+.m3-appbar-codename-en {
+  color: var(--m3-primary);
+  font-size: var(--t-label-s);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Medium and below: the row has a page title, a cost meter and four window
+   buttons to fit. The English name is the first thing that can go without
+   losing the identity — the Chinese name alone is still the code name. */
+@media (max-width: 1000px) {
+  .m3-appbar-codename-en { display: none; }
+}
+@media (max-width: 720px) {
+  .m3-appbar-codename { display: none; }
+}
+
+.m3-appbar-status {
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+
+/* 48px icon buttons: M3 states layer + Material's 48px minimum hit target. */
+.m3-icon-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  /* The button stays 48dp. An earlier attempt fed the size slider in here behind
+     a `max(48px, …)` floor, which made the control inert — the slider tops out
+     at 24px, so the floor won at every value and the row did nothing. The size
+     control drives the glyph instead (see the `svg` rule below): the icon grows,
+     the hit target does not shrink, and the control visibly does something. */
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: var(--el-iconButton-radius, var(--r-pill));
+  background: var(--el-iconButton-bg, transparent);
+  color: var(--el-iconButton-color, var(--m3-on-surface-variant));
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-icon-btn:hover { background: var(--m3-surface-container-high); }
+.m3-icon-btn[aria-expanded="true"] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-icon-btn svg { width: var(--el-iconButton-size, 22px); height: var(--el-iconButton-size, 22px); }
+
+.m3-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--m3-error);
+  color: var(--m3-on-error);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.m3-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  font-size: var(--t-label-l);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------- tab strip -- */
+
+.m3-tabstrip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: var(--el-tabStrip-pad, 6px) 8px 0;
+  background: var(--el-tabStrip-bg, var(--m3-surface-container-low));
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-tablist {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.m3-tab {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 220px;
+  flex: 1 1 auto;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: transparent;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-tab:hover { background: var(--m3-surface-container); }
+.m3-tab.selected { background: var(--m3-surface); box-shadow: var(--e1); }
+.m3-tab.dragging { opacity: 0.5; }
+.m3-tab.drop-target { outline: 2px solid var(--m3-primary); outline-offset: -2px; }
+
+/* ---------------------------------------------------------- tab groups --
+   A group is a coloured header immediately before its members' run. The header
+   is a real button (collapse/expand) carrying the group's accessible name and
+   member count, so the colour is decoration and never the only way to tell two
+   groups apart.
+
+   Copied byte-for-byte from `shared/m3/components.css`, which the docs site
+   loads. The two apps keep separate stylesheets — this one is not importable
+   without colliding with half of it — so the rules are duplicated rather than
+   shared, and duplicated *exactly* so a group cannot look like one thing here
+   and another there. Both read the same `--m3-group-color` the strip sets.
+   ------------------------------------------------------------------------- */
+
+.m3-tabgroup {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  padding-inline: 4px;
+  border-radius: var(--r-m) var(--r-m) 0 0;
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 14%, transparent);
+  box-shadow: inset 0 -2px 0 0 var(--m3-group-color, var(--m3-tertiary));
+}
+.m3-tabgroup-head {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 30%, transparent);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-weight: 500;
+  cursor: pointer;
+}
+.m3-tabgroup-head:hover { background: color-mix(in oklab, var(--m3-group-color, var(--m3-tertiary)) 46%, transparent); }
+.m3-tabgroup-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-tabgroup-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.m3-tabgroup.collapsed { flex: 0 0 auto; }
+.m3-tabgroup.dragging { opacity: 0.5; }
+
+.m3-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: var(--h-tab);
+  padding: 0 4px 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+  border-radius: var(--r-m) 0 0 0;
+}
+.m3-tab.selected .m3-tab-btn { color: var(--m3-on-surface); font-weight: 500; }
+.m3-tab-btn svg { flex: 0 0 auto; width: 18px; height: 18px; }
+.m3-tab-pin { color: var(--m3-primary); width: 14px !important; height: 14px !important; }
+.m3-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.m3-tab-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  align-self: center;
+  height: 28px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+}
+.m3-tab-close:hover { background: var(--m3-surface-container-highest); }
+.m3-tab-close svg { width: 16px; height: 16px; }
+.m3-tab-close[hidden] { display: none; }
+
+.m3-tabstrip-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 10px;
+  margin-bottom: 6px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-m);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.m3-tabstrip-btn:hover { background: var(--m3-surface-container-highest); }
+.m3-tabstrip-btn svg { width: 20px; height: 20px; }
+
+/* ---------------------------------------------------------------- menus -- */
+
+.m3-menu {
+  position: absolute;
+  z-index: 70;
+  min-width: min(220px, calc(100vw - 16px));
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: var(--el-menu-pad, 8px);
+  border-radius: var(--el-menu-radius, var(--r-m));
+  background: var(--el-menu-bg, var(--m3-surface-container-high));
+  color: var(--el-menu-color, var(--m3-on-surface));
+  font-family: var(--el-menu-font, inherit);
+  box-shadow: var(--e3);
+}
+.m3-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: left;
+  cursor: pointer;
+}
+.m3-menu-item:hover { background: var(--m3-surface-container-highest); }
+.m3-menu-item svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+.m3-menu-heading {
+  padding: 8px 12px 4px;
+  font-size: var(--t-label-m);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* ------------------------------------------------------------ page area -- */
+
+.m3-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--m3-surface);
+}
+.m3-page-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--page-pad-y) var(--page-pad-x) 64px;
+  animation: m3-rise 240ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-page-inner--wide { max-width: none; }
+
+@keyframes m3-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes m3-snack {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------------------- snackbars -- */
+
+/*
+  Informational messages are non-modal by contract: they land here, bottom-left,
+  stacked newest-nearest. Only decisions get a blocking dialog.
+*/
+.m3-snack-host {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.m3-snack {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--r-s);
+  background: var(--m3-inverse-surface);
+  color: var(--m3-inverse-on-surface);
+  box-shadow: var(--e3);
+  font-size: var(--t-body-m);
+  animation: m3-snack 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-snack.error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+.m3-snack-text { min-width: 0; flex: 1 1 auto; }
+.m3-snack-title { font-weight: 500; }
+.m3-snack-body { font-size: var(--t-body-s); opacity: 0.85; }
+.m3-snack-action {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-inverse-primary);
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  cursor: pointer;
+}
+.m3-snack.error .m3-snack-action { color: var(--m3-on-error-container); text-decoration: underline; }
+.m3-snack-action:hover { background: color-mix(in oklab, currentColor 12%, transparent); }
+.m3-snack-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.m3-snack-close svg { width: 16px; height: 16px; }
+
+/* --------------------------------------------------------- accessibility -- */
+
+.m3-app :focus-visible {
+  outline: 3px solid var(--m3-primary);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m3-app *, .m3-snack-host * {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* ============================================================================
+   M3 primitives (shell/m3-ui.tsx)
+   ============================================================================ */
+
+.m3-card {
+  padding: var(--el-card-pad, var(--pad-card));
+  margin-bottom: var(--sp-4);
+  border-radius: var(--el-card-radius, var(--r-l));
+  background: var(--el-card-bg, var(--m3-surface-container-low));
+  color: var(--el-card-color, var(--m3-on-surface));
+  font-family: var(--el-card-font, inherit);
+}
+.m3-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.m3-card-headtext { min-width: 0; flex: 1 1 auto; }
+.m3-card-title { margin: 0; font-size: var(--t-title-m); font-weight: 500; }
+.m3-card-sub { margin: 4px 0 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.m3-card-actions { flex: 0 0 auto; display: flex; gap: var(--sp-1); flex-wrap: wrap; }
+
+.m3-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* The size control is type size, not height — its slider runs 10–24px, so
+     driving `min-height` from it made "make the label bigger" shrink every
+     filled button in the app to well under the 48dp touch floor. Same mistake
+     as `.m3-input` and `.m3-chip` below; the height stays the token. */
+  min-height: var(--h-btn);
+  padding: 0 var(--el-button-pad, 24px);
+  border: none;
+  border-radius: var(--el-button-radius, var(--r-pill));
+  font: inherit;
+  font-family: var(--el-button-font, inherit);
+  font-size: var(--el-button-size, var(--t-label-l));
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms;
+}
+.m3-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-btn svg { width: 18px; height: 18px; }
+.m3-btn--filled { background: var(--el-button-bg, var(--m3-primary)); color: var(--m3-on-primary); }
+.m3-btn--filled:hover:not(:disabled) { box-shadow: var(--e1); }
+.m3-btn--tonal { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-btn--outlined { background: transparent; color: var(--m3-primary); box-shadow: inset 0 0 0 1px var(--m3-outline); }
+.m3-btn--text { background: transparent; color: var(--m3-primary); padding: 0 12px; }
+.m3-btn--text:hover:not(:disabled) { background: color-mix(in oklab, var(--m3-primary) 10%, transparent); }
+.m3-btn--danger { background: var(--m3-error); color: var(--m3-on-error); }
+
+.m3-segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.m3-segment {
+  min-height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  cursor: pointer;
+}
+.m3-segment.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); font-weight: 500; }
+
+.m3-field { margin-bottom: var(--sp-3); }
+.m3-field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.m3-field-hint { margin: 6px 0 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+
+.m3-input {
+  width: 100%;
+  /* NOT `--el-input-size`. That variable carries the editor's *type* size
+     slider, which ranges 10–24px — feeding it to `min-height` turned "make the
+     label bigger" into "collapse every text field in the app to 18px tall", and
+     below the 48dp touch floor at every value the slider can produce. The height
+     stays the token; the size control drives the text, which is what it is
+     labelled as and what `.m3-table` already does with it. */
+  min-height: var(--h-btn);
+  padding: 0 var(--el-input-pad, 16px);
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--el-input-radius, var(--r-s));
+  background: var(--el-input-bg, var(--m3-surface-container-lowest));
+  color: var(--el-input-color, var(--m3-on-surface));
+  font: inherit;
+  font-family: var(--el-input-font, inherit);
+  font-size: var(--el-input-size, var(--t-body-m));
+}
+.m3-input:focus { border-color: var(--m3-primary); }
+.m3-textarea { min-height: 120px; padding: 12px 16px; resize: vertical; font-family: var(--mono); font-size: var(--t-body-s); line-height: 1.5; }
+
+/* 48px tall so the whole control clears Material's minimum hit target, not just the thumb. */
+.m3-slider-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+.m3-slider-row .m3-field-label { margin: 0; flex: 0 0 auto; min-width: 140px; }
+.m3-slider {
+  flex: 1 1 200px;
+  height: 48px;
+  accent-color: var(--m3-primary);
+  background: transparent;
+  cursor: pointer;
+}
+.m3-slider-value {
+  flex: 0 0 auto;
+  min-width: 48px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+}
+
+.m3-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Same rule as `.m3-input` above: the size slider is type size, not height. */
+  min-height: 36px;
+  padding: 0 var(--el-chip-pad, 14px);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--el-chip-radius, var(--r-s));
+  background: var(--el-chip-bg, transparent);
+  color: var(--el-chip-color, var(--m3-on-surface-variant));
+  font: inherit;
+  font-family: var(--el-chip-font, inherit);
+  font-size: var(--el-chip-size, var(--t-label-l));
+  cursor: pointer;
+}
+.m3-chip.selected {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  border-color: transparent;
+  font-weight: 500;
+}
+
+.m3-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--m3-outline);
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container-highest);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.m3-switch.on { background: var(--m3-primary); border-color: var(--m3-primary); }
+.m3-switch:disabled { opacity: 0.38; cursor: not-allowed; }
+.m3-switch-thumb {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: var(--m3-outline);
+  transform: translateY(-50%);
+  transition: left 150ms cubic-bezier(0.2, 0, 0, 1), width 150ms, height 150ms, background 150ms;
+}
+.m3-switch.on .m3-switch-thumb { left: 26px; width: 20px; height: 20px; background: var(--m3-on-primary); }
+
+.m3-empty {
+  padding: var(--sp-5);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-low);
+  text-align: center;
+  color: var(--m3-on-surface-variant);
+}
+.m3-empty-title { font-size: var(--t-title-m); color: var(--m3-on-surface); margin-bottom: 6px; }
+.m3-empty-body { font-size: var(--t-body-s); }
+
+.m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.m3-row--split { justify-content: space-between; }
+.m3-grid { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.m3-stack { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* Data tables inherit the per-element editor's vars alongside the role tokens. */
+.m3-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--el-table-font, inherit);
+  font-size: var(--el-table-size, var(--t-body-s));
+  background: var(--el-table-bg, transparent);
+  color: var(--el-table-color, inherit);
+}
+.m3-table th, .m3-table td {
+  height: var(--h-row);
+  padding: 0 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-table th { font-weight: 500; color: var(--m3-on-surface-variant); font-size: var(--t-label-m); }
+.m3-table tbody tr:hover { background: var(--m3-surface-container); }
+
+/* Nav rows that carry a trailing control (the Claude connection switch). */
+.m3-nav-entry {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.m3-nav-entry .m3-nav-item { min-width: 0; }
+.m3-nav-entry > :not(.m3-nav-item) { flex: 0 0 auto; margin-right: 8px; }
+/* In rail mode the row is icon-over-label, so the switch tucks under it. */
+.m3-nav--rail .m3-nav-entry { flex-direction: column; gap: 2px; }
+.m3-nav--rail .m3-nav-entry > :not(.m3-nav-item) { margin: 0 0 4px; }
+
+/*
+  The opening paragraph of a screen. The prototype leads every screen with body-large
+  copy at a readable measure; ported screens were borrowing `.m3-card-sub` (body-small)
+  because no shared class existed, which made every page lead a size too small.
+*/
+.m3-page-lead {
+  margin: 0 0 var(--sp-3);
+  max-width: 74ch;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-body-l);
+}
+
+/* ----------------------------------------------------------- desktop shell -- */
+
+/*
+  Desktop app only (html[data-desktop]): the native title bar is hidden, so the
+  app bar doubles as the window chrome. The bar itself is the drag region;
+  everything interactive inside it opts back out, or it would stop being
+  clickable — note this has to cover open menus too, not just buttons, or a
+  dropdown rendered inside the bar becomes a drag handle and cannot be clicked.
+
+  There is no titlebar-area inset to reserve any more: the Window Controls
+  Overlay is gone and .m3-window-controls draws the buttons itself, so the one
+  strip of the window that could not be themed is now themed like everything else.
+*/
+html[data-desktop] .m3-appbar {
+  app-region: drag;
+  padding-right: 0;
+}
+html[data-desktop] .m3-appbar button,
+html[data-desktop] .m3-appbar a,
+html[data-desktop] .m3-appbar input,
+html[data-desktop] .m3-appbar [role="dialog"],
+html[data-desktop] .m3-appbar [role="menu"],
+html[data-desktop] .m3-appbar [role="listbox"],
+html[data-desktop] .m3-appbar .m3-avatar {
+  app-region: no-drag;
+}
+
+/*
+  Window buttons — Material, not Windows.
+
+  These used to be 46px square, flush to the corner, with the Segoe Fluent
+  minimise/maximise/restore marks and Windows 11's own #c42b1c close hover. The
+  argument was that window chrome should look like the platform's window chrome.
+  It does not survive the shell being frameless: there is no platform title bar
+  here to match, the M3 app bar *is* the chrome, and those four buttons were the
+  only thing in the whole window still drawn to another design system — a
+  hard-coded hex in a themed surface, in the most looked-at corner of the app.
+
+  So they are M3 icon buttons now: the same 48dp target and pill shape as every
+  other icon button in the bar, a standard state layer, and error-role tokens for
+  close instead of a literal Windows red. The tokens track the theme and the
+  user's seed colour, which the hex could not.
+*/
+.m3-window-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  /* An M3 icon button carries its own state layer inside its target, so the
+     strip is spaced rather than flush — a row of touching pills reads as one
+     control. */
+  gap: 2px;
+  margin-left: var(--sp-2);
+  padding-right: var(--sp-2);
+}
+.m3-window-controls .m3-win-btn {
+  /* Inherits .m3-icon-btn: 48dp floor, pill radius, M3 state layer. Nothing to
+     restate here — restating it is how the two drifted apart in the first
+     place. The one thing kept is that close reads as destructive. */
+  border-radius: var(--r-pill);
+}
+.m3-win-btn--close:hover {
+  background: var(--m3-error);
+  color: var(--m3-on-error);
+}
+.m3-win-btn--close:hover::before { background: none; }
+/* Focus must stay visible against both the surface and the error hover. */
+.m3-win-btn:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: -3px;
+}
+
+/*
+  Launcher grid. auto-fill with a min track rather than a fixed column count, so
+  the row reflows instead of clipping at narrow widths and at 200% display scale —
+  and the label wraps rather than truncating, because "Claude Code" and its
+  bilingual counterpart are different lengths.
+*/
+.m3-launch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-2);
+}
+.m3-launch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* Wraps so the installer transcript drops onto its own line instead of
+     squeezing the label and the button into nothing while an install runs. */
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-md, 12px);
+  background: var(--m3-surface-container-low);
+}
+/*
+  Screen-reader-only text.
+
+  A label that names a control for assistive technology without drawing it. The
+  clip-rect technique rather than `display:none` or `visibility:hidden`, both of
+  which remove the element from the accessibility tree — which would defeat the
+  entire point of having the label.
+*/
+.m3-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --------------------------------------------------------------- banner --
+   Inline status, in the same four tones the snackbars use — so a message reads
+   identically whether it lands beside its control or as a toast.
+   -------------------------------------------------------------------------- */
+
+.m3-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2, 12px);
+  padding: var(--el-banner-pad, 12px 14px);
+  border-radius: var(--el-banner-radius, var(--r-m, 12px));
+  font-family: var(--el-banner-font, inherit);
+  font-size: var(--el-banner-size, var(--t-body-s, 13px));
+  line-height: 1.45;
+}
+.m3-banner__text { min-width: 0; flex: 1 1 auto; display: grid; gap: 2px; }
+.m3-banner__title { font-weight: 600; }
+.m3-banner__body { overflow-wrap: anywhere; }
+.m3-banner__action { flex: 0 0 auto; }
+
+.m3-banner--info { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-banner--success { background: var(--m3-ok-container); color: var(--m3-on-ok-container); }
+.m3-banner--warn { background: var(--m3-warn-container); color: var(--m3-on-warn-container); }
+.m3-banner--error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+
+/* --------------------------------------------------------------- select --
+   The native control, themed. A hand-rolled listbox loses the platform picker
+   that touch users expect, and has to reimplement keyboard support to match.
+   -------------------------------------------------------------------------- */
+
+.m3-select {
+  min-height: var(--h-btn, 40px);
+  padding: 0 32px 0 var(--el-select-pad, 12px);
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--el-select-radius, var(--r-s, 8px));
+  background: var(--el-select-bg, var(--m3-surface));
+  color: var(--el-select-color, var(--m3-on-surface));
+  font: inherit;
+  font-family: var(--el-select-font, inherit);
+  font-size: var(--el-select-size, var(--t-body-m, 14px));
+  cursor: pointer;
+  /* Room for the UA arrow without it colliding with a long option label. */
+  appearance: auto;
+}
+.m3-select:disabled { opacity: 0.5; cursor: default; }
+.m3-select:focus-visible { outline: 2px solid var(--m3-primary); outline-offset: 2px; }
+
+/* --------------------------------------------------------------- dialog --
+   Material 3 dialog. Replaces the liquid-glass `.modal-overlay`/`.modal-card`
+   pair: no backdrop blur, no hardcoded rgba, every colour an `--m3-*` role.
+   -------------------------------------------------------------------------- */
+
+.m3-dialog {
+  /* The native element IS the scrim, so its own UA chrome has to go: a border
+     and a `::backdrop` on top of our own dim produced a white frame and a
+     double-darkened page. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 6vh 16px;
+  border: none;
+  background: color-mix(in oklab, var(--m3-scrim) 40%, transparent);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+}
+.m3-dialog::backdrop { background: transparent; }
+
+/* Non-modal: no scrim and no pointer capture, so the page behind stays usable.
+   The surface itself still takes pointer events. */
+.m3-dialog--nonmodal {
+  background: transparent;
+  pointer-events: none;
+}
+.m3-dialog--nonmodal .m3-dialog__surface {
+  pointer-events: auto;
+  /* Outlined rather than floating on a scrim: with nothing dimmed behind it, an
+     edge is what separates it from the page. */
+  border: 1px solid var(--m3-outline-variant);
+}
+.m3-dialog:not([open]) { display: none; }
+
+.m3-dialog__surface {
+  width: 100%;
+  /* M3 dialogs are the most raised surface in the app, at the largest radius. */
+  background: var(--el-dialog-bg, var(--m3-surface-container-high));
+  color: var(--el-dialog-color, var(--m3-on-surface));
+  border-radius: var(--el-dialog-radius, var(--r-xl, 28px));
+  font-family: var(--el-dialog-font, inherit);
+  font-size: var(--el-dialog-size, inherit);
+  box-shadow: var(--e3);
+  padding: var(--el-dialog-pad, var(--sp-4, 24px));
+  display: grid;
+  gap: var(--sp-3, 16px);
+  max-height: 84vh;
+  overflow-y: auto;
+}
+
+.m3-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2, 12px);
+}
+.m3-dialog__headtext { min-width: 0; flex: 1 1 auto; display: grid; gap: 8px; }
+.m3-dialog__headaction { flex: 0 0 auto; }
+.m3-dialog__title {
+  margin: 0;
+  font-size: var(--t-headline-s, 24px);
+  font-weight: 400;
+  color: var(--m3-on-surface);
+}
+.m3-dialog__desc {
+  margin: 0;
+  font-size: var(--t-body-m, 14px);
+  line-height: 1.45;
+  color: var(--m3-on-surface-variant);
+}
+.m3-dialog__body { min-width: 0; display: grid; gap: var(--sp-2, 12px); }
+
+.m3-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  /* End-aligned, per M3 — and wrapping rather than shrinking, so a long
+     localized label in bilingual mode never squeezes a button below its
+     touch target. */
+  justify-content: flex-end;
+}
+
+@media (max-width: 480px) {
+  .m3-dialog { padding: 0; align-items: flex-end; }
+  .m3-dialog__surface {
+    max-height: 92vh;
+    border-radius: var(--r-xl, 28px) var(--r-xl, 28px) 0 0;
+    padding-bottom: max(env(safe-area-inset-bottom), var(--sp-4, 24px));
+  }
+}
+
+/* Remote-access QR codes. */
+.m3-qr-row { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.m3-qr { margin: 0; display: grid; gap: 8px; justify-items: center; }
+.m3-qr figcaption {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  max-width: 180px;
+  font-size: var(--t-label-s);
+}
+.m3-qr figcaption code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+  text-align: center;
+  color: var(--m3-on-surface-variant);
+}
+
+/* ------------------------------------------------- mobile remote control --
+   Its own surface, not a page in the admin shell. Sized for a thumb: 48px
+   minimum targets, safe-area insets for a notch and a home indicator, and a
+   layout that survives the on-screen keyboard shrinking the viewport.
+   -------------------------------------------------------------------------- */
+
+.m3-mob {
+  /* Was `position: fixed; inset: 0` — a whole-viewport takeover, from when this
+     screen replaced the shell instead of living inside it. It is a page now, so
+     it fills the page area and lets the app bar, tab strip and bottom nav keep
+     their space. `min-height` rather than `height`: the transcript grows, and a
+     fixed height would make the compose box overlap it once it did. */
+  display: grid;
+  /* Bar, settings search, panel, bottom nav. Only the panel row is elastic — the
+     other three are sized by their content and stay put while the panel scrolls
+     under them. The search row is the fourth: `Mobile.tsx` renders a
+     `SettingsSearchRow` under the bar, and a three-row template silently gave it
+     the panel's elastic row instead.
+
+     The sizing above deliberately does *not* use `height: 100dvh`, which this
+     rule used to carry from when the remote was a viewport takeover. It is a
+     page inside the shell now, and a fixed height puts the compose box on top of
+     the transcript as soon as the transcript grows. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-height: min(100%, 32rem);
+  max-width: 100%;
+  min-width: 0;
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font);
+}
+
+.m3-mob__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: max(env(safe-area-inset-top), 8px) var(--sp-3) 8px;
+  background: var(--m3-surface-container);
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-mob__title { font-weight: 600; white-space: nowrap; }
+.m3-mob__model {
+  margin-inline-start: auto;
+  max-width: 58%;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s, 8px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-label-l);
+}
+
+/* The shared settings search row, scoped for a phone.
+
+   The row itself is the shell component every other settings surface uses, and
+   nothing here changes what it does — it only re-sizes it for a thumb, because
+   the shared field follows the density tokens and this screen has its own floor.
+   No `overflow` of any kind: the regex builder popover is absolutely positioned
+   inside this row, and a clipping ancestor would cut it off at the first line. */
+.m3-mob__search {
+  padding: 8px var(--sp-3) 0;
+  background: var(--m3-surface-container-low);
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+/* 48px and 16px are both floors, for different reasons: below 48 the control
+   stops clearing the touch-target minimum, and below 16 iOS Safari zooms the
+   whole page in when the field takes focus. At the tightest density `--h-btn`
+   is 36px and `--t-body-m` is 14px, so both would otherwise be crossed. */
+.m3-mob__search .m3-input,
+.m3-mob__search .m3-chip {
+  min-height: 48px;
+}
+.m3-mob__search .m3-input { font-size: max(16px, var(--t-body-m)); }
+/* Keeping the row on one line, and giving the status line its margin back, are
+   both the shared component's `compact` prop rather than overrides from here —
+   those values are inline styles on the component, and the only way to beat an
+   inline style from a stylesheet is `!important`. */
+
+.m3-mob__body { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+
+.m3-mob__chat {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  -webkit-overflow-scrolling: touch;
+}
+.m3-mob__hint { margin: 0; color: var(--m3-on-surface-variant); font-size: var(--t-body-s); }
+
+.m3-mob__msg {
+  max-width: 86%;
+  padding: 10px 14px;
+  border-radius: var(--r-l, 16px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--t-body-m);
+  line-height: 1.45;
+}
+.m3-mob__msg--user {
+  align-self: flex-end;
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  border-bottom-right-radius: var(--r-s, 8px);
+}
+.m3-mob__msg--assistant {
+  align-self: flex-start;
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  border-bottom-left-radius: var(--r-s, 8px);
+}
+.m3-mob__msg--error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+
+/* A caret while the reply streams, so a slow model does not read as a hang. */
+.m3-mob__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-inline-start: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: m3-mob-blink 1s steps(2, start) infinite;
+}
+@keyframes m3-mob-blink { to { visibility: hidden; } }
+/* The shell's reduced-motion block is scoped to `.m3-app`, and the mobile
+   remote deliberately renders outside it — so the caret kept blinking for a
+   user who asked for no motion. */
+@media (prefers-reduced-motion: reduce) {
+  .m3-mob__caret { animation: none; }
+}
+
+.m3-mob__compose {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--m3-outline-variant);
+  background: var(--m3-surface-container-low);
+}
+.m3-mob__compose textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  max-height: 40dvh;
+  padding: 11px 14px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-l, 16px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font: inherit;
+  /* 16px minimum stops iOS Safari zooming the page when the field is focused. */
+  font-size: max(16px, var(--t-body-m));
+  resize: none;
+}
+.m3-mob__send {
+  flex: 0 0 auto;
+  min-height: 48px;
+  min-width: 64px;
+  padding: 0 18px;
+  border: none;
+  border-radius: var(--r-pill, 999px);
+  background: var(--m3-primary);
+  color: var(--m3-on-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.m3-mob__send:disabled { opacity: 0.5; cursor: default; }
+.m3-mob__send--stop { background: var(--m3-error); color: var(--m3-on-error); }
+
+.m3-mob__list { min-height: 0; overflow-y: auto; padding: var(--sp-3); display: grid; gap: var(--sp-2); align-content: start; }
+.m3-mob__session {
+  padding: var(--el-remotePanel-pad, 12px 14px);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--el-remotePanel-radius, var(--r-m, 12px));
+  background: var(--el-remotePanel-bg, var(--m3-surface-container-low));
+  color: var(--el-remotePanel-color, inherit);
+  font-family: var(--el-remotePanel-font, inherit);
+  font-size: var(--el-remotePanel-size, inherit);
+}
+.m3-mob__sessionhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.m3-mob__sessionhead strong { overflow-wrap: anywhere; }
+.m3-mob__sessionmeta {
+  margin-top: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-l);
+}
+.m3-mob__ok { color: var(--m3-ok); font-variant-numeric: tabular-nums; }
+.m3-mob__bad { color: var(--m3-error); font-variant-numeric: tabular-nums; }
+.m3-mob__url { margin-top: 4px; font-family: var(--mono); font-size: var(--t-label-l); overflow-wrap: anywhere; }
+.m3-mob__key {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s, 8px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: max(16px, var(--t-body-m));
+}
+
+.m3-mob__nav {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--m3-surface-container);
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.m3-mob__navbtn {
+  min-height: 56px;
+  border: none;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  cursor: pointer;
+}
+.m3-mob__navbtn.is-active { color: var(--m3-primary); box-shadow: inset 0 2px 0 var(--m3-primary); }
+
+/* Embedded terminal. */
+.m3-term-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+.m3-term-warn {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm, 8px);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-s);
+}
+.m3-term-out {
+  margin: 0;
+  padding: var(--sp-2);
+  /* Tall enough to be a terminal, bounded so it cannot push the page. */
+  height: min(52vh, 460px);
+  overflow: auto;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-md, 12px);
+  background: var(--m3-surface-container-lowest, var(--m3-surface-container-low));
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font-mono, ui-monospace, monospace);
+  font-size: var(--t-body-s, 13px);
+  line-height: 1.45;
+  /* Wrap rather than scroll sideways: a long path should not hide the prompt. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.m3-term-out:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+}
+.m3-term-err {
+  color: var(--m3-error);
+}
+.m3-term-in {
+  /* The line you sent, distinguishable from what the process replied. */
+  color: var(--m3-primary);
+  font-weight: 500;
+}
+.m3-term-input {
+  display: flex;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+}
+.m3-term-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-sm, 8px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  font-family: var(--m3-font-mono, ui-monospace, monospace);
+  font-size: var(--t-body-s, 13px);
+}
+.m3-term-input input:focus-visible {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 1px;
+}
+
+.m3-launch-log {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-launch-log summary {
+  cursor: pointer;
+}
+.m3-launch-log pre {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-1);
+  max-height: 180px;
+  overflow: auto;
+  border-radius: var(--r-sm, 8px);
+  background: var(--m3-surface-container-high);
+  font-family: var(--m3-font-mono, ui-monospace, monospace);
+  /* Installer output is arbitrary width; it scrolls in its own box rather than
+     pushing the card sideways. */
+  white-space: pre;
+}
+.m3-launch-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.m3-launch-label {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.m3-launch-kind {
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+/*
+  Account-change history rows, each with its own restore. The subject wraps rather
+  than forcing the page to scroll sideways — a commit subject like
+  "before account removal: github-copilot/p3f9a12" is longer than the column at
+  narrow widths, and a horizontally scrolling page is a defect, not a layout.
+*/
+.m3-history-list { list-style: none; margin: 0; padding: 0; }
+.m3-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-history-row:last-child { border-bottom: none; }
+.m3-history-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.m3-history-subject {
+  font-family: var(--mono);
+  font-size: var(--t-body-s);
+  overflow-wrap: anywhere;
+}
+.m3-history-at {
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+
+/*
+  A paused account in the switcher is refused by the server, so the row must look
+  refused too. It was styled identically to a selectable row, which made "nothing
+  happened" the only feedback for a click that was never going to work.
+*/
+.m3-menu-item--unavailable {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* App-bar cost meter: tonal chip, always visible, machine number in mono. */
+.m3-cost-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  margin-right: 2px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font: inherit;
+  cursor: pointer;
+}
+.m3-cost-chip:hover { box-shadow: var(--e1); }
+.m3-cost-amount {
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.m3-cost-range { font-size: var(--t-label-s); opacity: 0.8; }
+/* Compact width: the range word goes; the number stays. */
+.m3-app--compact .m3-cost-range { display: none; }
+
+/* Avatar-as-button (account switcher): same look, real affordances. */
+button.m3-avatar--btn { border: none; cursor: pointer; transition: box-shadow 150ms; }
+button.m3-avatar--btn:hover:not(:disabled) { box-shadow: var(--e1); }
+button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
+
+/* ------------------------------------------- anchored regex builder popover --
+   The builder that opens beside a search bar (shell/RegexBuilderButton.tsx).
+
+   `position: absolute` inside the trigger's own wrapper, deliberately: the panel
+   then moves with the button for free, which a fixed-position portal only
+   achieves by listening for every scroll that could move the anchor. The
+   component supplies `left` and `max-height` inline because both depend on
+   measured geometry; everything below is the part that never varies.
+
+   z-index sits above the menus (70) and below the modal dialog layer, so a
+   builder opened from a search bar inside a dialog still renders over it. */
+
+.m3-rxpop-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+
+.m3-rxpop {
+  /* `fixed`, not `absolute`. This panel opens from search bars that live inside
+     `.m3-page` (a scroll container) and inside the tab strip's own menus (also
+     scroll containers), and an absolutely positioned descendant is clipped at
+     its scrolling ancestor's edge rather than the viewport's — which at 320px,
+     where the horizontal clamp resolves to a large negative offset, cut the
+     builder off on the left every time it was opened. `fixed` escapes every
+     ancestor's clip; the component supplies viewport coordinates and already
+     repositions on scroll and resize, so nothing detaches. */
+  position: fixed;
+  z-index: 75;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 24px));
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+  animation: m3-rxpop-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+/* The offsets are inline now, from `fixedPanelStyle`: a class-driven
+   `top: calc(100% + 8px)` is measured from the 48px wrapper, which cannot follow
+   a viewport clamp — a trigger partly off-screen dragged the panel off with it.
+   The modifier classes stay for the entry animation's direction. */
+
+@keyframes m3-rxpop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+/* The global reduced-motion rule only reaches `.m3-app` descendants, and this
+   panel is rendered by call sites that may sit outside it. */
+@media (prefers-reduced-motion: reduce) {
+  .m3-rxpop { animation-duration: 1ms; }
+}
+
+.m3-rxpop-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 12px 8px 4px 20px;
+}
+.m3-rxpop-title { flex: 1 1 auto; margin: 0; font-size: var(--t-title-m); font-weight: 500; }
+/* Trimmed from 48px so the header is not mostly button, but not below 44 — that
+   is the hit-target floor, and a close control is exactly what a shaky hand misses. */
+.m3-rxpop-close { width: 48px; height: 48px; }
+
+/* The body scrolls, not the panel: the heading and the apply button stay put so
+   the control that commits the pattern is never scrolled out of reach. */
+.m3-rxpop-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 20px 12px;
+}
+
+.m3-rxpop-engine {
+  margin: 0 0 var(--sp-3);
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-slash {
+  font-family: var(--mono);
+  font-size: var(--t-title-m);
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-error {
+  min-height: 22px;
+  margin: 0 0 var(--sp-2);
+  color: var(--m3-error);
+  font-size: var(--t-label-m);
+}
+
+.m3-rxpop-section { margin-bottom: var(--sp-3); }
+.m3-rxpop-heading {
+  margin: 0 0 6px;
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  color: var(--m3-on-surface);
+}
+.m3-rxpop-subheading {
+  margin: 0 0 4px;
+  font-size: var(--t-label-s);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--m3-on-surface-variant);
+}
+.m3-rxpop-tokgroup { margin-bottom: 10px; }
+.m3-rxpop-tokdesc { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-rxpop-list { margin: 0; padding: 0; list-style: none; }
+.m3-rxpop-row {
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-rxpop-row:last-child { border-bottom: none; }
+.m3-rxpop-at {
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+.m3-rxpop-hit {
+  padding: 1px 6px;
+  border-radius: var(--r-s);
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  font-family: var(--mono);
+  font-size: var(--t-label-m);
+}
+.m3-rxpop-name { font-family: var(--mono); font-size: var(--t-label-m); font-weight: 600; }
+.m3-rxpop-caps {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-rxpop-empty { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.m3-rxpop-safety { margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-rxpop-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.m3-rxpop-hint { flex: 1 1 auto; margin: 0; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+/* The convenience wrapper's row: the input takes the space, the trigger does not. */
+.m3-rxpop-searchrow { gap: var(--sp-2); align-items: center; flex-wrap: nowrap; }
+
+/* =========================================================================
+   Phone layout
+   =========================================================================
+
+   The shell is one shell. What follows adapts its *layout* to a narrow,
+   touch-driven viewport — it never forks a component, and every rule here is
+   either a containment fix (so wide content scrolls inside its own box instead
+   of dragging the page sideways) or a target-size fix.
+
+   Two invariants this section exists to hold at 320px:
+
+     1. The BODY never scrolls horizontally. Wide things — tables, code, the
+        tab strip, the heatmap — scroll inside their own container. A page that
+        pans sideways makes every fixed control drift away from the thumb that
+        is reaching for it.
+     2. Nothing anchored is ever WIDER than the viewport. `clampToViewport`
+        can only move a panel, not shrink one, so a hard-coded 360px panel on a
+        320px screen stays 40px off the edge however well it is clamped. The
+        widths below are the fix; the clamping was never the problem.
+   ========================================================================= */
+
+/* The status line is the app bar's only unshrinkable child: `nowrap` with no
+   `min-width: 0` gives it an automatic minimum size of the whole
+   "v0.9.3 · build 412 · 蝦餃 · :8787" string, which alone is most of a phone's
+   width. It keeps `nowrap` — a build id broken across two lines is unreadable —
+   and gains the ability to be truncated instead of pushing the bar wider. */
+.m3-appbar-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.m3-appbar { min-width: 0; }
+.m3-appbar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Every anchored menu. `min-width` alone let a 300px new-tab menu and a 320px
+   notification centre keep their full width at 320px and be clipped by
+   `.m3-main-col { overflow: hidden }`. Matches shared/m3/components.css. */
+.m3-menu { max-width: min(92vw, 380px); }
+
+/* The strip scrolls rather than clipping. `splitTabs` already moves what does
+   not fit into the overflow menu, but pinned tabs are deliberately exempt from
+   that — staying visible is what a pin means — so six pinned tabs on a phone
+   overflow the list box with nothing to move out. Scrolling is what makes them
+   reachable; the clip was silently swallowing them. */
+@media (pointer: coarse), (max-width: 600px) {
+  .m3-tablist {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+  .m3-tablist::-webkit-scrollbar { height: 0; }
+  .m3-tab { scroll-snap-align: end; }
+}
+
+/*
+ * A real hit area for a checkbox.
+ *
+ * Padding does NOT apply to `input[type=checkbox]` — it is a replaced element —
+ * so the obvious trick (18px box, 15px padding, negative margin) produces a
+ * control that still measures 18x18 to a finger while reading, in the
+ * stylesheet, exactly like a 48dp target. Two of those shipped before a real
+ * engine was asked. The wrapper is the target; the input keeps its 18px look.
+ *
+ * No negative margin: a `margin-inline-start: -15px` version kept the tick
+ * aligned with its old column and made two adjacent wrappers overlap by 5px,
+ * measured. One per row means they are never actually adjacent today, but a rule
+ * whose safety depends on nobody ever putting two side by side is a trap.
+ */
+.m3-check-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+}
+
+/*
+ * Touch targets: Material's 48dp minimum, applied where the guideline applies.
+ *
+ * The floor is 48, not 44. This block used to say "the 44px floor is a shipping
+ * requirement" while its rules already wrote 48px — 44 is Apple's HIG number and
+ * it had spread through this codebase in comments asserting that 44 "clears the
+ * minimum hit target". It does not clear Material's.
+ *
+ * Coarse pointers only, deliberately. `--h-btn` is a density ramp the user
+ * controls, from 56px at level 1 to a purposely compact 36px at level 5, and at
+ * the default (3) the standard control is 46px. That is not a defect for a mouse
+ * — 48dp is a *touch* minimum — so forcing it everywhere would move every screen
+ * for every user to fix a problem a pointer never had.
+ *
+ * These raise `min-height` rather than adding padding with a negative margin.
+ * Both enlarge a target; only the first is safe here, because these controls sit
+ * in flex rows where growing the box pushes neighbours apart, while the padding
+ * trick makes adjacent targets overlap and steal each other's taps — the failure
+ * HANDOFF.md already records against blanket 48dp targets on a dense row. A
+ * negative-margin version of `.m3-check-hit` was measured overlapping its
+ * neighbour by 5px before it was removed.
+ *
+ * Every selector below was measured under 48 on a 320px touch viewport, not
+ * guessed at.
+ */
+@media (pointer: coarse) {
+  .m3-tab-close { width: 48px; min-height: 48px; }
+  .m3-tabgroup-head { min-height: 48px; height: auto; }
+  .m3-menu-item { min-height: 48px; }
+  .m3-mob__navbtn { min-height: 48px; }
+  .m3-mob__model { min-height: 48px; }
+  .m3-mob__send { min-height: 48px; }
+  .m3-nav-item { min-height: 48px; }
+
+  .m3-btn,
+  .m3-input,
+  .m3-chip,
+  .m3-switch,
+  .m3-segment,
+  .m3-tab-btn,
+  .m3-tabstrip-btn,
+  .m3-cost-chip,
+  .m3-avatar--btn,
+  .models-icon-btn,
+  .models-provider-toggle,
+  .combos-workspace-tab,
+  .cwi-target-grip,
+  .ocx-tooltip {
+    min-height: 48px;
+  }
+
+  /* Width too, or a 48-tall 40-wide icon button is still a miss in one axis.
+     Chips and segments join them because a short label — ".*", "v1" — is what
+     makes them narrow: measured at 44.1px and 46.3px. */
+  .m3-tabstrip-btn,
+  .m3-avatar--btn,
+  .m3-chip,
+  .m3-segment,
+  .models-icon-btn,
+  .cwi-target-grip,
+  .ocx-tooltip {
+    min-width: 48px;
+  }
+}
+
+/* Safe-area insets, now that `viewport-fit=cover` makes them resolve. The
+   bottom bar and the snackbar host both sat under the home indicator. */
+.m3-bottom-nav { padding-bottom: max(env(safe-area-inset-bottom), 16px); }
+.m3-snack-host {
+  bottom: max(env(safe-area-inset-bottom), 16px);
+  left: max(env(safe-area-inset-left), 16px);
+  right: max(env(safe-area-inset-right), 16px);
+  max-width: calc(100vw - 32px);
+}
+
+/* Auto-fit grids whose track floor is wider than a phone's content box. Each
+   one is inside a card, so the excess was either a page-wide sideways scroll or
+   — worse, because it is silent — clipped by an `overflow: hidden` ancestor.
+   `min(100%, Npx)` keeps the desktop track and lets the track collapse below it
+   rather than forcing the container open; it is the pattern already used at
+   styles-dashboard-workspace.css:362. */
+.m3-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.m3-launch-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+
+/* The page area is the horizontal scroll boundary: anything wider than it
+   scrolls inside itself. Without this a single wide table hands its overflow up
+   to the document and the whole shell pans. */
+.m3-page { max-width: 100%; }
+.m3-page-inner { min-width: 0; max-width: 100%; }
+
+/* Code and pre are the classic silent widener: a long unbroken token has an
+   automatic minimum size equal to its own length. */
+@media (max-width: 600px) {
+  .m3-page pre { overflow-x: auto; max-width: 100%; }
+  .m3-page table { max-width: 100%; }
+}
+
+/*
+ * A real hit area for a checkbox.
+ *
+ * Padding does NOT apply to `input[type=checkbox]` — it is a replaced element —
+ * so the obvious trick (18px box, 15px padding, negative margin) produces a
+ * control that still measures 18x18 to a finger while looking, in the
+ * stylesheet, exactly like a 48dp target. Two of those shipped before a real
+ * engine was asked. The wrapper is the target; the input keeps its 18px look.
+ *
+ * No negative margin: these sit one per row in rows that are already at least
+ * 48px tall, so the wrapper costs width and overlaps nothing. That is the
+ * difference between this and the blanket 48dp targets HANDOFF.md warns about,
+ * where neighbours steal each other's taps.
+ */
+.m3-check-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+}
+
+/*
+ * No negative margin, deliberately.
+ *
+ * A `margin-inline-start: -15px` version of this kept the tick aligned with the
+ * column it used to sit in, and made two adjacent wrappers overlap by 5px —
+ * measured, not theorised. One per row means they are never actually adjacent
+ * today, but a rule whose safety depends on nobody ever putting two of them side
+ * by side is a trap for whoever does. The row indents by the wrapper instead.
+ */

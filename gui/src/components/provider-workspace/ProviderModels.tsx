@@ -5,6 +5,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
+import { Chip } from "../../shell/m3-ui";
+import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../../shell/settings-search";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
 import { filterModels } from "../../provider-workspace/report";
 
@@ -35,6 +38,16 @@ export default function ProviderModels({
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
+  /**
+   * The regex opt-in and the flags the builder hands back.
+   *
+   * This search bar shipped with neither — it was one of three in the app that
+   * offered no way to reach the builder at all, so a model catalogue of several
+   * hundred ids could only be narrowed by substring. Plain text stays the
+   * default; `.*` is the explicit opt-in, exactly as on every other search bar.
+   */
+  const [useRegex, setUseRegex] = useState(false);
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [customModelId, setCustomModelId] = useState("");
   const [customSaving, setCustomSaving] = useState(false);
   const [customError, setCustomError] = useState("");
@@ -55,9 +68,15 @@ export default function ProviderModels({
     || customModelIds.includes(trimmedCustomModelId)
     || configuredModels.includes(trimmedCustomModelId)
     || item.defaultModel === trimmedCustomModelId;
+  const matcher = useMemo(() => settingsMatcher(query, useRegex, flags), [query, useRegex, flags]);
+  /** The catalogue as it stands before any query, for the builder to test against. */
+  const allModelIds = useMemo(
+    () => filterModels(availableModels, item.defaultModel, "", configuredModels, customModelIds, hasLiveModels),
+    [availableModels, item.defaultModel, configuredModels, customModelIds, hasLiveModels],
+  );
   const models = useMemo(
-    () => filterModels(availableModels, item.defaultModel, query, configuredModels, customModelIds, hasLiveModels),
-    [availableModels, item.defaultModel, query, configuredModels, customModelIds, hasLiveModels],
+    () => filterModels(availableModels, item.defaultModel, query, configuredModels, customModelIds, hasLiveModels, matcher),
+    [availableModels, item.defaultModel, query, configuredModels, customModelIds, hasLiveModels, matcher],
   );
 
   useEffect(() => {
@@ -167,7 +186,7 @@ export default function ProviderModels({
         <div className="pws-inline-error" role="status">
           <span>{t("pws.modelsNeedsReauth")}</span>
           {onOpenAccounts && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenAccounts}>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={onOpenAccounts}>
               {t("pws.tab.accounts")}
             </button>
           )}
@@ -182,7 +201,7 @@ export default function ProviderModels({
       <div className="row pws-custom-model-row">
         <input
           id={`pws-custom-model-${item.name}`}
-          className="input"
+          className="m3-input"
           value={customModelId}
           onChange={event => setCustomModelId(event.target.value)}
           onKeyDown={event => { if (event.key === "Enter") void addCustomModel(); }}
@@ -192,7 +211,7 @@ export default function ProviderModels({
         />
         <button
           type="button"
-          className="btn btn-primary btn-sm"
+          className="m3-btn m3-btn--filled pws-btn-sm"
           onClick={() => { void addCustomModel(); }}
           disabled={customSaving || customModelInvalid}
         >
@@ -204,21 +223,49 @@ export default function ProviderModels({
         <p className="pws-inline-error" role="alert">
           {customError}
           {customModelsLoadFailed && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={retryCustomModels} style={{ marginLeft: 8 }}>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={retryCustomModels} style={{ marginLeft: 8 }}>
               {t("common.retry")}
             </button>
           )}
         </p>
       )}
       {!emptyBase && (
-        <input
-          type="search"
-          className="input pws-model-search"
-          placeholder={t("pws.modelSearchPlaceholder")}
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          aria-label={t("pws.modelSearchPlaceholder")}
-        />
+        <div className="m3-row pws-model-search-row" role="search">
+          <input
+            type="search"
+            className="m3-input pws-model-search"
+            placeholder={t("pws.modelSearchPlaceholder")}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            aria-label={t("pws.modelSearchPlaceholder")}
+            aria-invalid={!!matcher.error}
+            aria-describedby={matcher.error ? "pws-model-search-error" : undefined}
+          />
+          <Chip
+            selected={useRegex}
+            onClick={() => setUseRegex(!useRegex)}
+            title={t("regex.regexMode")}
+            aria-label={t("regex.regexMode")}
+          >
+            <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+          </Chip>
+          <RegexBuilderButton
+            value={query}
+            flags={flags}
+            regex={useRegex}
+            onRegexChange={setUseRegex}
+            onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
+            // The whole catalogue, not `models`: a sample taken from the already
+            // filtered list would hide every id the half-written pattern is being
+            // built to reach.
+            sample={allModelIds.join("\n")}
+          />
+        </div>
+      )}
+      {matcher.error && (
+        <p id="pws-model-search-error" className="pws-inline-error" role="alert">
+          {t("regex.invalid")}: {matcher.error}
+        </p>
       )}
       {modelsLoading && emptyBase ? (
         <p className="muted" role="status">{t("pws.modelsLoading")}</p>
@@ -226,7 +273,7 @@ export default function ProviderModels({
         <div role="alert" className="pws-inline-error">
           <span>{t("pws.modelsLoadFailed")}</span>
           {onRetryModels && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onRetryModels}>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={onRetryModels}>
               {t("pws.retry")}
             </button>
           )}

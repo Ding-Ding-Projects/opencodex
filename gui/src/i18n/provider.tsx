@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { DICTS, I18nContext, LOCALES, detectInitial, interpolate, type TFn, type TKey, type Vars } from "./shared";
-import { en } from "./en";
+import {
+  I18nContext, LOCALES, detectInitial, readFunny, writeFunny,
+  type FunnyLevels, type TFn, type TKey, type Vars,
+} from "./shared";
+import { translate } from "./resolve";
 import { useI18n } from "./shared";
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState(detectInitial);
+  // Lazy initializer, not an effect: a synchronous storage read that produces
+  // the initial value, so an effect would only add a second render.
+  const [funny, setFunnyState] = useState<FunnyLevels>(readFunny);
 
   useEffect(() => {
     const meta = LOCALES.find(l => l.code === locale) ?? LOCALES[0];
@@ -12,11 +18,16 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     try { localStorage.setItem("ocx-lang", locale); } catch { /* ignore */ }
   }, [locale]);
 
-  const t: TFn = useCallback(
-    (key, vars) => interpolate(DICTS[locale][key] ?? en[key] ?? key, vars),
-    [locale],
-  );
-  const value = useMemo(() => ({ locale, setLocale, t }), [locale, t]);
+  const setFunny = useCallback((patch: Partial<FunnyLevels>) => {
+    setFunnyState(prev => {
+      const next = { ...prev, ...patch };
+      writeFunny(next);
+      return next;
+    });
+  }, []);
+
+  const t: TFn = useCallback((key, vars) => translate(locale, funny, key, vars), [locale, funny]);
+  const value = useMemo(() => ({ locale, setLocale, t, funny, setFunny }), [locale, t, funny, setFunny]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

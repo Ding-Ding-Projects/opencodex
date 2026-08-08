@@ -153,9 +153,9 @@ test("rapid Debug flag/reset keeps controls busy and applies only the latest mut
       </LanguageProvider>,
     );
   });
-  await waitFor(() => container.querySelector('button.switch[aria-label="Usage extraction"]') != null);
+  await waitFor(() => container.querySelector('button[role="switch"][aria-label="Usage extraction"]') != null);
 
-  const usageSwitch = () => container.querySelector<HTMLButtonElement>('button.switch[aria-label="Usage extraction"]');
+  const usageSwitch = () => container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="Usage extraction"]');
   const resetBtn = () => Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(btn =>
     (btn.textContent ?? "").includes("Clear runtime overrides"),
   );
@@ -184,7 +184,7 @@ test("rapid Debug flag/reset keeps controls busy and applies only the latest mut
     await Promise.resolve();
   });
   await waitFor(() => usageSwitch()?.disabled === false);
-  expect(usageSwitch()?.getAttribute("aria-pressed")).toBe("false");
+  expect(usageSwitch()?.getAttribute("aria-checked")).toBe("false");
   expect(resetBtn()?.disabled).toBe(false);
 
   await act(async () => {
@@ -275,9 +275,9 @@ test("Debug PUTs are serialized so reverse-order response settlement cannot leav
       </LanguageProvider>,
     );
   });
-  await waitFor(() => container.querySelector('button.switch[aria-label="Usage extraction"]') != null);
+  await waitFor(() => container.querySelector('button[role="switch"][aria-label="Usage extraction"]') != null);
 
-  const usageSwitch = () => container.querySelector<HTMLButtonElement>('button.switch[aria-label="Usage extraction"]');
+  const usageSwitch = () => container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="Usage extraction"]');
   const resetBtn = () => Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(btn =>
     (btn.textContent ?? "").includes("Clear runtime overrides"),
   );
@@ -309,7 +309,7 @@ test("Debug PUTs are serialized so reverse-order response settlement cannot leav
   expect(maxInFlight).toBe(1);
   expect(serverSettings.usage).toBe(false);
   expect(serverSettings.runtimeOverride).toEqual({});
-  expect(usageSwitch()?.getAttribute("aria-pressed")).toBe("false");
+  expect(usageSwitch()?.getAttribute("aria-checked")).toBe("false");
   expect(serverSnapshots.at(-1)?.usage).toBe(false);
 
   await act(async () => {

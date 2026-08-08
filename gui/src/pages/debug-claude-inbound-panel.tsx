@@ -1,4 +1,5 @@
 import { useI18n } from "../i18n/shared";
+import { Card } from "../shell/m3-ui";
 import type { ClaudeInboundEntry } from "./debug-shared";
 import { formatClaudeInboundTime } from "./debug-shared";
 
@@ -6,24 +7,24 @@ export function DebugClaudeInboundPanel({ entries }: { entries: ClaudeInboundEnt
   const { t } = useI18n();
 
   return (
-    <div className="card" style={{ marginBottom: 16, padding: "12px 14px" }}>
-      <div className="font-semibold" style={{ marginBottom: 4 }}>{t("debug.claudeInbound.title")}</div>
-      <div className="muted text-control" style={{ marginBottom: 10 }}>{t("debug.claudeInbound.sub")}</div>
+    <Card title={t("debug.claudeInbound.title")} subtitle={t("debug.claudeInbound.sub")}>
       {entries.length === 0 ? (
-        <div className="muted text-control">{t("debug.claudeInbound.empty")}</div>
+        <div style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+          {t("debug.claudeInbound.empty")}
+        </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table className="table text-label">
+          <table className="m3-table">
             <thead>
               <tr>
-                <th>{t("debug.claudeInbound.time")}</th>
-                <th>{t("debug.claudeInbound.endpoint")}</th>
-                <th>{t("debug.claudeInbound.model")}</th>
-                <th>thinking</th>
-                <th>effort</th>
-                <th>beta</th>
-                <th>metadata</th>
-                <th>system</th>
+                <th scope="col">{t("debug.claudeInbound.time")}</th>
+                <th scope="col">{t("debug.claudeInbound.endpoint")}</th>
+                <th scope="col">{t("debug.claudeInbound.model")}</th>
+                <th scope="col">{t("debug.claudeInbound.thinking")}</th>
+                <th scope="col">{t("debug.claudeInbound.effort")}</th>
+                <th scope="col">{t("debug.claudeInbound.beta")}</th>
+                <th scope="col">{t("debug.claudeInbound.metadata")}</th>
+                <th scope="col">{t("debug.claudeInbound.system")}</th>
               </tr>
             </thead>
             <tbody>
@@ -53,6 +54,6 @@ export function DebugClaudeInboundPanel({ entries }: { entries: ClaudeInboundEnt
           </table>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

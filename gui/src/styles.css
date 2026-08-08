@@ -1,18 +1,29 @@
+/* The bundled interface faces. First, so a face is available before anything
+   paints — and so the picker's choices are real rather than silent fallbacks. */
+@import "./styles/fonts.css";
+
 /* ============================================================================
    opencodex dashboard — design system
-   Infra console in the OpenAI product grammar: white/near-black monochrome
-   base, black (light) / white (dark) primary actions, pill buttons, hairline
-   borders, flat surfaces, monospace for model ids / urls. Light + dark via
-   the native light-dark() function — every token is authored once;
-   `data-theme` (or the OS) picks the side.
+
+   Material 3 Expressive. The palette is derived at runtime from a single seed
+   colour by `theme/m3.ts`, which writes `--m3-*` role tokens plus density,
+   type, shape and elevation tokens onto <html>. The legacy token names in this
+   file are now aliases onto those roles, so screens that have not yet been
+   rewritten against `design/OpenCodex M3.dc.html` still pick up the new palette,
+   density and typography.
+
+   `light-dark()` survives only as the pre-paint fallback inside those aliases.
+   The steady state is whatever the seed and theme resolve to.
    ============================================================================ */
 
+@import "./styles/m3-shell.css";
 @import "./styles/provider-catalog.css";
 @import "./styles/provider-quota.css";
 @import "./styles/provider-workspace-shell.css";
 @import "./styles/provider-workspace-settings.css";
 @import "./styles/login-url-block.css";
 @import "./styles/provider-overview-dashboard.css";
+@import "./styles/appearance-editors.css";
 @import "./styles-combos-workspace.css";
 @import "./styles-models-workspace.css";
 @import "./styles-dashboard-workspace.css";
@@ -21,69 +32,93 @@
   /* default: follow the OS; [data-theme] below pins color-scheme so light-dark() obeys it */
   color-scheme: light dark;
 
-  --bg:           light-dark(#ffffff, #212121);
-  --rail:         light-dark(#f9f9f9, #171717);
-  --surface:      light-dark(#ffffff, #262626);
-  --raised:       light-dark(#f4f4f4, #303030);
-  --raised-hover: light-dark(#ececec, #3a3a3a);
-  --border:       light-dark(#e6e6e6, #3d3d3d);
-  --border-soft:  light-dark(#f0f0f0, #333333);
-  --hover:        light-dark(rgba(13, 13, 13, 0.03), rgba(255, 255, 255, 0.03));
+  /* ------------------------------------------------------------------------
+     Every colour token below is now an alias onto an `--m3-*` role token that
+     `theme/m3.ts` writes onto <html> from the seed colour. The class names are
+     unchanged on purpose: the product screens keep rendering while each one is
+     rewritten against the prototype, and they retint with the seed picker
+     immediately instead of staying monochrome until their rewrite lands.
 
-  --text:  light-dark(#0d0d0d, #ececec);
-  --muted: light-dark(#6e6e6e, #a6a6a6);
-  --faint: light-dark(#707070, #9a9a9a);
+     The `light-dark()` fallbacks are what a page sees for the one frame before
+     `applyTokens()` runs; they are never the steady state.
+     ------------------------------------------------------------------------ */
+  --bg:           var(--m3-surface, light-dark(#ffffff, #212121));
+  --rail:         var(--m3-surface-container, light-dark(#f9f9f9, #171717));
+  --surface:      var(--m3-surface-container-low, light-dark(#ffffff, #262626));
+  --raised:       var(--m3-surface-container, light-dark(#f4f4f4, #303030));
+  --raised-hover: var(--m3-surface-container-high, light-dark(#ececec, #3a3a3a));
+  --border:       var(--m3-outline-variant, light-dark(#e6e6e6, #3d3d3d));
+  --border-soft:  var(--m3-outline-variant, light-dark(#f0f0f0, #333333));
+  --hover:        color-mix(in oklab, var(--m3-on-surface, #0d0d0d) 6%, transparent);
 
-  /* monochrome primary: black actions on light, white actions on dark */
-  --accent:       light-dark(#0d0d0d, #ececec);
-  --accent-hover: light-dark(#3d3d3d, #ffffff);
-  --accent-ink:   light-dark(#ffffff, #0d0d0d);
-  --accent-soft:  light-dark(rgba(13, 13, 13, 0.06), rgba(255, 255, 255, 0.09));
-  --accent-ring:  light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.38));
+  --text:  var(--m3-on-surface, light-dark(#0d0d0d, #ececec));
+  --muted: var(--m3-on-surface-variant, light-dark(#6e6e6e, #a6a6a6));
+  --faint: var(--m3-outline, light-dark(#707070, #9a9a9a));
 
-  --green:      light-dark(#0a7d5c, #4ecb9d);
-  --green-soft: light-dark(rgba(16, 163, 127, 0.10), rgba(78, 203, 157, 0.13));
-  --red:        light-dark(#b91c1c, #f87171);
-  --red-soft:   light-dark(rgba(185, 28, 28, 0.09), rgba(248, 113, 113, 0.13));
-  --amber:      light-dark(#9a4a08, #fbbf24);
-  --amber-soft: light-dark(rgba(180, 83, 9, 0.10), rgba(251, 191, 36, 0.13));
+  /* primary actions now carry the seed colour rather than the old monochrome pair */
+  --accent:       var(--m3-primary, light-dark(#0d0d0d, #ececec));
+  --accent-hover: var(--m3-primary, light-dark(#3d3d3d, #ffffff));
+  --accent-ink:   var(--m3-on-primary, light-dark(#ffffff, #0d0d0d));
+  --accent-soft:  var(--m3-primary-container, light-dark(rgba(13, 13, 13, 0.06), rgba(255, 255, 255, 0.09)));
+  --accent-ring:  var(--m3-primary, light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.38)));
+
+  /* status colours stay functional data colours — exempt from the M3 chrome rule */
+  --green:      var(--m3-ok, light-dark(#0a7d5c, #4ecb9d));
+  --green-soft: var(--m3-ok-container, light-dark(rgba(16, 163, 127, 0.10), rgba(78, 203, 157, 0.13)));
+  --red:        var(--m3-error, light-dark(#b91c1c, #f87171));
+  --red-soft:   var(--m3-error-container, light-dark(rgba(185, 28, 28, 0.09), rgba(248, 113, 113, 0.13)));
+  --amber:      var(--m3-warn, light-dark(#9a4a08, #fbbf24));
+  --amber-soft: var(--m3-warn-container, light-dark(rgba(180, 83, 9, 0.10), rgba(251, 191, 36, 0.13)));
 
   /* geometry: 4px base grid, three surface radii, and one pill radius */
+
+  /* Aliased onto the density ramp the same way the radii below are aliased onto
+     the shape tokens. These were fixed pixels, so the density control moved
+     `--sp-*` while every rule in this sheet stayed put — the slider silently did
+     nothing on any screen that had not been migrated. The mapping is exact at
+     density 1, so nothing moves at the loosest setting; the tighter levels now
+     actually tighten. The three hairline steps stay fixed: a 2px rule is a
+     hairline at every density, not a spacing decision. */
   --space-0-5: 2px;
   --space-1: 4px;
   --space-1-5: 6px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
-  --space-12: 48px;
-  --space-16: 64px;
+  --space-2: var(--sp-1, 8px);
+  --space-3: var(--sp-2, 12px);
+  --space-4: var(--sp-3, 16px);
+  --space-5: calc(var(--sp-3, 16px) * 1.25);
+  --space-6: var(--sp-4, 24px);
+  --space-8: var(--sp-5, 32px);
+  --space-10: calc(var(--sp-5, 32px) * 1.25);
+  --space-12: calc(var(--sp-5, 32px) * 1.5);
+  --space-16: calc(var(--sp-5, 32px) * 2);
 
   --radius-2xs: 4px;
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: var(--r-m, 12px);
+  --radius-sm: var(--r-s, 8px);
   --radius-xs: 6px;
-  --radius-lg: 16px;
+  --radius-lg: var(--r-l, 16px);
   --radius-round: 50%;
-  --radius-pill: 999px;
+  --radius-pill: var(--r-pill, 999px);
 
   /* typography: product UI first, Korean-safe fallbacks, mono only for machine data */
-  --font-ui: "OpenAI Sans", "Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  /* The Appearance screen's family picker writes --m3-font; this is the fallback chain. */
+  --font-ui: var(--m3-font, "Roboto Flex", "Pretendard Variable", Pretendard, "Noto Sans HK", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif);
   --font-code: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK KR", Menlo, Consolas, monospace;
   --font: var(--font-ui);
   --mono: var(--font-code);
 
-  --text-micro: 10px;
-  --text-caption: 11px;
-  --text-label: 12px;
-  --text-control: 13px;
-  --text-body: 14px;
-  --text-subtitle: 16px;
-  --text-title: 20px;
-  --text-display: 24px;
+  /* Multiplied by the font-size scale the Appearance screen writes. These were
+     fixed pixels with no link to `typeTokens()`, so the slider moved `--t-*`
+     and left all 83 legacy `.text-*` elements exactly where they were. At the
+     default scale of 1 every value below is identical to what it was. */
+  --text-micro: calc(10px * var(--m3-type-scale, 1));
+  --text-caption: calc(11px * var(--m3-type-scale, 1));
+  --text-label: calc(12px * var(--m3-type-scale, 1));
+  --text-control: calc(13px * var(--m3-type-scale, 1));
+  --text-body: calc(14px * var(--m3-type-scale, 1));
+  --text-subtitle: calc(16px * var(--m3-type-scale, 1));
+  --text-title: calc(20px * var(--m3-type-scale, 1));
+  --text-display: calc(24px * var(--m3-type-scale, 1));
 
   --weight-regular: 400;
   --weight-medium: 500;
@@ -100,7 +135,11 @@
   --control-sm: 28px;
   --control-md: 34px;
   --control-lg: 40px;
-  --control-touch: 44px;
+  /* Material's minimum touch target. Was 44px — Apple's HIG number — which is
+     where the whole "44 clears the minimum hit target" belief in this codebase
+     came from. It is the token every coarse-pointer floor resolves through, so
+     the one edit moves them together. */
+  --control-touch: 48px;
 
   --icon-sm: 14px;
   --icon-md: 16px;
@@ -115,27 +154,32 @@
   --z-popover: 40;
   --z-modal: 50;
 
-  --shadow: 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.5)), 0 10px 28px light-dark(rgba(16, 24, 40, 0.07), rgba(0, 0, 0, 0.30));
-  --shadow-sm: 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.4));
+  --shadow: var(--e3, 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.5)));
+  --shadow-sm: var(--e1, 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.4)));
 
   /* toggle switch */
   --toggle-w: 36px;
   --toggle-h: 20px;
   --toggle-dot: 14px;
-  --toggle-off-bg: light-dark(#d4d4d4, #4a4a4a);
-  --toggle-on-bg: light-dark(#0d0d0d, #4ecb9d);
-  --toggle-dot-color: light-dark(#ffffff, #0d0d0d);
+  --toggle-off-bg: var(--m3-surface-container-highest, light-dark(#d4d4d4, #4a4a4a));
+  --toggle-on-bg: var(--m3-primary, light-dark(#0d0d0d, #4ecb9d));
+  --toggle-dot-color: var(--m3-on-primary, light-dark(#ffffff, #0d0d0d));
 }
 
 /* explicit user choice pins the scheme; "system" removes the attribute and falls back to the OS */
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"]  { color-scheme: dark; }
 
-/* glass material tokens: rail/nav layer only — content cards stay opaque */
+/*
+  The glass rail is legacy chrome that Material 3 replaces with opaque tonal
+  surfaces, so these tokens now resolve to solid surface containers and the blur
+  is a no-op. Kept as aliases rather than deleted because a handful of workspace
+  stylesheets still reference them; they disappear as those screens are rewritten.
+*/
 :root {
-  --glass-rail:  light-dark(rgba(249, 249, 249, 0.66), rgba(23, 23, 23, 0.62));
-  --glass-panel: light-dark(rgba(255, 255, 255, 0.78), rgba(38, 38, 38, 0.82));
-  --glass-blur:  saturate(1.6) blur(22px);
+  --glass-rail:  var(--m3-surface-container, light-dark(#f9f9f9, #171717));
+  --glass-panel: var(--m3-surface-container-low, light-dark(#ffffff, #262626));
+  --glass-blur:  none;
 }
 
 * { box-sizing: border-box; }
@@ -156,20 +200,11 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* single ambient soft-focus wash behind the app (OpenAI organic-blur grammar).
-   One wash per viewport; the glass rail and modals refract it via backdrop-filter. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: -20%;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(42% 38% at 12% 6%,  light-dark(rgba(164, 196, 255, 0.42), rgba(96, 130, 200, 0.16)), transparent 70%),
-    radial-gradient(46% 42% at 88% 18%, light-dark(rgba(168, 226, 197, 0.38), rgba(88, 160, 130, 0.13)), transparent 70%),
-    radial-gradient(40% 36% at 70% 92%, light-dark(rgba(255, 224, 194, 0.30), rgba(180, 140, 100, 0.08)), transparent 72%);
-  filter: blur(70px);
-}
+/*
+  The ambient soft-focus wash is gone with the rest of the legacy chrome: the M3
+  shell paints opaque tonal surfaces edge to edge, so a gradient behind them was
+  never visible and only cost a full-viewport blur on every paint.
+*/
 
 a { color: var(--text); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; }
 a:hover { text-decoration-color: var(--text); }
@@ -262,42 +297,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .nav-item svg { width: 17px; height: 17px; color: var(--faint); flex-shrink: 0; }
 .nav-item.active svg { color: var(--text); }
 
-.nav-entry { display: flex; align-items: center; min-width: 0; border-radius: var(--radius-sm); }
-.nav-entry .nav-item { flex: 1 1 auto; min-width: 0; }
-.nav-entry-claude {
-  padding-right: 2px;
-  transition: background var(--motion-fast), color var(--motion-fast);
-}
-.nav-entry-claude:hover,
-.nav-entry-claude.active { background: var(--accent-soft); color: var(--text); }
-.nav-entry-claude .nav-item,
-.nav-entry-claude .nav-item:hover,
-.nav-entry-claude .nav-item.active { width: auto; background: transparent; }
-.nav-entry-claude .switch {
-  position: relative;
-  width: 44px;
-  height: 36px;
-  padding: 0;
-  border-color: transparent;
-  background: transparent;
-}
-.nav-entry-claude .switch::before {
-  content: "";
-  position: absolute;
-  top: 10px;
-  left: 8px;
-  width: 28px;
-  height: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--raised);
-  transition: background var(--motion-normal), border-color var(--motion-normal);
-}
-.nav-entry-claude .switch.on { border-color: transparent; background: transparent; }
-.nav-entry-claude .switch.on::before { border-color: var(--toggle-on-bg); background: var(--toggle-on-bg); }
-.nav-entry-claude .switch .knob { position: absolute; top: 13px; left: 11px; z-index: 1; width: 10px; height: 10px; }
-.nav-entry-claude .switch.on .knob { transform: translateX(12px); }
-.nav-entry-claude .switch:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 0; }
+/* The `.switch` overrides that padded this row's toggle out to a 44px target
+   went with the component: the Claude row uses `.m3-switch`, which is 52x32
+   without needing a per-screen exception to clear the hit-target floor. */
 
 .sidebar-foot { margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 2px; }
 
@@ -309,7 +311,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .mobile-topbar { display: none; }
 .menu-toggle {
   display: none; align-items: center; justify-content: center;
-  min-width: 44px; min-height: 44px; padding: 8px;
+  min-width: 48px; min-height: 48px; padding: 8px;
   background: none; border: none; border-radius: var(--radius-sm);
   color: var(--muted); cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
@@ -328,11 +330,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .lang-toggle { display: flex; align-items: center; gap: 9px; padding: 8px 10px; width: 100%; color: var(--muted); font-size: var(--text-control); border-radius: var(--radius-sm); transition: background var(--motion-fast), color var(--motion-fast); position: relative; }
 .lang-toggle:hover { background: var(--accent-soft); color: var(--text); }
 .lang-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
-.lang-toggle .custom-select { width: 100%; position: static !important; }
-.lang-toggle .select-trigger { width: 100%; justify-content: space-between; border: none; background: none; color: inherit; font-size: var(--text-control); padding: 0; min-height: auto; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-.lang-toggle .select-trigger:hover:not(:disabled) { border: none; background: none; color: inherit; box-shadow: none; }
-.lang-toggle .select-dropdown { background: var(--glass-rail); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
-.lang-toggle .select-dropdown-beside { top: auto; bottom: 0; left: calc(100% + 6px); right: auto; min-width: 10rem; max-height: min(60vh, 20rem); overflow-y: auto; }
 .theme-toggle { display: flex; align-items: center; gap: 9px; padding: 8px 10px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; color: var(--muted); font: inherit; font-size: var(--text-control); border-radius: var(--radius-sm); transition: background var(--motion-fast), color var(--motion-fast); }
 .theme-toggle:hover { background: var(--accent-soft); color: var(--text); }
 .theme-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
@@ -428,6 +425,30 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .btn-icon:hover { background: var(--raised-hover); color: var(--text); }
 .btn-icon:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
 .btn-icon svg { width: 16px; height: 16px; display: block; }
+/* A 28px control with a 16px glyph is the right *look* and the wrong *target*:
+   Material asks for 48dp, and this app already gives 44px to its own mobile
+   controls. Rather than inflate the button — which would change a deliberate
+   visual density — the hit area is extended past the box with a pseudo-element,
+   which is how M3 separates visual size from touch size.
+
+   Safe to do here because `.btn-icon` has exactly one user: the close button in
+   the Add-provider dialog, alone in a header beside a heading. Nothing
+   interactive sits within 48px of it, so the larger target cannot start
+   stealing a neighbour's taps — which is the failure mode that makes a blanket
+   version of this change worse than the problem. Check that again before
+   putting `.btn-icon` in a dense row. */
+.btn-icon { position: relative; }
+.btn-icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translate(-50%, -50%);
+  /* Invisible, and never painted over anything: it exists only to catch the
+     pointer. Clicks on it bubble to the button that owns it. */
+}
 .btn.btn-ghost.btn-icon { width: 28px; height: 28px; padding: 0; }
 
 /* ---- cards / panels ---- */
@@ -485,7 +506,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   .injection-head { gap: 8px; }
   .injection-label { order: 1; flex: 1 0 calc(100% - 70px); }
   .injection-head > .badge { order: 1; margin-left: auto; }
-  .injection-head > .custom-select { order: 2; }
 }
 
 /* ---- stat cards (metric tiles) ---- */
@@ -503,34 +523,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .stat .value { font-size: var(--text-title); font-weight: var(--weight-semibold); letter-spacing: 0; line-height: var(--leading-tight); }
 .stat .value.mono { font-family: var(--font-code); font-size: var(--text-subtitle); }
 
-.startup-health-bar {
-  min-height: var(--control-lg);
-  margin: calc(-1 * var(--space-3)) 0 var(--space-6);
-  padding: 0 var(--space-3);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  color: var(--muted);
-  background: var(--hover);
-  border-block: 1px solid var(--border-soft);
-  text-decoration: none;
-  font-size: var(--text-control);
-  line-height: var(--leading-ui);
-  transition: background var(--motion-fast), color var(--motion-fast);
-}
-.startup-health-bar:hover { background: var(--raised); color: var(--text); }
-.startup-health-bar:active { transform: translateY(1px); }
-.startup-health-bar:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
-.startup-health-bar__summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 .startup-health-slot {
   min-height: var(--control-lg);
-}
-
-.startup-health-bar--pending {
-  pointer-events: none;
-  color: var(--faint);
 }
 
 .dash-stat-coverage {
@@ -547,11 +541,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 .dash-overview-head .stat-row {
   margin-bottom: 0;
-}
-
-.dash-overview-head .startup-health-bar,
-.dash-overview-head .startup-health-bar--pending {
-  margin: var(--space-4) 0 0;
 }
 
 /* ---- dashboard model grid (grouped by provider) ---- */
@@ -585,7 +574,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .badge-disabled { opacity: 0.5; cursor: default; }
 .card-badges { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .card-badges .badge { flex-shrink: 0; }
-.confirm-icon { width: 44px; height: 44px; border-radius: var(--radius-round); background: var(--amber-soft); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; color: var(--amber); }
+.confirm-icon { width: 48px; height: 48px; border-radius: var(--radius-round); background: var(--amber-soft); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; color: var(--amber); }
 .credit-list { display: flex; flex-direction: column; gap: 6px; }
 .credit-item { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--raised); transition: border-color var(--motion-fast); }
 .credit-next { border-color: var(--amber); background: var(--amber-soft); }
@@ -631,106 +620,16 @@ select.input { appearance: none; }
 .select-sm:hover:not(:disabled) { border-color: var(--faint); box-shadow: 0 2px 12px rgb(0 0 0 / 0.10); }
 .select-sm:disabled { opacity: 0.5; cursor: default; backdrop-filter: none; -webkit-backdrop-filter: none; }
 
-/* Custom select (replaces native <select>) */
-.select-trigger {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 12px; border-radius: var(--radius-pill);
-  background: color-mix(in oklab, canvas 75%, transparent);
-  backdrop-filter: blur(12px) saturate(1.3);
-  -webkit-backdrop-filter: blur(12px) saturate(1.3);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.06);
-  color: var(--text); font: inherit; font-size: var(--text-control); line-height: var(--leading-ui); cursor: pointer;
-  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
-  white-space: nowrap;
-}
-.select-trigger:hover:not(:disabled) { border-color: var(--faint); box-shadow: 0 2px 12px rgb(0 0 0 / 0.10); }
-.select-trigger:disabled { opacity: 0.5; cursor: default; }
-.select-dropdown {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-popover);
-  min-width: 100%; max-height: 280px; overflow-y: auto;
-  background: color-mix(in oklab, canvas 84%, transparent);
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 4px; box-shadow: 0 8px 32px rgb(0 0 0 / 0.16);
-}
-.select-dropdown-portal {
-  /* Position (top/bottom/left/right/maxHeight) comes from computeSelectMenuStyle. */
-  position: fixed;
-  top: auto;
-  left: auto;
-  right: auto;
-  bottom: auto;
-}
-.select-dropdown-right { left: auto !important; right: 0; }
-/* Beside-placement lives inside the sidebar, which establishes a containing block via
-   backdrop-filter (and a transform on the mobile drawer) — so a fixed-position fix would
-   resolve against the sidebar, not the viewport. Anchor the menu's BOTTOM to the trigger row
-   instead: the locale control sits in the footer, so the menu grows upward into empty sidebar
-   space. The height bound is what makes this count-independent — adding a locale used to push
-   the menu past the sidebar edge. */
-.select-dropdown-beside { top: auto; bottom: 0; left: calc(100% + 6px); right: auto; min-width: 10rem; max-height: min(60vh, 20rem); overflow-y: auto; }
-.select-option {
-  display: block; width: 100%; text-align: left;
-  padding: 7px 12px; border: none; border-radius: var(--radius-sm);
-  background: transparent; color: var(--text); font: inherit; font-size: var(--text-control); line-height: var(--leading-ui);
-  cursor: pointer; transition: background var(--motion-fast), box-shadow var(--motion-fast);
-  white-space: nowrap;
-}
-/* Pointer hover alone — softer than keyboard focus so the two cues stay distinct. */
-.select-option:hover:not(.select-option-active) { background: var(--hover); }
-/* Selected value (committed). */
-.select-option.active { background: var(--accent-soft); color: var(--accent); font-weight: var(--weight-semibold); }
-/* Keyboard / aria-activedescendant focus — visible without relying on :hover. */
-.select-option-active {
-  background: var(--hover);
-}
-/* Selected + keyboard-highlighted: full inset ring (not a left stripe). */
-.select-option.active.select-option-active {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
+/* The `.select-trigger` / `.select-dropdown` / `.select-option` family that lived
+   here is gone with the hand-rolled listbox it dressed: a portaled menu with its
+   own flip-above-the-viewport maths, several hundred lines reimplementing the
+   platform control and losing the native picker on touch. Its call sites use
+   `.m3-select` in `styles/m3-shell.css`, which is the native `<select>` themed. */
 
-/* ---- switch ---- */
-.switch {
-  width: 34px;
-  height: 20px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  background: var(--raised);
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  flex-shrink: 0;
-  line-height: 0;
-  vertical-align: middle;
-  transition: background var(--motion-normal), border-color var(--motion-normal);
-  appearance: none;
-  -webkit-appearance: none;
-}
-.switch.on { background: var(--toggle-on-bg); border-color: var(--toggle-on-bg); }
-.switch:disabled { opacity: 0.6; cursor: default; }
-.switch .knob {
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-round);
-  background: light-dark(#ffffff, #ececec);
-  box-shadow: 0 0 0 1px rgba(16, 24, 40, 0.08), 0 1px 1px rgba(16, 24, 40, 0.18);
-  transform: translateX(0);
-  transition: transform var(--motion-normal), background var(--motion-normal);
-}
-.switch.on .knob {
-  transform: translateX(14px);
-  /* [Decision Log]
-  - 목적: 다크 모드의 활성 트랙과 핸들이 모두 밝게 뭉개지는 문제를 없앤다.
-  - 대안 분석: 테두리만 강화하면 상태 구분이 약하고, 화면별 색상 지정은 중복되며, 공통 토글 토큰은 모든 스위치에 같은 대비 규칙을 적용한다.
-  - 선택 근거: 활성 트랙은 다크 모드 성공 색상, 핸들은 어두운 색으로 분리해 상태와 위치를 동시에 읽기 쉽다.
-  */
-  background: var(--toggle-dot-color);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
-}
+/* The `.switch` / `.knob` pair that lived here is gone with the component it
+   dressed: a 34x20px track, under half the 44px hit-target floor, painted with
+   literal rgba shadows. Its three call sites use `.m3-switch` in
+   `styles/m3-shell.css`, which is M3's 52x32 anatomy in role tokens. */
 
 /* ---- misc ---- */
 .muted { color: var(--muted); }
@@ -741,14 +640,13 @@ select.input { appearance: none; }
 .stack { display: flex; flex-direction: column; }
 .chip { font-family: var(--font-code); font-size: var(--text-label); line-height: var(--leading-ui); background: var(--raised); border: 1px solid var(--border); padding: 1px 7px; border-radius: var(--radius-xs); color: var(--text); }
 
-.empty { text-align: center; padding: 56px 20px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted); }
-.empty svg { width: 30px; height: 30px; color: var(--faint); margin-bottom: 12px; }
-.empty .title { color: var(--text); font-weight: var(--weight-semibold); margin-bottom: 6px; }
+/* `.empty` went with `EmptyState`; `.m3-empty` in `styles/m3-shell.css` replaced it.
 
-.notice { font-size: var(--text-control); line-height: var(--leading-body); padding: 9px 12px; border-radius: var(--radius-sm); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
-.notice svg { width: 15px; height: 15px; flex-shrink: 0; }
-.notice-ok { background: var(--green-soft); color: var(--green); }
-.notice-err { background: var(--red-soft); color: var(--red); }
+   `.notice` / `.notice-ok` / `.notice-err` are still here on purpose. The `Notice`
+   COMPONENT is gone, but the un-ported Add-Codex-Account modal still writes these
+   class names by hand, and deleting the rules would strip the styling off a live
+   surface. They go when that modal is ported. `.notice-warn` below is a separate
+   rule with its own callers and is not part of this family. */
 
 .h-section { font-size: var(--text-control); font-weight: var(--weight-semibold); line-height: var(--leading-ui); color: var(--text); margin: 30px 0 12px; display: flex; align-items: center; gap: 8px; }
 .h-section .count { color: var(--muted); font-weight: var(--weight-medium); font-family: var(--font-code); font-size: var(--text-label); }
@@ -761,37 +659,21 @@ select.input { appearance: none; }
 /* glass fallbacks: solid surfaces when blur is unsupported or unwanted */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .sidebar { background: var(--rail); }
-  .lang-toggle .select-dropdown { background: var(--rail); }
-  .modal-card { background: var(--surface); }
 }
 @media (prefers-reduced-transparency: reduce) {
   body::before { display: none; }
   .sidebar { background: var(--rail); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .lang-toggle .select-dropdown { background: var(--rail); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .modal-card { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .modal-overlay { backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
-/* ---- modal ---- */
-/* Liquid-glass modal: heavy tint + blur so background content is unreadable */
-.modal-overlay { position: fixed; inset: 0; background: light-dark(rgba(17, 19, 28, 0.78), rgba(0, 0, 0, 0.82)); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px; z-index: var(--z-modal); }
-/* Native <dialog>.showModal() UA styles (solid border + ::backdrop) stack on top of
-   .modal-overlay and produce a white frame + double dim. Reset when the dialog IS the overlay. */
-dialog.modal-overlay {
-  border: none;
-  margin: 0;
-  max-width: none;
-  max-height: none;
-  width: 100%;
-  height: 100%;
-  color: inherit;
-}
-dialog.modal-overlay::backdrop {
-  background: transparent;
-}
-.modal-card { position: relative; z-index: 1; background: color-mix(in oklab, canvas 92%, transparent); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; width: 100%; max-width: 520px; box-shadow: 0 8px 32px rgb(0 0 0 / 0.18); max-height: 84vh; overflow-y: auto; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.modal-head h3 { font-size: var(--text-subtitle); }
+/* The `.modal-overlay` / `.modal-card` liquid-glass pair is gone, and with it
+   the last surface in the app that could not be retinted. Its card painted
+   `color-mix(in oklab, canvas 92%, transparent)` — `canvas` being a *UA system
+   colour*, not one of ours — under 40px of backdrop blur, so the first-run
+   wizard rendered in the browser's idea of a window colour whatever seed the
+   user had picked. `.m3-dialog` in `styles/m3-shell.css` replaces it: a flat
+   `--m3-scrim` wash, no blur, every colour a role token. The reduced-
+   transparency and no-backdrop-filter fallbacks above lost their modal clauses
+   with it — there is nothing left to fall back from. */
 
 /* ---- codex auth page ---- */
 .card-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px; flex-wrap: wrap; min-width: 0; }
@@ -881,9 +763,9 @@ dialog.modal-overlay::backdrop {
   .startup-detail-row { align-items: flex-start; }
   .startup-detail-row > .startup-detail-actions { flex-direction: column; align-items: flex-end; }
 }
-.modal-desc { font-size: var(--text-control); line-height: var(--leading-body); color: var(--muted); margin-bottom: 14px; }
-.modal-actions { display: flex; gap: 8px; margin-top: 16px; }
-.modal-actions .btn { flex: 1; }
+/* `.modal-desc` and `.modal-actions` went with `.modal-overlay`/`.modal-card`:
+   the onboarding wizard was their last consumer, and `Dialog` draws supporting
+   text and an end-aligned action row itself. */
 
 /* request logs: clamped request id, status + details affordance, detail modal */
 .log-reqid {
@@ -929,7 +811,6 @@ table.logs-table { min-width: 960px; }
 }
 .usage-cost-value { font-size: var(--text-lg, 1.15em); }
 @media (max-width: 760px) {
-  .modal-overlay { padding: 16px 10px; }
   .log-detail-card { max-height: calc(100dvh - 32px); padding: 16px; }
   .log-detail-grid { grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: 8px 10px; }
   .log-detail-request-row { align-items: flex-start; flex-direction: column; }
@@ -1024,7 +905,7 @@ button.prov-account-row.active { cursor: default; }
 .oauth-actions { display: inline-flex; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; }
 .oauth-login-hint { grid-column: 1 / -1; font-size: var(--text-label); line-height: var(--leading-body); display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 .oauth-login-hint-links { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.oauth-device-code-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.oauth-device-code-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--surface); }
 .oauth-device-code-label { font-size: var(--text-label); font-weight: 600; color: var(--text); }
 .oauth-device-code { font-size: 20px; font-weight: 800; letter-spacing: .14em; color: var(--text); user-select: all; }
 .oauth-login-paste { display: flex; gap: 8px; align-items: center; width: 100%; }
@@ -1047,7 +928,7 @@ button.prov-account-row.active { cursor: default; }
     -webkit-backdrop-filter: var(--glass-blur);
   }
   .mobile-topbar .brand { flex: 1 1 auto; min-width: 0; padding: 4px; }
-  .mobile-topbar .stop-toggle { width: auto; min-width: 44px; min-height: 44px; justify-content: center; padding: 8px; }
+  .mobile-topbar .stop-toggle { width: auto; min-width: 48px; min-height: 48px; justify-content: center; padding: 8px; }
   .menu-toggle { display: inline-flex; }
   /* drawer: the desktop sidebar kept intact (nav groups + foot + GitHub link), off-canvas */
   .sidebar {
@@ -1091,7 +972,6 @@ button.prov-account-row.active { cursor: default; }
   .oauth-grid { grid-template-columns: minmax(0, auto) minmax(0, 1fr) max-content; column-gap: 8px; }
   /* language menu: the drawer scrolls (overflow-y) so the beside-placement would be
      clipped at the drawer edge — open upward from the foot row instead. */
-  .sidebar .lang-toggle .select-dropdown-beside { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; }
 }
 
 .usage-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
@@ -1136,30 +1016,30 @@ button.prov-account-row.active { cursor: default; }
 .heatmap-day-spacer { grid-column: 1; }
 .heatmap-month { white-space: nowrap; }
 .heatmap-body { display: flex; gap: var(--hm-gap); width: max-content; }
-.heatmap-days { display: grid; grid-template-rows: repeat(7, var(--hm-cell)); row-gap: var(--hm-gap); font-size: var(--text-micro); color: var(--muted); width: 25px; flex-shrink: 0; align-items: center; position: sticky; left: 0; background: var(--surface); z-index: 1; }
+.heatmap-days { display: grid; grid-template-rows: repeat(7, var(--hm-cell)); row-gap: var(--hm-gap); font-size: var(--text-micro); color: var(--muted); width: 25px; flex-shrink: 0; align-items: center; position: sticky; left: 0; background: var(--m3-surface); z-index: 1; }
 .heatmap-grid { display: grid; gap: var(--hm-gap); }
 .heatmap-week { display: grid; grid-template-rows: repeat(7, var(--hm-cell)); gap: var(--hm-gap); }
 .heatmap-cell { width: var(--hm-cell); height: var(--hm-cell); border-radius: var(--radius-2xs); background: var(--border); }
-.heatmap-cell-0 { background: var(--border); }
-.heatmap-cell-1 { background: color-mix(in oklch, var(--green) 25%, var(--surface)); }
-.heatmap-cell-2 { background: color-mix(in oklch, var(--green) 50%, var(--surface)); }
-.heatmap-cell-3 { background: color-mix(in oklch, var(--green) 75%, var(--surface)); }
-.heatmap-cell-4 { background: var(--green); }
+.heatmap-cell-0 { background: var(--m3-surface-container-highest); }
+.heatmap-cell-1 { background: color-mix(in oklab, var(--m3-primary) 25%, var(--m3-surface-container-highest)); }
+.heatmap-cell-2 { background: color-mix(in oklab, var(--m3-primary) 50%, var(--m3-surface-container-highest)); }
+.heatmap-cell-3 { background: color-mix(in oklab, var(--m3-primary) 75%, var(--m3-surface-container-highest)); }
+.heatmap-cell-4 { background: var(--m3-primary); }
 .heatmap-legend { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-label); align-self: flex-end; position: sticky; right: 0; }
 .heatmap-legend .heatmap-cell { width: 10px; height: 10px; }
 .heatmap-tip { position: fixed; z-index: 10; transform: translate(-50%, -100%) translateY(-8px); pointer-events: none;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 10px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.35); white-space: nowrap; font-size: var(--text-label); }
-.heatmap-tip-date { font-weight: var(--weight-semibold); color: var(--text); margin-bottom: 2px; }
-.heatmap-tip-val { color: var(--text); font-variant-numeric: tabular-nums; }
-.heatmap-tip-req { font-size: var(--text-caption); }
+.heatmap-tip-date { font-weight: var(--weight-semibold); color: var(--m3-on-surface); margin-bottom: 2px; }
+.heatmap-tip-val { color: var(--m3-on-surface); font-variant-numeric: tabular-nums; }
+.heatmap-tip-req { font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
 .usage-bar { width: 100%; height: 6px; background: var(--border); border-radius: var(--radius-pill); overflow: hidden; min-width: 60px; }
 .usage-bar-fill { height: 100%; background: var(--green); border-radius: var(--radius-pill); }
 
 /* 7d view: per-day request bar chart (replaces the year heatmap on the 7d toggle). */
 .daybars { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; align-items: end; height: 180px; padding-top: 8px; }
 .daybar { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
-.daybar-track { width: 100%; max-width: 48px; flex: 1; display: flex; align-items: flex-end; background: var(--border); border-radius: var(--radius-xs); overflow: hidden; }
+.daybar-track { width: 100%; max-width: 48px; flex: 1; display: flex; align-items: flex-end; background: var(--m3-surface-container-highest); border-radius: var(--radius-xs); overflow: hidden; }
 .daybar-stack { width: 100%; display: flex; flex-direction: column-reverse; border-radius: var(--radius-xs) var(--radius-xs) 0 0; overflow: hidden; min-height: 2px; transition: height var(--motion-normal) ease; }
 .daybar-seg { width: 100%; min-height: 1px; }
 .daybar-count { font-size: var(--text-label); font-weight: var(--weight-semibold); color: var(--text); }
@@ -1168,11 +1048,11 @@ button.prov-account-row.active { cursor: default; }
 .daybar-tip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px;
   min-width: 160px; box-shadow: 0 6px 20px rgba(0,0,0,0.35); pointer-events: none; }
-.daybar-tip-date { font-size: var(--text-label); font-weight: var(--weight-semibold); color: var(--text); margin-bottom: 6px; white-space: nowrap; }
+.daybar-tip-date { font-size: var(--text-label); font-weight: var(--weight-semibold); color: var(--m3-on-surface); margin-bottom: 6px; white-space: nowrap; }
 .daybar-tip-row { display: flex; align-items: center; gap: 8px; font-size: var(--text-label); line-height: var(--leading-relaxed); }
 .daybar-tip-swatch { width: 10px; height: 10px; border-radius: var(--radius-2xs); flex-shrink: 0; }
-.daybar-tip-name { color: var(--text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
-.daybar-tip-val { color: var(--muted); font-variant-numeric: tabular-nums; }
+.daybar-tip-name { color: var(--m3-on-surface); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.daybar-tip-val { color: var(--m3-on-surface-variant); font-variant-numeric: tabular-nums; }
 
 /* Model / provider tables: cap height and scroll inside the box instead of growing unbounded. */
 .usage-scroll { max-height: 360px; overflow-y: auto; }
@@ -1255,7 +1135,6 @@ button.prov-account-row.active { cursor: default; }
   from { opacity: 0; }
   to { opacity: 1; }
 }
-
 
 /* Invisible full-area control for native <dialog> backdrop dismiss (a11y). */
 .modal-backdrop-dismiss {
@@ -1390,14 +1269,14 @@ button.prov-account-row.active { cursor: default; }
 
 @media (max-width: 760px) {
   .claude-tabs { display: flex; width: 100%; }
-  .claude-tabs button { flex: 1; min-height: 44px; }
+  .claude-tabs button { flex: 1; min-height: 48px; }
   .claude-desktop-head { flex-direction: column; }
   .claude-profile-tools { width: 100%; }
-  .claude-profile-tools .btn { flex: 1; min-height: 44px; }
+  .claude-profile-tools .btn { flex: 1; min-height: 48px; }
   .claude-profile-bar { top: 8px; align-items: stretch; flex-direction: column; }
-  .claude-save-actions .btn { flex: 1; min-height: 44px; }
+  .claude-save-actions .btn { flex: 1; min-height: 48px; }
   .ocx-group-head { align-items: flex-start; }
-  .claude-move-row .input, .claude-move-row .btn { min-height: 44px; }
+  .claude-move-row .input, .claude-move-row .btn { min-height: 48px; }
 }
 
 /* ── Desktop status bar + effort badges (hardening WP3) ── */
@@ -1421,3 +1300,6 @@ button.prov-account-row.active { cursor: default; }
 }
 .claude-effort-badge.on { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
 .claude-effort-badge.off { background: color-mix(in srgb, var(--muted) 12%, transparent); color: var(--muted); }
+
+/* Card-action icons sit beside 20px marks; the shell's default 22px reads as a mismatch. */
+.m3-card-actions .m3-icon-btn svg { width: 20px; height: 20px; }

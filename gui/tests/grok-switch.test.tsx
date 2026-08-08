@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import Grok from "../src/pages/Grok";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
+import SnackbarHost from "../src/shell/SnackbarHost";
 
 /**
  * The Grok switch surface. Mounted because the failures worth catching are stateful:
@@ -85,21 +87,45 @@ afterEach(async () => {
 async function mount() {
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider><Grok apiBase="" /></LanguageProvider>);
+    // The page reports through the snackbar host now, so both live here: the
+    // provider owns the queue and the host is what the user actually reads.
+    root.render(
+      <LanguageProvider>
+        <NotificationsProvider>
+          <Grok apiBase="" />
+          <SnackbarHost />
+        </NotificationsProvider>
+      </LanguageProvider>,
+    );
   });
   await act(async () => { await new Promise(r => setTimeout(r, 50)); });
 }
 
+// The Material 3 port replaced the `.grok-model-row` flex rows with the prototype's
+// switch list (`role="listitem"`) and the legacy `button.switch` with the M3
+// `role="switch"` toggle. Same invariant — one switch per candidate row, reflecting
+// the exclusion state — pinned on the accessibility roles, which is the stronger
+// anchor than any class name.
 function switchFor(id: string): HTMLButtonElement {
-  const row = Array.from(container.querySelectorAll(".grok-model-row"))
+  const row = Array.from(container.querySelectorAll('[role="listitem"]'))
     .find(el => (el.textContent ?? "").includes(id));
-  const sw = row?.querySelector("button.switch");
+  const sw = row?.querySelector('button[role="switch"]');
   if (!sw) throw new Error(`switch not found for ${id}`);
   return sw as unknown as HTMLButtonElement;
 }
 
+/** Snackbar text, split by tone: errors carry the `.error` modifier and persist. */
+function snackText(tone: "error" | "ok"): string {
+  return Array.from(container.querySelectorAll(".m3-snack"))
+    .filter(el => el.classList.contains("error") === (tone === "error"))
+    .map(el => el.textContent ?? "")
+    .join(" ");
+}
+
+// Legacy `.btn-primary` became the M3 filled button; the save-apply action is the only
+// filled button on the page.
 function saveApplyButton(): HTMLButtonElement {
-  const btn = Array.from(container.querySelectorAll("button.btn-primary"))
+  const btn = Array.from(container.querySelectorAll("button.m3-btn--filled"))
     .find(b => (b.textContent ?? "").length > 0);
   if (!btn) throw new Error("save-apply button not found");
   return btn as unknown as HTMLButtonElement;
@@ -107,8 +133,10 @@ function saveApplyButton(): HTMLButtonElement {
 
 test("each candidate renders a switch reflecting the exclusion state", async () => {
   await mount();
-  expect(switchFor("gpt-5.6-sol").className).toContain("on");
-  expect(switchFor("cursor/grok-4.5").className).toContain("on");
+  // aria-checked replaces the legacy `.on` class check: the M3 toggle carries the state
+  // on the accessibility attribute, and the class merely mirrors it.
+  expect(switchFor("gpt-5.6-sol").getAttribute("aria-checked")).toBe("true");
+  expect(switchFor("cursor/grok-4.5").getAttribute("aria-checked")).toBe("true");
 });
 
 test("flipping a switch marks the page dirty and Save & apply writes both endpoints in order", async () => {
@@ -136,9 +164,8 @@ test("a skipped apply renders the not-changed message, not success", async () =>
   await act(async () => { saveApplyButton().click(); });
   await act(async () => { await new Promise(r => setTimeout(r, 20)); });
 
-  const notice = container.querySelector(".notice-err");
-  expect(notice?.textContent).toContain("Grok home not found");
-  expect(container.querySelector(".notice-ok")).toBeNull();
+  expect(snackText("error")).toContain("Grok home not found");
+  expect(snackText("ok")).toBe("");
 });
 
 test("a failed selection PUT surfaces an error and stays dirty", async () => {
@@ -156,7 +183,7 @@ test("a failed selection PUT surfaces an error and stays dirty", async () => {
   await act(async () => { saveApplyButton().click(); });
   await act(async () => { await new Promise(r => setTimeout(r, 20)); });
 
-  expect(container.querySelector(".notice-err")?.textContent).toContain("boom");
+  expect(snackText("error")).toContain("boom");
   expect(saveApplyButton().disabled).toBe(false);
 });
 

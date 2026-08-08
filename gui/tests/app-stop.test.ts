@@ -53,17 +53,33 @@ describe("App proxy stop", () => {
     expect(outcome).toEqual({ accepted: false, message: "HTTP 503 stop failed" });
   });
 
-  test("App clears stopping state and alerts for every rejected stop outcome", async () => {
+  /**
+   * The Material 3 shell replaced `alert()` with a persistent error snackbar:
+   * informational and failure messages are non-modal by contract, and an error
+   * notice stays on screen until dismissed rather than blocking the page. The
+   * behaviour under test is unchanged — a rejected stop must release the pending
+   * UI and surface the server's own remediation text, never swallow it.
+   */
+  test("App clears stopping state and reports every rejected stop outcome", async () => {
     const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
     const handleStopIdx = app.indexOf("const handleStop");
-    const brandIdx = app.indexOf("const brand");
+    const endIdx = app.indexOf("const title =", handleStopIdx);
     expect(handleStopIdx).toBeGreaterThanOrEqual(0);
-    expect(brandIdx).toBeGreaterThan(handleStopIdx);
-    const handler = app.slice(handleStopIdx, brandIdx);
+    expect(endIdx).toBeGreaterThan(handleStopIdx);
+    const handler = app.slice(handleStopIdx, endIdx);
 
     expect(handler).toContain("await requestProxyStop(API_BASE");
     expect(handler).toContain("if (!outcome.accepted)");
     expect(handler).toContain("setStopping(false)");
-    expect(handler).toContain("alert(outcome.message)");
+    // The server's message is surfaced verbatim, and as an error so it persists.
+    expect(handler).toContain("body: outcome.message");
+    expect(handler).toContain('tone: "error"');
+    // A stop is a decision, so the confirmation stays blocking — but it is the
+    // app's own M3 dialog now. The native `confirm()` drew a grey OS box whose
+    // buttons the app could neither theme nor label, so this asserts both halves:
+    // the awaited promise API, and the message still coming from the dictionary.
+    expect(handler).toContain("await confirm({");
+    expect(handler).toContain('body: t("dash.stopConfirm")');
+    expect(handler).toContain("if (!confirmed) return;");
   });
 });

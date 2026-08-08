@@ -1375,10 +1375,10 @@ describe("opencodex config defaults", () => {
   });
 
   test("runtime port metadata round-trips and validates expected pid", () => {
-    writeRuntimePort({ pid: 1234, port: 58195, hostname: "0.0.0.0" });
+    writeRuntimePort({ pid: 1234, port: 58195, hostname: "0.0.0.0", supervised: true });
 
-    expect(readRuntimePort()).toEqual({ pid: 1234, port: 58195, hostname: "0.0.0.0" });
-    expect(readRuntimePort(1234)).toEqual({ pid: 1234, port: 58195, hostname: "0.0.0.0" });
+    expect(readRuntimePort()).toEqual({ pid: 1234, port: 58195, hostname: "0.0.0.0", supervised: true });
+    expect(readRuntimePort(1234)).toEqual({ pid: 1234, port: 58195, hostname: "0.0.0.0", supervised: true });
     expect(readRuntimePort(9999)).toBeNull();
   });
 

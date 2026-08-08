@@ -3,6 +3,8 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
+import { ConfirmProvider } from "../src/shell/confirm";
 import ApiKeys from "../src/pages/ApiKeys";
 
 const originalFetch = globalThis.fetch;
@@ -95,7 +97,15 @@ test("successful key create keeps last-good keys visible when follow-up refresh 
       root = createRoot(container);
       root.render(
         <LanguageProvider>
-          <ApiKeys apiBase="http://localhost" />
+          {/* The screen's icon-only copy buttons acknowledge through the snackbar host. */}
+          <NotificationsProvider>
+            {/* Bulk revoke asks before it runs, so the page needs the confirm
+                host the app already wraps it in. Mounting without one is not a
+                lighter test — it is a different tree from the shipped app. */}
+            <ConfirmProvider>
+              <ApiKeys apiBase="http://localhost" />
+            </ConfirmProvider>
+          </NotificationsProvider>
         </LanguageProvider>,
       );
     });
@@ -170,7 +180,12 @@ test("successful key delete keeps last-good keys visible when follow-up refresh 
       root = createRoot(container);
       root.render(
         <LanguageProvider>
-          <ApiKeys apiBase="http://localhost" />
+          {/* The screen's icon-only copy buttons acknowledge through the snackbar host. */}
+          <NotificationsProvider>
+            <ConfirmProvider>
+              <ApiKeys apiBase="http://localhost" />
+            </ConfirmProvider>
+          </NotificationsProvider>
         </LanguageProvider>,
       );
     });
@@ -187,8 +202,9 @@ test("successful key delete keeps last-good keys visible when follow-up refresh 
       await new Promise<void>((resolve) => testWindow.setTimeout(resolve, 0));
     });
 
+    // Deleting a key is a decision, so it lands in the blocking confirm dialog.
     const confirmBtn = [...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Confirm");
+      .find((button) => button.textContent === "Delete key");
     expect(confirmBtn).toBeTruthy();
 
     await act(async () => {

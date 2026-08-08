@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { npmInvocation } from "../src/update/npm-invocation.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
+import { parseConcreteUpdateVersion } from "../src/update/version-resolution.mjs";
 
 const PKG = "@bitkyc08/opencodex";
 const require = createRequire(import.meta.url);
@@ -113,23 +114,44 @@ function runNpmSelfUpdate() {
   const current = currentPackageVersion();
   const tag = updateTag(current);
   const latestInvocation = npmInvocation(["view", `${PKG}@${tag}`, "version"]);
-  const installInvocation = npmInvocation(["install", "-g", `${PKG}@${tag}`]);
-  if (!latestInvocation || !installInvocation) {
+  if (!latestInvocation) {
     console.error("opencodex: could not resolve npm from a trusted absolute PATH entry; aborting before stopping the proxy.");
     process.exit(1);
   }
-  const latestResult = spawnSync(latestInvocation.file, latestInvocation.args, {
-    encoding: "utf8",
-    timeout: 12000,
-    windowsHide: true,
-    ...latestInvocation.options,
-  });
-  const latest = latestResult.status === 0 ? latestResult.stdout.trim() : "";
+  let latest = "";
+  try {
+    const latestResult = spawnSync(latestInvocation.file, latestInvocation.args, {
+      encoding: "utf8",
+      timeout: 12000,
+      windowsHide: true,
+      ...latestInvocation.options,
+    });
+    latest = latestResult.status === 0
+      ? (parseConcreteUpdateVersion(latestResult.stdout) ?? "")
+      : "";
+  } catch {
+    // The concrete-version gate below owns the user-facing failure and guarantees
+    // no tray/service/proxy shutdown or package mutation can follow.
+  }
 
   console.log(`opencodex v${current} (installed via npm, tag ${tag})`);
   if (latest && latest === current) {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     process.exit(0);
+  }
+  if (!latest) {
+    console.error(
+      "opencodex: could not resolve a concrete registry version; aborting before stopping the tray, service, or proxy and before package replacement.",
+    );
+    process.exit(1);
+  }
+
+  // Pin the package replacement to the exact version just resolved. The tag may
+  // move between the registry query and install, so it is not a safe mutation target.
+  const installInvocation = npmInvocation(["install", "-g", `${PKG}@${latest}`]);
+  if (!installInvocation) {
+    console.error("opencodex: could not resolve npm from a trusted absolute PATH entry; aborting before stopping the proxy.");
+    process.exit(1);
   }
 
   // Remember whether a background service manages the proxy BEFORE stopping — `ocx stop`
@@ -220,7 +242,7 @@ function runNpmSelfUpdate() {
     }
   }
 
-  console.log(`Updating${latest ? ` to v${latest}` : ""}...\n$ npm install -g ${PKG}@${tag}`);
+  console.log(`Updating to v${latest}...\n$ npm install -g ${PKG}@${latest}`);
   const res = spawnSync(installInvocation.file, installInvocation.args, {
     stdio: "inherit",
     timeout: 180000,
@@ -228,7 +250,7 @@ function runNpmSelfUpdate() {
     ...installInvocation.options,
   });
   if (res.status === 0) {
-    console.log(`\nUpdated${latest ? ` to v${latest}` : ""}.`);
+    console.log(`\nUpdated to v${latest}.`);
     repairCodexShimIfNeeded();
     if (trayBeforeUpdate.refreshAfterReplacement) {
       const tray = spawnSync(process.execPath, [launcher, ...trayBeforeUpdate.installArgs], {
@@ -277,7 +299,7 @@ function runNpmSelfUpdate() {
     process.exit(0);
   }
   if (trayBeforeUpdate.restoreOnFailure) runTrayLifecycle(launcher, "start");
-  console.error(`\nUpdate failed (npm exit ${res.status ?? "?"}). Try manually:  npm install -g ${PKG}@${tag}`);
+  console.error(`\nUpdate failed (npm exit ${res.status ?? "?"}). Try manually:  npm install -g ${PKG}@${latest}`);
   process.exit(1);
 }
 

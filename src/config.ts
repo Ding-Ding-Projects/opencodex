@@ -13,6 +13,7 @@ import {
 import { COMBO_NAMESPACE, comboConfigIssues } from "./combos/types";
 import { hardenSecretDir, hardenSecretPath, hardenSecretPathAsync } from "./lib/windows-secret-acl";
 import { recordOwnedConfigPath } from "./lib/config-ownership";
+import { announceDebugSandboxOnce, debugSandboxEnabled } from "./lib/debug-sandbox";
 import { providerDestinationConfigError } from "./lib/destination-policy";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
 import {
@@ -1277,6 +1278,10 @@ export function readConfigDiagnostics(): ConfigDiagnostics {
 }
 
 export function saveConfig(config: OcxConfig): void {
+  if (debugSandboxEnabled()) {
+    announceDebugSandboxOnce();
+    return;
+  }
   const dir = getConfigDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -1288,6 +1293,20 @@ export function saveConfig(config: OcxConfig): void {
   }
   const configPath = getConfigPath();
   atomicWriteFile(configPath, JSON.stringify(config, null, 2) + "\n");
+  noteConfigWritten();
+}
+
+let configSnapshotTimer: ReturnType<typeof setTimeout> | undefined;
+function noteConfigWritten(): void {
+  if (process.env.OCX_DISABLE_STATE_HISTORY === "1" || process.env.NODE_ENV === "test") return;
+  if (configSnapshotTimer) clearTimeout(configSnapshotTimer);
+  configSnapshotTimer = setTimeout(() => {
+    configSnapshotTimer = undefined;
+    void import("./lib/state-history")
+      .then(module => module.recordStateSnapshot("settings changed"))
+      .catch(() => { /* local history is best-effort */ });
+  }, 1_500);
+  configSnapshotTimer.unref?.();
 }
 
 export function websocketsEnabled(config: Pick<OcxConfig, "websockets">): boolean {
@@ -1643,18 +1662,22 @@ export type RuntimePortState = {
   pid: number;
   port: number;
   hostname?: string;
+  /** True only when the proxy process was launched by an OpenCodex service artifact. */
+  supervised?: boolean;
 };
 
 function isValidRuntimePortState(value: unknown): value is RuntimePortState {
   if (!value || typeof value !== "object") return false;
   const state = value as Record<string, unknown>;
   const hostnameOk = state.hostname === undefined || typeof state.hostname === "string";
+  const supervisedOk = state.supervised === undefined || typeof state.supervised === "boolean";
   return Number.isSafeInteger(state.pid)
     && Number(state.pid) > 0
     && Number.isInteger(state.port)
     && Number(state.port) > 0
     && Number(state.port) <= 65535
-    && hostnameOk;
+    && hostnameOk
+    && supervisedOk;
 }
 
 export function writeRuntimePort(state: RuntimePortState): void {

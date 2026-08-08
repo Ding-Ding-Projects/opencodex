@@ -66,6 +66,28 @@ test("a lane with models but no matches is distinguishable from an empty lane", 
   expect(laneView(models(5), "", LANE_PAGE).noMatch).toBe(false);
 });
 
+// Plain text is the default on every search bar; `.*` is the user's explicit opt-in.
+// Without it a metacharacter is a literal, so nobody runs a pattern by accident.
+test("regex is opt-in — the same query means different things in each mode", () => {
+  const list: LaneModel[] = [
+    { route: "cursor/grok-4.5", label: "Grok 4.5", available: true },
+    { route: "native/gpt-5.6-sol", label: "GPT 5.6 Sol", available: true },
+  ];
+  expect(laneView(list, "grok.*4", LANE_PAGE).shown).toHaveLength(0);
+  expect(laneView(list, "grok.*4", LANE_PAGE, true).shown.map(m => m.route)).toEqual(["cursor/grok-4.5"]);
+  expect(laneView(list, "^native/", LANE_PAGE, true).shown.map(m => m.route)).toEqual(["native/gpt-5.6-sol"]);
+});
+
+// A broken pattern is its own state. Folding it into "no matches" would blame the
+// catalogue for a typo the user can see and fix in the box.
+test("an invalid pattern reports itself instead of claiming the lane has no matches", () => {
+  const lane = laneView(models(5), "model-(", LANE_PAGE, true);
+  expect(lane.regexError).not.toBeNull();
+  expect(lane.shown).toHaveLength(0);
+  expect(lane.noMatch).toBe(false);
+  expect(laneView(models(5), "model-(", LANE_PAGE).regexError).toBeNull();
+});
+
 // Row disclosure starts the family default open — that is the row a user opens the page
 // to change — and everything else closed. A family with no default opens nothing.
 test("rowStartsOpen opens only the family's resolved default", () => {

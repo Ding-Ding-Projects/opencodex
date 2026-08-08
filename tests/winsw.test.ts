@@ -38,7 +38,8 @@ describe("winsw xml", () => {
     const xml = buildWinswXml(entry, env);
 
     expect(xml).toContain("<executable>C:\\OpenCodex\\bun.exe</executable>");
-    expect(xml).toContain("<arguments>&quot;C:\\Open Codex\\cli &amp; co\\index.ts&quot; start --port 10100</arguments>");
+    expect(xml).toContain("<arguments>&quot;C:\\Open Codex\\cli &amp; co\\index.ts&quot; start</arguments>");
+    expect(xml).not.toContain("start --port");
     expect(xml).toContain('<onfailure action="restart" delay="5 sec"/>');
     expect(xml).toContain("<stoptimeout>20 sec</stoptimeout>");
     expect(xml).toContain('<log mode="roll-by-size">');
@@ -47,6 +48,7 @@ describe("winsw xml", () => {
   test("honors OCX_BAKE_PORT when building WinSW arguments", () => {
     const xml = buildWinswXml(entry, { ...env, OCX_BAKE_PORT: "14444" });
     expect(xml).toContain("start --port 14444");
+    expect(buildWinswXml(entry, { ...env, OCX_BAKE_PORT: "14444" }, null)).not.toContain("start --port");
   });
 });
 
@@ -94,11 +96,13 @@ describe("winsw fail-closed lifecycle", () => {
   });
 
   test("a failed status query is treated as possibly-installed by lifecycle consumers", () => {
-    // stopServiceIfInstalled/installWindows gate on `!== "nonexistent"` — "unknown"
-    // must therefore route INTO stop/uninstall attempts, never skip them.
+    // Unknown is never absence. Stop/uninstall now fail closed before destructive
+    // teardown; install still routes a possibly-present service through removal.
     const service = readFileSync(new URL("../src/service.ts", import.meta.url), "utf8");
-    expect(service).not.toContain('statusWinswRaw() === "unknown"');
-    expect((service.match(/statusWinswRaw\(\) !== "nonexistent"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(service).toContain('if (nativeStatus === "unknown")');
+    expect(service).toContain("Native WinSW service state is unknown; refusing unsafe teardown.");
+    expect(service).toContain("Native WinSW install state is unknown; refusing to report uninstall success.");
+    expect(service).toContain('statusWinswRaw() !== "nonexistent"');
   });
 
   test("exe missing + non-Windows is confirmed absence; on Windows the SCM is queried", () => {

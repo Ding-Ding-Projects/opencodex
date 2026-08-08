@@ -2,6 +2,7 @@ import type { Locale, TFn } from "../i18n/shared";
 import { IconTicket } from "../icons";
 import type { CodexAccountEntry } from "./codex-account-pool-types";
 import { daysUntil, formatCreditDate, formatCreditDateTime } from "./codex-account-pool-utils";
+import { chipButtonStyle, chipStyle } from "./codex-account-pool-m3";
 
 export function CodexCreditItem({ index, grantedAt, expiresAt, isNext, locale, t }: {
   index: number; grantedAt: string; expiresAt: string; isNext: boolean; locale: Locale; t: TFn;
@@ -11,11 +12,11 @@ export function CodexCreditItem({ index, grantedAt, expiresAt, isNext, locale, t
   return (
     <div className={`credit-item${isNext ? " credit-next" : ""}`}>
       <div className="credit-item-head">
-        <IconTicket width={13} />
+        <IconTicket width={13} aria-hidden="true" />
         <span className="credit-item-label">
           {isNext ? t("codexAuth.creditNext") : t("codexAuth.creditLabel", { n: String(index + 1) })}
         </span>
-        {isNext && <span className="badge badge-amber text-micro" style={{ padding: "1px 6px" }}>{t("codexAuth.creditNextBadge")}</span>}
+        {isNext && <span className="m3-chip" style={{ ...chipStyle("warn"), minHeight: 22, padding: "0 8px" }}>{t("codexAuth.creditNextBadge")}</span>}
       </div>
       <div className="credit-item-dates">
         <span>{t("codexAuth.creditGranted", { date: formatCreditDate(grantedAt, locale) })}</span>
@@ -31,11 +32,12 @@ export function CodexTicketBadge({ account, onClick, t }: { account: CodexAccoun
   const hasCredits = typeof credits === "number" && credits > 0;
   return (
     <button type="button"
-      className={`badge ${hasCredits ? "badge-amber" : "badge-muted"} badge-clickable`}
+      className="m3-chip"
+      style={chipButtonStyle(hasCredits ? "warn" : "neutral")}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       aria-label={t("codexAuth.resetCreditsAria", { count: String(credits) })}
     >
-      <IconTicket width={12} />
+      <IconTicket width={12} aria-hidden="true" />
       {credits}
     </button>
   );

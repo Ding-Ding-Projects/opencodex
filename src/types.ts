@@ -635,6 +635,10 @@ export interface OcxConfig {
   contextCapValue?: number;
   /** Bind hostname. Default "127.0.0.1" (loopback only). Set "0.0.0.0" to expose on all interfaces. */
   hostname?: string;
+  /** Embedded terminal settings. Remote shell access remains disabled unless explicitly opted in. */
+  terminal?: {
+    allowRemote?: boolean;
+  };
   /**
    * Outbound HTTP(S) proxy URL for provider requests (e.g. "http://user:pass@proxy:8080", or
    * "${HTTPS_PROXY}"-style env reference). Mirrored into HTTP_PROXY/HTTPS_PROXY at startup when

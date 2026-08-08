@@ -1,5 +1,6 @@
 import type { Virtualizer } from "@tanstack/react-virtual";
 import { useI18n } from "../i18n/shared";
+import { Empty } from "../shell/m3-ui";
 import type { DebugLogEntry, LogStream } from "./debug-shared";
 import { formatLogTime } from "./debug-shared";
 
@@ -24,27 +25,37 @@ export function DebugLogViewer({
 
   if (!streamEnabled) {
     return (
-      <div className="empty">
-        <div className="font-semibold" style={{ marginBottom: 6 }}>{t("debug.emptyTitle")}</div>
-        <div className="muted text-control" style={{ maxWidth: 560, marginInline: "auto" }}>{t("debug.empty")}</div>
-      </div>
+      <Empty title={t("debug.emptyTitle")}>
+        <span style={{ display: "inline-block", maxWidth: 560 }}>{t("debug.empty")}</span>
+      </Empty>
     );
   }
 
   if (entries.length === 0) {
     return (
-      <div className="empty">
-        <div className="font-semibold" style={{ marginBottom: 6 }}>{t("debug.noLinesTitle")}</div>
-        <div className="muted text-control" style={{ maxWidth: 560, marginInline: "auto" }}>{t(`debug.noLines.${stream}`)}</div>
-      </div>
+      <Empty title={t("debug.noLinesTitle")}>
+        <span style={{ display: "inline-block", maxWidth: 560 }}>{t(`debug.noLines.${stream}`)}</span>
+      </Empty>
     );
   }
 
   return (
     <div
       ref={scrollContainerRef}
-      className="log-detail-json"
-      style={{ maxHeight: "calc(100vh - 280px)", overflow: "auto" }}
+      style={{
+        maxHeight: "calc(100vh - 280px)",
+        overflow: "auto",
+        padding: "14px 16px",
+        border: "1px solid var(--m3-outline-variant)",
+        borderRadius: "var(--r-l)",
+        background: "var(--m3-surface-container-lowest)",
+        color: "var(--m3-on-surface)",
+        fontFamily: "var(--mono)",
+        fontSize: "var(--t-label-m)",
+        lineHeight: 1.7,
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+      }}
     >
       <div
         style={{

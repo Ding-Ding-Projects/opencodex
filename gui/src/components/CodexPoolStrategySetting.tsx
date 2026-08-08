@@ -111,7 +111,7 @@ export default function CodexPoolStrategySetting({ apiBase }: { apiBase: string 
             : t("accountPool.strategyDesc")}
       </div>
       {loadError && (
-        <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={() => { void load(); }}>
+        <button type="button" className="m3-btn m3-btn--text" style={{ marginTop: "var(--sp-2)" }} onClick={() => { void load(); }}>
           {t("common.retry")}
         </button>
       )}

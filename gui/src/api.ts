@@ -1,3 +1,6 @@
+import { detectInitial } from "./i18n/shared";
+import { resolveTrack } from "./i18n/resolve";
+
 let installed = false;
 /** Shared 401 refresh gate — concurrent waiters join one prompt / token resolution. */
 let promptInFlight: Promise<string | null> | null = null;
@@ -7,6 +10,20 @@ let promptInFlight: Promise<string | null> | null = null;
  * A full reload clears module state and allows prompting again.
  */
 let promptCancelled = false;
+
+type TokenRequester = (message: string) => Promise<string | null>;
+let tokenRequester: TokenRequester | null = null;
+let promptSuppressed = false;
+
+/** Register the app's accessible credential prompt; null unregisters it on unmount. */
+export function setTokenRequester(requester: TokenRequester | null): void {
+  tokenRequester = requester;
+}
+
+/** Suppress only the prompt on a data-plane-only surface; the 401 still reaches its caller. */
+export function setAdminTokenPromptSuppressed(suppressed: boolean): void {
+  promptSuppressed = suppressed;
+}
 
 function needsApiAuth(input: RequestInfo | URL): boolean {
   try {
@@ -72,6 +89,23 @@ function clearLegacySessionToken(): void {
   }
 }
 
+function adminTokenPromptMessage(): string {
+  const locale = detectInitial();
+  return resolveTrack(locale, locale === "yue" ? "yue" : "en", 1, "auth.adminTokenPrompt");
+}
+
+async function askForToken(): Promise<string | null> {
+  const message = adminTokenPromptMessage();
+  if (tokenRequester) return (await tokenRequester(message))?.trim() || null;
+  try {
+    return window.prompt(message)?.trim() || null;
+  } catch {
+    // Electron does not implement window.prompt. A missing prompt surface is
+    // an unauthenticated request, not an exception for every caller to inherit.
+    return null;
+  }
+}
+
 function withToken(input: RequestInfo | URL, init: RequestInit | undefined, token: string): [RequestInfo | URL, RequestInit | undefined] {
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
   headers.set("X-OpenCodex-API-Key", token);
@@ -92,6 +126,7 @@ function withToken(input: RequestInfo | URL, init: RequestInit | undefined, toke
  * prompting so waiters that wake after another request already stored a token do not re-prompt.
  */
 async function resolveTokenAfter401(failedToken: string | null): Promise<string | null> {
+  if (promptSuppressed) return null;
   if (promptCancelled) return null;
   if (promptInFlight) return promptInFlight;
 
@@ -100,7 +135,7 @@ async function resolveTokenAfter401(failedToken: string | null): Promise<string 
     const current = readToken();
     if (current && current !== failedToken) return current;
 
-    const prompted = window.prompt("OpenCodex API token")?.trim() || null;
+    const prompted = await askForToken();
     if (prompted) {
       storeToken(prompted);
       return prompted;
@@ -158,4 +193,6 @@ export function resetApiAuthFetchForTests(): void {
   memorySessionOrigin = null;
   promptInFlight = null;
   promptCancelled = false;
+  tokenRequester = null;
+  promptSuppressed = false;
 }

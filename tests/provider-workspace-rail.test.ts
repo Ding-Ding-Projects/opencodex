@@ -90,11 +90,15 @@ describe("provider rail source contract", () => {
     const routing = await Bun.file("gui/src/app-routing.ts").text();
     const routeState = await Bun.file("gui/src/use-app-route-state.ts").text();
     const app = await Bun.file("gui/src/App.tsx").text();
+    const tabRouting = await Bun.file("gui/src/shell/use-tab-routing.ts").text();
     expect(routing).toContain('rawHash === "providers/workspace"');
     expect(routing).toContain("hashBelongsToPage(rawHash, nextPage)");
     expect(routeState).toContain('rawHash === "providers/workspace"');
     expect(routeState).toContain("hashBelongsToPage(rawHash, page)");
-    expect(app).toContain("useAppRouteState");
-    expect(`${routing}\n${routeState}\n${app}`).not.toContain("window.location.hash !== nextHash");
+    // App reaches the hash router through the tab coordinator. Keeping this as
+    // a chain assertion protects routing without requiring the old direct hook.
+    expect(app).toContain("useTabRouting");
+    expect(tabRouting).toContain("useAppRouteState");
+    expect(`${routing}\n${routeState}\n${app}\n${tabRouting}`).not.toContain("window.location.hash !== nextHash");
   });
 });

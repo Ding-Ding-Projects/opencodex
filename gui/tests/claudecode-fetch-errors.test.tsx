@@ -3,6 +3,8 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
+import SnackbarHost from "../src/shell/SnackbarHost";
 import ClaudeCode from "../src/pages/ClaudeCode";
 
 const originalFetch = globalThis.fetch;
@@ -75,8 +77,14 @@ async function mountClaudeCode(): Promise<{ container: HTMLElement; root: Root; 
   await act(async () => {
     root = createRoot(container);
     root.render(
+      // A save outcome is a snackbar now rather than an inline notice, so the
+      // host that renders snackbars is mounted inside the same container the
+      // assertions read. The message the user sees is the assertion either way.
       <LanguageProvider>
-        <ClaudeCode apiBase="http://localhost" />
+        <NotificationsProvider>
+          <ClaudeCode apiBase="http://localhost" />
+          <SnackbarHost />
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });
@@ -173,7 +181,15 @@ test("ClaudeCode save treats an empty 200 body as success", async () => {
   }
 });
 
-test("ClaudeCode helper model options render icon-backed model names", async () => {
+/**
+ * Supersession: this used to assert that the option list rendered the icon-backed
+ * `modelLabel()` node rather than stringifying it to "[object Object]". The
+ * picker is a native `<select>` now, and a browser will not render markup inside
+ * an `<option>` at all — so the screen passes plain slugs, and the surviving
+ * invariant is the one that actually mattered: the option is named by the model,
+ * never by a stringified React element.
+ */
+test("ClaudeCode helper model options are named by the model, never a stringified node", async () => {
   globalThis.fetch = (async (input) => {
     if (String(input).endsWith("/api/claude-code")) {
       return Response.json({ ...CLAUDE_OK, available: ["gpt-5.6-luna"] });
@@ -183,19 +199,12 @@ test("ClaudeCode helper model options render icon-backed model names", async () 
 
   const { container, root, testWindow } = await mountClaudeCode();
   try {
-    const helperModel = container.querySelector<HTMLButtonElement>(
-      '[role="combobox"][aria-label="Background helper model"]',
+    const helperModel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Background helper model"]',
     );
     expect(helperModel).toBeTruthy();
 
-    await act(async () => {
-      helperModel!.click();
-      await Promise.resolve();
-    });
-
-    const optionText = [...testWindow.document.querySelectorAll<HTMLElement>('[role="option"]')]
-      .map(option => option.textContent)
-      .join("\n");
+    const optionText = [...helperModel!.options].map(option => option.textContent).join("\n");
     expect(optionText).toContain("gpt-5.6-luna");
     expect(optionText).not.toContain("[object Object]");
   } finally {
