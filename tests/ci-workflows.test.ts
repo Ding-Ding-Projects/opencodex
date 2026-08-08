@@ -28,7 +28,7 @@ function count(text: string, fragment: string): number {
 }
 
 describe("GitHub Actions hardening", () => {
-  test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
+  test("Windows CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
 
     expect(workflow).toContain("name: Windows CI");
@@ -36,12 +36,13 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).not.toContain("macos-latest");
     expect(workflow).toContain("runs-on: windows-latest");
     expect(workflow).not.toContain("matrix:");
-    expect(count(workflow, "timeout-minutes: 12")).toBe(1);
+    expect(count(workflow, "timeout-minutes: 20")).toBe(1);
     expect(count(workflow, "timeout-minutes: 8")).toBe(1);
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
     expect(workflow).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
     expect(workflow).toContain("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e");
     expect(workflow).toContain("bun test --isolate tests");
+    expect(workflow).toContain("bun test --isolate tests --max-concurrency=8 --timeout=30000");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
@@ -117,7 +118,7 @@ describe("GitHub Actions hardening", () => {
     expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
   });
 
-  test("cross-platform CI keeps the GUI lint and build gates", async () => {
+  test("Windows CI keeps the GUI lint and build gates", async () => {
     // Review finding (PR #97): the GUI build gate was silently dropped once; assert the
     // enhanced gate (PR #99) stays wired so broken GUI builds cannot merge unnoticed.
     const workflow = await readText(".github/workflows/ci.yml");
@@ -180,20 +181,23 @@ describe("GitHub Actions hardening", () => {
     expect(text).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
-  test("service lifecycle is least-privilege, bounded, and cannot swallow health failures", async () => {
+  test("Windows service lifecycle is least-privilege, bounded, and cannot swallow health failures", async () => {
     const workflow = await readText(".github/workflows/service-lifecycle.yml");
 
     expect(workflow).toContain("permissions:\n  contents: read");
     expect(workflow).toContain("group: service-lifecycle-${{ github.ref }}");
     expect(workflow).toContain("cancel-in-progress: true");
-    expect(count(workflow, "timeout-minutes: 10")).toBe(3);
-    expect(count(workflow, "if: ${{ !cancelled() }}")).toBe(3);
+    expect(count(workflow, "timeout-minutes: 10")).toBe(1);
+    expect(count(workflow, "if: ${{ !cancelled() }}")).toBe(1);
     expect(workflow).not.toContain("always()");
     expect(workflow).not.toContain('healthz || echo "healthz not ready yet"');
     expect(workflow).not.toContain("sleep 8");
-    expect(workflow).toContain("systemd service has no positive MainPID before crash test");
+    expect(workflow).toContain("windows-schtasks:");
+    expect(workflow).not.toContain("linux-systemd:");
+    expect(workflow).not.toContain("macos-launchd:");
+    expect(workflow).not.toContain("ubuntu-latest");
+    expect(workflow).not.toContain("macos-latest");
     expect(workflow).toContain("Get-ScheduledTask -TaskName opencodex-proxy -ErrorAction SilentlyContinue");
-    expect(workflow).toContain("launchd artifact or proxy survived uninstall");
     expect(workflow).toContain("scheduled task or proxy survived uninstall");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
@@ -548,7 +552,7 @@ describe("GitHub Actions hardening", () => {
     // `defaults:`, and no `<<:` merge key to reintroduce any of them sideways.
     const [, job] = jobs[0]!;
     expect(Object.keys(job).sort()).toEqual(["runs-on", "steps"]);
-    expect(job["runs-on"]).toBe("ubuntu-latest");
+    expect(job["runs-on"]).toBe("windows-latest");
 
     // Checkout trusted scripts, then run the gate. Anything more is an extra
     // privileged action nobody reviewed.
