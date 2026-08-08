@@ -19,6 +19,10 @@ npm install -g @bitkyc08/opencodex
 ocx start        # proxy + dashboard on localhost:10100
 ```
 
+On Windows, `scripts/install.ps1` also repairs the current user's PATH using the directory reported by
+`npm.cmd prefix -g`; it never changes the machine PATH. If a manually installed global package still
+reports that `ocx` is not recognized, add that exact prefix to the user PATH and open a new PowerShell
+window before retrying.
 Already signed in through Codex or ChatGPT? That is the whole local setup: the built-in `openai`
 route forwards that login, so no provider API key and no `ocx init` are required. Leave
 `ocx start` running, then open another terminal and run `ocx codex`.
@@ -450,6 +454,12 @@ npm install -g @bitkyc08/opencodex
 ocx start
 ```
 
+On Windows, use `scripts/install.ps1` to add npm's global prefix to the current user's PATH without
+changing the machine PATH. If `ocx` is still unavailable after installation, open a new PowerShell
+window before retrying.
+
+Open `http://localhost:10100`, add a provider, and point your client at the proxy. `ocx codex`,
+`ocx claude` and `ocx grok` launch each client already wired to it.
 If Codex is already signed in to ChatGPT, there is nothing else to configure and no provider API key
 to paste. Keep `ocx start` running, then use `ocx codex` from another terminal. If this is the first
 Codex run on the machine, run `codex login` once. `ocx gui` opens the dashboard on the live port;

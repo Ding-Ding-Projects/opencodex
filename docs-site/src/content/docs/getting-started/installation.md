@@ -25,6 +25,38 @@ an OpenAI API key or any other provider API key.
 npm install -g @bitkyc08/opencodex
 ```
 
+On Windows, the repository installer `scripts/install.ps1` obtains the exact npm global prefix from
+`npm.cmd prefix -g`, adds that directory to the current user's PATH idempotently, and refreshes the
+current PowerShell process when possible. It never changes the machine PATH or requires elevation. If
+the current shell cannot be refreshed, the installer says to open a new PowerShell window and rerun
+`ocx --version`.
+
+If you are installing from a package download rather than a repository checkout, use the manual check
+below instead.
+
+If you install manually and `ocx` is not recognized, inspect the prefix and shim first. On Windows,
+use the prefix itself as the global npm bin directory — do not append `\bin`:
+
+```powershell
+$npmGlobalBin = (& npm.cmd prefix -g).Trim()
+$npmGlobalBin
+Test-Path -LiteralPath (Join-Path $npmGlobalBin "ocx.cmd")
+$env:Path -split ";" | Where-Object { $_.Trim().TrimEnd("\") -ieq $npmGlobalBin.Trim().TrimEnd("\") }
+Get-Command ocx.cmd -ErrorAction SilentlyContinue
+```
+
+If the shim exists but the PATH query is empty, rerun `scripts/install.ps1`. It adds the prefix to the
+current user's PATH idempotently, preserves unrelated entries, avoids the machine PATH, and refreshes
+the current PowerShell process when possible. If the process cannot be refreshed, it reports that a
+new PowerShell window is required. Do not use `setx PATH`, which can rewrite or truncate unrelated
+PATH entries.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+Open a new PowerShell window if the installer explicitly tells you to do so.
+
 :::note[npm blocked the bun postinstall?]
 Recent npm versions may block bun's postinstall script (`npm warn
 install-scripts ... blocked because they are not covered by allowScripts`),
