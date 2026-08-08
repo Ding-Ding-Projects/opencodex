@@ -13,6 +13,7 @@ import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
 import { usePrefs } from "../theme/prefs-context";
 import { useAppearanceTarget } from "./use-appearance-target";
+import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import type { Page } from "../app-routing";
 
 interface AppBarProps {
@@ -38,6 +39,9 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
   const { history, unreadCount, markAllRead } = useNotifications();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const notifTriggerRef = useRef<HTMLButtonElement>(null);
+  const notifPanelRef = useRef<HTMLDivElement>(null);
+  const notifPlacement = useAnchoredPlacement(notifRef, notifPanelRef, notifOpen, 320);
   // Right-click, press-and-hold or Shift+F10 on the bar restyles it in place.
   const barAppearance = useAppearanceTarget("appBar");
 
@@ -47,7 +51,12 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
     const onDown = (e: MouseEvent) => {
       if (!notifRef.current?.contains(e.target as Node)) setNotifOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNotifOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setNotifOpen(false);
+        notifTriggerRef.current?.focus();
+      }
+    };
     const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -88,13 +97,19 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
       <CostMeter apiBase={apiBase} />
 
       <div ref={notifRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
-        <button type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}
+        <button ref={notifTriggerRef} type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}
           aria-haspopup="dialog" aria-expanded={notifOpen} aria-label={t("notif.centre")} title={t("notif.centre")}>
           <IconBell aria-hidden />
           {unreadCount > 0 && <span className="m3-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
         </button>
         {notifOpen && (
-          <div className="m3-menu" role="dialog" aria-label={t("notif.centre")} style={{ top: "100%", right: 0, minWidth: 320 }}>
+          <div
+            ref={notifPanelRef}
+            className="m3-menu"
+            role="dialog"
+            aria-label={t("notif.centre")}
+            style={{ ...fixedPanelStyle(notifPlacement), zIndex: 70, minWidth: "min(320px, calc(100vw - 16px))" }}
+          >
             <div className="m3-menu-heading">{t("notif.centre")}</div>
             {history.length === 0 && (
               <div style={{ padding: "12px", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>

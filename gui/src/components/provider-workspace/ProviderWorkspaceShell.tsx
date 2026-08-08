@@ -5,6 +5,7 @@
  * arrive in WP090/091; until then the slot renders a real placeholder message.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { fixedPanelStyle, useAnchoredPlacement } from "../../shell/use-anchored-placement";
 import { useT } from "../../i18n/shared";
 import { IconFilter, IconSearch, IconBoxes, IconGlobe, IconLock, IconKey, IconTrash } from "../../icons";
 import { Chip } from "../../shell/m3-ui";
@@ -138,6 +139,9 @@ export default function ProviderWorkspaceShell({
   const [quotaReports, setQuotaReports] = useState<Record<string, ProviderQuotaReportView>>({});
   const [modelsLoadEpoch, setModelsLoadEpoch] = useState(0);
   const filterWrapRef = useRef<HTMLDivElement>(null);
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const filterPlacement = useAnchoredPlacement(filterWrapRef, filterPanelRef, filterOpen, 250);
 
   const sections = useMemo(() => {
     const base = buildProviderWorkspace(hideRedundantChatGptForwardProviders(providers));
@@ -244,7 +248,12 @@ export default function ProviderWorkspaceShell({
     const onDoc = (e: MouseEvent) => {
       if (filterWrapRef.current && !filterWrapRef.current.contains(e.target as Node)) setFilterOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFilterOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setFilterOpen(false);
+        filterTriggerRef.current?.focus();
+      }
+    };
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("keydown", onKey);
     return () => {
@@ -407,6 +416,7 @@ export default function ProviderWorkspaceShell({
           />
           <div className="pws-filter-wrap" ref={filterWrapRef}>
             <button
+              ref={filterTriggerRef}
               type="button"
               className={`m3-icon-btn pws-filter-btn${filterActive || filterOpen ? " pws-filter-btn--active" : ""}`}
               onClick={() => setFilterOpen(open => !open)}
@@ -418,7 +428,14 @@ export default function ProviderWorkspaceShell({
               {filterActive && <span className="pws-filter-dot" aria-hidden="true" />}
             </button>
             {filterOpen && (
-              <div id="pws-provider-filters" className="m3-menu pws-filter-menu" role="group" aria-label={t("pws.providerFiltersAria")}>
+              <div
+                id="pws-provider-filters"
+                ref={filterPanelRef}
+                className="m3-menu pws-filter-menu"
+                role="group"
+                aria-label={t("pws.providerFiltersAria")}
+                style={{ ...fixedPanelStyle(filterPlacement), zIndex: 70 }}
+              >
                 <div className="pws-filter-title">{t("pws.filters")}</div>
                 <div className="pws-filter-head">{t("pws.filterStatus")}</div>
                 {statusFilterOptions.map(({ key, label, count }) => (

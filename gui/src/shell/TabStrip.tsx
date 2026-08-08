@@ -41,6 +41,7 @@ import { useT } from "../i18n/shared";
 import { PAGE_META, PAGE_META_BY_ID } from "./page-meta";
 import { SearchField } from "./RegexBuilderButton";
 import TabAppearanceEditor from "./TabAppearanceEditor";
+import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import { Button, Segmented, TextInput, Toggle } from "./m3-ui";
 import {
   TAB_MATCH_FLAGS, bulkCloseTargets, clampToViewport, closeOthersTargets, closeToRightTargets,
@@ -185,8 +186,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
 
   const listRef = useRef<HTMLDivElement>(null);
   const newMenuWrapRef = useRef<HTMLDivElement>(null);
+  const newMenuRef = useRef<HTMLDivElement>(null);
   const newTriggerRef = useRef<HTMLButtonElement>(null);
   const overflowWrapRef = useRef<HTMLDivElement>(null);
+  const overflowMenuRef = useRef<HTMLDivElement>(null);
   const overflowTriggerRef = useRef<HTMLButtonElement>(null);
   const contextRef = useRef<HTMLDivElement>(null);
   const bulkRef = useRef<HTMLDivElement>(null);
@@ -251,6 +254,8 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   // Derived, not stored: closing the last overflowed tab has to shut the menu,
   // and a stored flag would need an effect to correct itself afterwards.
   const menuOpen = overflowOpen && overflow.length > 0;
+  const newMenuPlacement = useAnchoredPlacement(newMenuWrapRef, newMenuRef, newMenuOpen, 300);
+  const overflowMenuPlacement = useAnchoredPlacement(overflowWrapRef, overflowMenuRef, menuOpen, 260);
   const menuIndex = Math.min(focusIndex, Math.max(0, overflow.length - 1));
   // Named for what the menu actually holds. It lists the tabs that did not fit and
   // its badge counts only those, so "All tabs" told the user the visible ones were
@@ -1002,10 +1007,11 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           </button>
           {menuOpen && (
             <div
+              ref={overflowMenuRef}
               className="m3-menu"
               role="menu"
               aria-label={hiddenLabel}
-              style={{ top: "100%", right: 0, minWidth: 260 }}
+              style={{ ...fixedPanelStyle(overflowMenuPlacement), zIndex: 70, minWidth: "min(260px, calc(100vw - 16px))" }}
               onKeyDown={onMenuKeyDown}
             >
               <div className="m3-menu-heading">{hiddenLabel}</div>
@@ -1083,7 +1089,18 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           <IconPlus aria-hidden />
         </button>
         {newMenuOpen && (
-          <div className="m3-menu" role="menu" aria-label={t("tabs.newTab")} style={{ top: "100%", right: 0, minWidth: 300 }}>
+          <div
+            ref={newMenuRef}
+            className="m3-menu"
+            role="menu"
+            aria-label={t("tabs.newTab")}
+            style={{
+              ...fixedPanelStyle(newMenuPlacement),
+              zIndex: 70,
+              width: "min(300px, calc(100vw - 16px))",
+              minWidth: 0,
+            }}
+          >
             <div className="m3-menu-heading">{t("tabs.newTab")}</div>
             <div style={{ padding: "0 4px 8px" }} onKeyDown={onPageSearchKeyDown}>
               <SearchField

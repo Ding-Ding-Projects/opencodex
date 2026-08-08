@@ -22,7 +22,8 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { INITIAL_PLACEMENT, computePlacement, fixedPanelStyle } from "../../../shared/m3/anchor";
+import { INITIAL_PLACEMENT, fixedPanelStyle } from "../../../shared/m3/anchor";
+import { computeViewportPlacement } from "./use-anchored-placement";
 import { clampToViewport } from "../../../shared/m3/tabs";
 import { labelFor, targetFor } from "../../../shared/m3/elements";
 import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
@@ -450,7 +451,7 @@ function ElementAppearanceEditor({ id, anchor, onClose }: { id: string; anchor: 
       const rect = anchor?.getBoundingClientRect();
       const panel = panelRef.current?.getBoundingClientRect();
       if (!rect || !panel) return;
-      setPlacement(computePlacement(
+      setPlacement(computeViewportPlacement(
         { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
         { width: panel.width || PANEL_WIDTH, height: panel.height },
         { width: window.innerWidth, height: window.innerHeight },

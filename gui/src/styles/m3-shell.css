@@ -121,9 +121,6 @@
 }
 
 .m3-nav-foot {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
   margin-top: auto;
   padding-top: 12px;
   display: flex;
@@ -461,7 +458,9 @@
 .m3-menu {
   position: absolute;
   z-index: 70;
-  min-width: 220px;
+  min-width: min(220px, calc(100vw - 16px));
+  width: max-content;
+  max-width: calc(100vw - 16px);
   max-height: min(60vh, 480px);
   overflow-y: auto;
   padding: var(--el-menu-pad, 8px);
