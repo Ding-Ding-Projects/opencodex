@@ -49,7 +49,7 @@ function profileConfig(baseUrl = "http://127.0.0.1:9/v1", hostname = "127.0.0.1"
       mock: {
         adapter: "openai-chat",
         baseUrl,
-        apiKey: "upstream-provider-secret",
+        apiKey: "access-token-value-upstream",
         allowPrivateNetwork: true,
         liveModels: false,
         models: ["test-model"],
@@ -260,7 +260,7 @@ describe("GitHub Copilot Desktop end-to-end profile", () => {
         },
       });
       expect(JSON.stringify(profile)).not.toContain(PROFILE_KEY);
-      expect(JSON.stringify(profile)).not.toContain("upstream-provider-secret");
+      expect(JSON.stringify(profile)).not.toContain("access-token-value-upstream");
     } finally {
       server.stop(true);
     }
@@ -298,7 +298,7 @@ describe("GitHub Copilot Desktop end-to-end profile", () => {
       }
       expect(seen).toHaveLength(3);
       for (const headers of seen) {
-        expect(headers.authorization).toBe("Bearer upstream-provider-secret");
+        expect(headers.authorization).toBe("Bearer access-token-value-upstream");
         expect(headers.authorization).not.toContain(PROFILE_KEY);
         expect(headers.xApiKey).toBeNull();
         expect(headers.xOcxKey).toBeNull();
@@ -380,6 +380,6 @@ describe("GitHub Copilot Desktop end-to-end profile", () => {
     expect(Array.isArray(dto.models)).toBe(true);
     expect(Array.isArray(dto.sidecarDisclosure)).toBe(true);
     expect(text).not.toContain(PROFILE_KEY);
-    expect(text).not.toContain("upstream-provider-secret");
+    expect(text).not.toContain("access-token-value-upstream");
   });
 });
