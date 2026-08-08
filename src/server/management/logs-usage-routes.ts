@@ -54,7 +54,7 @@ import {
   type PersistedUsageEntry,
 } from "../../usage/log";
 import { getUsageDebugLogEntries } from "../../usage/debug";
-import { parseRange, parseUsageSurface, summarizeUsage, type UsageRange, type UsageSummary, type UsageSurface } from "../../usage/summary";
+import { emptyUsageSummaryTotals, parseRange, parseUsageSurface, summarizeUsage, type UsageRange, type UsageSummary, type UsageSurface } from "../../usage/summary";
 import { stripCodexRuntimeProviderFields } from "../../codex/auth-context";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { getDebugLogEntries } from "../../lib/debug-log-buffer";
@@ -203,27 +203,7 @@ export async function handleLogsUsageRoutes(ctx: ManagementContext): Promise<Res
         surface,
         since: null,
         generatedAt: now,
-        summary: {
-          requests: 0,
-          attemptCount: 0,
-          measuredRequests: 0,
-          reportedRequests: 0,
-          unreportedRequests: 0,
-          unsupportedRequests: 0,
-          estimatedRequests: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          cachedInputTokens: 0,
-          cacheReadInputTokens: 0,
-          cacheCreationInputTokens: 0,
-          reasoningOutputTokens: 0,
-          totalTokens: 0,
-          coverageRatio: 0,
-          estimatedCostUsd: 0,
-          pricedRequests: 0,
-          unpricedRequests: 0,
-          unmeteredRequests: 0,
-        },
+        summary: emptyUsageSummaryTotals(),
         days: [],
         models: [],
         providers: [],

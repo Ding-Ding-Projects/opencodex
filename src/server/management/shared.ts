@@ -51,7 +51,8 @@ import type { OcxClaudeCodeConfig, OcxClaudeDesktopProfile, OcxConfig, OcxCustom
 import type { DesktopProfileModel } from "../../claude/desktop-profile";
 import { drainAndShutdown } from "../lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
-import { estimateComboCost, estimateRequestCost, effectiveServiceTier, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
+import { classifyUsageForCost, comboPricingUnavailableReason, comboUsageUnavailableReason, estimateComboCost, estimateRequestCost, effectiveServiceTier, pricingUnavailableReason, tokensPerSecond } from "../../usage/cost";
+import type { PricingUnavailableReason } from "../../usage/expected-prices";
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
 import { applySystemEnvToggle } from "../system-env";
@@ -86,9 +87,9 @@ export type CostEstimateReason = "usage_estimated" | "cache_detail_missing" | "e
 
 export type CostResult =
   | { kind: "value"; estimate: NonNullable<ReturnType<typeof estimateRequestCost>>; estimateReasons: CostEstimateReason[] }
-  | { kind: "unavailable"; reason: MetricUnavailableReason };
+  | { kind: "unavailable"; reason: MetricUnavailableReason; pricingReason?: PricingUnavailableReason };
 
-export type MetricSource = Pick<RequestLogEntry, "provider" | "model" | "durationMs" | "usageStatus" | "usage" | "requestedServiceTier" | "configuredServiceTier" | "responseServiceTier"> & {
+export type MetricSource = Pick<RequestLogEntry, "provider" | "model" | "durationMs" | "usageStatus" | "usage"> & Partial<Pick<RequestLogEntry, "timestamp" | "requestedServiceTier" | "configuredServiceTier" | "responseServiceTier" | "cacheRetention">> & {
   attempts?: readonly PersistedUsageAttempt[];
 };
 
@@ -106,29 +107,55 @@ export function tokPerSecondResult(entry: Pick<MetricSource, "durationMs" | "usa
 }
 
 export function unavailableCostReason(entry: MetricSource): MetricUnavailableReason {
-  // Normalizer-first classification: the landed normalizer recovers legacy
-  // cachedInputTokens=read+write rows via retry, so a raw read+write>input
-  // pre-check would misclassify recoverable rows (020 audit blocker #2).
-  if (!entry.usage && !entry.attempts?.length) return "usage_missing";
-  if (entry.usageStatus === "unsupported") return "usage_unsupported";
-  if (entry.attempts?.length) return "combo_attempt_unavailable";
-  if (!entry.usage) return "usage_missing";
-  if (!normalizeCostTokens(entry.usage)) {
-    const effectiveRead = entry.usage.cacheReadInputTokens ?? entry.usage.cachedInputTokens ?? 0;
-    const effectiveWrite = entry.usage.cacheCreationInputTokens ?? 0;
-    const finite = [entry.usage.inputTokens, entry.usage.outputTokens, effectiveRead, effectiveWrite]
-      .every(v => Number.isFinite(v) && v >= 0);
-    return finite ? "invalid_cache_breakdown" : "invalid_usage";
+  if (entry.attempts?.length) {
+    return comboUsageUnavailableReason(entry.attempts) ?? "combo_attempt_unavailable";
   }
-  return "price_unmatched";
+  const usage = classifyUsageForCost(entry.usage, entry.usageStatus);
+  return usage.kind === "unavailable" ? usage.reason : "price_unmatched";
 }
 
 export function costResult(entry: MetricSource): CostResult {
   const tier = effectiveServiceTier(entry);
+  const context = {
+    serviceTier: tier,
+    cacheRetention: entry.cacheRetention,
+    timestamp: entry.timestamp,
+  };
   const estimate = entry.attempts?.length
-    ? estimateComboCost(entry.attempts, undefined, tier)
-    : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, serviceTier: tier });
-  if (!estimate) return { kind: "unavailable", reason: unavailableCostReason(entry) };
+    ? estimateComboCost(entry.attempts, undefined, context)
+    : estimateRequestCost({
+      provider: entry.provider,
+      model: entry.model,
+      usage: entry.usage,
+      usageStatus: entry.usageStatus,
+      ...context,
+    });
+  if (!estimate) {
+    const reason = unavailableCostReason(entry);
+    if (reason === "combo_attempt_unavailable" && entry.attempts?.length) {
+      const pricingReason = comboPricingUnavailableReason(entry.attempts, context);
+      return {
+        kind: "unavailable",
+        reason,
+        ...(pricingReason ? { pricingReason } : {}),
+      };
+    }
+    if (reason === "price_unmatched" && entry.usage) {
+      const pricingReason = pricingUnavailableReason({
+        provider: entry.provider,
+        model: entry.model,
+        usage: entry.usage,
+        usageStatus: entry.usageStatus,
+        ...context,
+      });
+      return {
+        kind: "unavailable",
+        reason,
+        ...(pricingReason ? { pricingReason } : {}),
+      };
+    }
+    return { kind: "unavailable", reason };
+  }
   const estimateReasons = [
     entry.usageStatus === "estimated" || entry.usage?.estimated ? "usage_estimated" as const : undefined,
     entry.usage && entry.usage.cachedInputTokens === undefined
@@ -153,7 +180,15 @@ export function requestLogDto(entry: RequestLogEntry): Record<string, unknown> {
           ...attempt,
           displayMetrics: {
             tokPerSecond: tokPerSecondResult(attempt),
-            cost: costResult({ ...attempt, attempts: undefined, requestedServiceTier: entry.requestedServiceTier, configuredServiceTier: entry.configuredServiceTier, responseServiceTier: entry.responseServiceTier }),
+            cost: costResult({
+              ...attempt,
+              attempts: undefined,
+              timestamp: attempt.timestamp ?? entry.timestamp,
+              requestedServiceTier: entry.requestedServiceTier,
+              configuredServiceTier: entry.configuredServiceTier,
+              responseServiceTier: entry.responseServiceTier,
+              cacheRetention: entry.cacheRetention,
+            }),
           },
         })),
       }

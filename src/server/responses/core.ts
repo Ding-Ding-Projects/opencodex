@@ -484,6 +484,20 @@ export interface ConsumedComboFailure {
 
 
 
+export function recordEffectiveCacheRetention(
+  logCtx: RequestLogContext,
+  adapterName: string,
+  configured: "none" | "short" | "long" | undefined,
+): void {
+  if (adapterName === "anthropic") {
+    logCtx.cacheRetention = configured ?? "short";
+    if (logCtx.activeAttempt) logCtx.activeAttempt.cacheRetention = logCtx.cacheRetention;
+    return;
+  }
+  delete logCtx.cacheRetention;
+  if (logCtx.activeAttempt) delete logCtx.activeAttempt.cacheRetention;
+}
+
 export interface HandleResponsesOptions {
   forceEmptyResponseId?: boolean;
   abortSignal?: AbortSignal;
@@ -1298,6 +1312,7 @@ export async function handleResponses(
   const adapterProvider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider);
   const adapter = resolveAdapter(adapterProvider, config.cacheRetention);
   logCtx.providerAdapter = adapter.name;
+  recordEffectiveCacheRetention(logCtx, adapter.name, config.cacheRetention);
   sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, adapter.name);
   const isPassthrough = "passthrough" in adapter && !!adapter.passthrough;
 
