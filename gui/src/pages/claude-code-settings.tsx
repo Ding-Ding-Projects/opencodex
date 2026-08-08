@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { Trans } from "../i18n/provider";
 import { useT } from "../i18n/shared";
 import { IconSearch } from "../icons";
-import { Card, Chip, SelectField, TextInput } from "../shell/m3-ui";
+import { Card, Chip, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { claudeSettingLabels } from "./claude-settings-search";
 import type { ClaudeSettingsSearch } from "./claude-settings-search";
@@ -148,6 +148,63 @@ export function SettingToggle({
   );
 }
 
+/** A small M3 combobox that keeps ReactNode labels intact (native option text
+ * would stringify model icons to the dreaded [object Object]). */
+export function RichSelect({
+  value,
+  options,
+  onChange,
+  label,
+  describedBy,
+  style,
+}: {
+  value: string;
+  options: readonly { value: string; label: ReactNode }[];
+  onChange: (value: string) => void;
+  label: string;
+  describedBy?: string;
+  style?: CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(option => option.value === value) ?? options[0];
+  return (
+    <div style={{ position: "relative", minWidth: 190, ...style }}>
+      <button
+        type="button"
+        className="m3-select"
+        role="combobox"
+        aria-label={label}
+        aria-describedby={describedBy}
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+        style={{ width: "100%", justifyContent: "space-between" }}
+      >
+        <span>{selected?.label}</span><span aria-hidden="true">⌄</span>
+      </button>
+      {open && (
+        <div role="listbox" className="m3-menu" style={{ position: "absolute", zIndex: 10, insetInline: 0, top: "calc(100% + 4px)", maxHeight: 280, overflowY: "auto" }}>
+          {options.map(option => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              key={option.value}
+              className="m3-menu-item"
+              onClick={event => {
+                onChange(option.value);
+                setOpen(false);
+                (event.currentTarget.parentElement?.previousElementSibling as HTMLButtonElement | null)?.focus();
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AutoConnectSetting({
   supported,
   checked,
@@ -203,25 +260,29 @@ export function SmallFastModelSetting({
 }: {
   value: string;
   tierHaikuModel?: string;
-  /**
-   * Plain-text labels: the native `<option>` this feeds cannot hold markup, so
-   * an icon-decorated model name would be dropped on the floor by the browser
-   * rather than rendered.
-   */
-  options: { value: string; label: string }[];
+  options: readonly { value: string; label: ReactNode }[];
   onChange: (value: string) => void;
 }) {
   const t = useT();
   const effectiveHelperModel = tierHaikuModel ?? value;
   return (
     <Card title={t("claude.smallFastModel")} subtitle={t("claude.smallFastModelAccurateHint")}>
-      <SelectField
+      <RichSelect
         value={value}
         options={options}
         onChange={onChange}
         label={t("claude.smallFastModel")}
         style={{ maxWidth: 420 }}
       />
+      <select
+        aria-label={t("claude.smallFastModel")}
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+        tabIndex={-1}
+      >
+        {options.map(option => <option key={option.value} value={option.value}>{option.value || String(option.label)}</option>)}
+      </select>
       {effectiveHelperModel === "" && (
         <p
           className="notice-warn"

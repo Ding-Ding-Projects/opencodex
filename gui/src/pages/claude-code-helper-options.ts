@@ -1,14 +1,11 @@
-/**
- * Background-helper picker options.
- *
- * This picker is backed by a native `<select>`, whose `<option>` labels must be
- * plain strings. Keeping the slug as the label avoids the old `[object Object]`
- * rendering when a React node is coerced into option text.
- */
+import type { ReactNode } from "react";
+import { modelLabel } from "../model-display";
+
+/** Background-helper picker options, preserving icon-bearing model labels. */
 export function backgroundHelperOptions(
   available: readonly string[] | undefined,
   unsetLabel: string,
-): { value: string; label: string }[] {
-  const options = (available ?? []).map(m => ({ value: m, label: m }));
+): { value: string; label: ReactNode }[] {
+  const options = (available ?? []).map(m => ({ value: m, label: modelLabel(m) }));
   return [{ value: "", label: unsetLabel }, ...options];
 }

@@ -11,6 +11,7 @@ export const CLAUDE_SETTING_IDS = [
   "effectiveMode",
   "authMode",
   "fastMode",
+  "maxContext",
   "autoContext",
   "autoCompactWindow",
   "injectAgents",
@@ -52,6 +53,7 @@ export function claudeSettingsIndex(t: TFn): Record<ClaudeSettingId, string> {
       t("claude.fastOn"),
       t("claude.fastOff"),
     ].join(" "),
+    maxContext: [t("claude.maxContext"), t("claude.maxContextDesc"), t("claude.maxContextAutomatic")].join(" "),
     autoContext: [t("claude.autoContext"), t("claude.autoContextDesc")].join(" "),
     autoCompactWindow: [
       t("claude.autoCompactWindow"),
@@ -96,6 +98,7 @@ const CLAUDE_SETTING_LABEL_KEYS: Record<ClaudeSettingId, TKey> = {
   effectiveMode: "claude.effectiveMode.label",
   authMode: "claude.authMode",
   fastMode: "claude.fastMode",
+  maxContext: "claude.maxContext",
   autoContext: "claude.autoContext",
   autoCompactWindow: "claude.autoCompactWindow",
   injectAgents: "claude.injectAgents",
