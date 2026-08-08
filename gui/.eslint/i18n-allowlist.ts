@@ -75,8 +75,10 @@ export function isTechnicalLiteral(value: string): boolean {
   // Dotted identifiers (package.paths, header-ish ids)
   if (/^[\w-]+(\.[\w-]+)+$/i.test(trimmed)) return true;
 
-  // Shell: export VAR=… / export VAR fragments
+  // Shell: export/unset/guarded env-assignment fragments
   if (/^export\b/i.test(trimmed)) return true;
+  if (/^unset\b/i.test(trimmed)) return true;
+  if (/^\[\s.*\]\s*(?:&&|\|\|)/.test(trimmed)) return true;
   if (/^[A-Z][A-Z0-9_]+=/.test(trimmed)) return true;
   if (/^[A-Z][A-Z0-9_]+$/.test(trimmed) && trimmed.includes("_")) return true;
 

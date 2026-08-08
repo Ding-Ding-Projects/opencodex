@@ -25,12 +25,13 @@ export function Notice({ tone, children }: { tone: "ok" | "err"; children: React
 
 export interface SelectOption { value: string; label: React.ReactNode }
 
-export function Select({ value, options, onChange, disabled, label, style, align, placement, dropdownStyle, portal = true }: {
+export function Select({ value, options, onChange, disabled, label, describedBy, style, align, placement, dropdownStyle, portal = true }: {
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
   disabled?: boolean;
   label?: string;
+  describedBy?: string;
   style?: CSSProperties;
   align?: "left" | "right";
   placement?: "below" | "right";
@@ -219,6 +220,7 @@ export function Select({ value, options, onChange, disabled, label, style, align
         aria-controls={open ? listboxId : undefined}
         aria-activedescendant={activeDescendant}
         aria-label={label}
+        aria-describedby={describedBy}
       >
         <span>{current?.label ?? value}</span>
         <IconChevron style={{ width: 12, height: 12, color: "var(--muted)", transform: open ? "rotate(90deg)" : "none", transition: "transform .12s" }} />

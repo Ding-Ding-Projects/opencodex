@@ -43,7 +43,7 @@ export interface ClaudeCodeState {
   autoConnectSupported: boolean;
   systemEnv: boolean;
   fastMode: boolean | null;
-  /** Legacy config override (no GUI control anymore) — still disables auto-context when hand-set. */
+  /** Fixed context-window override selected in the GUI; null restores automatic client/model defaults. */
   maxContextTokens: number | null;
   autoContext: boolean;
   autoCompactWindow: number | null;
