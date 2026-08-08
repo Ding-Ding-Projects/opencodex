@@ -64,6 +64,12 @@ async function mountSettings(
       <LanguageProvider>
         <ClaudeCodeSettingsCard
           state={state}
+          contextWindowOptions={[
+            { value: "", label: "Automatic" },
+            ...(state.maxContextTokens === null
+              ? []
+              : [{ value: String(state.maxContextTokens), label: String(state.maxContextTokens) }]),
+          ]}
           autoCompactOptions={[{ value: "", label: "Default" }]}
           onStateChange={setState}
         />

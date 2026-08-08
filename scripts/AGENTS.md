@@ -11,7 +11,7 @@ This file applies to `scripts/` and inherits the repository-wide rules in `/AGEN
 
 ## Implementation rules
 
-- Preserve Linux, macOS, and Windows behavior. Do not add shell-specific assumptions to cross-platform scripts.
+- Preserve Windows behavior. Do not add non-Windows assumptions to scripts in this Windows-only project.
 - Use explicit paths, deterministic inputs, bounded resource use, and actionable failures.
 - Use atomic replacement for files whose partial write would corrupt configuration, package metadata, release state, or recovery data.
 - Do not log secrets, tokens, request bodies, account identifiers, private paths, or personal data.

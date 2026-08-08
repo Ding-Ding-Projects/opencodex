@@ -1,39 +1,54 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Banner } from "../shell/m3-ui";
-import { useNotifications } from "../shell/notifications-context";
+import { Notice } from "../ui";
 import { useI18n, useT, LOCALES } from "../i18n/shared";
 import { readJsonOrThrow } from "../fetch-json";
+import { backgroundHelperOptions } from "./claude-code-helper-options";
 import { reconcileAutoConnectState } from "./claude-autoconnect";
 import { buildManualEnv } from "./claude-manual-env";
 import {
   ClaudeCodeAliasesSection,
   ClaudeCodeModelMapSection,
   ClaudeCodeQuickstartSection,
-  ClaudeCodeSaveBar,
   ClaudeCodeSettingsCard,
 } from "./claude-code-sections";
 import { serializeSidecarOverride } from "./claude-code-sidecar";
 import { formatCompactWindow, newClientId, type ClaudeCodeState, type MapRow } from "./claude-code-types";
-import { ClaudeSettingsSearchRow, SmallFastModelSetting } from "./claude-code-settings";
-import { claudeSettingsSearch } from "./claude-settings-search";
+import { SmallFastModelSetting } from "./claude-code-settings";
 
 export { AutoConnectSetting, SmallFastModelSetting } from "./claude-code-settings";
 
+const CONTEXT_WINDOW_PRESETS = [100_000, 200_000, 250_000, 300_000, 350_000, 400_000, 500_000, 600_000, 750_000, 900_000, 1_000_000];
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function buildWindowOptions(current: number | null, automaticLabel: string, locale: string) {
+  const values = current !== null && !CONTEXT_WINDOW_PRESETS.includes(current)
+    ? [...CONTEXT_WINDOW_PRESETS, current].sort((a, b) => a - b)
+    : CONTEXT_WINDOW_PRESETS;
+  return [
+    { value: "", label: automaticLabel },
+    ...values.map(value => ({
+      value: String(value),
+      label: current === value && !CONTEXT_WINDOW_PRESETS.includes(value)
+        ? new Intl.NumberFormat(locale).format(value)
+        : formatCompactWindow(value, locale),
+    })),
+  ];
+}
+
 export default function ClaudeCode({ apiBase }: { apiBase: string }) {
   const t = useT();
-  const { notify } = useNotifications();
   const { locale } = useI18n();
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang ?? "en";
   const [state, setState] = useState<ClaudeCodeState | null>(null);
+  const [persistedMaxContextTokens, setPersistedMaxContextTokens] = useState<number | null>(null);
+  const [invalidStoredMaxContext, setInvalidStoredMaxContext] = useState(false);
   const [rows, setRows] = useState<MapRow[]>([]);
-  // Load failure only. A save outcome is a snackbar — this one is not, because when
-  // the config never arrives there is no screen left behind a snackbar to read it on.
-  const [loadError, setLoadError] = useState("");
+  const [status, setStatus] = useState("");
+  const [ok, setOk] = useState(false);
   const [loading, setLoading] = useState(true);
-  // This tab's own settings search. Bound to this field alone — it never shares state
-  // with another search bar, so two surfaces can hold different queries at once.
-  const [settingsQuery, setSettingsQuery] = useState("");
-  const [settingsRegex, setSettingsRegex] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -43,9 +58,13 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         t("claude.loadFail"),
       );
       if (!r) {
-        setLoadError(t("claude.loadFail"));
+        setOk(false);
+        setStatus(t("claude.loadFail"));
         return;
       }
+      const maxContextTokens = isPositiveInteger(r.maxContextTokens) ? r.maxContextTokens : null;
+      setPersistedMaxContextTokens(maxContextTokens);
+      setInvalidStoredMaxContext(r.maxContextTokens !== null && r.maxContextTokens !== undefined && maxContextTokens === null);
       setState({
         ...r,
         // No coercion: an absent config key is AUTO, and coercing it to subscription is
@@ -53,16 +72,16 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         authMode: r.authMode === "proxy" || r.authMode === "subscription" ? r.authMode : "auto",
         ...reconcileAutoConnectState(r),
         fastMode: r.fastMode ?? null,
-        maxContextTokens: r.maxContextTokens ?? null,
+        maxContextTokens,
         autoContext: r.autoContext !== false,
         autoCompactWindow: r.autoCompactWindow ?? null,
         injectAgents: r.injectAgents !== false,
         effectiveModelEnv: r.effectiveModelEnv ?? {},
       });
       setRows(Object.entries(r.modelMap ?? {}).map(([from, to]) => ({ id: newClientId(), from, to: String(to) })));
-      setLoadError("");
     } catch (error) {
-      setLoadError(error instanceof Error && error.message ? error.message : t("claude.loadFail"));
+      setOk(false);
+      setStatus(error instanceof Error && error.message ? error.message : t("claude.loadFail"));
     } finally {
       setLoading(false);
     }
@@ -75,34 +94,26 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
     return () => window.clearTimeout(timeout);
   }, [load]);
 
-  // Plain slugs, not `modelLabel()`: the helper-model picker is a native <select>
-  // now, and a browser drops markup inside an <option> rather than rendering it —
-  // so the icon-prefixed variant would have shown up as nothing at all.
-  const modelOptions = useMemo(() => {
-    const options = (state?.available ?? []).map(m => ({ value: m, label: m }));
-    return [{ value: "", label: t("claude.smallFastModelUnsetOption") }, ...options];
-  }, [state?.available, t]);
+  const modelOptions = useMemo(
+    () => backgroundHelperOptions(state?.available, t("claude.smallFastModelUnsetOption")),
+    [state?.available, t],
+  );
 
   // Auto-compact window presets (devlog 020 + user request): dropdown like the model
   // pickers. "" = 350k default; a saved off-ladder value is surfaced as its own option.
-  const autoCompactOptions = useMemo(() => {
-    const ladder = [100_000, 200_000, 250_000, 300_000, 350_000, 400_000, 500_000, 600_000, 750_000, 900_000, 1_000_000];
-    // Compact SI-style units (1M / 350k) — technical number format, not prose.
-    const current = state?.autoCompactWindow ?? null;
-    const values = current !== null && !ladder.includes(current) ? [...ladder, current].sort((a, b) => a - b) : ladder;
-    return [
-      { value: "", label: t("claude.autoCompactDefault") },
-      ...values.map(value => ({ value: String(value), label: formatCompactWindow(value, localeTag) })),
-    ];
-  }, [state?.autoCompactWindow, t, localeTag]);
+  const autoCompactOptions = useMemo(
+    () => buildWindowOptions(state?.autoCompactWindow ?? null, t("claude.autoCompactDefault"), localeTag),
+    [state?.autoCompactWindow, t, localeTag],
+  );
 
-  const search = useMemo(
-    () => claudeSettingsSearch(settingsQuery, settingsRegex, t),
-    [settingsQuery, settingsRegex, t],
+  const contextWindowOptions = useMemo(
+    () => buildWindowOptions(state?.maxContextTokens ?? null, t("claude.maxContextAutomatic"), localeTag),
+    [state?.maxContextTokens, t, localeTag],
   );
 
   const save = async () => {
     if (!state) return;
+    setStatus("");
     const modelMap: Record<string, string> = {};
     for (const row of rows) {
       if (row.from.trim() && row.to.trim()) modelMap[row.from.trim()] = row.to.trim();
@@ -116,6 +127,7 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
           authMode: state.authMode,
           systemEnv: state.systemEnv,
           fastMode: state.fastMode,
+          maxContextTokens: state.maxContextTokens,
           autoContext: state.autoContext,
           autoCompactWindow: state.autoCompactWindow,
           injectAgents: state.injectAgents,
@@ -126,46 +138,40 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         }),
       });
       await readJsonOrThrow(r, t("claude.saveFailed"));
-      // A one-shot outcome, so it leaves as a snackbar rather than pushing the whole
-      // form down the page and staying there until the next save clears it.
-      notify({ tone: "success", title: t("claude.saved") });
+      setOk(true);
+      setStatus(t("claude.saved"));
       await load();
     } catch (error) {
-      notify({
-        tone: "error",
-        title: error instanceof Error && error.message ? error.message : t("claude.networkError"),
-      });
+      setOk(false);
+      setStatus(error instanceof Error && error.message ? error.message : t("claude.networkError"));
     }
   };
 
-  if (loading) return <div role="status" style={{ padding: 8, color: "var(--m3-on-surface-variant)" }}>{t("claude.loading")}</div>;
-  if (!state) return <Banner tone="error">{loadError || t("claude.loadFail")}</Banner>;
+  if (loading) return <div className="muted" style={{ padding: 8 }}>{t("claude.loading")}</div>;
+  if (!state) return <Notice tone="err">{status || t("claude.loadFail")}</Notice>;
 
   return (
     <>
-      {/* No page title here: the app bar names the screen and the tab names the panel, so
-          a third heading was the same words a third time. The lede moved up to Claude.tsx. */}
-      {/* Search first, per the prototype: it filters the four cards below it, and reports a
-          hit that lives on the Desktop tab instead of pretending the setting does not exist. */}
-      <ClaudeSettingsSearchRow
-        query={settingsQuery}
-        onQuery={setSettingsQuery}
-        regexOn={settingsRegex}
-        onRegex={setSettingsRegex}
-        search={search}
+      <div className="page-head"><h2>{t("claude.pageTitle")}</h2></div>
+      <p className="page-sub">{t("claude.subtitle")}</p>
+      {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
+      <ClaudeCodeSettingsCard
+        state={state}
+        persistedMaxContextTokens={persistedMaxContextTokens}
+        invalidStoredMaxContext={invalidStoredMaxContext}
+        contextWindowOptions={contextWindowOptions}
+        autoCompactOptions={autoCompactOptions}
+        onStateChange={setState}
       />
-      {/* Always rendered: it commits every setting on this tab, so no query may hide it. */}
-      <ClaudeCodeSaveBar onSave={() => { void save(); }} />
-      <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} match={search.matches} />
-      {search.matches("quickstart") && <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />}
-      {search.matches("smallFastModel") && <SmallFastModelSetting
+      <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />
+      <SmallFastModelSetting
         value={state.smallFastModel}
         tierHaikuModel={state.tierModels?.haiku}
         options={modelOptions}
         onChange={smallFastModel => setState({ ...state, smallFastModel })}
-      />}
-      {search.matches("modelMap") && <ClaudeCodeModelMapSection rows={rows} onRowsChange={setRows} />}
-      {search.matches("aliases") && <ClaudeCodeAliasesSection aliases={state.aliases} />}
+      />
+      <ClaudeCodeModelMapSection rows={rows} onRowsChange={setRows} onSave={() => { void save(); }} />
+      <ClaudeCodeAliasesSection aliases={state.aliases} />
     </>
   );
 }

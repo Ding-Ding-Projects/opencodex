@@ -59,7 +59,8 @@ test("ApiKeys stacked layout keeps endpoint, generate, keys table, and usage pan
   expect(between).not.toContain('t("api.usageChatTitle")');
   expect(between).not.toContain('t("api.usageResponsesTitle")');
   expect(src).toContain("gatewayInboundProtocols(claudeCodeEnabled)");
-  expect(page).toContain("classifyExternalModel(row)");
+  expect(page).toContain('fetch(`${apiBase}/api/copilot-desktop`)');
+  expect(page).not.toContain('fetch(`${apiBase}/v1/models`)');
   expect(page).toContain('from "../api-access-models"');
 
   // Per-row delete still gates on a confirmation owned by this screen — now the

@@ -23,9 +23,45 @@ import {
   sealRequestAttemptIdentity,
   type RequestLogContext,
 } from "../src/server/request-log";
+import { handleResponses, recordEffectiveCacheRetention } from "../src/server/responses";
 import { bridgeToResponsesSSE } from "../src/bridge";
-import type { AdapterEvent } from "../src/types";
+import type { AdapterEvent, OcxConfig } from "../src/types";
 import type { PersistedUsageEntry } from "../src/usage/log";
+
+describe("effective pricing context logging", () => {
+  test("malformed pre-route requests do not claim a cache tier", async () => {
+    const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
+    const response = await handleResponses(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not-json",
+      }),
+      { providers: {}, cacheRetention: "long" } as unknown as OcxConfig,
+      logCtx,
+    );
+    expect(response.status).toBe(400);
+    expect(logCtx).not.toHaveProperty("cacheRetention");
+  });
+
+  test("only effective Anthropic adapters record cache retention", () => {
+    const attempt = beginRequestAttempt(1, "anthropic-apikey", "claude-opus-5", "anthropic", 123);
+    const logCtx: RequestLogContext = {
+      model: "claude-opus-5",
+      provider: "anthropic-apikey",
+      activeAttempt: attempt,
+      cacheRetention: "short",
+    };
+    recordEffectiveCacheRetention(logCtx, "openai-chat", "long");
+    expect(logCtx).not.toHaveProperty("cacheRetention");
+    expect(attempt).not.toHaveProperty("cacheRetention");
+
+    recordEffectiveCacheRetention(logCtx, "anthropic", "long");
+    expect(logCtx.cacheRetention).toBe("long");
+    expect(attempt.cacheRetention).toBe("long");
+    expect(attempt.timestamp).toBe(123);
+  });
+});
 
 async function* replayAdapterEvents(events: AdapterEvent[]): AsyncGenerator<AdapterEvent> {
   for (const event of events) yield event;
@@ -1073,6 +1109,7 @@ describe("request log restart hydrate", () => {
       requestedSpeedLabel: "fast",
       configuredServiceTier: "auto",
       modelSupportsServiceTier: true,
+      cacheRetention: "long",
       status: 502,
       durationMs: 42,
       usageStatus: "unreported",
@@ -1095,6 +1132,7 @@ describe("request log restart hydrate", () => {
       requestedSpeedLabel: "fast",
       configuredServiceTier: "auto",
       modelSupportsServiceTier: true,
+      cacheRetention: "long",
       status: 502,
       durationMs: 42,
       usageStatus: "unreported",

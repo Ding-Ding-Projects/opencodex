@@ -52,15 +52,6 @@ const AMZ_TARGET = "AmazonCodeWhispererStreamingService.GenerateAssistantRespons
 const SDK_VERSION = "1.0.27";
 const NODE_VERSION = "22.21.1";
 const KIRO_IDE_VERSION = "1.0.0";
-/**
- * Which of Kiro's two request shapes an account is entitled to.
- *
- * `ide` is what this adapter has always sent: eventstream `accept`, a `KiroIDE-*`
- * user agent and `origin: "AI_EDITOR"`. It is only accepted alongside an enterprise
- * profile ARN. Builder ID / social logins and `ksk_` API keys resolve no ARN, so they
- * must go down `cli` — Amazon Q for CLI's shape — instead of an IDE request with the
- * ARN header simply left off.
- */
 type KiroWireClient = "ide" | "cli";
 
 function kiroCliPlatform(): "linux" | "macos" | "windows" {
@@ -95,7 +86,10 @@ interface KiroUserInputMessage {
   content: string;
   modelId?: string;
   origin?: string;
-  userInputMessageContext?: { tools?: unknown[]; toolResults?: KiroToolResult[] };
+  userInputMessageContext?: {
+    tools?: unknown[];
+    toolResults?: KiroToolResult[];
+  };
   images?: KiroImage[];
 }
 interface KiroHistoryEntry {
@@ -567,10 +561,6 @@ export function buildKiroPayload(
   const payload: Record<string, unknown> = {
     conversationState: {
       chatTriggerType: "MANUAL",
-      // The CLI carries agent mode in the body rather than the `x-amzn-kiro-agent-mode`
-      // header the IDE uses, so dropping that header is only safe together with this.
-      // `agentContinuationId` is fresh per request: it identifies this invocation, not
-      // the conversation — `conversationId` already carries continuity.
       ...(wireClient === "cli" ? {
         agentContinuationId: crypto.randomUUID(),
         agentTaskType: "vibe",
@@ -1484,8 +1474,6 @@ export function createKiroAdapter(provider: OcxProviderConfig): ProviderAdapter 
     const region = resolveKiroApiRegion(parsed._kiroAuthContext);
     const resolvedProfileArn = resolveKiroProfileArn(parsed._kiroAuthContext);
     const isApiKey = provider.apiKey.trim().startsWith("ksk_");
-    // An API key authenticates on its own; a profile ARN left over in the stored auth
-    // context belongs to a different identity and must not ride along on the request.
     const profileArn = isApiKey ? undefined : resolvedProfileArn;
     // Builder ID and Kiro API keys have no profile ARN and are accepted only on Kiro's CLI
     // request path. Enterprise profiles retain the existing IDE-shaped request.
@@ -1494,9 +1482,6 @@ export function createKiroAdapter(provider: OcxProviderConfig): ProviderAdapter 
     const headers: Record<string, string> = wireClient === "cli" ? {
       authorization: `Bearer ${provider.apiKey}`,
       "content-type": "application/x-amz-json-1.0",
-      // `*/*` mirrors the Rust SDK the real CLI ships. GenerateAssistantResponse is a
-      // streaming operation, so the response is an eventstream regardless of `accept` —
-      // decodeEventStream() stays correct here.
       accept: "*/*",
       "x-amz-target": AMZ_TARGET,
       "user-agent": kiroCliUserAgent(true),

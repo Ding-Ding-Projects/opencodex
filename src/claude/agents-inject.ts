@@ -161,9 +161,6 @@ function renderAgentDef(def: ClaudeAgentDef): string {
     // BODY rides the subagent's system prompt verbatim. The proxy detects this
     // directive and overrides the request model before routing/passthrough.
     `<!-- ocx-route: ${def.model} -->`,
-    // Claude Code 2.1.220 collapses `effort: max`/`xhigh` frontmatter into the
-    // legacy thinking-budget shape, losing the exact tier. Carry it through the
-    // same trusted body channel so the inbound boundary can restore it.
     ...(def.effort ? [`<!-- ocx-effort: ${def.effort} -->`] : []),
     "",
     `You are a delegated worker running on \`${def.model}\` through the local opencodex proxy.`,

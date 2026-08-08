@@ -1075,9 +1075,21 @@ function taskXmlDecodedValueEquals(xml: string, tag: string, expected: string): 
 }
 
 /**
- * Compare an element that Task Scheduler may omit when exporting a registered task.
- * Absence means the documented schema default (#432); a present element must still
- * match exactly, so a malformed or explicitly unsafe value never reads as healthy.
+ * Decode XML's five predefined entities, exactly once.
+ *
+ * Task Scheduler re-encodes element text when it exports a task, so a needle we
+ * escaped ourselves can never match its output (#608). Compare decoded values
+ * instead of encoded ones.
+ *
+ * The single pass is the point: decoding twice would turn `&amp;quot;` into `"`,
+ * letting a doubly-encoded value impersonate the expected launcher path.
+ */
+/**
+ * Exactly one unprefixed `<tag>` whose DECODED text equals `expected`.
+ *
+ * Unlike taskXmlOptionalValueEquals(), an absent element is NOT a pass: these
+ * elements name what actually gets executed, so a missing <Command>/<Arguments>
+ * must fail the health check rather than inherit a schema default.
  */
 function taskXmlOptionalValueEquals(xml: string, tag: string, expected: string): boolean {
   // Check the prefixed form first: treating `<t:Enabled>false</t:Enabled>` as an

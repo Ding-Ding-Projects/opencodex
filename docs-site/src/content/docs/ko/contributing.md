@@ -61,13 +61,12 @@ bun run build
 
 GitHub Actions는 필요한 작업만 수행합니다.
 
-- **Cross-platform CI**(`.github/workflows/ci.yml`)는 런타임, 테스트, 패키지, 스크립트,
-  TypeScript, 워크플로 파일이 바뀐 pull request와 `main` push에서 실행됩니다. Bun matrix는 Linux,
-  Windows, macOS에서 install, typecheck, tests, privacy scan, release helper build smoke, GUI build,
-  `ocx help`를 검사합니다. 별도의 3개 OS lane은 번들 런타임을 사용해 Bun을 따로 설치하지 않아도
-  npm global install이 동작하는지 확인합니다.
+- **Windows CI**(`.github/workflows/ci.yml`)는 런타임, 테스트, 패키지, 스크립트,
+  TypeScript, 워크플로 파일이 바뀐 pull request와 `main` push에서 실행됩니다. Windows 작업에서 install,
+  typecheck, tests, privacy scan, release helper build smoke, GUI build, `ocx help`, 그리고 번들 런타임을
+  사용하는 npm global install을 검사합니다.
 - **Release**(`.github/workflows/release.yml`)는 수동으로 실행합니다. 두 번째 전체 CI 파이프라인이
-  아니며, dry-run이나 publish 전에 정확한 릴리즈 커밋(`GITHUB_SHA`)에서 Cross-platform CI가
+  아니며, dry-run이나 publish 전에 정확한 릴리즈 커밋(`GITHUB_SHA`)에서 Windows CI가
   성공했는지 확인합니다.
 
 릴리즈에는 helper를 사용하세요.

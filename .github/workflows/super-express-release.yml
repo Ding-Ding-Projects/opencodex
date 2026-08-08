@@ -116,6 +116,8 @@ jobs:
           echo "photo=$photo"
 
       - name: Keep the installer as an artifact
+        if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-super-express-${{ github.run_number }}
@@ -124,7 +126,7 @@ jobs:
             dist-desktop/**/*.nupkg
             dist-desktop/**/RELEASES
             opencodex-dashboard.zip
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
           compression-level: 0
 

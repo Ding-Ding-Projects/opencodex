@@ -38,7 +38,7 @@ bun run build:gui      # Vite GUI build
 ```
 
 Run `bun run typecheck` and `bun run test` before proposing or approving any
-non-trivial change. CI runs these on Linux, Windows, and macOS.
+non-trivial change. CI runs these on Windows only.
 
 ## Branch policy
 

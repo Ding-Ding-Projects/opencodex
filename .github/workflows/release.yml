@@ -31,8 +31,12 @@ on:
 
 permissions:
   contents: write # create the matching GitHub Release + version tag after npm publish
-  actions: read # verify the release commit already passed CI
+  actions: read # verify the release commit already passed Windows CI
   id-token: write # OIDC auth for Trusted Publishing + automatic provenance attestation
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: release
@@ -40,7 +44,7 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -102,7 +106,7 @@ jobs:
             exit 1;
           }
 
-      - name: Require successful CI for this commit
+      - name: Require successful Windows CI for this commit
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
@@ -147,12 +151,12 @@ jobs:
           )"
 
           if [ -z "$ci_url" ]; then
-            echo "::error::No successful CI run found for ${GITHUB_SHA}. Wait for CI to pass before releasing."
+            echo "::error::No successful Windows CI run found for ${GITHUB_SHA}. Wait for CI to pass before releasing."
             gh run list --workflow ci.yml --commit "$GITHUB_SHA" --limit 10 || true
             exit 1
           fi
 
-          echo "CI passed for ${GITHUB_SHA}: ${ci_url}"
+          echo "Windows CI passed for ${GITHUB_SHA}: ${ci_url}"
 
           # Notes / service baseline:
           # - Preview: newest prior release of either channel (stable or preview). A
@@ -437,3 +441,56 @@ jobs:
 
           gh release create "$release_tag" --target "$GITHUB_SHA" --title "$release_tag" \
             --notes-file "$notes_file" ${prerelease_flag:+$prerelease_flag}
+
+      # Keep installable packages, build output, and failure metadata available
+      # even when a publish or release step fails. Only known output locations
+      # are copied; credentials, dependencies, caches, and source are excluded.
+      - name: Collect release artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set +e
+          artifact_root="$GITHUB_WORKSPACE/release-artifacts"
+          mkdir -p "$artifact_root"
+          cat > "$artifact_root/run-metadata.txt" <<EOF
+          workflow=$GITHUB_WORKFLOW
+          run_id=$GITHUB_RUN_ID
+          run_attempt=$GITHUB_RUN_ATTEMPT
+          sha=$GITHUB_SHA
+          job_status=$JOB_STATUS
+          runner_os=$RUNNER_OS
+          EOF
+
+          copy_dir() {
+            source="$1"
+            destination="$2"
+            if [ -d "$source" ]; then
+              mkdir -p "$destination"
+              cp -R "$source/." "$destination/" 2>/dev/null || true
+            fi
+          }
+          copy_dir "$GITHUB_WORKSPACE/gui/dist" "$artifact_root/gui-dist"
+          copy_dir "$GITHUB_WORKSPACE/dist" "$artifact_root/dist"
+          copy_dir "$GITHUB_WORKSPACE/dist/squirrel-windows" "$artifact_root/squirrel-windows"
+
+          for pattern in "$GITHUB_WORKSPACE"/pack.json "$GITHUB_WORKSPACE"/*.tgz; do
+            [ -f "$pattern" ] && cp "$pattern" "$artifact_root/" 2>/dev/null || true
+          done
+          if [ -d "$GITHUB_WORKSPACE/dist" ]; then
+            find "$GITHUB_WORKSPACE/dist" -type f \( -name 'Setup.exe' -o -name '*.Setup.exe' -o -name 'RELEASES' -o -name '*.nupkg' \) -exec cp {} "$artifact_root/" \; 2>/dev/null || true
+          fi
+          if ! find "$artifact_root" -type f -print -quit | grep -q .; then
+            printf '%s\n' 'No safe release output was present; metadata records the original job status.' > "$artifact_root/NO_SAFE_ARTIFACTS.txt"
+          fi
+
+      - name: Upload release artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-artifacts-${{ github.run_id }}
+          path: release-artifacts
+          if-no-files-found: warn
+          retention-days: 14

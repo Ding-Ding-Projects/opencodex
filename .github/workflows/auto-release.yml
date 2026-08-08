@@ -152,6 +152,8 @@ jobs:
       # and there was nothing left to download. Whatever breaks in the publish
       # step from here on, the installer it already built survives it.
       - name: Keep the installer as an artifact, whatever happens next
+        if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-setup-${{ github.run_number }}
@@ -160,7 +162,7 @@ jobs:
             dist-desktop/**/*.nupkg
             dist-desktop/**/RELEASES
             opencodex-dashboard.zip
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
           compression-level: 0 # A Squirrel installer and its nupkg are already compressed.
 

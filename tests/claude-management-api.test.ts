@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
 import { startServer } from "../src/server";
+import { buildClaudeEnv } from "../src/cli/claude";
 import * as systemEnv from "../src/server/system-env";
 import type { OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
@@ -421,6 +422,11 @@ test("PUT/GET round-trips the context/effort levers (devlog 136 B6)", async () =
     expect(get.maxContextTokens).toBe(1_000_000);
     expect(get.alwaysEnableEffort).toBe(true);
 
+    const env = buildClaudeEnv(loadConfig(), 10100, {});
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
+    expect(env.DISABLE_COMPACT).toBe("1");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+
     // null clears the context override; alwaysEnableEffort:false deletes the flag.
     const clear = await fetch(new URL("/api/claude-code", server.url), {
       method: "PUT",
@@ -523,6 +529,7 @@ test("PUT validation rejects bad shapes", async () => {
       [{ maxContextTokens: 0 }, "maxContextTokens must be a positive integer or null"],
       [{ maxContextTokens: -1 }, "maxContextTokens must be a positive integer or null"],
       [{ maxContextTokens: 1.5 }, "maxContextTokens must be a positive integer or null"],
+      [{ maxContextTokens: Number.MAX_SAFE_INTEGER + 1 }, "maxContextTokens must be a positive integer or null"],
       [{ maxContextTokens: "1000000" }, "maxContextTokens must be a positive integer or null"],
       [{ alwaysEnableEffort: "on" }, "alwaysEnableEffort must be a boolean"],
       [{ autoContext: "on" }, "autoContext must be a boolean"],

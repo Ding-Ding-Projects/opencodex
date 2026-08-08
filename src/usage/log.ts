@@ -19,6 +19,8 @@ export type AttemptRecoveryKind =
 
 export interface PersistedUsageAttempt {
   ordinal: number;
+  /** Wall-clock start used for date-conditional prices; absent only on legacy rows. */
+  timestamp?: number;
   provider: string;
   model: string;
   adapter: string;
@@ -29,6 +31,8 @@ export interface PersistedUsageAttempt {
   sendCount: number;
   recoveryKinds: AttemptRecoveryKind[];
   usageStatus: UsageStatus;
+  /** Effective prompt-cache tier for Anthropic adapter attempts only. */
+  cacheRetention?: "none" | "short" | "long";
   inputTokenEstimate?: number;
   usage?: OcxUsage;
   totalTokens?: number;
@@ -45,7 +49,7 @@ export interface PersistedUsageEntry {
   timestamp: number;
   provider: string;
   model: string;
-  surface?: "claude" | "claude-desktop" | "grok";
+  surface?: "claude" | "claude-desktop" | "github-copilot-desktop" | "grok";
   /** Best-effort chat/session correlation for Logs grouping (#330). */
   conversationId?: string;
   resolvedModel?: string;
@@ -62,6 +66,8 @@ export interface PersistedUsageEntry {
   configuredSpeedLabel?: string;
   modelSupportsServiceTier?: boolean;
   responseServiceTier?: string;
+  /** Effective Anthropic prompt-cache retention used by the request adapter. */
+  cacheRetention?: "none" | "short" | "long";
   status: number;
   durationMs: number;
   /** TTFT relative to the request start (WP4); unset for non-streaming/tool-only. */
@@ -82,6 +88,7 @@ export interface PersistedUsageEntry {
 const KNOWN_USAGE_SURFACES = new Set<NonNullable<PersistedUsageEntry["surface"]>>([
   "claude",
   "claude-desktop",
+  "github-copilot-desktop",
   "grok",
 ]);
 
@@ -203,6 +210,7 @@ function normalizeUsageAttempt(raw: unknown): PersistedUsageAttempt | null {
     || !USAGE_STATUSES.has(attempt.usageStatus as UsageStatus)) {
     return null;
   }
+  if ("timestamp" in attempt && !isNonNegativeFiniteNumber(attempt.timestamp)) return null;
   if ("inputTokenEstimate" in attempt
     && !isNonNegativeFiniteNumber(attempt.inputTokenEstimate)) return null;
   if ("firstOutputMs" in attempt
@@ -219,6 +227,7 @@ function normalizeUsageAttempt(raw: unknown): PersistedUsageAttempt | null {
     : [];
   return {
     ordinal: attempt.ordinal as number,
+    ...(isNonNegativeFiniteNumber(attempt.timestamp) ? { timestamp: attempt.timestamp } : {}),
     provider: attempt.provider,
     model: attempt.model,
     adapter: attempt.adapter,
@@ -230,6 +239,9 @@ function normalizeUsageAttempt(raw: unknown): PersistedUsageAttempt | null {
     sendCount: attempt.sendCount as number,
     recoveryKinds,
     usageStatus: attempt.usageStatus as UsageStatus,
+    ...(attempt.cacheRetention === "none" || attempt.cacheRetention === "short" || attempt.cacheRetention === "long"
+      ? { cacheRetention: attempt.cacheRetention }
+      : {}),
     ...(isNonNegativeFiniteNumber(attempt.inputTokenEstimate)
       ? { inputTokenEstimate: attempt.inputTokenEstimate }
       : {}),
@@ -310,6 +322,9 @@ function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
       : {}),
     ...(typeof entry.responseServiceTier === "string" && entry.responseServiceTier
       ? { responseServiceTier: capMetadataString(entry.responseServiceTier) }
+      : {}),
+    ...(entry.cacheRetention === "none" || entry.cacheRetention === "short" || entry.cacheRetention === "long"
+      ? { cacheRetention: entry.cacheRetention }
       : {}),
     status: entry.status,
     durationMs: entry.durationMs,

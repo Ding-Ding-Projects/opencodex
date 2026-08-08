@@ -79,9 +79,11 @@ jobs:
         run: ls -lhR dist-desktop
 
       - name: Upload installer
+        if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-desktop-windows-${{ github.sha }}
           path: dist-desktop/**/*.exe
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14

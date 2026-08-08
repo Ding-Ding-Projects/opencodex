@@ -666,25 +666,6 @@ const codexAccountNamespacesSchema = z.custom<Record<string, unknown>>(
   }
 }).pipe(z.record(z.string(), z.string()));
 
-const nestedSubagentDepthSchema = z.object({
-  models: z.array(z.string()).optional(),
-  injectionModel: z.string().optional(),
-  injectionEffort: z.string().optional(),
-  effortCap: z.string().optional(),
-}).passthrough();
-
-const nestedSubagentsSchema = z.object({
-  enabled: z.boolean().optional(),
-  maxDepth: z.number().optional(),
-  maxChildrenPerNode: z.number().optional(),
-  maxTotalSpawnsPerSession: z.number().optional(),
-  maxTurnsPerSpawnedAgent: z.number().optional(),
-  unknownDepthAssumption: z.number().optional(),
-  spawnEdgeLookup: z.boolean().optional(),
-  trustTaskSentinel: z.boolean().optional(),
-  depths: z.array(nestedSubagentDepthSchema).optional(),
-}).passthrough();
-
 const configSchema = z.object({
   port: z.number().int().min(0).max(65535).default(10100),
   // A blank hostname degrades to undefined rather than failing the parse. `getDefaultConfig()`
@@ -707,13 +688,6 @@ const configSchema = z.object({
   injectionModel: z.string().optional().catch(undefined),
   injectionEffort: z.string().optional().catch(undefined),
   syncCodexSubagentDefaults: z.boolean().optional().catch(undefined),
-  // Nested sub-agents. `.catch(undefined)` in the same style as injectionEffort above: a
-  // hand-edited typo must disable only this optional feature, never fail the whole parse and
-  // trip the backup-and-defaults repair path that would wipe providers and pool accounts.
-  // Values are ALSO clamped at read time (src/server/nested-subagents.ts nestedSubagentSettings)
-  // — schema validation covers what the dashboard writes, clamping covers what a text editor
-  // writes, and "maxDepth": 99 must become 4 either way.
-  nestedSubagents: nestedSubagentsSchema.optional().catch(undefined),
   codexShimAutoRestore: z.boolean().optional(),
   pausedCodexAccountIds: z.array(z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/)).optional(),
   codexAccountNamespaces: codexAccountNamespacesSchema.optional(),
@@ -723,19 +697,30 @@ const configSchema = z.object({
   // parse: a hand-edited typo must never trip the backup-and-defaults repair
   // path below and wipe providers/pool accounts. Warning emitted in loadConfig.
   streamMode: z.enum(["auto", "legacy-tee", "eager-relay"]).optional().catch(undefined),
+  apiKeys: z.array(z.object({
+    id: z.string().min(1).max(128),
+    name: z.string().min(1).max(80),
+    key: z.string().min(1).max(512),
+    createdAt: z.string().min(1).max(64),
+    // Unknown hand-edited metadata remains present so the key stays scoped and fails closed.
+    purpose: z.string().trim().min(1).max(64).optional().catch("invalid"),
+  }).passthrough()).optional(),
 }).passthrough().superRefine((config, ctx) => {
   const claudeCode = (config as { claudeCode?: unknown }).claudeCode;
   if (claudeCode !== undefined && (!claudeCode || typeof claudeCode !== "object" || Array.isArray(claudeCode))) {
     ctx.addIssue({ code: "custom", path: ["claudeCode"], message: "claudeCode must be an object" });
-  } else if (claudeCode && "desktopProfile" in claudeCode && (claudeCode as { desktopProfile?: unknown }).desktopProfile !== undefined) {
-    try {
-      parseDesktopProfile((claudeCode as { desktopProfile?: unknown }).desktopProfile);
-    } catch (error) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["claudeCode", "desktopProfile"],
-        message: error instanceof Error ? error.message : String(error),
-      });
+  } else if (claudeCode) {
+    const claude = claudeCode as { desktopProfile?: unknown };
+    if (claude.desktopProfile !== undefined) {
+      try {
+        parseDesktopProfile(claude.desktopProfile);
+      } catch (error) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["claudeCode", "desktopProfile"],
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -1301,11 +1286,9 @@ export function readConfigDiagnostics(): ConfigDiagnostics {
 }
 
 export function saveConfig(config: OcxConfig): void {
-  // The single funnel every settings change goes through, which is why the
-  // sandbox check sits here and not at the dozens of call sites. Returning
-  // before `getConfigDir()` matters: that call creates the directory and hardens
-  // its ACL, so checking any later would still leave a footprint on a machine
-  // the caller asked us not to touch.
+  // The sandbox must return before resolving or creating the config directory.
+  // A screenshot run should not leave a config file behind merely because a
+  // settings control was exercised.
   if (debugSandboxEnabled()) {
     announceDebugSandboxOnce();
     return;
@@ -1324,31 +1307,11 @@ export function saveConfig(config: OcxConfig): void {
   noteConfigWritten();
 }
 
-/**
- * Every settings change lands in the local history, not just account add/remove.
- *
- * Hooked here rather than at each call site on purpose: there are dozens of routes
- * and CLI commands that end in a config write, and "every modification is
- * recoverable" is a promise you cannot keep by remembering to call something at
- * each one. Anything that writes config.json is a deliberate change by definition —
- * the proxy does not rewrite it on a timer, and token refreshes go to auth.json and
- * codex-accounts.json instead.
- *
- * Debounced, because a single user action can save more than once (a route that
- * mutates then reconciles), and because git refuses empty commits anyway — the
- * debounce keeps that from becoming a burst of no-op spawns rather than one commit.
- * Fire-and-forget and best-effort: a history that cannot be written must never fail
- * the setting the user actually asked for.
- */
+// Settings history is best-effort and deliberately disabled in tests, where
+// thousands of temporary config writes would otherwise spawn bookkeeping work.
 let configSnapshotTimer: ReturnType<typeof setTimeout> | undefined;
 function noteConfigWritten(): void {
-  if (process.env.OCX_DISABLE_STATE_HISTORY === "1") return;
-  // `bun test` sets NODE_ENV=test, and the suite writes config thousands of times.
-  // Leaving this on spawned git across the whole run and pushed timing-sensitive
-  // tests past their deadline — including the state history's own, which is how it
-  // was noticed. Tests that actually exercise the history call recordStateSnapshot
-  // directly, so only this implicit save-path snapshot is suppressed.
-  if (process.env.NODE_ENV === "test") return;
+  if (process.env.OCX_DISABLE_STATE_HISTORY === "1" || process.env.NODE_ENV === "test") return;
   if (configSnapshotTimer) clearTimeout(configSnapshotTimer);
   configSnapshotTimer = setTimeout(() => {
     configSnapshotTimer = undefined;
@@ -1356,7 +1319,6 @@ function noteConfigWritten(): void {
       .then(m => m.recordStateSnapshot("settings changed"))
       .catch(() => { /* history is best-effort by contract */ });
   }, 1_500);
-  // Never hold the process open for a bookkeeping commit.
   configSnapshotTimer.unref?.();
 }
 
@@ -1596,9 +1558,6 @@ export function saveConfigPreservingClaudeCode(config: OcxConfig): void {
   if (claudeCodeBaseline.has(config)) {
     if (onDisk !== undefined) {
       const baseline = claudeCodeBaseline.get(config);
-      // Normalize before comparing: an invalid hand-edited subagentEffort was
-      // already dropped from the in-memory config, so comparing it raw would
-      // read as "the disk changed" on every save and re-adopt the bad value.
       const persistedClaudeCode = normalizePersistedClaudeCode(onDisk.claudeCode);
       const diskChanged = !deepEqual(persistedClaudeCode, baseline);
       const weChanged = !deepEqual(config.claudeCode, baseline);
@@ -1839,12 +1798,6 @@ export function isOcxStartCommandLine(commandLine: string): boolean {
   return hasOcxEntrypoint && /(?:^|[\s"'])start(?:$|[\s"'])/.test(normalized);
 }
 
-function isLikelyOcxStartProcessUncached(pid: number): boolean | undefined {
-  const commandLine = readProcessCommandLine(pid);
-  if (commandLine === undefined) return undefined;
-  return isOcxStartCommandLine(commandLine);
-}
-
 /** Per-process memo: waitForProxy/findLiveProxy used to spawn powershell on every 150ms poll. */
 const ocxStartProcessCache = new Map<number, boolean>();
 
@@ -1862,16 +1815,24 @@ function lookupOcxStartProcess(
   return ok;
 }
 
-function isLikelyOcxStartProcess(pid: number): boolean | undefined {
-  return lookupOcxStartProcess(pid, readProcessCommandLine, ocxStartProcessCache);
+function isLikelyOcxStartProcess(pid: number): boolean {
+  return lookupOcxStartProcess(pid, readProcessCommandLine, ocxStartProcessCache) === true;
 }
 
+/** Test seam for the cached identity lookup used by liveness polling. */
 export function lookupOcxStartProcessForTests(
   pid: number,
   readCommandLine: (pid: number) => string | undefined,
   cache = new Map<number, boolean>(),
 ): boolean | undefined {
   return lookupOcxStartProcess(pid, readCommandLine, cache);
+}
+
+/** Re-read process identity without consulting the short-lived polling cache. */
+function isLikelyOcxStartProcessUncached(pid: number): boolean | undefined {
+  const commandLine = readProcessCommandLine(pid);
+  if (commandLine === undefined) return undefined;
+  return isOcxStartCommandLine(commandLine);
 }
 
 /**
@@ -1904,12 +1865,12 @@ export function verifyPidIdentity(candidatePid: number): number | null {
   } catch (e: unknown) {
     if ((e as NodeJS.ErrnoException).code !== "EPERM") return null;
   }
-  return isLikelyOcxStartProcess(candidatePid) === true ? candidatePid : null;
+  return isLikelyOcxStartProcess(candidatePid) ? candidatePid : null;
 }
 
 /**
- * Re-read the process command line for update/recovery decisions that span enough
- * time for the OS to reuse a PID. Never trust the per-process polling cache here.
+ * Re-read process identity for update/recovery decisions that span enough time
+ * for the OS to reuse a PID; never trust the polling cache here.
  */
 export function verifyPidIdentityFresh(candidatePid: number): number | null {
   try {
@@ -1925,8 +1886,6 @@ export function verifyPidIdentityFresh(candidatePid: number): number | null {
     ocxStartProcessCache.delete(candidatePid);
     return null;
   }
-  // This read is authoritative across a PID-reuse boundary. Reconcile the
-  // polling memo so later short-lived checks cannot serve the old identity.
   ocxStartProcessCache.set(candidatePid, isOcx);
   return isOcx ? candidatePid : null;
 }
