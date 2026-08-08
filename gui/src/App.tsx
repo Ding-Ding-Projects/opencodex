@@ -318,6 +318,7 @@ export default function App() {
       <SnackbarHost />
       <DimSumCard version={displayedVersion} />
       <RemoteConnectionDialog
+        key={remoteDialogOpen ? "open" : "closed"}
         open={remoteDialogOpen}
         onClose={() => setRemoteDialogOpen(false)}
         onConnect={connectRemote}
