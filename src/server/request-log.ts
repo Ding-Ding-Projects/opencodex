@@ -52,6 +52,7 @@ export interface RequestLogContext {
   configuredSpeedLabel?: string;
   modelSupportsServiceTier?: boolean;
   responseServiceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
   resolvedModel?: string;
   usage?: OcxUsage;
   usageLogInputTokens?: number;
@@ -105,6 +106,7 @@ export interface RequestLogEntry {
   configuredSpeedLabel?: string;
   modelSupportsServiceTier?: boolean;
   responseServiceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
   resolvedModel?: string;
   status: number;
   durationMs: number;
@@ -174,6 +176,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
       ? { modelSupportsServiceTier: entry.modelSupportsServiceTier }
       : {}),
     ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
+    ...(entry.cacheRetention ? { cacheRetention: entry.cacheRetention } : {}),
     ...(entry.resolvedModel ? { resolvedModel: entry.resolvedModel } : {}),
     status: entry.status,
     durationMs: entry.durationMs,
@@ -255,6 +258,7 @@ export function addRequestLog(entry: RequestLogEntry) {
         ? { modelSupportsServiceTier: entry.modelSupportsServiceTier }
         : {}),
       ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
+      ...(entry.cacheRetention ? { cacheRetention: entry.cacheRetention } : {}),
       status: entry.status,
       durationMs: entry.durationMs,
       ...(entry.firstOutputMs !== undefined ? { firstOutputMs: entry.firstOutputMs } : {}),
@@ -707,6 +711,7 @@ export function addFinalRequestLog(
     ...(logCtx.configuredSpeedLabel ? { configuredSpeedLabel: logCtx.configuredSpeedLabel } : {}),
     ...(logCtx.modelSupportsServiceTier !== undefined ? { modelSupportsServiceTier: logCtx.modelSupportsServiceTier } : {}),
     ...(logCtx.responseServiceTier ? { responseServiceTier: logCtx.responseServiceTier } : {}),
+    ...(logCtx.cacheRetention ? { cacheRetention: logCtx.cacheRetention } : {}),
     ...(logCtx.resolvedModel ? { resolvedModel: logCtx.resolvedModel } : {}),
     status: effectiveStatus,
     durationMs: Date.now() - start,
@@ -803,9 +808,11 @@ export function beginRequestAttempt(
   provider: string,
   model: string,
   adapter: string,
+  timestamp = Date.now(),
 ): PersistedUsageAttempt {
   return {
     ordinal,
+    timestamp,
     provider,
     model,
     adapter,

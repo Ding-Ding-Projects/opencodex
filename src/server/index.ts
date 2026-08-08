@@ -129,7 +129,7 @@ export {
   safeConfigDTO,
 } from "./auth-cors";
 import { disableResponsesRequestTimeout, handleResponses, handleResponsesCompact } from "./responses";
-export { disableResponsesRequestTimeout, linkAbortSignal } from "./responses";
+export { disableResponsesRequestTimeout, linkAbortSignal, recordEffectiveCacheRetention } from "./responses";
 import { handleClaudeCountTokens, handleClaudeMessages } from "./claude-messages";
 import { handleChatCompletions } from "./chat-completions";
 import { chatCompletionsErrorResponse } from "../chat/outbound";

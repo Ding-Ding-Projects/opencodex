@@ -13,6 +13,7 @@ import {
   providerConfigSeed,
 } from "../src/providers/derive";
 import { PROVIDER_REGISTRY } from "../src/providers/registry";
+import { OFFICIAL_PRICE_SCHEDULES } from "../src/usage/expected-prices";
 import { FREE_PROVIDER_DIRECTORY } from "../src/providers/free-directory";
 import { applyProviderConfigHints } from "../src/codex/catalog";
 import { routeModel } from "../src/router";
@@ -107,15 +108,34 @@ describe("provider registry parity", () => {
     expect(KEY_LOGIN_PROVIDERS.openrouter.modelContextWindows?.["openai/gpt-5.6-sol"]).toBe(1_050_000);
     expect(KEY_LOGIN_PROVIDERS.openrouter.modelContextWindows?.["openai/gpt-5.6-terra"]).toBe(1_050_000);
     expect(KEY_LOGIN_PROVIDERS.openrouter.modelContextWindows?.["openai/gpt-5.6-luna"]).toBe(1_050_000);
-    expect(KEY_LOGIN_PROVIDERS.deepseek.models).toContain("deepseek-v4-pro");
+    expect(KEY_LOGIN_PROVIDERS.deepseek.models).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
+    expect(KEY_LOGIN_PROVIDERS.deepseek.models).not.toContain("deepseek-chat");
+    expect(KEY_LOGIN_PROVIDERS.deepseek.models).not.toContain("deepseek-reasoner");
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelReasoningEfforts?.["deepseek-v4-pro"]).toEqual(["high", "xhigh", "max"]);
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelReasoningEffortMap?.["deepseek-v4-pro"]?.xhigh).toBe("max");
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelReasoningEffortMap?.["deepseek-v4-pro"]?.max).toBe("max");
     expect(KEY_LOGIN_PROVIDERS.deepseek.preserveReasoningContentModels).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
     // Issue #88: every DeepSeek API model is text-only input — the vision sidecar covers them.
     expect(KEY_LOGIN_PROVIDERS.deepseek.noVisionModels).toEqual([
-      "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", "deepseek-v4-flash",
+      "deepseek-v4-pro", "deepseek-v4-flash",
     ]);
+  });
+
+  test("catalog aliases stay metadata-only while official price authority excludes non-API products", () => {
+    const aliases = deriveJawcodeAliases();
+    expect(aliases["google-antigravity"]).toBe("google");
+    expect(aliases.kimi).toBe("moonshot");
+    expect(aliases["minimax-cn"]).toBe("minimax");
+
+    const pricedProviders = new Set(OFFICIAL_PRICE_SCHEDULES.map(row => row.provider));
+    expect(pricedProviders).toEqual(new Set(["anthropic-apikey", "deepseek", "moonshot"]));
+    for (const provider of [
+      "anthropic", "cursor", "kiro", "google-antigravity", "google-vertex",
+      "kimi", "kimi-code", "minimax", "minimax-cn", "openrouter", "orcarouter",
+      "alibaba-token-plan", "alibaba-token-plan-intl", "tencent-coding-plan",
+    ]) {
+      expect(pricedProviders.has(provider)).toBe(false);
+    }
   });
 
   test("OpenAI API route max-input metadata is trusted and user values only lower it", () => {
