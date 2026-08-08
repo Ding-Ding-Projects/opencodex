@@ -25,9 +25,10 @@ import Network from "./pages/Network";
 import SettingsPage from "./pages/Settings";
 import OnboardingWizard from "./shell/OnboardingWizard";
 import ErrorBoundary from "./components/ErrorBoundary";
+import RemoteConnectionDialog from "./components/RemoteConnectionDialog";
 import { useT } from "./i18n/shared";
 import { installApiAuthFetch } from "./api";
-import { type Page } from "./app-routing";
+import { hashRouteFor, type Page } from "./app-routing";
 import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
 import { useNotifications } from "./shell/notifications-context";
@@ -112,6 +113,15 @@ export default function App() {
   // drawer without an effect that would cascade a second render.
   const [drawerRequested, setDrawerRequested] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
+
+  const connectRemote = useCallback((url: string) => {
+    setRemoteDialogOpen(false);
+    window.open(`${url}/${hashRouteFor("dashboard")}`, "_blank", "noopener,noreferrer");
+    notify({ tone: "success", title: t("remote.connectOpened"), body: url });
+  }, [notify, t]);
+
+  const connectRemoteDialog = useCallback(() => setRemoteDialogOpen(true), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerRequested(false); };
@@ -270,6 +280,7 @@ export default function App() {
           onOpenDrawer={() => setDrawerRequested(true)}
           drawerOpen={drawerOpen}
           onOpen={openPage}
+          onConnectRemote={connectRemoteDialog}
         />
         <TabStrip tabs={tabs} />
 
@@ -306,6 +317,12 @@ export default function App() {
 
       <SnackbarHost />
       <DimSumCard version={displayedVersion} />
+      <RemoteConnectionDialog
+        key={remoteDialogOpen ? "open" : "closed"}
+        open={remoteDialogOpen}
+        onClose={() => setRemoteDialogOpen(false)}
+        onConnect={connectRemote}
+      />
       {/* Decides for itself whether this is a first run; renders nothing otherwise. */}
       <OnboardingWizard apiBase={API_BASE} />
     </div>
