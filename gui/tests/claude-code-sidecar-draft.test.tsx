@@ -83,25 +83,28 @@ function sidecarModelInputs(host: HTMLElement): HTMLInputElement[] {
   return [...host.querySelectorAll<HTMLInputElement>('input[aria-label="Model"]')];
 }
 
-function sidecarBackendTriggers(host: HTMLElement): HTMLButtonElement[] {
-  return [...host.querySelectorAll<HTMLButtonElement>('button.select-trigger[aria-label="Backend"]')];
+/**
+ * The backend pickers are native `<select>` elements now, not the hand-rolled
+ * listbox button this file used to open. The draft semantics under test are
+ * unchanged — what changed is only how a choice is made.
+ */
+function sidecarBackendSelects(host: HTMLElement): HTMLSelectElement[] {
+  return [...host.querySelectorAll<HTMLSelectElement>('select[aria-label="Backend"]')];
 }
 
-async function pickOption(trigger: HTMLButtonElement, label: string): Promise<void> {
-  await act(async () => {
-    trigger.click();
-  });
-  const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
-    .find(el => el.textContent?.includes(label));
+async function pickOption(select: HTMLSelectElement, label: string): Promise<void> {
+  const option = [...select.options].find(el => el.textContent?.includes(label));
   expect(option).toBeTruthy();
   await act(async () => {
-    option!.click();
+    Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value")!
+      .set!.call(select, option!.value);
+    select.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
   });
 }
 
 test("Inherit → Auto stays Auto and enables the sidecar model input", async () => {
   const { root, host, getState } = await mountSettings();
-  const [webSearchTrigger] = sidecarBackendTriggers(host);
+  const [webSearchTrigger] = sidecarBackendSelects(host);
   const [webSearchModel] = sidecarModelInputs(host);
   expect(webSearchTrigger).toBeTruthy();
   expect(webSearchModel.disabled).toBe(true);
@@ -118,7 +121,7 @@ test("Inherit → Auto stays Auto and enables the sidecar model input", async ()
 
 test("Empty Auto draft keeps model input enabled until Inherit is chosen", async () => {
   const { root, host, getState } = await mountSettings();
-  const [webSearchTrigger] = sidecarBackendTriggers(host);
+  const [webSearchTrigger] = sidecarBackendSelects(host);
   await pickOption(webSearchTrigger!, "Auto");
 
   const model = sidecarModelInputs(host)[0]!;
@@ -140,13 +143,20 @@ test("Empty Auto draft keeps model input enabled until Inherit is chosen", async
   expect(model.disabled).toBe(false);
   expect(sidecarSelectLabel(host, 0)).toContain("Auto");
 
-  await pickOption(sidecarBackendTriggers(host)[0]!, "Use main setting");
+  await pickOption(sidecarBackendSelects(host)[0]!, "Use main setting");
   expect(getState().webSearchSidecar).toBeUndefined();
   expect(sidecarModelInputs(host)[0]!.disabled).toBe(true);
 
   await act(async () => { root.unmount(); });
 });
 
+/**
+ * What the picker is CURRENTLY showing. The legacy trigger rendered the selected
+ * option as its own text content; a native select reports it as `value`, so the
+ * selected option's label is read back through the option list.
+ */
 function sidecarSelectLabel(host: HTMLElement, index: number): string {
-  return sidecarBackendTriggers(host)[index]?.textContent ?? "";
+  const select = sidecarBackendSelects(host)[index];
+  if (!select) return "";
+  return [...select.options].find(option => option.value === select.value)?.textContent ?? "";
 }

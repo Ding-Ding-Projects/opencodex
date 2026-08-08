@@ -17,6 +17,15 @@ let _serverRef: ReturnType<typeof Bun.serve> | undefined;
 
 export function setServerRef(server: ReturnType<typeof Bun.serve> | undefined): void { _serverRef = server; }
 export function setDraining(value: boolean): void { draining = value; }
+const shutdownTasks = new Set<() => void>();
+
+export function registerShutdownTask(task: () => void): void { shutdownTasks.add(task); }
+
+function runShutdownTasks(): void {
+  for (const task of shutdownTasks) {
+    try { task(); } catch { /* one cleanup must not strand the others */ }
+  }
+}
 export function registerTurn(ac: AbortController): void { activeTurns.add(ac); }
 export function unregisterTurn(ac: AbortController): void { activeTurns.delete(ac); }
 export function isDraining(): boolean { return draining; }
@@ -26,6 +35,11 @@ export function getServerListenPort(): number | undefined {
   const port = _serverRef?.port;
   return typeof port === "number" && port > 0 ? port : undefined;
 }
+/** Live bind hostname; undefined before a listener exists. */
+export function getServerListenHostname(): string | undefined {
+  const hostname = _serverRef?.hostname;
+  return typeof hostname === "string" && hostname ? hostname : undefined;
+}
 /**
  * Mark this process as a recycle (dashboard drain-and-restart). Exit cleanup
  * must keep Codex/Grok/system-env injection so the replacement process inherits
@@ -33,6 +47,16 @@ export function getServerListenPort(): number | undefined {
  */
 export function markRecyclingForExit(): void { recyclingForExit = true; }
 export function isRecyclingForExit(): boolean { return recyclingForExit; }
+
+/** Stop admitting new turns and wait without terminating the listener. */
+export async function quiesceActiveTurns(timeoutMs: number): Promise<{ drained: boolean; remaining: number }> {
+  draining = true;
+  const deadline = Date.now() + timeoutMs;
+  while (activeTurns.size > 0 && Date.now() < deadline) {
+    await Bun.sleep(100);
+  }
+  return { drained: activeTurns.size === 0, remaining: activeTurns.size };
+}
 
 export function trackStreamLifetime(
   body: ReadableStream<Uint8Array>,
@@ -73,10 +97,12 @@ export async function drainAndShutdown(
 ): Promise<void> {
   const s = server ?? _serverRef;
   draining = true;
+  runShutdownTasks();
   const deadline = Date.now() + timeoutMs;
   while (activeTurns.size > 0 && Date.now() < deadline) {
     await Bun.sleep(100);
   }
+  runShutdownTasks();
   if (activeTurns.size > 0) {
     console.warn(`⚠️  Aborting ${activeTurns.size} in-flight turn(s) after ${timeoutMs}ms deadline`);
     for (const ac of activeTurns) {

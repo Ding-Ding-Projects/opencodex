@@ -184,7 +184,7 @@ describe("provider dashboard payload", () => {
     expect(buildProviderPayload({ ...bearerGateway, adapter: "openai-chat" })).not.toHaveProperty("apiKeyTransport");
   });
 
-  test("does not persist secrets for forward or local modes", () => {
+  test("persists no-key modes while omitting their stale secrets", () => {
     const base = {
       name: "local",
       adapter: "openai-responses",
@@ -200,6 +200,10 @@ describe("provider dashboard payload", () => {
     expect(buildProviderPayload({ ...base, authMode: "local" })).toEqual({
       adapter: "openai-responses",
       baseUrl: "https://example.test/v1",
+      // `local` is not a secret. It is the explicit server-side authorization
+      // to bypass API-key enforcement for registry-approved local runtimes;
+      // omitting it turns a LAN-hosted Ollama/vLLM endpoint back into key auth.
+      authMode: "local",
     });
   });
 

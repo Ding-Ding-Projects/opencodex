@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useRef } from "react";
+/**
+ * Confirmation dialogs for the combo workspace. Both are Material 3 `Dialog`s:
+ * the `showModal()` effect, the dialog ref, the `onCancel` (Escape) handler and
+ * the backdrop-dismiss button each component used to repeat inline now live in
+ * `Dialog` itself.
+ *
+ * Both render their own `<h*>` id so `aria-labelledby` keeps pointing at the
+ * headline text, which is also what the workspace tests assert on.
+ */
 import { useT } from "../i18n/shared";
+import { Button, Dialog } from "../shell/m3-ui";
 
 export function RemoveComboDialog({
   model,
@@ -11,37 +20,21 @@ export function RemoveComboDialog({
   onConfirm: () => void;
 }) {
   const t = useT();
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
-
-  const handleCancel = useCallback((e: React.SyntheticEvent) => {
-    e.preventDefault();
-    onCancel();
-  }, [onCancel]);
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal-overlay"
-      aria-labelledby="cwi-remove-title"
-      onCancel={handleCancel}
-    >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onCancel} />
-      <div className="modal-card pwi-remove-confirm-card" onClick={(e) => e.stopPropagation()}>
-        <h3 id="cwi-remove-title" className="pwi-remove-confirm-title">
-          {t("cws.removeConfirmTitle", { model })}
-        </h3>
-        <p className="muted pwi-remove-confirm-desc">{t("cws.removeConfirmDesc")}</p>
-        <div className="pwi-remove-confirm-actions">
-          <button type="button" className="btn btn-ghost" onClick={onCancel}>{t("common.cancel")}</button>
-          <button type="button" className="btn pwi-remove-confirm-danger" onClick={onConfirm}>{t("common.remove")}</button>
-        </div>
-      </div>
-    </dialog>
+    <Dialog
+      onClose={onCancel}
+      labelledBy="cwi-remove-title"
+      width={420}
+      title={<span id="cwi-remove-title">{t("cws.removeConfirmTitle", { model })}</span>}
+      description={t("cws.removeConfirmDesc")}
+      actions={
+        <>
+          <Button variant="text" onClick={onCancel}>{t("common.cancel")}</Button>
+          <Button variant="danger" onClick={onConfirm}>{t("common.remove")}</Button>
+        </>
+      }
+    />
   );
 }
 
@@ -53,48 +46,35 @@ export function UnsavedLeaveDialog({
   onDiscard: () => void;
 }) {
   const t = useT();
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
-
-  const handleCancel = useCallback((e: React.SyntheticEvent) => {
-    e.preventDefault();
-    onKeep();
-  }, [onKeep]);
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal-overlay"
-      aria-labelledby="cwi-unsaved-title"
-      onCancel={handleCancel}
-    >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onKeep} />
-      <div className="modal-card pwi-json-unsaved-card" onClick={(e) => e.stopPropagation()}>
-        <h3 id="cwi-unsaved-title" className="pwi-json-unsaved-title">{t("cws.unsavedTitle")}</h3>
-        <p className="muted pwi-json-unsaved-desc">{t("cws.unsavedDesc")}</p>
-        <div className="pwi-json-unsaved-actions">
-          <button
-            type="button"
-            className="btn btn-ghost"
+    // Scrim dismissal stays on: this dialog holds no input of its own, and every
+    // casual dismissal route (scrim, Escape) lands on `onKeep`, which is the
+    // non-destructive branch that leaves the edits alone.
+    <Dialog
+      onClose={onKeep}
+      labelledBy="cwi-unsaved-title"
+      width={420}
+      title={<span id="cwi-unsaved-title">{t("cws.unsavedTitle")}</span>}
+      description={t("cws.unsavedDesc")}
+      actions={
+        <>
+          <Button
+            variant="text"
             data-testid="cwi-unsaved-keep"
             onClick={onKeep}
           >
             {t("cws.keepEditing")}
-          </button>
-          <button
-            type="button"
-            className="btn btn-danger"
+          </Button>
+          <Button
+            variant="danger"
             data-testid="cwi-unsaved-discard"
             onClick={onDiscard}
           >
             {t("common.discard")}
-          </button>
-        </div>
-      </div>
-    </dialog>
+          </Button>
+        </>
+      }
+    />
   );
 }

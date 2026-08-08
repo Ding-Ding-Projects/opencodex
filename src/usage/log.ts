@@ -94,8 +94,10 @@ export function isKnownUsageSurface(value: unknown): value is NonNullable<Persis
   return typeof value === "string" && KNOWN_USAGE_SURFACES.has(value as NonNullable<PersistedUsageEntry["surface"]>);
 }
 
-export function usageLogPath(): string {
-  return join(getConfigDir(), "usage.jsonl");
+export const USAGE_LOG_FILE_NAME = "usage.jsonl";
+
+export function usageLogPath(configDir: string = getConfigDir()): string {
+  return join(configDir, USAGE_LOG_FILE_NAME);
 }
 
 export function usageTotalTokens(usage: OcxUsage | undefined): number | undefined {

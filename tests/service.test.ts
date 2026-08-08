@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
 import { windowsEnvIndirectBatchValue } from "../src/lib/win-paths";
-import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsServiceScript, buildWindowsTaskXml, deriveWindowsServiceDiagnostic, normalizeServiceSubcommand, parseServiceInstallState, readWindowsSchedulerXmlState, resolveServiceListenPort, serviceLogPath, serviceStartableFromTray, serviceStatusSummary, windowsTaskRegistrationHealthy } from "../src/service";
+import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsServiceScript, buildWindowsTaskXml, deriveWindowsServiceDiagnostic, normalizeServiceSubcommand, parseServiceInstallState, parseWindowsSchedulerRuntimeState, readWindowsSchedulerXmlState, resolveServiceListenPort, runServiceStopGate, serviceLogPath, serviceStartPostcondition, serviceStartableFromTray, serviceStatusSummary, stopManagerWithVerification, waitForServiceProxy, windowsTaskRegistrationHealthy } from "../src/service";
 import { serviceApiTokenFilePath } from "../src/lib/service-secrets";
 import type { OcxConfig } from "../src/types";
 
@@ -50,8 +50,8 @@ function expectTextToContainPath(text: string, path: string): void {
   expect(pathVariants(path).some(candidate => text.includes(candidate))).toBe(true);
 }
 
-describe("service listen-port bake", () => {
-  test("resolveServiceListenPort prefers override, then OCX_BAKE_PORT, then config", () => {
+describe("service listen-port policy", () => {
+  test("resolveServiceListenPort uses only an explicit/update pin, never config.port", () => {
     process.env.OPENCODEX_HOME = TEST_DIR;
     mkdirSync(TEST_DIR, { recursive: true });
     saveConfig({ port: 10100, hostname: "127.0.0.1", defaultProvider: "openai", providers: {} } as OcxConfig);
@@ -61,23 +61,126 @@ describe("service listen-port bake", () => {
       process.env.OCX_BAKE_PORT = "15555";
       expect(resolveServiceListenPort()).toBe(15555);
       delete process.env.OCX_BAKE_PORT;
-      expect(resolveServiceListenPort()).toBe(10100);
+      expect(resolveServiceListenPort()).toBeUndefined();
       saveConfig({ port: 0, hostname: "127.0.0.1", defaultProvider: "openai", providers: {} } as OcxConfig);
-      expect(resolveServiceListenPort()).toBe(10100);
+      expect(resolveServiceListenPort()).toBeUndefined();
+      process.env.OCX_BAKE_PORT = "15555";
+      expect(resolveServiceListenPort(null)).toBeUndefined();
     } finally {
       if (prev === undefined) delete process.env.OCX_BAKE_PORT;
       else process.env.OCX_BAKE_PORT = prev;
     }
   });
 
-  test("Windows batch and launchd/systemd shell commands bake start --port", () => {
+  test("normal service assets are soft while update-generated assets bake OCX_BAKE_PORT", () => {
     process.env.OPENCODEX_HOME = TEST_DIR;
     mkdirSync(TEST_DIR, { recursive: true });
     saveConfig({ port: 13337, hostname: "127.0.0.1", defaultProvider: "openai", providers: {} } as OcxConfig);
-    const script = buildWindowsServiceScript({ bun: "C:\\OpenCodex\\bun.exe", cli: "C:\\OpenCodex\\cli.ts" });
-    expect(script).toContain("start --port 13337");
-    expect(buildPlist()).toContain("start --port 13337");
-    expect(buildUnit()).toContain("start --port 13337");
+    const prev = process.env.OCX_BAKE_PORT;
+    try {
+      delete process.env.OCX_BAKE_PORT;
+      const script = buildWindowsServiceScript({ bun: "C:\\OpenCodex\\bun.exe", cli: "C:\\OpenCodex\\cli.ts" });
+      expect(script).toContain('"%OCX_BUN%" "%OCX_CLI%" start >>');
+      expect(script).not.toContain("start --port");
+      expect(buildPlist()).not.toContain("start --port");
+      expect(buildUnit()).not.toContain("start --port");
+
+      process.env.OCX_BAKE_PORT = "14444";
+      expect(buildWindowsServiceScript()).toContain("start --port 14444");
+      expect(buildPlist()).toContain("--port");
+      expect(buildPlist()).toContain("14444");
+      expect(buildUnit()).toContain("--port");
+      expect(buildUnit()).toContain("14444");
+    } finally {
+      if (prev === undefined) delete process.env.OCX_BAKE_PORT;
+      else process.env.OCX_BAKE_PORT = prev;
+    }
+  });
+
+  test("service readiness waits for identity health and returns the fallback runtime port", async () => {
+    let now = 0;
+    let probes = 0;
+    const live = await waitForServiceProxy({
+      timeoutMs: 100,
+      intervalMs: 10,
+      now: () => now,
+      sleep: async ms => { now += ms; },
+      findLive: async () => (++probes < 3 ? null : {
+        pid: 222,
+        port: 49152,
+        hostname: "127.0.0.1",
+        source: "runtime",
+        supervised: true,
+      }),
+    });
+    expect(live).toMatchObject({ pid: 222, port: 49152 });
+  });
+
+  test("service readiness refuses an unrelated direct proxy", async () => {
+    let now = 0;
+    const live = await waitForServiceProxy({
+      timeoutMs: 30,
+      intervalMs: 10,
+      stabilityMs: 0,
+      now: () => now,
+      sleep: async ms => { now += ms; },
+      findLive: async () => ({
+        pid: 333,
+        port: 49153,
+        hostname: "127.0.0.1",
+        source: "runtime",
+        supervised: false,
+      }),
+    });
+    expect(live).toBeNull();
+    expect(serviceStartPostcondition(
+      { pid: 333, port: 49153, hostname: "127.0.0.1", source: "runtime", supervised: false },
+      { running: true, viable: true },
+    )).toBe(false);
+    expect(serviceStartPostcondition(
+      { pid: 444, port: 49154, hostname: "127.0.0.1", source: "runtime", supervised: true },
+      { running: false, viable: true },
+    )).toBe(false);
+    expect(serviceStartPostcondition(
+      { pid: null, port: 49155, hostname: "127.0.0.1", source: "runtime", supervised: true },
+      { running: true, viable: true },
+    )).toBe(false);
+    expect(serviceStartPostcondition(
+      { pid: 555, port: 49156, hostname: "127.0.0.1", source: "config", supervised: true },
+      { running: true, viable: true },
+    )).toBe(false);
+  });
+
+  test("service install/start report success only after identity readiness", async () => {
+    const source = await readText("src/service.ts");
+    const command = source.slice(source.indexOf("export async function serviceCommand"));
+    const install = command.slice(command.indexOf('case "install"'), command.indexOf('case "start"'));
+    const start = command.slice(command.indexOf('case "start"'), command.indexOf('case "stop"'));
+
+    expect(install.indexOf('confirmServiceStarted("installed")')).toBeLessThan(install.indexOf("installed + started"));
+    expect(start.indexOf('confirmServiceStarted("started")')).toBeLessThan(start.indexOf("✅ service started"));
+    expect(start).toContain("ops.prepareStart?.()");
+    expect(start).toContain("return false");
+  });
+
+  test("service stop gate never permits config teardown after an unsafe stop", async () => {
+    const calls: string[] = [];
+    const managerFailure = await runServiceStopGate({
+      stopManager: () => { calls.push("manager"); throw new Error("unknown manager state"); },
+      stopProxy: () => { calls.push("proxy"); return true; },
+    });
+    if (managerFailure.safeToTeardown) calls.push("teardown");
+    expect(managerFailure.phase).toBe("manager-unsafe");
+    expect(calls).toEqual(["manager"]);
+
+    calls.length = 0;
+    const proxyFailure = await runServiceStopGate({
+      stopManager: () => { calls.push("manager"); },
+      stopProxy: () => { calls.push("proxy"); return false; },
+    });
+    if (proxyFailure.safeToTeardown) calls.push("teardown");
+    expect(proxyFailure.phase).toBe("proxy-unsafe");
+    expect(calls).toEqual(["manager", "proxy"]);
   });
 });
 
@@ -485,7 +588,8 @@ describe("Windows service task", () => {
 
     expect(script).toContain('set "OCX_BUN=C:\\Bun&Dir\\100%%bun^^\\bun.exe"');
     expect(script).toContain('set "OCX_CLI=C:\\OpenCodex&Dir\\cli.ts"');
-    expect(script).toContain('"%OCX_BUN%" "%OCX_CLI%" start --port');
+    expect(script).toContain('"%OCX_BUN%" "%OCX_CLI%" start >>');
+    expect(script).not.toContain('"%OCX_BUN%" "%OCX_CLI%" start --port');
     expect(script).not.toContain('"C:\\Bun&Dir\\100%bun^\\bun.exe"');
   });
 
@@ -542,7 +646,7 @@ describe("Windows service task", () => {
       expect(script).toContain('echo opencodex_home="%OPENCODEX_HOME%"');
       expect(script).toContain('echo codex_home="%CODEX_HOME%"');
       expect(script).toContain('echo token_file="%OCX_API_TOKEN_FILE%"');
-      expect(script).toMatch(/"%OCX_BUN%" "%OCX_CLI%" start --port \d+ >>"%OCX_SERVICE_LOG%" 2>&1/);
+      expect(script).toContain('"%OCX_BUN%" "%OCX_CLI%" start >>"%OCX_SERVICE_LOG%" 2>&1');
       expect(script).toContain("child exited with code %ERRORLEVEL%");
       expect(script).not.toContain("local-secret");
       expect(script).not.toContain('set "OPENCODEX_API_AUTH_TOKEN=');
@@ -587,24 +691,27 @@ describe("service lifecycle cleanup ordering", () => {
   test("direct service stop kills the tracked proxy before restoring native Codex", async () => {
     const service = await readText("src/service.ts");
     const stopCase = service.slice(service.indexOf('case "stop":'), service.indexOf('case "status":'));
+    const safeStop = service.slice(
+      service.indexOf("async function stopServiceCommandSafely"),
+      service.indexOf("export interface ParsedServiceArgs"),
+    );
 
-    expect(stopCase).toContain("ops.stop();");
-    expect(stopCase).toContain("await stopTrackedProxyForServiceCommand();");
+    expect(stopCase).toContain("await stopServiceCommandSafely()");
+    expect(safeStop).toContain("stopServiceIfInstalled()");
+    expect(safeStop).toContain("await stopTrackedProxyForServiceCommand()");
     expect(stopCase).toContain("restoreNativeCodex();");
-    expect(stopCase.indexOf("ops.stop();")).toBeLessThan(stopCase.indexOf("stopTrackedProxyForServiceCommand();"));
-    expect(stopCase.indexOf("stopTrackedProxyForServiceCommand();")).toBeLessThan(stopCase.indexOf("restoreNativeCodex();"));
+    expect(safeStop.indexOf("stopServiceIfInstalled()")).toBeLessThan(safeStop.indexOf("stopTrackedProxyForServiceCommand()"));
+    expect(stopCase.indexOf("stopServiceCommandSafely()")).toBeLessThan(stopCase.indexOf("restoreNativeCodex();"));
   });
 
   test("direct service uninstall kills the tracked proxy before deleting service assets", async () => {
     const service = await readText("src/service.ts");
     const uninstallCase = service.slice(service.indexOf('case "uninstall":'), service.indexOf("default:"));
 
-    expect(uninstallCase).toContain("ops.stop();");
-    expect(uninstallCase).toContain("await stopTrackedProxyForServiceCommand();");
+    expect(uninstallCase).toContain("await stopServiceCommandSafely()");
     expect(uninstallCase).toContain("ops.uninstall();");
     expect(uninstallCase).toContain("restoreNativeCodex();");
-    expect(uninstallCase.indexOf("ops.stop();")).toBeLessThan(uninstallCase.indexOf("stopTrackedProxyForServiceCommand();"));
-    expect(uninstallCase.indexOf("stopTrackedProxyForServiceCommand();")).toBeLessThan(uninstallCase.indexOf("ops.uninstall();"));
+    expect(uninstallCase.indexOf("stopServiceCommandSafely()")).toBeLessThan(uninstallCase.indexOf("ops.uninstall();"));
     expect(uninstallCase.indexOf("ops.uninstall();")).toBeLessThan(uninstallCase.indexOf("restoreNativeCodex();"));
   });
 
@@ -640,9 +747,10 @@ describe("service lifecycle cleanup ordering", () => {
     expect(service).toContain('import { expandUserPath, getConfigDir, readPid, removePid, removeRuntimePort } from "./config";');
     expect(service).toContain("removeRuntimePort(pid);");
     expect(service).toContain('import { isProcessAlive, stopProxy } from "./lib/process-control";');
-    expect(service).toContain('type TrackedProxyCleanupResult = "none" | "stale" | "stopped";');
+    expect(service).toContain('type TrackedProxyCleanupResult = "none" | "stale" | "stopped" | "failed";');
     expect(service).toContain("async function stopTrackedProxyIfRunning(): Promise<TrackedProxyCleanupResult>");
-    expect(service).toContain('if (!pid) return "none";');
+    expect(service).toContain("const live = await findLiveProxy()");
+    expect(service).toContain("if (!live) return \"none\"");
     expect(service).toContain("if (!isProcessAlive(pid))");
     expect(service).toContain('return "stale";');
     expect(service).toContain("await stopProxy(pid);");
@@ -650,13 +758,19 @@ describe("service lifecycle cleanup ordering", () => {
     expect(service).toContain('return "stopped";');
   });
 
-  test("service command cleanup logs kill failures without skipping restore/delete", async () => {
+  test("service command cleanup blocks restore/delete after a proxy-stop failure", async () => {
     const service = await readText("src/service.ts");
 
     expect(service).toContain("async function stopTrackedProxyForServiceCommand(): Promise<TrackedProxyCleanupResult>");
     expect(service).toContain("catch (err)");
     expect(service).toContain("Failed to stop proxy");
-    expect(service).toContain('return "none";');
+    expect(service).toContain('return "failed";');
+    const safeStop = service.slice(
+      service.indexOf("async function stopServiceCommandSafely"),
+      service.indexOf("export interface ParsedServiceArgs"),
+    );
+    expect(safeStop).toContain('!== "failed"');
+    expect(safeStop).toContain("return false");
   });
 });
 
@@ -673,6 +787,7 @@ describe("service diagnostics", () => {
   const base = {
     schedulerXml: "",
     schedulerAssetsPresent: true,
+    schedulerRunning: false,
     nativeStatus: "nonexistent" as const,
     recordedBackend: null,
     staleBakedPaths: false,
@@ -682,13 +797,125 @@ describe("service diagnostics", () => {
   const installedEnabled = { schedulerXml: healthyTaskXml() };
   const installedDisabled = { schedulerXml: disabledTaskXml() };
 
+  test("manager stop requires known non-running state before teardown", () => {
+    let stopCalls = 0;
+    expect(() => stopManagerWithVerification({
+      label: "test manager",
+      installed: true,
+      runtimeState: () => "unknown",
+      stop: () => { stopCalls += 1; },
+      attempts: 1,
+      intervalMs: 0,
+    })).toThrow("runtime state is unknown");
+    expect(stopCalls).toBe(0);
+
+    let runtimeCalls = 0;
+    expect(() => stopManagerWithVerification({
+      label: "test manager",
+      installed: true,
+      runtimeState: () => (++runtimeCalls === 1 ? "running" : "running"),
+      stop: () => { throw new Error("manager command failed"); },
+      attempts: 1,
+      intervalMs: 0,
+    })).toThrow("did not reach a proven non-running state");
+
+    runtimeCalls = 0;
+    expect(stopManagerWithVerification({
+      label: "test manager",
+      installed: true,
+      runtimeState: () => (++runtimeCalls === 1 ? "running" : "stopped"),
+      stop: () => { throw new Error("manager command raced with shutdown"); },
+      attempts: 1,
+      intervalMs: 0,
+    })).toBe(true);
+  });
+
+  test("unknown Task Scheduler query is possibly installed but unstartable", () => {
+    expect(deriveWindowsServiceDiagnostic({
+      ...base,
+      schedulerQueryStatus: "unknown",
+      schedulerQueryDetail: "RPC unavailable",
+      recordedBackend: "scheduler",
+    })).toMatchObject({
+      installed: true,
+      enabled: false,
+      running: false,
+      viable: false,
+      startable: false,
+      stale: true,
+      backend: "scheduler",
+      summary: expect.stringContaining("status unknown"),
+    });
+
+    expect(deriveWindowsServiceDiagnostic({
+      ...base,
+      ...installedEnabled,
+      schedulerRuntimeStatus: "unknown",
+      recordedBackend: "scheduler",
+    })).toMatchObject({
+      installed: true,
+      running: false,
+      viable: false,
+      startable: false,
+      stale: true,
+      summary: expect.stringContaining("runtime status unknown"),
+    });
+  });
+
   test("fails closed for disabled, stale, conflicting, stopped, and ghost Windows services", () => {
-    expect(deriveWindowsServiceDiagnostic({ ...base, ...installedEnabled, recordedBackend: "scheduler" })).toMatchObject({ viable: true, backend: "scheduler" });
+    expect(deriveWindowsServiceDiagnostic({ ...base, ...installedEnabled, recordedBackend: "scheduler" })).toMatchObject({
+      enabled: true,
+      running: false,
+      viable: false,
+      startable: true,
+      backend: "scheduler",
+    });
+    expect(deriveWindowsServiceDiagnostic({
+      ...base,
+      ...installedEnabled,
+      schedulerRunning: true,
+      recordedBackend: "scheduler",
+    })).toMatchObject({ enabled: true, running: true, viable: true, startable: true, backend: "scheduler" });
     expect(deriveWindowsServiceDiagnostic({ ...base, ...installedDisabled })).toMatchObject({ viable: false, enabled: false });
     expect(deriveWindowsServiceDiagnostic({ ...base, ...installedEnabled, staleBakedPaths: true })).toMatchObject({ viable: false, stale: true });
     expect(deriveWindowsServiceDiagnostic({ ...base, ...installedEnabled, nativeStatus: "started" })).toMatchObject({ viable: false, conflict: true });
     expect(deriveWindowsServiceDiagnostic({ ...base, nativeStatus: "stopped" })).toMatchObject({ installed: true, viable: false, startable: false, stale: true, running: false });
     expect(deriveWindowsServiceDiagnostic({ ...base, nativeRepairAssetsOnly: true })).toMatchObject({ installed: false, viable: false, stale: true });
+  });
+
+  test("an enabled scheduler with an unrelated direct proxy is startable but not running", async () => {
+    // COM state 3 is READY: the task is enabled but has no running task instance.
+    // A separate direct proxy may be healthy, but it is deliberately not service evidence.
+    const directProxy = { pid: 4242, identityHealthy: true };
+    expect(directProxy.identityHealthy).toBe(true);
+    expect(parseWindowsSchedulerRuntimeState("3")).toBe("not-running");
+    const scheduler = deriveWindowsServiceDiagnostic({
+      ...base,
+      ...installedEnabled,
+      schedulerRunning: parseWindowsSchedulerRuntimeState("3") === "running",
+      recordedBackend: "scheduler",
+    });
+    expect(scheduler).toMatchObject({ enabled: true, running: false, viable: false, startable: true });
+
+    const source = await readText("src/service.ts");
+    const windowsBranch = source.slice(
+      source.indexOf('if (process.platform === "win32")', source.indexOf("export function diagnoseService")),
+      source.indexOf('if (process.platform === "linux")', source.indexOf("export function diagnoseService")),
+    );
+    expect(windowsBranch).toContain("const schedulerRuntimeStatus =");
+    expect(windowsBranch).toContain("? windowsSchedulerRuntimeState()");
+    expect(windowsBranch).toContain('schedulerRuntimeStatus === "running"');
+    expect(windowsBranch).not.toContain("schedulerRunning: readPid()");
+  });
+
+  test("parses locale-independent Task Scheduler COM states conservatively", () => {
+    expect(parseWindowsSchedulerRuntimeState("4\r\n")).toBe("running");
+    for (const state of ["1", "2", "3"]) {
+      expect(parseWindowsSchedulerRuntimeState(state)).toBe("not-running");
+    }
+    expect(parseWindowsSchedulerRuntimeState("0")).toBe("unknown");
+    expect(parseWindowsSchedulerRuntimeState("Running")).toBe("unknown");
+    expect(parseWindowsSchedulerRuntimeState("")).toBe("unknown");
   });
 
   test("a stopped healthy WinSW service remains startable from the tray", () => {

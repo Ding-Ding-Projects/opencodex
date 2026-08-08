@@ -11,7 +11,6 @@ export function useProvidersOAuth({
   oauthLoginGenerationRef,
   accountSets,
   setBusy,
-  setStatus,
   setLoginInfo,
   setOauthStatus,
   notify,
@@ -27,7 +26,6 @@ export function useProvidersOAuth({
   oauthLoginGenerationRef: React.MutableRefObject<Map<string, number>>;
   accountSets: Record<string, { accounts: OAuthAccount[] }>;
   setBusy: React.Dispatch<React.SetStateAction<string | null>>;
-  setStatus: React.Dispatch<React.SetStateAction<string>>;
   setLoginInfo: React.Dispatch<React.SetStateAction<{ provider: string; url?: string; instructions?: string; deviceCode?: string } | null>>;
   setOauthStatus: React.Dispatch<React.SetStateAction<Record<string, OAuthStatus>>>;
   notify: (msg: string, ok: boolean) => void;
@@ -61,7 +59,6 @@ export function useProvidersOAuth({
     const generation = nextGen;
     const reauthTargetId = accountId?.trim() || undefined;
     setBusy(provider);
-    setStatus("");
     setLoginInfo(null);
     try {
       const res = await fetch(`${apiBase}/api/oauth/login`, {

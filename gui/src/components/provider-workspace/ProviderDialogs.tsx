@@ -18,8 +18,8 @@ export function RemoveConfirmDialog({
         <h3>{t("pws.removeConfirmTitle")}</h3>
         <p>{t("pws.removeConfirmBody", { name: providerName })}</p>
         <div className="dialog-actions">
-          <button type="button" className="btn btn-ghost" onClick={onCancel}>{t("common.cancel")}</button>
-          <button type="button" className="btn btn-danger" onClick={onConfirm}>{t("pws.removeConfirm")}</button>
+          <button type="button" className="m3-btn m3-btn--text" onClick={onCancel}>{t("common.cancel")}</button>
+          <button type="button" className="m3-btn m3-btn--danger" onClick={onConfirm}>{t("pws.removeConfirm")}</button>
         </div>
       </div>
     </div>
@@ -41,9 +41,9 @@ export function UnsavedLeaveDialog({
         <h3>{t("pws.unsavedLeaveTitle")}</h3>
         <p>{t("pws.unsavedLeaveBody")}</p>
         <div className="dialog-actions">
-          <button type="button" className="btn btn-ghost" onClick={onCancel}>{t("common.cancel")}</button>
-          <button type="button" className="btn btn-ghost" onClick={onDiscard}>{t("pws.discardSettings")}</button>
-          <button type="button" className="btn btn-primary" onClick={onSave} disabled={saving}>
+          <button type="button" className="m3-btn m3-btn--text" onClick={onCancel}>{t("common.cancel")}</button>
+          <button type="button" className="m3-btn m3-btn--text" onClick={onDiscard}>{t("pws.discardSettings")}</button>
+          <button type="button" className="m3-btn m3-btn--filled" onClick={onSave} disabled={saving}>
             {saving ? t("pws.saving") : t("pws.saveSettings")}
           </button>
         </div>

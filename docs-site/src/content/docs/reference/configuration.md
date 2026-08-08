@@ -52,7 +52,7 @@ differing backup and rewrites known legacy namespaced selected ids to bare ids.
 | `shutdownTimeoutMs?` | `number` | `5000` | Graceful drain deadline before active turns are aborted. |
 | `websockets?` | `boolean` | `false` | Advertise `supports_websockets` so Codex uses the Responses WebSocket path. Omit or set `false` to keep HTTP/SSE. |
 | `storageCleanupPolicy?` | `StorageCleanupPolicy` | unset / `enabled: false` | **Opt-in** archived auto-cleanup (issue #42 Phase 3). Default **OFF** — never enabled implicitly. When enabled, runs on `schedule` (`startup` / `daily` / `weekly` / `manual`) once archived bytes exceed `trigger.archivedBytesOver`, selecting oldest archives toward `target` (`reduceToBytes` or `removeOldestPercent`) in `mode` (`quarantine` default, or explicit `permanent`). Persists `lastRun` / `nextRun`. Configure via Storage page or `GET`/`PUT /api/storage/cleanup-policy`; `POST /api/storage/cleanup-policy/run` for manual. |
-| `apiKeys?` | `OcxApiKey[]` | `[]` | Additional generated `ocx_…` credentials accepted by management and data-plane auth on non-loopback binds. Managed by the dashboard; entry fields are listed below. |
+| `apiKeys?` | `OcxApiKey[]` | `[]` | Additional generated `ocx_…` data-plane credentials on non-loopback binds. They are not ADMIN credentials. Managed by the dashboard; entry fields are listed below. |
 | `codexAutoStart?` | `boolean` | `true` | Let the Codex shim run `ocx ensure` before launching Codex. `false` makes `ocx ensure` a no-op. |
 | `codexShimAutoRestore?` | `boolean` | `true` | Restore a previously installed Codex shim when a completed external Codex update replaces it. Set `false`, or set `OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0` for a process-level opt-out. |
 | `syncResumeHistory?` | `boolean` | `true` | Reversible Codex App history compatibility mode. opencodex backs up original Codex thread metadata, remaps old OpenAI interactive rows to `opencodex`, and temporarily promotes opencodex-created `exec` rows to an app-visible source. `ocx stop` / `ocx restore` restore backed-up OpenAI rows and eject remaining opencodex user threads to OpenAI so native Codex can resume them after the proxy is removed from `config.toml`. Set `false` to opt out. |
@@ -233,8 +233,7 @@ normally dashboard-managed.
 ## Remote access
 
 By default opencodex binds to `127.0.0.1` (loopback only). When `hostname` is set to a non-loopback
-address such as `0.0.0.0`, opencodex enforces token authentication on **both** the management API
-(`/api/*`) and the data-plane (`/v1/responses`).
+address such as `0.0.0.0`, the data plane and management API are protected by separate credentials.
 
 Set the `OPENCODEX_API_AUTH_TOKEN` environment variable before starting:
 
@@ -243,22 +242,33 @@ export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
 ocx start
 ```
 
-The proxy refuses to start without this variable when binding beyond loopback. If you install a
-background service for LAN access, export the same variable before `ocx service install` so launchd,
-systemd, or Task Scheduler receives it. Clients must include the token in every request via the
-`x-opencodex-api-key` header:
+The proxy refuses a non-loopback bind without this variable or a generated `apiKeys` credential. If
+you install a background service for LAN access, export the same variable before
+`ocx service install` so launchd, systemd, or Task Scheduler receives it. Data-plane clients must
+include a credential in every request via the `x-opencodex-api-key` header:
 
 ```
 x-opencodex-api-key: your-secret-token
 ```
 
 An `Authorization: Bearer …` header is also accepted. Dashboard-generated `apiKeys` may be used in
-place of the environment token after startup; all candidates are compared in constant time
-(`timingSafeEqual`) to prevent timing side-channels.
+place of the environment token after startup. They do not grant `/api/*` access.
+
+The management API and remote dashboard require the distinct ADMIN token. OpenCodex creates it in a
+hardened local secret file at startup, or you can supply it through
+`OPENCODEX_ADMIN_AUTH_TOKEN`. A remote dashboard prompts for this ADMIN value; a data-plane key is
+deliberately rejected there. All credential comparisons use constant time (`timingSafeEqual`).
+
+The Material 3 dashboard's **Connect to another OpenCodex** dialog accepts a manual IPv4 address,
+IPv6 address, or DNS hostname plus the remote's active port. It opens that exact HTTP origin in a new
+tab without probing it, placing credentials in the URL, or saving a token. If automatic startup used
+a fallback port, use the identity-verified live value from `ocx host status` or `ocx status`, not
+merely `config.port`.
 
 :::caution[LAN exposure]
 Binding to `0.0.0.0` exposes your proxy — and all configured provider credentials — to the local
-network. Only do this on trusted networks, and always set a strong `OPENCODEX_API_AUTH_TOKEN`.
+network. Direct HTTP is unencrypted. Only do this on trusted networks, use strong data-plane and
+ADMIN credentials, and prefer SSH port forwarding across untrusted links.
 :::
 
 ### SSH port forwarding

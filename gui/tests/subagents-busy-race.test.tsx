@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { type Root } from "react-dom/client";
 import Subagents from "../src/pages/Subagents";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 
 /**
  * While a Subagents save is in flight, toggle/remove/reorder must be blocked;
@@ -86,11 +87,20 @@ afterEach(async () => {
 });
 
 async function mount() {
+  // Imported here, not at module scope: react-dom only wires its delegated `input`
+  // listener when the DOM globals already exist, and beforeEach installs them. A
+  // module-scope import evaluates react-dom too early and poisons it for every test
+  // file sharing the process — including the search test in subagents-classic.
+  const { createRoot } = await import("react-dom/client");
   await act(async () => {
     root = createRoot(container);
     root.render(
+      // Save outcomes are snackbars now, so the page needs the notification
+      // provider the shell mounts — rendering it bare throws from useNotifications.
       <LanguageProvider>
-        <Subagents apiBase="" />
+        <NotificationsProvider>
+          <Subagents apiBase="" />
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });

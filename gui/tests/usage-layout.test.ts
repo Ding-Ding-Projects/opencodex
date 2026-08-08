@@ -35,8 +35,11 @@ test("Usage stacked layout mounts every report panel in order", async () => {
     cursor = at;
   }
 
-  // Classic panels keep their section landmarks and headings.
-  expect(src).toContain('className="panel"');
+  // Panels keep their section landmarks and headings. The legacy `.panel` chrome was
+  // superseded by the Material 3 restyle, so this pins the M3 equivalent (`.m3-card`
+  // section + `.m3-card-title` heading) rather than the retired class name.
+  expect(src).toContain('className="m3-card"');
+  expect(src).toContain('className="m3-card-title"');
   expect(src).toContain('aria-labelledby={titleId}');
 });
 
@@ -46,6 +49,59 @@ test("Usage loading and empty states guard the stacked body", async () => {
   expect(src).toContain('t("usage.loading")');
   expect(src).toContain('t("usage.empty")');
   expect(src).toContain("data?.summary.requests === 0");
+});
+
+// The prototype leads every usage tile with a mark and a sub-value hint, and folds "Measured"
+// into the requests hint instead of spending a whole tile on it. Pin the six tiles so a future
+// edit cannot quietly drop a mark or a hint back to a bare number.
+test("Usage stat tiles carry the prototype's marks and hints", async () => {
+  const src = await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text();
+
+  for (const mark of ["IconSwapVert", "IconDataUsage", "IconBolt", "IconGauge", "IconClock", "IconCoin"]) {
+    expect(src).toContain(`<${mark} {...STAT_ICON} />`);
+  }
+  for (const hint of ["usage.card.requestsHint", "usage.card.totalTokensHint", "usage.card.coverageHint", "usage.card.costHint"]) {
+    expect(src).toContain(`t("${hint}"`);
+  }
+  // Short label on the tile; the long one stays as its tooltip.
+  expect(src).toContain('t("usage.card.estCost")');
+  expect(src).toContain('t("usage.cost.total")');
+  // "Measured" is the requests hint now, not a tile of its own.
+  expect(src).not.toContain('t("usage.card.measured")');
+});
+
+// Every search bar keeps plain text as the default with an explicit `.*` opt-in and a builder
+// affordance anchored beside the field.
+test("Usage model search offers regex opt-in and the anchored builder", async () => {
+  const src = await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text();
+
+  expect(src).toContain("useRegex");
+  expect(src).toContain('t("search.regexHint")');
+  // Anchored beside the field rather than linked to the builder page: the old
+  // `<a href="#regex">` navigated away from the table the pattern was written for.
+  expect(src).toContain("<RegexBuilderButton");
+  expect(src).not.toContain('href="#regex"');
+  expect(src).toContain("new RegExp(query.slice(0, 400)");
+  // An invalid in-progress pattern reports itself instead of silently blanking the table.
+  expect(src).toContain('role="alert"');
+  expect(src).toContain('t("regex.invalid")');
+});
+
+// The heatmap's month strip and the day tooltips are calendar labels. They used to be an English
+// month array and a raw `YYYY-MM-DD` slice, which read as English in every locale.
+test("Usage calendar labels come from Intl in the active locale, not a baked-in English array", async () => {
+  const src = await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text();
+
+  expect(src).not.toContain('"Jan", "Feb"');
+  expect(src).not.toContain("day.date.slice(5)");
+  expect(src).toContain("new Intl.DateTimeFormat(locale, options)");
+  expect(src).toContain("buildHeatmap(data?.days ?? [], locale)");
+  expect(src).toContain("formatDayShort(day.date, locale)");
+  expect(src).toContain("formatDayFull(cell.date, locale)");
+  // A bucket key must be read as a local calendar day; `new Date(iso)` would shift it a day west
+  // of Greenwich and mislabel the cell.
+  expect(src).toContain("function parseIsoDay");
+  expect(src).toContain("new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))");
 });
 
 test("retired usage workspace i18n keys stay removed from every locale", async () => {

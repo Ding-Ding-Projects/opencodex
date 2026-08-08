@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer } from "react";
 import { useT } from "../i18n/shared";
+import { Dialog } from "../shell/m3-ui";
 import {
   addCodexAccountUiReducer,
   initialAddCodexAccountUiState,
@@ -7,6 +8,14 @@ import {
 import { AddCodexAccountPickStep } from "./add-codex-account-pick-step";
 import { AddCodexAccountWaitingStep } from "./add-codex-account-waiting-step";
 import { useAddCodexAccountOAuth } from "./use-add-codex-account-oauth";
+
+/**
+ * Both steps render their own visible heading, so the dialog's accessible name
+ * cannot come from them — `Dialog` names itself by id only. This carries the
+ * exact string the removed `aria-label` did, from an element that is in the
+ * accessibility tree but not on screen.
+ */
+const DIALOG_LABEL_ID = "add-codex-account-dialog-title";
 
 export default function AddCodexAccountModal({
   apiBase, onClose, onAdded, reauthAccountId,
@@ -18,8 +27,6 @@ export default function AddCodexAccountModal({
 }) {
   const t = useT();
   const [ui, dispatch] = useReducer(addCodexAccountUiReducer, reauthAccountId, initialAddCodexAccountUiState);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const dialogRef = useRef<HTMLDialogElement>(null);
 
   const oauth = useAddCodexAccountOAuth({ apiBase, reauthAccountId, ui, dispatch, t });
   const { manualCodeBusy, manualCodeWaiting, bindCallbacks, closeModal, startOAuth, submitManualCode } = oauth;
@@ -28,60 +35,44 @@ export default function AddCodexAccountModal({
     bindCallbacks(onAdded, onClose);
   }, [bindCallbacks, onAdded, onClose]);
 
-  useEffect(() => {
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    const focusable = dialog?.querySelector<HTMLElement>(
-      "input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-    );
-    if (focusable) focusable.focus();
-    return () => {
-      previousFocusRef.current?.focus();
-    };
-  }, []);
-
-  const handleCancel = useCallback((e: React.SyntheticEvent) => {
-    e.preventDefault();
-    closeModal();
-  }, [closeModal]);
-
   const dialogLabel = reauthAccountId ? t("codexAuth.reauthenticate") : t("codexAuth.addTitle");
 
   return (
-    <dialog
-      ref={dialogRef}
-      aria-label={dialogLabel}
-      className="modal-overlay"
-      onCancel={handleCancel}
+    <Dialog
+      onClose={closeModal}
+      labelledBy={DIALOG_LABEL_ID}
+      width={440}
+      // Never dismissed by the scrim: the legacy `<dialog>` had no scrim click
+      // handler at all, and both steps hold typed input — the account id, and
+      // the pasted redirect URL — that a stray click must not discard.
+      dismissOnScrim={false}
     >
-      <div className="modal-card" style={{ maxWidth: 440 }}>
-        {ui.step === "pick" && (
-          <AddCodexAccountPickStep
-            id={ui.id}
-            error={ui.error}
-            onIdChange={value => dispatch({ type: "set-id", id: value })}
-            onStartOAuth={() => { void startOAuth(ui.id); }}
-            onClose={closeModal}
-          />
-        )}
-        {ui.step === "oauth-waiting" && (
-          <AddCodexAccountWaitingStep
-            reauthAccountId={reauthAccountId}
-            authUrl={ui.authUrl}
-            manualCode={ui.manualCode}
-            manualCodeBusy={manualCodeBusy}
-            manualCodeWaiting={manualCodeWaiting}
-            statusNotice={ui.statusNotice}
-            statusTone={ui.statusTone}
-            flowId={ui.flowId}
-            error={ui.error}
-            onManualCodeChange={value => dispatch({ type: "set-manual-code", manualCode: value })}
-            onSubmitManualCode={() => { void submitManualCode(); }}
-            onClose={closeModal}
-          />
-        )}
-      </div>
-    </dialog>
+      <span id={DIALOG_LABEL_ID} className="m3-visually-hidden">{dialogLabel}</span>
+      {ui.step === "pick" && (
+        <AddCodexAccountPickStep
+          id={ui.id}
+          error={ui.error}
+          onIdChange={value => dispatch({ type: "set-id", id: value })}
+          onStartOAuth={() => { void startOAuth(ui.id); }}
+          onClose={closeModal}
+        />
+      )}
+      {ui.step === "oauth-waiting" && (
+        <AddCodexAccountWaitingStep
+          reauthAccountId={reauthAccountId}
+          authUrl={ui.authUrl}
+          manualCode={ui.manualCode}
+          manualCodeBusy={manualCodeBusy}
+          manualCodeWaiting={manualCodeWaiting}
+          statusNotice={ui.statusNotice}
+          statusTone={ui.statusTone}
+          flowId={ui.flowId}
+          error={ui.error}
+          onManualCodeChange={value => dispatch({ type: "set-manual-code", manualCode: value })}
+          onSubmitManualCode={() => { void submitManualCode(); }}
+          onClose={closeModal}
+        />
+      )}
+    </Dialog>
   );
 }

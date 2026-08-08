@@ -1,31 +1,39 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Notice } from "../ui";
+import { Banner } from "../shell/m3-ui";
+import { useNotifications } from "../shell/notifications-context";
 import { useI18n, useT, LOCALES } from "../i18n/shared";
 import { readJsonOrThrow } from "../fetch-json";
-import { backgroundHelperOptions } from "./claude-code-helper-options";
 import { reconcileAutoConnectState } from "./claude-autoconnect";
 import { buildManualEnv } from "./claude-manual-env";
 import {
   ClaudeCodeAliasesSection,
   ClaudeCodeModelMapSection,
   ClaudeCodeQuickstartSection,
+  ClaudeCodeSaveBar,
   ClaudeCodeSettingsCard,
 } from "./claude-code-sections";
 import { serializeSidecarOverride } from "./claude-code-sidecar";
 import { formatCompactWindow, newClientId, type ClaudeCodeState, type MapRow } from "./claude-code-types";
-import { SmallFastModelSetting } from "./claude-code-settings";
+import { ClaudeSettingsSearchRow, SmallFastModelSetting } from "./claude-code-settings";
+import { claudeSettingsSearch } from "./claude-settings-search";
 
 export { AutoConnectSetting, SmallFastModelSetting } from "./claude-code-settings";
 
 export default function ClaudeCode({ apiBase }: { apiBase: string }) {
   const t = useT();
+  const { notify } = useNotifications();
   const { locale } = useI18n();
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang ?? "en";
   const [state, setState] = useState<ClaudeCodeState | null>(null);
   const [rows, setRows] = useState<MapRow[]>([]);
-  const [status, setStatus] = useState("");
-  const [ok, setOk] = useState(false);
+  // Load failure only. A save outcome is a snackbar — this one is not, because when
+  // the config never arrives there is no screen left behind a snackbar to read it on.
+  const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
+  // This tab's own settings search. Bound to this field alone — it never shares state
+  // with another search bar, so two surfaces can hold different queries at once.
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -35,8 +43,7 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         t("claude.loadFail"),
       );
       if (!r) {
-        setOk(false);
-        setStatus(t("claude.loadFail"));
+        setLoadError(t("claude.loadFail"));
         return;
       }
       setState({
@@ -53,9 +60,9 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         effectiveModelEnv: r.effectiveModelEnv ?? {},
       });
       setRows(Object.entries(r.modelMap ?? {}).map(([from, to]) => ({ id: newClientId(), from, to: String(to) })));
+      setLoadError("");
     } catch (error) {
-      setOk(false);
-      setStatus(error instanceof Error && error.message ? error.message : t("claude.loadFail"));
+      setLoadError(error instanceof Error && error.message ? error.message : t("claude.loadFail"));
     } finally {
       setLoading(false);
     }
@@ -68,10 +75,13 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
     return () => window.clearTimeout(timeout);
   }, [load]);
 
-  const modelOptions = useMemo(
-    () => backgroundHelperOptions(state?.available, t("claude.smallFastModelUnsetOption")),
-    [state?.available, t],
-  );
+  // Plain slugs, not `modelLabel()`: the helper-model picker is a native <select>
+  // now, and a browser drops markup inside an <option> rather than rendering it —
+  // so the icon-prefixed variant would have shown up as nothing at all.
+  const modelOptions = useMemo(() => {
+    const options = (state?.available ?? []).map(m => ({ value: m, label: m }));
+    return [{ value: "", label: t("claude.smallFastModelUnsetOption") }, ...options];
+  }, [state?.available, t]);
 
   // Auto-compact window presets (devlog 020 + user request): dropdown like the model
   // pickers. "" = 350k default; a saved off-ladder value is surfaced as its own option.
@@ -86,9 +96,13 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
     ];
   }, [state?.autoCompactWindow, t, localeTag]);
 
+  const search = useMemo(
+    () => claudeSettingsSearch(settingsQuery, settingsRegex, t),
+    [settingsQuery, settingsRegex, t],
+  );
+
   const save = async () => {
     if (!state) return;
-    setStatus("");
     const modelMap: Record<string, string> = {};
     for (const row of rows) {
       if (row.from.trim() && row.to.trim()) modelMap[row.from.trim()] = row.to.trim();
@@ -112,33 +126,46 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         }),
       });
       await readJsonOrThrow(r, t("claude.saveFailed"));
-      setOk(true);
-      setStatus(t("claude.saved"));
+      // A one-shot outcome, so it leaves as a snackbar rather than pushing the whole
+      // form down the page and staying there until the next save clears it.
+      notify({ tone: "success", title: t("claude.saved") });
       await load();
     } catch (error) {
-      setOk(false);
-      setStatus(error instanceof Error && error.message ? error.message : t("claude.networkError"));
+      notify({
+        tone: "error",
+        title: error instanceof Error && error.message ? error.message : t("claude.networkError"),
+      });
     }
   };
 
-  if (loading) return <div className="muted" style={{ padding: 8 }}>{t("claude.loading")}</div>;
-  if (!state) return <Notice tone="err">{status || t("claude.loadFail")}</Notice>;
+  if (loading) return <div role="status" style={{ padding: 8, color: "var(--m3-on-surface-variant)" }}>{t("claude.loading")}</div>;
+  if (!state) return <Banner tone="error">{loadError || t("claude.loadFail")}</Banner>;
 
   return (
     <>
-      <div className="page-head"><h2>{t("claude.pageTitle")}</h2></div>
-      <p className="page-sub">{t("claude.subtitle")}</p>
-      {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
-      <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} />
-      <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />
-      <SmallFastModelSetting
+      {/* No page title here: the app bar names the screen and the tab names the panel, so
+          a third heading was the same words a third time. The lede moved up to Claude.tsx. */}
+      {/* Search first, per the prototype: it filters the four cards below it, and reports a
+          hit that lives on the Desktop tab instead of pretending the setting does not exist. */}
+      <ClaudeSettingsSearchRow
+        query={settingsQuery}
+        onQuery={setSettingsQuery}
+        regexOn={settingsRegex}
+        onRegex={setSettingsRegex}
+        search={search}
+      />
+      {/* Always rendered: it commits every setting on this tab, so no query may hide it. */}
+      <ClaudeCodeSaveBar onSave={() => { void save(); }} />
+      <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} match={search.matches} />
+      {search.matches("quickstart") && <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />}
+      {search.matches("smallFastModel") && <SmallFastModelSetting
         value={state.smallFastModel}
         tierHaikuModel={state.tierModels?.haiku}
         options={modelOptions}
         onChange={smallFastModel => setState({ ...state, smallFastModel })}
-      />
-      <ClaudeCodeModelMapSection rows={rows} onRowsChange={setRows} onSave={() => { void save(); }} />
-      <ClaudeCodeAliasesSection aliases={state.aliases} />
+      />}
+      {search.matches("modelMap") && <ClaudeCodeModelMapSection rows={rows} onRowsChange={setRows} />}
+      {search.matches("aliases") && <ClaudeCodeAliasesSection aliases={state.aliases} />}
     </>
   );
 }

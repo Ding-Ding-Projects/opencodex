@@ -7,8 +7,12 @@ import type { AccountQuota } from "../../codex-quota-utils";
 
 export type { ProviderSortMode, WorkspaceItem };
 
-/** Rail status facets (all on by default). */
-export type StatusFilter = { ready: boolean; needsSetup: boolean; disabled: boolean };
+/**
+ * Rail status facets (all on by default). `needsAttention` is the live-auth split of
+ * the catalog's `needsSetup` bin — a configured provider whose active account needs
+ * re-authentication, which is a different problem from one that was never set up.
+ */
+export type StatusFilter = { ready: boolean; needsSetup: boolean; needsAttention: boolean; disabled: boolean };
 
 /** Rail pricing facets. */
 export type PricingFilter = { free: boolean; paid: boolean };

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useKeyedClientResource } from "../client-resource";
-import { useI18n } from "../i18n/shared";
+import { useI18n, type TKey } from "../i18n/shared";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
+import { makeMatcher } from "./models-shared";
 import {
   PROJECT_CONFIG_DIAGNOSTICS_POLL_MS,
   seedStartupHealthFromSettings,
@@ -17,6 +20,7 @@ import {
 } from "./dashboard-core-poll";
 import {
   type DashboardSection,
+  type DashboardSettingId,
   type HealthData,
   type ModelInfo,
   type ProjectCodexConfigGroup,
@@ -29,6 +33,7 @@ import {
   type UpdateChannel,
   type UpdateCheckData,
   type UpdateJob,
+  type UpdateJobStatus,
   type UsageSummary30d,
   UPDATE_CHECK_MAX_AUTO_RETRIES,
   UPDATE_CHECK_RETRY_BASE_MS,
@@ -37,14 +42,19 @@ import {
   readDashboardSectionFromHash,
   requireJson,
   sidecarModelOptions,
+  updateJobLabel,
   useModalDialog,
 } from "./dashboard-shared";
 
 export function useDashboardData(apiBase: string) {
   const { locale, t } = useI18n();
+  const { notify } = useNotifications();
   // The hash is the source of truth for the active section (#dashboard, …).
   const [selectedSection, setSelectedSection] = useState<DashboardSection>(readDashboardSectionFromHash);
   const [modelQuery, setModelQuery] = useState("");
+  const [modelRegex, setModelRegex] = useState(false);
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [health, setHealth] = useState<HealthData | null>(null);
   const [startupHealth, setStartupHealth] = useState<StartupHealthStatus | null>(null);
@@ -75,8 +85,6 @@ export function useDashboardData(apiBase: string) {
   const [effortCap, setEffortCap] = useState<string>("");
   const [subagentEffortCap, setSubagentEffortCap] = useState<string>("");
   const [effortCapSaving, setEffortCapSaving] = useState(false);
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const [projectConfigWarnings, setProjectConfigWarnings] = useState<ProjectCodexConfigGroup[]>([]);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateChannel, setUpdateChannel] = useState<UpdateChannel>("latest");
@@ -276,22 +284,122 @@ export function useDashboardData(apiBase: string) {
   }, [updatePoll.data]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // One snackbar per real transition. The poll re-delivers the same job every
+  // 1.5s, so without the ref the user would get a new toast every tick.
+  const notifiedUpdateStatusRef = useRef<UpdateJobStatus | null>(null);
+  useEffect(() => {
+    if (!updateJob || notifiedUpdateStatusRef.current === updateJob.status) return;
+    notifiedUpdateStatusRef.current = updateJob.status;
+    notify({
+      tone: updateJob.status === "failed" ? "error" : updateJob.status === "succeeded" ? "success" : "info",
+      title: updateJobLabel(updateJob.status, t),
+      body: [
+        updateJob.latestVersion ? `${updateJob.currentVersion} -> ${updateJob.latestVersion}` : "",
+        updateJob.error ?? "",
+      ].filter(Boolean).join(" ") || undefined,
+    });
+  }, [updateJob, notify, t]);
+
+  const notifiedReconnectingRef = useRef(false);
+  useEffect(() => {
+    if (!reconnecting) { notifiedReconnectingRef.current = false; return; }
+    if (notifiedReconnectingRef.current) return;
+    notifiedReconnectingRef.current = true;
+    notify({ tone: "info", title: t("dash.updateReconnecting") });
+  }, [reconnecting, notify, t]);
+
   const grouped = useMemo(() => {
     const g: Record<string, ModelInfo[]> = {};
     for (const m of models) (g[m.provider] ??= []).push(m);
     return Object.entries(g).sort(([a], [b]) => a.localeCompare(b));
   }, [models]);
+  /**
+   * Plain text by default, `.*` only when the user opts in — the same locally
+   * evaluated, 400-character-capped matcher every other search bar in the GUI uses.
+   */
+  const { modelMatches, modelRegexError } = useMemo(() => {
+    const matcher = makeMatcher(modelQuery, modelRegex);
+    return { modelMatches: matcher.test, modelRegexError: matcher.error };
+  }, [modelQuery, modelRegex]);
   const filteredGroups = useMemo(() => {
-    const q = modelQuery.trim().toLowerCase();
-    if (!q) return grouped;
+    if (!modelQuery.trim()) return grouped;
     const out: Array<[string, ModelInfo[]]> = [];
     for (const [provider, rows] of grouped) {
-      const hits = rows.filter(m => m.id.toLowerCase().includes(q) || provider.toLowerCase().includes(q));
+      const hits = rows.filter(m => modelMatches(`${m.id} ${provider}`));
       if (hits.length > 0) out.push([provider, hits]);
     }
     return out;
-  }, [grouped, modelQuery]);
+  }, [grouped, modelMatches, modelQuery]);
   const sidecarModels = useMemo(() => sidecarModelOptions(models), [models]);
+
+  /**
+   * The overview tab is this screen's settings surface, so it carries its own search
+   * bar wired to the same regex builder. Each entry indexes the control's label, its
+   * description and its current value, so a remembered value finds the control too.
+   */
+  const settingsEntries = useMemo<Array<{ id: DashboardSettingId; text: string }>>(() => [
+    {
+      id: "effortCap",
+      text: [
+        t("dash.effortCapLabel"), t("dash.subagentEffortCapLabel"), t("dash.effortCapHelp"),
+        effortCap || t("dash.effortCapNone"), subagentEffortCap || t("dash.effortCapNone"),
+      ].join(" "),
+    },
+    {
+      id: "injection",
+      text: [
+        t("dash.injectionLabel"), t("dash.injectionHint"), t("dash.injectionEffortLabel"),
+        t("dash.syncCodexSubagentDefaults"), t("dash.syncCodexSubagentDefaultsHint"),
+        t("dash.multiAgentGuidance"), t("dash.multiAgentGuidanceHint"),
+        injectionModel || t("dash.injectionNone"), injectionEffort || t("dash.injectionEffortNone"),
+      ].join(" "),
+    },
+    { id: "codexAutoStart", text: [t("dash.codexAutoStart"), t("dash.codexAutoStartHint")].join(" ") },
+    {
+      id: "webSearch",
+      text: [t("dash.webSearchSidecar"), t("dash.webSearchSidecarHint"), t("dash.sidecarModel"), sidecar?.webSearch.model ?? ""].join(" "),
+    },
+    {
+      id: "vision",
+      text: [t("dash.visionSidecar"), t("dash.visionSidecarHint"), t("dash.sidecarModel"), sidecar?.vision.model ?? ""].join(" "),
+    },
+    {
+      id: "shadowCall",
+      text: [t("dash.shadowCallIntercept"), t("dash.shadowCallTooltip"), t("dash.shadowCallModel"), shadowCall?.model ?? ""].join(" "),
+    },
+    { id: "memory", text: [t("dash.mem.title"), t("dash.mem.hint")].join(" ") },
+    {
+      id: "maintenance",
+      text: [t("dash.maintenance"), t("dash.maintenanceHint"), t("dash.syncModels"), t("dash.checkUpdate")].join(" "),
+    },
+  ], [effortCap, injectionEffort, injectionModel, shadowCall?.model, sidecar?.vision.model, sidecar?.webSearch.model, subagentEffortCap, t]);
+
+  const { settingMatches, settingsError, settingsHits } = useMemo(() => {
+    const matcher = makeMatcher(settingsQuery, settingsRegex);
+    const hits = new Set(settingsEntries.filter(entry => matcher.test(entry.text)).map(entry => entry.id));
+    return {
+      settingMatches: (id: DashboardSettingId) => hits.has(id),
+      settingsError: matcher.error,
+      settingsHits: hits.size,
+    };
+  }, [settingsEntries, settingsQuery, settingsRegex]);
+
+  /**
+   * Version history entry for one settings change made here. Append-only, and named
+   * after what changed — "Sub-agent delegation set to openai/gpt-5.5", never "Updated" —
+   * because a restore needs to say which state it is going back to. `before` carries the
+   * prior value so the restore has something to put back.
+   */
+  const logSettingRevision = (setting: string, value: string, before?: string) => {
+    recordRevision({
+      scope: "settings",
+      label: t("dash.revision.settings"),
+      summary: value ? t("dash.revision.changed", { setting, value }) : t("dash.revision.cleared", { setting }),
+      ...(before !== undefined ? { before } : {}),
+    });
+  };
+
+  const onOffLabel = (on: boolean) => t(on ? "startup.enabled" : "startup.disabled");
 
   const saveSidecar = async (patch: SidecarPatch) => {
     if (!sidecar || sidecarSaving) return;
@@ -310,6 +418,15 @@ export function useDashboardData(apiBase: string) {
       });
       const data = await requireJson<SidecarData>(res, "save failed");
       setSidecar({ webSearch: data.webSearch, vision: data.vision });
+      // One entry per field that actually moved: an unchanged state records nothing,
+      // so the history panel stays a list of real events.
+      const before = JSON.stringify(previous);
+      if (data.webSearch.model !== previous.webSearch.model) {
+        logSettingRevision(t("dash.webSearchSidecar"), data.webSearch.model, before);
+      }
+      if (data.vision.model !== previous.vision.model) {
+        logSettingRevision(t("dash.visionSidecar"), data.vision.model, before);
+      }
     } catch {
       setSidecar(previous);
     } finally {
@@ -332,6 +449,13 @@ export function useDashboardData(apiBase: string) {
       });
       if (!res.ok) throw new Error("shadow-call save failed");
       shadowCallMutationEpochRef.current += 1;
+      const before = JSON.stringify(previous);
+      if (patch.enabled !== undefined && patch.enabled !== previous.enabled) {
+        logSettingRevision(t("dash.shadowCallIntercept"), onOffLabel(patch.enabled), before);
+      }
+      if (patch.model !== undefined && patch.model !== previous.model) {
+        logSettingRevision(t("dash.shadowCallModel"), patch.model, before);
+      }
     } catch {
       setShadowCall(previous);
     } finally {
@@ -349,7 +473,15 @@ export function useDashboardData(apiBase: string) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ multiAgentMode: mode }),
       });
-      if (r.ok) setMaMode(mode);
+      if (r.ok) {
+        const before = maMode;
+        setMaMode(mode);
+        logSettingRevision(
+          t("dash.multiAgent"),
+          t(`models.v2Mode_${mode}` as TKey),
+          JSON.stringify({ multiAgentMode: before }),
+        );
+      }
     } catch { /* ignore */ }
     finally { setMaBusy(false); }
   };
@@ -361,6 +493,12 @@ export function useDashboardData(apiBase: string) {
     effort?: string | null;
   }) => {
     if (injectionSaving) return;
+    const before = JSON.stringify({
+      multiAgentGuidanceEnabled,
+      syncCodexSubagentDefaults,
+      model: injectionModel || null,
+      effort: injectionEffort || null,
+    });
     setInjectionSaving(true);
     try {
       const res = await fetch(`${apiBase}/api/injection-model`, {
@@ -385,6 +523,20 @@ export function useDashboardData(apiBase: string) {
       setInjectionEffort(normalized.injectionEffort);
       if (Array.isArray(data.efforts)) setInjectionEfforts(data.efforts);
       if (Array.isArray(data.available)) setInjectionAvailable(data.available);
+      // The delegation form re-sends the untouched sibling field on every write, so
+      // each entry is gated on the value having genuinely moved.
+      if (normalized.multiAgentGuidanceEnabled !== multiAgentGuidanceEnabled) {
+        logSettingRevision(t("dash.multiAgentGuidance"), onOffLabel(normalized.multiAgentGuidanceEnabled), before);
+      }
+      if (normalized.syncCodexSubagentDefaults !== syncCodexSubagentDefaults) {
+        logSettingRevision(t("dash.syncCodexSubagentDefaults"), onOffLabel(normalized.syncCodexSubagentDefaults), before);
+      }
+      if (normalized.injectionModel !== injectionModel) {
+        logSettingRevision(t("dash.injectionLabel"), normalized.injectionModel, before);
+      }
+      if (normalized.injectionEffort !== injectionEffort) {
+        logSettingRevision(t("dash.injectionEffortLabel"), normalized.injectionEffort, before);
+      }
     } catch { /* keep the last committed UI state */ }
     finally { setInjectionSaving(false); }
   };
@@ -404,6 +556,21 @@ export function useDashboardData(apiBase: string) {
       const data = await requireJson<{ codexAutoStart: boolean; startupHealth?: SettingsData["startupHealth"] }>(res, "save failed");
       settingsMutationEpochRef.current += 1;
       setSettings(prev => prev ? { ...prev, codexAutoStart: data.codexAutoStart, startupHealth: data.startupHealth ?? prev.startupHealth } : prev);
+      // Only record a revision if the server says the value actually moved, and
+      // record the value it actually moved FROM. Logging unconditionally against an
+      // assumed `!next` meant a refused change — where the server echoes the setting
+      // unchanged — still wrote a history entry for a change that never happened,
+      // turning the panel into a list of things the user might have done. Every
+      // other setting on this screen already gates on the echoed value; this one
+      // was the exception.
+      const previousAutoStart = settings.codexAutoStart;
+      if (data.codexAutoStart !== previousAutoStart) {
+        logSettingRevision(
+          t("dash.codexAutoStart"),
+          onOffLabel(data.codexAutoStart),
+          JSON.stringify({ codexAutoStart: previousAutoStart }),
+        );
+      }
     } catch {
       setSettings(prev => prev ? { ...prev, codexAutoStart: !next } : prev);
       setError(true);
@@ -416,15 +583,25 @@ export function useDashboardData(apiBase: string) {
   const runSync = async () => {
     if (syncing) return;
     setSyncing(true);
-    setSyncResult(null);
-    setSyncError(null);
     try {
       const res = await fetch(`${apiBase}/api/sync`, { method: "POST" });
       const data = await requireJson<SyncResult & { projectConfigGrouped?: ProjectCodexConfigGroup[] }>(res, "sync failed");
-      setSyncResult(data);
       if (data.projectConfigGrouped) setProjectConfigWarnings(data.projectConfigGrouped);
+      // Every caveat the server returned rides along in the body. A sync that
+      // silently rewrote native Codex subagent defaults must still say so, so
+      // the tone drops to "warn" rather than reporting a clean success.
+      const caveats = [
+        data.warning,
+        data.nativeSubagentDefaultsWarning,
+        data.staleAppServerHint ? t("dash.syncStaleHint", { cmd: "ocx sync --restart-codex" }) : "",
+      ].filter(Boolean).join(" ");
+      notify({
+        tone: data.nativeSubagentDefaultsWarning ? "warn" : "success",
+        title: t("dash.syncOk", { count: data.added }),
+        body: caveats || undefined,
+      });
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : String(err));
+      notify({ tone: "error", title: t("dash.syncFailed", { error: err instanceof Error ? err.message : String(err) }) });
     } finally {
       setSyncing(false);
     }
@@ -515,7 +692,9 @@ export function useDashboardData(apiBase: string) {
     apiBase,
     locale, t,
     selectedSection, setSelectedSection,
-    modelQuery, setModelQuery,
+    modelQuery, setModelQuery, modelRegex, setModelRegex, modelRegexError,
+    settingsQuery, setSettingsQuery, settingsRegex, setSettingsRegex,
+    settingsError, settingsHits, settingMatches,
     expandedProviders, setExpandedProviders,
     health, startupHealth, providers, models, settings, sidecar, shadowCall, usage30d,
     sidecarSaving, shadowCallSaving, modelsLoading, settingsSaving, syncing,
@@ -524,13 +703,13 @@ export function useDashboardData(apiBase: string) {
     injectionModel, injectionEffort, injectionEfforts, injectionAvailable, injectionSaving,
     multiAgentGuidanceEnabled, syncCodexSubagentDefaults, saveInjection,
     effortCap, subagentEffortCap, effortCapSaving, setEffortCap, setSubagentEffortCap, setEffortCapSaving,
-    syncResult, syncError, projectConfigWarnings,
+    projectConfigWarnings,
     updateOpen, updateChannel, setUpdateRestart, updateRestart, updateLoading,
     updateCheck, updateError, updateJob, reconnecting, error,
     effortCapHelpTriggerRef, updateTriggerRef, maHelpTriggerRef, shadowCallHelpTriggerRef,
     effortCapHelpDialogRef, updateDialogRef, maHelpDialogRef, shadowCallHelpDialogRef,
     filteredGroups, sidecarModels,
-    saveSidecar, saveShadowCall, switchMaMode, toggleCodexAutoStart, runSync,
+    saveSidecar, saveShadowCall, switchMaMode, toggleCodexAutoStart, runSync, logSettingRevision, onOffLabel,
     fetchUpdateCheck, closeUpdateDialog, openUpdateDialog, changeUpdateChannel, runUpdate,
   };
 }

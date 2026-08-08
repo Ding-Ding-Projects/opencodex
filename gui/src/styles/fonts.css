@@ -1,0 +1,105 @@
+/*
+  Bundled interface faces. Loaded from gui/public/fonts, never from a network:
+  the dashboard runs on loopback beside a proxy holding provider credentials, and a
+  font request to a third party would be the one outbound call the user did not ask
+  for. A CDN link is also forbidden by the design system's own foundations doc.
+
+  These are the Latin subsets. Noto Sans HK's CJK coverage is deliberately NOT
+  bundled — one weight of it is 6.7 MB, three weights ~20 MB, and it would ride in
+  every clone and every installer to duplicate a face Windows already ships
+  (Microsoft JhengHei) and macOS already ships (PingFang). The stacks name
+  'Noto Sans HK' first and fall through to the system's Chinese face, which is why
+  Cantonese renders correctly without it. If CJK is ever bundled, subset it to the
+  glyphs the interface actually uses rather than shipping the whole font.
+
+  Generated from the Google Fonts CSS API at build-authoring time, then vendored.
+  Roboto, Roboto Flex, Roboto Mono and Noto Sans HK are all SIL Open Font License 1.1.
+*/
+
+@font-face {
+  font-family: "Roboto Flex";
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+  src: url("/fonts/roboto-flex-latin-0.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("/fonts/roboto-latin-0.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/roboto-latin-1.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/roboto-latin-2.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/roboto-latin-3.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/roboto-mono-latin-0.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/roboto-mono-latin-1.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/roboto-mono-latin-2.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans HK";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/noto-sans-hk-latin-0.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans HK";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/noto-sans-hk-latin-1.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans HK";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/noto-sans-hk-latin-2.woff2") format("woff2");
+}

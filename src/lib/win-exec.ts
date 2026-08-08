@@ -8,8 +8,12 @@
  * via PATH×PATHEXT, launch `.exe` targets directly (argument boundaries preserved by
  * the normal shell-less spawn), and route `.cmd`/`.bat` targets through
  * `cmd.exe /d /s /c "<escaped line>"` with `windowsVerbatimArguments: true`.
+ *
+ * A fourth case joined those three: Windows **app execution aliases**. See
+ * `appExecutionAliasExists` — they are the reason `winget` was never actually
+ * reachable from the Bun proxy.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { win32 } from "node:path";
 
 const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
@@ -31,6 +35,55 @@ export function escapeCmdCommand(command: string): string {
 export interface ResolveDeps {
   env?: Record<string, string | undefined>;
   exists?: (path: string) => boolean;
+  /** Overrides the app-execution-alias probe; see `appExecutionAliasExists`. */
+  aliasExists?: (path: string) => boolean;
+}
+
+/**
+ * The single directory Windows puts app execution aliases in. Scoping the probe
+ * to it is what keeps this cheap: the fallback below reads a directory, and
+ * doing that for every PATH miss would mean enumerating System32 (thousands of
+ * entries) on every unresolved command.
+ */
+const ALIAS_DIR_NAME = "windowsapps";
+
+/**
+ * Does `path` name a Windows app execution alias?
+ *
+ * MSIX packages (winget, Windows Terminal, the Store Python, WSL…) expose their
+ * executables as zero-byte `AppExecLink` reparse points under
+ * `%LOCALAPPDATA%\Microsoft\WindowsApps`. They are on PATH and CreateProcess
+ * follows them, but they are **not** files in any sense `stat` recognises:
+ * measured on Windows 11 with Bun 1.3.14, `existsSync` returns false and
+ * `statSync` throws EACCES or ENOENT for `…\WindowsApps\winget.exe` while
+ * `readdirSync` lists the very same name.
+ *
+ * That silent blindness is worth spelling out because of what it cost: every
+ * "is winget installed" probe in this repo answered *no* on a machine where
+ * `winget --version` works from any shell, so the winget install routes were
+ * unreachable rather than broken — no error, just a button that quietly offered
+ * a download page instead.
+ *
+ * A directory listing is the only probe that sees them, so that is what this
+ * does. Name comparison is case-insensitive because the filesystem is.
+ */
+export function appExecutionAliasExists(
+  path: string,
+  readdir: (dir: string) => string[] = readdirSync,
+): boolean {
+  const dir = win32.dirname(path);
+  if (win32.basename(dir).toLowerCase() !== ALIAS_DIR_NAME) return false;
+  const name = win32.basename(path).toLowerCase();
+  try {
+    return readdir(dir).some(entry => entry.toLowerCase() === name);
+  } catch {
+    // An unreadable or absent directory is simply not an alias directory.
+    return false;
+  }
+}
+
+function aliasProbe(deps: ResolveDeps): (path: string) => boolean {
+  return deps.aliasExists ?? (path => appExecutionAliasExists(path));
 }
 
 /**
@@ -41,6 +94,7 @@ export interface ResolveDeps {
 export function resolveWindowsCommand(command: string, deps: ResolveDeps = {}): string {
   const env = deps.env ?? process.env;
   const exists = deps.exists ?? existsSync;
+  const isAlias = aliasProbe(deps);
   if (win32.extname(command) || command.includes("\\") || command.includes("/") || win32.isAbsolute(command)) {
     return command;
   }
@@ -48,7 +102,10 @@ export function resolveWindowsCommand(command: string, deps: ResolveDeps = {}): 
   for (const dir of (env.PATH ?? env.Path ?? "").split(win32.delimiter).filter(Boolean)) {
     for (const ext of exts) {
       const candidate = win32.join(dir, command + ext.toLowerCase());
-      if (exists(candidate)) return candidate;
+      // `exists` first: it is a single stat, and it answers for every ordinary
+      // program. The listing probe only runs for the one directory that can
+      // hold an alias, and only after the cheap answer came back no.
+      if (exists(candidate) || isAlias(candidate)) return candidate;
     }
   }
   return command;
@@ -57,7 +114,7 @@ export function resolveWindowsCommand(command: string, deps: ResolveDeps = {}): 
 export interface SpawnInvocation {
   file: string;
   args: string[];
-  options: { windowsVerbatimArguments?: boolean };
+  options: { windowsVerbatimArguments?: boolean; cwd?: string };
 }
 
 /**
@@ -65,6 +122,8 @@ export interface SpawnInvocation {
  * POSIX: passthrough. win32 `.exe`: resolved direct spawn. win32 `.cmd`/`.bat`:
  * `ComSpec /d /s /c "<escaped command line>"` with verbatim args; npm local-bin
  * shims get cross-spawn's double escaping, all other batch targets single.
+ * win32 app execution alias: spawned as `./name.exe` from its own directory —
+ * see below, and note that this stays a shell-less spawn like every other case.
  */
 export function commandInvocation(
   command: string,
@@ -74,7 +133,27 @@ export function commandInvocation(
 ): SpawnInvocation {
   if (platform !== "win32") return { file: command, args: [...args], options: {} };
   const resolved = resolveWindowsCommand(command, deps);
-  if (!/\.(cmd|bat)$/i.test(resolved)) return { file: resolved, args: [...args], options: {} };
+  if (!/\.(cmd|bat)$/i.test(resolved)) {
+    const exists = deps.exists ?? existsSync;
+    // An alias is stat-invisible (see appExecutionAliasExists), and Bun refuses
+    // to spawn what it cannot stat: `spawn("C:\…\WindowsApps\winget.exe")`
+    // fails ENOENT under Bun even though CreateProcess would have followed the
+    // link, and so does the bare name. A path with no separators is handed
+    // straight to CreateProcess without that pre-check, so the same file
+    // launches fine as `./winget.exe` with cwd set to its directory — verified
+    // on Bun 1.3.14 and Node 26 alike.
+    //
+    // `cwd` is a resolution device only. The directory comes from PATH and the
+    // filename from a constant, so nothing here widens what can be spawned.
+    if (!exists(resolved) && aliasProbe(deps)(resolved)) {
+      return {
+        file: `./${win32.basename(resolved)}`,
+        args: [...args],
+        options: { cwd: win32.dirname(resolved) },
+      };
+    }
+    return { file: resolved, args: [...args], options: {} };
+  }
   const env = deps.env ?? process.env;
   const doubleEscape = IS_CMD_SHIM.test(resolved);
   const line = [escapeCmdCommand(resolved), ...args.map(a => escapeCmdArg(a, doubleEscape))].join(" ");

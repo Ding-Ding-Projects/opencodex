@@ -245,7 +245,10 @@ describe("rate-limit reset credits", () => {
       expect(source).not.toContain("isWorkspaceAccount");
       expect(source).not.toContain("Not available for workspace accounts");
       expect(helpers).toContain("if (credits === undefined) return null;");
-      expect(helpers).toContain("className={`badge ${hasCredits ? \"badge-amber\" : \"badge-muted\"} badge-clickable`}");
+      // The M3 chip remains a button and its tone still distinguishes a usable
+      // ticket from an empty count.
+      expect(helpers).toContain('className="m3-chip"');
+      expect(helpers).toContain('chipButtonStyle(hasCredits ? "warn" : "neutral")');
     });
 
     it("keeps clickable ticket badges from overriding visual badge colors", async () => {
@@ -259,15 +262,16 @@ describe("rate-limit reset credits", () => {
 
     it("renders reset tickets beside next-session badges instead of replacing them", async () => {
       const source = await Bun.file("gui/src/components/codex-account-pool-cards.tsx").text();
-      expect(source).toContain("className=\"card-badges\"");
+      // Ticket and next-session chips share one wrapping M3 row, so neither
+      // replaces the other at narrow widths.
+      expect(source).toContain('<span className="m3-row" style={{ gap: 6 }}>');
       expect(source).toContain("<CodexTicketBadge t={t} account={a} onClick={() => onOpenReset(a)} />");
       // Next-session still renders BESIDE the ticket; health projection also suppresses
       // it for projected reauth/cooldown (not only the legacy needsReauth flag).
       expect(source).toContain("{isNext(a) && !showReauth && !inCooldown && (");
       expect(source).toContain("{t(accountModeState === \"direct\" ? \"codexAuth.poolPrepared\" : \"codexAuth.nextSession\")}");
-      const styles = await Bun.file("gui/src/styles.css").text();
-      expect(styles).toContain(".card-badges { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }");
-      expect(styles).toContain(".card-badges .badge { flex-shrink: 0; }");
+      const shell = await Bun.file("gui/src/styles/m3-shell.css").text();
+      expect(shell).toContain(".m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }");
     });
   });
 

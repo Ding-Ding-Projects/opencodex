@@ -919,9 +919,14 @@ export function aggregateAttemptUsage(
 
 export function getRequestLogEntries(): RequestLogEntry[] { return requestLog; }
 
+/** Re-arm disk hydration after persisted logs are cleared or restored. */
+export function resetRequestLogsForReload(): void {
+  requestLog.length = 0;
+  requestLogsHydratedFromDisk = false;
+}
+
 /** Test-only process-state reset for isolated integration harnesses. */
 export function clearRequestLogsForTests(): void {
-  requestLog.length = 0;
+  resetRequestLogsForReload();
   requestLogSeq = 0;
-  requestLogsHydratedFromDisk = false;
 }

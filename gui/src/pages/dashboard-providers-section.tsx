@@ -1,7 +1,7 @@
 import { Trans } from "../i18n/provider";
 import type { TFn } from "../i18n/shared";
-import { EmptyState } from "../ui";
-import type { ProviderInfo } from "./dashboard-shared";
+import { Card, Empty } from "../shell/m3-ui";
+import { providerStatusPresentation, type ProviderInfo } from "./dashboard-shared";
 
 export function DashboardProvidersSection({
   t,
@@ -11,27 +11,44 @@ export function DashboardProvidersSection({
   providers: ProviderInfo[];
 }) {
   return (
-    <>
-      <div className="h-section">{t("dash.activeProviders")} <span className="count">{providers.length}</span></div>
+    <Card title={t("dash.activeProviders")} subtitle={String(providers.length)}>
       {providers.length === 0 ? (
-        <EmptyState title={<Trans k="dash.noProviders" cmd="ocx init" />} />
+        <Empty title={<Trans k="dash.noProviders" cmd="ocx init" />} />
       ) : (
-        <div className="tbl-wrap">
-          <table className="tbl">
-            <thead><tr><th>{t("dash.col.name")}</th><th>{t("dash.col.adapter")}</th><th>{t("dash.col.baseUrl")}</th><th>{t("dash.col.model")}</th></tr></thead>
+        <div className="dash-table-wrap">
+          <table className="m3-table">
+            <thead>
+              <tr>
+                <th scope="col">{t("dash.col.name")}</th>
+                <th scope="col">{t("dash.col.adapter")}</th>
+                <th scope="col">{t("dash.col.baseUrl")}</th>
+                <th scope="col">{t("dash.col.model")}</th>
+              </tr>
+            </thead>
             <tbody>
-              {providers.map(p => (
-                <tr key={p.name}>
-                  <td className="font-semibold">{p.name}</td>
-                  <td><span className="chip">{p.adapter}</span></td>
-                  <td className="muted mono text-label">{p.baseUrl}</td>
-                  <td className="muted">{p.defaultModel ?? "—"}</td>
-                </tr>
-              ))}
+              {providers.map(p => {
+                // Status is a functional data colour, so the dot also carries its
+                // own name: colour alone would leave "needs setup" invisible to a
+                // screen reader and to anyone who cannot separate the two hues.
+                const status = providerStatusPresentation(p, t);
+                return (
+                  <tr key={p.name} data-configuration-reason={p.configurationReason}>
+                    <td className="font-semibold">
+                      <span className="m3-row" style={{ gap: 8 }}>
+                        <span className={`dot ${status.dotClass}`} role="img" aria-label={status.label} />
+                        {p.name}
+                      </span>
+                    </td>
+                    <td><span className="m3-chip">{p.adapter}</span></td>
+                    <td className="dash-cell-url">{p.baseUrl}</td>
+                    <td className="muted">{p.defaultModel ?? "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
-    </>
+    </Card>
   );
 }

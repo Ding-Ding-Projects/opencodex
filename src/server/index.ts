@@ -139,6 +139,9 @@ import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveS
 import { handleSearch } from "./search";
 import { fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
 import { initializeManagementAuthState, issueGuiSession, requireManagementAuth } from "./management-auth";
+import { isUnauthenticatedPairingClaim } from "./management/host-routes";
+import { ensureAppLogFile } from "../lib/app-log-file";
+import { hydrateDebugLogFromDisk } from "../lib/debug-log-buffer";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -298,6 +301,8 @@ export function startServer(port?: number) {
   // usage.jsonl already persists every request; rehydrate the in-memory Logs ring so
   // /api/logs (and the GUI) survive `ocx stop` / `ocx start` process restarts.
   hydrateRequestLogsFromDisk();
+  ensureAppLogFile();
+  hydrateDebugLogFromDisk();
   // #314: warn-only RSS observability (unref'd, idempotent — safe under repeated
   // startServer(0) in tests). Snapshot surfaces via GET /api/system/memory.
   startMemoryWatchdog();
@@ -389,8 +394,10 @@ export function startServer(port?: number) {
       }
 
       if (url.pathname.startsWith("/api/")) {
-        const apiAuthError = requireManagementAuth(req, managementAuth, config);
-        if (apiAuthError) return withManagementCors(apiAuthError, req, config);
+        if (!isUnauthenticatedPairingClaim(req.method, url.pathname)) {
+          const apiAuthError = requireManagementAuth(req, managementAuth, config);
+          if (apiAuthError) return withManagementCors(apiAuthError, req, config);
+        }
         const mgmtResponse = await handleManagementAPI(req, url, config);
         if (mgmtResponse) return withManagementCors(mgmtResponse, req, config);
         return withManagementCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);

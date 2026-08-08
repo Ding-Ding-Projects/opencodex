@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Switch, Notice, EmptyState, Select, Tooltip } from "../ui";
-import { IconChevron, IconBoxes, IconInfo, IconShuffle } from "../icons";
+import { Tooltip } from "../ui";
+import { Banner, Button, Chip, Dialog, Empty, SelectField, TextInput, Toggle } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import BulkBar from "../shell/BulkBar";
+import {
+  invert as invertSelection, selectAll as selectAllIds, selectRange, toggle as toggleSelection,
+} from "../shell/bulk-selection";
+import { IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
+import { useNotifications } from "../shell/notifications-context";
+import { useConfirm } from "../shell/confirm-context";
+import { recordRevision } from "../shell/revisions";
 import { useT } from "../i18n/shared";
 import type { TFn, TKey } from "../i18n/shared";
 import { modelLabel } from "../model-display";
@@ -35,6 +44,9 @@ import {
   writeCollapsedProviders,
   writeCombosOpen,
   discoveryFailureLabel,
+  effortRange,
+  makeMatcher,
+  type ModelsSettingId,
   type ModelRow,
   type ProviderContextCapsResponse,
   type ShadowCallData,
@@ -42,23 +54,48 @@ import {
 } from "./models-shared";
 import { EmptyProviderHint } from "./models-provider-hints";
 
+/**
+ * How much of the catalogue the anchored builder is handed as sample text. The
+ * string is built on every render of the search row, not only while the panel is
+ * open, and this page routinely lists thousands of models across dozens of
+ * providers — an unbounded join would be paid for on every keystroke.
+ */
+const SAMPLE_GROUPS = 8;
+const SAMPLE_ROWS_PER_GROUP = 8;
+
 export default function Models({ apiBase }: { apiBase: string }) {
   const t: TFn = useT();
+  const { notify } = useNotifications();
+  // Shadows the global `confirm` deliberately: an accidental native call in this
+  // file is now a type error rather than a grey Windows box at runtime.
+  const confirm = useConfirm();
   const [models, setModels] = useState<ModelRow[]>([]);
   const [providers, setProviders] = useState<ConfiguredProviderSummary[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [selectedModels, setSelectedModels] = useState<ProviderModelMap | null>(null);
-  const [search, setSearch] = useState<Record<string, string>>({});
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsRegex, setSettingsRegex] = useState(false);
   const [limit, setLimit] = useState<Record<string, number>>({});
   const [contextCaps, setContextCaps] = useState<Record<string, number>>({});
   const [contextCapValue, setContextCapValue] = useState(350_000);
   const [customCap, setCustomCap] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsedProviders);
-  const [status, setStatus] = useState("");
-  const [ok, setOk] = useState(false);
+  // A failed reload is a standing page condition, not an event: the 10s poll would otherwise
+  // stack one un-dismissable error snackbar per tick, so it stays an inline banner.
+  const [loadError, setLoadError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // Selection is per PROVIDER, not one set across the page. The list is grouped,
+  // every action here is a per-provider API call, and a "select all" that
+  // silently reached across groups would delete models from a provider whose
+  // group the user never even scrolled to.
+  const [modelSel, setModelSel] = useState<Record<string, ReadonlySet<string>>>({});
+  const modelAnchor = useRef<Record<string, string>>({});
+  const [modelBulk, setModelBulk] = useState<{ provider: string; done: number; total: number } | null>(null);
+  const cancelModelBulk = useRef(false);
   const busyRef = useRef(false);
   const loadGenerationRef = useRef(0);
   const loadPendingRef = useRef(false);
@@ -192,10 +229,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
         : (typeof capsData.cap === "number" && Number.isFinite(capsData.cap) && capsData.cap > 0 ? capsData.cap : undefined);
       if (value !== undefined) setContextCapValue(value);
       setContextCaps(capsData.caps ?? {});
+      setLoadError(false);
       return true;
     } catch {
       if (shouldApplyLoadGeneration(generation, loadGenerationRef.current)) {
-        setOk(false); setStatus(t("models.loadFail"));
+        setLoadError(true);
       }
       return false;
     } finally {
@@ -204,7 +242,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         setLoading(false);
       }
     }
-  }, [apiBase, loadShadowCall, loadV2, t]);
+  }, [apiBase, loadShadowCall, loadV2]);
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
@@ -228,6 +266,73 @@ export default function Models({ apiBase }: { apiBase: string }) {
     [models, providers],
   );
 
+  /**
+   * One search across every provider group, plain text by default with `.*` as an
+   * explicit opt-in — see `makeMatcher` for the 400-character cap and the local
+   * evaluation that keeps a pasted novel from becoming a backtracking payload.
+   */
+  const { matchesQuery, regexError } = useMemo(() => {
+    const matcher = makeMatcher(query, useRegex);
+    return { matchesQuery: matcher.test, regexError: matcher.error };
+  }, [query, useRegex]);
+  const rowMatches = useCallback(
+    (provider: string, row: ModelRow) => matchesQuery(`${row.id} ${row.namespaced} ${provider}`),
+    [matchesQuery],
+  );
+
+  /**
+   * The screen's own settings search, wired to the same builder as the model search.
+   * It indexes the settings this page owns — each entry carries the label, the
+   * description and the current value, so typing a remembered value finds the control
+   * as readily as typing its name.
+   */
+  const settingsEntries = useMemo((): { id: ModelsSettingId; text: string }[] => [
+    {
+      id: "shadowCall",
+      text: `${t("models.shadowCallIntercept")} ${t("models.shadowCallInterceptHint")} ${shadowCall?.model ?? ""}`,
+    },
+    {
+      id: "subAgent",
+      text: [
+        t("models.v2Label"),
+        t("models.v2Mode_v1"),
+        t("models.v2Mode_default"),
+        t("models.v2Mode_v2"),
+        t("models.v2ModeDesc_v1"),
+        t("models.v2ModeDesc_default"),
+        t("models.v2ModeDesc_v2"),
+      ].join(" "),
+    },
+    {
+      id: "threads",
+      text: `${t("models.v2ThreadsLabel")} ${t("models.v2ThreadsDefault")} ${v2?.maxConcurrentThreadsPerSession ?? ""}`,
+    },
+    {
+      id: "contextCap",
+      text: [
+        t("models.contextCapLabel"),
+        t("models.capValue", { value: fmtK(contextCapValue) }),
+        t("models.setAll"),
+        t("models.setAllHint", { value: fmtK(contextCapValue) }),
+      ].join(" "),
+    },
+  ], [contextCapValue, shadowCall?.model, t, v2?.maxConcurrentThreadsPerSession]);
+
+  const { settingMatches, settingsError, settingsHits } = useMemo(() => {
+    const matcher = makeMatcher(settingsQuery, settingsRegex);
+    const hits = new Set(settingsEntries.filter(entry => matcher.test(entry.text)).map(entry => entry.id));
+    return {
+      settingMatches: (id: ModelsSettingId) => hits.has(id),
+      settingsError: matcher.error,
+      settingsHits: hits.size,
+    };
+  }, [settingsEntries, settingsQuery, settingsRegex]);
+
+  /** Version history entry for a settings change made here — restore needs a named event, not "Updated". */
+  const logRevision = (summary: string) => {
+    recordRevision({ scope: "settings", label: t("nav.models"), summary });
+  };
+
   const effectiveVisibleCount = useMemo(() => {
     if (!selectedModels) return 0;
     return models.filter(model => modelVisible(
@@ -248,7 +353,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
     ++loadGenerationRef.current;
     setBusy(true);
     busyRef.current = true;
-    setStatus("");
     let errorKey: "models.saveFailed" | "models.networkError" | null = null;
     try {
       const response = await putModelVisibility(apiBase, scope, provider, targets, enabled);
@@ -258,11 +362,10 @@ export default function Models({ apiBase }: { apiBase: string }) {
     } finally {
       const refreshed = await load(true);
       if (errorKey) {
-        setOk(false);
-        setStatus(t(errorKey));
+        notify({ tone: "error", title: t(errorKey) });
       } else if (refreshed) {
-        setOk(true);
-        setStatus(t("models.applied"));
+        notify({ tone: "success", title: t("models.applied") });
+        logRevision(`${targets.map(target => (target.native ? target.id : `${provider}/${target.id}`)).join(", ")} — ${enabled ? t("models.tipActive") : t("models.tipDisabled")}`);
       }
       setBusy(false);
       busyRef.current = false;
@@ -272,7 +375,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const toggleProviderCap = async (provider: string) => {
     setBusy(true);
     busyRef.current = true;
-    setStatus("");
     const enabled = contextCaps[provider] !== contextCapValue;
     try {
       const r = await fetch(`${apiBase}/api/provider-context-caps`, {
@@ -283,15 +385,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         const data = await readJsonOrThrow<ProviderContextCapsResponse>(r, t("models.capSaveFailed"));
         setContextCaps(data?.caps ?? {});
-        setOk(true);
-        setStatus(t("models.capApplied"));
+        notify({ tone: "success", title: t("models.capApplied") });
+        logRevision(`${provider} — ${t("models.capValue", { value: fmtK(contextCapValue) })} ${enabled ? t("models.tipActive") : t("models.tipDisabled")}`);
         await load(true);
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.capSaveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.capSaveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setBusy(false);
       busyRef.current = false;
@@ -316,7 +417,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const putCap = async (body: Record<string, unknown>) => {
     setBusy(true);
     busyRef.current = true;
-    setStatus("");
     try {
       const r = await fetch(`${apiBase}/api/provider-context-caps`, {
         method: "PUT",
@@ -327,15 +427,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
         const data = await readJsonOrThrow<ProviderContextCapsResponse>(r, t("models.capSaveFailed"));
         if (typeof data?.value === "number" && Number.isFinite(data.value) && data.value > 0) setContextCapValue(data.value);
         setContextCaps(data?.caps ?? {});
-        setOk(true);
-        setStatus(t("models.capApplied"));
+        notify({ tone: "success", title: t("models.capApplied") });
+        logRevision(`${t("models.contextCapLabel")} ${fmtK(typeof data?.value === "number" ? data.value : contextCapValue)}`);
         await load(true);
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.capSaveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.capSaveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setBusy(false);
       busyRef.current = false;
@@ -356,7 +455,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
 
   const applyCustomCap = () => {
     const value = Number(customCap.replace(/[_,\s]/g, ""));
-    if (!Number.isFinite(value) || value <= 0) { setOk(false); setStatus(t("models.capSaveFailed")); return; }
+    if (!Number.isFinite(value) || value <= 0) { notify({ tone: "error", title: t("models.capSaveFailed") }); return; }
     setShowCustom(false);
     setGlobalCap(value);
   };
@@ -381,6 +480,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
+      logRevision(`${t("models.shadowCallIntercept")} — ${patch.enabled ?? shadowCall.enabled ? t("models.tipActive") : t("models.tipDisabled")}${patch.model !== undefined ? ` ${patch.model}` : ""}`);
     } finally {
       setShadowCallSaving(false);
     }
@@ -392,7 +492,6 @@ export default function Models({ apiBase }: { apiBase: string }) {
     setV2Busy(true);
     v2BusyRef.current = true;
     setV2Note("");
-    setStatus("");
     try {
       const r = await fetch(`${apiBase}/api/v2`, {
         method: "PUT",
@@ -402,15 +501,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         const data = await readJsonOrThrow<V2Status & { warnings?: string[] }>(r, t("models.saveFailed"));
         void loadV2();
-        setOk(true);
-        setStatus(t("models.v2Applied"));
+        notify({ tone: "success", title: t("models.v2Applied") });
+        logRevision(`${t("models.v2Label")} — ${t(`models.v2Mode_${mode}` as TKey)}`);
         setV2Note((data?.warnings ?? []).join(" "));
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.saveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.saveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setV2Busy(false);
       v2BusyRef.current = false;
@@ -422,12 +520,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
     // (setMaxConcurrentThreads no-ops on equal value), so a re-selected current
     // value or a double click can never double-write config.toml.
     if (!v2 || v2BusyRef.current) return;
-    if (!Number.isInteger(value) || value < 1) { setOk(false); setStatus(t("models.v2ThreadsInvalid")); return; }
+    if (!Number.isInteger(value) || value < 1) { notify({ tone: "error", title: t("models.v2ThreadsInvalid") }); return; }
     if (v2.maxConcurrentThreadsPerSession === value) return;
     setV2Busy(true);
     v2BusyRef.current = true;
     setV2Note("");
-    setStatus("");
     try {
       const r = await fetch(`${apiBase}/api/v2`, {
         method: "PUT",
@@ -437,8 +534,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         const data = await readJsonOrThrow<V2Status & { warnings?: string[] }>(r, t("models.saveFailed"));
         if (!data || typeof data.enabled !== "boolean") {
-          setOk(false);
-          setStatus(t("models.saveFailed"));
+          notify({ tone: "error", title: t("models.saveFailed") });
           return;
         }
         setV2({
@@ -447,15 +543,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
           maxConcurrentThreadsPerSession: typeof data.maxConcurrentThreadsPerSession === "number" ? data.maxConcurrentThreadsPerSession : null,
           multiAgentMode: data.multiAgentMode === "v1" || data.multiAgentMode === "v2" ? data.multiAgentMode : "default",
         });
-        setOk(true);
-        setStatus(t("models.v2ThreadsApplied"));
+        notify({ tone: "success", title: t("models.v2ThreadsApplied") });
+        logRevision(`${t("models.v2ThreadsLabel")} — ${value}`);
         setShowThreadsCustom(false);
       } catch (e) {
-        setOk(false);
-        setStatus(e instanceof Error ? e.message : t("models.saveFailed"));
+        notify({ tone: "error", title: e instanceof Error ? e.message : t("models.saveFailed") });
       }
     } catch {
-      setOk(false); setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
     } finally {
       setV2Busy(false);
       v2BusyRef.current = false;
@@ -507,8 +602,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         await readJsonOrThrow(r, t("models.customSaveFailed"));
         setCustomModalOpen(false);
-        setOk(true);
-        setStatus(t("models.customAdded"));
+        notify({ tone: "success", title: t("models.customAdded"), body: `${provider}/${modelId}` });
+        logRevision(`${t("models.customAdded")} — ${provider}/${modelId}`);
         await load(true);
       } catch (e) {
         setCustomError(e instanceof Error ? e.message : t("models.customSaveFailed"));
@@ -532,8 +627,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
       try {
         await readJsonOrThrow(r, t("models.customSaveFailed"));
         setCustomModalOpen(false);
-        setOk(true);
-        setStatus(t("models.customUpdated"));
+        notify({ tone: "success", title: t("models.customUpdated"), body: String(patch.modelId ?? id) });
+        logRevision(`${t("models.customUpdated")} — ${String(patch.modelId ?? id)}`);
         await load(true);
       } catch (e) {
         setCustomError(e instanceof Error ? e.message : t("models.customSaveFailed"));
@@ -545,26 +640,101 @@ export default function Models({ apiBase }: { apiBase: string }) {
     }
   };
 
-  const deleteCustomModel = async (id: string) => {
+  const deleteCustomModel = async (id: string, label: string) => {
     try {
       const r = await fetch(`${apiBase}/api/custom-models/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (r.ok) {
-        setOk(true);
-        setStatus(t("models.customDeleted"));
+        notify({ tone: "success", title: t("models.customDeleted"), body: label });
+        logRevision(`${t("models.customDeleted")} — ${label}`);
         await load(true);
       } else {
-        setOk(false);
-        setStatus(t("models.customSaveFailed"));
+        notify({ tone: "error", title: t("models.customSaveFailed") });
       }
     } catch {
-      setOk(false);
-      setStatus(t("models.networkError"));
+      notify({ tone: "error", title: t("models.networkError") });
+    }
+  };
+
+  const EMPTY_SELECTION: ReadonlySet<string> = new Set();
+  const selectionFor = (provider: string) => modelSel[provider] ?? EMPTY_SELECTION;
+  const setSelectionFor = (provider: string, next: ReadonlySet<string>) =>
+    setModelSel(current => ({ ...current, [provider]: next }));
+
+  /* Shift-click extends from the last row touched IN THIS GROUP. The anchor is
+     kept per provider for the same reason the selection is: an anchor shared
+     across groups would let one shift-click sweep a range that spans a boundary
+     the user can see and the code cannot. */
+  const toggleModelSelect = (provider: string, order: string[], id: string, shiftKey: boolean) => {
+    const anchor = modelAnchor.current[provider];
+    setSelectionFor(provider, shiftKey && anchor
+      ? selectRange(selectionFor(provider), order, anchor, id)
+      : toggleSelection(selectionFor(provider), id));
+    modelAnchor.current[provider] = id;
+  };
+
+  /**
+   * Enable or disable a selection in one request.
+   *
+   * `putModelVisibility` already takes a batch, so this is a single call rather
+   * than a loop — which also means it cannot half-succeed, and there is nothing
+   * partial to report.
+   */
+  const bulkSetVisibility = async (provider: string, rows: ModelRow[], enabled: boolean) => {
+    if (!rows.length) return;
+    await applyVisibility("models", provider, rows.map(m => ({ id: m.id, native: m.native === true })), enabled);
+    setSelectionFor(provider, new Set());
+  };
+
+  /**
+   * Delete the selected custom models, one at a time, reporting what happened.
+   *
+   * Only models the user added themselves can be deleted; discovered and native
+   * rows are excluded by the bar with a reason rather than being silently
+   * dropped from the count. Sequential because each delete rewrites the config.
+   */
+  const bulkDeleteCustom = async (provider: string, rows: ModelRow[]) => {
+    if (!rows.length) return;
+    const ok = await confirm({
+      title: t("bulk.deleteModels"),
+      body: t("bulk.confirmDeleteModels", { count: rows.length, provider }),
+      confirmLabel: t("bulk.deleteModels"),
+      tone: "danger",
+    });
+    if (!ok) return;
+
+    cancelModelBulk.current = false;
+    setModelBulk({ provider, done: 0, total: rows.length });
+    let succeeded = 0;
+    let failed = 0;
+    for (const [index, row] of rows.entries()) {
+      if (cancelModelBulk.current) break;
+      try {
+        const res = await fetch(`${apiBase}/api/custom-models/${encodeURIComponent(row.customId!)}`, { method: "DELETE" });
+        if (res.ok) succeeded += 1; else failed += 1;
+      } catch { failed += 1; }
+      setModelBulk({ provider, done: index + 1, total: rows.length });
+    }
+    const remaining = rows.length - succeeded - failed;
+    setModelBulk(null);
+    setSelectionFor(provider, new Set());
+    if (succeeded) logRevision(`${t("models.customDeleted")} — ${succeeded}× ${provider}`);
+    await load(true);
+
+    // Never "Done" when it was not: a run that failed at item thirty did
+    // twenty-nine things, and the summary has to say so.
+    const action = t("bulk.deleteModels");
+    if (remaining > 0) {
+      notify({ tone: "warn", title: t("bulk.cancelled", { action, succeeded, remaining }) });
+    } else if (failed > 0) {
+      notify({ tone: "error", title: t("bulk.doneSome", { action, succeeded, failed }) });
+    } else {
+      notify({ tone: "success", title: t("bulk.doneAll", { action, succeeded }) });
     }
   };
 
   if (loading) return <div className="row muted"><span className="spin" /> {t("models.loading")}</div>;
   if (!selectedModels) {
-    return <Notice tone="err">{t("models.loadFail")}</Notice>;
+    return <Banner tone="error">{t("models.loadFail")}</Banner>;
   }
 
 
@@ -585,8 +755,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
     const capOn = contextCaps[provider] === contextCapValue;
     const isNative = native;
     const discoveryFailure = liveModels && discovery?.status === "failed" ? discovery : undefined;
-    const q = (search[provider] ?? "").trim().toLowerCase();
-    const filtered = q ? rows.filter(m => m.id.toLowerCase().includes(q)) : rows;
+    const filtered = rows.filter(m => rowMatches(provider, m));
     // Display-only: enabled models float to the top of each provider group so they
     // stay findable in long lists. The sort is stable, so the server order is kept
     // inside each partition, and this does not affect the picker order above
@@ -609,19 +778,28 @@ export default function Models({ apiBase }: { apiBase: string }) {
          enable,
        );
      };
+    // Selection lives per group, over the rows actually on screen.
+    const order = visible.map(m => m.namespaced);
+    const chosen = selectionFor(provider);
+    const chosenRows = visible.filter(m => chosen.has(m.namespaced));
+    const deletableRows = chosenRows.filter(m => m.custom && m.customId);
+    // "page" whenever the group is truncated by Show more, because select-all
+    // takes the rendered rows and nothing else. Saying "all" there would promise
+    // rows the button does not touch.
+    const bulkScope = remaining > 0 ? "page" : query.trim() ? "matching" : "all";
+
     return (
-      <div key={provider} className="card models-provider-card" style={{ marginBottom: 8, overflow: "hidden" }}>
+      <div key={provider} className="m3-card models-provider-card">
        <div className={`row group-head models-provider-head${isCollapsed ? "" : " open"}`}>
           <button
             type="button"
             className="row models-provider-toggle"
             onClick={() => toggleCollapse(provider)}
             aria-expanded={!isCollapsed}
-            style={{ flex: 1, border: 0, background: "transparent", padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
           >
-          <IconChevron style={{ width: 14, height: 14, color: "var(--muted)", transform: isCollapsed ? "none" : "rotate(90deg)", transition: "transform .12s" }} />
+          <IconChevron aria-hidden="true" className="models-provider-chevron" style={{ transform: isCollapsed ? "none" : "rotate(90deg)" }} />
           <span className="text-body font-semibold">{provider}</span>
-          {isNative && <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>{t("models.nativeGroupLabel")}</span>}
+          {isNative && <span className="models-tag">{t("models.nativeGroupLabel")}</span>}
          {discoveryFailure && (
            <span
              className="badge badge-amber"
@@ -635,10 +813,9 @@ export default function Models({ apiBase }: { apiBase: string }) {
           </button>
            <div className="row models-provider-actions">
              {!isNative && (
-               <button
-                 type="button"
-                 className="btn btn-ghost btn-sm text-caption"
-                 style={{ padding: "2px 8px" }}
+               <Button
+                 variant="text"
+                 className="models-provider-add"
                  onClick={(e) => {
                    e.stopPropagation();
                    setCustomModalMode("add");
@@ -654,32 +831,50 @@ export default function Models({ apiBase }: { apiBase: string }) {
                  }}
                  aria-label={t("models.customAdd")}
                  aria-haspopup="dialog"
-               >+</button>
+               >+</Button>
              )}
-             <button type="button" className="btn btn-ghost btn-sm text-caption" disabled={busy || allOn} onClick={() => bulkToggle(true)} style={{ padding: "2px 8px" }}>{t("models.allOn")}</button>
-             <button type="button" className="btn btn-ghost btn-sm text-caption" disabled={busy || allOff} onClick={() => bulkToggle(false)} style={{ padding: "2px 8px" }}>{t("models.allOff")}</button>
+             <Button variant="text" disabled={busy || allOn} onClick={() => bulkToggle(true)}>{t("models.allOn")}</Button>
+             <Button variant="text" className="models-btn-quiet" disabled={busy || allOff} onClick={() => bulkToggle(false)}>{t("models.allOff")}</Button>
              {!isNative && <>
-               <Switch on={capOn} onClick={() => toggleProviderCap(provider)} disabled={busy} label={t("models.capValue", { value: fmtK(contextCapValue) })} />
+               <Toggle on={capOn} onChange={() => void toggleProviderCap(provider)} disabled={busy} label={t("models.capValue", { value: fmtK(contextCapValue) })} />
                <span className="muted mono text-label">{t("models.capValue", { value: fmtK(contextCapValue) })}</span>
              </>}
            </div>
         </div>
         {!isCollapsed && (
-          <div style={{ padding: "6px 12px" }}>
-            {isNative && <p className="muted text-label" style={{ margin: "2px 0 6px" }}>{t("models.nativeHint")}</p>}
+          <div className="models-provider-body">
+            {isNative && <p className="muted text-label models-provider-note">{t("models.nativeHint")}</p>}
             {rows.length === 0 && (
               <EmptyProviderHint liveModels={liveModels} discovery={discovery} showFailureBadge={false} />
             )}
-            {rows.length > PAGE / 2 && (
-              <input
-                className="input"
-                style={{ width: "100%", marginBottom: 6 }}
-                placeholder={t("models.search")}
-                value={search[provider] ?? ""}
-                onChange={e => setSearch(prev => ({ ...prev, [provider]: e.target.value }))}
-                aria-label={t("models.search")}
-              />
-            )}
+             <BulkBar
+               items={visible.map(m => ({
+                 id: m.namespaced,
+                 label: m.native ? m.id : m.namespaced,
+                 // Enable/disable applies to every row; delete does not. Rather
+                 // than hiding the ones it cannot delete, the bar keeps them in
+                 // the count and says why they are excluded from that action.
+                 skipReason: m.custom && m.customId ? null : t("bulk.skip.notCustom"),
+               }))}
+               selected={new Set(chosen)}
+               scope={bulkScope}
+               onSelectAll={() => setSelectionFor(provider, selectAllIds(order))}
+               onSelectNone={() => setSelectionFor(provider, new Set())}
+               onInvert={() => setSelectionFor(provider, invertSelection(chosen, order))}
+               progress={modelBulk?.provider === provider
+                 ? { done: modelBulk.done, total: modelBulk.total, onCancel: () => { cancelModelBulk.current = true; } }
+                 : null}
+               actions={[
+                 { id: "delete", label: t("bulk.deleteModels"), destructive: true, run: () => void bulkDeleteCustom(provider, deletableRows) },
+               ]}
+             >
+               {/* Enable and disable apply to every selected row, so they sit
+                   beside the selection controls rather than among the actions
+                   the bar disables when everything selected is excluded from
+                   the destructive one. */}
+               <Button variant="text" disabled={busy || !chosenRows.length} onClick={() => void bulkSetVisibility(provider, chosenRows, true)}>{t("bulk.enableModels")}</Button>
+               <Button variant="text" disabled={busy || !chosenRows.length} onClick={() => void bulkSetVisibility(provider, chosenRows, false)}>{t("bulk.disableModels")}</Button>
+             </BulkBar>
              {visible.map(m => {
                // The row reflects the same final-visibility answer as the count and the picker.
                const off = !isVisible(m);
@@ -694,15 +889,42 @@ export default function Models({ apiBase }: { apiBase: string }) {
                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoveredModel(null);
                    }}
                  >
-                   <div className="row" style={{ padding: "5px 0" }}>
-                     <Switch on={!off} onClick={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy} label={m.native ? m.id : m.namespaced} />
-                     <code className="mono text-control" style={{ color: off ? "var(--faint)" : "var(--text)", textDecoration: off ? "line-through" : "none" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
+                   {/* Context and modalities read inline, as the design shows them: a hover-only
+                       tooltip hides them from touch and from anyone scanning the list. */}
+                   <div className="row models-model-row" style={{ flexWrap: "wrap" }}>
+                     {/* The hit area is the WRAPPER, not the input. Padding does
+                         not apply to a checkbox — it is a replaced element — so
+                         the padded version of this measured 18x18 in a real
+                         engine while claiming to be a 48dp target. */}
+                     <span className="m3-check-hit">
+                       <input
+                         type="checkbox"
+                         className="models-row-check"
+                         checked={chosen.has(m.namespaced)}
+                         aria-label={t("bulk.selectRow", { name: m.native ? m.id : m.namespaced })}
+                         onClick={(e) => toggleModelSelect(provider, order, m.namespaced, e.shiftKey)}
+                         onChange={() => { /* handled on click, which carries shiftKey */ }}
+                       />
+                     </span>
+                     <Toggle on={!off} onChange={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy} label={m.native ? m.id : m.namespaced} />
+                     <code className={`mono text-control models-model-id${off ? " models-model-id--off" : ""}`} style={{ flex: "1 1 220px" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
+                     {(m.contextWindow || m.contextCap) && (
+                       <span className="muted text-label" style={{ whiteSpace: "nowrap" }}>
+                         {t("models.ctxValue", { value: fmtK(m.contextWindow ?? m.contextCap ?? 0) })}
+                       </span>
+                     )}
+                     {m.inputModalities && m.inputModalities.length > 0 && (
+                       <span className="muted text-label" style={{ whiteSpace: "nowrap" }}>{m.inputModalities.join(", ")}</span>
+                     )}
+                     {effortRange(m.reasoningEfforts) && (
+                       <span className="muted mono text-label" style={{ whiteSpace: "nowrap" }}>{effortRange(m.reasoningEfforts)}</span>
+                     )}
                      {m.custom && (
-                       <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>
+                       <span className="models-tag">
                          {t("models.customBadge")}
                        </span>
                      )}
-                     {m.contextCapped && <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>{t("models.contextCappedValue", { value: fmtK(m.contextCap ?? contextCapValue) })}</span>}
+                     {m.contextCapped && <span className="models-tag">{t("models.contextCappedValue", { value: fmtK(m.contextCap ?? contextCapValue) })}</span>}
                    </div>
                    {hoveredModel?.namespaced === m.namespaced && (() => {
                      const r = hoveredModel.rect;
@@ -725,7 +947,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                          <div className="model-tip-id">{m.native ? m.id : m.namespaced}</div>
                          {m.displayName && <div className="model-tip-display">{m.displayName}</div>}
                          {m.custom && (
-                           <span className="muted mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)", display: "inline-block", marginBottom: 4 }}>
+                           <span className="models-tag models-tag--block">
                              {t("models.customBadge")}
                            </span>
                          )}
@@ -749,9 +971,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
                          </div>
                          {m.custom && m.customId && (
                            <div className="model-tip-actions">
-                             <button
-                               type="button"
-                               className="btn btn-ghost btn-sm text-caption"
+                             <Button
+                               variant="text"
                                onClick={() => {
                                  setCustomModalMode("edit");
                                  setCustomModalProvider(m.provider);
@@ -765,18 +986,29 @@ export default function Models({ apiBase }: { apiBase: string }) {
                                  setCustomModalOpen(true);
                                  setHoveredModel(null);
                                }}
-                             >{t("models.customEdit")}</button>
-                             <button
-                               type="button"
-                               className="btn btn-ghost btn-sm text-caption"
-                               style={{ color: "var(--red)" }}
+                             >{t("models.customEdit")}</Button>
+                             <Button
+                               variant="text"
+                               className="models-btn-danger"
                                onClick={() => {
-                                 if (window.confirm(t("models.customDeleteConfirm", { name: m.displayName ?? m.id }))) {
-                                   void deleteCustomModel(m.customId!);
-                                 }
+                                 // The hover card is dismissed first, not after
+                                 // the await: it is anchored to a row the dialog
+                                 // now covers, and leaving it up behind a modal
+                                 // is a tooltip the user cannot dismiss.
+                                 const customId = m.customId!;
+                                 const namespaced = m.namespaced;
                                  setHoveredModel(null);
+                                 void (async () => {
+                                   const confirmed = await confirm({
+                                     title: t("confirm.deleteModelTitle"),
+                                     body: t("models.customDeleteConfirm", { name: m.displayName ?? m.id }),
+                                     confirmLabel: t("confirm.deleteAction"),
+                                     tone: "danger",
+                                   });
+                                   if (confirmed) await deleteCustomModel(customId, namespaced);
+                                 })();
                                }}
-                             >{t("models.customDelete")}</button>
+                             >{t("models.customDelete")}</Button>
                            </div>
                          )}
                        </div>
@@ -786,12 +1018,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
                );
              })}
              {remaining > 0 && (
-               <button
-                 type="button"
+               <Button
+                 variant="text"
                  onClick={() => setLimit(prev => ({ ...prev, [provider]: shown + PAGE }))}
-                 className="btn btn-ghost btn-sm"
-                 style={{ marginTop: 4 }}
-               >{t("models.showMore", { n: remaining })}</button>
+                 className="models-show-more"
+               >{t("models.showMore", { n: remaining })}</Button>
              )}
            </div>
          )}
@@ -799,34 +1030,135 @@ export default function Models({ apiBase }: { apiBase: string }) {
      );
   };
 
-  const visibleGroups = selectedProvider
+  const scopedGroups = selectedProvider
     ? groups.filter(group => group.provider === selectedProvider)
     : groups;
+  // A searching user wants hits, not a wall of headers: groups that match nothing drop out,
+  // and every group dropping out is what raises the no-match state below.
+  const searching = query.trim().length > 0;
+  const visibleGroups = searching
+    ? scopedGroups.filter(group => group.rows.some(row => rowMatches(group.provider, row)))
+    : scopedGroups;
+
+  // Sample text for the anchored builder: the same haystack `rowMatches` tests, taken
+  // from the scoped groups rather than the visible ones — seeding it from what the
+  // current query already kept would hide the rows a new pattern is being written for.
+  // Bounded per group as well as overall, so one enormous provider cannot crowd out
+  // every other name a pattern might need to be tried against.
+  const modelSearchSample = scopedGroups
+    .slice(0, SAMPLE_GROUPS)
+    .flatMap(group => group.rows.slice(0, SAMPLE_ROWS_PER_GROUP).map(row => `${row.id} ${row.namespaced} ${group.provider}`))
+    .join("\n");
+
+  const searchBlock = (
+    <>
+      <div className="m3-row" role="search" style={{ marginBottom: "var(--sp-2)" }}>
+        <IconSearch width={20} height={20} aria-hidden="true" className="muted" />
+        <TextInput
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={t("models.search")}
+          aria-label={t("models.search")}
+          aria-invalid={!!regexError}
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
+        />
+        {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
+        <Chip
+          selected={useRegex}
+          onClick={() => setUseRegex(v => !v)}
+          title={t("regex.regexMode")}
+          aria-label={t("search.regexHint")}
+        >
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <RegexBuilderButton
+          className="models-icon-btn"
+          value={query}
+          onApply={pattern => setQuery(pattern)}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          // Real catalogue rows in the same shape the search matches them, taken
+          // from the groups in scope rather than from what the query already kept.
+          sample={modelSearchSample}
+        />
+      </div>
+      {/* The design reserves this line whether or not a pattern is broken, so typing an
+          unfinished regex does not shunt the whole provider list up and down. */}
+      <div className="models-search-error" role="alert" style={{ minHeight: 20, color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
+        {regexError ? `${t("regex.invalid")}: ${regexError}` : ""}
+      </div>
+    </>
+  );
+
+  // The settings surface on this screen gets its own search bar and its own builder,
+  // bound to this field alone — it never shares state with the model search above it.
+  const settingsSearchBlock = (
+    <>
+      <div className="m3-row models-settings-search" role="search" style={{ marginBottom: "var(--sp-2)" }}>
+        <IconSearch width={20} height={20} aria-hidden="true" className="muted" />
+        <TextInput
+          value={settingsQuery}
+          onChange={e => setSettingsQuery(e.target.value)}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={!!settingsError}
+          style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
+        />
+        <Chip
+          selected={settingsRegex}
+          onClick={() => setSettingsRegex(v => !v)}
+          title={t("regex.regexMode")}
+          aria-label={t("search.regexHint")}
+        >
+          <code style={{ fontFamily: "var(--mono)" }}>.*</code>
+        </Chip>
+        <RegexBuilderButton
+          className="models-icon-btn"
+          value={settingsQuery}
+          onApply={pattern => setSettingsQuery(pattern)}
+          regex={settingsRegex}
+          onRegexChange={setSettingsRegex}
+          // This screen's settings index, which is a different corpus from the
+          // model search above — the two builders never share a sample.
+          sample={settingsEntries.map(entry => entry.text).join("\n")}
+          label={t("settings.openBuilder")}
+        />
+      </div>
+      {/* One status line, as the prototype has it: the broken pattern wins over the
+          no-match message, because an unusable pattern is why nothing matched. */}
+      <div className="models-settings-status" role="status" style={{ minHeight: 20, marginBottom: "var(--sp-2)", fontSize: "var(--t-label-m)" }}>
+        {settingsError
+          ? <span style={{ color: "var(--m3-error)" }}>{`${t("regex.invalid")}: ${settingsError}`}</span>
+          : (settingsQuery.trim().length > 0 && settingsHits === 0
+            ? <span className="muted">{t("settings.noMatch")}</span>
+            : "")}
+      </div>
+    </>
+  );
 
   const controlsBlock = (
     <>
       <div className="models-control-top-row">
-        <div className="models-shadow-row row muted text-control">
+        {settingMatches("shadowCall") && <div className="models-shadow-row row muted text-control">
           <span className="models-shadow-label">{t("models.shadowCallIntercept")} <Tooltip content={t("models.shadowCallInterceptHint")} side="top" maxWidth={320}><span style={{ cursor: "help" }} aria-label={t("models.shadowCallInterceptHint")}>ⓘ</span></Tooltip></span>
           <code className="text-caption models-shadow-warning" style={{ opacity: 0.6 }}>{t("models.shadowCallOriginal")}</code>
-          <Switch on={shadowCall?.enabled ?? false} onClick={() => void saveShadowCall({ enabled: !shadowCall?.enabled })} disabled={!shadowCall || shadowCallSaving} label={t("models.shadowCallIntercept")} />
+          <Toggle on={shadowCall?.enabled ?? false} onChange={() => void saveShadowCall({ enabled: !shadowCall?.enabled })} disabled={!shadowCall || shadowCallSaving} label={t("models.shadowCallIntercept")} />
           <div className="models-shadow-model-slot">
-            <Select value={shadowCall?.model ?? ""} options={[{ value: "", label: "\u2014" }, ...shadowModelOptions]} onChange={v => { setShadowCall(c => c ? { ...c, model: v } : c); void saveShadowCall({ model: v }); }} disabled={!shadowCall || shadowCallSaving || !shadowCall.enabled} label={t("models.shadowCallIntercept")} />
+            <SelectField value={shadowCall?.model ?? ""} options={[{ value: "", label: "\u2014" }, ...shadowModelOptions]} onChange={v => { setShadowCall(c => c ? { ...c, model: v } : c); void saveShadowCall({ model: v }); }} disabled={!shadowCall || shadowCallSaving || !shadowCall.enabled} label={t("models.shadowCallIntercept")} />
           </div>
-        </div>
+        </div>}
 
-        {v2 && (
+        {v2 && settingMatches("subAgent") && (
           <div className="models-v2-mode-row row">
             <span className="muted text-control">{t("models.v2Label")}</span>
-            <div className="segmented" role="radiogroup" aria-label={t("models.v2Label")} style={{ display: "inline-flex", borderRadius: "var(--radius-pill)", background: "var(--surface-soft, var(--raised))", padding: 3, gap: 2 }}>
+            <div className="m3-segmented" role="radiogroup" aria-label={t("models.v2Label")}>
               {(["v1", "default", "v2"] as const).map(mode => (
                 <button
                   key={mode}
                   type="button"
                   role="radio"
                   aria-checked={(v2.multiAgentMode ?? "default") === mode}
-                  className={`btn btn-sm${(v2.multiAgentMode ?? "default") === mode ? " btn-primary" : " btn-ghost"}`}
-                  style={{ borderRadius: "var(--radius-pill)", minWidth: 64, padding: "5px 12px", border: "none", background: (v2.multiAgentMode ?? "default") === mode ? undefined : "transparent", color: (v2.multiAgentMode ?? "default") === mode ? undefined : "var(--muted)" }}
+                  className={`m3-segment${(v2.multiAgentMode ?? "default") === mode ? " selected" : ""}`}
                   disabled={v2Busy}
                   onClick={() => void setMultiAgentMode(mode)}
                 >
@@ -836,24 +1168,23 @@ export default function Models({ apiBase }: { apiBase: string }) {
             </div>
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ width: 24, height: 24, minWidth: 24, flex: "0 0 24px", padding: 0, borderRadius: "var(--radius-pill)", color: "var(--muted)" }}
+              className="models-icon-btn"
               onClick={() => setV2HelpOpen(true)}
               aria-label={t("models.v2Label")}
               aria-haspopup="dialog"
             >
-              <IconInfo width={14} height={14} aria-hidden="true" />
+              <IconInfo width={20} height={20} aria-hidden="true" />
             </button>
           </div>
         )}
       </div>
 
-      {v2 && (v2.enabled || v2.agentsMaxThreadsConflict || v2Note) && (
+      {v2 && settingMatches("threads") && (v2.enabled || v2.agentsMaxThreadsConflict || v2Note) && (
         <div className="models-v2-detail-row row">
           {v2.enabled && (
             <>
               <span className="muted text-control">{t("models.v2ThreadsLabel")}</span>
-              <Select
+              <SelectField
                 value={showThreadsCustom
                   ? CUSTOM_OPTION
                   : (v2.maxConcurrentThreadsPerSession !== null && v2.maxConcurrentThreadsPerSession !== undefined
@@ -875,8 +1206,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
               {showThreadsCustom && (
                 <>
                   <input
-                    className="input"
-                    style={{ width: 100 }}
+                    className="m3-input models-input-narrow"
                     inputMode="numeric"
                     value={threadsCustom}
                     onChange={e => setThreadsCustom(e.target.value)}
@@ -884,40 +1214,40 @@ export default function Models({ apiBase }: { apiBase: string }) {
                     disabled={v2Busy}
                     aria-label={t("models.v2ThreadsLabel")}
                   />
-                  <button type="button" className="btn btn-sm" disabled={v2Busy}
+                  <Button variant="tonal" disabled={v2Busy}
                     onClick={() => { void putV2Threads(Number(threadsCustom.replace(/[_,\s]/g, ""))); }}>
                     {t("models.v2ThreadsApply")}
-                  </button>
+                  </Button>
                 </>
               )}
             </>
           )}
           {v2.enabled && v2.agentsMaxThreadsConflict && (
-            <span className="mono text-label" style={{ color: "var(--err, #e5484d)" }}>{t("models.v2Conflict")}</span>
+            <span className="mono text-label models-conflict">{t("models.v2Conflict")}</span>
           )}
           {v2Note && <span className="muted text-label">{v2Note}</span>}
         </div>
       )}
 
-      <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+      {settingMatches("contextCap") && <div className="row models-cap-row" role="group" aria-label={t("models.contextCapLabel")}>
         <span className="muted text-control">{t("models.contextCapLabel")}</span>
-        <Select
-          value={showCustom ? CUSTOM_OPTION : (CAP_OPTION_SET.has(contextCapValue) ? String(contextCapValue) : CUSTOM_OPTION)}
-          options={[
-            ...(!CAP_OPTION_SET.has(contextCapValue) && !showCustom
-              ? [{ value: String(contextCapValue), label: fmtK(contextCapValue) }] : []),
-            ...CAP_OPTIONS.map(v => ({ value: String(v), label: fmtK(v) })),
-            { value: CUSTOM_OPTION, label: t("models.custom") },
-          ]}
-          onChange={v => onSelectCap(v)}
+        {CAP_OPTIONS.map(v => (
+          <Chip
+            key={v}
+            selected={!showCustom && contextCapValue === v}
+            disabled={busy}
+            onClick={() => onSelectCap(String(v))}
+          >{fmtK(v)}</Chip>
+        ))}
+        <Chip
+          selected={showCustom || !CAP_OPTION_SET.has(contextCapValue)}
           disabled={busy}
-          label={t("models.contextCapLabel")}
-        />
+          onClick={() => onSelectCap(CUSTOM_OPTION)}
+        >{!showCustom && !CAP_OPTION_SET.has(contextCapValue) ? fmtK(contextCapValue) : t("models.custom")}</Chip>
         {showCustom && (
           <>
             <input
-              className="input"
-              style={{ width: 160 }}
+              className="m3-input models-input-cap"
               inputMode="numeric"
               placeholder={t("models.customPlaceholder")}
               value={customCap}
@@ -926,27 +1256,27 @@ export default function Models({ apiBase }: { apiBase: string }) {
               disabled={busy}
               aria-label={t("models.customPlaceholder")}
             />
-            <button type="button" onClick={applyCustomCap} disabled={busy} className="btn btn-ghost btn-sm">{t("models.customApply")}</button>
+            <Button variant="tonal" onClick={applyCustomCap} disabled={busy}>{t("models.customApply")}</Button>
           </>
         )}
-        <Switch on={allCapped} onClick={setAll} disabled={busy} label={t("models.setAll")} />
+        <Toggle on={allCapped} onChange={setAll} disabled={busy} label={t("models.setAll")} />
         <span className="muted text-label leading-body">{t("models.setAllHint", { value: fmtK(contextCapValue) })}</span>
-      </div>
+      </div>}
 
       {(() => {
         const customCount = models.filter(m => m.custom).length;
         if (customCount === 0) return null;
         return (
-          <div className="row muted text-label" style={{ gap: 6, marginBottom: 8 }}>
-            <span className="mono text-caption" style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}>
+          <div className="row muted text-label models-custom-summary">
+            <span className="models-tag">
               {t("models.customSummary", { count: customCount })}
             </span>
           </div>
         );
       })()}
 
-      <div className="row muted text-label leading-body" style={{ alignItems: "flex-start", gap: 8, marginBottom: 12, maxWidth: "80ch" }}>
-        <IconInfo width={15} height={15} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }} />
+      <div className="row muted text-label leading-body models-order-hint">
+        <IconInfo width={18} height={18} aria-hidden="true" />
         <span>{t("models.orderHint")}</span>
       </div>
     </>
@@ -955,33 +1285,32 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const combosBlock = (
     <>
      {combos !== null && !combosError && combos.length === 0 && (
-       <div className="card models-combos-card" style={{ marginBottom: 10 }}>
-         <div className="row" style={{ padding: "10px 12px", justifyContent: "space-between", gap: 8 }}>
-           <div className="row" style={{ gap: 8, minWidth: 0 }}>
-             <IconShuffle width={14} height={14} aria-hidden="true" style={{ flexShrink: 0 }} />
+       <div className="m3-card models-combos-card">
+         <div className="row models-combos-head models-row-split">
+           <div className="row models-combos-title">
+             <IconShuffle width={18} height={18} aria-hidden="true" />
              <strong>{t("nav.combos")}</strong>
              <span className="muted text-label">{t("models.combosEmpty")}</span>
            </div>
-           <a className="btn btn-sm" href="#combos" style={{ flexShrink: 0 }}>{t("models.combosSetup")}</a>
+           <a className="m3-btn m3-btn--tonal" href="#combos">{t("models.combosSetup")}</a>
          </div>
        </div>
      )}
      {combos !== null && !combosError && combos.length > 0 && (
-       <div className="card models-combos-card" style={{ marginBottom: 10 }}>
-         <div className={`row group-head${combosOpen ? " open" : ""}`} style={{ gap: 8 }}>
+       <div className="m3-card models-combos-card">
+         <div className={`row group-head models-combos-head${combosOpen ? " open" : ""}`}>
            <button
              type="button"
-             className="row"
+             className="row models-combos-toggle"
              aria-expanded={combosOpen}
              onClick={toggleCombosOpen}
-             style={{ flex: 1, gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit", color: "inherit", textAlign: "left", minWidth: 0 }}
            >
-             <IconChevron style={{ width: 14, height: 14, color: "var(--muted)", flexShrink: 0, transform: combosOpen ? "rotate(90deg)" : "none", transition: "transform .12s" }} />
-             <IconShuffle width={14} height={14} aria-hidden="true" style={{ flexShrink: 0 }} />
+             <IconChevron aria-hidden="true" className="models-provider-chevron" style={{ transform: combosOpen ? "rotate(90deg)" : "none" }} />
+             <IconShuffle width={18} height={18} aria-hidden="true" />
              <strong>{t("nav.combos")}</strong>
              <span className="muted mono text-label">{t("models.combosActive", { count: combos.length })}</span>
            </button>
-           <a className="btn btn-sm btn-ghost" href="#combos" style={{ flexShrink: 0 }}>{t("models.combosSetup")}</a>
+           <a className="m3-btn m3-btn--text" href="#combos">{t("models.combosSetup")}</a>
          </div>
          {combosOpen && (
            <div>
@@ -991,7 +1320,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
                  <span className="muted text-label">{c.strategy} · {c.targets.length}</span>
                </div>
              ))}
-             <a className="row muted" href="#combos" style={{ padding: "8px 12px 10px 34px", gap: 6, textDecoration: "none" }}>
+             <a className="row muted models-combos-add" href="#combos">
                + {t("models.combosAdd")}
              </a>
            </div>
@@ -1002,174 +1331,92 @@ export default function Models({ apiBase }: { apiBase: string }) {
   );
 
   const collapseControls = (
-    <div className="row" style={{ gap: 6, margin: "2px 0 10px" }}>
-      <button type="button" className="btn btn-ghost btn-sm text-caption" onClick={() => setAllCollapsed(true)} disabled={busy}>
-        <IconChevron width={12} height={12} aria-hidden="true" /> {t("models.collapseAll")}
-      </button>
-      <button type="button" className="btn btn-ghost btn-sm text-caption" onClick={() => setAllCollapsed(false)} disabled={busy}>
-        <IconChevron width={12} height={12} aria-hidden="true" style={{ transform: "rotate(90deg)" }} /> {t("models.expandAll")}
-      </button>
+    <div className="row models-collapse-row">
+      <Button variant="text" onClick={() => setAllCollapsed(true)} disabled={busy}>
+        <IconChevron width={16} height={16} aria-hidden="true" /> {t("models.collapseAll")}
+      </Button>
+      <Button variant="text" onClick={() => setAllCollapsed(false)} disabled={busy}>
+        <IconChevron width={16} height={16} aria-hidden="true" style={{ transform: "rotate(90deg)" }} /> {t("models.expandAll")}
+      </Button>
     </div>
   );
 
   const emptyStateBlock = (
     <>
       {groups.length === 0 && (
-        <EmptyState icon={<IconBoxes />} title={t("models.noRouted")}>
+        <Empty title={t("models.noRouted")}>
           {t("models.noRoutedHint")}
-        </EmptyState>
+        </Empty>
       )}
     </>
+  );
+
+  // The prototype's search_off state: the search found nothing, which is not the same
+  // as "no routed models" (that empty state lives above and speaks about setup).
+  const noMatchBlock = (
+    <Empty title={t("models.noMatch")} />
   );
 
   const modalsBlock = (
     <>
       {v2HelpOpen && (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("models.v2Label")} onClick={() => setV2HelpOpen(false)} onKeyDown={e => { if (e.key === "Escape") setV2HelpOpen(false); }}>
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>{t("models.v2Label")}</h3>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setV2HelpOpen(false)} aria-label={t("common.close")}>&times;</button>
-            </div>
-            <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
-              {t("models.v2Help")}
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
-                {t("models.v2DocsLink")}
-              </a>
-            </div>
-            <div className="modal-actions">
-              <button type="button" className="btn btn-primary" onClick={() => setV2HelpOpen(false)}>{t("common.ok")}</button>
-            </div>
+        <Dialog
+          onClose={() => setV2HelpOpen(false)}
+          // Help text about the v2 models, opened to be read while the list it
+          // describes stays visible. Not a decision, so not blocking.
+          modal={false}
+          // The headline carries the id so the dialog keeps the accessible name the
+          // legacy overlay set with `aria-label` — `<dialog>` gets no name from its
+          // contents, and Dialog exposes `labelledBy` rather than an aria-label prop.
+          title={<span id="models-v2-help-title">{t("models.v2Label")}</span>}
+          labelledBy="models-v2-help-title"
+          // The help text is authored with newlines, so it stays `pre-line`.
+          description={<span className="leading-relaxed" style={{ whiteSpace: "pre-line" }}>{t("models.v2Help")}</span>}
+          actions={
+            <>
+              <Button variant="text" className="models-modal-close" onClick={() => setV2HelpOpen(false)} aria-label={t("common.close")}>&times;</Button>
+              <Button variant="filled" onClick={() => setV2HelpOpen(false)}>{t("common.ok")}</Button>
+            </>
+          }
+        >
+          <div>
+            <a className="text-control" href="https://opencodex.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--m3-primary)" }}>
+              {t("models.v2DocsLink")}
+            </a>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {customModalOpen && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("models.customAdd")}
-          onClick={() => { if (!customSaving) setCustomModalOpen(false); }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && !customSaving) setCustomModalOpen(false);
-          }}
-        >
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>
-                {customModalMode === "add"
-                  ? t("models.customAddTitle", { provider: customModalProvider })
-                  : t("models.customEditTitle", { provider: customModalProvider })}
-              </h3>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
+        <Dialog
+          // Escape still cannot abandon a save in flight, exactly as the legacy
+          // overlay's keydown guard had it.
+          onClose={() => { if (!customSaving) setCustomModalOpen(false); }}
+          // The form holds whatever the user typed, so a stray scrim click must
+          // not discard it.
+          dismissOnScrim={false}
+          title={
+            <span id="models-custom-model-title">
+              {customModalMode === "add"
+                ? t("models.customAddTitle", { provider: customModalProvider })
+                : t("models.customEditTitle", { provider: customModalProvider })}
+            </span>
+          }
+          labelledBy="models-custom-model-title"
+          actions={
+            <>
+              <Button
+                variant="text"
+                className="models-modal-close"
                 onClick={() => setCustomModalOpen(false)}
                 disabled={customSaving}
                 aria-label={t("common.close")}
-              >&times;</button>
-            </div>
-
-            {customError && <Notice tone="err">{customError}</Notice>}
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldModelId")}
-                <input
-                  className="input"
-                  value={customFormModelId}
-                  onChange={e => setCustomFormModelId(e.target.value)}
-                  disabled={customSaving}
-                  placeholder={t("models.customFieldModelIdPlaceholder")}
-                  autoFocus
-                />
-              </label>
-
-              <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldDisplayName")}
-                <input
-                  className="input"
-                  value={customFormDisplayName}
-                  onChange={e => setCustomFormDisplayName(e.target.value)}
-                  disabled={customSaving}
-                  placeholder={t("models.customFieldDisplayNamePlaceholder")}
-                />
-              </label>
-
-              <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldContext")}
-                <div className="row" style={{ gap: 6 }}>
-                  <Select
-                    value={customFormShowCustomCtx ? CUSTOM_OPTION : customFormContextWindow}
-                    options={[
-                      { value: "", label: "—" },
-                      { value: "100000", label: "100k" },
-                      { value: "128000", label: "128k" },
-                      { value: "200000", label: "200k" },
-                      { value: "256000", label: "256k" },
-                      { value: "352000", label: "352k" },
-                      { value: "500000", label: "500k" },
-                      { value: "1000000", label: "1M" },
-                      { value: CUSTOM_OPTION, label: t("models.custom") },
-                    ]}
-                    onChange={v => {
-                      if (v === CUSTOM_OPTION) {
-                        setCustomFormShowCustomCtx(true);
-                        return;
-                      }
-                      setCustomFormShowCustomCtx(false);
-                      setCustomFormContextWindow(v);
-                    }}
-                    disabled={customSaving}
-                    label={t("models.customFieldContext")}
-                  />
-                  {customFormShowCustomCtx && (
-                    <input
-                      className="input"
-                      style={{ width: 120 }}
-                      inputMode="numeric"
-                      value={customFormContextWindow}
-                      onChange={e => setCustomFormContextWindow(e.target.value)}
-                      disabled={customSaving}
-                      placeholder={t("models.customPlaceholder")}
-                      aria-label={t("models.customFieldContext")}
-                    />
-                  )}
-                </div>
-              </label>
-
-              <div className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {t("models.customFieldModalities")}
-                <div className="row" style={{ gap: 8 }}>
-                  {(["text", "image", "audio"] as const).map(mod => (
-                    <label key={mod} className="row" style={{ gap: 4, cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={customFormModalities.includes(mod)}
-                        onChange={e => {
-                          setCustomFormModalities(prev => (
-                            e.target.checked ? [...prev, mod] : prev.filter(m => m !== mod)
-                          ));
-                        }}
-                        disabled={customSaving}
-                      />
-                      <span className="text-control">{mod}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-actions">
-              <button type="button" className="btn btn-ghost" onClick={() => setCustomModalOpen(false)} disabled={customSaving}>
+              >&times;</Button>
+              <Button variant="text" onClick={() => setCustomModalOpen(false)} disabled={customSaving}>
                 {t("common.cancel")}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
+              </Button>
+              <Button
+                variant="filled"
                 disabled={customSaving || !customFormModelId.trim()}
                 onClick={() => {
                   const modelId = customFormModelId.trim();
@@ -1197,10 +1444,101 @@ export default function Models({ apiBase }: { apiBase: string }) {
                 {customSaving
                   ? t("models.customSaving")
                   : (customModalMode === "add" ? t("models.customAddBtn") : t("models.customEditBtn"))}
-              </button>
+              </Button>
+            </>
+          }
+        >
+          {/* Inline, not a snackbar: it names why THIS form was refused, and it
+              belongs beside the fields the user has to correct. */}
+          {customError && <Banner tone="error">{customError}</Banner>}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldModelId")}
+              <input
+                className="m3-input"
+                value={customFormModelId}
+                onChange={e => setCustomFormModelId(e.target.value)}
+                disabled={customSaving}
+                placeholder={t("models.customFieldModelIdPlaceholder")}
+                autoFocus
+              />
+            </label>
+
+            <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldDisplayName")}
+              <input
+                className="m3-input"
+                value={customFormDisplayName}
+                onChange={e => setCustomFormDisplayName(e.target.value)}
+                disabled={customSaving}
+                placeholder={t("models.customFieldDisplayNamePlaceholder")}
+              />
+            </label>
+
+            <label className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldContext")}
+              <div className="row" style={{ gap: 6 }}>
+                <SelectField
+                  value={customFormShowCustomCtx ? CUSTOM_OPTION : customFormContextWindow}
+                  options={[
+                    { value: "", label: "—" },
+                    { value: "100000", label: "100k" },
+                    { value: "128000", label: "128k" },
+                    { value: "200000", label: "200k" },
+                    { value: "256000", label: "256k" },
+                    { value: "352000", label: "352k" },
+                    { value: "500000", label: "500k" },
+                    { value: "1000000", label: "1M" },
+                    { value: CUSTOM_OPTION, label: t("models.custom") },
+                  ]}
+                  onChange={v => {
+                    if (v === CUSTOM_OPTION) {
+                      setCustomFormShowCustomCtx(true);
+                      return;
+                    }
+                    setCustomFormShowCustomCtx(false);
+                    setCustomFormContextWindow(v);
+                  }}
+                  disabled={customSaving}
+                  label={t("models.customFieldContext")}
+                />
+                {customFormShowCustomCtx && (
+                  <input
+                    className="m3-input models-input-narrow"
+                    inputMode="numeric"
+                    value={customFormContextWindow}
+                    onChange={e => setCustomFormContextWindow(e.target.value)}
+                    disabled={customSaving}
+                    placeholder={t("models.customPlaceholder")}
+                    aria-label={t("models.customFieldContext")}
+                  />
+                )}
+              </div>
+            </label>
+
+            <div className="text-label" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("models.customFieldModalities")}
+              <div className="row" style={{ gap: 8 }}>
+                {(["text", "image", "audio"] as const).map(mod => (
+                  <label key={mod} className="row" style={{ gap: 4, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={customFormModalities.includes(mod)}
+                      onChange={e => {
+                        setCustomFormModalities(prev => (
+                          e.target.checked ? [...prev, mod] : prev.filter(m => m !== mod)
+                        ));
+                      }}
+                      disabled={customSaving}
+                    />
+                    <span className="text-control">{mod}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
     </>
   );
@@ -1213,8 +1551,9 @@ export default function Models({ apiBase }: { apiBase: string }) {
           <span className="muted mono text-label">{t("models.active", { active: effectiveVisibleCount, total: models.length })}</span>
         </div>
       </div>
-      <p className="page-sub">{t("models.subtitle")}</p>
-      {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
+      {/* The prototype leads the screen with body-large copy at a 74ch measure. */}
+      <p className="m3-page-lead" style={{ whiteSpace: "pre-line" }}>{t("models.subtitle")}</p>
+      {loadError && <Banner tone="error">{t("models.loadFail")}</Banner>}
       <div className="models-workspace-root">
         <aside className="models-workspace-rail" aria-label={t("nav.models")}>
           <div className="models-workspace-rail-header">
@@ -1257,6 +1596,8 @@ export default function Models({ apiBase }: { apiBase: string }) {
           </div>
         </aside>
         <section className="models-workspace-main" aria-label={t("models.workspace.mainAria")}>
+          {searchBlock}
+          {settingsSearchBlock}
           {controlsBlock}
           {combosBlock}
           {collapseControls}
@@ -1265,6 +1606,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
             visibleGroups.map(group => renderGroup(group))
           }
           {groups.length === 0 && emptyStateBlock}
+          {groups.length > 0 && visibleGroups.length === 0 && noMatchBlock}
         </section>
       </div>
       {modalsBlock}

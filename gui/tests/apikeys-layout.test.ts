@@ -62,12 +62,50 @@ test("ApiKeys stacked layout keeps endpoint, generate, keys table, and usage pan
   expect(page).toContain("classifyExternalModel(row)");
   expect(page).toContain('from "../api-access-models"');
 
-  // Inline per-row delete confirmation, not a workspace detail pane.
-  expect(src).toContain("confirmDelete === k.id");
+  // Per-row delete still gates on a confirmation owned by this screen — now the
+  // prototype's blocking dialog, still not a workspace detail pane. The dialog
+  // names the key, states what stops working, and says it cannot be undone.
+  expect(src).toContain("ApiKeysDeleteDialog");
+  expect(src).toContain("keys.find(k => k.id === confirmDelete)");
+  expect(src).toContain('t("api.deleteConfirmBody"');
+  expect(src).toContain('t("api.deleteConfirmAction")');
+  expect(src).toContain('t("codexAuth.irreversible")');
   expect(src).toContain('t("api.noKeys")');
   expect(src).toContain('t("api.colKey")');
   // Double-create guard kept from the workspace era.
   expect(page).toContain("if (creatingRef.current) return false");
+});
+
+test("the model catalog search keeps plain text default with a regex opt-in and builder", async () => {
+  const page = await Bun.file(new URL("../src/pages/ApiKeys.tsx", import.meta.url)).text();
+  const panels = await Bun.file(new URL("../src/pages/api-keys-panels.tsx", import.meta.url)).text();
+
+  // The search bar is a landmark, offers `.*` as an opt-in, and hands off to the builder.
+  expect(panels).toContain('role="search"');
+  expect(panels).toContain('t("search.regexHint")');
+  expect(panels).toContain('t("regex.invalid")');
+  // The builder is anchored beside this field, not a link to the builder page:
+  // `<a href="#regex">` navigated the whole window away from the query being typed.
+  expect(panels).toContain("<RegexBuilderButton");
+  expect(panels).not.toContain('href="#regex"');
+
+  // Plain text is what an untouched search bar does.
+  expect(page).toContain("useState(false)");
+  // Locally evaluated, pattern-capped, and no `g` flag whose lastIndex would
+  // leak between rows and silently drop every other match.
+  expect(page).toContain('new RegExp(query.slice(0, 400), "i")');
+});
+
+test("key create and delete record past-tense revisions and announce themselves", async () => {
+  const page = await Bun.file(new URL("../src/pages/ApiKeys.tsx", import.meta.url)).text();
+
+  expect(page).toContain('summary: t("api.keyCreated")');
+  expect(page).toContain('summary: t("api.keyDeleted")');
+  expect(page).toContain('title: t("api.keyCreated")');
+  expect(page).toContain('title: t("api.keyDeleted")');
+  // The revision keeps a restorable `before` without ever storing the secret.
+  expect(page).toContain("JSON.stringify({ name: deleted.name, prefix: deleted.prefix })");
+  expect(page).not.toContain("data.key,");
 });
 
 test("retired apikeys workspace i18n keys stay removed from every locale", async () => {

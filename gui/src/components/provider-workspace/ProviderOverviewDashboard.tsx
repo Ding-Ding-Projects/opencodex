@@ -89,7 +89,7 @@ export default function ProviderOverviewDashboard({
           <p className="muted pws-dashboard-subtitle">{t("pws.dashboard.subtitle")}</p>
         </div>
         {onEditConfig && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onEditConfig}>
+          <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={onEditConfig}>
             {t("prov.editJson")}
           </button>
         )}

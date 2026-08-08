@@ -17,7 +17,7 @@ export function StrategySeg({
 }) {
   const t = useT();
   return (
-    <div className="cwi-strategy-seg" role="radiogroup" aria-label={t("cws.strategy")}>
+    <div className="m3-segmented" role="radiogroup" aria-label={t("cws.strategy")}>
       {([
         ["failover", "cws.strategy.failover"],
         ["round-robin", "cws.strategy.roundRobin"],
@@ -27,7 +27,7 @@ export function StrategySeg({
           type="button"
           role="radio"
           aria-checked={value === id}
-          className={`btn btn-sm${value === id ? " btn-primary" : " btn-ghost"}`}
+          className={`m3-segment${value === id ? " selected" : ""}`}
           disabled={disabled}
           onClick={() => onChange(id)}
         >
@@ -59,7 +59,7 @@ export function EffortSelect({
     <>
       <select
         id={id}
-        className="input"
+        className="m3-input"
         value={value ?? ""}
         disabled={disabled}
         aria-label={t("cws.field.defaultEffort")}
@@ -74,7 +74,7 @@ export function EffortSelect({
         ))}
       </select>
       {unsupported ? (
-        <p className="muted" style={{ fontSize: 12, margin: "4px 0 0", color: "var(--danger, #b42318)" }}>
+        <p className="cwi-effort-warning">
           {t("cws.field.defaultEffortUnsupported")}
         </p>
       ) : null}
@@ -169,25 +169,25 @@ export function TargetEditor({
             <div className="cwi-target-reorder">
               <button
                 type="button"
-                className="btn btn-ghost btn-sm"
+                className="cwi-icon-btn"
                 disabled={index === 0}
                 aria-label={t("cws.target.moveUp")}
                 onClick={() => reorder(index, index - 1)}
               >
-                <IconArrowUp width={14} height={14} aria-hidden="true" />
+                <IconArrowUp width={16} height={16} aria-hidden="true" />
               </button>
               <button
                 type="button"
-                className="btn btn-ghost btn-sm"
+                className="cwi-icon-btn"
                 disabled={index === targets.length - 1}
                 aria-label={t("cws.target.moveDown")}
                 onClick={() => reorder(index, index + 1)}
               >
-                <IconArrowDown width={14} height={14} aria-hidden="true" />
+                <IconArrowDown width={16} height={16} aria-hidden="true" />
               </button>
             </div>
             <select
-              className="input"
+              className="m3-input"
               value={row.provider}
               aria-label={t("cws.target.provider")}
               onChange={(e) => {
@@ -204,7 +204,7 @@ export function TargetEditor({
               ))}
             </select>
             <select
-              className="input"
+              className="m3-input"
               value={row.model}
               disabled={modelSelectDisabled}
               aria-label={t("cws.target.model")}
@@ -223,7 +223,7 @@ export function TargetEditor({
             </select>
             {strategy === "round-robin" && (
               <input
-                className="input mono"
+                className="m3-input mono"
                 type="number"
                 min={1}
                 max={10000}
@@ -239,12 +239,12 @@ export function TargetEditor({
             <div className="cwi-target-actions">
               <button
                 type="button"
-                className="btn btn-ghost btn-sm"
+                className="cwi-icon-btn cwi-icon-btn--danger"
                 disabled={targets.length <= 1}
                 onClick={() => onChange(targets.filter((_, i) => i !== index))}
                 aria-label={t("common.remove")}
               >
-                <IconTrash width={14} height={14} />
+                <IconTrash width={18} height={18} aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -252,11 +252,11 @@ export function TargetEditor({
       })}
       <button
         type="button"
-        className="btn btn-ghost btn-sm"
+        className="m3-btn m3-btn--tonal"
         style={{ alignSelf: "flex-start" }}
         onClick={() => onChange([...targets, newComboTarget()])}
       >
-        <IconPlus width={14} height={14} /> {t("cws.target.add")}
+        <IconPlus aria-hidden="true" /> {t("cws.target.add")}
       </button>
     </div>
   );

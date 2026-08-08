@@ -1,16 +1,9 @@
 import type { ComboItem } from "../combo-workspace-data";
-import { buildComboAttention, groupCombos } from "../combo-workspace-data";
+import { buildComboAttention } from "../combo-workspace-data";
 import { IconAlert, IconChevron, IconPlus } from "../icons";
-import { useT, type TFn } from "../i18n/shared";
-
-function attentionCopy(
-  reason: "empty-targets" | "few-targets" | "catalog-omitted",
-  t: TFn,
-): string {
-  if (reason === "empty-targets") return t("cws.attention.empty");
-  if (reason === "catalog-omitted") return t("cws.attention.catalogOmitted");
-  return t("cws.attention.few");
-}
+import { useT } from "../i18n/shared";
+import { Button, Card } from "../shell/m3-ui";
+import { attentionCopy } from "./combo-workspace-attention";
 
 export function OverviewPanel({
   combos,
@@ -24,32 +17,25 @@ export function OverviewPanel({
   onAdd: () => void;
 }) {
   const t = useT();
-  const sections = groupCombos(combos);
   const attention = buildComboAttention(combos, { cataloguedComboIds });
 
   return (
     <div className="combos-workspace-overview">
       <div className="combos-workspace-overview-head">
         <h2 className="combos-workspace-overview-title">{t("cws.overviewTitle")}</h2>
-        <button type="button" className="btn btn-primary btn-sm" onClick={onAdd}>
-          <IconPlus width={14} height={14} /> {t("cws.add")}
-        </button>
+        <Button variant="filled" onClick={onAdd}>
+          <IconPlus aria-hidden="true" /> {t("cws.add")}
+        </Button>
       </div>
-      <p className="muted" style={{ marginTop: 0, maxWidth: "62ch" }}>{t("cws.overviewBlurb")}</p>
-      <div className="cwi-count-strip">
-        <div className="cwi-count-pill"><strong>{combos.length}</strong><span>{t("cws.count.total")}</span></div>
-        <div className="cwi-count-pill"><strong>{sections.failover.length}</strong><span>{t("cws.count.failover")}</span></div>
-        <div className="cwi-count-pill"><strong>{sections.roundRobin.length}</strong><span>{t("cws.count.roundRobin")}</span></div>
-      </div>
+      {/* The blurb and the count strip moved up to the page banner in Combos.tsx,
+          where the prototype puts them — repeating them here would double them up. */}
 
-      <section className="pwi-section" aria-label={t("cws.howTitle")}>
-        <h3 className="pwi-section-title">{t("cws.howTitle")}</h3>
-        <p className="muted" style={{ margin: 0 }}>{t("cws.howBody")}</p>
-      </section>
+      <Card title={t("cws.howTitle")}>
+        <p className="m3-card-sub" style={{ margin: 0 }}>{t("cws.howBody")}</p>
+      </Card>
 
       {attention.length > 0 && (
-        <section className="pwi-section" aria-label={t("cws.attentionTitle")}>
-          <h3 className="pwi-section-title">{t("cws.attentionTitle")}</h3>
+        <Card title={t("cws.attentionTitle")}>
           <div className="cwi-attention-list">
             {attention.map((item) => (
               <button
@@ -58,14 +44,14 @@ export function OverviewPanel({
                 className="cwi-attention-row"
                 onClick={() => onSelect(item.id)}
               >
-                <IconAlert width={14} height={14} aria-hidden="true" />
-                <code className="chip">{item.model}</code>
-                <span className="muted">{attentionCopy(item.reason, t)}</span>
-                <IconChevron width={14} height={14} style={{ marginLeft: "auto" }} aria-hidden="true" />
+                <IconAlert width={18} height={18} aria-hidden="true" />
+                <span className="cwi-attention-model">{item.model}</span>
+                <span>{attentionCopy(item.reason, t)}</span>
+                <IconChevron width={18} height={18} style={{ marginLeft: "auto", flex: "0 0 auto" }} aria-hidden="true" />
               </button>
             ))}
           </div>
-        </section>
+        </Card>
       )}
     </div>
   );

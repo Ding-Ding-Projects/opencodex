@@ -41,15 +41,15 @@ export function CodexAutoSwitchSetting({
     : "codex-auto-switch-desc";
   return (
     <div
-      className="card card-row codex-auto-switch-card"
-      style={{ marginTop: 16 }}
+      className="m3-card codex-auto-switch-card"
+      style={{ display: "flex", alignItems: "center", marginTop: "var(--sp-3)" }}
       aria-busy={saving || (!ready && !loadError)}
     >
       <div className="codex-auto-switch-copy">
-        <strong>{t("codexAuth.autoSwitch")}</strong>
+        <strong className="m3-card-title">{t("codexAuth.autoSwitch")}</strong>
         <div
           id="codex-auto-switch-desc"
-          className="card-sub"
+          className="card-sub m3-card-sub"
           role={!ready ? (loadError ? "alert" : "status") : undefined}
         >
           {!ready
@@ -77,7 +77,7 @@ export function CodexAutoSwitchSetting({
               <span className="field-label">{t("codexAuth.autoSwitchThreshold")}</span>
               <span className="codex-auto-switch-input-wrap">
                 <input
-                  className="input mono codex-auto-switch-input"
+                  className="m3-input mono codex-auto-switch-input"
                   type="number"
                   min={1}
                   max={100}
@@ -122,6 +122,11 @@ export function CodexAutoSwitchSetting({
               void onToggle();
             }}
             disabled={saving}
+            // M3 restyle: `role="switch"` + `aria-checked` is the accessibility contract
+            // for this control. `aria-pressed` stays because the saved-state assertions in
+            // codex-account-auto-switch / codex-auto-switch-controller pin it.
+            role="switch"
+            aria-checked={enabled}
             aria-pressed={enabled}
             aria-label={t("codexAuth.autoSwitch")}
             aria-describedby={describedBy}
@@ -132,7 +137,7 @@ export function CodexAutoSwitchSetting({
         </div>
       ) : loadError ? (
         <div className="codex-auto-switch-controls">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>
+          <button type="button" className="m3-btn m3-btn--text" onClick={onRetry}>
             {t("pws.retryAccounts")}
           </button>
         </div>

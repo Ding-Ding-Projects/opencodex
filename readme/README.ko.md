@@ -245,7 +245,8 @@ opencodex는 두 가지 동작을 분리해서 유지합니다:
 
 ```bash
 ocx init                       # 대화형 설정
-ocx start [--port 10100]       # 프록시 시작; 포트가 사용 중이면 빈 포트로 자동 전환
+ocx start                      # 자동 시작; 우선 포트가 사용 중이면 빈 포트로 전환
+ocx start --port 10100         # 명시 고정; 다른 포트로 이동하지 않음
 ocx stop                       # 프록시 중지 + Codex 원래 설정 복원
 ocx restore                    # 중지 없이 복원 (별칭: ocx eject)
 ocx uninstall                  # service/shim/config 제거 + Codex 원본 복원
@@ -305,8 +306,10 @@ shim을 복구합니다. 아직 변경 중인 런처는 건드리지 않고 이�
 요청한 명령을 실패시키지 않고 경고만 출력하며, 수동 대체 명령은 `ocx codex-shim install`입니다.
 자동 복구를 끄려면 `codexShimAutoRestore`를 `false`로 설정하거나 프로세스에
 `OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0`을 설정하세요.
-shim 자동 시작은 기본으로 켜져 있으며 GUI 대시보드에서 끌 수 있습니다. 설정된 프록시 포트가 이미 사용
-중이면 `ocx start`가 자동으로 다른 빈 로컬 포트를 고르고 Codex 설정도 그 포트로 갱신합니다.
+shim 자동 시작은 기본으로 켜져 있으며 GUI 대시보드에서 끌 수 있습니다. `--port` 없는 자동 시작은
+설정 포트를 우선값으로 취급하고, 사용 중이면 다른 빈 포트를 runtime state에 기록해 Codex를 실제
+listener로 보냅니다. 명시적인 `ocx start --port`, 업데이트 인계, 대시보드 재시작은 같은 포트를
+고정하며 다른 포트로 이동하지 않고 실패합니다.
 
 ### 삭제
 
@@ -392,9 +395,9 @@ WebSocket 전송은 기본적으로 꺼져 있습니다. Codex가 HTTP/SSE 대�
 
 ### 원격 접근
 
-기본적으로 opencodex는 `127.0.0.1`(루프백)에 바인딩되며 별도 인증이 필요 없습니다.
-`"hostname": "0.0.0.0"`으로 LAN에 노출할 경우, opencodex는 관리 API(`/api/*`)와 데이터 플레인
-(`/v1/responses`, `/v1/images/generations`, `/v1/images/edits`) 모두에 bearer 토큰을 요구합니다:
+기본적으로 opencodex는 `127.0.0.1`(루프백)에 바인딩됩니다. `"hostname": "0.0.0.0"`으로 LAN에
+노출할 경우 data plane(`/v1/responses`, `/v1/images/generations`, `/v1/images/edits`)은 전용 bearer
+credential을 요구합니다:
 
 ```bash
 export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
@@ -409,7 +412,12 @@ ocx start
 x-opencodex-api-key: your-secret-token
 ```
 
-토큰은 타이밍 공격 방지를 위해 상수 시간으로 비교됩니다.
+대시보드와 `/api/*`는 별도 ADMIN token을 사용합니다. 다른 OpenCodex에 연결할 때 원격 IP/호스트
+이름과 `ocx host status`(또는 `ocx status`)에 표시된 실제 실행 포트를 입력하고, 대상 prompt에 그
+프록시의 ADMIN token을 입력하세요. data-plane
+key는 ADMIN 인증에 쓸 수 없고 연결 dialog는 token을 URL에 넣거나 저장하지 않습니다. HTTP는
+암호화되지 않으므로 신뢰할 수 있는 LAN에서만 직접 사용하고 그 밖에서는 SSH tunnel을 우선하세요.
+token은 타이밍 공격 방지를 위해 상수 시간으로 비교됩니다.
 
 opencodex는 Codex resume 히스토리를 자동으로 remap해, 오래된 OpenAI 채팅과 opencodex가 만든 프로젝트
 스레드가 프록시 활성 동안 Codex App에 계속 보이도록 합니다. 원본 provider/source 메타데이터는

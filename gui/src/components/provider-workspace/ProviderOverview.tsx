@@ -16,12 +16,16 @@ export default function ProviderOverview({
   item, usageTotals, quotaReport, oauthEmail,
   onEditSettings, onViewUsage, onUpdateProvider,
   onReauthenticate, onCancelLogin, reauthBusy = false,
-  accountPanel,
+  accountPanel, modelCount, modelsLoading = false,
 }: {
   item: WorkspaceItem;
   usageTotals?: ProviderUsageTotals;
   quotaReport?: ProviderQuotaReportView;
   oauthEmail?: string;
+  /** Discovered/configured model count — the same number the rail row shows. */
+  modelCount?: number;
+  /** Suppresses the count row while discovery is in flight: "0" would be a lie, not a fact. */
+  modelsLoading?: boolean;
   onEditSettings?: () => void;
   onViewUsage?: () => void;
   onUpdateProvider?: (name: string, patch: ProviderUpdatePatch) => Promise<{ ok: boolean; error?: string }>;
@@ -63,6 +67,13 @@ export default function ProviderOverview({
               {statusText}
             </dd>
           </div>
+          {/* The prototype's Connection block lists the adapter next to the base URL —
+              which of the four wire protocols this endpoint speaks is the first thing
+              anyone debugging a 400 wants to see, and it was only visible on Settings. */}
+          <div className="pws-kv-row">
+            <dt>{t("modal.adapter")}</dt>
+            <dd><code>{item.adapter?.trim() ? item.adapter : "—"}</code></dd>
+          </div>
           <div className="pws-kv-row">
             <dt>{t("modal.baseUrl")}</dt>
             <dd><code>{item.baseUrl?.trim() ? item.baseUrl : "—"}</code></dd>
@@ -75,6 +86,12 @@ export default function ProviderOverview({
             <dt>{t("modal.defaultModel")}</dt>
             <dd>{item.defaultModel ?? <span className="muted">—</span>}</dd>
           </div>
+          {!modelsLoading && modelCount !== undefined && (
+            <div className="pws-kv-row">
+              <dt>{t("pws.tab.models")}</dt>
+              <dd className="pws-kv-mono">{modelCount}</dd>
+            </div>
+          )}
           {item.note && (
             <div className="pws-kv-row">
               <dt>{t("pws.cell.note")}</dt>
@@ -83,7 +100,7 @@ export default function ProviderOverview({
           )}
         </dl>
         {onEditSettings && (
-          <button type="button" className="link-btn pws-edit-settings-link" onClick={onEditSettings}>
+          <button type="button" className="m3-btn m3-btn--text pws-btn-sm pws-edit-settings-link" onClick={onEditSettings}>
             {t("pws.editSettings")}
           </button>
         )}
@@ -110,7 +127,7 @@ export default function ProviderOverview({
                 {onReauthenticate && (
                   <button
                     type="button"
-                    className="btn btn-primary btn-sm"
+                    className="m3-btn m3-btn--filled pws-btn-sm"
                     disabled={reauthBusy}
                     onClick={() => onReauthenticate()}
                   >
@@ -118,7 +135,7 @@ export default function ProviderOverview({
                   </button>
                 )}
                 {reauthBusy && onCancelLogin && (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCancelLogin()}>
+                  <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={() => onCancelLogin()}>
                     {t("common.cancel")}
                   </button>
                 )}
@@ -175,7 +192,7 @@ export default function ProviderOverview({
           )}
         </dl>
         {onViewUsage && (
-          <button type="button" className="link-btn pws-view-usage-link" onClick={onViewUsage}>
+          <button type="button" className="m3-btn m3-btn--text pws-btn-sm pws-view-usage-link" onClick={onViewUsage}>
             {t("pws.viewUsage")} →
           </button>
         )}

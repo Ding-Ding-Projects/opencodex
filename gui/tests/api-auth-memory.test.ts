@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import { installApiAuthFetch, resetApiAuthFetchForTests } from "../src/api";
+import { installApiAuthFetch, resetApiAuthFetchForTests, setTokenRequester } from "../src/api";
 
 const LEGACY_TOKEN_KEY = "opencodex-api-token";
 const globals = ["document", "window", "navigator", "sessionStorage", "fetch"] as const;
@@ -79,6 +79,32 @@ test("prompted API tokens stay memory-only and are not written to sessionStorage
   expect(res.status).toBe(200);
   expect(authorized).toBe(true);
   expect(sessionStorage.getItem(LEGACY_TOKEN_KEY)).toBeNull();
+  expect(sessionStorage.length).toBe(0);
+});
+
+test("the registered M3 requester replaces window.prompt without persisting its token", async () => {
+  let requestedMessage = "";
+  let browserPromptCalls = 0;
+  window.prompt = () => {
+    browserPromptCalls += 1;
+    return null;
+  };
+  setTokenRequester(async message => {
+    requestedMessage = message;
+    return "m3-token";
+  });
+  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    return headers.get("X-OpenCodex-API-Key") === "m3-token"
+      ? new Response("{}", { status: 200 })
+      : new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(browserPromptCalls).toBe(0);
+  expect(requestedMessage).toContain("management token");
   expect(sessionStorage.length).toBe(0);
 });
 

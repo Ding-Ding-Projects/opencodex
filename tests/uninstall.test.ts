@@ -36,17 +36,22 @@ describe("full uninstall command", () => {
     expect(service).toContain("uninstallSystemd");
   });
 
-  test("full uninstall kills the tracked proxy before deleting service assets", async () => {
+  test("full uninstall proves manager and proxy stop before deleting service assets", async () => {
     const cli = await readText("src/cli/index.ts");
-    const uninstallBody = cli.slice(cli.indexOf("async function handleUninstall()"), cli.indexOf("type HealthCheck"));
+    const uninstallBody = cli.slice(cli.indexOf("async function handleUninstall()"), cli.indexOf("async function handleStatus()"));
+    const proxyStop = cli.slice(
+      cli.indexOf("async function stopTrackedProxyForCli()"),
+      cli.indexOf("function reportUnsafeStop("),
+    );
 
-    expect(uninstallBody).toContain('runStep("service stopped"');
-    expect(uninstallBody).toContain('runStep("proxy stopped"');
+    expect(uninstallBody).toContain("await runStopSequence({");
+    expect(uninstallBody).toContain("stopManager:");
+    expect(uninstallBody).toContain("stopProxy:");
+    expect(uninstallBody).toContain("if (!stopOutcome.safeToRestart)");
     expect(uninstallBody).toContain('runStep("service removed"');
-    expect(uninstallBody).toContain("await stopProxy(pid);");
+    expect(proxyStop).toContain("await stopProxy(pid);");
     expect(uninstallBody).toContain("uninstallServiceIfInstalled()");
-    expect(uninstallBody.indexOf('runStep("service stopped"')).toBeLessThan(uninstallBody.indexOf('runStep("proxy stopped"'));
-    expect(uninstallBody.indexOf('runStep("proxy stopped"')).toBeLessThan(uninstallBody.indexOf('runStep("service removed"'));
-    expect(uninstallBody.indexOf("await stopProxy(pid);")).toBeLessThan(uninstallBody.indexOf("uninstallServiceIfInstalled()"));
+    expect(uninstallBody.indexOf("stopManager:")).toBeLessThan(uninstallBody.indexOf("stopProxy:"));
+    expect(uninstallBody.indexOf("if (!stopOutcome.safeToRestart)")).toBeLessThan(uninstallBody.indexOf('runStep("service removed"'));
   });
 });

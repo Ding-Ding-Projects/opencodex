@@ -86,6 +86,11 @@ describe("headless GUI parity CLI", () => {
       ["/api/usage", "ocx observe usage"],
       ["/api/v2", "ocx v2/agent"],
       ["/api/windows-tray", "ocx tray"],
+      ["/api/changelog", "ocx changelog"],
+      ["/api/export", "ocx export data"],
+      ["/api/host", "ocx host/export/restart"],
+      ["/api/launch", "ocx launch"],
+      ["/api/terminal", "ocx terminal"],
     ];
     const uncovered = [...endpoints].filter(endpoint => !coverage.some(([prefix]) => endpoint === prefix || endpoint.startsWith(prefix)));
     expect(uncovered).toEqual([]);

@@ -109,10 +109,27 @@ export function isAllowedManagementOrigin(req: Request, config: OcxConfig): bool
   return !origin || origin === requestOrigin;
 }
 
-export function browserSecurityHeaders(): Record<string, string> {
+export function browserSecurityHeaders(scriptNonce?: string): Record<string, string> {
+  const scriptSources = ["'self'", ...(scriptNonce ? [`'nonce-${scriptNonce}'`] : [])].join(" ");
   return {
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "base-uri 'none'",
+      `script-src ${scriptSources}`,
+      // The React surface uses style props extensively; scripts still receive no
+      // unsafe-inline escape hatch and every production script is same-origin.
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "font-src 'self'",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "frame-src 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+    ].join("; "),
   };
 }
 

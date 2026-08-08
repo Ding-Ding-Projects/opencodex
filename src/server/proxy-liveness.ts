@@ -27,7 +27,7 @@ export interface LivenessIo {
    * Destructive callers only ever receive pids that passed this gate.
    */
   verifyPidFn?: (candidatePid: number) => number | null;
-  readRuntimeFn?: (pid?: number) => { pid?: number; port: number; hostname?: string } | null;
+  readRuntimeFn?: (pid?: number) => { pid?: number; port: number; hostname?: string; supervised?: boolean } | null;
   configFn?: () => { port?: number; hostname?: string };
   timeoutMs?: number;
 }
@@ -39,6 +39,8 @@ export interface LiveProxy {
   hostname?: string;
   /** Whether the successful probe used runtime-port metadata or the configured listen port. */
   source: "runtime" | "config";
+  /** Correlated from the PID-matched runtime record, never inferred from installation. */
+  supervised?: boolean;
 }
 
 /**
@@ -120,7 +122,16 @@ export async function findLiveProxy(io: LivenessIo = {}): Promise<LiveProxy | nu
         // healthz confirmed the pid itself → trusted; a pidless legacy body did not,
         // so the cheap pid must pass full identity verification before it is returned.
         const trusted = identity.pid === pid ? pid : killablePid(pid);
-        return { pid: trusted, port: runtime.port, hostname: runtime.hostname, source: "runtime" };
+        return {
+          pid: trusted,
+          port: runtime.port,
+          hostname: runtime.hostname,
+          source: "runtime",
+          // Service ownership is meaningful only when this exact runtime PID was
+          // verified by healthz or the process-identity fallback. A stale marker
+          // beside a PID-less legacy response must remain ordinary liveness only.
+          ...(runtime.supervised === true && trusted !== null ? { supervised: true as const } : {}),
+        };
       }
     }
   }
@@ -136,7 +147,13 @@ export async function findLiveProxy(io: LivenessIo = {}): Promise<LiveProxy | nu
     // (its process dead, the port reused by a pidless legacy proxy) — synthesizing it
     // would hand destructive callers (stopProxy → kill fallback) a reusable pid.
     if (identity) {
-      return { pid: identity.pid ?? null, port: record.port, hostname: record.hostname, source: "runtime" };
+      return {
+        pid: identity.pid ?? null,
+        port: record.port,
+        hostname: record.hostname,
+        source: "runtime",
+        ...(record.supervised === true && identity.pid !== null ? { supervised: true as const } : {}),
+      };
     }
   }
 

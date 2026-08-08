@@ -37,7 +37,11 @@ test("every locale carries the auth-mode keys", async () => {
 // sticky manual mode forever (devlog 260726_claude_auth_auto/002 §3).
 test("the auth-mode select offers auto first", async () => {
   const section = await read("../src/pages/claude-code-sections.tsx");
-  const optionsBlock = section.slice(section.indexOf("claude.authMode\")"), section.indexOf("claude.effectiveMode.label"));
+  // Bounded by the auth-mode row's own copy keys. It used to slice up to the
+  // effective-mode row, which stopped bounding anything once that row moved above the
+  // auth-mode row in the M3 card split — the option order is what matters, not the
+  // neighbouring row.
+  const optionsBlock = section.slice(section.indexOf("claude.authModeHint"), section.indexOf("claude.fastMode\")"));
   expect(optionsBlock).toContain("claude.authModeAuto");
   expect(optionsBlock.indexOf("claude.authModeAuto")).toBeLessThan(optionsBlock.indexOf("claude.authModeSubscription"));
 });

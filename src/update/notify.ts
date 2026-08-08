@@ -118,7 +118,7 @@ export function isSourceBuildVersion(v: string): boolean {
 
 /** The interactive/TTY + install-method gate shared with the star prompt. */
 function interactiveGuardOk(): boolean {
-  return !(process.env.OCX_SERVICE || !process.stdin.isTTY || !process.stdout.isTTY);
+  return !(process.env.OCX_SERVICE || process.env.OCX_BACKGROUND || !process.stdin.isTTY || !process.stdout.isTTY);
 }
 
 /**
@@ -168,7 +168,7 @@ export function triggerBackgroundRefreshIfStale(channel: Channel, cache: Version
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, OCX_SERVICE: "1" }, // never let the helper prompt
+      env: { ...process.env, OCX_BACKGROUND: "1" }, // never let the helper prompt
     });
     child.unref();
   } catch {

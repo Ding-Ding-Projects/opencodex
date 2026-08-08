@@ -44,8 +44,10 @@ ocx start --port 8080
 - 在 provider 支持时发现实时模型，并**把原生与已路由条目同步进 Codex 的模型目录**，以及
 - 在 `http://localhost:<port>/v1` 上监听。
 
-如果请求的端口已被占用，`ocx start` 会选择一个空闲端口，将其写入 `runtime-port.json`，并更新
-Codex 配置以使用实际监听端口。
+不带 `--port` 的自动启动会把配置端口当作首选值。若该端口被占用，opencodex 会把一个空闲端口
+写入 `runtime-port.json`，并让 Codex 使用 identity-verified 的实际 listener，而不改写配置中的
+首选值。`ocx start --port 8080` 是硬性固定；若该端口不可用则失败，不会切换。更新交接与仪表盘
+重启同样会固定当前实时端口。
 
 检查它:
 

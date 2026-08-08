@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
-import { EmptyState } from "../ui";
-import { IconRefresh } from "../icons";
+import { Button, Chip, Dialog, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
+import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh } from "../icons";
 import { formatBytes } from "../format-bytes";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 
 interface StorageLargestEntry {
   path: string;
@@ -108,6 +111,179 @@ const BUCKET_TKEYS: Record<string, TKey> = {
 
 const PRESETS = [10, 25, 50] as const;
 
+/** Shared presentation constants — tokens only, no literal colours. */
+const SECTION_GAP: CSSProperties = { marginTop: "var(--sp-3)" };
+const NUM_CELL: CSSProperties = { textAlign: "right", fontVariantNumeric: "tabular-nums" };
+const MUTED_CELL: CSSProperties = { color: "var(--m3-on-surface-variant)" };
+const CARD_BODY: CSSProperties = { marginTop: "var(--sp-2)" };
+const TABLE_WRAP: CSSProperties = { overflowX: "auto", marginTop: "var(--sp-2)" };
+const ERROR_TEXT: CSSProperties = { marginTop: "var(--sp-2)", color: "var(--m3-error)" };
+const ESTIMATE_TEXT: CSSProperties = {
+  margin: 0,
+  marginTop: "var(--sp-2)",
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-label-m)",
+  color: "var(--m3-on-surface-variant)",
+};
+const BAR_TRACK: CSSProperties = {
+  display: "block",
+  width: "100%",
+  minWidth: 64,
+  height: 8,
+  borderRadius: "var(--r-pill)",
+  background: "var(--m3-surface-container-highest)",
+  overflow: "hidden",
+};
+const BAR_FILL: CSSProperties = { display: "block", height: "100%", background: "var(--m3-primary)" };
+const STAT_GRID: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+  gap: "var(--sp-2)",
+  marginBottom: "var(--sp-4)",
+};
+/** Tonal stat tile matching the prototype's --h-stat cards. */
+const STAT_TILE: CSSProperties = {
+  minHeight: "var(--h-stat)",
+  padding: "var(--pad-card)",
+  borderRadius: "var(--r-l)",
+  background: "var(--m3-surface-container-low)",
+  border: "1px solid var(--m3-outline-variant)",
+  minWidth: 0,
+};
+/** Icon + label, exactly as the prototype leads each storage stat card. */
+const STAT_LABEL: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-l)",
+};
+const STAT_ICON: CSSProperties = { flex: "0 0 auto", width: 18, height: 18 };
+const STAT_VALUE: CSSProperties = {
+  marginTop: 6,
+  fontFamily: "var(--mono)",
+  fontSize: "var(--t-title-l)",
+  fontWeight: 500,
+  overflowWrap: "anywhere",
+};
+/** Reserved height so a hintless tile still lines up with its neighbours. */
+const STAT_HINT: CSSProperties = {
+  minHeight: 16,
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-s)",
+  fontFamily: "var(--mono)",
+  overflowWrap: "anywhere",
+};
+
+function StatTile({ label, value, hint, icon }: {
+  label: string;
+  value: string;
+  hint?: string;
+  icon?: ReactNode;
+}) {
+  return (
+    <div style={STAT_TILE}>
+      <div style={STAT_LABEL}>{icon}{label}</div>
+      <div style={STAT_VALUE}>{value}</div>
+      <div style={STAT_HINT}>{hint}</div>
+    </div>
+  );
+}
+
+/** One searchable setting on this surface: label, description and current value. */
+interface SettingEntry {
+  id: string;
+  section: string;
+  label: string;
+  desc?: string;
+  value?: string;
+}
+
+const SETTINGS_PATTERN_CAP = 400;
+
+/**
+ * Plain text by default; the regex engine is the browser's own `RegExp`, capped at
+ * 400 characters exactly as the regex builder screen documents. An invalid pattern
+ * matches nothing rather than throwing, and the caller shows the invalid notice.
+ */
+function makeSettingsMatcher(query: string, useRegex: boolean): { test: (text: string) => boolean; invalid: boolean } {
+  if (!query) return { test: () => true, invalid: false };
+  if (useRegex) {
+    try {
+      const re = new RegExp(query.slice(0, SETTINGS_PATTERN_CAP), "i");
+      return { test: text => re.test(text), invalid: false };
+    } catch {
+      return { test: () => false, invalid: true };
+    }
+  }
+  const needle = query.toLowerCase();
+  return { test: text => text.toLowerCase().includes(needle), invalid: false };
+}
+
+function settingText(entry: SettingEntry): string {
+  return [entry.label, entry.desc, entry.value].filter(Boolean).join(" ");
+}
+
+const SEARCH_ROW: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginTop: "var(--sp-3)",
+};
+const SEARCH_INPUT: CSSProperties = { flex: "1 1 auto", minWidth: 0, maxWidth: 420 };
+const SEARCH_NOTE: CSSProperties = {
+  marginTop: "var(--sp-2)",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-m)",
+};
+
+/**
+ * The settings-search row every settings surface carries: plain-text search by
+ * default, an explicit `.*` regex opt-in, and the full builder one click away —
+ * anchored to the field it belongs to rather than hidden behind a menu.
+ */
+function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, sample, t }: {
+  query: string;
+  onQuery: (next: string) => void;
+  regexOn: boolean;
+  onRegex: (next: boolean) => void;
+  invalid: boolean;
+  /** The rows this row's query is run over, handed to the builder to test against. */
+  sample: string;
+  t: TFn;
+}) {
+  return (
+    <div style={SEARCH_ROW}>
+      <TextInput
+        type="search"
+        value={query}
+        placeholder={t("settings.search")}
+        aria-label={t("settings.search")}
+        aria-invalid={invalid}
+        style={SEARCH_INPUT}
+        onChange={e => onQuery(e.target.value)}
+      />
+      <Chip
+        selected={regexOn}
+        title={t("regex.regexMode")}
+        aria-label={t("regex.regexMode")}
+        style={{ minHeight: 48, fontFamily: "var(--mono)" }}
+        onClick={() => onRegex(!regexOn)}
+      >
+        .*
+      </Chip>
+      <RegexBuilderButton
+        value={query}
+        onApply={pattern => onQuery(pattern)}
+        regex={regexOn}
+        onRegexChange={onRegex}
+        sample={sample}
+        label={t("settings.openBuilder")}
+      />
+    </div>
+  );
+}
+
 const localizedCatch = (e: unknown, fallback: string): string => {
   if (!(e instanceof Error)) return fallback;
   const msg = e.message;
@@ -132,33 +308,91 @@ function formatDate(ms: number | undefined, locale: Locale): string {
   return ms === undefined ? "—" : new Date(ms).toLocaleDateString(locale);
 }
 
-function BucketsTable({ buckets, locale, t }: { buckets: StorageBucket[]; locale: Locale; t: TFn }) {
+function BucketsTable({ buckets, totalBytes, locale, t }: {
+  buckets: StorageBucket[];
+  totalBytes: number;
+  locale: Locale;
+  t: TFn;
+}) {
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-buckets-title">
-      <h3 id="storage-buckets-title" className="panel-title">{t("storage.section.buckets")}</h3>
-      <div className="tbl-wrap">
-        <table className="tbl">
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-buckets-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h2 id="storage-buckets-title" className="m3-card-title">{t("storage.section.buckets")}</h2>
+        </div>
+      </header>
+      <div style={TABLE_WRAP}>
+        <table className="m3-table">
           <thead>
             <tr>
               <th>{t("storage.col.bucket")}</th>
-              <th className="num">{t("storage.col.size")}</th>
-              <th className="num">{t("storage.col.files")}</th>
+              <th>{t("storage.col.share")}</th>
+              <th style={NUM_CELL}>{t("storage.col.size")}</th>
+              <th style={NUM_CELL}>{t("storage.col.files")}</th>
               <th>{t("storage.col.oldest")}</th>
               <th>{t("storage.col.newest")}</th>
-              <th className="num">{t("storage.col.rows")}</th>
+              <th style={NUM_CELL}>{t("storage.col.rows")}</th>
             </tr>
           </thead>
           <tbody>
-            {buckets.map(bucket => (
-              <tr key={bucket.key}>
-                <td>{bucketLabel(bucket, t)}</td>
-                <td className="num mono">{formatBytes(bucket.bytes, locale)}</td>
-                <td className="num">{bucket.fileCount}</td>
-                <td className="muted">{formatDate(bucket.oldest, locale)}</td>
-                <td className="muted">{formatDate(bucket.newest, locale)}</td>
-                <td className="num mono">
-                  {bucket.rows === undefined ? "—" : bucket.rows === null ? t("storage.rows.unknown") : bucket.rows.toLocaleString(locale)}
-                </td>
+            {buckets.map(bucket => {
+              const share = totalBytes > 0 ? Math.round((bucket.bytes / totalBytes) * 100) : 0;
+              // A non-empty bucket that rounds to 0% still gets a visible sliver;
+              // aria keeps the true value so the bar never lies to a screen reader.
+              const width = bucket.bytes > 0 ? Math.max(2, share) : 0;
+              return (
+                <tr key={bucket.key}>
+                  <td>{bucketLabel(bucket, t)}</td>
+                  <td>
+                    <span
+                      role="progressbar"
+                      aria-valuenow={share}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={bucketLabel(bucket, t)}
+                      style={BAR_TRACK}
+                    >
+                      <span aria-hidden="true" style={{ ...BAR_FILL, width: `${width}%` }} />
+                    </span>
+                  </td>
+                  <td className="mono" style={NUM_CELL}>{formatBytes(bucket.bytes, locale)}</td>
+                  <td style={NUM_CELL}>{bucket.fileCount}</td>
+                  <td style={MUTED_CELL}>{formatDate(bucket.oldest, locale)}</td>
+                  <td style={MUTED_CELL}>{formatDate(bucket.newest, locale)}</td>
+                  <td className="mono" style={NUM_CELL}>
+                    {bucket.rows === undefined ? "—" : bucket.rows === null ? t("storage.rows.unknown") : bucket.rows.toLocaleString(locale)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function LargestFilesPanel({ buckets, locale, t }: { buckets: StorageBucket[]; locale: Locale; t: TFn }) {
+  // One flat list across every bucket, biggest first. The scanner's paths are
+  // CODEX_HOME-relative, so they stay unambiguous once the buckets are merged.
+  const files = buckets
+    .flatMap(bucket => bucket.largest ?? [])
+    .toSorted((a, b) => b.bytes - a.bytes);
+  if (files.length === 0) return null;
+  return (
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-largest-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h2 id="storage-largest-title" className="m3-card-title">{t("storage.section.largest")}</h2>
+        </div>
+      </header>
+      <div style={TABLE_WRAP}>
+        <table className="m3-table">
+          <tbody>
+            {files.map(entry => (
+              <tr key={entry.path}>
+                <td className="mono" style={{ overflowWrap: "anywhere" }}>{entry.path}</td>
+                <td className="mono" style={NUM_CELL}>{formatBytes(entry.bytes, locale)}</td>
               </tr>
             ))}
           </tbody>
@@ -168,78 +402,35 @@ function BucketsTable({ buckets, locale, t }: { buckets: StorageBucket[]; locale
   );
 }
 
-function LargestFilesPanel({ buckets, locale, t }: { buckets: StorageBucket[]; locale: Locale; t: TFn }) {
-  const withLargest = buckets.filter(bucket => (bucket.largest?.length ?? 0) > 0);
-  if (withLargest.length === 0) return null;
-  return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-largest-title">
-      <h3 id="storage-largest-title" className="panel-title">{t("storage.section.largest")}</h3>
-      {withLargest.map(bucket => (
-        <details key={bucket.key} style={{ marginTop: 8 }}>
-          <summary>{bucketLabel(bucket, t)}</summary>
-          <div className="tbl-wrap" style={{ marginTop: 8 }}>
-            <table className="tbl">
-              <tbody>
-                {bucket.largest!.map(entry => (
-                  <tr key={entry.path}>
-                    <td className="mono">{entry.path}</td>
-                    <td className="num mono">{formatBytes(entry.bytes, locale)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      ))}
-    </section>
-  );
-}
-
 function ArchivedCleanupPanel({
   apiBase,
   locale,
   t,
   onDone,
+  archivedBytes,
+  archivedCount,
 }: {
   apiBase: string;
   locale: Locale;
   t: TFn;
   onDone: () => void;
+  archivedBytes: number;
+  archivedCount: number;
 }) {
+  const { notify } = useNotifications();
   const [percent, setPercent] = useState(25);
   const [preview, setPreview] = useState<CleanupPreview | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [permanent, setPermanent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const busyRef = useRef(false);
 
+  // The permanent switch lives on the card, not in the dialog, so closing the
+  // dialog must not silently flip the mode the user already chose.
   const closeConfirm = useCallback((clearPreview = false) => {
     setConfirmOpen(false);
-    setPermanent(false);
     if (clearPreview) setPreview(null);
   }, []);
-
-  useEffect(() => {
-    busyRef.current = busy;
-  }, [busy]);
-
-  useEffect(() => {
-    if (!confirmOpen) return;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyRef.current) closeConfirm();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousFocusRef.current?.focus();
-    };
-  }, [confirmOpen, closeConfirm]);
 
   const mapCleanupError = (code: string | undefined, fallback?: string, trashDir?: string) => {
     switch (code) {
@@ -267,7 +458,6 @@ function ArchivedCleanupPanel({
   const runPreview = async () => {
     setBusy(true);
     setError(null);
-    setStatus(null);
     try {
       const res = await fetch(`${apiBase}/api/storage/cleanup/preview`, {
         method: "POST",
@@ -318,11 +508,17 @@ function ArchivedCleanupPanel({
         throw new Error(mapCleanupError(json.error, json.message, json.trashDir));
       }
       closeConfirm(true);
-      setStatus(
-        permanent
-          ? t("storage.cleanup.donePermanent", { count: String(json.count), size: formatBytes(json.bytes, locale) })
-          : t("storage.cleanup.doneQuarantine", { count: String(json.count), size: formatBytes(json.bytes, locale) }),
-      );
+      const done = permanent
+        ? t("storage.cleanup.donePermanent", { count: String(json.count), size: formatBytes(json.bytes, locale) })
+        : t("storage.cleanup.doneQuarantine", { count: String(json.count), size: formatBytes(json.bytes, locale) });
+      // Archived sessions are a user-visible record, so the cleanup is listed in
+      // Version history — quarantine is recoverable, permanent delete is not.
+      recordRevision({ scope: "settings", label: t("storage.cleanup.title"), summary: done });
+      notify({
+        tone: "success",
+        title: done,
+        body: permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote"),
+      });
       onDone();
     } catch (e) {
       // Keep the dialog open (except stale_preview) so the failure is visible.
@@ -333,106 +529,126 @@ function ArchivedCleanupPanel({
   };
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-cleanup-title">
-      <h3 id="storage-cleanup-title" className="panel-title">{t("storage.cleanup.title")}</h3>
-      <p className="muted" style={{ marginTop: 4 }}>{t("storage.cleanup.help")}</p>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 12 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 220px" }}>
-          <span className="muted">{t("storage.cleanup.percent", { percent: String(percent) })}</span>
-          <input
-            type="range"
-            min={1}
-            max={100}
-            value={percent}
-            onChange={e => setPercent(Number(e.target.value))}
-            disabled={busy}
-            style={{ flex: 1 }}
-            aria-label={t("storage.cleanup.slider")}
-          />
-        </label>
-        <div style={{ display: "flex", gap: 6 }}>
-          {PRESETS.map(p => (
-            <button
-              key={p}
-              type="button"
-              className={`btn btn-ghost btn-sm${percent === p ? " active" : ""}`}
-              disabled={busy}
-              onClick={() => setPercent(p)}
-            >
-              {formatPreset(p)}
-            </button>
-          ))}
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-cleanup-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h2 id="storage-cleanup-title" className="m3-card-title">{t("storage.cleanup.title")}</h2>
+          <p className="m3-card-sub">{t("storage.cleanup.help")}</p>
         </div>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void runPreview()}>
-          {t("storage.cleanup.preview")}
-        </button>
+      </header>
+
+      {/* Raw input rather than <Slider>: the primitive has no disabled prop and
+          the busy lock must stay exactly as it was. */}
+      <div className="m3-slider-row" style={CARD_BODY}>
+        <label className="m3-field-label" htmlFor="storage-cleanup-percent">{t("storage.cleanup.slider")}</label>
+        <input
+          id="storage-cleanup-percent"
+          className="m3-slider"
+          type="range"
+          min={1}
+          max={100}
+          value={percent}
+          onChange={e => setPercent(Number(e.target.value))}
+          disabled={busy}
+          aria-label={t("storage.cleanup.slider")}
+        />
+        <span className="m3-slider-value">{t("storage.cleanup.percent", { percent: String(percent) })}</span>
+      </div>
+      {/* Live estimate straight from the archived bucket the scan reported: what the
+          slider position would take. Approximate by construction — the server's own
+          preview is the authority, which is why the label carries a "~". */}
+      <p style={ESTIMATE_TEXT}>
+        {t("storage.cleanup.estimate", {
+          count: Math.round((archivedCount * percent) / 100).toLocaleString(locale),
+          size: formatBytes(Math.round((archivedBytes * percent) / 100), locale),
+        })}
+      </p>
+      <div className="m3-row" style={CARD_BODY}>
+        {PRESETS.map(p => (
+          <Chip
+            key={p}
+            selected={percent === p}
+            disabled={busy}
+            onClick={() => setPercent(p)}
+          >
+            {formatPreset(p)}
+          </Chip>
+        ))}
       </div>
 
-      {status && <p className="muted" style={{ marginTop: 12 }}>{status}</p>}
-      {error && !confirmOpen && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
+      <div className="m3-row m3-row--split" style={{ marginTop: "var(--sp-3)", alignItems: "flex-start" }}>
+        <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+          <div>{t("storage.cleanup.permanent")}</div>
+          <p className="m3-card-sub">{t("storage.cleanup.permanentWarn")}</p>
+        </div>
+        <Toggle
+          on={permanent}
+          disabled={busy}
+          onChange={next => setPermanent(next)}
+          label={t("storage.cleanup.permanent")}
+        />
+      </div>
+
+      {/* Filled, not danger: previewing deletes nothing. The destructive tone
+          belongs on the dialog's confirm, which is where the decision is made.
+
+          The prototype marks this button with the `cleaning_services` broom. The
+          icon set has no broom, and IconTrash would be a lie on a control whose
+          first act is to measure rather than delete — so this is IconDataUsage,
+          the share-of-storage wedge, which is exactly what the slider selects and
+          the preview reports. Swap it for the real broom when one exists. */}
+      <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
+        <Button variant="filled" disabled={busy} onClick={() => void runPreview()}>
+          <IconDataUsage aria-hidden="true" /> {t("storage.cleanup.previewAndClean")}
+        </Button>
+      </div>
+
+      {error && !confirmOpen && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
       {confirmOpen && preview && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="storage-cleanup-confirm-title"
-          onClick={() => !busy && closeConfirm()}
-        >
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <h3 id="storage-cleanup-confirm-title">{t("storage.cleanup.confirmTitle")}</h3>
-            <p>
-              {t("storage.cleanup.confirmBody", {
-                count: String(preview.count),
-                size: formatBytes(preview.bytes, locale),
-                percent: String(preview.percent),
-              })}
-            </p>
-            {preview.candidates.length > 0 && (
-              <ul className="mono muted" style={{ maxHeight: 160, overflow: "auto", fontSize: "var(--text-caption)" }}>
-                {preview.candidates.slice(0, 8).map(c => (
-                  <li key={c.relPath}>{c.relPath}</li>
-                ))}
-                {preview.count > 8 && (
-                  <li>{t("storage.cleanup.moreFiles", { n: String(Math.max(0, preview.count - 8)) })}</li>
-                )}
-              </ul>
-            )}
-            <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
-              <input
-                type="checkbox"
-                checked={permanent}
-                disabled={busy}
-                onChange={e => setPermanent(e.target.checked)}
-              />
-              <span>{t("storage.cleanup.permanent")}</span>
-            </label>
-            <p className="muted" style={{ marginTop: 8, fontSize: "var(--text-caption)" }}>
-              {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
-            </p>
-            {error && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
-            <div className="dialog-actions" style={{ marginTop: 16 }}>
-              <button
-                ref={cancelRef}
-                type="button"
-                className="btn btn-ghost"
-                disabled={busy}
-                onClick={() => closeConfirm()}
-              >
+        <Dialog
+          // Escape and the scrim both arrive here, and neither may abandon a
+          // cleanup that is already deleting — the same guard the hand-rolled
+          // overlay applied to both routes.
+          onClose={() => { if (!busy) closeConfirm(); }}
+          title={t("storage.cleanup.confirmTitle")}
+          description={t("storage.cleanup.confirmBody", {
+            count: String(preview.count),
+            size: formatBytes(preview.bytes, locale),
+            percent: String(preview.percent),
+          })}
+          actions={
+            <>
+              <Button variant="text" disabled={busy} onClick={() => closeConfirm()}>
                 {t("storage.cleanup.cancel")}
-              </button>
-              <button
-                type="button"
-                className={permanent ? "btn btn-danger" : "btn"}
+              </Button>
+              <Button
+                variant={permanent ? "danger" : "filled"}
                 disabled={busy || preview.count === 0}
                 onClick={() => void runCleanup()}
               >
                 {permanent ? t("storage.cleanup.confirmPermanent") : t("storage.cleanup.confirmQuarantine")}
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </>
+          }
+        >
+          {preview.candidates.length > 0 && (
+            <ul className="mono" style={{ maxHeight: 160, overflow: "auto", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
+              {preview.candidates.slice(0, 8).map(c => (
+                <li key={c.relPath}>{c.relPath}</li>
+              ))}
+              {preview.count > 8 && (
+                <li>{t("storage.cleanup.moreFiles", { n: String(Math.max(0, preview.count - 8)) })}</li>
+              )}
+            </ul>
+          )}
+          {/* No marginTop: the dialog body is a grid and owns the spacing the
+              legacy modal card left to each child's own margin. */}
+          <p style={{ fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
+            {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
+          </p>
+          {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
+        </Dialog>
       )}
     </section>
   );
@@ -453,36 +669,15 @@ function QuarantineTrashPanel({
   reloadToken: number;
   onEntriesChange?: (entries: TrashEntry[]) => void;
 }) {
+  const { notify } = useNotifications();
   const [entries, setEntries] = useState<TrashEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmEntry, setConfirmEntry] = useState<TrashEntry | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const busyRef = useRef(false);
   const loadGenerationRef = useRef(0);
 
-  useEffect(() => {
-    busyRef.current = busy;
-  }, [busy]);
-
   const closeConfirm = useCallback(() => setConfirmEntry(null), []);
-
-  useEffect(() => {
-    if (!confirmEntry) return;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyRef.current) closeConfirm();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousFocusRef.current?.focus();
-    };
-  }, [confirmEntry, closeConfirm]);
 
   const loadTrash = useCallback(async (signal?: AbortSignal) => {
     const generation = ++loadGenerationRef.current;
@@ -559,10 +754,13 @@ function QuarantineTrashPanel({
         throw new Error(mapRestoreError(json.error, json.message));
       }
       closeConfirm();
-      setStatus(t("storage.trash.done", {
+      const done = t("storage.trash.done", {
         count: String(json.count),
         size: formatBytes(json.bytes, locale),
-      }));
+      });
+      // Append-only: the restore is its own revision, so it can itself be undone.
+      recordRevision({ scope: "settings", label: t("storage.trash.title"), summary: done, restored: true });
+      notify({ tone: "success", title: done, body: confirmEntry.id });
       onDone();
     } catch (e) {
       setError(localizedCatch(e, t("storage.trash.restoreFailed")));
@@ -584,42 +782,44 @@ function QuarantineTrashPanel({
   };
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-trash-title">
-      <h3 id="storage-trash-title" className="panel-title">{t("storage.trash.title")}</h3>
-      <p className="muted" style={{ marginTop: 4 }}>{t("storage.trash.help")}</p>
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-trash-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h2 id="storage-trash-title" className="m3-card-title">{t("storage.trash.title")}</h2>
+          <p className="m3-card-sub">{t("storage.trash.help")}</p>
+        </div>
+      </header>
 
-      {status && <p className="muted" style={{ marginTop: 12 }}>{status}</p>}
-      {error && !confirmEntry && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
+      {error && !confirmEntry && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
       {loading ? (
-        <p className="muted" style={{ marginTop: 12 }}>{t("storage.trash.loading")}</p>
+        <p className="m3-card-sub" style={CARD_BODY}>{t("storage.trash.loading")}</p>
       ) : entries.length === 0 ? (
-        <p className="muted" style={{ marginTop: 12 }}>{t("storage.trash.empty")}</p>
+        <div style={CARD_BODY}><Empty title={t("storage.trash.empty")} /></div>
       ) : (
-        <div className="tbl-wrap" style={{ marginTop: 12 }}>
-          <table className="tbl">
+        <div style={TABLE_WRAP}>
+          <table className="m3-table">
             <thead>
               <tr>
-                <th>{t("storage.trash.col.when")}</th>
-                <th className="num">{t("storage.trash.col.files")}</th>
-                <th className="num">{t("storage.trash.col.size")}</th>
-                <th>{t("storage.trash.col.mode")}</th>
                 <th>{t("storage.trash.col.id")}</th>
+                <th>{t("storage.trash.col.when")}</th>
+                <th style={NUM_CELL}>{t("storage.trash.col.files")}</th>
+                <th style={NUM_CELL}>{t("storage.trash.col.size")}</th>
+                <th>{t("storage.trash.col.mode")}</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {entries.map(entry => (
                 <tr key={entry.id}>
-                  <td className="muted">{formatWhen(entry)}</td>
-                  <td className="num">{entry.fileCount}</td>
-                  <td className="num mono">{formatBytes(entry.bytes, locale)}</td>
-                  <td className="muted">{modeLabel(entry.mode)}</td>
-                  <td className="mono" style={{ fontSize: "var(--text-caption)" }}>{entry.id}</td>
+                  <td className="mono" style={{ fontSize: "var(--t-label-m)" }}>{entry.id}</td>
+                  <td style={MUTED_CELL}>{formatWhen(entry)}</td>
+                  <td style={NUM_CELL}>{entry.fileCount}</td>
+                  <td className="mono" style={NUM_CELL}>{formatBytes(entry.bytes, locale)}</td>
+                  <td style={MUTED_CELL}>{modeLabel(entry.mode)}</td>
                   <td>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
+                    <Button
+                      variant="outlined"
                       disabled={busy}
                       onClick={() => {
                         setError(null);
@@ -627,7 +827,7 @@ function QuarantineTrashPanel({
                       }}
                     >
                       {t("storage.trash.restore")}
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -637,44 +837,34 @@ function QuarantineTrashPanel({
       )}
 
       {confirmEntry && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="storage-trash-confirm-title"
-          onClick={() => !busy && closeConfirm()}
-        >
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <h3 id="storage-trash-confirm-title">{t("storage.trash.confirmTitle")}</h3>
-            <p>
-              {t("storage.trash.confirmBody", {
-                count: String(confirmEntry.fileCount),
-                size: formatBytes(confirmEntry.bytes, locale),
-                id: confirmEntry.id,
-              })}
-            </p>
-            {error && <p style={{ marginTop: 12, color: "var(--red)" }}>{error}</p>}
-            <div className="dialog-actions" style={{ marginTop: 16 }}>
-              <button
-                ref={cancelRef}
-                type="button"
-                className="btn btn-ghost"
-                disabled={busy}
-                onClick={() => closeConfirm()}
-              >
+        <Dialog
+          // Escape and the scrim both arrive here, and neither may abandon a
+          // restore that is already running — the same guard the hand-rolled
+          // overlay applied to both routes.
+          onClose={() => { if (!busy) closeConfirm(); }}
+          title={t("storage.trash.confirmTitle")}
+          description={t("storage.trash.confirmBody", {
+            count: String(confirmEntry.fileCount),
+            size: formatBytes(confirmEntry.bytes, locale),
+            id: confirmEntry.id,
+          })}
+          actions={
+            <>
+              <Button variant="text" disabled={busy} onClick={() => closeConfirm()}>
                 {t("storage.trash.cancel")}
-              </button>
-              <button
-                type="button"
-                className="btn"
+              </Button>
+              <Button
+                variant="filled"
                 disabled={busy}
                 onClick={() => void runRestore()}
               >
                 {t("storage.trash.confirmRestore")}
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </>
+          }
+        >
+          {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
+        </Dialog>
       )}
     </section>
   );
@@ -695,17 +885,22 @@ function AutoCleanupPolicyPanel({
   locale,
   t,
   onDone,
+  otherSettings,
 }: {
   apiBase: string;
   locale: Locale;
   t: TFn;
   onDone: () => void;
+  /** Settings that live in the other cards on this screen, so a miss here can say where they are. */
+  otherSettings: SettingEntry[];
 }) {
+  const { notify } = useNotifications();
+  const [query, setQuery] = useState("");
+  const [regexOn, setRegexOn] = useState(false);
   const [policy, setPolicy] = useState<CleanupPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<"percent" | "reduce">("percent");
   /** Draft string so blank/invalid percent targets are rejected instead of coerced. */
@@ -797,9 +992,9 @@ function AutoCleanupPolicyPanel({
       return;
     }
     const body = { ...base, ...patch };
+    const previous = policy;
     setSaving(true);
     setError(null);
-    setStatus(null);
     try {
       const res = await fetch(`${apiBase}/api/storage/cleanup-policy`, {
         method: "PUT",
@@ -816,7 +1011,15 @@ function AutoCleanupPolicyPanel({
         return;
       }
       setPolicy(policyFieldsFromResponse(json.policy));
-      setStatus(t("storage.policy.saved"));
+      // The policy is a user-visible settings record: keep the value it replaced
+      // so Version history can show what the change was undoing.
+      recordRevision({
+        scope: "settings",
+        label: t("storage.policy.title"),
+        summary: t("storage.policy.saved"),
+        before: previous ? JSON.stringify(previous) : undefined,
+      });
+      notify({ tone: "success", title: t("storage.policy.saved") });
     } catch {
       setError(t("storage.policy.saveFailed"));
     } finally {
@@ -832,7 +1035,6 @@ function AutoCleanupPolicyPanel({
 
     setRunning(true);
     setError(null);
-    setStatus(null);
     try {
       const base = buildBody();
       if (!base) {
@@ -942,27 +1144,27 @@ function AutoCleanupPolicyPanel({
       }
 
       if (outcome.skipped === "disabled") {
-        setStatus(t("storage.policy.skippedDisabled"));
+        notify({ tone: "info", title: t("storage.policy.skippedDisabled") });
       } else if (outcome.skipped === "under_threshold") {
-        setStatus(t("storage.policy.skippedUnder"));
+        notify({ tone: "info", title: t("storage.policy.skippedUnder") });
       } else if (outcome.skipped === "nothing_selected") {
-        setStatus(t("storage.policy.skippedEmpty"));
+        notify({ tone: "info", title: t("storage.policy.skippedEmpty") });
       } else if (outcome.deferred === "codex_busy" || outcome.error === "codex_busy") {
         setError(t("storage.cleanup.err.codex_busy"));
       } else if (!outcome.ok) {
         setError(t("storage.policy.runFailed"));
       } else {
-        setStatus(
-          outcome.mode === "permanent"
-            ? t("storage.policy.donePermanent", {
-              count: String(outcome.removed ?? 0),
-              size: formatBytes(outcome.freedBytes ?? 0, locale),
-            })
-            : t("storage.policy.doneQuarantine", {
-              count: String(outcome.removed ?? 0),
-              size: formatBytes(outcome.freedBytes ?? 0, locale),
-            }),
-        );
+        const done = outcome.mode === "permanent"
+          ? t("storage.policy.donePermanent", {
+            count: String(outcome.removed ?? 0),
+            size: formatBytes(outcome.freedBytes ?? 0, locale),
+          })
+          : t("storage.policy.doneQuarantine", {
+            count: String(outcome.removed ?? 0),
+            size: formatBytes(outcome.freedBytes ?? 0, locale),
+          });
+        recordRevision({ scope: "settings", label: t("storage.policy.title"), summary: done });
+        notify({ tone: "success", title: done });
         onDone();
       }
     } catch (err) {
@@ -977,175 +1179,259 @@ function AutoCleanupPolicyPanel({
   const formatWhen = (ms: number | undefined) =>
     ms === undefined ? t("storage.policy.never") : new Date(ms).toLocaleString(locale);
 
+  const scheduleLabel = (schedule: CleanupPolicy["schedule"]) => {
+    switch (schedule) {
+      case "startup": return t("storage.policy.schedule.startup");
+      case "daily": return t("storage.policy.schedule.daily");
+      case "weekly": return t("storage.policy.schedule.weekly");
+      default: return t("storage.policy.schedule.manual");
+    }
+  };
+
+  const modeLabel = (mode: CleanupPolicy["mode"]) =>
+    mode === "permanent" ? t("storage.policy.mode.permanent") : t("storage.policy.mode.quarantine");
+
+  const section = t("storage.policy.title");
+  const entries: SettingEntry[] = policy
+    ? [
+      { id: "enabled", section, label: t("storage.policy.enabled"), desc: t("storage.policy.enabledHint") },
+      { id: "threshold", section, label: t("storage.policy.threshold"), value: thresholdGb },
+      {
+        id: "target",
+        section,
+        label: t("storage.policy.target"),
+        desc: `${t("storage.policy.targetPercent")} ${t("storage.policy.targetReduce")}`,
+        value: targetMode === "reduce" ? reduceGb : percent,
+      },
+      { id: "schedule", section, label: t("storage.policy.schedule"), value: scheduleLabel(policy.schedule) },
+      {
+        id: "mode",
+        section,
+        label: t("storage.policy.mode"),
+        desc: t("storage.policy.permanentWarn"),
+        value: modeLabel(policy.mode),
+      },
+      { id: "lastRun", section, label: t("storage.policy.lastRun"), value: formatWhen(policy.lastRun?.at) },
+      { id: "nextRun", section, label: t("storage.policy.nextRun"), value: formatWhen(policy.nextRun) },
+    ]
+    : [];
+
+  const matcher = makeSettingsMatcher(query, regexOn);
+  const hits = new Set(entries.filter(e => matcher.test(settingText(e))).map(e => e.id));
+  const shows = (id: string) => query === "" || hits.has(id);
+  const elsewhere = query === "" ? [] : otherSettings.filter(e => matcher.test(settingText(e)));
+  const elsewhereSections = [...new Set(elsewhere.map(e => e.section))].join(", ");
+
+  const searchRow = (
+    <>
+      <SettingsSearchRow
+        query={query}
+        onQuery={setQuery}
+        regexOn={regexOn}
+        onRegex={setRegexOn}
+        invalid={matcher.invalid}
+        // The unfiltered policy settings, in the same words the search indexes them.
+        sample={entries.map(settingText).join("\n")}
+        t={t}
+      />
+      {matcher.invalid && <p style={SEARCH_NOTE} role="alert">{t("regex.invalid")}</p>}
+      {/* A hit that is not on this card still deserves a pointer to where it lives. */}
+      {elsewhere.length > 0 && (
+        <p style={SEARCH_NOTE} role="status">
+          {t("settings.otherTab", { count: String(elsewhere.length), tabs: elsewhereSections })}
+        </p>
+      )}
+      {query !== "" && hits.size === 0 && <p style={SEARCH_NOTE} role="status">{t("settings.noMatch")}</p>}
+    </>
+  );
+
+  const policyHead = (
+    <header className="m3-card-head">
+      <div className="m3-card-headtext">
+        <h2 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h2>
+      </div>
+    </header>
+  );
+
   if (loading && !policy) {
     return (
-      <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-policy-title">
-        <h3 id="storage-policy-title" className="panel-title">{t("storage.policy.title")}</h3>
-        <p className="muted">{t("storage.policy.loading")}</p>
+      <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-policy-title">
+        {policyHead}
+        <p className="m3-card-sub">{t("storage.policy.loading")}</p>
       </section>
     );
   }
 
   if (!policy) {
     return (
-      <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-policy-title">
-        <h3 id="storage-policy-title" className="panel-title">{t("storage.policy.title")}</h3>
-        {error && <p className="err" role="alert">{error}</p>}
+      <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-policy-title">
+        {policyHead}
+        {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
       </section>
     );
   }
 
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="storage-policy-title">
-      <h3 id="storage-policy-title" className="panel-title">{t("storage.policy.title")}</h3>
-      <p className="muted" style={{ marginTop: 4 }}>{t("storage.policy.help")}</p>
+    <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-policy-title">
+      <header className="m3-card-head">
+        <div className="m3-card-headtext">
+          <h2 id="storage-policy-title" className="m3-card-title">{t("storage.policy.title")}</h2>
+          <p className="m3-card-sub">{t("storage.policy.help")}</p>
+        </div>
+      </header>
 
-      <label className="row" style={{ marginTop: 12, gap: 8, alignItems: "center" }}>
-        <input
-          type="checkbox"
-          checked={policy.enabled}
-          disabled={saving || running}
-          onChange={e => {
-            const enabled = e.target.checked;
-            void savePolicy({ enabled });
-          }}
-        />
-        <span>{t("storage.policy.enabled")}</span>
-      </label>
-      <p className="muted" style={{ marginTop: 4, fontSize: "var(--text-sm)" }}>{t("storage.policy.enabledHint")}</p>
+      {searchRow}
 
-      <div style={{ display: "grid", gap: 12, marginTop: 16, maxWidth: 420 }}>
-        <label>
-          <span className="muted">{t("storage.policy.threshold")}</span>
-          <input
-            type="number"
-            min={0}
-            step={0.1}
-            value={thresholdGb}
+      {shows("enabled") && (
+        <div className="m3-row m3-row--split" style={CARD_BODY}>
+          <div>
+            <div>{t("storage.policy.enabled")}</div>
+            <p className="m3-card-sub">{t("storage.policy.enabledHint")}</p>
+          </div>
+          <Toggle
+            on={policy.enabled}
             disabled={saving || running}
-            onChange={e => setThresholdGb(e.target.value)}
-            onBlur={() => void savePolicy()}
-            style={{ display: "block", marginTop: 4, width: "100%" }}
+            label={t("storage.policy.enabled")}
+            onChange={enabled => { void savePolicy({ enabled }); }}
           />
-        </label>
+        </div>
+      )}
 
-        <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
-          <legend className="muted">{t("storage.policy.target")}</legend>
-          <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 4 }}>
-            <input
-              type="radio"
-              name="storage-policy-target"
-              checked={targetMode === "percent"}
-              disabled={saving || running}
-              onChange={() => setTargetMode("percent")}
-            />
-            <span>{t("storage.policy.targetPercent")}</span>
-          </label>
-          {targetMode === "percent" && (
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={percent}
-              disabled={saving || running}
-              aria-label={t("storage.policy.targetPercent")}
-              onChange={e => setPercent(e.target.value)}
-              onBlur={() => void savePolicy()}
-              style={{ display: "block", marginTop: 4, width: "100%" }}
-            />
-          )}
-          <label className="row" style={{ gap: 8, alignItems: "center", marginTop: 8 }}>
-            <input
-              type="radio"
-              name="storage-policy-target"
-              checked={targetMode === "reduce"}
-              disabled={saving || running}
-              onChange={() => setTargetMode("reduce")}
-            />
-            <span>{t("storage.policy.targetReduce")}</span>
-          </label>
-          {targetMode === "reduce" && (
-            <input
+      <div className="m3-stack" style={{ marginTop: "var(--sp-3)", maxWidth: 420 }}>
+        {shows("threshold") && (
+          <Field label={t("storage.policy.threshold")} id="storage-policy-threshold">
+            <TextInput
+              id="storage-policy-threshold"
               type="number"
               min={0}
               step={0.1}
-              value={reduceGb}
+              value={thresholdGb}
               disabled={saving || running}
-              aria-label={t("storage.policy.targetReduce")}
-              onChange={e => setReduceGb(e.target.value)}
+              onChange={e => setThresholdGb(e.target.value)}
               onBlur={() => void savePolicy()}
-              style={{ display: "block", marginTop: 4, width: "100%" }}
             />
-          )}
-        </fieldset>
+          </Field>
+        )}
 
-        <label>
-          <span className="muted">{t("storage.policy.schedule")}</span>
-          <select
-            value={policy.schedule}
-            disabled={saving || running}
-            onChange={e => {
-              const schedule = e.target.value as CleanupPolicy["schedule"];
-              void savePolicy({ schedule });
-            }}
-            style={{ display: "block", marginTop: 4, width: "100%" }}
-          >
-            <option value="manual">{t("storage.policy.schedule.manual")}</option>
-            <option value="startup">{t("storage.policy.schedule.startup")}</option>
-            <option value="daily">{t("storage.policy.schedule.daily")}</option>
-            <option value="weekly">{t("storage.policy.schedule.weekly")}</option>
-          </select>
-        </label>
+        {shows("target") && (
+          <div className="m3-field">
+            <span className="m3-field-label">{t("storage.policy.target")}</span>
+            <Segmented
+              value={targetMode}
+              label={t("storage.policy.target")}
+              onChange={next => { if (!saving && !running) setTargetMode(next); }}
+              options={[
+                { value: "percent", label: t("storage.policy.targetPercent") },
+                { value: "reduce", label: t("storage.policy.targetReduce") },
+              ]}
+            />
+            {targetMode === "percent" && (
+              <TextInput
+                type="number"
+                min={1}
+                max={100}
+                value={percent}
+                disabled={saving || running}
+                aria-label={t("storage.policy.targetPercent")}
+                onChange={e => setPercent(e.target.value)}
+                onBlur={() => void savePolicy()}
+                style={{ marginTop: "var(--sp-1)" }}
+              />
+            )}
+            {targetMode === "reduce" && (
+              <TextInput
+                type="number"
+                min={0}
+                step={0.1}
+                value={reduceGb}
+                disabled={saving || running}
+                aria-label={t("storage.policy.targetReduce")}
+                onChange={e => setReduceGb(e.target.value)}
+                onBlur={() => void savePolicy()}
+                style={{ marginTop: "var(--sp-1)" }}
+              />
+            )}
+          </div>
+        )}
 
-        <label>
-          <span className="muted">{t("storage.policy.mode")}</span>
-          <select
-            value={policy.mode}
-            disabled={saving || running}
-            onChange={e => {
-              const mode = e.target.value as CleanupPolicy["mode"];
-              void savePolicy({ mode });
-            }}
-            style={{ display: "block", marginTop: 4, width: "100%" }}
-          >
-            <option value="quarantine">{t("storage.policy.mode.quarantine")}</option>
-            <option value="permanent">{t("storage.policy.mode.permanent")}</option>
-          </select>
-        </label>
-        {policy.mode === "permanent" && (
-          <p className="err" role="status">{t("storage.policy.permanentWarn")}</p>
+        {shows("schedule") && (
+          <Field label={t("storage.policy.schedule")} id="storage-policy-schedule">
+            <select
+              id="storage-policy-schedule"
+              className="m3-input"
+              value={policy.schedule}
+              disabled={saving || running}
+              onChange={e => {
+                const schedule = e.target.value as CleanupPolicy["schedule"];
+                void savePolicy({ schedule });
+              }}
+            >
+              <option value="manual">{t("storage.policy.schedule.manual")}</option>
+              <option value="startup">{t("storage.policy.schedule.startup")}</option>
+              <option value="daily">{t("storage.policy.schedule.daily")}</option>
+              <option value="weekly">{t("storage.policy.schedule.weekly")}</option>
+            </select>
+          </Field>
+        )}
+
+        {shows("mode") && (
+          <>
+            <Field label={t("storage.policy.mode")} id="storage-policy-mode">
+              <select
+                id="storage-policy-mode"
+                className="m3-input"
+                value={policy.mode}
+                disabled={saving || running}
+                onChange={e => {
+                  const mode = e.target.value as CleanupPolicy["mode"];
+                  void savePolicy({ mode });
+                }}
+              >
+                <option value="quarantine">{t("storage.policy.mode.quarantine")}</option>
+                <option value="permanent">{t("storage.policy.mode.permanent")}</option>
+              </select>
+            </Field>
+            {policy.mode === "permanent" && (
+              <p style={{ color: "var(--m3-error)" }} role="status">{t("storage.policy.permanentWarn")}</p>
+            )}
+          </>
         )}
       </div>
 
-      <div className="usage-cards" style={{ marginTop: 16 }}>
-        <div className="stat">
-          <div className="muted">{t("storage.policy.lastRun")}</div>
-          <div className="stat-value" style={{ fontSize: "var(--text-body)" }}>{formatWhen(policy.lastRun?.at)}</div>
-          {policy.lastRun && (
-            <div className="muted" style={{ marginTop: 4 }}>
-              {t("storage.policy.lastRunDetail", {
-                count: String(policy.lastRun.removed),
-                size: formatBytes(policy.lastRun.freedBytes, locale),
-              })}
-            </div>
+      {(shows("lastRun") || shows("nextRun")) && (
+        <div style={{ ...STAT_GRID, marginTop: "var(--sp-3)", marginBottom: 0 }}>
+          {shows("lastRun") && (
+            <StatTile
+              icon={<IconClock aria-hidden="true" style={STAT_ICON} />}
+              label={t("storage.policy.lastRun")}
+              value={formatWhen(policy.lastRun?.at)}
+              hint={policy.lastRun
+                ? t("storage.policy.lastRunDetail", {
+                  count: String(policy.lastRun.removed),
+                  size: formatBytes(policy.lastRun.freedBytes, locale),
+                })
+                : undefined}
+            />
+          )}
+          {shows("nextRun") && (
+            <StatTile
+              icon={<IconClock aria-hidden="true" style={STAT_ICON} />}
+              label={t("storage.policy.nextRun")}
+              value={formatWhen(policy.nextRun)}
+            />
           )}
         </div>
-        <div className="stat">
-          <div className="muted">{t("storage.policy.nextRun")}</div>
-          <div className="stat-value" style={{ fontSize: "var(--text-body)" }}>{formatWhen(policy.nextRun)}</div>
-        </div>
-      </div>
+      )}
 
-      <div className="row" style={{ marginTop: 16, gap: 8, flexWrap: "wrap" }}>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={saving || running} onClick={() => void savePolicy()}>
+      <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
+        <Button variant="outlined" disabled={saving || running} onClick={() => void savePolicy()}>
           {t("storage.policy.save")}
-        </button>
-        <button type="button" className="btn btn-sm" disabled={saving || running || !policy.enabled} onClick={() => void runNow()}>
+        </Button>
+        <Button variant="filled" disabled={saving || running || !policy.enabled} onClick={() => void runNow()}>
           {running ? t("storage.policy.running") : t("storage.policy.runNow")}
-        </button>
+        </Button>
       </div>
-      {status && <p className="muted" style={{ marginTop: 8 }} role="status">{status}</p>}
-      {error && <p className="err" style={{ marginTop: 8 }} role="alert">{error}</p>}
+      {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
     </section>
   );
 }
@@ -1201,61 +1487,88 @@ export default function Storage({ apiBase }: { apiBase: string }) {
   const trashHasEntries = trashInfo.apiBase === apiBase && trashInfo.hasEntries;
   const failed = !loading && (!data || data.error !== undefined);
   const empty = !loading && !failed && data!.total.fileCount === 0 && trashSettled && !trashHasEntries;
-  const archivedCount = data?.buckets.find(b => b.key === "archived_sessions")?.fileCount ?? 0;
+  const archived = data?.buckets.find(b => b.key === "archived_sessions");
+  const archivedCount = archived?.fileCount ?? 0;
+  const archivedBytes = archived?.bytes ?? 0;
   const showBody = Boolean(data) && !failed;
   // While storage is empty, keep the trash panel mounted until it reports so we
   // do not flash the empty state over a non-empty quarantine.
   const showTrashWhileSettling = showBody && (data!.total.fileCount > 0 || !trashSettled || trashHasEntries);
 
+  // The settings that live on the Archived cleanup card, indexed so a settings
+  // search that misses on the policy card can still say where the hit is. Empty
+  // when that card is not rendered — the row must never point at nothing.
+  const cleanupSettings = useMemo<SettingEntry[]>(() => {
+    const section = t("storage.cleanup.title");
+    return [
+      { id: "cleanupPercent", section, label: t("storage.cleanup.slider"), desc: t("storage.cleanup.help") },
+      { id: "cleanupPermanent", section, label: t("storage.cleanup.permanent"), desc: t("storage.cleanup.permanentWarn") },
+    ];
+  }, [t]);
+
   return (
     <>
-      <div className="page-head">
-        <h2 id="storage-page-title">{t("storage.title")}</h2>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={() => refreshAll()}>
-          <IconRefresh /> {t("storage.refresh")}
-        </button>
+      {/* No page heading: the app bar already carries the page title, exactly as
+          the prototype's screen sections do. */}
+      <div className="m3-row m3-row--split" style={{ marginBottom: "var(--sp-4)", alignItems: "flex-start" }}>
+        <p className="m3-page-lead" style={{ margin: 0 }}>
+          {t("storage.subtitle")}
+        </p>
+        <Button variant="text" disabled={loading} onClick={() => refreshAll()}>
+          <IconRefresh aria-hidden="true" /> {t("storage.refresh")}
+        </Button>
       </div>
-      <p className="page-sub">{t("storage.subtitle")}</p>
 
       {loading && !data ? (
-        <EmptyState title={t("storage.loading")} />
+        <Empty title={t("storage.loading")} />
       ) : failed ? (
-        <EmptyState title={t("storage.error")} />
+        <Empty title={t("storage.error")} />
       ) : empty ? (
         <>
-          <EmptyState title={t("storage.empty")} />
+          <Empty title={t("storage.empty")} />
           <AutoCleanupPolicyPanel
             apiBase={apiBase}
             locale={locale}
             t={t}
             onDone={() => refreshAll()}
+            otherSettings={[]}
           />
         </>
       ) : (
         <>
           {data && data.total.fileCount > 0 && (
             <>
-              <div className="usage-cards">
-                <div className="stat"><div className="muted">{t("storage.card.total")}</div><div className="stat-value">{formatBytes(data.total.bytes, locale)}</div></div>
-                <div className="stat"><div className="muted">{t("storage.card.files")}</div><div className="stat-value">{data.total.fileCount.toLocaleString(locale)}</div></div>
-                <div className="stat"><div className="muted">{t("storage.card.home")}</div><div className="stat-value mono" style={{ fontSize: "var(--text-body)", wordBreak: "break-all" }}>{data.codexHome}</div></div>
+              <div style={STAT_GRID}>
+                <StatTile
+                  icon={<IconHardDrive aria-hidden="true" style={STAT_ICON} />}
+                  label={t("storage.card.total")}
+                  value={formatBytes(data.total.bytes, locale)}
+                  hint={data.codexHome}
+                />
+                <StatTile
+                  icon={<IconList aria-hidden="true" style={STAT_ICON} />}
+                  label={t("storage.card.files")}
+                  value={data.total.fileCount.toLocaleString(locale)}
+                />
+                <StatTile
+                  icon={<IconBoxes aria-hidden="true" style={STAT_ICON} />}
+                  label={t("storage.card.archived")}
+                  value={formatBytes(archivedBytes, locale)}
+                  hint={t("storage.card.archivedFiles", { count: archivedCount.toLocaleString(locale) })}
+                />
               </div>
-              <BucketsTable buckets={data.buckets} locale={locale} t={t} />
+              <BucketsTable buckets={data.buckets} totalBytes={data.total.bytes} locale={locale} t={t} />
               <LargestFilesPanel buckets={data.buckets} locale={locale} t={t} />
             </>
           )}
-          <AutoCleanupPolicyPanel
-            apiBase={apiBase}
-            locale={locale}
-            t={t}
-            onDone={() => refreshAll()}
-          />
           {archivedCount > 0 && (
             <ArchivedCleanupPanel
               apiBase={apiBase}
               locale={locale}
               t={t}
               onDone={() => refreshAll()}
+              archivedBytes={archivedBytes}
+              archivedCount={archivedCount}
             />
           )}
           {showTrashWhileSettling && (
@@ -1268,6 +1581,13 @@ export default function Storage({ apiBase }: { apiBase: string }) {
               onDone={() => refreshAll()}
             />
           )}
+          <AutoCleanupPolicyPanel
+            apiBase={apiBase}
+            locale={locale}
+            t={t}
+            onDone={() => refreshAll()}
+            otherSettings={archivedCount > 0 ? cleanupSettings : []}
+          />
         </>
       )}
     </>

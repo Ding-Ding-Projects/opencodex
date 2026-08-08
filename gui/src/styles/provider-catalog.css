@@ -6,34 +6,60 @@
   gap: 10px;
 }
 
+/* M3 pill tablist, matching the Providers detail sections. */
 .provider-catalog-tabs {
   display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--m3-surface-container);
 }
 
 .provider-catalog-tab {
   appearance: none;
-  background: none;
+  background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
-  padding: 8px 12px;
-  color: var(--muted);
+  border-radius: var(--r-pill);
+  min-height: 40px;
+  padding: 0 18px;
+  color: var(--m3-on-surface-variant);
   font: inherit;
+  font-size: var(--t-label-l);
+  font-weight: 500;
   cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+
+.provider-catalog-tab:hover {
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
 }
 
 .provider-catalog-tab.active {
-  color: var(--fg);
-  border-bottom-color: var(--accent);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
 }
 
 .provider-catalog-accounts-hint {
   padding: 2px 2px 0;
 }
 
+/* The row that carries the catalogue search: field, `.*` opt-in, builder trigger.
+   The field gave up `width: 100%` when the two controls joined it — at full width
+   it left them no room and pushed the builder outside the modal. */
+.provider-catalog-search-row {
+  gap: var(--sp-2);
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
 .provider-catalog-search {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
 }
 
 .provider-catalog-rows {

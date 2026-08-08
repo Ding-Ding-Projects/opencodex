@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { setClientResourceData, useKeyedClientResource } from "./client-resource";
 import Dashboard from "./pages/Dashboard";
+import Terminal from "./pages/Terminal";
+import MobileRemote from "./pages/Mobile";
 import Providers from "./pages/Providers";
 import Models from "./pages/Models";
 import Combos from "./pages/Combos";
@@ -13,95 +15,136 @@ import ApiKeys from "./pages/ApiKeys";
 import Claude from "./pages/Claude";
 import Grok from "./pages/Grok";
 import Startup from "./pages/Startup";
+import Appearance from "./pages/Appearance";
+import LanguageVoice from "./pages/LanguageVoice";
+import RegexBuilder from "./pages/RegexBuilder";
+import Changelog from "./pages/Changelog";
+import VersionHistory from "./pages/VersionHistory";
+import NotificationsPage from "./pages/Notifications";
+import Network from "./pages/Network";
+import SettingsPage from "./pages/Settings";
+import OnboardingWizard from "./shell/OnboardingWizard";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { IconGrid, IconServer, IconBoxes, IconBot, IconList, IconActivity, IconHardDrive, IconKey, IconGithub, IconMenu, IconSun, IconMoon, IconMonitor, IconGlobe, IconPower, IconSparkle, IconX } from "./icons";
-import { useI18n, useT, LOCALES, type Locale, type TKey } from "./i18n/shared";
-import { Select, Switch } from "./ui";
-import { installApiAuthFetch } from "./api";
-import { readJsonIfOk } from "./fetch-json";
+import RemoteConnectionDialog from "./components/RemoteConnectionDialog";
+import { useT } from "./i18n/shared";
+import { installApiAuthFetch, setAdminTokenPromptSuppressed } from "./api";
 import { type Page } from "./app-routing";
-import { useAppRouteState } from "./use-app-route-state";
+import { openRemoteDashboard } from "./remote-navigation";
 import { requestProxyStop } from "./stop-proxy";
+import { usePrefs } from "./theme/prefs-context";
+import { useNotifications } from "./shell/notifications-context";
+import { useConfirm } from "./shell/confirm-context";
+import { useTabRouting } from "./shell/use-tab-routing";
+import { codenameLabel, fullBuildLabel, readBuildInfo, shortBuildLabel, windowTitle } from "./shell/build-info";
+import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
+import AppBar from "./shell/AppBar";
+import ElementAppearanceHost from "./shell/ElementAppearanceHost";
+import TabStrip from "./shell/TabStrip";
+import SnackbarHost from "./shell/SnackbarHost";
+import DimSumCard from "./shell/DimSumCard";
+import { PAGE_META_BY_ID } from "./shell/page-meta";
+import { readJsonIfOk } from "./fetch-json";
 
 installApiAuthFetch();
 
-type Theme = "light" | "dark" | "system";
-
-const PAGE_TKEY: Record<Page, TKey> = {
-  dashboard: "nav.dashboard",
-  startup: "nav.startup",
-  providers: "nav.providers",
-  models: "nav.models",
-  combos: "nav.combos",
-  subagents: "nav.subagents",
-  logs: "nav.logs",
-  usage: "nav.usage",
-  storage: "nav.storage",
-  "codex-auth": "nav.codexAuth",
-  api: "nav.api",
-  claude: "nav.claude",
-  grok: "nav.grok",
-};
-
 const API_BASE = import.meta.env.VITE_API_BASE || "";
-const THEME_KEY = "ocx-theme";
 
-const NAV: { id: Page; tkey: TKey; Icon: typeof IconGrid }[] = [
-  { id: "dashboard", tkey: "nav.dashboard", Icon: IconGrid },
-  { id: "codex-auth", tkey: "nav.codexAuth", Icon: IconKey },
-  { id: "providers", tkey: "nav.providers", Icon: IconServer },
-  { id: "models", tkey: "nav.models", Icon: IconBoxes },
-  { id: "subagents", tkey: "nav.subagents", Icon: IconBot },
-  { id: "logs", tkey: "nav.logs", Icon: IconList },
-  { id: "usage", tkey: "nav.usage", Icon: IconActivity },
-  { id: "storage", tkey: "nav.storage", Icon: IconHardDrive },
-  { id: "api", tkey: "nav.api", Icon: IconGlobe },
-  { id: "claude", tkey: "nav.claude", Icon: IconSparkle },
-  { id: "grok", tkey: "nav.grok", Icon: IconBoxes },
-];
-
-const THEME_ICON = { light: IconSun, dark: IconMoon, system: IconMonitor } as const;
-const THEME_TKEY: Record<Theme, TKey> = { light: "theme.light", dark: "theme.dark", system: "theme.system" };
-
-function readRuntimeVersion(data: unknown): string | null {
-  if (!data || typeof data !== "object" || !("version" in data)) return null;
-  const version = (data as { version?: unknown }).version;
-  return typeof version === "string" && version.length > 0 ? version : null;
+interface Health {
+  version: string | null;
+  port: number | null;
+  uptime: number | null;
 }
 
-function readStoredTheme(): Theme {
-  const t = localStorage.getItem(THEME_KEY);
-  return t === "light" || t === "dark" ? t : "system";
+function readHealth(data: unknown): Health {
+  if (!data || typeof data !== "object") return { version: null, port: null, uptime: null };
+  const d = data as Record<string, unknown>;
+  return {
+    version: typeof d.version === "string" && d.version ? d.version : null,
+    port: typeof d.port === "number" ? d.port : null,
+    uptime: typeof d.uptime === "number" ? d.uptime : null,
+  };
+}
+
+/** Pages that need the full width; everything else is centred at 1180px. */
+const WIDE_PAGES = new Set<Page>(["combos", "providers", "models", "logs"]);
+
+
+/** One mounted instance per open tab; the switch keeps each page's JSX greppable. */
+function renderPage(page: Page): ReactNode {
+  switch (page) {
+    case "dashboard": return <Dashboard apiBase={API_BASE} />;
+    case "startup": return <Startup apiBase={API_BASE} />;
+    case "providers": return <Providers apiBase={API_BASE} />;
+    case "models": return <Models apiBase={API_BASE} />;
+    case "combos": return <Combos apiBase={API_BASE} />;
+    case "subagents": return <Subagents apiBase={API_BASE} />;
+    case "logs": return <Logs apiBase={API_BASE} />;
+    case "usage": return <Usage apiBase={API_BASE} />;
+    case "storage": return <Storage apiBase={API_BASE} />;
+    case "codex-auth": return <CodexAuth apiBase={API_BASE} />;
+    case "api": return <ApiKeys apiBase={API_BASE} />;
+    case "claude": return <Claude apiBase={API_BASE} />;
+    case "grok": return <Grok apiBase={API_BASE} />;
+    case "appearance": return <Appearance />;
+    case "language": return <LanguageVoice />;
+    case "regex": return <RegexBuilder />;
+    case "changelog": return <Changelog apiBase={API_BASE} />;
+    case "history": return <VersionHistory />;
+    case "notifications": return <NotificationsPage />;
+    case "network": return <Network apiBase={API_BASE} />;
+    case "settings": return <SettingsPage apiBase={API_BASE} />;
+    case "terminal": return <Terminal apiBase={API_BASE} />;
+    case "mobile": return <MobileRemote apiBase={API_BASE} />;
+  }
 }
 
 export default function App() {
-  const { page, navigateToPage } = useAppRouteState();
-  const [theme, setTheme] = useState<Theme>(readStoredTheme);
-  const { locale, setLocale } = useI18n();
+  const { windowClass } = usePrefs();
+  const { notify } = useNotifications();
+  // Shadows the global `confirm` deliberately: an accidental native call in this
+  // file is now a type error rather than a grey Windows box at runtime.
+  const confirm = useConfirm();
   const t = useT();
 
-  // Narrow screens: the sidebar becomes an off-canvas drawer behind a hamburger toggle.
-  const [navOpen, setNavOpen] = useState(false);
-  const menuBtnRef = useRef<HTMLButtonElement>(null);
-  const sidebarRef = useRef<HTMLElement>(null);
-  const navWasOpen = useRef(false);
+  // The tab strip owns the active page and the hash follows it. Both directions
+  // live in one hook because wiring them as a pair of effects here is a cycle
+  // with no fixed point — see the note in `use-tab-routing.ts`.
+  const tabs = useTabRouting();
+  const activePage = tabs.activePage;
+  // Held rather than derived so growing past the compact breakpoint closes the
+  // drawer without an effect that would cascade a second render.
+  const [drawerRequested, setDrawerRequested] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
+
+  const connectRemote = useCallback((url: string) => {
+    const result = openRemoteDashboard(url);
+    if (!result.opened) {
+      notify({ tone: "error", title: t("remote.popupBlocked"), body: result.url });
+      return;
+    }
+    setRemoteDialogOpen(false);
+    notify({ tone: "success", title: t("remote.connectOpened"), body: url });
+  }, [notify, t]);
+
+  const connectRemoteDialog = useCallback(() => setRemoteDialogOpen(true), []);
+
+  // A paired phone carries a data-plane key, not the management credential.
+  // Let management 401s reach the Mobile page so it can show its unavailable
+  // state, without asking the phone user for a different secret on every poll.
+  useEffect(() => {
+    setAdminTokenPromptSuppressed(activePage === "mobile");
+    return () => setAdminTokenPromptSuppressed(false);
+  }, [activePage]);
 
   useEffect(() => {
-    // External navigation (hash edit, back/forward) also dismisses the mobile drawer.
-    const dismissNav = () => setNavOpen(false);
-    window.addEventListener("hashchange", dismissNav);
-    window.addEventListener("popstate", dismissNav);
-    return () => {
-      window.removeEventListener("hashchange", dismissNav);
-      window.removeEventListener("popstate", dismissNav);
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerRequested(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  useEffect(() => {
-    const el = document.documentElement;
-    if (theme === "system") { el.removeAttribute("data-theme"); localStorage.removeItem(THEME_KEY); }
-    else { el.setAttribute("data-theme", theme); localStorage.setItem(THEME_KEY, theme); }
-  }, [theme]);
+  const compact = windowClass === "compact";
+  const drawerOpen = compact && drawerRequested;
 
   const healthPoll = useKeyedClientResource(
     `app-healthz:${API_BASE}`,
@@ -109,59 +152,35 @@ export default function App() {
     async (signal) => {
       const res = await fetch(`${API_BASE}/healthz`, { signal });
       if (!res.ok) return null;
-      return readRuntimeVersion(await res.json());
+      return readHealth(await res.json());
     },
     { pollMs: 30_000 },
   );
 
-  const cycleTheme = () => setTheme(t => (t === "light" ? "dark" : t === "dark" ? "system" : "light"));
-  const ThemeIcon = THEME_ICON[theme];
-  const displayedVersion: string = healthPoll.data ?? __APP_VERSION__;
+  const health = healthPoll.data;
+  const displayedVersion = health?.version ?? __APP_VERSION__;
 
-  const [stopping, setStopping] = useState(false);
-  // Claude navigation row also owns the connection toggle.
+  // The Claude nav row owns the connection toggle, as it did in the old sidebar.
   const fetchClaudeEnabled = useCallback(async (signal: AbortSignal) => {
     const res = await fetch(`${API_BASE}/api/claude-code`, { signal });
     const d = await readJsonIfOk<{ enabled?: unknown }>(res);
     return d && typeof d.enabled === "boolean" ? d.enabled : null;
   }, []);
 
+  // `/api/claude-code` is a protected management route. The same-origin fetch
+  // wrapper supplies the short-lived GUI session on loopback or asks for the
+  // remote management token; it never substitutes a data-plane credential.
   const claudePoll = useKeyedClientResource(
     `app-claude-code:${API_BASE}`,
     [],
     fetchClaudeEnabled,
+    {},
   );
   const claudeEnabled = claudePoll.data ?? null;
+  // A ref, not state: the guard has to hold within a single click burst, before
+  // React has re-rendered with the pending flag.
   const claudeToggleInFlight = useRef(false);
   const [claudeTogglePending, setClaudeTogglePending] = useState(false);
-
-  useEffect(() => {
-    if (!navOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNavOpen(false); };
-    window.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";         // no background scroll behind the drawer
-    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prevOverflow; };
-  }, [navOpen]);
-
-  // Move focus into the drawer on open; hand it back to the toggle on close.
-  useEffect(() => {
-    if (navOpen) {
-      navWasOpen.current = true;
-      // after the 180ms slide-in: while visibility is transitioning, focus() no-ops
-      const timer = setTimeout(() => sidebarRef.current?.focus(), 200);
-      return () => clearTimeout(timer);
-    }
-    if (navWasOpen.current) { navWasOpen.current = false; menuBtnRef.current?.focus(); }
-  }, [navOpen]);
-
-  // Growing the window past the breakpoint dismisses the drawer state.
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 761px)");
-    const onChange = () => { if (mq.matches) setNavOpen(false); };
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
 
   const toggleClaude = async () => {
     if (claudeEnabled === null || claudeToggleInFlight.current) return;
@@ -183,135 +202,144 @@ export default function App() {
       setClaudeTogglePending(false);
     }
   };
+
+  const openPage = useCallback((next: Page, newTab: boolean) => {
+    tabs.openPage(next, newTab);
+    setDrawerRequested(false);
+  }, [tabs]);
+
   const handleStop = async () => {
-    if (!confirm(t("dash.stopConfirm"))) return;
+    // A stop is a decision, so it keeps a blocking dialog rather than a snackbar
+    // — an M3 one the app owns, not the browser's untranslatable OK/Cancel box.
+    const confirmed = await confirm({
+      title: t("confirm.stopTitle"),
+      body: t("dash.stopConfirm"),
+      confirmLabel: t("dash.stop"),
+    });
+    if (!confirmed) return;
     setStopping(true);
     const outcome = await requestProxyStop(API_BASE, {
       formatFailure: status => t("dash.stopFailed", { status: String(status) }),
     });
-    // Refusals and restore failures return normally instead of dropping the connection.
-    // In both cases the proxy did not reach a clean-stop result, so re-enable the control
-    // and surface the server's remediation instead of leaving "stopping…" stuck forever.
     if (!outcome.accepted) {
       setStopping(false);
-      alert(outcome.message);
+      notify({ tone: "error", title: t("dash.stopFailedTitle"), body: outcome.message });
     }
   };
 
-  const brand = (
-    <div className="brand">
-      <span className="brand-logo" role="img" aria-label={t("app.logoAria")} />
-      <span className="name">opencodex</span>
-      <span className="ver">v{displayedVersion}</span>
-    </div>
-  );
+  const title = t(PAGE_META_BY_ID[activePage].tkey);
+  // The semantic version alone read the same across a dozen installers, so it
+  // could not answer "is the fix in the build I am running". Build number and
+  // dish codename come along now; the dish is derived from the commit with the
+  // same function that titles the release, so the line matches the release list.
+  const buildInfo = useMemo(() => readBuildInfo(displayedVersion), [displayedVersion]);
+  const statusLine = shortBuildLabel(buildInfo, health?.port ?? null);
+  const statusTitle = fullBuildLabel(buildInfo);
+  const codename = codenameLabel(buildInfo);
+
+  // The window title, which in a frameless shell is the one piece of chrome the
+  // app does NOT draw: it is what Windows shows in the taskbar, in Alt+Tab and
+  // in the window list. It read `opencodex · proxy dashboard` for every build
+  // ever shipped, so two running builds were indistinguishable in the only place
+  // the OS shows them beside each other. Set from here rather than from
+  // `BrowserWindow({ title })` because the page's own <title> wins the moment it
+  // loads — which is why the value passed at window creation never survived.
+  useEffect(() => {
+    document.title = windowTitle(buildInfo);
+  }, [buildInfo]);
+
+  // The remote control used to short-circuit the whole shell here, on the
+  // reasoning that a nav rail and a tab strip are the wrong furniture for a
+  // thumb on a phone. The furniture was the wrong thing to argue about: what it
+  // actually did was make `#/mobile` a dead end with three panels behind it, so
+  // a phone could reach the chat and nothing else — no settings, no appearance,
+  // no logs, no changelog, none of the other twenty-one pages.
+  //
+  // So the remote is a page like any other now, and the *shell* is what adapts:
+  // `windowClass === "compact"` already swaps the rail for a drawer and adds a
+  // bottom bar, and the strip, the menus and the anchored editors below now hold
+  // up at 320px. One shell, one set of components, one place a fix lands — the
+  // alternative was a second implementation of everything, which is how two
+  // surfaces start disagreeing about what a pin protects.
 
   return (
-    <div className="app">
-      {/* inert while the drawer is open: keeps focus and assistive tech inside the drawer */}
-      <header className="mobile-topbar" inert={navOpen}>
-        <button ref={menuBtnRef} type="button" className="menu-toggle" onClick={() => setNavOpen(o => !o)}
-          aria-expanded={navOpen} aria-controls="app-sidebar"
-          aria-label={t(navOpen ? "nav.closeMenu" : "nav.openMenu")} title={t(navOpen ? "nav.closeMenu" : "nav.openMenu")}>
-          <IconMenu />
-        </button>
-        {brand}
-        <button type="button" className="theme-toggle stop-toggle" onClick={handleStop} disabled={stopping}
-          aria-label={t("dash.stop")} title={t("dash.stop")}>
-          <IconPower />
-        </button>
-      </header>
-      {navOpen && <div className="drawer-scrim" onClick={() => setNavOpen(false)} aria-hidden="true" />}
-      <aside id="app-sidebar" className={`sidebar${navOpen ? " open" : ""}`} ref={sidebarRef} tabIndex={-1}>
-        <div className="drawer-head">
-          {brand}
-          <button type="button" className="menu-toggle drawer-close" onClick={() => setNavOpen(false)}
-            aria-label={t("nav.closeMenu")} title={t("nav.closeMenu")}>
-            <IconX />
-          </button>
-        </div>
-        <nav>
+    // The appearance host wraps the shell rather than sitting inside it: every
+    // surface that offers "Edit appearance…" — the rail, the app bar, the tab
+    // strip — has to be a descendant of the provider, and those three have no
+    // common ancestor further down.
+    <ElementAppearanceHost>
+    <div className={`m3-app${compact ? " m3-app--compact" : ""}`}>
+      <AdaptiveNav
+        activePage={activePage}
+        onOpen={openPage}
+        version={displayedVersion}
+        port={health?.port != null ? String(health.port) : null}
+        onStop={() => void handleStop()}
+        stopping={stopping}
+        drawerOpen={drawerOpen}
+        onCloseDrawer={() => setDrawerRequested(false)}
+        claudeEnabled={claudeEnabled}
+        claudeTogglePending={claudeTogglePending}
+        onToggleClaude={() => void toggleClaude()}
+        onConnectRemote={connectRemoteDialog}
+      />
+
+      <div className="m3-main-col">
+        <AppBar
+          apiBase={API_BASE}
+          title={title}
+          statusLine={statusLine}
+          statusTitle={statusTitle}
+          codename={codename}
+          onOpenDrawer={() => setDrawerRequested(true)}
+          drawerOpen={drawerOpen}
+          onOpen={openPage}
+          onConnectRemote={connectRemoteDialog}
+        />
+        <TabStrip tabs={tabs} />
+
+        <main className="m3-page">
           {/*
-            Codex Auth was once filtered out of this list whenever the workspace layout
-            was active, on the grounds that the Providers workspace embeds the same
-            account pool. It is now promoted to the second slot instead: there is only
-            one layout, so that filter would have hidden the page permanently.
+            Keep-alive tabs: every open tab's page stays mounted and hidden
+            rather than being torn down on switch. Remounting heavy pages on
+            every tab change caused visible stutter, and browser-style tabs
+            promise preserved state anyway. Shared client-resource keys mean
+            hidden duplicates share fetches instead of stacking polls.
           */}
-          {NAV.map(({ id, tkey, Icon }) => (
-            <div key={id} className={`nav-entry${id === "claude" ? ` nav-entry-claude${page === id ? " active" : ""}` : ""}`}>
-              <button type="button" className={`nav-item${page === id ? " active" : ""}`} data-page={id}
-                onClick={() => {
-                  // Deliberate sidebar navigation — push a history entry.
-                  navigateToPage(id);
-                  setNavOpen(false);
-                }}
-                aria-current={page === id ? "page" : undefined}>
-                <Icon /> {t(tkey)}
-              </button>
-              {id === "claude" && claudeEnabled !== null && (
-                <Switch
-                  on={claudeEnabled}
-                  onClick={() => void toggleClaude()}
-                  disabled={claudeTogglePending}
-                  label={t("claude.toggleAria")}
-                />
-              )}
+          {tabs.tabs.map(tab => (
+            <div
+              key={tab.id}
+              className={`m3-page-inner${WIDE_PAGES.has(tab.page) ? " m3-page-inner--wide" : ""}`}
+              hidden={tab.id !== tabs.activeTab}
+            >
+              <ErrorBoundary
+                key={`${tab.id}:${tab.page}`}
+                pageName={t(PAGE_META_BY_ID[tab.page].tkey)}
+                title={t("errorBoundary.title")}
+                message={t("errorBoundary.message")}
+                detailsLabel={t("errorBoundary.details")}
+                reloadLabel={t("errorBoundary.reload")}
+              >
+                {renderPage(tab.page)}
+              </ErrorBoundary>
             </div>
           ))}
-        </nav>
-        <div className="sidebar-foot">
-          <div className="lang-toggle">
-            <IconGlobe aria-hidden />
-            <Select
-              value={locale}
-              options={LOCALES.map(l => ({ value: l.code, label: l.name }))}
-              onChange={v => setLocale(v as Locale)}
-              label={t("lang.label")}
-              placement="right"
-              portal={false}
-              style={{ flex: 1, minWidth: 0, width: "100%" }}
-            />
-          </div>
-          <button type="button" className="theme-toggle" onClick={cycleTheme}
-            aria-label={`${t("theme.label")}: ${t(THEME_TKEY[theme])}`} title={`${t("theme.label")}: ${t(THEME_TKEY[theme])}`}>
-            <ThemeIcon /> <span className="mode">{t(THEME_TKEY[theme])}</span>
-          </button>
-          <button type="button" className="theme-toggle stop-toggle" onClick={handleStop} disabled={stopping}
-            aria-label={t("dash.stop")} title={t("dash.stop")}>
-            <IconPower /> <span className="mode">{stopping ? t("dash.stopping") : t("dash.stop")}</span>
-          </button>
-          <a className="sidebar-link" href="https://github.com/lidge-jun/opencodex" target="_blank" rel="noreferrer">
-            <IconGithub /> {t("common.github")}
-          </a>
-        </div>
-      </aside>
+        </main>
 
-      <main className="main" inert={navOpen}>
-        <div className={`main-inner${page === "combos" ? " main-inner--combos" : ""}`}>
-          <ErrorBoundary
-            key={page}
-            pageName={t(PAGE_TKEY[page])}
-            title={t("errorBoundary.title")}
-            message={t("errorBoundary.message")}
-            detailsLabel={t("errorBoundary.details")}
-            reloadLabel={t("errorBoundary.reload")}
-          >
-            {page === "dashboard" && <Dashboard apiBase={API_BASE} />}
-            {page === "startup" && <Startup apiBase={API_BASE} />}
-            {page === "providers" && <Providers apiBase={API_BASE} />}
-            {page === "models" && <Models apiBase={API_BASE} />}
-            {page === "combos" && <Combos apiBase={API_BASE} />}
-            {page === "subagents" && <Subagents apiBase={API_BASE} />}
-            {page === "logs" && <Logs apiBase={API_BASE} />}
-            {page === "usage" && <Usage apiBase={API_BASE} />}
-            {page === "storage" && <Storage apiBase={API_BASE} />}
-            {page === "codex-auth" && <CodexAuth apiBase={API_BASE} />}
-            {page === "api" && <ApiKeys apiBase={API_BASE} />}
-            {page === "claude" && <Claude apiBase={API_BASE} />}
-            {page === "grok" && <Grok apiBase={API_BASE} />}
-          </ErrorBoundary>
-        </div>
-      </main>
+        {compact && <BottomNav activePage={activePage} onOpen={openPage} />}
+      </div>
+
+      <SnackbarHost />
+      <DimSumCard version={displayedVersion} />
+      <RemoteConnectionDialog
+        key={remoteDialogOpen ? "open" : "closed"}
+        open={remoteDialogOpen}
+        onClose={() => setRemoteDialogOpen(false)}
+        onConnect={connectRemote}
+      />
+      {/* Decides for itself whether this is a first run; renders nothing otherwise. */}
+      <OnboardingWizard apiBase={API_BASE} />
     </div>
+    </ElementAppearanceHost>
   );
 }

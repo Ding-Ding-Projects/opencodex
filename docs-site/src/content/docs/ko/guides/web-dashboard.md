@@ -21,6 +21,14 @@ ocx start
 bun run dev:gui
 ```
 
+## Material 3 전용
+
+패키지 대시보드는 Material 3 인터페이스만 제공합니다. 폐기된 UI와 그 소스, 인접 빌드 fallback은
+제거되었습니다. 프록시는 패키지가 소유한 `gui/dist`의 build manifest가 Material 3를 가리키고 실행
+중인 패키지 버전과 일치할 때만 제공합니다. HTML은 `no-store`로 응답합니다. 검증된 빌드가 없거나
+오래되었으면 예전 UI로 돌아가지 않고 재빌드/재설치 안내와 함께 대시보드를 사용할 수 없다고
+보고합니다. legacy layout 전환 옵션은 없습니다.
+
 ## 할 수 있는 일
 
 | 영역 | 기능 |
@@ -40,7 +48,28 @@ bun run dev:gui
 | **Logs** | 토큰, 요청한 강도와 (사용 가능한 경우) 실제 전송 강도, 실제 모델, 프로바이더, 상태, 요청 id, 소요 시간, 오류 상세가 포함된 최근 요청을 자동 갱신합니다. 어댑터가 reasoning 매개변수를 전송한 경우 상세 보기에 정확한 wire field도 표시됩니다. 클라이언트가 보낸 불투명 대화/세션 id로 필터하면 현재 로드된 Logs 링의 토큰·추정 정가 합계를 볼 수 있습니다. |
 | **Usage / Debug** | 토큰 사용량의 측정 범위와 추이를 보거나, 선택적 프로바이더 전송/사용량 추출 진단을 켭니다. |
 | **Storage** | CODEX_HOME 디스크 사용량(세션, 보관, DB, 첨부)을 읽기 전용으로 표시합니다. 선택적 보관 정리: 가장 오래된 N%를 미리본 뒤 기본으로 `CODEX_HOME/.trash`에 격리하거나, 명시 체크 후 영구 삭제합니다. **자동 정리 정책**은 opt-in이며 **기본 OFF**(`storageCleanupPolicy.enabled`)입니다. Storage 페이지에서 임계값/목표/일정/모드를 설정하거나 **지금 실행**하세요. Storage 페이지에서 격리 항목을 복원할 수 있습니다(JSONL + 스레드). 활성 세션은 읽기 전용입니다. Codex가 최신/활성 `state_*.sqlite`를 잠그면 정리와 복원을 거절합니다. |
+| **원격 연결** | IPv4, IPv6 또는 호스트 이름과 실제 실행 포트를 직접 입력해 다른 OpenCodex를 엽니다. 대상 대시보드가 ADMIN 인증을 수행합니다. |
+| **내보내기** | 지원 형식/아카이브로 대시보드 데이터를 내보냅니다. 보호된 비밀번호 transport가 없어 비밀번호 7z는 사용할 수 없습니다. |
 | **Stop** | 프록시와 설치된 백그라운드 서비스를 정상 종료하고 네이티브 Codex를 복원한 뒤 끝냅니다(`POST /api/stop`). |
+
+### 다른 OpenCodex에 연결
+
+탐색 레일이나 모바일 메뉴에서 **다른 OpenCodex에 연결**을 여세요. IPv4, IPv6 또는 DNS 호스트
+이름과 1~65535 사이 포트를 입력합니다. 기본값은 `10100`입니다. 원격이 fallback 포트에서 자동
+시작했다면 단순 설정값이 아니라 `ocx host status`(또는 `ocx status`)에 표시된 identity-verified
+실제 실행 포트로
+바꾸세요.
+
+**연결**은 검증한 정확한 HTTP origin의 `#/dashboard`를 새 탭에서 엽니다. 원격 온라인 상태를
+확인하거나 URL에 token을 추가하거나 token을 저장하지 않습니다. 대상 대시보드는 data-plane API
+key와 별개인 해당 프록시의 ADMIN token을 요구합니다. HTTP는 암호화되지 않으므로 신뢰할 수 있는
+LAN에서만 직접 연결하고, 다른 네트워크에서는 SSH tunnel을 사용하세요.
+
+### 내보내기 아카이브
+
+안전한 7-Zip executable이 있으면 암호화하지 않은 7z는 쓸 수 있지만 비밀번호 암호화는 꺼져
+있습니다. 7-Zip이 비밀번호를 process arguments로만 받아 같은 머신의 다른 프로세스가 볼 수 있기
+때문입니다. OpenCodex는 보호된 password-input channel이 생길 때까지 암호화를 활성화하지 않습니다.
 
 ### 섹션으로 바로 가기
 

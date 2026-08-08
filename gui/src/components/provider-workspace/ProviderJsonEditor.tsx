@@ -39,10 +39,10 @@ export default function ProviderJsonEditor({
         <span className="pwi-json-panel-title">{t("pws.jsonEditorTitle", { name: providerName })}</span>
         <div className="pwi-json-panel-actions">
           {editor.onRestore && editor.isDirty && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={editor.onRestore}>{t("pws.jsonRestore")}</button>
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={editor.onRestore}>{t("pws.jsonRestore")}</button>
           )}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={editor.onClose}>{t("common.cancel")}</button>
-          <button type="button" className="btn btn-primary btn-sm" onClick={onSave} disabled={saving || !editor.isDirty}>
+          <button type="button" className="m3-btn m3-btn--text pws-btn-sm" onClick={editor.onClose}>{t("common.cancel")}</button>
+          <button type="button" className="m3-btn m3-btn--filled pws-btn-sm" onClick={onSave} disabled={saving || !editor.isDirty}>
             {saving ? t("pws.saving") : t("pws.jsonSave")}
           </button>
         </div>
@@ -50,7 +50,7 @@ export default function ProviderJsonEditor({
       <p className="pwi-json-panel-desc muted">{t("pws.jsonEditorDesc")}</p>
       <textarea
         ref={textareaRef}
-        className="input pwi-json-textarea"
+        className="m3-input pwi-json-textarea"
         value={editor.draft}
         onChange={e => editor.onDraftChange(e.target.value)}
         spellCheck={false}

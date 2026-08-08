@@ -3,6 +3,8 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
+import { ConfirmProvider } from "../src/shell/confirm";
 import Logs from "../src/pages/Logs";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT", "ResizeObserver"] as const;
@@ -30,6 +32,15 @@ const updatedLog = {
   requestId: "req-2",
   model: "gpt-updated",
 };
+
+/**
+ * The log table's own request, and not the one-shot `/api/logs/footprint` read
+ * that shares its prefix. Counting both would make the poll assertions below
+ * pass or fail on a fetch that has nothing to do with auto-refresh.
+ */
+function isPoll(url: string): boolean {
+  return url.includes("/api/logs") && !url.includes("/api/logs/footprint");
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -111,8 +122,15 @@ async function mountLogs(): Promise<{ root: Root; container: HTMLElement }> {
   await act(async () => {
     root = createRoot(container);
     root.render(
+      // Logs now owns a destructive action, so it reads the confirm and
+      // notification contexts main.tsx supplies. Mounting it bare would fail
+      // on a missing provider rather than on anything these tests assert.
       <LanguageProvider>
-        <Logs apiBase="http://localhost" />
+        <NotificationsProvider>
+          <ConfirmProvider>
+            <Logs apiBase="http://localhost" />
+          </ConfirmProvider>
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });
@@ -173,13 +191,13 @@ test("Logs: initial failure shows error; silent failure keeps it; retry then rec
   expect(container.textContent).toContain("Could not load request logs.");
   expect(container.textContent).not.toContain("No requests yet.");
   expect(container.textContent).not.toMatch(/\bLoading\b/);
-  const initialCalls = calls.filter(u => u.includes("/api/logs")).length;
+  const initialCalls = calls.filter(u => isPoll(u)).length;
   expect(initialCalls).toBeGreaterThanOrEqual(1);
 
   await advanceSilentRefresh();
   expect(container.textContent).toContain("Could not load request logs.");
   expect(container.textContent).not.toContain("No requests yet.");
-  expect(calls.filter(u => u.includes("/api/logs")).length).toBeGreaterThan(initialCalls);
+  expect(calls.filter(u => isPoll(u)).length).toBeGreaterThan(initialCalls);
 
   mode = "ok";
   await act(async () => {
@@ -265,21 +283,21 @@ test("Logs: disabling auto-refresh stops scheduled requests", async () => {
 
   const { root, container } = await mountLogs();
   await flushMicrotasks();
-  const afterInitial = urls.filter(u => u.includes("/api/logs")).length;
+  const afterInitial = urls.filter(u => isPoll(u)).length;
   expect(afterInitial).toBe(1);
 
-  const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
-  expect(checkbox?.checked).toBe(true);
-  const autoRefreshLabel = checkbox!.closest("label");
-  expect(autoRefreshLabel).not.toBeNull();
+  // Auto-refresh is the prototype's M3 switch, so the state lives on aria-checked
+  // rather than on a checkbox input.
+  const autoRefresh = container.querySelector<HTMLButtonElement>('button[role="switch"]');
+  expect(autoRefresh?.getAttribute("aria-checked")).toBe("true");
   await act(async () => {
-    autoRefreshLabel!.click();
+    autoRefresh!.click();
   });
   await flushMicrotasks();
-  expect(checkbox!.checked).toBe(false);
+  expect(autoRefresh!.getAttribute("aria-checked")).toBe("false");
 
   // Effect re-runs once when autoRefresh flips (non-silent fetch), then must stop polling.
-  const afterDisable = urls.filter(u => u.includes("/api/logs")).length;
+  const afterDisable = urls.filter(u => isPoll(u)).length;
   expect(afterDisable).toBeGreaterThanOrEqual(afterInitial);
   expect(afterDisable).toBeLessThanOrEqual(afterInitial + 1);
 
@@ -288,7 +306,7 @@ test("Logs: disabling auto-refresh stops scheduled requests", async () => {
   });
   await flushMicrotasks();
 
-  expect(urls.filter(u => u.includes("/api/logs")).length).toBe(afterDisable);
+  expect(urls.filter(u => isPoll(u)).length).toBe(afterDisable);
 
   await act(async () => { root.unmount(); });
 });
@@ -304,7 +322,7 @@ test("Logs: switching to the Debug tab stops scheduled log requests", async () =
 
   const { root, container } = await mountLogs();
   await flushMicrotasks();
-  const afterInitial = urls.filter(u => u.includes("/api/logs")).length;
+  const afterInitial = urls.filter(u => isPoll(u)).length;
   expect(afterInitial).toBe(1);
 
   await act(async () => {
@@ -328,7 +346,7 @@ test("Logs: switching to the Debug tab stops scheduled log requests", async () =
   });
   await flushMicrotasks();
 
-  expect(urls.filter(u => u.includes("/api/logs")).length).toBe(afterInitial);
+  expect(urls.filter(u => isPoll(u)).length).toBe(afterInitial);
 
   await act(async () => { root.unmount(); });
 });

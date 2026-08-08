@@ -3,6 +3,8 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { ConfirmProvider } from "../src/shell/confirm";
+import { NotificationsProvider } from "../src/shell/notifications";
 import CodexAuth from "../src/pages/CodexAuth";
 
 /**
@@ -111,7 +113,11 @@ async function mountPage() {
     root = createRoot(host);
     root.render(
       <LanguageProvider>
-        <CodexAuth apiBase="" />
+        <NotificationsProvider>
+          <ConfirmProvider>
+            <CodexAuth apiBase="" />
+          </ConfirmProvider>
+        </NotificationsProvider>
       </LanguageProvider>,
     );
   });

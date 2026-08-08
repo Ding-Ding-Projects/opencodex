@@ -46,8 +46,11 @@ On start, opencodex:
   Codex's model catalog**,
 - listens on `http://localhost:<port>/v1`.
 
-If the requested port is busy, `ocx start` selects a free port, records it in `runtime-port.json`,
-and updates Codex to use the live listener.
+With no `--port`, startup treats the configured port as a preference. If it is busy, opencodex
+selects a free port, records it in `runtime-port.json`, and updates Codex to use the identity-verified
+live listener without overwriting the configured preference. `ocx start --port 8080` is an explicit
+pin: it waits for that exact port and fails if it cannot use it. Update handoffs and dashboard
+restarts likewise keep their captured live port instead of hopping.
 
 Check it:
 

@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { act, useState } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import { NotificationsProvider } from "../src/shell/notifications";
 import Startup from "../src/pages/Startup";
 import Usage from "../src/pages/Usage";
 
@@ -100,8 +101,12 @@ test("an aborted Startup fetch must not clear loading while its replacement is i
     const [apiBase, setApiBase] = useState("http://old");
     (window as unknown as { __bumpApiBase?: () => void }).__bumpApiBase = () => setApiBase("http://new");
     return (
+      // Startup reports copy and install outcomes as snackbars, so it needs the
+      // notification host main.tsx mounts — rendering it bare throws.
       <LanguageProvider>
-        <Startup apiBase={apiBase} />
+        <NotificationsProvider>
+          <Startup apiBase={apiBase} />
+        </NotificationsProvider>
       </LanguageProvider>
     );
   }
@@ -128,7 +133,10 @@ test("an aborted Startup fetch must not clear loading while its replacement is i
   await settle();
 
   expect(container.textContent).toContain("Checking startup protection");
-  const refresh = container.querySelector<HTMLButtonElement>("button.btn");
+  // Supersedes the legacy `button.btn` selector: the Material 3 restyle renders the refresh
+  // control as `m3-btn`. The invariant under test is unchanged — the refresh button stays
+  // disabled while the replacement request is in flight.
+  const refresh = container.querySelector<HTMLButtonElement>("button.m3-btn");
   expect(refresh?.disabled).toBe(true);
 
   await act(async () => {

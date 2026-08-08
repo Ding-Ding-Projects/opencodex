@@ -1,0 +1,374 @@
+/* ============================================================================
+   The appearance editors: the infinite colour picker, the font picker and the
+   word-depth typography panel.
+
+   Ported from `docs-site/src/styles/appearance.css`, trimmed to the rules these
+   three components actually emit. Every value is a token the dashboard already
+   defines (`--m3-*`, `--r-*`, `--sp-*`, `--t-*`, `--e3`, `--mono`); there is no
+   raw hex in the chrome. The only literal colours here are inside the
+   checkerboard and cursor, which are *data* — they exist to make a translucent
+   or extreme colour legible against itself, and a token would defeat them.
+
+   Deliberately NOT solved by importing `shared/m3/components.css`: that sheet
+   defines its own `.m3-*` selectors overlapping this app's, and which copy wins
+   would become a bundler load-order accident.
+   ============================================================================ */
+
+/* The picker's free-text value and the translator rows are values to be read
+   character by character, so they are set in the code face. */
+.m3-input--mono { font-family: var(--mono); }
+
+/* A search field and the affordances anchored to it. `min-width: 0` on the
+   input is what stops a long placeholder forcing the row wider than the panel
+   and giving the whole editor a horizontal scrollbar. */
+.ap-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.ap-search > .m3-input { flex: 1 1 auto; min-width: 0; width: auto; }
+
+.ap-row { display: grid; gap: 6px; margin-block: var(--sp-2); min-width: 0; }
+.ap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* A capability note. Colour-coded AND worded, never colour alone — the state is
+   in the sentence, so a reader who cannot distinguish the two tints loses
+   nothing. */
+.ap-cap { margin-top: 2px; }
+.ap-cap--unsupported { color: var(--m3-error); }
+.ap-cap--partial,
+.ap-cap--unknown { color: var(--m3-on-surface-variant); }
+
+/* -------------------------------------------------------------- typography */
+
+.ap-type { display: grid; gap: var(--sp-3); min-width: 0; }
+.ap-type__group {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--sp-2) 0 0;
+  border-top: 1px solid var(--m3-outline-variant);
+}
+.ap-type__group:first-child { border-top: none; padding-top: 0; }
+.ap-type__grouptitle {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--t-label-l);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--m3-on-surface-variant);
+}
+
+/* --------------------------------------------------------------- popover -- */
+
+/**
+ * The anchored popover the colour picker opens in.
+ *
+ * `position: fixed`, not `absolute`, and that is not a preference. It opens from
+ * inside the tab appearance editor and from the Appearance page body, both of
+ * which are scroll containers: an absolutely-positioned child would be CLIPPED
+ * at their edge, so the picker would open and be cut in half by the panel that
+ * contains it. Fixed positioning escapes the clip, and the placement effect
+ * re-measures on scroll and resize so the panel still tracks its trigger —
+ * which is the part that must not be traded away for the clip fix.
+ *
+ * `max-width` is clamped to the viewport so a panel opened near an edge scrolls
+ * inside itself rather than pushing the page sideways.
+ */
+.ap-popover {
+  position: fixed;
+  z-index: 100;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-3);
+  display: grid;
+  gap: var(--sp-2);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  box-shadow: var(--e3);
+}
+/* Hidden until the placement effect has measured it, so it is never painted in
+   the wrong place and then jumped into the right one. */
+.ap-popover[data-placed='no'] { visibility: hidden; }
+
+/* ---------------------------------------------------------------- colour -- */
+
+.ap-colorfield { position: relative; display: grid; gap: 6px; min-width: 0; }
+.ap-colorfield__row { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; }
+.ap-colorfield__trigger {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--m3-outline);
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container-lowest);
+  color: var(--m3-on-surface);
+  font: inherit;
+  font-size: var(--t-body-m);
+  text-align: left;
+  cursor: pointer;
+}
+.ap-colorfield__trigger:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+.ap-colorfield__chip {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-s);
+  box-shadow: inset 0 0 0 1px var(--m3-outline-variant);
+  /* The checkerboard shows through a translucent colour, which is the only way
+     a swatch can distinguish 20% black from light grey. */
+  background-image:
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%),
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 5px 5px;
+}
+.ap-colorfield__chip[data-empty] { background-color: transparent; }
+.ap-colorfield__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+}
+
+.ap-picker { display: grid; gap: var(--sp-2); min-width: 0; }
+
+/* The 2-D field. `touch-action: none` so a drag steers the colour instead of
+   scrolling the panel out from under the pointer. */
+.ap-picker__field {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--r-m);
+  overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
+  /* Visible even before the canvas paints — and it never paints in a test
+     runner, where there is no raster surface at all. */
+  background: var(--m3-surface-container-highest);
+}
+.ap-picker__field canvas { width: 100%; height: 100%; display: block; }
+.ap-picker__field:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+.ap-picker__cursor {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: var(--r-pill);
+  /* Two rings, light over dark, so the marker stays visible at every point of a
+     field that spans white to black. */
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #000;
+  pointer-events: none;
+}
+
+.ap-picker__ramp-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.ap-picker__num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* 48px tall so the whole ramp clears Material's minimum hit target, not just the thumb. */
+.ap-picker__ramp {
+  width: 100%;
+  height: 48px;
+  margin: 0;
+  border-radius: var(--r-pill);
+  appearance: none;
+  cursor: pointer;
+}
+.ap-picker__ramp:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+/* `appearance: none` removes the native thumb along with the native track, so
+   both engines need one drawn back or the control becomes invisible and
+   undraggable. The two rings are the cursor's, for the same reason: the thumb
+   sits on a ramp that runs through every hue and both extremes of alpha. */
+.ap-picker__ramp::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #000;
+}
+.ap-picker__ramp::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #000;
+}
+.ap-picker__ramp--hue {
+  /* Stepped through OKLCh rather than through the HSL rainbow, so the ramp
+     matches the field it steers — an sRGB rainbow puts yellow and cyan in
+     visibly the wrong place relative to an OKLCh hue angle. */
+  background: linear-gradient(to right,
+    oklch(70% 0.16 0), oklch(70% 0.16 30), oklch(70% 0.16 60), oklch(70% 0.16 90),
+    oklch(70% 0.16 120), oklch(70% 0.16 150), oklch(70% 0.16 180), oklch(70% 0.16 210),
+    oklch(70% 0.16 240), oklch(70% 0.16 270), oklch(70% 0.16 300), oklch(70% 0.16 330),
+    oklch(70% 0.16 360));
+}
+.ap-picker__ramp--alpha {
+  background-image:
+    linear-gradient(to right, transparent, var(--ap-solid, currentColor)),
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%),
+    linear-gradient(45deg, #8884 25%, transparent 25%, transparent 75%, #8884 75%);
+  background-size: 100% 100%, 12px 12px, 12px 12px;
+  background-position: 0 0, 0 0, 6px 6px;
+}
+
+.ap-picker__numbers { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ap-picker__number { display: flex; align-items: center; gap: 4px; flex: 1 1 88px; min-width: 0; }
+.ap-picker__number > span { font-family: var(--mono); color: var(--m3-on-surface-variant); }
+.ap-picker__number .m3-input { min-height: 40px; padding: 0 8px; width: 100%; min-width: 0; }
+.ap-picker__rgb {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--t-label-m);
+  color: var(--m3-on-surface-variant);
+}
+
+.ap-picker__facts { display: grid; gap: 2px; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.ap-picker__gamut.warn { color: var(--m3-warn); }
+.ap-picker__warn {
+  margin: 0;
+  padding: var(--sp-2);
+  border-radius: var(--r-s);
+  background: var(--m3-warn-container);
+  color: var(--m3-on-warn-container);
+  font-size: var(--t-body-s);
+}
+
+.ap-picker__swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ap-picker__swatch {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--r-s);
+  box-shadow: inset 0 0 0 1px var(--m3-outline-variant);
+  cursor: pointer;
+}
+.ap-picker__swatch:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+/* The swatch itself is 32px for density, but its hit target is not: a negative
+   inset on a transparent pseudo-element gives every one of them the 48px a
+   finger needs without opening gaps in the grid. Was -6px, for a 44px target —
+   Apple's minimum, not Material's, and invisible to any audit that measures the
+   element's own box rather than this overlay. */
+.ap-picker__swatch::after { content: ''; position: absolute; inset: -8px; }
+
+.ap-picker__iconbtn {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  cursor: pointer;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ap-picker__iconbtn:hover { background: var(--m3-surface-container-highest); }
+.ap-picker__iconbtn:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+
+.ap-picker__translator > summary {
+  cursor: pointer;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  font-size: var(--t-label-l);
+  font-weight: 500;
+  color: var(--m3-on-surface-variant);
+}
+.ap-picker__translator ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ap-picker__translator li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ap-picker__translator code {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: var(--t-label-m);
+}
+.ap-picker__space { font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+
+/* ----------------------------------------------------------------- fonts -- */
+
+.ap-fonts { display: grid; gap: var(--sp-2); min-width: 0; }
+.ap-fonts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-s);
+}
+.ap-fonts__row {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ap-fonts__row:hover { background: var(--m3-surface-container-highest); }
+.ap-fonts__row:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: -3px; }
+.ap-fonts__row.selected { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.ap-fonts__name { font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+.ap-fonts__row.selected .ap-fonts__name { color: inherit; }
+/* The whole point of the list: each family drawn in itself. */
+.ap-fonts__sample {
+  font-size: var(--t-body-l);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ap-fonts__empty { padding: var(--sp-3); font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.ap-fonts__axes { display: grid; gap: 6px; }
+.ap-axis { display: grid; grid-template-columns: 1fr 2fr auto; align-items: center; gap: 6px; }
+.ap-axis > span:first-child { font-size: var(--t-label-m); color: var(--m3-on-surface-variant); }
+
+/* ------------------------------------------------------------ small screens */
+
+@media (max-width: 34.99em) {
+  /* An anchored popover on a screen this narrow stops being anchored to
+     anything useful — the panel is already the width of the viewport. It flows
+     inline instead. `position: static` also neutralises the inline
+     `left`/`top`/`bottom` the placement effect writes, since those are ignored
+     on a static box, so the two systems do not have to know about each other. */
+  .ap-popover { position: static; width: auto; max-width: 100%; box-shadow: none; border-radius: var(--r-m); }
+  .ap-popover[data-placed='no'] { visibility: visible; }
+  .ap-picker__translator li { grid-template-columns: 4.5rem 1fr auto; }
+  .ap-axis { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ap-picker__iconbtn { transition: none; }
+}

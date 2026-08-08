@@ -73,6 +73,14 @@ export function filterModels(
    * authoritative.
    */
   hasLiveModels: boolean,
+  /**
+   * How to test an id against the query, when the caller offers more than plain
+   * text. Optional so the assembly above stays the single place that decides
+   * which ids exist at all: a caller that also owns a regex opt-in passes its own
+   * matcher rather than reimplementing the live-versus-fallback rule to filter
+   * the result itself.
+   */
+  matcher?: { test: (text: string) => boolean },
 ): string[] {
   const fallback = configuredModels && configuredModels.length > 0
     ? configuredModels
@@ -81,5 +89,6 @@ export function filterModels(
   const list = [...new Set([...primary, ...customModels])];
   const q = query.trim().toLowerCase();
   if (!q) return list;
+  if (matcher) return list.filter(id => matcher.test(id));
   return list.filter(id => id.toLowerCase().includes(q));
 }

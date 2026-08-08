@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ComboWorkspace from "../components/ComboWorkspace";
 import {
   type ComboItem,
   comboModelId,
+  groupCombos,
   parseComboList,
   toPutBody,
 } from "../combo-workspace-data";
 import { hideRedundantChatGptForwardProviders } from "../provider-workspace/catalog";
-import { Notice } from "../ui";
+import { useNotifications } from "../shell/notifications-context";
+import { recordRevision } from "../shell/revisions";
 import { useT } from "../i18n/shared";
 
 type ProviderOption = {
@@ -41,29 +43,17 @@ function responseSucceeded(data: unknown): boolean {
 
 export default function Combos({ apiBase }: { apiBase: string }) {
   const t = useT();
+  // Load/save/remove outcomes are informational, so they are snackbars rather
+  // than a banner that pushes the workspace down; only the remove decision is
+  // still blocking, and that dialog lives in ComboWorkspace.
+  const { notify } = useNotifications();
   const [combos, setCombos] = useState<ComboItem[]>([]);
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [cataloguedComboIds, setCataloguedComboIds] = useState<ReadonlySet<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState("");
-  const [statusOk, setStatusOk] = useState(false);
   const [adding, setAdding] = useState(false);
-
-  const notify = (msg: string, ok: boolean) => {
-    setStatus(msg);
-    setStatusOk(ok);
-  };
-
-  // Success banners are transient; errors stay until the next notify.
-  useEffect(() => {
-    if (!status || !statusOk) return;
-    const timer = window.setTimeout(() => {
-      setStatus("");
-      setStatusOk(false);
-    }, 5000);
-    return () => window.clearTimeout(timer);
-  }, [status, statusOk]);
+  const sections = useMemo(() => groupCombos(combos), [combos]);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -145,11 +135,11 @@ export default function Combos({ apiBase }: { apiBase: string }) {
 
       setModels(fromApi);
     } catch {
-      notify(t("cws.loadFailed"), false);
+      notify({ tone: "error", title: t("cws.loadFailed") });
     } finally {
       setLoading(false);
     }
-  }, [apiBase, t]);
+  }, [apiBase, notify, t]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -159,6 +149,9 @@ export default function Combos({ apiBase }: { apiBase: string }) {
   }, [fetchAll]);
 
   const saveCombo = async (item: ComboItem, isCreate: boolean, renameFrom?: string) => {
+    // Captured before the refetch: a rename retires the old id, so this is the
+    // only moment the pre-edit record is still reachable for the revision log.
+    const before = combos.find((c) => c.id === (renameFrom ?? item.id));
     try {
       const res = await fetch(`${apiBase}/api/combos`, {
         method: "PUT",
@@ -171,25 +164,30 @@ export default function Combos({ apiBase }: { apiBase: string }) {
       const serverError = responseError(data);
       if (!res.ok || serverError || !responseSucceeded(data)) {
         const err = serverError || t("cws.saveFailed");
-        notify(err, false);
+        notify({ tone: "error", title: err });
         return { ok: false as const, error: err };
       }
       await fetchAll();
-      notify(
-        renameFrom
-          ? t("cws.renamed", { from: comboModelId(renameFrom), to: item.model })
-          : isCreate ? t("cws.created", { model: item.model }) : t("cws.saved"),
-        true,
-      );
+      const summary = renameFrom
+        ? t("cws.renamed", { from: comboModelId(renameFrom), to: item.model })
+        : isCreate ? t("cws.created", { model: item.model }) : t("cws.saved");
+      recordRevision({
+        scope: "combo",
+        label: item.model,
+        summary,
+        ...(before ? { before: JSON.stringify(before) } : {}),
+      });
+      notify({ tone: "success", title: summary });
       return { ok: true as const };
     } catch {
       const err = t("cws.saveFailed");
-      notify(err, false);
+      notify({ tone: "error", title: err });
       return { ok: false as const, error: err };
     }
   };
 
   const removeCombo = async (id: string) => {
+    const before = combos.find((c) => c.id === id);
     try {
       const res = await fetch(`${apiBase}/api/combos?id=${encodeURIComponent(id)}`, { method: "DELETE" });
       const data = res.ok
@@ -198,15 +196,23 @@ export default function Combos({ apiBase }: { apiBase: string }) {
       const serverError = responseError(data);
       if (!res.ok || serverError || !responseSucceeded(data)) {
         const err = serverError || t("cws.removeFailed");
-        notify(err, false);
+        notify({ tone: "error", title: err });
         return { ok: false as const, error: err };
       }
       await fetchAll();
-      notify(t("cws.removed", { id }), true);
+      const summary = t("cws.removed", { id });
+      // Without `before` the deletion could not be undone from Version history.
+      recordRevision({
+        scope: "combo",
+        label: before?.model ?? comboModelId(id),
+        summary,
+        ...(before ? { before: JSON.stringify(before) } : {}),
+      });
+      notify({ tone: "success", title: summary });
       return { ok: true as const };
     } catch {
       const err = t("cws.removeFailed");
-      notify(err, false);
+      notify({ tone: "error", title: err });
       return { ok: false as const, error: err };
     }
   };
@@ -214,25 +220,31 @@ export default function Combos({ apiBase }: { apiBase: string }) {
   if (loading && combos.length === 0) {
     return (
       <div className="combos-workspace-shell">
-        {status && (
-          <div className="combos-workspace-shell-banner">
-            <Notice tone={statusOk ? "ok" : "err"}>{status}</Notice>
-          </div>
-        )}
-        <div className="muted" style={{ padding: "24px 20px" }} role="status">
-          {status ? null : t("cws.loading")}
-        </div>
+        <div className="m3-empty" role="status">{t("cws.loading")}</div>
       </div>
     );
   }
 
   return (
     <div className="combos-workspace-shell">
-      {status && (
-        <div className="combos-workspace-shell-banner">
-          <Notice tone={statusOk ? "ok" : "err"}>{status}</Notice>
+      {/* The prototype leads the Combos screen with the blurb and the three-count
+          strip ABOVE the rail/detail split, so both stay visible while a combo is
+          selected. They used to live inside OverviewPanel, which only renders when
+          nothing is selected — hence they vanished the moment you opened a combo. */}
+      <div className="combos-workspace-shell-banner">
+        <p className="m3-page-lead">{t("cws.overviewBlurb")}</p>
+        <div className="cwi-count-strip">
+          <div className="cwi-count-pill">
+            <strong>{combos.length}</strong><span>{t("cws.count.total")}</span>
+          </div>
+          <div className="cwi-count-pill">
+            <strong>{sections.failover.length}</strong><span>{t("cws.count.failover")}</span>
+          </div>
+          <div className="cwi-count-pill">
+            <strong>{sections.roundRobin.length}</strong><span>{t("cws.count.roundRobin")}</span>
+          </div>
         </div>
-      )}
+      </div>
       <div className="combos-workspace-shell-body">
         <ComboWorkspace
           combos={combos}

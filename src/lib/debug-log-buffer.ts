@@ -1,4 +1,6 @@
-/** In-memory ring buffer of debug log lines for `ocx debug logs` / GUI tailing. */
+/** In-memory debug ring mirrored to the bounded app log on disk. */
+
+import { appendAppLogLine, readAppLogTail } from "./app-log-file";
 
 export interface DebugLogEntry {
   /** Monotonic cursor for pagination; survives same-millisecond bursts. */
@@ -11,13 +13,34 @@ const MAX_LINES = 2_000;
 const buffer: DebugLogEntry[] = [];
 const listeners = new Set<(entry: DebugLogEntry) => void>();
 let nextSeq = 1;
+let hydratedFromDisk = false;
 
 export function appendDebugLogLine(line: string): void {
   const entry: DebugLogEntry = { seq: nextSeq++, at: Date.now(), line };
   buffer.push(entry);
   if (buffer.length > MAX_LINES) buffer.splice(0, buffer.length - MAX_LINES);
+  appendAppLogLine(line);
   for (const listener of listeners) {
     try { listener(entry); } catch { /* listeners must not break logging */ }
+  }
+}
+
+export function hydrateDebugLogFromDisk(
+  reader: () => { at: number; line: string }[] = () => readAppLogTail(MAX_LINES),
+): number {
+  if (hydratedFromDisk || buffer.length > 0) {
+    hydratedFromDisk = true;
+    return 0;
+  }
+  hydratedFromDisk = true;
+  try {
+    const replayed = reader();
+    for (const entry of replayed.slice(-MAX_LINES)) {
+      buffer.push({ seq: nextSeq++, at: entry.at, line: entry.line });
+    }
+    return Math.min(replayed.length, MAX_LINES);
+  } catch {
+    return 0;
   }
 }
 
@@ -34,9 +57,15 @@ export function subscribeDebugLogEntries(listener: (entry: DebugLogEntry) => voi
   return () => listeners.delete(listener);
 }
 
+export function clearDebugLogBuffer(): void {
+  buffer.length = 0;
+  hydratedFromDisk = false;
+}
+
 /** Test isolation. */
 export function resetDebugLogBufferForTests(): void {
   buffer.length = 0;
   listeners.clear();
   nextSeq = 1;
+  hydratedFromDisk = false;
 }

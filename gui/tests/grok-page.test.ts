@@ -27,13 +27,59 @@ test("the Grok page covers loading, absent and error states", async () => {
   expect(page).toContain("common.retry");
 });
 
+// The nav table moved to shell/page-meta.ts with the Material 3 shell, and pages
+// render off the active tab rather than a single `page`. Same invariant, new home.
 test("the Grok page is routable and present in the nav", async () => {
   const routing = await read("../src/app-routing.ts");
   const app = await read("../src/App.tsx");
+  const meta = await read("../src/shell/page-meta.ts");
   expect(routing).toContain('| "grok"');
   expect(routing).toContain('"grok",');
-  expect(app).toContain('{page === "grok" && <Grok apiBase={API_BASE} />}');
-  expect(app).toContain('{ id: "grok", tkey: "nav.grok"');
+  expect(app).toContain('case "grok": return <Grok apiBase={API_BASE} />;');
+  expect(meta).toContain('grok: "nav.grok"');
+  expect(meta).toContain("grok: IconBolt");
+});
+
+// Every settings surface carries its own search, plain text by default with `.*` as an
+// explicit opt-in and a route to the full builder. Grok's settings are its per-model
+// registration switches, so the search filters those rows.
+test("the Grok page carries the settings search row wired to the regex builder", async () => {
+  const page = await read("../src/pages/Grok.tsx");
+  expect(page).toContain('role="search"');
+  expect(page).toContain("search.regexHint");
+  expect(page).toContain("settings.openBuilder");
+  // The builder opens beside this field. The old `<a href="#regex">` navigated to
+  // the builder page, which is precisely where the user's query was not.
+  expect(page).toContain("<RegexBuilderButton");
+  expect(page).not.toContain('href="#regex"');
+});
+
+// The rows are models and aliases, so the field and its empty state say so. Borrowing
+// "Search settings…" / "No settings match on this surface." described the wrong things.
+test("the Grok search uses its own copy, not the generic settings strings", async () => {
+  const page = await read("../src/pages/Grok.tsx");
+  expect(page).toContain('placeholder={t("grok.search")}');
+  expect(page).toContain('aria-label={t("grok.search")}');
+  // No-match is an honest empty state, not a silently blank list.
+  expect(page).toContain('t("grok.noMatch")');
+  expect(page).not.toContain('t("settings.search")');
+  expect(page).not.toContain('t("settings.noMatch")');
+});
+
+test("the Grok search copy exists in the M3 dictionary", async () => {
+  const dict = await read("../src/i18n/m3.ts");
+  for (const key of ["grok.search", "grok.noMatch"]) {
+    expect(new RegExp(`"${key.replace(".", "\\.")}":\\s*"[^"]+"`).test(dict)).toBe(true);
+  }
+});
+
+// A Version history entry must name the event, not that "something changed" — and it must
+// use Grok's own copy rather than borrowing the header's count label.
+test("the Grok selection records its own revision summary", async () => {
+  const page = await read("../src/pages/Grok.tsx");
+  expect(page).toContain("recordRevision");
+  expect(page).toContain("grok.revisionSummary");
+  expect(page).not.toContain('summary: t("grok.enabledCount"');
 });
 
 test("every locale carries the Grok keys", async () => {
