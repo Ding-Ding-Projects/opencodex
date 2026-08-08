@@ -24,7 +24,7 @@ function validIpv4(value: string): boolean {
 
 function normalizedHost(value: string): string | null {
   const trimmed = value.trim();
-  if (!trimmed || /[\x00- /?#@\\]/.test(trimmed)) return null;
+  if (!trimmed || /[\s/?#@\\]/.test(trimmed)) return null;
 
   // An IPv6 literal may arrive already bracketed from a copied URL. The output
   // always brackets it exactly once because the port follows it.

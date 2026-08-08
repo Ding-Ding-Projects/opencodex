@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useT } from "../i18n/shared";
 import { Button, Dialog, TextInput } from "../shell/m3-ui";
 import { buildRemoteEndpoint, DEFAULT_REMOTE_PORT } from "../remote-connection";
@@ -13,15 +13,6 @@ export default function RemoteConnectionDialog({ open, onClose, onConnect }: Pro
   const t = useT();
   const [host, setHost] = useState("");
   const [port, setPort] = useState(String(DEFAULT_REMOTE_PORT));
-  const hostRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (open) {
-      setHost("");
-      setPort(String(DEFAULT_REMOTE_PORT));
-      window.setTimeout(() => hostRef.current?.focus(), 0);
-    }
-  }, [open]);
 
   if (!open) return null;
 
@@ -53,7 +44,6 @@ export default function RemoteConnectionDialog({ open, onClose, onConnect }: Pro
           <div className="m3-field" style={{ flex: "1 1 240px" }}>
             <label className="m3-field-label" htmlFor="ocx-remote-host">{t("remote.host")}</label>
             <TextInput
-              ref={hostRef}
               id="ocx-remote-host"
               value={host}
               onChange={event => setHost(event.target.value)}
@@ -84,4 +74,3 @@ export default function RemoteConnectionDialog({ open, onClose, onConnect }: Pro
     </Dialog>
   );
 }
-EOF
