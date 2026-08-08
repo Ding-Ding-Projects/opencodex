@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
-import { IconBell, IconMenu, IconPalette } from "../icons";
+import { IconBell, IconDevices, IconMenu, IconPalette } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
 import CostMeter from "./CostMeter";
@@ -30,9 +30,10 @@ interface AppBarProps {
   onOpenDrawer: () => void;
   drawerOpen: boolean;
   onOpen: (page: Page, newTab: boolean) => void;
+  onConnectRemote: () => void;
 }
 
-export default function AppBar({ apiBase, title, statusLine, statusTitle, codename, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
+export default function AppBar({ apiBase, title, statusLine, statusTitle, codename, onOpenDrawer, drawerOpen, onOpen, onConnectRemote }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
   const { history, unreadCount, markAllRead } = useNotifications();
@@ -113,6 +114,11 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
           </div>
         )}
       </div>
+
+      <button type="button" className="m3-icon-btn" onClick={onConnectRemote}
+        aria-label={t("remote.connectTitle")} title={t("remote.connectTitle")}>
+        <IconDevices aria-hidden />
+      </button>
 
       <button type="button" className="m3-icon-btn" onClick={() => onOpen("appearance", false)}
         aria-label={t("nav.appearance")} title={t("nav.appearance")}>
