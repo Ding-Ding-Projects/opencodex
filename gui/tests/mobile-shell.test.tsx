@@ -32,6 +32,7 @@ import { PrefsProvider } from "../src/theme/prefs";
 import { PAGE_META } from "../src/shell/page-meta";
 import { VALID_PAGES } from "../src/app-routing";
 import { computePlacement } from "../../shared/m3/anchor";
+import { computeViewportPlacement } from "../src/shell/use-anchored-placement";
 import { clampToViewport } from "../../shared/m3/tabs";
 import { elsewhereFor } from "../src/pages/settings-elsewhere";
 import { makeMatcher } from "../src/pages/models-shared";
@@ -108,6 +109,20 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
 }
 
 /* ------------------------------------------------- every route reachable -- */
+
+test("the navigation footer stays in normal scroll flow for tall compact menus", () => {
+  const footer = SHELL_CSS.match(/\.m3-nav-foot\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(footer).toContain("margin-top: auto");
+  expect(footer).not.toContain("position: sticky");
+  expect(footer).not.toContain("bottom:");
+  expect(footer).not.toContain("z-index:");
+});
+
+test("shared menus have a narrow viewport width cap instead of a defeating minimum", () => {
+  const menu = SHELL_CSS.match(/\.m3-menu\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(menu).toContain("max-width: calc(100vw - 16px)");
+  expect(menu).toContain("min-width: min(220px, calc(100vw - 16px))");
+});
 
 test("every route the app has is offered by the new-tab search", async () => {
   seed([{ id: "t1", page: "dashboard", pinned: false }], "t1");
@@ -211,6 +226,36 @@ test("a panel with no room below flips above its trigger instead of running off 
   // Anchored by its bottom edge, so growing content cannot slide it over the
   // trigger it is supposed to sit above.
   expect(placed.viewportBottom).toBeGreaterThan(0);
+});
+
+test("viewport placement clamps a scrolled anchor and height to the visible side", () => {
+  const viewport = { width: 320, height: 240 };
+  const above = computeViewportPlacement(
+    { top: -100, bottom: -56, left: 20, right: 64 },
+    { width: 300, height: 400 },
+    viewport,
+  );
+  expect(above.viewportTop).toBeGreaterThanOrEqual(8);
+  expect(above.viewportTop).toBeLessThanOrEqual(viewport.height - 8);
+  expect(above.maxHeight).toBeLessThanOrEqual(viewport.height - 16);
+
+  const below = computeViewportPlacement(
+    { top: 244, bottom: 288, left: 20, right: 64 },
+    { width: 300, height: 400 },
+    viewport,
+  );
+  expect(below.viewportBottom).toBeGreaterThanOrEqual(8);
+  expect(below.viewportBottom).toBeLessThanOrEqual(viewport.height - 8);
+  expect(below.maxHeight).toBeLessThanOrEqual(viewport.height - 16);
+});
+
+test("viewport placement does not force the 220px minimum into a short edge gap", () => {
+  const placed = computeViewportPlacement(
+    { top: 20, bottom: 64, left: 20, right: 64 },
+    { width: 300, height: 400 },
+    { width: PHONE_WIDTH, height: 80 },
+  );
+  expect(placed.maxHeight).toBeLessThanOrEqual(8);
 });
 
 test("clampToViewport keeps a pointer-positioned menu on a phone screen", () => {

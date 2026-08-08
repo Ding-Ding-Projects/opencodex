@@ -33,7 +33,8 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
-import { INITIAL_PLACEMENT, computePlacement, fixedPanelStyle, type Placement } from "../../../shared/m3/anchor";
+import { INITIAL_PLACEMENT, fixedPanelStyle, type Placement } from "../../../shared/m3/anchor";
+import { computeViewportPlacement } from "./use-anchored-placement";
 import { Button, Chip, Field, TextArea, TextInput } from "./m3-ui";
 import { IconRegex, IconX } from "../icons";
 import { useT } from "../i18n/shared";
@@ -228,7 +229,7 @@ function RegexPopover({
       const anchor = anchorRef.current?.getBoundingClientRect();
       const panel = panelRef.current?.getBoundingClientRect();
       if (!anchor || !panel) return;
-      setPlacement(computePlacement(anchor, panel, {
+      setPlacement(computeViewportPlacement(anchor, panel, {
         width: window.innerWidth,
         height: window.innerHeight,
       }));

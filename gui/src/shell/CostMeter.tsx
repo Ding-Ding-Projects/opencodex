@@ -14,6 +14,7 @@ import { readJsonIfOk } from "../fetch-json";
 import { useT, type TKey } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
 import type { CostRange } from "../theme/prefs-context";
+import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import { formatUsd } from "./cost-format";
 
 const RANGES: { range: CostRange; tkey: TKey }[] = [
@@ -27,6 +28,9 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
   const { prefs, setPrefs } = usePrefs();
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuPlacement = useAnchoredPlacement(wrapRef, menuRef, menuOpen, 180);
 
   const range = prefs.costRange;
   const poll = useKeyedClientResource(
@@ -46,7 +50,12 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
     const onDown = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setMenuOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
     const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -64,6 +73,7 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
   return (
     <div ref={wrapRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
       <button
+        ref={triggerRef}
         type="button"
         className="m3-cost-chip"
         onClick={() => setMenuOpen(o => !o)}
@@ -76,7 +86,7 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
         <span className="m3-cost-range">{rangeLabel}</span>
       </button>
       {menuOpen && (
-        <div className="m3-menu" role="menu" style={{ top: "100%", right: 0, minWidth: 180 }}>
+        <div ref={menuRef} className="m3-menu" role="menu" style={{ ...fixedPanelStyle(menuPlacement), zIndex: 70, minWidth: "min(180px, calc(100vw - 16px))" }}>
           <div className="m3-menu-heading">{t("cost.menuTitle")}</div>
           {RANGES.map(item => (
             <button

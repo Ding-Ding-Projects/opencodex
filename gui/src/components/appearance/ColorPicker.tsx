@@ -54,7 +54,8 @@ import {
   translate,
   type Color,
 } from "../../../../shared/m3/color";
-import { computePlacement, fixedPanelStyle } from "../../../../shared/m3/anchor";
+import { fixedPanelStyle } from "../../../../shared/m3/anchor";
+import { computeViewportPlacement } from "../../shell/use-anchored-placement";
 import { SEED_SWATCHES } from "../../theme/m3";
 import { pushRecentColor, readRecentColors } from "../../theme/recent-colors";
 import { usePrefs } from "../../theme/prefs-context";
@@ -564,7 +565,7 @@ function ColorPopover({ color, onChange, anchorRef, fieldId }: {
       if (!anchor || !panel) return;
       setPlacement(
         fixedPanelStyle(
-          computePlacement(
+          computeViewportPlacement(
             anchor,
             { width: panel.width, height: panel.height },
             { width: window.innerWidth, height: window.innerHeight },
