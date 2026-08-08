@@ -3,19 +3,21 @@ import { Notice } from "../ui";
 import { useI18n, LOCALES } from "../i18n/shared";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import {
-  classifyExternalModel,
   externalModelId,
   type ExternalModelRow,
 } from "../api-access-models";
+import { compileBoundedRegex, type RegexSearchState } from "../regex-search";
 import {
   DEFAULT_ENDPOINTS,
   deriveApiEndpoints,
   type ApiEndpointInfo,
   type ApiKeyEntry,
+  type CopilotDesktopProfile,
   type ModelTestState,
 } from "./api-keys-utils";
 import {
   ApiKeysAuthPanel,
+  ApiKeysCopilotPanel,
   ApiKeysEndpointsPanel,
   ApiKeysManagePanel,
   ApiKeysModelsPanel,
@@ -41,6 +43,8 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang;
   const [keys, setKeys] = useState<ApiKeyEntry[]>([]);
+  const [copilotProfile, setCopilotProfile] = useState<CopilotDesktopProfile | null>(null);
+  const [copilotLoadFailed, setCopilotLoadFailed] = useState(false);
   const [endpoints, setEndpoints] = useState<ApiEndpointInfo>(DEFAULT_ENDPOINTS);
   const [claudeCodeEnabled, setClaudeCodeEnabled] = useState(true);
   const [keysLoadFailed, setKeysLoadFailed] = useState(false);
@@ -49,6 +53,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
+  const [modelRegex, setModelRegex] = useState<RegexSearchState>({ enabled: false, pattern: "", flags: "i" });
   const [copiedModelId, setCopiedModelId] = useState<string | null>(null);
   const [modelTests, setModelTests] = useState<Record<string, { state: ModelTestState; detail?: string }>>({});
   const [newName, setNewName] = useState("");
@@ -83,38 +88,36 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     }
   }, [apiBase]);
 
-  const fetchModels = useCallback(async () => {
+  const fetchCopilotProfile = useCallback(async () => {
     setModelsLoading(true);
     setModelsLoadFailed(false);
     try {
-      const res = await fetch(`${apiBase}/v1/models`);
-      if (!res.ok) {
-        setModels([]);
+      const res = await fetch(`${apiBase}/api/copilot-desktop`);
+      const profile = await readJsonIfOk<CopilotDesktopProfile>(res);
+      if (!profile || !Array.isArray(profile.models)) {
+        setCopilotLoadFailed(true);
         setModelsLoadFailed(true);
         return;
       }
-      const data = await res.json() as unknown;
-      const rawRows = Array.isArray(data)
-        ? data
-        : (typeof data === "object" && data !== null && Array.isArray((data as { data?: unknown }).data)
-          ? (data as { data: unknown[] }).data
-          : null);
-      if (!rawRows) {
-        setModels([]);
-        setModelsLoadFailed(true);
-        return;
-      }
-      const rows = rawRows
-        .filter((row): row is { id: string; owned_by?: string } => (
-          typeof row === "object"
-          && row !== null
-          && typeof (row as { id?: unknown }).id === "string"
-        ))
-        .map(row => classifyExternalModel(row))
-        .sort((a, b) => externalModelId(a).localeCompare(externalModelId(b)));
-      setModels(rows);
+      setCopilotProfile(profile);
+      setCopilotLoadFailed(false);
+      setModels(profile.models.map(model => ({
+        id: model.id,
+        displayName: model.id,
+        provider: model.provider,
+        native: model.provider === "openai" && !model.id.includes("/"),
+        custom: model.provider !== "openai" && model.provider !== "combo",
+        copilot: {
+          ready: model.ready,
+          reason: model.reason,
+          adapter: model.adapter,
+          capabilities: model.capabilities,
+          sidecars: model.sidecars,
+          directModeExcluded: model.directModeExcluded,
+        },
+      })).sort((a, b) => externalModelId(a).localeCompare(externalModelId(b))));
     } catch {
-      setModels([]);
+      setCopilotLoadFailed(true);
       setModelsLoadFailed(true);
     } finally {
       setModelsLoading(false);
@@ -124,23 +127,30 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void fetchKeys();
-      void fetchModels();
+      void fetchCopilotProfile();
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [fetchKeys, fetchModels]);
+  }, [fetchCopilotProfile, fetchKeys]);
 
   const filteredModels = useMemo(() => {
+    const regex = compileBoundedRegex(modelRegex);
     const query = modelQuery.trim().toLowerCase();
-    if (!query) return models;
+    if (modelRegex.enabled && !regex) return [];
+    if (!modelRegex.enabled && !query) return models;
     return models.filter(model => {
-      const id = externalModelId(model).toLowerCase();
-      return id.includes(query)
-        || model.displayName.toLowerCase().includes(query)
-        || model.provider.toLowerCase().includes(query);
+      const searchable = [
+        externalModelId(model),
+        model.displayName,
+        model.provider,
+        model.copilot?.reason ?? "",
+        model.copilot?.adapter ?? "",
+        ...Object.entries(model.copilot?.capabilities ?? {}).map(([name, value]) => `${name} ${value}`),
+      ].join(" ");
+      return regex ? regex.test(searchable) : searchable.toLowerCase().includes(query);
     });
-  }, [modelQuery, models]);
+  }, [modelQuery, modelRegex, models]);
 
-  const handleCreate = async (name?: string): Promise<boolean> => {
+  const handleCreate = async (name?: string, purpose?: ApiKeyEntry["purpose"]): Promise<boolean> => {
     if (creatingRef.current) return false;
     creatingRef.current = true;
     setCreating(true);
@@ -150,7 +160,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       const res = await fetch(`${apiBase}/api/keys`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: effectiveName || "default" }),
+        body: JSON.stringify({ name: effectiveName || "default", ...(purpose ? { purpose } : {}) }),
       });
       const data = await readJsonOrThrow<CreateKeyResponse>(res, t("api.createFailed"));
       if (typeof data?.key !== "string" || data.key.length === 0) {
@@ -160,6 +170,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       setNewKey(data.key);
       setNewName("");
       void fetchKeys();
+      if (purpose === "github-copilot-desktop") void fetchCopilotProfile();
       return true;
     } catch {
       setActionError(t("api.createFailed"));
@@ -271,6 +282,16 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         <Notice tone="err">{actionError ?? t("api.keysLoadFailed")}</Notice>
       )}
 
+      <ApiKeysCopilotPanel
+        profile={copilotProfile}
+        profileLoadFailed={copilotLoadFailed}
+        integrationKey={keys.find(key => key.purpose === "github-copilot-desktop") ?? null}
+        creating={creating}
+        newKeyVisible={newKey !== null}
+        localeTag={localeTag}
+        onGenerate={() => { void handleCreate(t("api.copilotKeyName"), "github-copilot-desktop"); }}
+        onManage={() => document.getElementById("api-active-keys")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      />
       <ApiKeysEndpointsPanel endpoints={endpoints} claudeCodeEnabled={claudeCodeEnabled} />
       <ApiKeysAuthPanel claudeCodeEnabled={claudeCodeEnabled} />
       <ApiKeysManagePanel
@@ -295,10 +316,18 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         modelsLoading={modelsLoading}
         modelsLoadFailed={modelsLoadFailed}
         modelQuery={modelQuery}
+        modelRegex={modelRegex}
         copiedModelId={copiedModelId}
         modelTests={modelTests}
         claudeCodeEnabled={claudeCodeEnabled}
-        onModelQueryChange={setModelQuery}
+        onModelQueryChange={(value) => {
+          setModelQuery(value);
+          setModelRegex(current => ({ ...current, pattern: value }));
+        }}
+        onModelRegexChange={(next) => {
+          setModelRegex(next);
+          setModelQuery(next.pattern);
+        }}
         onCopyModelId={(modelId) => { void copyModelId(modelId); }}
         onTestModel={(model) => { void testModel(model); }}
         sourceLabel={sourceLabel}

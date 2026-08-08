@@ -138,9 +138,15 @@ function chunkBase(id: string, model: string, created: number): Rec {
 /**
  * Streaming: Responses SSE bytes -> Chat Completions SSE bytes.
  */
+export interface ChatCompletionsStreamOptions {
+  includeUsage?: boolean;
+  separateUsageChunk?: boolean;
+}
+
 export function responsesSseToChatCompletionsSse(
   upstream: ReadableStream<Uint8Array>,
   model: string,
+  options: ChatCompletionsStreamOptions = { includeUsage: true },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let terminated = false;
@@ -236,8 +242,15 @@ export function responsesSseToChatCompletionsSse(
         ensureRole();
         const frame = chunkBase(id, model, created);
         frame.choices = [{ index: 0, delta: {}, finish_reason: finishReason }];
-        if (usage) frame.usage = chatCompletionsUsage(usage);
+        if (usage && options.includeUsage !== false && options.separateUsageChunk !== true) {
+          frame.usage = chatCompletionsUsage(usage);
+        }
         emit(frame);
+        if (usage && options.includeUsage !== false && options.separateUsageChunk === true) {
+          const usageFrame = chunkBase(id, model, created);
+          usageFrame.usage = chatCompletionsUsage(usage);
+          emit(usageFrame);
+        }
         emit("[DONE]");
       };
       const fail = (message: string, details?: { code?: string | null; type?: string; status?: number }) => {

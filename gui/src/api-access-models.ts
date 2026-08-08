@@ -1,3 +1,5 @@
+export type ExternalCapabilityState = "supported" | "unsupported";
+
 export interface ExternalModelRow {
   id: string;
   displayName: string;
@@ -5,6 +7,20 @@ export interface ExternalModelRow {
   disabled?: boolean;
   native?: boolean;
   custom?: boolean;
+  copilot?: {
+    ready: boolean;
+    reason: string;
+    adapter: string;
+    capabilities: {
+      chat: ExternalCapabilityState;
+      tools: ExternalCapabilityState;
+      images: ExternalCapabilityState;
+      reasoning: ExternalCapabilityState;
+      structuredOutput: ExternalCapabilityState;
+    };
+    sidecars: string[];
+    directModeExcluded: boolean;
+  };
 }
 
 /** Inbound gateway protocols — not inferred from provider type. */

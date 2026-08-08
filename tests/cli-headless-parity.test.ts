@@ -58,6 +58,7 @@ describe("headless GUI parity CLI", () => {
       ["/api/claude/", "ocx observe"],
       ["/api/codex-auth", "ocx account"],
       ["/api/oauth", "ocx account"],
+      ["/api/copilot-desktop", "ocx access"],
       ["/api/providers/keys", "ocx account"],
       ["/api/providers", "ocx provider"],
       ["/api/provider-", "ocx provider/models"],

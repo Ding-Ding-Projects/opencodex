@@ -54,7 +54,7 @@ import {
   setDebugSettings,
   type DebugFlag,
 } from "../../lib/debug-settings";
-import type { OcxClaudeCodeConfig, OcxConfig, OcxCustomModel, OcxProviderConfig } from "../../types";
+import { DATA_PLANE_API_KEY_PURPOSES, type DataPlaneApiKeyPurpose, type OcxClaudeCodeConfig, type OcxConfig, type OcxCustomModel, type OcxProviderConfig } from "../../types";
 import { drainAndShutdown } from "../lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
@@ -431,8 +431,18 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
   }
 
   // ---------------------------------------------------------------------------
-  // API Keys management
+  // API Keys management and token-free inbound-client readiness
   // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/copilot-desktop" && req.method === "GET") {
+    const { buildCopilotDesktopProfile } = await import("../../chat/copilot-profile");
+    const profile = await buildCopilotDesktopProfile(config, {
+      requestUrl: req.url,
+      requestHost: req.headers.get("host"),
+      requestOrigin: req.headers.get("origin"),
+    });
+    return jsonResponse(profile, 200, req, config);
+  }
+
   if (url.pathname === "/api/keys" && req.method === "GET") {
     const keys = config.apiKeys ?? [];
     const endpoints = buildApiAccessEndpoints(config, {
@@ -441,24 +451,55 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       requestOrigin: req.headers.get("origin"),
     });
     return jsonResponse({
-      keys: keys.map(k => ({ id: k.id, name: k.name, prefix: k.key.slice(0, 8) + "...", createdAt: k.createdAt })),
+      keys: keys.map(k => ({
+        id: k.id,
+        name: k.name,
+        prefix: k.key.slice(0, 8) + "...",
+        createdAt: k.createdAt,
+        ...(k.purpose ? { purpose: k.purpose } : {}),
+      })),
       ...endpoints,
     }, 200, req, config);
   }
 
   if (url.pathname === "/api/keys" && req.method === "POST") {
-    const body = await req.json() as { name?: string };
-    const name = (body.name ?? "").trim() || "default";
+    const body = await req.json().catch(() => ({})) as { name?: unknown; purpose?: unknown };
+    if (body.name !== undefined && typeof body.name !== "string") {
+      return jsonResponse({ error: "name must be a string" }, 400, req, config);
+    }
+    const name = (typeof body.name === "string" ? body.name : "").trim() || "default";
+    if (name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) {
+      return jsonResponse({ error: "name must be at most 80 printable characters" }, 400, req, config);
+    }
+    let purpose: DataPlaneApiKeyPurpose | undefined;
+    if (body.purpose !== undefined) {
+      if (typeof body.purpose !== "string" || !DATA_PLANE_API_KEY_PURPOSES.includes(body.purpose as DataPlaneApiKeyPurpose)) {
+        return jsonResponse({ error: "unsupported key purpose" }, 400, req, config);
+      }
+      purpose = body.purpose as DataPlaneApiKeyPurpose;
+    }
     // Generate key from provider keys hash + random salt
     const providerKeys = Object.values(config.providers).map(p => p.apiKey ?? "").filter(Boolean).join("|");
     const salt = crypto.randomUUID();
     const hashInput = `${providerKeys}|${salt}|${Date.now()}`;
     const hashBuf = new Bun.CryptoHasher("sha256").update(hashInput).digest();
     const key = "ocx_data_" + Buffer.from(hashBuf).toString("hex").slice(0, 40);
-    const entry = { id: crypto.randomUUID(), name, key, createdAt: new Date().toISOString() };
+    const entry = {
+      id: crypto.randomUUID(),
+      name,
+      key,
+      createdAt: new Date().toISOString(),
+      ...(purpose ? { purpose } : {}),
+    };
     config.apiKeys = [...(config.apiKeys ?? []), entry];
     saveConfigPreservingClaudeCode(config);
-    return jsonResponse({ id: entry.id, name: entry.name, key: entry.key, createdAt: entry.createdAt }, 201, req, config);
+    return jsonResponse({
+      id: entry.id,
+      name: entry.name,
+      key: entry.key,
+      createdAt: entry.createdAt,
+      ...(entry.purpose ? { purpose: entry.purpose } : {}),
+    }, 201, req, config);
   }
 
   if (url.pathname === "/api/keys" && req.method === "DELETE") {

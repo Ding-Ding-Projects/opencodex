@@ -60,15 +60,13 @@ bun run build
 
 GitHub Actions намеренно остаются компактными:
 
-- **Cross-platform CI** (`.github/workflows/ci.yml`) запускается на pull request и push в `main`,
-  затрагивающих файлы рантайма, тестов, пакета, скриптов, TypeScript или воркфлоу. Его Bun-матрица
-  покрывает Linux, Windows и macOS: install, typecheck, тесты, privacy scan, smoke-сборка
-  release-helper, сборка GUI и `ocx help`. Отдельная линия на тех же трёх ОС подтверждает, что
-  npm global install работает без отдельно установленного Bun — за счёт runtime, входящего в
-  состав пакета.
+- **Windows CI** (`.github/workflows/ci.yml`) запускается на pull request и push в `main`, затрагивающих
+  файлы рантайма, тестов, пакета, скриптов, TypeScript или воркфлоу. Windows jobs выполняют install,
+  typecheck, тесты, privacy scan, smoke-сборку release-helper, сборку GUI, `ocx help` и проверяют npm
+  global install без отдельно установленного Bun — за счёт runtime, входящего в состав пакета.
 - **Release** (`.github/workflows/release.yml`) запускается вручную. Он не служит вторым полным
   CI-пайплайном; перед dry-run или publish он требует, чтобы для точного релизного коммита
-  (`GITHUB_SHA`) уже был успешный запуск Cross-platform CI.
+  (`GITHUB_SHA`) уже был успешный запуск Windows CI.
 
 Для релизов используйте helper:
 
