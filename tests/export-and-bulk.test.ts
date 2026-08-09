@@ -2,9 +2,9 @@
  * The export formats, the archives, the VS Code hand-off, and bulk actions.
  *
  * What is pinned here is mostly the honesty, not the happy path: that a lossy
- * format says what it loses before it runs, that an "encrypted" archive really
- * does hide its filenames, that a missing editor is reported rather than
- * substituted, and that a bulk run which half-failed says so.
+ * format says what it loses before it runs, that unsupported encryption is
+ * rejected before it can enter process arguments, that a missing editor is
+ * reported rather than substituted, and that a bulk run which half-failed says so.
  *
  * The ZIP writer is checked by handing its output to the real 7-Zip when the
  * machine has one. A ZIP that only this repository can read would pass every
@@ -22,7 +22,8 @@ import {
   type ExportInput,
 } from "../src/lib/export-formats";
 import {
-  assertSafePath, buildZip, describePlan, findSevenZip, resolveOnPath, runSevenZip, sevenZipArgs,
+  assertSafePath, buildZip, describePlan, findSevenZip, parseSevenZipOptions,
+  resolveOnPath, runSevenZip, sevenZipArgs, SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON,
 } from "../src/lib/export-archive";
 import { VSCODE_DOWNLOAD, findVsCode, vsCodeCandidates } from "../src/lib/open-in-vscode";
 import {
@@ -220,16 +221,22 @@ describe("ZIP", () => {
 });
 
 describe("7z options", () => {
-  test("a password encrypts the FILE NAMES too, by default", () => {
-    // 7-Zip's own default is off. This inverts it, and that inversion is the
-    // difference between "encrypted" being true and being nearly true.
-    const args = sevenZipArgs("out.7z", { password: "hunter2" });
-    expect(args).toContain("-mhe=on");
+  test("passwords are rejected before they can enter process arguments", () => {
+    expect(() => sevenZipArgs("out.7z", { password: "one-use-secret" }))
+      .toThrow(SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON);
+    expect(parseSevenZipOptions({ password: "one-use-secret" })).toEqual({
+      ok: false,
+      error: SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON,
+    });
   });
 
-  test("headers can be left in the clear, but only by asking", () => {
-    const args = sevenZipArgs("out.7z", { password: "hunter2", encryptHeaders: false });
-    expect(args).not.toContain("-mhe=on");
+  test("encrypted headers are rejected without a password too", () => {
+    expect(() => sevenZipArgs("out.7z", { encryptHeaders: true }))
+      .toThrow(SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON);
+    expect(parseSevenZipOptions({ encryptHeaders: false })).toEqual({
+      ok: true,
+      options: { encryptHeaders: false },
+    });
   });
 
   test("no password means no encryption flags at all", () => {
@@ -241,7 +248,7 @@ describe("7z options", () => {
   test("every documented knob reaches the command line", () => {
     const args = sevenZipArgs("out.7z", {
       method: "PPMd", level: 9, dictionarySize: "64m", wordSize: 273,
-      solid: "4g", multithread: 8, volumeSize: "100m",
+      solid: "4g", multithread: 8,
     });
     expect(args).toContain("-m0=PPMd");
     expect(args).toContain("-mx=9");
@@ -249,7 +256,12 @@ describe("7z options", () => {
     expect(args).toContain("-mfb=273");
     expect(args).toContain("-ms=4g");
     expect(args).toContain("-mmt=8");
-    expect(args).toContain("-v100m");
+  });
+
+  test("split volumes are rejected by the single-file download contract", () => {
+    const parsed = parseSevenZipOptions({ volumeSize: "100m" });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toContain("single-file download endpoint");
   });
 
   test("solid off is a real setting, not an omission", () => {
@@ -259,19 +271,20 @@ describe("7z options", () => {
 });
 
 describe("the plan is stated before the archive is built", () => {
-  test("an unencrypted-header 7z says the names are readable", () => {
-    const notes = describePlan("7z", { password: "x", encryptHeaders: false }, "/usr/bin/7z").notes.join(" ");
-    expect(notes).toContain("file names stay readable");
+  test("a password-bearing 7z plan is blocked", () => {
+    const plan = describePlan("7z", { password: "x" }, "7z.exe");
+    expect(plan.blocked).toBe(SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON);
+    expect(plan.notes).toEqual([]);
   });
 
-  test("a fully encrypted 7z says both are covered", () => {
-    const notes = describePlan("7z", { password: "x" }, "/usr/bin/7z").notes.join(" ");
-    expect(notes).toContain("contents and the file names");
+  test("a header-encryption plan is blocked", () => {
+    expect(describePlan("7z", { encryptHeaders: true }, "7z.exe").blocked)
+      .toBe(SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON);
   });
 
-  test("a ZIP asked for a password is told plainly that it will not be encrypted", () => {
-    const notes = describePlan("zip", { password: "x" }).notes.join(" ");
-    expect(notes).toContain("NOT encrypted");
+  test("an accepted 7z plan says plainly that it is not encrypted", () => {
+    const notes = describePlan("7z", {}, "7z.exe").notes.join(" ");
+    expect(notes).toContain("not encrypted");
   });
 
   test("no 7-Zip is a blocked plan, not a silent fall back to ZIP", () => {
@@ -303,6 +316,11 @@ describe("the plan is stated before the archive is built", () => {
     const result = await runSevenZip(dir, join(dir, "a.7z"), {}, null);
     expect(result.ok).toBe(false);
     expect(result.message).toContain("not installed");
+  });
+
+  test("running 7z validates encryption before checking the executable", async () => {
+    const result = await runSevenZip(dir, join(dir, "a.7z"), { password: "x" }, null);
+    expect(result).toEqual({ ok: false, message: SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON });
   });
 });
 

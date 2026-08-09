@@ -29,8 +29,9 @@ import {
   type ExportFormat, type ExportInput, type Row,
 } from "../../lib/export-formats";
 import {
-  buildZip, describePlan, findSevenZip, runSevenZip,
-  type ArchiveKind, type SevenZipOptions,
+  buildZip, describePlan, findSevenZip, parseSevenZipOptions, runSevenZip,
+  SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON,
+  type ArchiveKind,
 } from "../../lib/export-archive";
 import { findVsCode, openInVsCode } from "../../lib/open-in-vscode";
 import { jsonResponse } from "../auth-cors";
@@ -108,9 +109,14 @@ export async function handleExportRoutes(
       datasets: described,
       archives: {
         zip: { available: true, ...describePlan("zip") },
-        // Reported rather than assumed: the UI must not offer an encrypted 7z on
-        // a machine that cannot produce one and discover it at the last step.
-        sevenZip: { available: !!sevenZip, path: sevenZip, ...describePlan("7z", {}, sevenZip) },
+        // Availability is useful; the executable's absolute path is not and can
+        // disclose the host account/layout to a dashboard administrator.
+        sevenZip: {
+          available: !!sevenZip,
+          encryptionAvailable: false,
+          encryptionUnavailableReason: SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON,
+          ...describePlan("7z", {}, sevenZip),
+        },
       },
       vsCode: { available: vscode.found, label: vscode.label ?? null, downloadUrl: vscode.downloadUrl ?? null },
     }, 200, req, config);
@@ -121,10 +127,27 @@ export async function handleExportRoutes(
     try { body = (await req.json()) as ExportRequest; }
     catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
 
+    if (body.openInVsCode !== undefined && typeof body.openInVsCode !== "boolean") {
+      return jsonResponse({ error: "openInVsCode must be a boolean" }, 400, req, config);
+    }
     if (body.openInVsCode === true) {
       const localOnly = requireLoopbackListener(ctx, "Opening exports in VS Code");
       if (localOnly) return localOnly;
     }
+    if (body.archive !== undefined && body.archive !== "zip" && body.archive !== "7z") {
+      return jsonResponse({ error: "archive must be zip or 7z" }, 400, req, config);
+    }
+
+    const archiveKind: ArchiveKind | null =
+      body.archive === "zip" ? "zip" : body.archive === "7z" ? "7z" : null;
+    if (body.sevenZip !== undefined && archiveKind !== "7z") {
+      return jsonResponse({ error: "sevenZip options require archive=7z" }, 400, req, config);
+    }
+    const parsedSevenZip = parseSevenZipOptions(body.sevenZip);
+    if (!parsedSevenZip.ok) {
+      return jsonResponse({ error: parsedSevenZip.error }, 400, req, config);
+    }
+    const sevenZipOptions = parsedSevenZip.options;
 
     const dataset = typeof body.dataset === "string" ? datasets.get(body.dataset) : undefined;
     if (!dataset) {
@@ -162,9 +185,6 @@ export async function handleExportRoutes(
       fidelity: describeFidelity(input, format),
     }));
 
-    const archiveKind: ArchiveKind | null =
-      body.archive === "zip" ? "zip" : body.archive === "7z" ? "7z" : null;
-
     // One file and no archive asked for: hand it straight back. Wrapping a
     // single CSV in a ZIP to be uniform would just make the user unwrap it.
     if (!archiveKind && files.length === 1) {
@@ -183,7 +203,6 @@ export async function handleExportRoutes(
     }
 
     const kind: ArchiveKind = archiveKind ?? "zip";
-    const sevenZipOptions = (body.sevenZip ?? {}) as SevenZipOptions;
 
     if (kind === "zip") {
       const zip = buildZip(files.map(file => ({

@@ -28,7 +28,8 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import RemoteConnectionDialog from "./components/RemoteConnectionDialog";
 import { useT } from "./i18n/shared";
 import { installApiAuthFetch } from "./api";
-import { hashRouteFor, type Page } from "./app-routing";
+import type { Page } from "./app-routing";
+import { openRemoteDashboard } from "./remote-navigation";
 import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
 import { useNotifications } from "./shell/notifications-context";
@@ -116,8 +117,12 @@ export default function App() {
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
 
   const connectRemote = useCallback((url: string) => {
+    const result = openRemoteDashboard(url);
+    if (!result.opened) {
+      notify({ tone: "error", title: t("remote.popupBlocked"), body: result.url });
+      return;
+    }
     setRemoteDialogOpen(false);
-    window.open(`${url}/${hashRouteFor("dashboard")}`, "_blank", "noopener,noreferrer");
     notify({ tone: "success", title: t("remote.connectOpened"), body: url });
   }, [notify, t]);
 

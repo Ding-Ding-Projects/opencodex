@@ -46,17 +46,19 @@ ocx export data requests --format csv > requests.csv
 ## Archives
 
 Ask for `zip` and you get a deterministic archive written natively — no external tool, no temporary
-install. Ask for `7z` and opencodex shells out to a real 7-Zip, exposing its full option surface:
-compression method and level, dictionary and word size, solid blocks, threads, volume splitting,
-password, and header encryption.
+install. Ask for `7z` and opencodex shells out to a real 7-Zip after validating the requested
+compression method and level, dictionary and word size, solid blocks, and thread count. Split volumes
+are unavailable because this endpoint returns one downloadable file.
 
 Two rules matter more than the options:
 
-- **Header encryption defaults ON when you set a password.** 7-Zip's own default leaves file *names*
-  readable in an encrypted archive. If you encrypted an export, you meant the file names too.
+- **Password and header encryption are unavailable.** 7-Zip accepts its password through process
+  arguments, where process inspection can expose it. opencodex rejects `password` and
+  `encryptHeaders: true` before starting 7-Zip and reports that limitation through
+  `GET /api/export/capabilities`; accepted 7z exports are unencrypted.
 - **A missing 7-Zip is refused, never silently downgraded.** If 7-Zip is not installed the request
-  fails with `409` and says so. Handing back an unencrypted ZIP to someone who asked for an
-  encrypted 7z would tell them their data is protected when it is not.
+  fails with `409` and says so. Handing back a ZIP to someone who asked for 7z would return a
+  different archive format without saying so.
 
 Whatever is written to disk during a 7z export is plaintext until the archive exists, so the staging
 directory is deleted when the request ends, successfully or not.
