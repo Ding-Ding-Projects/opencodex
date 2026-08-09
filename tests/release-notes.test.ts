@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { OPENCODEX_GITHUB_REPOSITORY } from "../src/update/links";
 import {
   assembleReleaseNotes,
   hasMeaningfulCarriedNotes,
@@ -118,7 +119,7 @@ describe("stripCarriedReleaseNotes", () => {
       "- release: v2.7.39-preview.20260724 (8894e40e)",
       "- Merge branch 'dev' into preview (9077f7c1)",
       "",
-      "**Full Changelog**: https://github.com/lidge-jun/opencodex/compare/v2.7.38-preview.20260724...v2.7.39-preview.20260724",
+      "**Full Changelog**: https://github.com/Ding-Ding-Projects/opencodex/compare/v2.7.38-preview.20260724...v2.7.39-preview.20260724",
       "",
     ].join("\n");
 
@@ -213,14 +214,14 @@ describe("assembleReleaseNotes", () => {
       commits: "- release: v2.7.39 (357acee6)",
       compareFrom: "v2.7.37",
       compareTo: "v2.7.39",
-      repository: "lidge-jun/opencodex",
+      repository: OPENCODEX_GITHUB_REPOSITORY,
     });
 
     expect(notes).toContain("dist-tag `latest`");
     expect(notes).toContain("## What's Changed\n### Bug Fixes\n* fix A");
     expect(notes).toContain("## Since preview\n\n## What's Changed\n### Bug Fixes\n* fix B");
     expect(notes).toContain("## Commits\n\n- release: v2.7.39 (357acee6)");
-    expect(notes).toContain("**Full Changelog**: https://github.com/lidge-jun/opencodex/compare/v2.7.37...v2.7.39");
+    expect(notes).toContain("**Full Changelog**: https://github.com/Ding-Ding-Projects/opencodex/compare/v2.7.37...v2.7.39");
   });
 
   test("omits empty generate-notes delta that is only the config comment", () => {

@@ -186,6 +186,14 @@ describe("install scripts", () => {
     });
   });
 
+  test("PowerShell installer documentation explains current-user PATH repair", async () => {
+    const docs = await readText("docs-site/src/content/docs/getting-started/installation.md");
+
+    expect(docs).toContain(".\\scripts\\install.ps1");
+    expect(docs).toContain("current user's npm global");
+    expect(docs).toContain("does not require administrator");
+  });
+
   test("Node launcher handles npm self-update before starting Bun", async () => {
     const launcher = await readText("bin/ocx.mjs");
 

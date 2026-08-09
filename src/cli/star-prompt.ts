@@ -5,8 +5,9 @@ import { getConfigDir } from "../config";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
 import { isAgentDriven } from "./agent-driven";
 import { interactiveConfirm } from "./interactive-confirm";
+import { OPENCODEX_GITHUB_REPOSITORY } from "../update/links";
 
-const REPO = "lidge-jun/opencodex";
+const REPO = OPENCODEX_GITHUB_REPOSITORY;
 /** Fires exactly once from the first interactive `ocx start`. */
 const MARKER = ".star-prompted";
 

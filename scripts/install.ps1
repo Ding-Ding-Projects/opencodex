@@ -28,7 +28,6 @@ Write-Host "Using Node v$nodeVersion"
 # Install opencodex globally
 # If npm reports "install scripts blocked" for bun, rerun as:
 #   npm install -g --allow-scripts=bun @bitkyc08/opencodex
-# (use an elevated PowerShell if the original install was elevated)
 $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (-not $npm) {
     $npm = Get-Command npm -ErrorAction Stop

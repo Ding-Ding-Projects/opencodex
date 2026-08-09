@@ -1341,7 +1341,7 @@ describe("GitHub Actions hardening", () => {
       expect(commentBody).toContain("`dev`");
       expect(commentBody).toContain("`dev2-go`");
       // Points at the documentation rather than assuming the reader knows.
-      expect(commentBody).toContain("https://lidge-jun.github.io/opencodex/contributing/");
+      expect(commentBody).toContain("https://opencodex.me/contributing/");
       // And carries the state the next run needs.
       expect(commentBody).toContain(MARKER);
       expect(commentBody).toContain('"version":1');

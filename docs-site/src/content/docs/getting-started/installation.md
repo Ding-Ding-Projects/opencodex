@@ -72,6 +72,21 @@ sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
 ```
 :::
 
+On Windows, the repository's PowerShell installer also repairs the current user's npm global
+`PATH` entry when npm installs successfully but `ocx` is not yet resolvable. It updates the running
+PowerShell process and the user's environment only, preserves unrelated entries, avoids machine-wide
+mutation or `setx`, and verifies `ocx.cmd`/`ocx` with `help` before reporting success:
+
+From a checkout of the repository, run the script from its root:
+
+```powershell
+.\scripts\install.ps1
+```
+
+If npm reports an empty or invalid prefix, or Windows refuses the user `PATH` write, the installer
+fails with that reason instead of claiming that `ocx` is ready. A new PowerShell opened later will
+inherit the persisted user `PATH`.
+
 Verify both command aliases are on your `PATH`:
 
 ```bash
@@ -94,6 +109,15 @@ An **upstream provider API key** pays for/authenticates an optional provider. An
 key** protects `/v1/*` only when you expose the proxy beyond loopback. Neither is required for the
 default `localhost` + ChatGPT/Codex-login path. See the [Quickstart credential table](/getting-started/quickstart/#which-credential-is-it-asking-about).
 :::
+
+```powershell
+Get-Command ocx.cmd
+Get-Command ocx
+```
+
+> The installer does not require administrator privileges. If the npm global prefix itself is
+> protected or npm was installed for all users, use a user-owned Node/npm installation rather than
+> granting the installer machine-wide access.
 
 ### Release channels
 

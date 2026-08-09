@@ -1,10 +1,10 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability (private)
-    url: https://github.com/lidge-jun/opencodex/security/advisories/new
+    url: https://github.com/Ding-Ding-Projects/opencodex/security/advisories/new
     about: Report undisclosed vulnerabilities privately to the maintainers. Do not open a public issue.
   - name: Security policy
-    url: https://github.com/lidge-jun/opencodex/blob/main/SECURITY.md
+    url: https://github.com/Ding-Ding-Projects/opencodex/blob/main/SECURITY.md
     about: Read the supported-version and reporting guidance before sharing security-sensitive details.
   - name: Contributing guide
     url: https://opencodex.me/contributing/

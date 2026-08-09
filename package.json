@@ -89,11 +89,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lidge-jun/opencodex.git"
+    "url": "git+https://github.com/Ding-Ding-Projects/opencodex.git"
   },
-  "homepage": "https://lidge-jun.github.io/opencodex/",
+  "homepage": "https://opencodex.me/",
   "bugs": {
-    "url": "https://github.com/lidge-jun/opencodex/issues"
+    "url": "https://github.com/Ding-Ding-Projects/opencodex/issues"
   },
   "license": "MIT"
 }

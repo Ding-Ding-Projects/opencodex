@@ -44,6 +44,9 @@ window before retrying.
 
 <p align="center">
   <a href="README.md">English</a> · <a href="readme/README.ko.md">한국어</a> · <a href="readme/README.zh-CN.md">简体中文</a> · <a href="readme/README.ru.md">Русский</a> · <a href="readme/README.ja.md">日本語</a> · 📖 <a href="https://opencodex.me/"><b>Full documentation →</b></a>
+  · <a href="https://opencodex.me/getting-started/">Getting started</a>
+  · <a href="https://opencodex.me/reference/cli/">CLI reference</a>
+  · <a href="https://opencodex.me/reference/configuration/">Configuration</a>
 </p>
 
 <p align="center">
@@ -326,6 +329,7 @@ ocx claude [args...]           # launch Claude Code wired to the proxy (model di
 ocx claude desktop             # save and apply the Claude Desktop four-family profile
 ocx service [install|start|stop|status|uninstall]   # install/update/start background service
 ocx update [--tag preview]     # update opencodex; preview installs stay on @preview
+ocx memory-sync <status|install|uninstall|profile> # inspect or synchronize canonical agent memory
 ```
 
 ### Claude Desktop profile
@@ -515,6 +519,9 @@ lives in [`SECURITY.md`](./SECURITY.md).
 Report undisclosed vulnerabilities privately through
 [GitHub private vulnerability reporting](https://github.com/lidge-jun/opencodex/security/advisories/new),
 not a public issue.
+
+The memory-sync guide documents the provenance checks, Windows synchronizer boundary, and read-only
+project-profile inventory: [`Global agent memory`](https://opencodex.me/guides/global-memory/).
 
 ## Development
 

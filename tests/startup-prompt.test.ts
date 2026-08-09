@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { OPENCODEX_GITHUB_REPOSITORY } from "../src/update/links";
 
 const root = new URL("../", import.meta.url);
 
@@ -34,6 +35,8 @@ describe("startup star prompt", () => {
     expect(prompt).toContain("interactiveConfirm");
     expect(prompt).toContain("defaultYes: true");
     expect(prompt).toContain("Star it on GitHub (via gh)?");
+    expect(prompt).toContain("OPENCODEX_GITHUB_REPOSITORY");
+    expect(OPENCODEX_GITHUB_REPOSITORY).toBe("Ding-Ding-Projects/opencodex");
   });
 
   test("an agent driving ocx is told to ask the user instead of answering", async () => {

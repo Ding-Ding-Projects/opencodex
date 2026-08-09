@@ -162,10 +162,10 @@ export default defineConfig({
         { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: dark)", content: "#212121" } },
       ],
       social: [
-        { icon: "github", label: "GitHub", href: "https://github.com/lidge-jun/opencodex" },
+        { icon: "github", label: "GitHub", href: "https://github.com/Ding-Ding-Projects/opencodex" },
       ],
       editLink: {
-        baseUrl: "https://github.com/lidge-jun/opencodex/edit/main/docs-site/",
+        baseUrl: "https://github.com/Ding-Ding-Projects/opencodex/edit/main/docs-site/",
       },
       lastUpdated: true,
       // English at the site root; Korean under /ko, Simplified Chinese under /zh-cn, Russian under /ru, Japanese under /ja.
@@ -192,6 +192,7 @@ export default defineConfig({
           translations: { ko: "가이드", "zh-CN": "指南", ru: "Руководства", ja: "ガイド" },
           items: [
             { label: "Providers", translations: { ko: "프로바이더", "zh-CN": "提供商", ru: "Провайдеры", ja: "プロバイダー" }, slug: "guides/providers" },
+            { label: "Global agent memory", translations: { ko: "전역 에이전트 메모리", "zh-CN": "全局代理记忆", ru: "Глобальная память агента", ja: "グローバルエージェントメモリ" }, slug: "guides/global-memory" },
             { label: "Model Routing", translations: { ko: "모델 라우팅", "zh-CN": "模型路由", ru: "Маршрутизация моделей", ja: "モデルルーティング" }, slug: "guides/model-routing" },
             { label: "Codex Integration", translations: { ko: "Codex 통합", "zh-CN": "Codex 集成", ru: "Интеграция с Codex", ja: "Codex 連携" }, slug: "guides/codex-integration" },
             { label: "Codex App Model Picker", translations: { ko: "Codex App 모델 선택기", "zh-CN": "Codex App 模型选择器", ru: "Выбор модели в Codex App", ja: "Codex App モデルピッカー" }, slug: "guides/codex-app-models" },
