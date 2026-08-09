@@ -13,19 +13,17 @@
  *   npm publishes and it should not start moving per commit.
  * - **build** — the run number that produced the installer, baked in at build
  *   time. Monotonic, and the same number the release is tagged with.
- * - **codename** — the dim sum dish, *derived* from the commit rather than
- *   passed in. The release title names a build 叉燒包 Classic Char Siu Bao by
- *   running `codenameFor` over the commit; this runs the same function over the
- *   same commit and gets the same dish. Passing it in as a second env var would
- *   work right up until one of the two was set wrong, and a build displaying a
- *   different dish from the release it came from is worse than displaying none.
+ * - **codename** — the one-use dish resolved from the public catalog by the
+ *   release workflow. It is baked into the same dashboard artifact that the
+ *   release publishes; when the catalog is unavailable the value is null rather
+ *   than a conflicting guess from the legacy local dish table.
  *
  * Outside CI there is no run number and no commit, and this says so rather than
  * inventing one. A local dev build claiming to be "build 34" is a worse lie
  * than admitting it is not a release.
  */
 
-import { codenameFor, type DimSumDish } from "./dimsum";
+import type { DimSumDish } from "./dimsum";
 
 export interface BuildInfo {
   version: string;
@@ -45,6 +43,7 @@ export function readBuildInfo(
   version: string,
   build: string = typeof __APP_BUILD__ === "string" ? __APP_BUILD__ : "dev",
   commit: string = typeof __APP_COMMIT__ === "string" ? __APP_COMMIT__ : "",
+  dish: DimSumDish | null = typeof __APP_CODENAME__ !== "undefined" ? __APP_CODENAME__ : null,
 ): BuildInfo {
   const released = build !== "dev" && build !== "";
   return {
@@ -53,7 +52,7 @@ export function readBuildInfo(
     commit,
     shortCommit: commit ? commit.slice(0, 9) : "",
     released,
-    dish: commit ? codenameFor(commit) : null,
+    dish: released && commit ? dish : null,
   };
 }
 

@@ -83,12 +83,13 @@ jobs:
         with:
           node-version: 22
 
-      # "build 26" names nothing anybody can remember a week later. The dish is
-      # drawn from the dashboard's own table, so a codename can only ever be a
-      # dish that already ships a photo — and the script exits non-zero if the
-      # art is missing rather than publishing a release with a broken image.
+      # Resolve an unused dish only from the public catalog and its published
+      # catalog-v1* assets. The script emits DISH_AVAILABLE=false on catalog or
+      # network failure so decoration can never block an otherwise valid build.
       - name: Pick the dim sum codename
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun scripts/release-codename.ts "$SHA" "${{ github.repository }}" >> "$GITHUB_ENV"
 
       - name: Install proxy dependencies
@@ -112,14 +113,20 @@ jobs:
       # these the dashboard reports the `package.json` version and nothing else,
       # which reads identically across every installer between two npm releases
       # — for a while that was a dozen builds all calling themselves 2.7.42.
-      # The dish codename is deliberately NOT passed: the app derives it from
-      # the commit with the same function that titles the release, so the two
-      # cannot be set to disagree.
+      # The public catalog selection is passed into the bundle so the app and
+      # release title use the same one-use result. A local build, or a release
+      # built while the catalog is unavailable, names no dish rather than
+      # deriving a conflicting name from the legacy bundled table.
       - name: Build the dashboard
         working-directory: gui
         env:
           OCX_BUILD: ${{ github.run_number }}
           OCX_COMMIT: ${{ env.SHA }}
+          OCX_DISH_ID: ${{ env.DISH_ID }}
+          OCX_DISH_NAME: ${{ env.DISH_NAME }}
+          OCX_DISH_ZH: ${{ env.DISH_ZH }}
+          OCX_DISH_JYUTPING: ${{ env.DISH_JYUTPING }}
+          OCX_DISH_PHOTO: ${{ env.DISH_PHOTO }}
         run: bun run build
 
       # The same two facts the dashboard bundle just baked in, on disk this time.
@@ -342,27 +349,26 @@ jobs:
             exit 1
           fi
           echo "feed: ${feed[*]:-none}"
-          echo "codename: $DISH_NAME ($DISH_ZH)"
 
-          # The dish photo travels WITH the release, not only as a link in the
-          # notes. The note's <img> points at raw.githubusercontent at this SHA,
-          # which renders today and stops rendering the moment the repository is
-          # made private, renamed, or transferred — leaving a permanent record
-          # with a broken image. An attached asset is part of the release itself
-          # and survives all three.
-          #
-          # `release-codename.ts` has already refused to name a dish whose art is
-          # missing, so this file exists whenever we reach here; the check is for
-          # the case where that guarantee is changed out from under us, and it
-          # warns rather than failing, because a release with an installer and no
-          # photo is a far better outcome than no release at all.
-          photo="gui/public/dimsum/${DISH_ID}.webp"
-          photo_asset=""
-          if [ -s "$photo" ]; then
-            photo_asset="$photo#${DISH_ID}.webp"
-            echo "dish photo: $photo ($(wc -c < "$photo") bytes)"
+          # Decoration comes only from the published public catalog. The image
+          # remains an asset of dim-sum-photos and is linked in the notes; this
+          # repository neither vendors nor attaches a duplicate copy.
+          title_codename=""
+          dish_section=""
+          if [ "$DISH_AVAILABLE" = "true" ]; then
+            title_codename=" · $DISH_NAME · $DISH_ZH"
+            dish_section=$(cat <<DISH
+          ### 🥟 $DISH_NAME · $DISH_ZH
+
+          <img src="$DISH_PHOTO" alt="$DISH_NAME · $DISH_ZH" width="360">
+
+          *[$DISH_NAME · $DISH_ZH · \`$DISH_JYUTPING\`]($DISH_PHOTO)*<br>
+          Public catalog asset: \`$DISH_RELEASE_TAG/$DISH_ID\`. This release links the public photo and does not attach a copied image.
+          DISH
+            )
+            echo "codename: $DISH_NAME · $DISH_ZH ($DISH_RELEASE_TAG)"
           else
-            echo "::warning::Dish photo $photo is missing; publishing without it."
+            echo "::warning::Publishing without a dim-sum codename because no unused published public asset was resolved."
           fi
 
           # The line count, produced by this run over this commit.
@@ -374,26 +380,27 @@ jobs:
           # one a contributor gets locally cannot disagree.
           lines=$(bun run scripts/count-lines.ts)
 
-          # A heredoc rather than a quoted string: the notes are markdown, and
-          # an image tag inside a shell string is one stray quote away from
-          # becoming an unreadable release note nobody notices until it is
-          # published.
-          notes=$(cat <<NOTES
-          ### 🥟 The **$DISH_ZH $DISH_NAME** build
+          workflow_started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          if [ -z "$workflow_started" ]; then
+            echo "::error::Workflow start time is unavailable; refusing to publish incomplete timing evidence."
+            exit 1
+          fi
+          preliminary_notes=$(cat <<NOTES
+          $dish_section
 
-          <img src="$DISH_PHOTO" alt="$DISH_NAME ($DISH_ZH)" width="360">
+          Automated Windows build of \`${SHA:0:9}\` (v${version}), published because exact-commit Windows CI passed.
 
-          *$DISH_ZH · $DISH_NAME · \`$DISH_JYUTPING\`*
-
-          Automated build of \`${SHA:0:9}\` (v${version}), published because CI passed on it.
+          > [!WARNING]
+          > The Squirrel.Windows installer is intentionally unsigned and may show an Unknown Publisher or SmartScreen warning.
 
           | Asset | What it is |
           | --- | --- |
-          | **opencodex-setup.exe** | Windows desktop app — proxy + dashboard, tray, start at login |
-          | **opencodex-dashboard.zip** | The built dashboard alone; serve it next to a running proxy |
-          | **${DISH_ID}.webp** | The build's dim sum, attached so it outlives the link above |
+          | **opencodex-setup.exe** | Unsigned Windows desktop installer |
+          | **RELEASES** | Squirrel.Windows update-feed index |
+          | **\*-full.nupkg** | Complete Squirrel.Windows update package |
+          | **opencodex-dashboard.zip** | Built dashboard bundle |
 
-          Installable releases, not npm packages — the npm package still ships through the audited Release workflow.
+          Workflow timing is finalized immediately after publication.
 
           <details>
           <summary>📏 <strong>Lines of code at this commit</strong></summary>
@@ -407,12 +414,46 @@ jobs:
           )
           gh release create "$tag" \
             --target "$SHA" \
-            --title "build ${{ github.run_number }} · $DISH_ZH $DISH_NAME — v${version} @ ${SHA:0:9}" \
-            --notes "$notes" \
+            --title "build ${{ github.run_number }}${title_codename} — v${version} @ ${SHA:0:9}" \
+            --notes "$preliminary_notes" \
             "$installer#opencodex-setup.exe" \
             "${feed[@]}" \
-            "opencodex-dashboard.zip" \
-            ${photo_asset:+"$photo_asset"}
+            "opencodex-dashboard.zip"
+
+          workflow_completed=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          workflow_duration=$(node -e 'const start=Date.parse(process.argv[1]); const end=Date.parse(process.argv[2]); if(!Number.isFinite(start)||!Number.isFinite(end)||end<start) process.exit(2); const seconds=Math.floor((end-start)/1000); const h=String(Math.floor(seconds/3600)).padStart(2,"0"); const m=String(Math.floor((seconds%3600)/60)).padStart(2,"0"); const s=String(seconds%60).padStart(2,"0"); process.stdout.write(`${h}:${m}:${s}`);' "$workflow_started" "$workflow_completed")
+          notes=$(cat <<NOTES
+          $dish_section
+
+          Automated Windows build of \`${SHA:0:9}\` (v${version}), published because exact-commit Windows CI passed.
+
+          > [!WARNING]
+          > The Squirrel.Windows installer is intentionally unsigned and may show an Unknown Publisher or SmartScreen warning.
+
+          | Asset | What it is |
+          | --- | --- |
+          | **opencodex-setup.exe** | Unsigned Windows desktop installer |
+          | **RELEASES** | Squirrel.Windows update-feed index |
+          | **\*-full.nupkg** | Complete Squirrel.Windows update package |
+          | **opencodex-dashboard.zip** | Built dashboard bundle |
+
+          | Workflow timing | UTC |
+          | --- | --- |
+          | Workflow started | \`$workflow_started\` |
+          | Workflow completed | \`$workflow_completed\` |
+          | Workflow duration | \`$workflow_duration\` |
+
+          <details>
+          <summary>📏 <strong>Lines of code at this commit</strong></summary>
+
+          $lines
+
+          Produced by this run with \`bun run scripts/count-lines.ts\` over \`${SHA:0:9}\`.
+
+          </details>
+          NOTES
+          )
+          gh release edit "$tag" --notes "$notes"
 
       # Neither a red run nor a skipped publish is self-explanatory when the
       # build itself succeeded. Say plainly that the installer exists and where,

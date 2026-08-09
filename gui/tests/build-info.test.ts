@@ -9,34 +9,41 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { codenameFor, DISHES } from "../src/shell/dimsum";
+import type { DimSumDish } from "../src/shell/dimsum";
 import { codenameLabel, fullBuildLabel, readBuildInfo, shortBuildLabel, windowTitle } from "../src/shell/build-info";
 
 const SHA = "e13e261c1f2a3b4c5d6e7f8091a2b3c4d5e6f708";
+const PUBLIC_DISH: DimSumDish = {
+  id: "hk-dish-0001",
+  name: "Classic Har Gow",
+  zh: "蝦餃",
+  jyutping: "haa1 gaau2",
+  emoji: "🥟",
+};
+const releasedInfo = (build = "34", sha = SHA) => readBuildInfo("2.7.42", build, sha, PUBLIC_DISH);
 
 describe("what a released build reports", () => {
   test("carries the run number and the commit it was built from", () => {
-    const info = readBuildInfo("2.7.42", "34", SHA);
+    const info = releasedInfo();
     expect(info.released).toBe(true);
     expect(info.build).toBe("34");
     expect(info.shortCommit).toBe("e13e261c1");
   });
 
-  test("names the same dish the release title does", () => {
-    // The release runs `codenameFor` over the commit to title the build; this
-    // runs the same function over the same commit. A second source of truth —
-    // an env var carrying the dish name — would agree right up until one of the
-    // two was set wrong, and a build displaying a different dish from its own
-    // release is worse than displaying none.
-    const info = readBuildInfo("2.7.42", "34", SHA);
-    expect(info.dish?.id).toBe(codenameFor(SHA).id);
-    expect(DISHES.some(d => d.id === info.dish?.id)).toBe(true);
+  test("carries the exact public-catalog dish selected by the release", () => {
+    const info = releasedInfo();
+    expect(info.dish).toEqual(PUBLIC_DISH);
+    expect(info.dish?.id).toBe("hk-dish-0001");
+  });
+
+  test("admits when the public catalog supplied no codename", () => {
+    expect(readBuildInfo("2.7.42", "34", SHA, null).dish).toBeNull();
   });
 
   test("the label distinguishes two builds of the same version", () => {
     // The whole point. Same semantic version, different builds, different text.
-    const a = shortBuildLabel(readBuildInfo("2.7.42", "34", SHA));
-    const b = shortBuildLabel(readBuildInfo("2.7.42", "35", "0db1c763bae4cc0c03ba616d3db3da34e6b81e98"));
+    const a = shortBuildLabel(releasedInfo());
+    const b = shortBuildLabel(releasedInfo("35", "0db1c763bae4cc0c03ba616d3db3da34e6b81e98"));
     expect(a).not.toBe(b);
     expect(a).toContain("2.7.42");
     expect(b).toContain("2.7.42");
@@ -63,7 +70,7 @@ describe("the label itself", () => {
     // A label ending in " · " reads as a rendering bug, and it is one.
     for (const label of [
       shortBuildLabel(readBuildInfo("2.7.42", "dev", "")),
-      shortBuildLabel(readBuildInfo("2.7.42", "34", SHA)),
+      shortBuildLabel(releasedInfo()),
       fullBuildLabel(readBuildInfo("2.7.42", "dev", "")),
     ]) {
       expect(label.endsWith("·")).toBe(false);
@@ -73,13 +80,13 @@ describe("the label itself", () => {
   });
 
   test("the port appears only when there is one", () => {
-    const info = readBuildInfo("2.7.42", "34", SHA);
+    const info = releasedInfo();
     expect(shortBuildLabel(info, 10100)).toContain(":10100");
     expect(shortBuildLabel(info, null)).not.toContain(":");
   });
 
   test("the full label carries the English dish name and the commit", () => {
-    const info = readBuildInfo("2.7.42", "34", SHA);
+    const info = releasedInfo();
     expect(fullBuildLabel(info)).toContain(info.dish!.name);
     expect(fullBuildLabel(info)).toContain(info.shortCommit);
   });
@@ -88,14 +95,14 @@ describe("the label itself", () => {
     // The dish has its own element in the app bar now. Leaving it here as well
     // printed it twice on one row — and the row is the one that has to fit a
     // page title, a cost meter and four window buttons beside it.
-    const info = readBuildInfo("2.7.42", "34", SHA);
+    const info = releasedInfo();
     expect(shortBuildLabel(info)).not.toContain(info.dish!.zh);
   });
 });
 
 describe("the code name", () => {
   test("names the release in both languages", () => {
-    const info = readBuildInfo("2.7.42", "34", SHA);
+    const info = releasedInfo();
     const name = codenameLabel(info);
     expect(name).toEqual({ zh: info.dish!.zh, name: info.dish!.name });
   });
@@ -110,7 +117,7 @@ describe("the code name", () => {
 
 describe("the OS window title", () => {
   test("carries the code name, because the taskbar is where builds sit side by side", () => {
-    const info = readBuildInfo("2.7.42", "34", SHA);
+    const info = releasedInfo();
     const title = windowTitle(info);
     expect(title).toContain("opencodex");
     expect(title).toContain(info.dish!.zh);
@@ -122,8 +129,8 @@ describe("the OS window title", () => {
     // The failure this replaces: every build ever shipped showed the same
     // `opencodex · proxy dashboard` in Alt+Tab, so the one place Windows shows
     // two running builds together could not tell them apart.
-    const a = windowTitle(readBuildInfo("2.7.42", "34", SHA));
-    const b = windowTitle(readBuildInfo("2.7.42", "35", "0db1c763bae4cc0c03ba616d3db3da34e6b81e98"));
+    const a = windowTitle(releasedInfo());
+    const b = windowTitle(releasedInfo("35", "0db1c763bae4cc0c03ba616d3db3da34e6b81e98"));
     expect(a).not.toBe(b);
   });
 

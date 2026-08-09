@@ -11,6 +11,13 @@ function slice(source: string, from: string, to: string): string {
   return source.slice(start, end);
 }
 
+function expectInOrder(source: string, first: string, second: string): void {
+  const firstAt = source.indexOf(first);
+  const secondAt = source.indexOf(second, firstAt + first.length);
+  expect(firstAt).toBeGreaterThanOrEqual(0);
+  expect(secondAt).toBeGreaterThan(firstAt);
+}
+
 describe("automatic CLI launch policy wiring", () => {
   test("ensure, tray direct, and GUI use soft direct starts with PID-scoped readiness", async () => {
     const source = await read("src/cli/index.ts");
@@ -80,6 +87,71 @@ describe("automatic CLI launch policy wiring", () => {
     }
     expect(claude).toContain("env: directProxyEnv()");
     expect(opencode).toContain("directProxyEnv(withTokenFile");
+  });
+
+  test("losing convenience launchers adopt the identity-checked winner after their exact child loses", async () => {
+    const index = await read("src/cli/index.ts");
+    const ensure = slice(index, "async function handleEnsure(", "async function handleTrayProxyStart(");
+    const gui = slice(index, 'case "gui"', 'case "service"');
+    const claude = slice(
+      await read("src/cli/claude.ts"),
+      "async function ensureProxyForClaude(",
+      "const CLAUDE_INSTALL_HINT",
+    );
+    const opencode = slice(
+      await read("src/cli/opencode.ts"),
+      "async function ensureProxyForOpencode(",
+      "const OPENCODE_INSTALL_HINT",
+    );
+
+    expectInOrder(
+      ensure,
+      "waitForProxyIdentity({ expectedPid: child.pid })",
+      "await waitForProxyIdentity()",
+    );
+    expectInOrder(
+      gui,
+      "waitForProxyIdentity({ expectedPid: child.pid })",
+      "await waitForProxyIdentity()",
+    );
+    expectInOrder(
+      claude,
+      "waitForProxyIdentity({ expectedPid: child.pid, intervalMs: 250 })",
+      "waitForProxyIdentity({ intervalMs: 250 })",
+    );
+    expectInOrder(
+      opencode,
+      "waitForProxyIdentity({ expectedPid: child.pid, intervalMs: 250 })",
+      "waitForProxyIdentity({ intervalMs: 250 })",
+    );
+
+    for (const launcher of [ensure, gui, claude, opencode]) {
+      expect(launcher).not.toContain("while (true)");
+      expect(launcher).not.toContain("new Promise<void>(() => {})");
+    }
+  });
+
+  test("detached convenience starts observe spawn errors before unref", async () => {
+    const index = await read("src/cli/index.ts");
+    const launchers = [
+      slice(index, "async function handleEnsure(", "async function handleTrayProxyStart("),
+      slice(index, 'case "gui"', 'case "service"'),
+      slice(
+        await read("src/cli/claude.ts"),
+        "async function ensureProxyForClaude(",
+        "const CLAUDE_INSTALL_HINT",
+      ),
+      slice(
+        await read("src/cli/opencode.ts"),
+        "async function ensureProxyForOpencode(",
+        "const OPENCODE_INSTALL_HINT",
+      ),
+    ];
+
+    for (const launcher of launchers) {
+      expectInOrder(launcher, "const child = spawn(", 'child.on("error"');
+      expectInOrder(launcher, 'child.on("error"', "child.unref()");
+    }
   });
 
   test("dashboard in-place restart remains hard-pinned but strips a leaked service marker", async () => {

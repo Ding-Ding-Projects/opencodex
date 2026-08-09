@@ -9,7 +9,8 @@
  *
  * Lives outside cli.ts (which dispatches argv at module top level) so tests can import it.
  */
-import { loadConfig, readAlivePid, readRuntimePort, verifyPidIdentity } from "../config";
+import { loadConfig, readAlivePid, readRuntimePort, verifyPidIdentityFresh } from "../config";
+import { scanListenPids, type ListenPidScan } from "./port-reclaim";
 
 export interface HealthzIdentity {
   service?: unknown;
@@ -23,10 +24,12 @@ export interface LivenessIo {
   fetchFn?: typeof fetch;
   readPidFn?: () => number | null;
   /**
-   * Full identity check of the passed candidate pid; must return the SAME pid or null.
+   * Fresh full identity check of the passed candidate pid; must return the SAME pid or null.
    * Destructive callers only ever receive pids that passed this gate.
    */
   verifyPidFn?: (candidatePid: number) => number | null;
+  /** Fail-closed lookup of the PIDs currently listening on a candidate port. */
+  scanListenPidsFn?: (port: number) => ListenPidScan | number[];
   readRuntimeFn?: (pid?: number) => { pid?: number; port: number; hostname?: string; supervised?: boolean } | null;
   configFn?: () => { port?: number; hostname?: string };
   timeoutMs?: number;
@@ -96,19 +99,31 @@ export async function proxyIdentityAt(
  */
 export async function findLiveProxy(io: LivenessIo = {}): Promise<LiveProxy | null> {
   // Prefer the cheap alive-pid check: the Windows cmdline probe (WMIC/PowerShell) is too
-  // expensive for waitForProxy's 150ms poll loop, and /healthz identity is the real trust gate.
+  // expensive for waitForProxy's 150ms poll loop. Run it only after /healthz answers,
+  // immediately before the candidate can become a destructive stop/kill target.
   const readPidFn = io.readPidFn ?? readAlivePid;
-  const verifyPidFn = io.verifyPidFn ?? verifyPidIdentity;
+  const verifyPidFn = io.verifyPidFn ?? verifyPidIdentityFresh;
+  const scanListenPidsFn = io.scanListenPidsFn ?? scanListenPids;
   const readRuntimeFn = io.readRuntimeFn ?? readRuntimePort;
   const configFn = io.configFn ?? loadConfig;
 
-  // The cheap pid is discovery-only. Before it can appear in a returned (killable) result
-  // it must pass the full identity check AND the verifier must echo the exact candidate —
-  // a pidfile rewrite between discovery and verification can never swap in another process.
-  const killablePid = (candidate: number | null): number | null => {
-    if (candidate === null) return null;
-    const verified = verifyPidFn(candidate);
-    return verified === candidate ? verified : null;
+  // The cheap pid is discovery-only. Before it can appear in a returned (killable) result,
+  // it must be the sole listener on the probed port and pass a fresh full identity check
+  // whose verifier echoes the exact candidate. A health endpoint cannot authorize another
+  // process merely by copying its PID.
+  const killablePid = (candidate: number | null, port: number): number | null => {
+    if (candidate === null || !Number.isSafeInteger(candidate) || candidate <= 0) return null;
+    try {
+      const rawScan = scanListenPidsFn(port);
+      const scan: ListenPidScan = Array.isArray(rawScan) ? { ok: true, pids: rawScan } : rawScan;
+      if (!scan.ok) return null;
+      const owners = new Set(scan.pids);
+      if (owners.size !== 1 || !owners.has(candidate)) return null;
+      const verified = verifyPidFn(candidate);
+      return verified === candidate ? verified : null;
+    } catch {
+      return null;
+    }
   };
 
   const pid = readPidFn();
@@ -122,7 +137,7 @@ export async function findLiveProxy(io: LivenessIo = {}): Promise<LiveProxy | nu
         // Even when healthz echoes the pid-file value, the endpoint is unauthenticated
         // and the PID may have been reused. A full process-identity check is required
         // before a destructive caller receives the runtime PID.
-        const trusted = killablePid(pid);
+        const trusted = killablePid(pid, runtime.port);
         return {
           pid: trusted,
           port: runtime.port,
@@ -144,16 +159,17 @@ export async function findLiveProxy(io: LivenessIo = {}): Promise<LiveProxy | nu
   if (record?.port && record.port !== probedPort) {
     const expectedPid = typeof record.pid === "number" ? record.pid : undefined;
     const identity = await proxyIdentityAt(record.port, { hostname: record.hostname, expectedPid }, io);
-    // Only the healthz-reported pid is authoritative here. The record's pid may be stale
-    // (its process dead, the port reused by a pidless legacy proxy) — synthesizing it
-    // would hand destructive callers (stopProxy → kill fallback) a reusable pid.
+    // Only a freshly process-verified healthz pid is authoritative here. Both the
+    // record and the unauthenticated endpoint can echo a stale/reused pid, so neither
+    // may hand destructive callers (stopProxy → kill fallback) a candidate directly.
     if (identity) {
+      const trusted = killablePid(identity.pid, record.port);
       return {
-        pid: identity.pid ?? null,
+        pid: trusted,
         port: record.port,
         hostname: record.hostname,
         source: "runtime",
-        ...(record.supervised === true && identity.pid !== null ? { supervised: true as const } : {}),
+        ...(record.supervised === true && trusted !== null ? { supervised: true as const } : {}),
       };
     }
   }
@@ -162,8 +178,12 @@ export async function findLiveProxy(io: LivenessIo = {}): Promise<LiveProxy | nu
   const port = config.port ?? 10100;
   const identity = await proxyIdentityAt(port, { hostname: config.hostname }, io);
   if (identity) {
+    // /healthz is a liveness signal, not process authorization. Keep legacy
+    // PID-less responses usable, but expose a kill target only after a fresh
+    // command-line identity check of the exact candidate.
+    const trusted = killablePid(identity.pid ?? pid, port);
     return {
-      pid: identity.pid ?? killablePid(pid),
+      pid: trusted,
       port,
       hostname: config.hostname,
       source: "config",

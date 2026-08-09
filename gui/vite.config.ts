@@ -10,14 +10,23 @@ const proxyTarget = process.env.OPENCODEX_PROXY_TARGET
 // The semantic version moves only when someone cuts an npm release, so every
 // automated build in between reports the same "2.7.42" and there is no way to
 // tell from inside the app which one is installed. These two carry that: the
-// run number that produced the build, and the commit it was built from. The
-// dish codename is not passed in — the app derives it from the commit with the
-// same function the release title uses, so the two cannot disagree.
+// run number that produced the build, the commit it was built from, and the
+// one-use public-catalog codename selected by the release workflow. A missing
+// catalog result stays null instead of falling back to the legacy local table.
 //
 // "dev" rather than a fake number when unset: a local build claiming to be
 // build 34 is worse than one that admits it is not a release at all.
 const build = process.env.OCX_BUILD || 'dev'
 const commit = process.env.OCX_COMMIT || ''
+const codename = process.env.OCX_DISH_ID && process.env.OCX_DISH_NAME && process.env.OCX_DISH_ZH
+  ? {
+      id: process.env.OCX_DISH_ID,
+      name: process.env.OCX_DISH_NAME,
+      zh: process.env.OCX_DISH_ZH,
+      jyutping: process.env.OCX_DISH_JYUTPING || '',
+      emoji: '🥟',
+    }
+  : null
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -26,6 +35,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(version),
     __APP_BUILD__: JSON.stringify(build),
     __APP_COMMIT__: JSON.stringify(commit),
+    __APP_CODENAME__: JSON.stringify(codename),
   },
   /* [Decision Log]
   - 목적: 로컬 Vite GUI가 실행 중인 opencodex API를 same-origin으로 호출해 CORS 잡음 없이 실제 데이터를 보여준다.

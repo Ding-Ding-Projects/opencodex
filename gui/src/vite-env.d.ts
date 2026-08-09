@@ -6,6 +6,14 @@ declare const __APP_VERSION__: string;
 declare const __APP_BUILD__: string;
 /** Commit this build came from; empty outside CI. Names the dish codename too. */
 declare const __APP_COMMIT__: string;
+/** One-use public-catalog release codename, or null when none was resolved. */
+declare const __APP_CODENAME__: {
+  id: string;
+  name: string;
+  zh: string;
+  jyutping: string;
+  emoji: string;
+} | null;
 
 /** Injected by the desktop shell's preload (electron/preload.mjs). Absent in a browser. */
 interface Window {
