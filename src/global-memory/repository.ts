@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { GlobalMemoryRepository } from "./types";
 
@@ -65,6 +65,7 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 async function ensureRegularDirectory(path: string, label: string): Promise<string> {
+  await ensureNoReparseComponents(path, label);
   let info;
   try {
     info = await lstat(path);
@@ -74,16 +75,13 @@ async function ensureRegularDirectory(path: string, label: string): Promise<stri
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new GlobalMemoryRepositoryError(`${label} must be a regular directory, not a symlink or reparse point: ${path}`);
   }
-  const resolved = await realpath(path);
-  if (resolved !== path) {
-    throw new GlobalMemoryRepositoryError(`${label} resolves through a symlink or reparse point: ${path}`);
-  }
-  return resolved;
+  return path;
 }
 
 async function ensureRegularFile(root: string, path: string, label: string): Promise<string> {
   const candidate = resolve(path);
   if (!isInside(root, candidate)) throw new GlobalMemoryRepositoryError(`${label} escapes the verified repository root: ${path}`);
+  await ensureNoReparseComponents(candidate, label);
   let info;
   try {
     info = await lstat(candidate);
@@ -93,9 +91,39 @@ async function ensureRegularFile(root: string, path: string, label: string): Pro
   if (!info.isFile() || info.isSymbolicLink()) {
     throw new GlobalMemoryRepositoryError(`${label} must be a regular file, not a symlink or reparse point: ${candidate}`);
   }
-  const resolved = await realpath(candidate);
-  if (!isInside(root, resolved)) throw new GlobalMemoryRepositoryError(`${label} resolves outside the verified repository root: ${candidate}`);
-  return resolved;
+  return candidate;
+}
+
+async function ensureNoReparseComponents(path: string, label: string): Promise<void> {
+  let current = resolve(path);
+  while (true) {
+    let info;
+    try {
+      info = await lstat(current);
+    } catch {
+      throw new GlobalMemoryRepositoryError(`${label} does not exist: ${path}`);
+    }
+    if (info.isSymbolicLink()) {
+      throw new GlobalMemoryRepositoryError(`${label} resolves through a symlink or reparse point: ${path}`);
+    }
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
+
+function comparablePath(value: string): string {
+  const normalized = resolve(value).replace(/[\\/]+$/u, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+async function samePhysicalPath(left: string, right: string): Promise<boolean> {
+  try {
+    const [leftResolved, rightResolved] = await Promise.all([realpath(left), realpath(right)]);
+    return comparablePath(leftResolved) === comparablePath(rightResolved);
+  } catch {
+    return comparablePath(left) === comparablePath(right);
+  }
 }
 
 function canonicalOrigin(value: string): boolean {
@@ -124,7 +152,7 @@ export async function resolveGlobalMemoryRepository(
   let origin: string;
   try {
     const gitRoot = (await git(["rev-parse", "--show-toplevel"], repositoryPath)).stdout.trim();
-    if (!gitRoot || resolve(gitRoot) !== repositoryPath) {
+    if (!gitRoot || !(await samePhysicalPath(gitRoot, repositoryPath))) {
       throw new GlobalMemoryRepositoryError(`Git root does not match the verified repository directory: ${gitRoot || "<missing>"}`);
     }
     origin = (await git(["remote", "get-url", "origin"], repositoryPath)).stdout.trim();
