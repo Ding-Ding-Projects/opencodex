@@ -22,6 +22,7 @@ import {
   ELEVATION_REQUEST_TIMEOUT_MS,
   OCX_ELEVATED_PROTOCOL_FAILED,
   raceWithTimeout,
+  resolveTrustedWindowsPowerShellExe,
   resolveTrustedWindowsSchtasksExe,
   startElevatedSchtasksCreateAndRun,
   runWindowsElevated,
@@ -31,10 +32,14 @@ import {
   type ElevatedSchtasksCreateAndRunExecution,
   type ElevatedSchtasksCreateAndRunResult,
 } from "./lib/windows-elevation";
-import { defaultWinswEntry, installWinswService, startWinswService, stopWinswService, statusWinswRaw, uninstallWinswService, winswStatusSummary, WINSW_SERVICE_ID, WINSW_SHA256, WINSW_VERSION } from "./lib/winsw";
+import { buildWinswXml, defaultWinswEntry, installWinswService, startWinswService, stopWinswService, statusWinswRaw, uninstallWinswService, winswStatusSummary, winswXmlPath, WINSW_SERVICE_ID, WINSW_SHA256, WINSW_VERSION } from "./lib/winsw";
 import { hardenSecretDir, hardenSecretPath } from "./lib/windows-secret-acl";
 import { windowsEnvIndirectBatchPathList, windowsEnvIndirectBatchValue } from "./lib/win-paths";
 import { recordOwnedConfigPath } from "./lib/config-ownership";
+import { servicePinnedPort, serviceStartArgv } from "./lib/proxy-launch";
+import { waitForProxyIdentity, type ProxyReadinessOptions } from "./cli/proxy-readiness";
+import { findLiveProxy, type LiveProxy } from "./server/proxy-liveness";
+import { revertSystemEnv } from "./server/system-env";
 
 const LABEL = "com.opencodex.proxy";
 const TASK = "opencodex-proxy";
@@ -265,7 +270,7 @@ function writeServiceApiTokenFile(): string | null {
   return path;
 }
 
-export function buildPlist(): string {
+export function buildPlist(pinnedPort?: number | null): string {
   const { bun, cli } = cliEntry();
   const log = logPath();
   const path = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
@@ -277,7 +282,7 @@ export function buildPlist(): string {
     codexHome ? `    <key>CODEX_HOME</key><string>${plistString(codexHome)}</string>` : null,
     opencodexHome ? `    <key>OPENCODEX_HOME</key><string>${plistString(opencodexHome)}</string>` : null,
   ].filter((line): line is string => Boolean(line)).join("\n");
-  const command = buildServiceShellCommand(bun, cli);
+  const command = buildServiceShellCommand(bun, cli, pinnedPort);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -306,29 +311,15 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-/**
- * Listen port baked into service wrappers / WinSW XML.
- * Priority: explicit override → OCX_BAKE_PORT (update restart) → config.port → 10100.
- * `config.port === 0` means ephemeral for interactive start; services need a stable pin,
- * so treat 0 / invalid like unset (default 10100) instead of baking `--port 0`.
- */
-export function resolveServiceListenPort(override?: number): number {
-  if (typeof override === "number" && Number.isFinite(override) && override > 0 && override <= 65535) {
-    return Math.trunc(override);
-  }
-  const baked = process.env.OCX_BAKE_PORT?.trim();
-  if (baked && /^\d+$/.test(baked)) {
-    const n = Number(baked);
-    if (n > 0 && n <= 65535) return n;
-  }
-  const configured = loadConfig().port;
-  if (typeof configured === "number" && configured > 0 && configured <= 65535) return configured;
-  return 10100;
+/** Normal service starts are soft; only update's OCX_BAKE_PORT (or an override) pins. */
+export function resolveServiceListenPort(override?: number | null): number | undefined {
+  return servicePinnedPort({ pinnedPort: override });
 }
 
-function buildServiceShellCommand(bun: string, cli: string, port = resolveServiceListenPort()): string {
+function buildServiceShellCommand(bun: string, cli: string, pinnedPort?: number | null): string {
   const tokenFile = serviceApiTokenFilePath();
-  return `if [ -f ${shellQuote(tokenFile)} ]; then OPENCODEX_API_AUTH_TOKEN="$(cat ${shellQuote(tokenFile)})"; export OPENCODEX_API_AUTH_TOKEN; fi; exec ${shellQuote(bun)} ${shellQuote(cli)} start --port ${port}`;
+  const start = serviceStartArgv(cli, { pinnedPort }).map(shellQuote).join(" ");
+  return `if [ -f ${shellQuote(tokenFile)} ]; then OPENCODEX_API_AUTH_TOKEN="$(cat ${shellQuote(tokenFile)})"; export OPENCODEX_API_AUTH_TOKEN; fi; exec ${shellQuote(bun)} ${start}`;
 }
 
 function systemdQuote(value: string): string {
@@ -367,7 +358,52 @@ function windowsWscript(): string {
   return existsSync(candidate) ? candidate : "wscript.exe";
 }
 
+export type WindowsSchedulerRuntimeState = "running" | "not-running" | "unknown";
+
+/**
+ * Task Scheduler's COM API exposes TASK_STATE as a locale-independent integer:
+ * 4 is running; disabled, queued, and ready are installed but not running.
+ */
+export function parseWindowsSchedulerRuntimeState(raw: string): WindowsSchedulerRuntimeState {
+  const state = raw.trim();
+  if (state === "4") return "running";
+  if (state === "1" || state === "2" || state === "3") return "not-running";
+  return "unknown";
+}
+
+function powershellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** Query the scheduler itself; an unrelated healthy direct proxy is not service evidence. */
+function windowsSchedulerRuntimeState(taskName = TASK): WindowsSchedulerRuntimeState {
+  if (querySchedulerRuntimeForTests) {
+    return parseWindowsSchedulerRuntimeState(querySchedulerRuntimeForTests());
+  }
+  if (process.platform !== "win32") return "unknown";
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$scheduler = New-Object -ComObject 'Schedule.Service'",
+    "$scheduler.Connect()",
+    `$task = $scheduler.GetFolder('\\').GetTask(${powershellSingleQuoted(taskName)})`,
+    "[Console]::Out.Write([int]$task.State)",
+  ].join("; ");
+  try {
+    const raw = runFile(resolveTrustedWindowsPowerShellExe(), [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script,
+    ]);
+    return parseWindowsSchedulerRuntimeState(raw);
+  } catch {
+    return "unknown";
+  }
+}
+
 let querySchtasksForTests: ((args: string[]) => string) | null = null;
+let querySchedulerRuntimeForTests: (() => string) | null = null;
 
 function querySchtasks(args: string[]): string {
   if (querySchtasksForTests) return querySchtasksForTests(args);
@@ -377,6 +413,11 @@ function querySchtasks(args: string[]): string {
 /** Test-only seam for Task Scheduler query used by presence probes. */
 export function setQuerySchtasksForTests(next: ((args: string[]) => string) | null): void {
   querySchtasksForTests = next;
+}
+
+/** Test-only seam for the locale-independent Task Scheduler COM state query. */
+export function setQueryWindowsSchedulerRuntimeForTests(next: (() => string) | null): void {
+  querySchedulerRuntimeForTests = next;
 }
 
 function schtasks(args: string[]): string {
@@ -444,9 +485,59 @@ export function probeWindowsSchedulerTask(taskName = TASK): WindowsSchedulerTask
   }
 }
 
+/**
+ * Backend switches are destructive and must distinguish proven absence from an
+ * unavailable scheduler. Returning false is therefore reserved for a successful
+ * query that proved the task absent; an indeterminate query aborts the switch.
+ */
+export function requireKnownWindowsSchedulerTaskState(
+  taskName = TASK,
+  action = "change the Windows service backend",
+): "present" | "absent" {
+  const probe = probeWindowsSchedulerTask(taskName);
+  if (probe.status === "unknown") {
+    throw new Error(`Task Scheduler state is unknown; refusing to ${action}. ${probe.detail}`);
+  }
+  return probe.status;
+}
+
 /** True when the Task Scheduler registration for the default proxy task is proven present. */
 export function windowsSchedulerTaskInstalled(taskName = TASK): boolean {
   return probeWindowsSchedulerTask(taskName).status === "present";
+}
+
+export type WindowsSchedulerXmlProbe =
+  | { status: "present"; xml: string }
+  | { status: "absent"; xml: "" }
+  | { status: "unknown"; xml: ""; detail: string };
+
+/**
+ * Read registration XML without collapsing query/access failures into absence.
+ * A secondary presence probe may prove absence, but cannot manufacture XML when
+ * the task is known present and the XML query itself failed.
+ */
+export function probeWindowsSchedulerXml(taskName = TASK): WindowsSchedulerXmlProbe {
+  try {
+    const xml = querySchtasks(["/query", "/tn", taskName, "/xml"]);
+    if (xml.trim()) return { status: "present", xml };
+    return { status: "unknown", xml: "", detail: "Task Scheduler returned empty registration XML." };
+  } catch (error) {
+    const xmlError = schtasksErrorDetail(error);
+    const presence = probeWindowsSchedulerTask(taskName);
+    if (presence.status === "absent") return { status: "absent", xml: "" };
+    if (presence.status === "present") {
+      return {
+        status: "unknown",
+        xml: "",
+        detail: `Task exists, but registration XML could not be read (${xmlError}).`,
+      };
+    }
+    return {
+      status: "unknown",
+      xml: "",
+      detail: `${presence.detail} XML query also failed (${xmlError}).`,
+    };
+  }
 }
 
 export interface WindowsSchedulerInstallVerification {
@@ -895,10 +986,12 @@ function taskXmlString(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-export function buildWindowsServiceScript(entry = cliEntry(), port = resolveServiceListenPort()): string {
+export function buildWindowsServiceScript(entry = cliEntry(), pinnedPort?: number | null): string {
   const { bun, cli } = entry;
   const bunRuntime = durableBunRuntime();
   const path = process.env.PATH ?? "";
+  const port = resolveServiceListenPort(pinnedPort);
+  const startArgs = port === undefined ? "start" : `start --port ${port}`;
   const lines = [
     "@echo off",
     "setlocal",
@@ -924,7 +1017,7 @@ export function buildWindowsServiceScript(entry = cliEntry(), port = resolveServ
     '>>"%OCX_SERVICE_LOG%" echo opencodex_home="%OPENCODEX_HOME%"',
     '>>"%OCX_SERVICE_LOG%" echo codex_home="%CODEX_HOME%"',
     '>>"%OCX_SERVICE_LOG%" echo token_file="%OCX_API_TOKEN_FILE%"',
-    `"%OCX_BUN%" "%OCX_CLI%" start --port ${port} >>"%OCX_SERVICE_LOG%" 2>&1`,
+    `"%OCX_BUN%" "%OCX_CLI%" ${startArgs} >>"%OCX_SERVICE_LOG%" 2>&1`,
     "if %ERRORLEVEL% NEQ 0 (",
     '  >>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] child exited with code %ERRORLEVEL%; restarting in 5s',
     // `timeout` needs console stdin and dies with "Input redirection is not supported"
@@ -1177,8 +1270,19 @@ function installLaunchd(): void {
   writeServiceInstallState();
 }
 function startLaunchd(): void { sh(`launchctl load -w "${plistPath()}"`); }
-function stopLaunchd(): void { try { sh(`launchctl unload "${plistPath()}"`); } catch { /* not loaded */ } }
+function prepareLaunchdStart(): void {
+  if (existsSync(plistPath())) writeFileSync(plistPath(), buildPlist(null), "utf8");
+}
+function stopLaunchd(): void { sh(`launchctl unload "${plistPath()}"`); }
 function statusLaunchd(): string { try { return sh(`launchctl list | grep ${LABEL} || true`); } catch { return ""; } }
+function launchdRuntimeState(): ServiceManagerRuntimeState {
+  try {
+    const list = sh("launchctl list");
+    return list.split(/\r?\n/).some(line => line.includes(LABEL)) ? "running" : "stopped";
+  } catch {
+    return "unknown";
+  }
+}
 function uninstallLaunchd(): void {
   const p = plistPath();
   try { sh(`launchctl unload "${p}" 2>/dev/null`); } catch { /* not loaded */ }
@@ -1243,10 +1347,10 @@ async function installWindowsNative(): Promise<void> {
   recordOwnedConfigPath(getConfigDir(), serviceStatePath());
   if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true });
   writeServiceApiTokenFile();
-  let hadScheduler = false;
-  try {
-    hadScheduler = schtasks(["/query", "/tn", TASK]).includes(TASK);
-  } catch { /* task absent */ }
+  const hadScheduler = requireKnownWindowsSchedulerTaskState(
+    TASK,
+    "install the native service while scheduler presence is unverified",
+  ) === "present";
   if (hadScheduler) {
     console.log("🔁 Removing the Task Scheduler backend before installing the native (WinSW) service...");
     try { stopWindows(); } catch { /* not running */ }
@@ -1255,14 +1359,14 @@ async function installWindowsNative(): Promise<void> {
     } catch (err) {
       throw new Error(`Cannot remove the Task Scheduler backend before switching to native: ${err instanceof Error ? err.message : String(err)}`);
     }
-    // Verify removal — schtasks /delete can silently fail if UAC or policy blocks it.
-    try {
-      if (schtasks(["/query", "/tn", TASK]).includes(TASK)) {
-        throw new Error("Task Scheduler backend still present after removal — aborting switch.");
-      }
-    } catch (e) {
-      if (e instanceof Error && e.message.includes("still present")) throw e;
-      /* query failure = task absent, which is what we want */
+    // Verify removal — schtasks /delete can silently fail if UAC or policy blocks it,
+    // and a failed verification query is not proof that the task disappeared.
+    const afterRemoval = requireKnownWindowsSchedulerTaskState(
+      TASK,
+      "continue the native service install after scheduler removal could not be verified",
+    );
+    if (afterRemoval === "present") {
+      throw new Error("Task Scheduler backend still present after removal — aborting switch.");
     }
   }
   try {
@@ -1274,9 +1378,17 @@ async function installWindowsNative(): Promise<void> {
   writeServiceInstallState("native");
 }
 function startWindows(): void { schtasks(["/run", "/tn", TASK]); }
-function stopWindows(): void { try { schtasks(["/end", "/tn", TASK]); } catch { /* not running */ } }
+function prepareWindowsStart(): void {
+  const script = windowsServiceScriptPath();
+  if (existsSync(script)) writeServiceAssetWithRetry(script, buildWindowsServiceScript(cliEntry(), null), "utf8");
+}
+function prepareWindowsNativeStart(): void {
+  if (existsSync(winswXmlPath())) {
+    writeFileSync(winswXmlPath(), buildWinswXml(defaultWinswEntry(import.meta.dir), process.env, null), "utf8");
+  }
+}
+function stopWindows(): void { schtasks(["/end", "/tn", TASK]); }
 function statusWindows(): string { try { return schtasks(["/query", "/tn", TASK]); } catch { return ""; } }
-function statusWindowsXml(): string { try { return schtasks(["/query", "/tn", TASK, "/xml"]); } catch { return ""; } }
 function uninstallWindows(): void {
   try { schtasks(["/delete", "/tn", TASK, "/f"]); } catch { /* absent */ }
   if (existsSync(windowsServiceScriptPath())) unlinkSync(windowsServiceScriptPath());
@@ -1311,7 +1423,7 @@ function unitPath(): string {
   return join(unitDir(), `${TASK}.service`);
 }
 
-export function buildUnit(): string {
+export function buildUnit(pinnedPort?: number | null): string {
   const { bun, cli } = cliEntry();
   const log = logPath();
   const path = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
@@ -1330,7 +1442,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${systemdQuote("/bin/sh")} -lc ${systemdQuote(buildServiceShellCommand(bun, cli))}
+ExecStart=${systemdQuote("/bin/sh")} -lc ${systemdQuote(buildServiceShellCommand(bun, cli, pinnedPort))}
 Restart=on-failure
 RestartSec=5
 ${envLines}
@@ -1397,8 +1509,23 @@ function startSystemd(): void {
   }
   sh(`systemctl --user start ${TASK}`);
 }
-function stopSystemd(): void { try { sh(`systemctl --user stop ${TASK}`); } catch { /* not running */ } }
+function prepareSystemdStart(): void {
+  if (!existsSync(unitPath())) return;
+  writeFileSync(unitPath(), buildUnit(null), "utf8");
+  sh("systemctl --user daemon-reload");
+}
+function stopSystemd(): void { sh(`systemctl --user stop ${TASK}`); }
 function statusSystemd(): string { try { return sh(`systemctl --user status ${TASK}`); } catch { return ""; } }
+function systemdRuntimeState(): ServiceManagerRuntimeState {
+  try {
+    const state = sh(`systemctl --user show ${TASK} --property=ActiveState --value`).trim();
+    if (state === "active" || state === "activating" || state === "reloading" || state === "deactivating") return "running";
+    if (state === "inactive" || state === "failed") return "stopped";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 function uninstallSystemd(): void {
   try { sh(`systemctl --user disable --now ${TASK}`); } catch { /* absent */ }
   if (existsSync(unitPath())) unlinkSync(unitPath());
@@ -1408,15 +1535,16 @@ function uninstallSystemd(): void {
 type ServiceOps = {
   install: () => void | Promise<void>; start: () => void; stop: () => void;
   status: () => string; uninstall: () => void;
+  prepareStart?: () => void;
 };
 
 function platformOps(backend: ServiceBackend = "scheduler"): ServiceOps | null {
   if (process.platform === "darwin")
-    return { install: installLaunchd, start: startLaunchd, stop: stopLaunchd, status: statusLaunchd, uninstall: uninstallLaunchd };
+    return { install: installLaunchd, prepareStart: prepareLaunchdStart, start: startLaunchd, stop: stopLaunchd, status: statusLaunchd, uninstall: uninstallLaunchd };
   if (process.platform === "win32") {
     if (backend === "native")
-      return { install: installWindowsNative, start: startWinswService, stop: stopWinswService, status: winswStatusSummary, uninstall: uninstallWinswService };
-    return { install: installWindows, start: startWindows, stop: stopWindows, status: statusWindows, uninstall: uninstallWindows };
+      return { install: installWindowsNative, prepareStart: prepareWindowsNativeStart, start: startWinswService, stop: stopWinswService, status: winswStatusSummary, uninstall: uninstallWinswService };
+    return { install: installWindows, prepareStart: prepareWindowsStart, start: startWindows, stop: stopWindows, status: statusWindows, uninstall: uninstallWindows };
   }
   if (process.platform === "linux") {
     if (existsSync("/.dockerenv")) {
@@ -1430,16 +1558,73 @@ function platformOps(backend: ServiceBackend = "scheduler"): ServiceOps | null {
       }
       process.exit(1);
     }
-    return { install: installSystemd, start: startSystemd, stop: stopSystemd, status: statusSystemd, uninstall: uninstallSystemd };
+    return { install: installSystemd, prepareStart: prepareSystemdStart, start: startSystemd, stop: stopSystemd, status: statusSystemd, uninstall: uninstallSystemd };
   }
   return null;
 }
 
-type TrackedProxyCleanupResult = "none" | "stale" | "stopped";
+export type ServiceManagerRuntimeState = "running" | "stopped" | "unknown";
+
+export class ServiceManagerStopError extends Error {
+  readonly code = "service-manager-stop-uncertain" as const;
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ServiceManagerStopError";
+  }
+}
+
+export interface StopManagerWithVerificationOptions {
+  label: string;
+  installed: boolean;
+  runtimeState: () => ServiceManagerRuntimeState;
+  stop: () => void;
+  attempts?: number;
+  intervalMs?: number;
+  sleep?: (ms: number) => void;
+}
+
+/** Stop a manager only from known state and return only after non-running is proven. */
+export function stopManagerWithVerification(options: StopManagerWithVerificationOptions): boolean {
+  if (!options.installed) return false;
+  const before = options.runtimeState();
+  if (before === "unknown") {
+    throw new ServiceManagerStopError(`${options.label} runtime state is unknown; refusing unsafe teardown.`);
+  }
+  if (before === "stopped") return true;
+
+  let stopError: unknown;
+  try {
+    options.stop();
+  } catch (error) {
+    stopError = error;
+  }
+
+  const attempts = Math.max(1, options.attempts ?? 20);
+  const intervalMs = Math.max(0, options.intervalMs ?? 100);
+  const sleep = options.sleep ?? Bun.sleepSync;
+  let after: ServiceManagerRuntimeState = "unknown";
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    after = options.runtimeState();
+    if (after === "stopped") return true;
+    if (attempt + 1 < attempts && intervalMs > 0) sleep(intervalMs);
+  }
+  const detail = stopError instanceof Error ? ` Stop command failed: ${stopError.message}` : "";
+  throw new ServiceManagerStopError(
+    `${options.label} did not reach a proven non-running state (last state: ${after}).${detail}`,
+    stopError === undefined ? undefined : { cause: stopError },
+  );
+}
+
+type TrackedProxyCleanupResult = "none" | "stale" | "stopped" | "failed";
 
 async function stopTrackedProxyIfRunning(): Promise<TrackedProxyCleanupResult> {
-  const pid = readPid();
-  if (!pid) return "none";
+  let pid = readPid();
+  if (!pid) {
+    const live = await findLiveProxy();
+    if (!live) return "none";
+    if (!live.pid) throw new Error("A live OpenCodex proxy was found, but its PID could not be verified.");
+    pid = live.pid;
+  }
   if (!isProcessAlive(pid)) {
     removePid(pid);
     removeRuntimePort(pid);
@@ -1456,8 +1641,32 @@ async function stopTrackedProxyForServiceCommand(): Promise<TrackedProxyCleanupR
     return await stopTrackedProxyIfRunning();
   } catch (err) {
     console.error(`⚠️  Failed to stop proxy: ${err instanceof Error ? err.message : String(err)}`);
-    return "none";
+    return "failed";
   }
+}
+
+export interface ServiceStopGateOutcome {
+  safeToTeardown: boolean;
+  phase: "safe" | "manager-unsafe" | "proxy-unsafe";
+  error?: unknown;
+}
+
+/** Service stop/uninstall may restore shared routing only after both stop gates pass. */
+export async function runServiceStopGate(io: {
+  stopManager: () => void;
+  stopProxy: () => boolean | Promise<boolean>;
+}): Promise<ServiceStopGateOutcome> {
+  try {
+    io.stopManager();
+  } catch (error) {
+    return { safeToTeardown: false, phase: "manager-unsafe", error };
+  }
+  try {
+    if (!await io.stopProxy()) return { safeToTeardown: false, phase: "proxy-unsafe" };
+  } catch (error) {
+    return { safeToTeardown: false, phase: "proxy-unsafe", error };
+  }
+  return { safeToTeardown: true, phase: "safe" };
 }
 
 /**
@@ -1467,23 +1676,57 @@ async function stopTrackedProxyForServiceCommand(): Promise<TrackedProxyCleanupR
 export function stopServiceIfInstalled(): boolean {
   assertServiceEnvironmentMatchesInstall();
   if (process.platform === "darwin") {
-    if (existsSync(plistPath())) {
-      try { stopLaunchd(); return true; } catch { return false; }
-    }
+    return stopManagerWithVerification({
+      label: "launchd service",
+      installed: existsSync(plistPath()),
+      runtimeState: launchdRuntimeState,
+      stop: stopLaunchd,
+    });
   } else if (process.platform === "win32") {
     // Query BOTH backends regardless of state: a failed switch or stale state can leave
     // two managers installed, and either one would respawn the proxy after `ocx stop`.
-    let stopped = false;
-    try {
-      const q = schtasks(["/query", "/tn", TASK]);
-      if (q.includes(TASK)) { stopWindows(); stopped = true; }
-    } catch { /* task not found */ }
-    if (statusWinswRaw() !== "nonexistent") {
-      try { stopWinswService(); stopped = true; } catch { /* best-effort */ }
+    const scheduler = probeWindowsSchedulerXml();
+    const nativeStatus = statusWinswRaw();
+    if (scheduler.status === "unknown") {
+      throw new ServiceManagerStopError(`Task Scheduler state is unknown; refusing unsafe teardown. ${scheduler.detail}`);
     }
-    if (stopped) return true;
-  } else if (process.platform === "linux" && isSystemd() && existsSync(unitPath())) {
-    try { stopSystemd(); return true; } catch { return false; }
+    if (nativeStatus === "unknown") {
+      throw new ServiceManagerStopError("Native WinSW service state is unknown; refusing unsafe teardown.");
+    }
+    const schedulerInstalled = scheduler.status === "present";
+    const schedulerState = schedulerInstalled ? windowsSchedulerRuntimeState() : "not-running";
+    if (schedulerInstalled && schedulerState === "unknown") {
+      throw new ServiceManagerStopError("Task Scheduler runtime state is unknown; refusing unsafe teardown.");
+    }
+    let stopped = false;
+    stopped = stopManagerWithVerification({
+      label: "Task Scheduler service",
+      installed: schedulerInstalled,
+      runtimeState: () => {
+        const state = windowsSchedulerRuntimeState();
+        return state === "not-running" ? "stopped" : state;
+      },
+      stop: stopWindows,
+    }) || stopped;
+    stopped = stopManagerWithVerification({
+      label: "native WinSW service",
+      installed: nativeStatus !== "nonexistent",
+      runtimeState: () => {
+        const status = statusWinswRaw();
+        return status === "started" ? "running"
+          : status === "stopped" || status === "nonexistent" ? "stopped" : "unknown";
+      },
+      stop: stopWinswService,
+    }) || stopped;
+    return stopped;
+  } else if (process.platform === "linux" && existsSync(unitPath())) {
+    if (!isSystemd()) throw new ServiceManagerStopError("systemd user manager state is unknown; refusing unsafe teardown.");
+    return stopManagerWithVerification({
+      label: "systemd user service",
+      installed: true,
+      runtimeState: systemdRuntimeState,
+      stop: stopSystemd,
+    });
   }
   return false;
 }
@@ -1504,21 +1747,27 @@ export function uninstallServiceIfInstalled(): boolean {
   assertServiceEnvironmentMatchesInstall();
   if (process.platform === "darwin") {
     if (existsSync(plistPath())) {
-      try { uninstallLaunchd(); removeServiceInstallState(); return true; } catch { return false; }
+      uninstallLaunchd();
+      removeServiceInstallState();
+      return true;
     }
   } else if (process.platform === "win32") {
     let removed = false;
-    try {
-      const q = schtasks(["/query", "/tn", TASK]);
-      if (q.includes(TASK)) { uninstallWindows(); removed = true; }
-    } catch { /* task not found */ }
-    if (statusWinswRaw() !== "nonexistent") {
-      try {
-        uninstallWinswService();
-        removed = true;
-      } catch (err) {
-        console.warn(`⚠️  Failed to remove native service: ${err instanceof Error ? err.message : String(err)}. Check 'sc.exe query ${WINSW_SERVICE_ID}'.`);
-      }
+    const scheduler = probeWindowsSchedulerXml();
+    if (scheduler.status === "unknown") {
+      throw new Error(`Task Scheduler install state is unknown; refusing to report uninstall success. ${scheduler.detail}`);
+    }
+    if (scheduler.status === "present") {
+      uninstallWindows();
+      removed = true;
+    }
+    const nativeStatus = statusWinswRaw();
+    if (nativeStatus === "unknown") {
+      throw new Error("Native WinSW install state is unknown; refusing to report uninstall success.");
+    }
+    if (nativeStatus !== "nonexistent") {
+      uninstallWinswService();
+      removed = true;
     }
     if (removed) { removeServiceInstallState(); return true; }
   } else if (process.platform === "linux" && existsSync(unitPath())) {
@@ -1560,8 +1809,15 @@ export interface WindowsServiceDiagnosticInputs {
    * silently reintroduce the stale-status false positive (#432).
    */
   schedulerXml: string;
+  /** Query certainty; omitted test fixtures infer present/absent from schedulerXml. */
+  schedulerQueryStatus?: "present" | "absent" | "unknown";
+  schedulerQueryDetail?: string;
   /** Whether the on-disk service assets exist. A filesystem concern, not an XML one. */
   schedulerAssetsPresent: boolean;
+  /** Actual proxy/task evidence; XML Enabled is registration state, not runtime state. */
+  schedulerRunning: boolean;
+  /** Query certainty for the Task Scheduler instance; omitted fixtures infer from schedulerRunning. */
+  schedulerRuntimeStatus?: WindowsSchedulerRuntimeState;
   nativeStatus: "started" | "stopped" | "nonexistent" | "unknown";
   recordedBackend: ServiceBackend | null;
   staleBakedPaths: boolean;
@@ -1571,33 +1827,60 @@ export interface WindowsServiceDiagnosticInputs {
 
 export function deriveWindowsServiceDiagnostic(inputs: WindowsServiceDiagnosticInputs): ServiceDiagnostic {
   const schedulerState = readWindowsSchedulerXmlState(inputs.schedulerXml);
-  const schedulerInstalled = schedulerState.installed;
-  const schedulerEnabled = schedulerState.enabled;
-  const schedulerAssetsHealthy = inputs.schedulerAssetsPresent && schedulerState.registrationHealthy;
+  const schedulerQueryStatus = inputs.schedulerQueryStatus
+    ?? (schedulerState.installed ? "present" : "absent");
+  const schedulerUnknown = schedulerQueryStatus === "unknown"
+    || (schedulerQueryStatus === "present" && !schedulerState.installed);
+  const schedulerRuntimeStatus = inputs.schedulerRuntimeStatus
+    ?? (inputs.schedulerRunning ? "running" : "not-running");
+  const schedulerRuntimeUnknown = schedulerQueryStatus === "present"
+    && schedulerRuntimeStatus === "unknown";
+  // Unknown presence is treated as possibly installed so callers cannot bypass it.
+  const schedulerInstalled = schedulerQueryStatus !== "absent";
+  const schedulerEnabled = !schedulerUnknown && schedulerState.enabled;
+  const schedulerAssetsHealthy = !schedulerUnknown
+    && inputs.schedulerAssetsPresent
+    && schedulerState.registrationHealthy;
   const nativeInstalled = inputs.nativeStatus !== "nonexistent";
   const conflict = schedulerInstalled && nativeInstalled;
   const backendStateMismatch = schedulerInstalled
     ? inputs.recordedBackend !== "scheduler"
-    : nativeInstalled && inputs.recordedBackend !== "native";
-  const stale = inputs.staleBakedPaths
+    : nativeInstalled
+      ? inputs.recordedBackend !== "native"
+      : inputs.recordedBackend !== null;
+  const stale = schedulerUnknown
+    || schedulerRuntimeUnknown
+    || inputs.staleBakedPaths
     || (schedulerInstalled && !schedulerAssetsHealthy)
     || backendStateMismatch
     || (inputs.nativeStatus === "nonexistent" && inputs.nativeRepairAssetsOnly);
   const backend = schedulerInstalled ? "scheduler" : nativeInstalled ? "native" : null;
   const enabled = schedulerInstalled ? schedulerEnabled : inputs.nativeStatus === "started";
-  const running = nativeInstalled ? inputs.nativeStatus === "started" : schedulerInstalled && schedulerEnabled;
+  const running = nativeInstalled
+    ? inputs.nativeStatus === "started"
+    : schedulerInstalled && schedulerRuntimeStatus === "running";
   const viable = !conflict && !stale
-    && (schedulerInstalled ? schedulerEnabled && schedulerAssetsHealthy : inputs.nativeStatus === "started");
+    && (schedulerInstalled
+      ? schedulerEnabled && schedulerAssetsHealthy && running
+      : inputs.nativeStatus === "started");
   const startable = !conflict && !stale
     && (schedulerInstalled
       ? schedulerEnabled && schedulerAssetsHealthy
       : inputs.nativeStatus === "started" || inputs.nativeStatus === "stopped");
   const detail = conflict
     ? "CONFLICT: Task Scheduler and native WinSW are both present — run 'ocx service uninstall' then reinstall one"
+    : schedulerUnknown
+      ? `Task Scheduler status unknown${inputs.schedulerQueryDetail ? `: ${inputs.schedulerQueryDetail}` : ""}`
+    : schedulerRuntimeUnknown
+      ? "Task Scheduler runtime status unknown"
     : stale
       ? "stale or missing service assets — run 'ocx service install' to repair"
       : schedulerInstalled
-        ? schedulerEnabled ? "Task Scheduler enabled" : "Task Scheduler disabled"
+        ? !schedulerEnabled
+          ? "Task Scheduler disabled"
+          : running
+            ? "Task Scheduler enabled and proxy running"
+            : "Task Scheduler enabled, proxy not verified running"
         : nativeInstalled
           ? `native (WinSW ${WINSW_VERSION}): ${inputs.nativeStatus}`
           : "not installed";
@@ -1635,9 +1918,14 @@ export function diagnoseService(): ServiceDiagnostic {
     return { supported: true, installed, enabled: running, running, viable, startable: installed && !stale, stale, conflict: false, backend: "launchd", summary };
   }
   if (process.platform === "win32") {
-    const schedulerXml = statusWindowsXml();
+    const schedulerProbe = probeWindowsSchedulerXml();
+    const schedulerXml = schedulerProbe.xml;
     const schedulerAssetsPresent = [windowsServiceScriptPath(), windowsLauncherVbsPath(), windowsTaskXmlPath()]
       .every(existsSync);
+    const schedulerRuntimeStatus = schedulerProbe.status === "present"
+      ? windowsSchedulerRuntimeState()
+      : "not-running";
+    const schedulerRunning = schedulerRuntimeStatus === "running";
     const nativeStatus = statusWinswRaw();
     const installState = readServiceInstallState();
     const recordedBackend: ServiceBackend | null = !installState
@@ -1645,7 +1933,13 @@ export function diagnoseService(): ServiceDiagnostic {
       : installState.backend === "native" ? "native" : "scheduler";
     return deriveWindowsServiceDiagnostic({
       schedulerXml,
+      schedulerQueryStatus: schedulerProbe.status,
+      schedulerQueryDetail: schedulerProbe.status === "unknown" ? schedulerProbe.detail : undefined,
       schedulerAssetsPresent,
+      // Registration XML says whether the task is enabled, not whether its instance is
+      // running. Only Task Scheduler's own runtime state can establish this ownership.
+      schedulerRunning,
+      schedulerRuntimeStatus,
       nativeStatus,
       recordedBackend,
       staleBakedPaths: bakedServicePathsDiagnostic() !== null,
@@ -1678,6 +1972,88 @@ export function normalizeServiceSubcommand(sub?: string): string {
   return sub ?? "install";
 }
 
+export const SERVICE_START_HEALTH_TIMEOUT_MS = 35_000;
+
+export type ServiceCorrelatedLiveProxy = LiveProxy & {
+  pid: number;
+  source: "runtime";
+  supervised: true;
+};
+
+export function isServiceCorrelatedProxy(
+  live: LiveProxy | null,
+): live is ServiceCorrelatedLiveProxy {
+  return live?.supervised === true
+    && live.source === "runtime"
+    && typeof live.pid === "number"
+    && Number.isSafeInteger(live.pid)
+    && live.pid > 0;
+}
+
+export function serviceStartPostcondition(
+  live: LiveProxy | null,
+  manager: Pick<ServiceDiagnostic, "running" | "viable">,
+): boolean {
+  return isServiceCorrelatedProxy(live) && manager.running && manager.viable;
+}
+
+/** Require stable identity health whose PID-matched runtime record says service-owned. */
+export async function waitForServiceProxy(
+  options: ProxyReadinessOptions = {},
+) {
+  const findLive = options.findLive ?? findLiveProxy;
+  return await waitForProxyIdentity({
+    timeoutMs: SERVICE_START_HEALTH_TIMEOUT_MS,
+    intervalMs: 200,
+    ...options,
+    findLive: async () => {
+      const live = await findLive();
+      return isServiceCorrelatedProxy(live) ? live : null;
+    },
+  });
+}
+
+async function refuseUnsupervisedProxyBeforeServiceStart(): Promise<boolean> {
+  const live = await findLiveProxy();
+  if (!live || isServiceCorrelatedProxy(live)) return true;
+  console.error(
+    `❌ A direct OpenCodex proxy is already running on port ${live.port}. `
+    + "Stop it before starting or installing the background service.",
+  );
+  process.exitCode = 1;
+  return false;
+}
+
+async function confirmServiceStarted(action: "installed" | "started"): Promise<boolean> {
+  const live = await waitForServiceProxy();
+  const manager = diagnoseService();
+  if (!live || !serviceStartPostcondition(live, manager)) {
+    console.error(`❌ Service ${action}, but the proxy did not become identity-healthy within ${Math.trunc(SERVICE_START_HEALTH_TIMEOUT_MS / 1000)}s.`);
+    if (live && (!manager.running || !manager.viable)) {
+      console.error(`   Service manager is not confirmed running and viable: ${manager.summary}`);
+    }
+    console.error(`   ${serviceDiagnosticsSummary()}`);
+    process.exitCode = 1;
+    return false;
+  }
+  console.log(`✅ Proxy identity verified on port ${live.port}${live.pid ? ` (PID ${live.pid})` : ""}.`);
+  return true;
+}
+
+async function stopServiceCommandSafely(): Promise<boolean> {
+  const outcome = await runServiceStopGate({
+    stopManager: () => { stopServiceIfInstalled(); },
+    stopProxy: async () => await stopTrackedProxyForServiceCommand() !== "failed",
+  });
+  if (outcome.safeToTeardown) return true;
+  if (outcome.phase === "manager-unsafe") {
+    console.error(`❌ Service manager stop is not verified: ${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}`);
+  }
+  // A still-live proxy continues to depend on injected routing. Never tear it down.
+  process.exitCode = 1;
+  return false;
+}
+
 export interface ParsedServiceArgs {
   sub: string;
   backend: ServiceBackend | null;
@@ -1708,7 +2084,7 @@ export function parseServiceArgs(args: string[]): ParsedServiceArgs {
   return { sub: normalizeServiceSubcommand(sub), backend, invalid };
 }
 
-export async function serviceCommand(...args: (string | undefined)[]): Promise<void> {
+export async function serviceCommand(...args: (string | undefined)[]): Promise<boolean | void> {
   const parsed = parseServiceArgs(args.filter((a): a is string => Boolean(a)));
   const command = parsed.sub;
   if (parsed.invalid.length > 0) {
@@ -1734,31 +2110,44 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<v
     case "install":
       assertServiceEnvironmentMatchesInstall();
       assertServiceAuthEnvironment();
+      if (!await refuseUnsupervisedProxyBeforeServiceStart()) return false;
       await ops.install();
+      if (!await confirmServiceStarted("installed")) return false;
       console.log(backend === "native"
         ? "✅ opencodex native service installed + started (windowless, starts at boot, auto-restarts on crash)."
         : "✅ opencodex service installed + started (auto-starts on login, auto-restarts on crash).");
       if (process.platform === "linux") console.log("   For auto-start on boot: loginctl enable-linger $USER");
-      break;
+      return true;
     case "start":
+      assertServiceEnvironmentMatchesInstall();
+      if (!await refuseUnsupervisedProxyBeforeServiceStart()) return false;
+      // Refresh legacy hard-pinned assets to the normal availability-first policy.
+      // Update installation still gets one hard launch through OCX_BAKE_PORT.
+      ops.prepareStart?.();
       ops.start();
+      if (!await confirmServiceStarted("started")) return false;
       console.log("✅ service started.");
-      break;
+      return true;
     case "stop":
       assertServiceEnvironmentMatchesInstall();
-      // Only stop what is actually installed. The unguarded call ran a real `launchctl unload`
-      // (and its Windows/Linux twins) even with nothing installed.
-      if (ops.status() !== null || isServiceInstalled()) ops.stop();
-      await stopTrackedProxyForServiceCommand();
+      if (!await stopServiceCommandSafely()) return false;
       {
         const restore = restoreNativeCodex();
         if (restore.success) console.log("✅ service stopped + native Codex restored.");
-        else console.error(`⚠️ service stopped, but native Codex restore FAILED: ${restore.message}\nRun \`ocx restore\` (or check $CODEX_HOME/config.toml) before using native Codex.`);
+        else {
+          process.exitCode = 1;
+          console.error(`⚠️ service stopped, but native Codex restore FAILED: ${restore.message}\nRun \`ocx restore\` (or check $CODEX_HOME/config.toml) before using native Codex.`);
+        }
+        const env = revertSystemEnv();
+        if (!env.reverted && env.reason !== "no tracking file" && env.reason !== "not macOS") {
+          process.exitCode = 1;
+          console.error(`⚠️  System environment restore failed: ${env.reason ?? "unknown error"}`);
+        }
         // The Grok fence is the other managed config this command owns. Leaving it behind
         // pointed grok at a dead endpoint while native Codex was already restored.
         const grok = stripGrokConfig();
         if (grok.changed) console.log(`↩️  ${grok.message}`);
-        else if (!grok.ok) console.error(`⚠️  ${grok.message}`);
+        else if (!grok.ok) { process.exitCode = 1; console.error(`⚠️  ${grok.message}`); }
       }
       break;
     case "status": {
@@ -1770,10 +2159,7 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<v
     case "uninstall":
     case "remove":
       assertServiceEnvironmentMatchesInstall();
-      try { ops.stop(); } catch (err) {
-        console.warn(`⚠️  Service stop failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      await stopTrackedProxyForServiceCommand();
+      if (!await stopServiceCommandSafely()) return false;
       try {
         ops.uninstall();
       } catch (err) {
@@ -1784,11 +2170,17 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<v
       {
         const restore = restoreNativeCodex();
         if (!restore.success) {
+          process.exitCode = 1;
           console.error(`⚠️ native Codex restore FAILED: ${restore.message}\nRun \`ocx restore\` before using native Codex.`);
+        }
+        const env = revertSystemEnv();
+        if (!env.reverted && env.reason !== "no tracking file" && env.reason !== "not macOS") {
+          process.exitCode = 1;
+          console.error(`⚠️  System environment restore failed: ${env.reason ?? "unknown error"}`);
         }
         const grok = stripGrokConfig();
         if (grok.changed) console.log(`↩️  ${grok.message}`);
-        else if (!grok.ok) console.error(`⚠️  ${grok.message}`);
+        else if (!grok.ok) { process.exitCode = 1; console.error(`⚠️  ${grok.message}`); }
       }
       removeServiceInstallState();
       try { if (existsSync(serviceApiTokenFilePath())) unlinkSync(serviceApiTokenFilePath()); } catch { /* best-effort */ }

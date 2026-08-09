@@ -74,6 +74,12 @@ win:
     - target: squirrel
       arch: [x64]
   icon: gui/public/logo.png
+  # Code signing is permanently disabled. Keep all three controls explicit so
+  # neither electron-builder nor the Squirrel target can discover or invoke a
+  # signer when a developer machine happens to have credentials installed.
+  forceCodeSigning: false
+  signExecutable: false
+  signAndEditExecutable: false
 
 # Squirrel.Windows, not NSIS.
 #

@@ -96,6 +96,8 @@ proxy and can reach the same management routes as any other client. See
 | **Logs** | Auto-refresh recent requests with tokens, requested effort and (when available) effective outbound effort, resolved model, provider, status, request id, duration, and error details. The detail view includes the exact reasoning wire field when the adapter emits one. Filter by opaque conversation/session id (when the client sends one) to total tokens and estimated list-price cost for the currently loaded Logs ring. |
 | **Usage / Debug** | Inspect token-usage coverage and trends, or enable opt-in provider transport and usage-extraction diagnostics. |
 | **Storage** | Read-only CODEX_HOME disk breakdown (sessions, archives, DBs, attachments). Optional archived cleanup: preview the oldest N%, then quarantine to `CODEX_HOME/.trash` (default) or permanently delete behind an explicit checkbox. **Auto-cleanup policy** is opt-in and **default OFF** (`storageCleanupPolicy.enabled`); configure threshold/target/schedule/mode on the Storage page, or trigger **Run now**. Quarantined entries can be restored from the Storage page (JSONL + threads). Active sessions stay read-only. Cleanup and restore are refused while Codex holds the newest/active `state_*.sqlite` locked. |
+| **Remote connection** | Manually open another OpenCodex by IPv4, IPv6, or hostname and its active port. The destination dashboard performs ADMIN authentication. |
+| **Export** | Export dashboard datasets as supported formats/archives. Password-protected 7z is unavailable until a protected password transport exists. |
 | **Stop** | Gracefully stop the proxy and installed background service, restore native Codex, and exit (`POST /api/stop`). |
 | **Tabs** | Browser-style tabs with pinning, drag reordering, an overflow menu, per-tab appearance, named and collapsible **groups**, and four searches that find a tab across this strip, inside a group, by group name, or across every window. See [Tab Groups & Tab Search](/guides/tab-groups-and-search/). |
 
@@ -106,6 +108,26 @@ addressable instead: `#dashboard` opens Overview, and `#dashboard/providers` and
 `#dashboard/models` open the other two. Reload, bookmark, and Back all keep the section you were
 on. **Logs** works the same way with `#logs` and `#logs/debug`. An older `#providers/workspace`
 bookmark now lands on `#providers`.
+
+### Connect to another OpenCodex
+
+Open **Connect to another OpenCodex** from the navigation rail or mobile menu. Enter an IPv4
+address, IPv6 address, or DNS hostname and a port from 1 through 65535. Port `10100` is filled in by
+default; replace it with the remote's identity-verified active listener port from
+`ocx host status` (or `ocx status`) when that host started on a fallback port.
+
+**Connect** opens the exact validated HTTP origin at `#/dashboard` in a new tab. The dialog does not
+probe the host, add a token to the URL, or save one. The destination dashboard prompts for that
+proxy's ADMIN token, which is distinct from its data-plane API keys. HTTP is unencrypted, so connect
+directly only across a trusted LAN and prefer an SSH tunnel for other networks.
+
+### Export archives
+
+7z export remains available when a safe 7-Zip executable is installed, but password encryption is
+disabled. 7-Zip accepts passwords only through process arguments, where other local processes may
+observe them; OpenCodex will not enable encryption until a protected password-input channel exists.
+Use an unencrypted 7z/ZIP for non-secret datasets, or protect a sensitive export outside OpenCodex
+with an appropriate secret-safe tool.
 
 Cost values in **Logs** and **Usage** are API list-price equivalents calculated from reported tokens.
 They are not billing receipts or evidence of an actual charge; subscription usage or provider credits

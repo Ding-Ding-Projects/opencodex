@@ -72,11 +72,67 @@ jobs:
       - name: Build the installer
         # electron-builder downloads Electron itself from the pinned electronVersion
         # in electron-builder.yml, so neither it nor electron is a repo dependency.
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+          WIN_CSC_LINK: ""
+          WIN_CSC_KEY_PASSWORD: ""
         run: npx --yes electron-builder@26.15.3 --win --publish never
+
+      - name: Verify unsigned Squirrel feed
+        shell: pwsh
+        run: |
+          $setups = @(Get-ChildItem -LiteralPath dist-desktop -Recurse -File -Filter "*.exe" | Where-Object { $_.Name -match "Setup" })
+          $releaseIndexes = @(Get-ChildItem -LiteralPath dist-desktop -Recurse -File | Where-Object { $_.Name -eq "RELEASES" })
+          $fullPackages = @(Get-ChildItem -LiteralPath dist-desktop -Recurse -File -Filter "*.nupkg" | Where-Object { $_.Name -notmatch "-delta\.nupkg$" })
+          if ($setups.Count -eq 0 -or $releaseIndexes.Count -eq 0 -or $fullPackages.Count -eq 0) {
+            throw "Squirrel packaging did not produce Setup.exe, RELEASES, and a full .nupkg."
+          }
+          foreach ($setup in $setups) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $setup.FullName
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+              throw "Expected unsigned installer, but $($setup.Name) reported $($signature.Status)."
+            }
+          }
 
       - name: List what was produced
         shell: bash
         run: ls -lhR dist-desktop
+
+      - name: Collect installer evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE "desktop-artifacts"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          @(
+            "run_id=$env:GITHUB_RUN_ID"
+            "sha=$env:GITHUB_SHA"
+            "job_status=$env:JOB_STATUS"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+          ) | Set-Content -LiteralPath (Join-Path $root "run-metadata.txt") -Encoding utf8
+
+          $sourceRoot = Join-Path $env:GITHUB_WORKSPACE "dist-desktop"
+          $safeCount = 0
+          if (Test-Path -LiteralPath $sourceRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object {
+              $_.Extension -in @(".exe", ".nupkg") -or $_.Name -eq "RELEASES"
+            } | ForEach-Object {
+              $relative = $_.FullName.Substring($sourceRoot.Length).TrimStart([char]"\", [char]"/")
+              $destination = Join-Path $root $relative
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+              Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+              $safeCount++
+            }
+          }
+          if ($safeCount -eq 0) {
+            "No safe installer files were produced." | Set-Content -LiteralPath (Join-Path $root "NO_SAFE_ARTIFACTS.txt") -Encoding utf8
+          }
 
       - name: Upload installer
         if: ${{ always() }}
@@ -84,6 +140,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-desktop-windows-${{ github.sha }}
-          path: dist-desktop/**/*.exe
+          path: desktop-artifacts
           if-no-files-found: warn
           retention-days: 14

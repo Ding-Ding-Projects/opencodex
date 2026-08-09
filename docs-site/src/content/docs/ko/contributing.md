@@ -68,6 +68,16 @@ GitHub Actions는 필요한 작업만 수행합니다.
 - **Release**(`.github/workflows/release.yml`)는 수동으로 실행합니다. 두 번째 전체 CI 파이프라인이
   아니며, dry-run이나 publish 전에 정확한 릴리즈 커밋(`GITHUB_SHA`)에서 Windows CI가
   성공했는지 확인합니다.
+- **Super express release**(`.github/workflows/super-express-release.yml`)는 Windows용 수동 패키징
+  경로입니다. 선택한 ref를 하나의 변경 불가능한 커밋 SHA로 확정하고, **Release**와 마찬가지로 그 정확한
+  SHA의 Windows CI가 성공하지 않았으면 publish를 거부합니다. 데스크톱 릴리즈에는 의도적으로 서명하지
+  않은 Squirrel.Windows `Setup.exe`, `RELEASES`, 전체 `.nupkg`가 포함됩니다.
+
+서명되지 않은 Windows 설치 파일은 **Unknown Publisher** 또는 Microsoft Defender SmartScreen 경고를
+표시할 수 있습니다. 관련 CI, 패키징, 릴리즈 작업은 앞 단계가 실패한 뒤에도 방어적인 artifact collector를
+실행합니다. collector는 명시적으로 안전한 설치 파일/feed 출력과 run metadata만 GitHub Actions artifact에
+보관하며, collector 자체의 실패는 원래 job verdict를 숨기거나 바꾸지 않도록 무시됩니다. 증거가 보관되어도
+실패한 build가 publish 대상이 되지는 않습니다.
 
 릴리즈에는 helper를 사용하세요.
 

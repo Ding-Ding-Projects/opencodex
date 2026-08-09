@@ -35,6 +35,7 @@ import {
 import { findVsCode, openInVsCode } from "../../lib/open-in-vscode";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
+import { requireLoopbackListener } from "./local-machine-gate";
 
 /** A named collection this route knows how to export. */
 export interface Dataset {
@@ -119,6 +120,11 @@ export async function handleExportRoutes(
     let body: ExportRequest;
     try { body = (await req.json()) as ExportRequest; }
     catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
+
+    if (body.openInVsCode === true) {
+      const localOnly = requireLoopbackListener(ctx, "Opening exports in VS Code");
+      if (localOnly) return localOnly;
+    }
 
     const dataset = typeof body.dataset === "string" ? datasets.get(body.dataset) : undefined;
     if (!dataset) {

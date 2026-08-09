@@ -48,6 +48,10 @@ export async function handleLaunchCommand(args: string[]): Promise<number> {
   // No target named, or an explicit list: report what is installed. Listing is the
   // safe default — a bare `ocx launch` must not start something the user did not name.
   if (!sub || sub === "list") {
+    if (sub === "list" && positional.length > 1) {
+      console.error("ocx launch: list does not accept a target or extra positional arguments.");
+      return 2;
+    }
     printTargets(json);
     return 0;
   }

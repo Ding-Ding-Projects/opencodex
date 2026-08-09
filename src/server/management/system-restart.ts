@@ -14,8 +14,7 @@
  * - If detached spawn fails (sync throw or pre-start `error`): exit(1) without
  *   markRecycling — after drain the listen socket is already closed, so a latch
  *   reset cannot recover serving. Clear inherited `OCX_SERVICE` so exit cleanup
- *   can restore Codex/Grok fences (ensure/tray daemons set the marker without a
- *   real supervisor). Log only a stable errno code — never the raw message
+ *   can restore Codex/Grok fences. Log only a stable errno code — never the raw message
  *   (paths in ENOENT often include the OS username).
  */
 import { spawn } from "node:child_process";
@@ -27,15 +26,16 @@ import {
   markRecyclingForExit,
   setDraining,
 } from "../lifecycle";
-import { isServiceInstalled } from "../../service";
+import { diagnoseService, type ServiceDiagnostic } from "../../service";
 import { readRuntimePort } from "../../config";
+import { directProxyEnv, proxyStartArgv } from "../../lib/proxy-launch";
+import { waitForProxyIdentity, type ProxyReadinessOptions } from "../../cli/proxy-readiness";
 
 /** Fixed v1 drain window for the memory-card action (not config-driven). */
 export const MEMORY_DRAIN_RESTART_MS = 60_000;
 
 export interface SystemRestartIo {
   drainAndShutdown?: typeof drainAndShutdown;
-  isServiceInstalled?: () => boolean;
   isSupervisedServiceChild?: () => boolean;
   /** Must resolve only after the replacement process has actually started. */
   spawnStart?: (port?: number) => void | Promise<void>;
@@ -66,8 +66,16 @@ function resolveListenPort(): number | undefined {
   return undefined;
 }
 
+export function serviceSupervisorCanRespawn(
+  marker: string | undefined,
+  service: Pick<ServiceDiagnostic, "installed" | "running" | "viable">,
+): boolean {
+  return marker === "1" && service.installed && service.running && service.viable;
+}
+
 function isSupervisedServiceChild(): boolean {
-  return process.env.OCX_SERVICE === "1" && isServiceInstalled();
+  if (process.env.OCX_SERVICE !== "1") return false;
+  return serviceSupervisorCanRespawn(process.env.OCX_SERVICE, diagnoseService());
 }
 
 /** Stable, path-free spawn failure label for logs (never interpolate err.message). */
@@ -79,19 +87,27 @@ function spawnFailureCode(err: unknown): string {
   return "spawn_failed";
 }
 
-function spawnDetachedStart(port?: number): Promise<void> {
-  const args = [process.argv[1], "start"];
-  if (typeof port === "number" && Number.isFinite(port) && port > 0 && port <= 65535) {
-    args.push("--port", String(Math.trunc(port)));
-  }
-  return new Promise<void>((resolve, reject) => {
+export async function waitForRestartChild(
+  expectedPid: number,
+  options: ProxyReadinessOptions = {},
+): Promise<void> {
+  const live = await waitForProxyIdentity({ ...options, expectedPid });
+  if (live) return;
+  const error = new Error("replacement proxy did not become stably identity-healthy") as Error & { code?: string };
+  error.code = "health_timeout";
+  throw error;
+}
+
+async function spawnDetachedStart(port?: number): Promise<void> {
+  const args = proxyStartArgv(process.argv[1], port);
+  const childPid = await new Promise<number>((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(process.execPath, args, {
         detached: true,
         stdio: "ignore",
         windowsHide: true,
-        env: { ...process.env, OCX_SERVICE: "1" },
+        env: directProxyEnv(),
       });
     } catch (err) {
       reject(err);
@@ -109,10 +125,12 @@ function spawnDetachedStart(port?: number): Promise<void> {
     child.once("spawn", () => {
       finish(() => {
         child.unref();
-        resolve();
+        if (typeof child.pid === "number" && child.pid > 0) resolve(child.pid);
+        else reject(Object.assign(new Error("spawned replacement has no PID"), { code: "missing_pid" }));
       });
     });
   });
+  await waitForRestartChild(childPid);
 }
 
 /**
@@ -137,7 +155,16 @@ export function acceptSystemRestart(io: SystemRestartIo = restartIo): {
     schedule(async () => {
       const drain = io.drainAndShutdown ?? drainAndShutdown;
       await drain(undefined, MEMORY_DRAIN_RESTART_MS);
-      const supervised = (io.isSupervisedServiceChild ?? isSupervisedServiceChild)();
+      let supervised: boolean;
+      try {
+        supervised = (io.isSupervisedServiceChild ?? isSupervisedServiceChild)();
+      } catch {
+        console.warn(
+          "⚠️  Drain-and-restart supervisor state is unknown; refusing a duplicate direct replacement",
+        );
+        (io.exitProcess ?? ((code: number) => { process.exit(code); }))(1);
+        return;
+      }
       if (supervised) {
         // Failure-only supervisors ignore exit(0); intentional non-zero triggers respawn.
         (io.exitProcess ?? ((code: number) => { process.exit(code); }))(1);
@@ -152,8 +179,8 @@ export function acceptSystemRestart(io: SystemRestartIo = restartIo): {
           `⚠️  Drain-and-restart spawn failed (${spawnFailureCode(err)}); exiting without replacement`,
         );
         // Listen socket is already stopped; do not markRecycling — no child to inherit fences.
-        // ensure/tray children inherit OCX_SERVICE=1 without an installed service; clear it so
-        // syncCleanup can restore Codex/Grok fences instead of leaving clients pointed at a dead port.
+        // A caller may itself be supervised; clear the inherited marker so syncCleanup
+        // can restore Codex/Grok fences instead of leaving clients pointed at a dead port.
         delete process.env.OCX_SERVICE;
         exitProcess(1);
         return;

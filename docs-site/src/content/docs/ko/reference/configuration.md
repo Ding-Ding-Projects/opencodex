@@ -47,7 +47,7 @@ namespaced selected id를 bare id로 바꿉니다.
 | `connectTimeoutMs?` | `number` | `200000` | DNS/TCP/TLS와 최종 응답 헤더만 기다리는 시도별 deadline. 응답 body 생성 전 종료됩니다. |
 | `shutdownTimeoutMs?` | `number` | `5000` | 진행 중인 turn을 중단하기 전 graceful drain deadline. |
 | `websockets?` | `boolean` | `false` | `supports_websockets`를 알려 Codex가 Responses WebSocket 경로를 쓰게 합니다. 생략하거나 `false`이면 HTTP/SSE를 유지합니다. |
-| `apiKeys?` | `OcxApiKey[]` | `[]` | 비-loopback 바인드에서 관리 API와 data plane 인증에 추가로 허용할 생성형 `ocx_…` 자격 증명. 대시보드가 관리하며 항목 필드는 아래에 설명합니다. |
+| `apiKeys?` | `OcxApiKey[]` | `[]` | 비-loopback 바인드에서 추가로 허용할 생성형 `ocx_…` data-plane 자격 증명. ADMIN 자격 증명은 아닙니다. 대시보드가 관리하며 항목 필드는 아래에 설명합니다. |
 | `codexAutoStart?` | `boolean` | `true` | Codex shim이 Codex 실행 전에 `ocx ensure`를 실행하게 합니다. `false`이면 `ocx ensure`가 아무 작업도 하지 않습니다. |
 | `codexShimAutoRestore?` | `boolean` | `true` | 완료된 외부 Codex 업데이트가 이전에 설치한 shim을 교체하면 자동으로 복구합니다. 끄려면 `false`로 설정하거나 프로세스에 `OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0`을 설정합니다. |
 | `syncResumeHistory?` | `boolean` | `true` | 되돌릴 수 있는 Codex App 기록 호환 모드. opencodex가 원래 Codex thread metadata를 백업하고, 예전 OpenAI interactive row를 `opencodex`로 재매핑하며, opencodex가 만든 `exec` row를 App에 보이는 source로 잠시 승격합니다. `ocx stop` / `ocx restore`는 백업한 OpenAI row를 복원하고 남은 opencodex user thread를 OpenAI로 돌려 네이티브 Codex가 `config.toml`에서 프록시를 제거한 뒤에도 이어서 열 수 있게 합니다. 끄려면 `false`로 설정합니다. |
@@ -125,8 +125,7 @@ cooldown, health에 따라 자동 라우팅됩니다.
 ## 원격 접근
 
 opencodex는 기본적으로 `127.0.0.1`(loopback 전용)에 바인드합니다. `hostname`을 `0.0.0.0` 같은
-비-loopback 주소로 설정하면 관리 API(`/api/*`)와 data plane(`/v1/responses`) **모두**에 token
-인증을 강제합니다.
+비-loopback 주소로 설정하면 data plane과 관리 API를 서로 다른 자격 증명으로 보호합니다.
 
 시작 전에 `OPENCODEX_API_AUTH_TOKEN` 환경 변수를 설정하세요.
 
@@ -135,22 +134,31 @@ export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
 ocx start
 ```
 
-비-loopback 바인드에서는 이 변수가 없으면 프록시가 시작되지 않습니다. LAN 접근용 백그라운드
-서비스를 설치할 때도 같은 변수를 먼저 export한 뒤 `ocx service install`을 실행해야 launchd,
-systemd, Task Scheduler에 전달됩니다. 클라이언트는 모든 요청의 `x-opencodex-api-key` 헤더에
-token을 넣어야 합니다.
+비-loopback 바인드에서는 이 변수나 생성된 `apiKeys`가 없으면 프록시가 시작되지 않습니다. LAN 접근용
+백그라운드 서비스를 설치할 때도 같은 변수를 먼저 export한 뒤 `ocx service install`을 실행해야
+launchd, systemd, Task Scheduler에 전달됩니다. data-plane 클라이언트는 모든 요청의
+`x-opencodex-api-key` 헤더에 token을 넣어야 합니다.
 
 ```
 x-opencodex-api-key: your-secret-token
 ```
 
 `Authorization: Bearer …` 헤더도 허용합니다. 시작 후에는 대시보드에서 생성한 `apiKeys`를 환경 변수
-token 대신 쓸 수 있습니다. 모든 후보는 timing side channel을 막기 위해 상수 시간
-(`timingSafeEqual`)으로 비교합니다.
+token 대신 쓸 수 있지만 `/api/*` 권한은 주지 않습니다.
+
+관리 API와 원격 대시보드는 별도 ADMIN token이 필요합니다. OpenCodex는 시작할 때 보호된 로컬 secret
+file을 만들거나 `OPENCODEX_ADMIN_AUTH_TOKEN`을 사용합니다. 원격 대시보드는 이 ADMIN 값을 묻고
+data-plane key는 거부합니다. 모든 자격 증명 후보는 상수 시간(`timingSafeEqual`)으로 비교합니다.
+
+Material 3 대시보드의 **다른 OpenCodex에 연결**에서 IPv4, IPv6 또는 DNS 호스트 이름과 원격의 실제
+실행 포트를 직접 입력할 수 있습니다. 원격을 probe하거나 URL에 token을 넣거나 token을 저장하지
+않습니다. 자동 시작이 fallback 포트를 썼다면 `config.port`만 보지 말고 `ocx host status` 또는
+`ocx status`의 identity-verified live 값을 사용하세요.
 
 :::caution[LAN 노출]
 `0.0.0.0`에 바인드하면 프록시와 설정된 모든 프로바이더 자격 증명이 로컬 네트워크에 노출됩니다.
-신뢰할 수 있는 네트워크에서만 사용하고 강력한 `OPENCODEX_API_AUTH_TOKEN`을 반드시 설정하세요.
+HTTP는 암호화되지 않습니다. 신뢰할 수 있는 네트워크에서만 사용하고 강력한 data-plane/ADMIN 자격
+증명을 설정하며, 신뢰할 수 없는 경로에서는 SSH port forwarding을 우선하세요.
 :::
 
 ## 프로바이더 (`OcxProviderConfig`)

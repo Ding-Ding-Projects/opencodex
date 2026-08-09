@@ -70,10 +70,20 @@ GitHub Actions intentionally stay small:
 - **Release** (`.github/workflows/release.yml`) is manual. It does not act as a second full CI
   pipeline; before dry-run or publish it requires the exact release commit (`GITHUB_SHA`) to already
   have a successful Windows CI run.
+- **Super express release** (`.github/workflows/super-express-release.yml`) is the manual Windows
+  packaging path. It resolves the selected ref to one immutable commit SHA and, like **Release**,
+  refuses publication unless Windows CI succeeded for that exact SHA. Its desktop release contains
+  an intentionally unsigned Squirrel.Windows `Setup.exe`, `RELEASES`, and the full `.nupkg`.
 - **Stale needs-info** (`.github/workflows/stale-needs-info.yml`) runs daily on the default branch.
   Open issues labeled `needs-info` with no activity for 14 days get a warning; after 7 more idle
   days they close as not planned. Any update clears the stale warning. To keep long-lived work open,
   remove `needs-info` (for example when promoting an issue to `roadmap`).
+
+Unsigned Windows installers may show an **Unknown Publisher** or Microsoft Defender SmartScreen
+warning. Relevant CI, packaging, and release jobs run defensive artifact collectors even after an
+earlier step fails. The collectors retain only explicitly safe installer/feed output and run metadata
+in GitHub Actions artifacts; collector failures are ignored so they cannot hide or replace the
+original job verdict. Retaining evidence never makes a failed build eligible for publication.
 
 Use the helper for releases:
 

@@ -64,6 +64,15 @@ GitHub Actions 有意只保留必要步骤：
   无需单独安装 Bun 也能完成 npm global install。
 - **Release**（`.github/workflows/release.yml`）只能手动运行。它不是第二套完整 CI；dry-run 或
   publish 前，精确的 release commit（`GITHUB_SHA`）必须已有成功的 Windows CI run。
+- **Super express release**（`.github/workflows/super-express-release.yml`）是 Windows 手动打包
+  路径。它会把选定的 ref 解析为一个不可变的 commit SHA，并与 **Release** 一样：只有该精确 SHA
+  已通过 Windows CI 才允许 publish。桌面发布包含有意不签名的 Squirrel.Windows `Setup.exe`、
+  `RELEASES` 和完整 `.nupkg`。
+
+未签名的 Windows 安装程序可能会显示 **Unknown Publisher** 或 Microsoft Defender SmartScreen
+警告。相关 CI、打包与发布 job 即使在前置步骤失败后，也会运行防御式 artifact collector。collector
+只把明确安全的安装程序/feed 输出与 run metadata 保存为 GitHub Actions artifact；collector 自身失败
+会被忽略，因此不会掩盖或替换原始 job verdict。保留诊断证据并不会让失败的 build 获得发布资格。
 
 发布请使用 helper：
 

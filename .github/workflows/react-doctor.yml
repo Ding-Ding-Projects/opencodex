@@ -80,6 +80,7 @@ jobs:
             sha = $env:GITHUB_SHA
             jobStatus = $env:JOB_STATUS
             runnerOs = $env:RUNNER_OS
+            runnerArch = $env:RUNNER_ARCH
             baseRef = $env:BASE_REF
           } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
           if (-not (Test-Path -LiteralPath $report)) {

@@ -74,7 +74,7 @@ function printAgentDeferral(): void {
  */
 export async function maybeShowStarPrompt(): Promise<void> {
   try {
-    if (process.env.OCX_SERVICE || !process.stdin.isTTY || !process.stdout.isTTY) return;
+    if (process.env.OCX_SERVICE || process.env.OCX_BACKGROUND || !process.stdin.isTTY || !process.stdout.isTTY) return;
     const dir = getConfigDir();
     const marker = join(dir, MARKER);
     if (existsSync(marker)) return;

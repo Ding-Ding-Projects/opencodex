@@ -27,6 +27,47 @@ function count(text: string, fragment: string): number {
   return text.split(fragment).length - 1;
 }
 
+type WorkflowStep = {
+  name?: string;
+  uses?: string;
+  if?: unknown;
+  run?: string;
+  env?: Record<string, unknown>;
+  with?: Record<string, unknown>;
+  "continue-on-error"?: unknown;
+};
+
+type WorkflowJob = {
+  "runs-on"?: unknown;
+  steps?: WorkflowStep[];
+};
+
+type WorkflowDocument = {
+  jobs?: Record<string, WorkflowJob>;
+};
+
+const uploadArtifactAction =
+  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+
+function expectAlwaysAndNonMasking(step: WorkflowStep, label: string): void {
+  expect(String(step.if ?? ""), `${label} must run after any earlier result`).toContain("always()");
+  expect(step["continue-on-error"], `${label} must not mask the original job result`).toBe(true);
+}
+
+function expectRunMetadata(step: WorkflowStep, label: string): void {
+  const run = String(step.run ?? "");
+  const envEntries = Object.entries(step.env ?? {});
+  const statusEnv = envEntries.find(([, value]) => String(value).includes("job.status"));
+
+  expect(run, `${label} must write a metadata record`).toMatch(/run-metadata\.(?:json|txt)/i);
+  expect(run, `${label} metadata must record the run id`).toContain("GITHUB_RUN_ID");
+  expect(run, `${label} metadata must record the commit SHA`).toContain("GITHUB_SHA");
+  expect(run, `${label} metadata must record the runner operating system`).toContain("RUNNER_OS");
+  expect(run, `${label} metadata must record the runner architecture`).toContain("RUNNER_ARCH");
+  expect(statusEnv, `${label} must bind job.status into the collector environment`).toBeDefined();
+  expect(run, `${label} metadata must record the bound job status`).toContain(statusEnv?.[0] ?? "");
+}
+
 describe("GitHub Actions hardening", () => {
   test("Windows CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
@@ -130,31 +171,75 @@ describe("GitHub Actions hardening", () => {
   });
 
   test("Windows producers retain safe artifacts after failures", async () => {
-    const uploadAction = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
-    const producers = [
-      ".github/workflows/ci.yml",
-      ".github/workflows/release.yml",
-      ".github/workflows/service-lifecycle.yml",
-      ".github/workflows/deploy-docs.yml",
-      ".github/workflows/react-doctor.yml",
+    const producers: Array<{ path: string; jobs: string[] }> = [
+      { path: ".github/workflows/ci.yml", jobs: ["test", "npm-global-smoke"] },
+      { path: ".github/workflows/release.yml", jobs: ["publish"] },
+      { path: ".github/workflows/service-lifecycle.yml", jobs: ["windows-schtasks"] },
+      { path: ".github/workflows/deploy-docs.yml", jobs: ["build"] },
+      { path: ".github/workflows/react-doctor.yml", jobs: ["react-doctor"] },
+      { path: ".github/workflows/auto-release.yml", jobs: ["release"] },
+      { path: ".github/workflows/desktop-installer.yml", jobs: ["build"] },
+      { path: ".github/workflows/gui-preview.yml", jobs: ["build"] },
+      { path: ".github/workflows/super-express-release.yml", jobs: ["release"] },
     ];
 
-    for (const path of producers) {
-      const workflow = await readText(path);
-      expect(workflow, `${path} must run only on Windows`).toContain("runs-on: windows-latest");
-      expect(workflow, `${path} must pin upload-artifact`).toContain(uploadAction);
-      expect(workflow, `${path} must collect after any prior result`).toContain("if: ${{ always() }}");
-      expect(workflow, `${path} must warn when no safe file exists`).toContain("if-no-files-found: warn");
-      expect(workflow, `${path} must not mask the original result`).toContain("continue-on-error: true");
-      expect(workflow, `${path} must not run another operating system`).not.toMatch(/ubuntu-latest|macos-latest/);
+    for (const producer of producers) {
+      const workflow = Bun.YAML.parse(await readText(producer.path)) as WorkflowDocument;
+      const artifactJobs = Object.entries(workflow.jobs ?? {})
+        .filter(([, job]) => (job.steps ?? []).some(step => step.uses === uploadArtifactAction))
+        .map(([jobName]) => jobName)
+        .sort();
+      expect(artifactJobs, `${producer.path} artifact-producing jobs changed`).toEqual(
+        [...producer.jobs].sort(),
+      );
+
+      for (const jobName of producer.jobs) {
+        const job = workflow.jobs?.[jobName];
+        expect(job, `${producer.path}:${jobName} must exist`).toBeDefined();
+        expect(job?.["runs-on"], `${producer.path}:${jobName} must run only on Windows`).toBe(
+          "windows-latest",
+        );
+
+        const steps = job?.steps ?? [];
+        const uploadIndexes = steps.flatMap((step, index) =>
+          step.uses === uploadArtifactAction ? [index] : [],
+        );
+        expect(uploadIndexes.length, `${producer.path}:${jobName} must pin upload-artifact`).toBeGreaterThan(0);
+
+        for (const uploadIndex of uploadIndexes) {
+          const upload = steps[uploadIndex]!;
+          const label = `${producer.path}:${jobName}:${upload.name ?? "artifact upload"}`;
+          expectAlwaysAndNonMasking(upload, label);
+          expect(upload.with?.["if-no-files-found"], `${label} must warn when no safe file exists`).toBe(
+            "warn",
+          );
+          expect(Number(upload.with?.["retention-days"]), `${label} must use bounded retention`).toBeGreaterThan(0);
+
+          const collector = steps
+            .slice(0, uploadIndex)
+            .reverse()
+            .find(step => /^Collect\b/i.test(step.name ?? ""));
+          expect(collector, `${producer.path}:${jobName} needs a collector before its upload`).toBeDefined();
+          const collectorLabel = `${producer.path}:${jobName}:${collector?.name ?? "collector"}`;
+          expectAlwaysAndNonMasking(collector ?? {}, collectorLabel);
+          expectRunMetadata(collector ?? {}, collectorLabel);
+        }
+      }
     }
 
-    const ci = await readText(".github/workflows/ci.yml");
-    expect(count(ci, "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02")).toBe(2);
-    const release = await readText(".github/workflows/release.yml");
-    expect(release).toContain("Setup.exe");
-    expect(release).toContain("*.nupkg");
-    expect(release).toContain("*.tgz");
+    const release = Bun.YAML.parse(await readText(".github/workflows/release.yml")) as WorkflowDocument;
+    const releaseCollector = release.jobs?.publish?.steps?.find(step => step.name === "Collect release artifacts");
+    expect(releaseCollector?.run).toContain("*.tgz");
+
+    const desktop = Bun.YAML.parse(
+      await readText(".github/workflows/desktop-installer.yml"),
+    ) as WorkflowDocument;
+    const desktopCollector = desktop.jobs?.build?.steps?.find(
+      step => step.name === "Collect installer evidence",
+    );
+    expect(desktopCollector?.run).toContain("dist-desktop");
+    expect(desktopCollector?.run).toContain(".nupkg");
+    expect(desktopCollector?.run).toContain('$_.Name -eq "RELEASES"');
   });
 
   test("stale needs-info workflow is schedule-only and least-privilege", async () => {

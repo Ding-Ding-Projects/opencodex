@@ -11,7 +11,7 @@ Two commands, and every one of them runs any LLM you point it at.</p>
 
 ```bash
 npm install -g @bitkyc08/opencodex
-ocx start        # proxy + dashboard on localhost:10100
+ocx start        # proxy + dashboard; uses another free port if 10100 is busy
 ```
 
 On Windows, `scripts/install.ps1` also repairs the current user's PATH using the directory reported by
@@ -96,6 +96,11 @@ flowchart LR
 
 Windows is the supported target. Requires [Node](https://nodejs.org) 18+. The Bun runtime is bundled automatically on `npm install` — no separate Bun install needed.
 
+GitHub Releases carry an intentionally unsigned Squirrel.Windows `Setup.exe` plus its `RELEASES`
+index and full `.nupkg` update package. Windows may show an Unknown Publisher or SmartScreen warning.
+Release workflows verify the installer is `NotSigned`, fail closed on an incomplete update feed, and
+retain safe installer/feed evidence as a GitHub Actions artifact even when a later step fails.
+
 ## Quick start
 
 ```bash
@@ -152,7 +157,7 @@ The fastest way to add a provider is through the web dashboard:
 ocx gui
 ```
 
-This opens the dashboard at `http://localhost:10100`. From there:
+This opens the dashboard on the proxy's identity-verified live port. From there:
 
 1. Click **"Add Provider"**
 2. Pick from **40+ built-in providers** — or enter a custom OpenAI-compatible endpoint
@@ -160,6 +165,15 @@ This opens the dashboard at `http://localhost:10100`. From there:
 4. Models are **auto-discovered** from the provider's `/v1/models` endpoint
 
 Your new provider is ready to use immediately. No restart needed.
+
+The packaged dashboard is now the Material 3 interface only. The retired UI and its fallback lookup
+have been removed, so a missing, stale, or version-mismatched dashboard build is reported as
+unavailable instead of silently serving the old interface.
+
+Use **Connect to another OpenCodex** to enter a remote IPv4 address, IPv6 address, or hostname and
+the remote proxy's active port. The destination opens in a new tab and prompts for that proxy's
+separate ADMIN token. Nothing is appended to the URL or saved by the connection dialog. Direct HTTP
+is appropriate only on a trusted LAN; prefer an SSH tunnel across any untrusted link.
 
 You can also add providers through `ocx init` (interactive CLI) or by editing `~/.opencodex/config.json` directly.
 
@@ -313,7 +327,8 @@ Cursor OAuth and live model discovery are enabled for the experimental Cursor ad
 
 ```bash
 ocx init                       # interactive setup
-ocx start [--port 10100]       # start the proxy; falls back to a free port if busy
+ocx start                      # automatic start; uses another free port if preferred port is busy
+ocx start --port 10100         # explicit pin; waits/fails instead of changing ports
 ocx stop                       # stop + restore native Codex
 ocx restore                    # restore without stopping (alias: ocx eject)
 ocx uninstall                  # remove service/shim/config and restore native Codex
@@ -325,6 +340,9 @@ ocx login <provider>          # OAuth login (xai, anthropic, kimi, cursor, ...)
 ocx logout <provider>          # remove a stored login
 ocx account <list|current|use> # list/switch accounts & API-key pools (masked; also refresh/auto-switch/remove/add-key)
 ocx gui                        # open the web dashboard
+ocx host <status|enable|disable>   # configure trusted-LAN remote access
+ocx export data <dataset>      # export a redacted dashboard dataset
+ocx export <new-file> --yes    # protected full-state backup containing plaintext secrets
 ocx claude [args...]           # launch Claude Code wired to the proxy (model discovery on)
 ocx claude desktop             # save and apply the Claude Desktop four-family profile
 ocx service [install|start|stop|status|uninstall]   # install/update/start background service
@@ -373,8 +391,23 @@ opencodex has two ways to auto-start the proxy:
 
 Use the **service** for always-on proxy (recommended for development machines). Use the **shim** for
 lightweight, on-demand proxy startup without a background daemon. Shim autostart is enabled by default
-and can be disabled from the GUI dashboard. If the configured proxy port is already busy, `ocx start`
-automatically picks another free local port and updates Codex to use it.
+and can be disabled from the GUI dashboard. Automatic starts (`ocx start` without `--port`, service
+startup, `ocx ensure`, and the dashboard opener) treat the configured port as a preference. If it is
+busy, opencodex records another free port in runtime state and points Codex at that live listener
+without overwriting the configured preference. An explicit `ocx start --port`, an update handoff,
+and an in-dashboard restart keep the exact requested/live port and fail instead of hopping.
+
+Lifecycle commands do not trust a PID file or an open TCP port by itself. Start and restart wait for
+stable OpenCodex identity health; service starts also require service-owned runtime identity. Stop
+verifies the service manager and proxy are actually down before it restores native Codex or removes
+owned state, so a failed manual stop cannot silently leave a supervisor able to respawn the proxy.
+
+Full-state CLI backups require `ocx export <new-file> --yes`. They include plaintext API keys and
+OAuth tokens, are created as a new protected file, refuse stdout, and never overwrite an existing
+path. Redacted dataset exports may still use stdout through `ocx export data`. The dashboard can
+create unencrypted 7z archives when 7-Zip is available, but password encryption is disabled because
+7-Zip accepts its password only through process arguments; it will remain unavailable until a
+protected password-input transport exists.
 
 If an external Codex update overwrites an installed shim, the next ordinary `ocx` command backs up
 the stable new launcher and restores the shim. A launcher that is still changing is left untouched
@@ -473,26 +506,31 @@ WebSocket transport is off by default. Set `"websockets": true` only if you want
 
 ### Remote access
 
-By default opencodex binds to `127.0.0.1` (loopback) and requires no extra authentication.
-If you set `"hostname": "0.0.0.0"` to expose the proxy on the LAN, opencodex requires a bearer token
-to protect both the management API (`/api/*`) and the data-plane (`/v1/responses`,
-`/v1/images/generations`, and `/v1/images/edits`):
+By default opencodex binds to `127.0.0.1` (loopback). If you set `"hostname": "0.0.0.0"` to expose
+the proxy on the LAN, the data plane (`/v1/responses`, `/v1/images/generations`, and
+`/v1/images/edits`) requires its own bearer credential:
 
 ```bash
 export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
 ocx start
 ```
 
-The proxy refuses to start without this variable when binding beyond loopback. If you install a
-background service for LAN access, export the same variable before `ocx service install` so the
-service manager receives it.
+The proxy refuses to start on a non-loopback bind without this variable or a generated data-plane
+key. If you install a background service for LAN access, export the same variable before
+`ocx service install` so the service manager receives it.
 Clients (scripts, remote machines) must include the token in every request:
 
 ```
 x-opencodex-api-key: your-secret-token
 ```
 
-The token is compared in constant time to prevent timing attacks.
+The dashboard and `/api/*` use a distinct ADMIN credential. A hardened ADMIN token is created on
+the proxy host (or supplied through `OPENCODEX_ADMIN_AUTH_TOKEN`), and a remote dashboard prompts
+for it. Data-plane keys are never accepted as ADMIN credentials. In **Connect to another
+OpenCodex**, enter the remote IP/hostname and its active listener port from `ocx host status` (or
+`ocx status`); the dialog never puts a token in the URL or saves it. Direct HTTP is unencrypted, so
+use it only on a trusted LAN and prefer SSH
+port forwarding elsewhere. Tokens are compared in constant time.
 
 opencodex automatically remaps Codex resume history so old OpenAI chats and opencodex-created project
 threads stay visible in Codex App while the proxy is active. opencodex records the original provider/source metadata in

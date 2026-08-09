@@ -60,6 +60,7 @@ describe("findLiveProxy", () => {
       readPidFn: () => 4242,
       readRuntimeFn: pid => (pid === 4242 ? { port: 58195 } : null),
       configFn: () => ({ port: 10100 }),
+      verifyPidFn: candidate => candidate,
       fetchFn: (async (url: string | URL | Request) => {
         urls.push(String(url));
         return healthz(OURS);
@@ -68,6 +69,17 @@ describe("findLiveProxy", () => {
 
     expect(live).toEqual({ pid: 4242, port: 58195, source: "runtime" });
     expect(urls).toEqual(["http://127.0.0.1:58195/healthz"]);
+  });
+
+  test("propagates service ownership only from the PID-matched runtime record", async () => {
+    const live = await findLiveProxy({
+      readPidFn: () => 4242,
+      readRuntimeFn: pid => (pid === 4242 ? { port: 58195, supervised: true } : null),
+      configFn: () => ({ port: 10100 }),
+      verifyPidFn: candidate => candidate,
+      fetchFn: (async () => healthz(OURS)) as typeof fetch,
+    });
+    expect(live).toMatchObject({ pid: 4242, port: 58195, source: "runtime", supervised: true });
   });
 
   test("falls back to config.port only when no runtime record answers, taking pid from the body", async () => {
@@ -98,6 +110,7 @@ describe("findLiveProxy", () => {
       readPidFn: () => null,
       readRuntimeFn: () => ({ pid: 4242, port: 58195, hostname: "::1" }),
       configFn: () => ({ port: 10100 }),
+      verifyPidFn: candidate => candidate,
       fetchFn: (async (url: string | URL | Request) => {
         urls.push(String(url));
         return healthz(OURS);
@@ -108,18 +121,31 @@ describe("findLiveProxy", () => {
     expect(urls).toEqual(["http://[::1]:58195/healthz"]);
   });
 
-  test("an orphaned record backed by a pidless legacy proxy yields pid null (never a killable stale pid)", async () => {
+  test("does not trust a matching healthz PID when process identity verification fails", async () => {
+    const live = await findLiveProxy({
+      readPidFn: () => 4242,
+      readRuntimeFn: () => ({ port: 58195 }),
+      verifyPidFn: () => null,
+      configFn: () => ({ port: 10100 }),
+      fetchFn: (async () => healthz(OURS)) as typeof fetch,
+    });
+
+    expect(live).toEqual({ pid: null, port: 58195, hostname: undefined, source: "runtime" });
+  });
+
+  test("an orphaned record backed by a pidless legacy proxy yields pid null without service ownership", async () => {
     const legacyBody = { status: "ok", version: "2.6.16", uptime: 5 }; // pre-identity healthz: no pid
     const live = await findLiveProxy({
       readPidFn: () => null,
-      readRuntimeFn: () => ({ pid: 1111, port: 58195, hostname: undefined }),
+      readRuntimeFn: () => ({ pid: 1111, port: 58195, hostname: undefined, supervised: true }),
       configFn: () => ({ port: 10100 }),
       fetchFn: (async (url: string | URL | Request) =>
         String(url).includes("58195") ? healthz(legacyBody) : healthz({ status: "ok" })) as typeof fetch,
     });
 
     // The record's pid 1111 may be dead/reused — synthesizing it would let `ocx stop`
-    // kill an unrelated process via the taskkill/kill fallback.
+    // kill an unrelated process via the taskkill/kill fallback. The same missing
+    // identity must also prevent a stale `supervised` marker claiming service ownership.
     expect(live).toEqual({ pid: null, port: 58195, hostname: undefined, source: "runtime" });
   });
 

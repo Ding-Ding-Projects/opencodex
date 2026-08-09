@@ -53,6 +53,7 @@ import { acceptSystemRestartAfterExternalDrain } from "./system-restart";
 import { isLoopbackHostname, jsonResponse } from "../auth-cors";
 import type { OcxConfig } from "../../types";
 import type { ManagementContext } from "./context";
+import { requireLoopbackListener } from "./local-machine-gate";
 
 /** Default hand-off window for restore/exit, and the ceiling a caller may ask for. */
 const DEFAULT_DRAIN_MS = 60_000;
@@ -424,6 +425,8 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   // Automatic installation. The body carries a catalog id and nothing else — the
   // package id and every command-line argument come from constants in the installer.
   if (url.pathname === "/api/launch/install" && req.method === "POST") {
+    const localOnly = requireLoopbackListener(ctx, "Installing applications");
+    if (localOnly) return localOnly;
     let body: { id?: unknown };
     try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
     const id = typeof body.id === "string" ? body.id.trim() : "";
@@ -465,6 +468,8 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   }
 
   if (url.pathname === "/api/launch" && req.method === "POST") {
+    const localOnly = requireLoopbackListener(ctx, "Launching applications");
+    if (localOnly) return localOnly;
     let body: { id?: unknown };
     try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
     const id = typeof body.id === "string" ? body.id.trim() : "";

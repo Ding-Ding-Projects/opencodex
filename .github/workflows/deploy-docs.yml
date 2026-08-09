@@ -65,6 +65,7 @@ jobs:
             sha = $env:GITHUB_SHA
             jobStatus = $env:JOB_STATUS
             runnerOs = $env:RUNNER_OS
+            runnerArch = $env:RUNNER_ARCH
           } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
           $dist = Join-Path $env:GITHUB_WORKSPACE "docs-site\dist"
           if (Test-Path -LiteralPath $dist) {

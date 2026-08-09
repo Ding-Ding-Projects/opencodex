@@ -8,7 +8,9 @@ import { removeTempDir } from "./helpers/temp-dir";
 
 const EXPECTED = {
   "X-Frame-Options": "DENY",
-  "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 
 describe("clickjacking response headers", () => {
@@ -20,14 +22,21 @@ describe("clickjacking response headers", () => {
     expect(corsHeaders()).toMatchObject(EXPECTED);
   });
 
-  test("static dashboard responses include the framing policy", () => {
+  test("static dashboard responses include the framing policy", async () => {
     const guiDist = mkdtempSync(join(tmpdir(), "ocx-gui-headers-"));
-    writeFileSync(join(guiDist, "index.html"), "<!doctype html><title>test</title>");
+    writeFileSync(
+      join(guiDist, "index.html"),
+      "<!doctype html><title>test</title><script>window.__ocxTest = true</script>",
+    );
     try {
       const response = serveGuiFile("/", guiDist);
       expect(response).not.toBeNull();
       expect(response?.headers.get("X-Frame-Options")).toBe("DENY");
-      expect(response?.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+      const policy = response?.headers.get("Content-Security-Policy") ?? "";
+      expect(policy).toContain("default-src 'self'");
+      expect(policy).toContain("frame-ancestors 'none'");
+      expect(policy).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+'/);
+      expect(await response?.text()).toMatch(/<script nonce="[A-Za-z0-9+/=]+"/);
     } finally {
       removeTempDir(guiDist);
     }

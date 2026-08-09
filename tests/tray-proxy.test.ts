@@ -54,6 +54,33 @@ describe("tray proxy coordinator", () => {
     expect(calls.some(call => call.includes("did not become healthy"))).toBe(true);
   });
 
+  test("direct readiness is scoped to the spawned child PID", async () => {
+    let expectedPid: number | undefined;
+    const { io } = startIo({
+      startDirect: () => 4242,
+      waitForProxy: async pid => {
+        expectedPid = pid;
+        return { port: 49152 };
+      },
+    });
+
+    expect(await runTrayProxyStart(io)).toBe(true);
+    expect(expectedPid).toBe(4242);
+  });
+
+  test("a service readiness failure is terminal and is not reported as started", async () => {
+    let waited = false;
+    const { io, calls } = startIo({
+      diagnoseService: () => ({ installed: true, startable: true, summary: "healthy" }),
+      startService: async () => false,
+      waitForProxy: async () => { waited = true; return { port: 10100 }; },
+    });
+
+    expect(await runTrayProxyStart(io)).toBe(false);
+    expect(waited).toBe(false);
+    expect(calls.some(call => call.includes("did not become healthy"))).toBe(true);
+  });
+
   test("propagates the selected start failure without trying an alternate path", async () => {
     const service = startIo({
       diagnoseService: () => ({ installed: true, startable: true, summary: "healthy" }),

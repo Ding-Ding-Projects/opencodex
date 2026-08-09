@@ -1675,18 +1675,22 @@ export type RuntimePortState = {
   pid: number;
   port: number;
   hostname?: string;
+  /** True only when the proxy process was launched by an OpenCodex service artifact. */
+  supervised?: boolean;
 };
 
 function isValidRuntimePortState(value: unknown): value is RuntimePortState {
   if (!value || typeof value !== "object") return false;
   const state = value as Record<string, unknown>;
   const hostnameOk = state.hostname === undefined || typeof state.hostname === "string";
+  const supervisedOk = state.supervised === undefined || typeof state.supervised === "boolean";
   return Number.isSafeInteger(state.pid)
     && Number(state.pid) > 0
     && Number.isInteger(state.port)
     && Number(state.port) > 0
     && Number(state.port) <= 65535
-    && hostnameOk;
+    && hostnameOk
+    && supervisedOk;
 }
 
 export function writeRuntimePort(state: RuntimePortState): void {

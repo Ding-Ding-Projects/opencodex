@@ -110,12 +110,52 @@ jobs:
           from the gui/ directory, which proxies /api and /healthz for you.
           EOF
 
-      - name: Upload dashboard bundle
+      - name: Collect safe dashboard evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'opencodex-dashboard-evidence'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          @(
+            "run_id=$env:GITHUB_RUN_ID"
+            "sha=$env:GITHUB_SHA"
+            "job_status=$env:JOB_STATUS"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+          ) | Set-Content -LiteralPath (Join-Path $out 'run-metadata.txt') -Encoding utf8
+
+          $allowedExtensions = @(
+            '.css', '.html', '.ico', '.js', '.json', '.md', '.png', '.svg',
+            '.txt', '.wasm', '.webmanifest', '.webp', '.woff', '.woff2'
+          )
+          $safeFiles = @()
+          if (Test-Path -LiteralPath 'gui/dist') {
+            $safeFiles = @(Get-ChildItem -LiteralPath 'gui/dist' -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Extension.ToLowerInvariant() -in $allowedExtensions })
+          }
+          foreach ($file in $safeFiles) {
+            $relative = [IO.Path]::GetRelativePath(
+              (Join-Path $env:GITHUB_WORKSPACE 'gui/dist'),
+              $file.FullName
+            )
+            $destination = Join-Path (Join-Path $out 'gui-dist') $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+          }
+          if ($safeFiles.Count -eq 0) {
+            'No safe dashboard output existed when collection ran.' |
+              Set-Content -LiteralPath (Join-Path $out 'NO_SAFE_ARTIFACTS.txt') -Encoding utf8
+          }
+
+      - name: Upload collected dashboard evidence
         if: ${{ always() }}
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-dashboard-${{ github.sha }}
-          path: gui/dist
+          path: ${{ runner.temp }}/opencodex-dashboard-evidence
           if-no-files-found: warn
           retention-days: 14

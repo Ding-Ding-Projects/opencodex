@@ -8,6 +8,15 @@ file says so instead of implying users have it.
 Release state at the time of writing: the newest non-preview tag is **v2.7.42** (2026-07-28). Every
 feature commit listed as "on `main`" below landed after it and has not shipped in a tagged release.
 
+## Completed — Windows release integrity and automatic conflict repair (2026-08-09)
+
+| Work | Current state |
+| --- | --- |
+| Merge reconciliation | The integration source tip is semantically resolved into the current `main` tree with no unmerged paths; lifecycle, GUI identity, loopback process gates, fail-closed updater/export behavior, and current management-plane semantics are retained. |
+| Unsigned Squirrel delivery | Every installer path clears signing inputs, requires `NotSigned`, validates `Setup.exe` + `RELEASES` + a referenced full `.nupkg`, and attaches the update feed to its release. Stable packaging now finishes before npm publication, and super-express requires successful Windows CI for the exact SHA. |
+| Failure evidence | Every artifact producer defensively collects allowlisted outputs and run/SHA/job/runner metadata behind `always()` without masking the original failure. Step-specific YAML tests guard the collector, upload, and real release asset arguments. |
+| Verification | Typecheck, privacy, GUI lint/build, docs build, and focused workflow, Squirrel, export, and storage tests are green locally. Exact-commit GitHub Actions and release evidence remain pending until the integration commit lands. |
+
 ## Completed — plug-and-play local startup (2026-08-04)
 
 This refresh was implemented and verified on `codex/plug-and-play-startup` for integration into

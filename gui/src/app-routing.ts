@@ -178,3 +178,8 @@ export function resolveAppHashChange(rawHash: string): AppHashChangeAction {
 export function hashRouteFor(page: Page): string {
   return `#/${page}`;
 }
+
+/** Join an already validated remote origin to one application page route. */
+export function pageUrlForOrigin(origin: string, page: Page): string {
+  return `${origin.replace(/\/$/, "")}/${hashRouteFor(page)}`;
+}

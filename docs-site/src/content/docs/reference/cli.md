@@ -38,10 +38,16 @@ autostart shim.
 
 ### `ocx start [--port <port>]`
 
-Start the proxy server (preferred port `10100`). If that port is occupied, opencodex selects and
-records another available port. It writes PID/runtime-port state and refuses to start a second live
-instance. On start it syncs each provider's models into Codex's catalog. On shutdown it restores
-native Codex — unless it was launched as a managed service (`OCX_SERVICE=1`).
+Start the proxy server (preferred port `10100`). With no `--port`, this is an automatic start: if the
+configured preference is occupied, opencodex records another available port in `runtime-port.json`
+and syncs Codex to that live listener without changing the configured preference. An explicit
+`--port` is a hard pin: opencodex waits for that exact port and fails if it stays occupied; it never
+hops. Update handoffs and dashboard restarts also pin their captured live port.
+
+Startup uses a cross-process lock and stable OpenCodex identity-health checks, not just PID-file or
+TCP reachability. A concurrent starter cannot create a duplicate fallback daemon. On start it syncs
+each provider's models into Codex's catalog. On shutdown it restores native Codex unless it was
+launched as a managed service (`OCX_SERVICE=1`).
 
 ```bash
 ocx start
@@ -50,9 +56,11 @@ ocx start --port 8080
 
 ### `ocx stop`
 
-Stop the running proxy (by PID), remove the PID file, and restore native Codex. If a managed
-background service is installed, `ocx stop` also stops it first (so it won't respawn the proxy).
-The same action is available from the web dashboard's **Stop** button (`POST /api/stop`).
+Stop the running proxy and restore native Codex. If a managed background service is installed,
+`ocx stop` stops and verifies the service manager first so it cannot respawn the proxy. It then
+identity-checks proxy termination before removing runtime state or restoring Codex, Grok, and
+environment routing. Manager or proxy uncertainty fails closed and preserves that owned state for
+recovery. The same action is available from the web dashboard's **Stop** button (`POST /api/stop`).
 
 ### `ocx restore` &nbsp;·&nbsp; `ocx eject`
 
@@ -154,6 +162,29 @@ tokens, authorization headers, request content, emails, and account identities.
 
 Identity-check the live proxy. Human output reports PID/port; `--json` emits `{ok, pid, port}`. The
 command exits 0 only when healthy and 1 otherwise, making it suitable for service probes.
+
+### `ocx export <path> --yes` · `ocx export data …`
+
+`ocx export data <dataset>` exports a redacted dashboard dataset and may write to stdout. Use
+`--list` to see datasets and formats, and `--out <path>` to write a file.
+
+`ocx export <path> --yes` is the separate full-state backup. It includes config, account state,
+API keys, MCP credentials, and OAuth access/refresh tokens in plaintext. The destination must be a
+new file: opencodex creates it exclusively with private permissions (and a hardened Windows ACL),
+refuses stdout, refuses overwrite/symlink replacement, and deletes an empty partial file if
+hardening fails. Store the result encrypted, never commit or upload it, and delete it when no longer
+needed.
+
+### `ocx host <status|enable|disable>`
+
+Configure trusted-LAN access without putting credentials in command arguments. `enable --yes`
+accepts an IPv4 address, IPv6 address, or DNS hostname through `--hostname`; `--new-key [name]`
+generates a data-plane key and shows it once. `status` identity-probes a running proxy and prints its
+active bind/port and remote URLs, including an automatic fallback port. When the proxy is stopped it
+prints the configured values. Run `ocx host status` for the remote connection URL; `ocx status` also
+reports the identity-verified live port.
+The remote dashboard separately prompts for that proxy's ADMIN token. Direct HTTP is unencrypted;
+prefer an SSH tunnel outside a trusted LAN.
 
 ### `ocx uninstall` &nbsp;·&nbsp; `ocx remove`
 
@@ -503,7 +534,9 @@ git -C ~/.opencodex show <hash>:codex-accounts.json
 
 Run opencodex as a login-managed background service (macOS **launchd**, Linux **systemd user unit**,
 Windows **Task Scheduler**) that auto-starts on login and auto-restarts on crash. Service runs set
-`OCX_SERVICE=1` so a restart doesn't churn the Codex config.
+`OCX_SERVICE=1` so a restart doesn't churn the Codex config. A normal service start uses the
+availability-first port policy, but it reports success only after stable OpenCodex health is tied to
+service-owned runtime state; an unrelated direct proxy is not adopted as the service child.
 
 | Subcommand | Action |
 | --- | --- |

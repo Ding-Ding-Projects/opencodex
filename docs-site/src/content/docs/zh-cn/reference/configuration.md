@@ -45,7 +45,7 @@ no-replace 方式创建 `config.json.pre-openai-tiers-v2.bak`，并把已知旧 
 | `connectTimeoutMs?` | `number` | `200000` | 每次尝试仅等待 DNS/TCP/TLS 和最终响应 header 的 deadline；在响应 body 生成前结束。 |
 | `shutdownTimeoutMs?` | `number` | `5000` | 中止活跃 turn 前的 graceful drain deadline。 |
 | `websockets?` | `boolean` | `false` | 公布 `supports_websockets`，让 Codex 使用 Responses WebSocket 路径。省略或设为 `false` 会保持 HTTP/SSE。 |
-| `apiKeys?` | `OcxApiKey[]` | `[]` | 非 loopback 绑定下，management 和 data-plane 认证额外接受的生成式 `ocx_…` credential。由仪表盘管理；条目字段见下文。 |
+| `apiKeys?` | `OcxApiKey[]` | `[]` | 非 loopback 绑定下额外接受的生成式 `ocx_…` data-plane credential。它不是 ADMIN credential。由仪表盘管理；条目字段见下文。 |
 | `codexAutoStart?` | `boolean` | `true` | 允许 Codex shim 在启动 Codex 前运行 `ocx ensure`。`false` 会让 `ocx ensure` 不执行任何操作。 |
 | `codexShimAutoRestore?` | `boolean` | `true` | 已完成的外部 Codex 更新替换此前安装的 shim 时自动恢复。若要关闭，请设为 `false`，或为进程设置 `OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0`。 |
 | `syncResumeHistory?` | `boolean` | `true` | 可逆的 Codex App 历史兼容模式。opencodex 会备份原始 Codex thread metadata，把旧 OpenAI interactive row 重映射到 `opencodex`，并暂时把 opencodex 创建的 `exec` row 提升成 App 可见 source。`ocx stop` / `ocx restore` 会恢复已备份的 OpenAI row，并把剩余 opencodex user thread 转回 OpenAI，使原生 Codex 在从 `config.toml` 移除代理后仍能继续这些 thread。设为 `false` 可退出该模式。 |
@@ -119,7 +119,7 @@ threshold；未知 usage 不强制切换）后按稳定排序进入下一个。�
 ## 远程访问
 
 opencodex 默认只绑定到 `127.0.0.1`（loopback）。当 `hostname` 设置为 `0.0.0.0` 等非 loopback
-地址时，management API（`/api/*`）和 data plane（`/v1/responses`）都会强制 token 认证。
+地址时，data plane 和 management API 会由不同 credential 分别保护。
 
 启动前设置 `OPENCODEX_API_AUTH_TOKEN`：
 
@@ -128,20 +128,29 @@ export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
 ocx start
 ```
 
-非 loopback 绑定缺少该变量时，代理会拒绝启动。若要为 LAN 访问安装后台服务，也应先 export
-同一变量，再运行 `ocx service install`，让 launchd、systemd 或 Task Scheduler 收到 token。
-客户端必须在每个请求的 `x-opencodex-api-key` header 中提供 token：
+非 loopback 绑定缺少该变量或生成的 `apiKeys` 时，代理会拒绝启动。若要为 LAN 访问安装后台服务，
+也应先 export 同一变量，再运行 `ocx service install`，让 launchd、systemd 或 Task Scheduler 收到
+token。data-plane 客户端必须在每个请求的 `x-opencodex-api-key` header 中提供 credential：
 
 ```
 x-opencodex-api-key: your-secret-token
 ```
 
-也可以使用 `Authorization: Bearer …` header。启动后，仪表盘生成的 `apiKeys` 可代替环境 token。
-所有候选值均用常量时间（`timingSafeEqual`）比较，避免 timing side-channel。
+也可以使用 `Authorization: Bearer …` header。启动后，仪表盘生成的 `apiKeys` 可代替环境 token，
+但不会授予 `/api/*` 权限。
+
+management API 和远程仪表盘需要单独的 ADMIN token。OpenCodex 会在启动时把它创建在受保护的本地
+secret file 中，也可使用 `OPENCODEX_ADMIN_AUTH_TOKEN`。远程仪表盘会提示输入此 ADMIN 值，并拒绝
+data-plane key。所有 credential 均以常量时间（`timingSafeEqual`）比较。
+
+Material 3 仪表盘的 **连接到另一台 OpenCodex** 可手动输入 IPv4、IPv6 或 DNS 主机名，以及远端的
+实际运行端口。它不会 probe 远端、把 token 放入 URL 或保存 token。若自动启动使用了 fallback 端口，
+请使用 `ocx host status` 或 `ocx status` 的 identity-verified live 值，而不要只看 `config.port`。
 
 :::caution[LAN 暴露]
 绑定到 `0.0.0.0` 会把代理和所有已配置 provider credential 暴露到本地网络。只应在可信网络中
-使用，并始终设置强 `OPENCODEX_API_AUTH_TOKEN`。
+HTTP 未加密。只应在可信网络中使用，并设置强 data-plane 与 ADMIN credential；不可信链路请优先
+使用 SSH port forwarding。
 :::
 
 ## Providers（`OcxProviderConfig`）

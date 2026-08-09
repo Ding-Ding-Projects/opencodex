@@ -46,6 +46,7 @@ on:
         default: true
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -142,26 +143,87 @@ jobs:
           echo "packed $(du -h ../../opencodex-dashboard.zip | cut -f1)"
 
       - name: Build the Windows installer
+        env:
+          # Signing is permanently disabled. Clear every supported credential
+          # input and disable certificate discovery so a runner-local identity
+          # cannot silently turn an unsigned build into a signed one.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+          WIN_CSC_LINK: ""
+          WIN_CSC_KEY_PASSWORD: ""
         run: npx --yes electron-builder@26.15.3 --win --publish never
 
-      # Upload BEFORE publishing, and regardless of what happens after.
+      - name: Verify every Windows setup is unsigned
+        shell: pwsh
+        run: |
+          $setups = @(Get-ChildItem -Path dist-desktop -Recurse -File -Filter '*Setup*.exe' -ErrorAction SilentlyContinue)
+          if ($setups.Count -eq 0) {
+            throw 'Squirrel.Windows did not produce a Setup.exe.'
+          }
+          foreach ($setup in $setups) {
+            $status = (Get-AuthenticodeSignature -LiteralPath $setup.FullName).Status
+            if ($status -ne 'NotSigned') {
+              throw "Signing is prohibited, but $($setup.FullName) reported Authenticode status $status."
+            }
+            Write-Host "Verified unsigned setup: $($setup.FullName)"
+          }
+
+      # Collect BEFORE publishing, and regardless of what happened earlier.
       #
       # A run once built a 181 MB working installer and threw it away because
       # `gh release create` came back "HTTP 403: Resource not accessible by
       # integration". The build was fine; only the last API call was refused,
       # and there was nothing left to download. Whatever breaks in the publish
       # step from here on, the installer it already built survives it.
-      - name: Keep the installer as an artifact, whatever happens next
+      - name: Collect safe release evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'opencodex-auto-release-evidence'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          @(
+            "run_id=$env:GITHUB_RUN_ID"
+            "sha=$env:GITHUB_SHA"
+            "resolved_sha=$env:SHA"
+            "job_status=$env:JOB_STATUS"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+          ) | Set-Content -LiteralPath (Join-Path $out 'run-metadata.txt') -Encoding utf8
+
+          $safeFiles = @()
+          # Preserve only the explicit installer output allowlist formerly
+          # expressed as dist-desktop/**/RELEASES and
+          # dist-desktop/**/*.nupkg, plus executable installer payloads.
+          if (Test-Path -LiteralPath 'dist-desktop') {
+            $safeFiles += @(Get-ChildItem -LiteralPath 'dist-desktop' -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -eq 'RELEASES' -or $_.Extension -in @('.exe', '.nupkg') })
+          }
+          if (Test-Path -LiteralPath 'opencodex-dashboard.zip' -PathType Leaf) {
+            $safeFiles += @(Get-Item -LiteralPath 'opencodex-dashboard.zip')
+          }
+
+          foreach ($file in $safeFiles) {
+            $relative = [IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $file.FullName)
+            $destination = Join-Path $out $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+          }
+          if ($safeFiles.Count -eq 0) {
+            'No safe installer or dashboard output existed when collection ran.' |
+              Set-Content -LiteralPath (Join-Path $out 'NO_SAFE_ARTIFACTS.txt') -Encoding utf8
+          }
+
+      - name: Keep collected release evidence, whatever happens next
         if: ${{ always() }}
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-setup-${{ github.run_number }}
-          path: |
-            dist-desktop/**/*.exe
-            dist-desktop/**/*.nupkg
-            dist-desktop/**/RELEASES
-            opencodex-dashboard.zip
+          path: ${{ runner.temp }}/opencodex-auto-release-evidence
           if-no-files-found: warn
           retention-days: 30
           compression-level: 0 # A Squirrel installer and its nupkg are already compressed.
@@ -226,7 +288,7 @@ jobs:
           version=$(node -p "require('./package.json').version")
 
           # Fail before creating anything if electron-builder produced no installer.
-          # `gh release create` publishes the release first and uploads assets after,
+          # The GitHub CLI publishes the release first and uploads assets after,
           # so an empty `installer` would leave a real, visible release carrying only
           # the dashboard zip — which is precisely the "release with no installer"
           # this pipeline exists to never produce.
@@ -255,11 +317,29 @@ jobs:
           # array so a missing one is visible here rather than as a silent
           # omission from the asset list.
           feed=()
-          while IFS= read -r f; do
-            [ -s "$f" ] && feed+=("$f")
-          done < <(find dist-desktop -type f \( -name RELEASES -o -name '*.nupkg' \) 2>/dev/null)
-          if [ ${#feed[@]} -lt 2 ]; then
-            echo "::warning::Squirrel update feed incomplete (found ${#feed[@]} of RELEASES + .nupkg). The release will install but not self-update."
+          release_indexes=()
+          full_packages=()
+          while IFS= read -r -d '' f; do
+            feed+=("$f")
+            [ "$(basename "$f")" = "RELEASES" ] && release_indexes+=("$f")
+            [[ "$f" == *-full.nupkg ]] && full_packages+=("$f")
+          done < <(find dist-desktop -type f \( -name 'RELEASES' -o -name '*.nupkg' \) -size +0c -print0 2>/dev/null)
+          if [ ${#release_indexes[@]} -eq 0 ] || [ ${#full_packages[@]} -eq 0 ]; then
+            echo "::error::Squirrel update feed is incomplete: a non-empty RELEASES file and full .nupkg are both required."
+            find dist-desktop -maxdepth 3 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+          full_is_indexed=false
+          for index in "${release_indexes[@]}"; do
+            for package in "${full_packages[@]}"; do
+              if grep -Fq "$(basename "$package")" "$index"; then
+                full_is_indexed=true
+              fi
+            done
+          done
+          if [ "$full_is_indexed" != true ]; then
+            echo "::error::Squirrel RELEASES does not reference any produced full .nupkg."
+            exit 1
           fi
           echo "feed: ${feed[*]:-none}"
           echo "codename: $DISH_NAME ($DISH_ZH)"
@@ -330,6 +410,7 @@ jobs:
             --title "build ${{ github.run_number }} · $DISH_ZH $DISH_NAME — v${version} @ ${SHA:0:9}" \
             --notes "$notes" \
             "$installer#opencodex-setup.exe" \
+            "${feed[@]}" \
             "opencodex-dashboard.zip" \
             ${photo_asset:+"$photo_asset"}
 

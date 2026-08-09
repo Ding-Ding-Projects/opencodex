@@ -96,6 +96,62 @@ const helpEntries: Record<string, HelpEntry> = {
   login: { usage: "ocx login <provider>", summary: "OAuth or API-key login for a provider." },
   logout: { usage: "ocx logout <provider>", summary: "Remove a stored provider login." },
   gui: { usage: "ocx gui", summary: "Open the opencodex dashboard." },
+  changelog: {
+    usage: "ocx changelog [--from <date>] [--to <date>] [--search <text>] [--regex] [--limit <n>] [--json]",
+    summary: "Show released versions and their changes.",
+    details: [
+      "--from/--to       Inclusive ISO date range (YYYY-MM-DD).",
+      "--search <text>   Case-insensitive text search; add --regex for a JavaScript regex.",
+      "--limit <n>       Maximum releases (default 20, 0 means all).",
+      "--json            Machine-readable output.",
+    ],
+  },
+  export: {
+    usage: "ocx export <path> --yes | ocx export --history [--json] | ocx export data <dataset> [--format <format>] [--out <path>] [--list]",
+    summary: "Export data or a full state backup; full state exports contain plaintext secrets.",
+    details: [
+      "data <dataset>    Export a redacted dashboard dataset; use --list to see datasets and formats.",
+      "--history         List local account/config snapshots.",
+      "<path> --yes      Export complete config, account, and auth state, including plaintext secrets.",
+      "",
+      "The full-state form requires a private mode-0600 file and cannot write to stdout.",
+      "Store its output encrypted and never commit or upload it.",
+    ],
+  },
+  host: {
+    usage: "ocx host <status|enable|disable> [--hostname <addr>] [--new-key [name]] [--yes] [--json]",
+    summary: "Expose the authenticated proxy and dashboard to trusted devices on your network.",
+    details: [
+      "status    Show the bind address, credential state, and URLs for other devices.",
+      "enable    Bind to the network. Requires --yes and a data-plane credential.",
+      "disable   Return to loopback (this machine only).",
+      "--new-key [name] generates a credential; name is only a short label, never a secret value.",
+      "",
+      "A remote dashboard must authenticate with that remote proxy's ADMIN token.",
+      "The command never accepts that token (or any credential) in argv; enter it only in the dashboard prompt.",
+      "Direct HTTP is suitable only on a trusted LAN; prefer an SSH tunnel for untrusted links.",
+    ],
+  },
+  launch: {
+    usage: "ocx launch [list|<target>] [--json]",
+    summary: "Open an installed agent CLI or desktop app.",
+    details: [
+      "list      Show the fixed catalog and installation state (the safe default).",
+      "<target>  Launch one catalog id; arbitrary executable paths and arguments are not accepted.",
+    ],
+  },
+  terminal: {
+    usage: "ocx terminal [list|run <preset>] [--command \"...\"] [--wait <ms>] [--json]",
+    summary: "Run a command through a local opencodex terminal session.",
+    details: [
+      "list                 Show the fixed preset catalog (the safe default).",
+      "run <preset>         Start one local session, collect output, then close it.",
+      "--command \"...\"    Optional command sent to the session.",
+      "--wait <ms>          Collection time from 1 to 120000 (default 4000).",
+      "",
+      "Command-line arguments may be visible to other local processes. Never put secrets in --command.",
+    ],
+  },
   update: {
     usage: "ocx update [--tag latest|preview]",
     summary: "Update opencodex. Preview installs stay on the preview tag unless overridden.",
@@ -180,63 +236,6 @@ const helpEntries: Record<string, HelpEntry> = {
   "api-key": { usage: "ocx api-key <list|create|remove> ...", summary: "Alias of ocx access key." },
   grok: { usage: "ocx grok <status|exclude|include|set|clear|apply> ...", summary: "Manage and apply the Grok Build model fence." },
   integration: { usage: "ocx integration <claude|grok> ...", summary: "Manage supported client integrations." },
-  export: { usage: "ocx export <path|-> --yes  |  ocx export --history", summary: "Export config + accounts + auth (SECRETS INCLUDED), or list account-change snapshots." },
-  host: {
-    // This is the ONLY help text `ocx host --help` can reach: cli/index.ts routes
-    // any help flag into printSubcommandUsage(command) before the command runs.
-    usage: "ocx host <status|enable|disable|token> [--hostname <addr>] [--new-key [name]] [--key <value>] [--yes] [--json]",
-    summary: "Expose the proxy and dashboard to other devices on your network.",
-    details: [
-      "status    Show the bind address, credential state, and the URLs other devices use.",
-      "enable    Bind to the network. Requires --yes and a data-plane credential.",
-      "disable   Return to loopback (this machine only).",
-      "token     Legacy no-op: the dashboard and /api/* no longer use an ADMIN token.",
-      "",
-      "--hostname <addr>  Bind address for enable (default: 0.0.0.0, all interfaces).",
-      "--new-key [name]   Generate a data-plane API key and print it once.",
-      "--key <value>      Store a user-chosen data-plane key (>= 12 chars, no whitespace).",
-      "                   Custom keys sit in plaintext in config.json — never reuse a password.",
-      "--yes              Confirm that the proxy becomes reachable by other devices.",
-      "--json             Machine-readable output.",
-      "",
-      "Only use this on a network you trust. Anyone who can reach the port and holds the",
-      "key can drive the proxy and every provider account behind it.",
-    ],
-  },
-  launch: {
-    usage: "ocx launch [list|<target>] [--json]",
-    summary: "Open an agent CLI or its desktop app (Codex, Grok, Claude).",
-    details: [
-      "list      Show every target and whether it is installed on this machine (the default).",
-      "<target>  Launch one target by id, e.g. codex-cli, claude-desktop, grok-cli.",
-      "",
-      "--json    Machine-readable output.",
-      "",
-      "Targets are a fixed catalog resolved against PATH and known install locations, so a",
-      "target that is not installed is reported rather than guessed at. No console window is",
-      "ever created: a CLI opens in a real terminal application, and a machine without one is",
-      "told so instead of getting a legacy console popup.",
-    ],
-  },
-  terminal: {
-    usage: "ocx terminal [list|run <preset>] [--command \"...\"] [--wait <ms>] [--json]",
-    summary: "Run a command through an opencodex terminal session.",
-    details: [
-      "list                Show every preset (the default).",
-      "run <preset>        Start a session, optionally send one command, print the output, and",
-      "                    close it again.",
-      "",
-      "--command \"...\"     The command to send.",
-      "--wait <ms>         How long to collect output before printing (default 4000, max 120000).",
-      "--json              Machine-readable output.",
-      "",
-      "You are already in a terminal, so this is not trying to be one. It exists for the",
-      "scriptable half of the dashboard's Terminal screen: the session runs where opencodex",
-      "runs. Sessions are piped rather than pseudo-terminals, so a full-screen TUI will not",
-      "render — non-interactive commands work normally.",
-    ],
-  },
-  changelog: { usage: "ocx changelog [--from <date>] [--to <date>] [--search <text>] [--regex] [--limit <n>] [--json]", summary: "Show released versions and their changes." },
   system: {
     usage: "ocx system <status|settings|startup|diagnostics|sync|update> ...",
     summary: "Manage headless runtime settings, startup, sync, diagnostics, and updates.",
@@ -341,6 +340,11 @@ Usage:
   ocx login <provider>        OAuth or API-key provider login
   ocx logout <provider>       Remove a stored OAuth login
   ocx gui                     Open the opencodex dashboard
+  ocx changelog [opts]        Show released versions and their changes
+  ocx export <sub>            Export dashboard data or a confirmed full-state backup
+  ocx host <sub>              Configure trusted-LAN remote access
+  ocx launch [target]         Open an installed agent CLI or desktop app
+  ocx terminal <sub>          Run a command through a local opencodex terminal session
   ocx update [--tag <tag>]    Update opencodex (keeps preview installs on @preview)
   ocx restart                  Stop and restart the proxy
   ocx v2 <sub>                multi_agent_v2 surface (status|on|off|mode|threads)

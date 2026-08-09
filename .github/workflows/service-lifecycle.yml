@@ -147,6 +147,7 @@ jobs:
             sha = $env:GITHUB_SHA
             jobStatus = $env:JOB_STATUS
             runnerOs = $env:RUNNER_OS
+            runnerArch = $env:RUNNER_ARCH
           } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
           $log = Join-Path $env:USERPROFILE ".opencodex\service.log"
           if (Test-Path -LiteralPath $log) {

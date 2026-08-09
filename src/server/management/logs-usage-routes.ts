@@ -81,15 +81,12 @@ import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, C
 import type { ManagementContext } from "./context";
 
 const USAGE_DAY_MS = 86_400_000;
+const usageSummaryCache = new Map<string, {
+  revisionKey: string;
+  expiresAt: number;
+  summary: UsageSummary;
+}>();
 
-/**
- * Re-seed both in-memory log rings from what is now on disk.
- *
- * Called after a clear AND after a restore. Skipping it leaves the dashboard
- * showing the opposite of what just happened — deleted rows still listed, or a
- * restored file invisible until the next process start — and in both cases the
- * user concludes the button did nothing.
- */
 function reloadLogBuffers(): void {
   resetRequestLogsForReload();
   hydrateRequestLogsFromDisk();
@@ -97,11 +94,6 @@ function reloadLogBuffers(): void {
   hydrateDebugLogFromDisk();
 }
 
-/**
- * The retention the app actually enforces, reported alongside the footprint so
- * the dashboard states a real bound rather than a number copied into its copy
- * and left to drift when the constants change.
- */
 function logRetentionFacts(): { maxLogBytes: number; maxRotatedFiles: number; maxTotalBytes: number } {
   return {
     maxLogBytes: MAX_LOG_BYTES,
@@ -109,11 +101,6 @@ function logRetentionFacts(): { maxLogBytes: number; maxRotatedFiles: number; ma
     maxTotalBytes: MAX_TOTAL_BYTES,
   };
 }
-const usageSummaryCache = new Map<string, {
-  revisionKey: string;
-  expiresAt: number;
-  summary: UsageSummary;
-}>();
 
 function usageEntryMatchesSurface(entry: PersistedUsageEntry, surface: UsageSurface): boolean {
   if (surface === "claude") return entry.surface === "claude" || entry.surface === "claude-desktop";

@@ -15,6 +15,92 @@
 import { describe, expect, test } from "bun:test";
 import { handleSquirrelEvent, planSquirrelEvent } from "../electron/squirrel.mjs";
 
+type ReleaseWorkflowStep = {
+  name?: string;
+  run?: string;
+};
+
+type ReleaseWorkflow = {
+  jobs?: Record<string, { steps?: ReleaseWorkflowStep[] }>;
+};
+
+function continuedShellCommand(script: string, command: string): string {
+  const lines = script.split(/\r?\n/);
+  const start = lines.findIndex(line => line.trimStart().startsWith(command));
+  if (start < 0) return "";
+
+  const commandLines = [lines[start]!];
+  while (commandLines.at(-1)?.trimEnd().endsWith("\\") && start + commandLines.length < lines.length) {
+    commandLines.push(lines[start + commandLines.length]!);
+  }
+  return commandLines.join("\n");
+}
+
+function commandUsesVariable(command: string, variable: string): boolean {
+  return new RegExp(`\\$(?:${variable}\\b|\\{${variable}(?:\\[[^\\]]+\\])?\\})`).test(command);
+}
+
+function populatedVariable(script: string, requiredText: RegExp): string | undefined {
+  for (const line of script.split(/\r?\n/)) {
+    if (!line.includes("find")) continue;
+    const assignment = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)=/);
+    if (assignment && requiredText.test(line)) return assignment[1];
+    const arrayLoad = line.match(/^\s*(?:mapfile|readarray)\s+-t\s+([A-Za-z_][A-Za-z0-9_]*)/);
+    if (arrayLoad && requiredText.test(line)) return arrayLoad[1];
+  }
+  return undefined;
+}
+
+function expectPublishedSquirrelAssets(step: ReleaseWorkflowStep, label: string): void {
+  const run = String(step.run ?? "");
+  const command = continuedShellCommand(run, "gh release create");
+
+  expect(command, `${label} must publish a GitHub release`).not.toBe("");
+  expect(run, `${label} must locate the Squirrel setup executable recursively`).toMatch(
+    /find[^\n]*dist-desktop[^\n]*-name\s+['"][^'"]*Setup[^'"]*\.exe['"]/,
+  );
+  expect(run, `${label} must select the full Squirrel package`).toContain("*-full.nupkg");
+  expect(run, `${label} must select the Squirrel release index`).toMatch(
+    /-name\s+['"]?RELEASES['"]?|[A-Za-z_][A-Za-z0-9_]*=.*RELEASES/,
+  );
+  expect(run, `${label} must fail closed when a required asset is missing`).toContain("exit 1");
+
+  const installerVariable = populatedVariable(run, /Setup[^\n]*\.exe/);
+  expect(installerVariable, `${label} must bind the setup path before publishing`).toBeDefined();
+  expect(
+    commandUsesVariable(command, installerVariable ?? "__missing_installer__"),
+    `${label} must attach the setup executable to gh release create`,
+  ).toBe(true);
+
+  const releaseIndexVariable = populatedVariable(run, /RELEASES/);
+  const fullPackageVariable = populatedVariable(run, /\*-full\.nupkg/);
+  const allPackageVariable = populatedVariable(run, /-name\s+['"]\*\.nupkg['"]/);
+  const attachedArrays = [...command.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}/g)]
+    .map(match => match[1]!)
+    .filter(variable => new RegExp(`\\b${variable}\\s*\\+=\\s*\\(`).test(run));
+  const feedFind = run.split(/\r?\n/).some(
+    line =>
+      line.includes("find") &&
+      line.includes("RELEASES") &&
+      (line.includes("*-full.nupkg") || line.includes("*.nupkg")),
+  );
+  const namedAssetsAttached =
+    releaseIndexVariable !== undefined &&
+    fullPackageVariable !== undefined &&
+    commandUsesVariable(command, releaseIndexVariable) &&
+    (commandUsesVariable(command, fullPackageVariable) ||
+      (allPackageVariable !== undefined && commandUsesVariable(command, allPackageVariable)));
+  // A feed array may collect only `*-full.nupkg`, or collect all packages and
+  // separately classify + require the full package before publication. Both
+  // routes attach the required full package; neither accepts a delta alone.
+  const feedArrayAttached = attachedArrays.length > 0 && feedFind;
+
+  expect(
+    namedAssetsAttached || feedArrayAttached,
+    `${label} must attach RELEASES and the full .nupkg to gh release create`,
+  ).toBe(true);
+}
+
 /** A realistic Squirrel layout: Update.exe sits above the versioned app dir. */
 const EXEC = "C:\\Users\\x\\AppData\\Local\\opencodex\\app-2.7.42\\opencodex.exe";
 const UPDATE = "C:\\Users\\x\\AppData\\Local\\opencodex\\Update.exe";
@@ -145,16 +231,36 @@ describe("the packaging metadata Squirrel needs", () => {
     const yaml = await Bun.file(new URL("../electron-builder.yml", import.meta.url)).text();
     expect(yaml).toContain("target: squirrel");
 
-    // A release carrying only Setup.exe is installable but not updatable, which
-    // is most of the reason for choosing Squirrel over NSIS.
-    const workflow = await Bun.file(new URL("../.github/workflows/auto-release.yml", import.meta.url)).text();
-    expect(workflow).toContain("dist-desktop/**/RELEASES");
-    expect(workflow).toContain("dist-desktop/**/*.nupkg");
+    // A run artifact is recovery evidence, not a release asset. Parse each
+    // publication step so an unrelated upload glob cannot make this pass while
+    // the actual release ships only Setup.exe (or no installer at all).
+    const publications = [
+      {
+        path: "../.github/workflows/auto-release.yml",
+        job: "release",
+        step: "Create the release",
+      },
+      {
+        path: "../.github/workflows/release.yml",
+        job: "publish",
+        step: "Create GitHub release",
+      },
+      {
+        path: "../.github/workflows/super-express-release.yml",
+        job: "release",
+        step: "Create the full GitHub release",
+      },
+    ];
 
-    // Recursive, deliberately. Squirrel writes into `dist-desktop/squirrel-windows/`
-    // where NSIS wrote to the root, so a flat `dist-desktop/*.exe` found nothing
-    // and the publish step refused to release a build that had succeeded.
-    expect(workflow).not.toContain("ls dist-desktop/*.exe");
-    expect(workflow).toContain("find dist-desktop -type f -name '*Setup*.exe'");
+    for (const publication of publications) {
+      const workflow = Bun.YAML.parse(
+        await Bun.file(new URL(publication.path, import.meta.url)).text(),
+      ) as ReleaseWorkflow;
+      const step = workflow.jobs?.[publication.job]?.steps?.find(
+        candidate => candidate.name === publication.step,
+      );
+      expect(step, `${publication.path}:${publication.step} must exist`).toBeDefined();
+      expectPublishedSquirrelAssets(step ?? {}, `${publication.path}:${publication.step}`);
+    }
   });
 });

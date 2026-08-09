@@ -1,5 +1,12 @@
 # Handoff
 
+## Windows release and lifecycle reconciliation — 2026-08-09
+
+- Resolved the integration source merge against current `main` without leaving any unmerged paths. The result retains current management-plane behavior while carrying GUI build identity, lifecycle locking, duplicate-start winner adoption, loopback process-action gates, fail-closed update resolution, and strict full-state export handling.
+- Every Windows installer path explicitly disables signing, clears certificate discovery inputs, requires `Get-AuthenticodeSignature` to report `NotSigned`, and fails closed unless `Setup.exe`, `RELEASES`, and a referenced full `.nupkg` exist. Auto, stable, and super-express releases attach the complete feed; stable packaging completes before npm publication; super-express requires successful Windows CI for the exact source commit.
+- Every artifact-producing workflow now uses a step-specific defensive collector and pinned upload step with `always()`, `continue-on-error`, warning-only missing output, bounded retention, safe allowlisted paths, and run ID/SHA/original job status/runner OS/architecture metadata. Contract tests parse the YAML and inspect the actual collector, upload, and release-publication steps instead of accepting unrelated text elsewhere in a workflow.
+- Local evidence currently includes typecheck, privacy scan, GUI lint/build, docs build (191 pages and 195 HTML files), 77/77 focused workflow/Squirrel tests, 15/15 export/resource tests, isolated storage responsiveness, and a full root campaign with 6,604 passes, 4 skips, and three findings. The Squirrel contract now passes, the storage timing case passes in isolation, and the stale stdout-export expectation was corrected to the documented secret-safe refusal. The integration commit, pushed-main ancestry, and exact GitHub Actions verdict are recorded after landing.
+
 ## Plug-and-play startup and credential clarity — 2026-08-04
 
 The fresh-install contract is now documented as **`ocx start` + the user's existing ChatGPT/Codex
@@ -505,7 +512,7 @@ Tarts) and Material window buttons off it.
 - `assets/architecture.png`, both `codex-app-picker.png` copies and the five
   `hero-*.png` files are **unreferenced by any page** — dead assets, not deleted
   here because deleting is not what was asked.
-- A Gerk Tong Hui at `.claude/worktrees/keen-dijkstra-a12563` (`40aa982f`) is not
+- A linked worktree at `.claude/worktrees/keen-dijkstra-a12563` (`40aa982f`) is not
   mine and was left alone.
 
 ## Two installs, a stolen port, and the right-click that reached three elements — 2026-08-02
