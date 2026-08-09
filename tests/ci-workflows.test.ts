@@ -1926,6 +1926,9 @@ describe("GitHub Actions hardening", () => {
     const commentJob = workflow.split(/\n {2}translate-comment:\n/)[1]!.split(/\n {2}[a-zA-Z]/)[0]!;
     expect(commentJob).toContain("parse-issue-translation-response.cjs");
     expect(commentJob).toContain("Apply inline comment translation");
+    expect(commentJob).toContain("continue-on-error: true");
+    expect(commentJob).toContain("Record comment translation availability");
+    expect(commentJob).toContain("steps.ai.outcome == 'success'");
     expect(commentJob).toContain("isPreparedSourceStillCurrent");
     expect(commentJob).toContain("updateComment");
     expect(commentJob).toContain("requires_translation == 'true'");

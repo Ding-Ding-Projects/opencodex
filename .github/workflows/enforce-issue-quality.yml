@@ -149,6 +149,7 @@ jobs:
       - name: Detect and translate
         id: ai
         if: steps.prepare.outputs.should_translate == 'true'
+        continue-on-error: true
         uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1
         with:
           model: openai/gpt-4o-mini
@@ -175,15 +176,20 @@ jobs:
             JSON shape:
             {"requires_translation":<bool>,"detected_language":"<lang>","translated_title":"<str>","translated_body":"<str>"}
 
+      - name: Record translation availability
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome != 'success'
+        shell: bash
+        run: echo "::warning::AI translation was unavailable; leaving the source unchanged and retryable."
+
       - name: Parse AI response
         id: parse
-        if: steps.prepare.outputs.should_translate == 'true'
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome == 'success'
         env:
           AI_RESPONSE: ${{ steps.ai.outputs.response }}
         run: node .github/scripts/parse-issue-translation-response.cjs
 
       - name: Apply inline translation
-        if: steps.prepare.outputs.should_translate == 'true' && steps.parse.outputs.requires_translation == 'true'
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome == 'success' && steps.parse.outcome == 'success' && steps.parse.outputs.requires_translation == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           SOURCE_BODY: ${{ steps.prepare.outputs.source_body }}
@@ -340,6 +346,8 @@ jobs:
           always() &&
           steps.prepare.outcome == 'success' &&
           steps.prepare.outputs.should_translate == 'true' &&
+          steps.ai.outcome == 'success' &&
+          steps.parse.outcome == 'success' &&
           steps.parse.outputs.requires_translation != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
@@ -486,6 +494,7 @@ jobs:
       - name: Detect and translate comment
         id: ai
         if: steps.prepare.outputs.should_translate == 'true'
+        continue-on-error: true
         uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1
         with:
           model: openai/gpt-4o-mini
@@ -511,15 +520,20 @@ jobs:
             JSON shape:
             {"requires_translation":<bool>,"detected_language":"<lang>","translated_title":"","translated_body":"<str>"}
 
+      - name: Record comment translation availability
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome != 'success'
+        shell: bash
+        run: echo "::warning::AI comment translation was unavailable; leaving the source unchanged and retryable."
+
       - name: Parse AI response
         id: parse
-        if: steps.prepare.outputs.should_translate == 'true'
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome == 'success'
         env:
           AI_RESPONSE: ${{ steps.ai.outputs.response }}
         run: node .github/scripts/parse-issue-translation-response.cjs
 
       - name: Apply inline comment translation
-        if: steps.prepare.outputs.should_translate == 'true' && steps.parse.outputs.requires_translation == 'true'
+        if: steps.prepare.outputs.should_translate == 'true' && steps.ai.outcome == 'success' && steps.parse.outcome == 'success' && steps.parse.outputs.requires_translation == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           SOURCE_BODY: ${{ steps.prepare.outputs.source_body }}
@@ -627,6 +641,8 @@ jobs:
           always() &&
           steps.prepare.outcome == 'success' &&
           steps.prepare.outputs.should_translate == 'true' &&
+          steps.ai.outcome == 'success' &&
+          steps.parse.outcome == 'success' &&
           steps.parse.outputs.requires_translation != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
