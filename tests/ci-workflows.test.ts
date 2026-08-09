@@ -1894,7 +1894,13 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("timeout-minutes: 15");
     expect(workflow).toContain("timeout-minutes: 10");
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
-    expect(workflow).toContain("withastro/action@e84f40bd8d2caa9e768ec82ad30dd81f0b280853");
+    // The Pages build is deliberately explicit on Windows: the hosted Astro
+    // wrapper previously mis-rendered the root locale search JSON. Keep the
+    // replacement pinned and assert the upload action that actually feeds the
+    // deploy job rather than requiring the retired Bash wrapper.
+    expect(workflow).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
+    expect(workflow).toContain("actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9");
+    expect(workflow).not.toContain("withastro/action@");
     expect(workflow).toContain("actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
