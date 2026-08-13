@@ -47,12 +47,22 @@ Split into two files because Fast Refresh discards module state when a file
 mixes component and non-component exports — which would have reset every
 preference on each edit.
 
+`theme/viewport-preview.ts` sits beside it and supplies the *other* width the
+shell can measure itself against. `windowClass` is deliberately a JavaScript
+decision rather than a media query so an emulated width works; this is the
+module that supplies one. It is a small subscribable store rather than a
+preference because both `PrefsProvider` and `SettingsDraftProvider` derive the
+shell width and must never disagree, and because it is view state that resets on
+reload — a persisted preview would reopen the app inside a fake 412px frame with
+nothing on screen to explain why.
+
 ### 3. Shell — `gui/src/shell/`
 
 | File | Role |
 |---|---|
 | `AdaptiveNav.tsx` | bottom bar / icon rail / permanent drawer + compact modal drawer |
-| `AppBar.tsx` | title, live `v… · :port` status, notification centre, Appearance shortcut, account chip |
+| `AppBar.tsx` | title, live `v… · :port` status, notification centre, viewport preview size, Appearance shortcut, account chip |
+| `ViewportPreview.tsx` | pins the shell to an emulated width (412 / 834 / 1280) so the compact and medium layouts can be checked without resizing the window; draws the device frame and its exit banner |
 | `TabStrip.tsx` | browser-style tabs: pin, close, drag-reorder, overflow menu, roving `tabIndex` |
 | `SnackbarHost.tsx` | bottom-left `aria-live="polite"` stack |
 | `use-tabs.ts` | tab state, hash sync |
@@ -449,6 +459,31 @@ file.
   names but not a setting's **live value** on a page nobody has opened — a screen
   that has not read a control cannot honestly report what it holds. A cross-page
   hit says where the setting lives; it does not navigate there.
+- **Design parity survey, 2026-08-13 — 24 gaps open, six uncommitted.** A
+  seven-slice re-read of `design/` against `gui/` found 67 differences, 30 of them
+  real gaps. Six are in the working tree of `fix/design-parity-gaps`, whose tip is
+  `c8fd307f` — identical to `main`, so **none of it is committed, none of it is on
+  `main`, and none of it is in `build-152`**. Those six: nav labels kept in the DOM
+  and clipped rather than dropped at rail width; the compact drawer made a real
+  modal (`role="dialog"`, `aria-modal`, `inert` on `.m3-main-col`, focus trap);
+  per-tone snackbar marks with a visually hidden tone name and the missing
+  `.m3-snack.warn` surface; warnings promoted to persist-until-dismissed via
+  `PERSISTENT_TONES`; the snackbar's close and action lifted to the 48px
+  coarse-pointer floor; and the app bar's viewport preview-size control
+  (`shell/ViewportPreview.tsx` + `theme/viewport-preview.ts`, item 3 above).
+
+  The other **24 are open and unstarted**, and the full list with file and line
+  references lives in `ROADMAP.md` under *Known gaps → Design parity — the
+  2026-08-13 survey*. It is not duplicated here; one copy is
+  hard enough to keep true. The shape worth knowing from this file's point of view
+  is the element-appearance seam below, and three places the survey itself was
+  wrong that the roadmap entry corrects rather than copies: the dead
+  element-editor controls are **seventeen** across ten targets, not the five it
+  named; the hard-coded `#c44` is one site in each of two files rather than two in
+  one file, and the second file was never named; and the funny-level page-lead
+  shortfall is ten of fourteen enumerable leads, not the "18 of 22, only Dashboard
+  and Usage voiced" it stated. A survey is evidence, not a record.
+
 - **Word-depth typography** landed in `4ba0f747` and was never listed here as
   deferred, but `ROADMAP.md` claimed it was missing, so it is worth naming:
   `gui/src/components/appearance/TypographyEditor.tsx` carries underline styles
@@ -462,6 +497,30 @@ file.
 
 ## Seams worth knowing
 
+- **An element-appearance control is only live if the stylesheet reads its
+  variable.** The per-element editor compiles a curated target's controls into
+  `--el-<target>-<control>`; a control whose variable no rule consumes moves, and
+  the screen does not. Nothing fails: the editor renders, the value persists, and
+  the slider is inert. **Seventeen are dead as of 2026-08-13, across ten of the
+  sixteen `ELEMENT_TARGETS`** — `tabStrip` (color, font, radius, size), `navRail`
+  (radius, size), `table` (radius, pad), `iconButton` (font, pad), `banner`
+  (bg, color), and `size` alone on `appBar`, `card`, `menu` and `bottomNav`, plus
+  `color` on `button`. `input`, `chip`, `select`, `dialog`, `statCard` and
+  `remotePanel` are complete. Check that across **all five** stylesheets carrying
+  `--el-*` (`styles/m3-shell.css`, `styles/provider-overview-dashboard.css`,
+  `styles/provider-workspace-shell.css`, `styles-dashboard-workspace.css`,
+  `shared/m3/components.css`) — grepping `m3-shell.css` alone wrongly condemns
+  `table` and `statCard`. Two traps go with it. `gui/src/styles/m3-shell.css` and
+  `shared/m3/components.css` both style `.m3-btn--filled`, so a hook added to one
+  and not the other makes the docs site drift. And a hook on `.m3-banner` alone
+  renders nothing, because the four tone modifiers below it set `background` and
+  `color` and win on source order — the hooks belong on the modifiers.
+  `gui/tests/element-typography.test.ts` does **not** catch any of this: it asserts
+  each mapped target consumes *at least one* variable, which all ten of the
+  affected targets already do. It has to be per-target-per-control, with a
+  hand-written allow-list for the deliberate exemptions — `iconButton`'s `font`
+  and `pad` on a fixed 48×48 box are the plausible ones, and writing them down is
+  what makes them distinguishable from the fifteen oversights.
 - `data-theme` is still written on `<html>` in both directions, because legacy
   page CSS branches on it. Do not remove it until the last screen is rewritten.
 - `WIDE_PAGES` in `App.tsx` opts a page out of the 1180px centred column.
@@ -474,6 +533,16 @@ file.
   `useConfirm()` from `shell/confirm-context.ts`, never the native
   `window.confirm()`. That one drew an OS box the app could neither theme nor
   label, so every decision in the product read "OK".
+
+  Which tones stay on screen is decided in one place — on `main` that is
+  `notice.tone !== "error"`, so only errors persist. In the uncommitted
+  `fix/design-parity-gaps` tree it is `PERSISTENT_TONES` = `["warn", "error"]`
+  with an `autoDismisses(tone)` helper, because a warning is the one message that
+  exists to be acted on and a six-second timer only catches a user who happened
+  to be looking at that corner. Read the constant before assuming either.
+  `action.onAction` has existed since the first stage and has exactly one caller
+  in `gui/src` (`components/LaunchCard.tsx`); there is no Undo anywhere in the
+  product and no `notif.undo` string to reuse.
 
   ```ts
   const confirm = useConfirm();

@@ -286,6 +286,161 @@
   .m3-draft-bar .m3-btn--text { display: none; }
 }
 
+/* ---------------------------------------------------- viewport preview -- */
+
+/* The app bar's preview-size control pins the shell to an emulated width. The
+   width itself is a JavaScript decision — `windowClass` is measured, not
+   media-queried, which is what makes the whole thing possible — and everything
+   here is the frame drawn around the result, so the emulated size is visible
+   rather than merely believed.
+
+   `--preview-w` and the `data-viewport-preview` attribute are written onto
+   <html> by `applyViewportPreview`. Nothing below applies without them, so an
+   ordinary run pays for none of it. */
+
+html[data-viewport-preview] {
+  /* One token for the banner's height and the shell's top offset, so the two
+     cannot drift apart into either an overlap or a gap. */
+  --preview-banner-h: 48px;
+}
+
+html[data-viewport-preview] .m3-app {
+  /* Fixed rather than offset by margins: `#root` establishes no block
+     formatting context, so a top margin here would collapse through it, push
+     the root down and open a vertical scrollbar on a shell that is supposed to
+     fill the window exactly. Taking the frame out of flow sidesteps that, and
+     costs nothing — the fixed descendants inside (snackbars, anchored menus)
+     still resolve against the viewport, because a fixed ancestor does not
+     become their containing block. */
+  position: fixed;
+  top: calc(var(--preview-banner-h) + 8px);
+  left: 0;
+  right: 0;
+  /* Content-box on purpose: the emulated width has to be the width the shell
+     lays itself out in, and the 8px frame must sit outside it. Under the
+     document's global `border-box` the border would eat 16px of the emulated
+     viewport and every measurement taken from a capture would be that much
+     out. */
+  box-sizing: content-box;
+  width: var(--preview-w);
+  /* A pinned width wider than the window is clamped rather than allowed to
+     overflow — the page must never scroll sideways. The banner says so in
+     words when it happens, so the frame is never quietly narrower than the
+     number beside it. */
+  max-width: calc(100vw - 32px);
+  /* Stated rather than left to `top`/`bottom` to resolve, because `.m3-main-col`
+     and `.m3-nav` below both size themselves with `height: 100%` — a definite
+     height here is what those percentages have something to resolve against.
+     The 32px is the 8px gap above and below plus the 8px border on each edge,
+     which is what makes the framed shell fill the window exactly. */
+  height: calc(100dvh - var(--preview-banner-h) - 32px);
+  max-height: none;
+  margin: 0 auto;
+  border: 8px solid var(--m3-inverse-surface);
+  /* The shape token rather than the literal it happens to equal: a device frame
+     is exactly the extra-large corner the scale already defines, and the guard
+     in `m3-shape-scale.test.ts` exists because a hand-written radius stops
+     tracking the scale the moment anyone retunes it. */
+  border-radius: var(--r-xl, 28px);
+  box-shadow: var(--e3);
+}
+
+.m3-preview-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the compact drawer's scrim (60/61) so the exit stays reachable while
+     the drawer is open, and below the anchored menus (70) and snackbars (80),
+     which are transient and should not be pushed under a persistent bar. */
+  z-index: 65;
+  height: var(--preview-banner-h, 48px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--m3-inverse-surface);
+  color: var(--m3-inverse-on-surface);
+  font-size: var(--t-label-l);
+}
+.m3-preview-banner__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.m3-preview-banner__warn {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-label-s);
+  /* Inverse surfaces have no `--m3-error` counterpart that stays legible on
+     them, so the caveat is set apart by weight and size rather than by colour —
+     which it would have to be anyway, since colour alone is not a message. */
+  opacity: 0.85;
+}
+.m3-preview-banner__exit {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-label-l);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.m3-preview-banner__exit:hover {
+  background: color-mix(in oklab, var(--m3-inverse-on-surface) 14%, transparent);
+}
+
+/* At a phone width the banner has room for the size and the way out, and not
+   for the caveat as well. The caveat is about the frame being clamped, which is
+   a desktop-window problem, so dropping it here loses nothing a narrow window
+   can actually be in. */
+@media (max-width: 520px) {
+  .m3-preview-banner__warn { display: none; }
+}
+
+/* The trigger, while a preview is pinned. Tonal rather than tinted text: the
+   app bar's icon buttons are otherwise all the same flat mark, so a filled
+   container is what makes "this one is currently doing something" readable at a
+   glance instead of a colour difference on a 24px glyph.
+
+   An attribute rather than a modifier class, and deliberately placed above
+   `.m3-icon-btn` rather than below it. A bare `.m3-preview-btn--on` would be
+   one class against `.m3-icon-btn`'s one class and would LOSE on source order,
+   because that rule sits further down this file and sets its own background —
+   the state would have been visibly inert while looking perfectly correct in
+   the diff. `.m3-icon-btn[data-preview-on]` outranks it, and sitting above the
+   `:hover` and `[aria-expanded="true"]` rules lets both of those still layer on
+   top, which is exactly the order they should win in. */
+.m3-icon-btn[data-preview-on] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+
+.m3-preview-px {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-preview-note {
+  margin: 4px 4px 0;
+  padding: 8px;
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container-highest);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-s);
+  line-height: 1.4;
+}
+
 /* 48px icon buttons: M3 states layer + Material's 48px minimum hit target. */
 .m3-icon-btn {
   position: relative;
@@ -583,7 +738,32 @@
   font-size: var(--t-body-m);
   animation: m3-snack 220ms cubic-bezier(0.2, 0, 0, 1);
 }
+/*
+  Tonal surfaces. `info` and `success` share the default inverse-surface bar —
+  that is the prototype's `ok` tone, and a success needs no alarm colour.
+
+  `warn` had no rule at all until now, so a warning rendered as a success: the
+  same bar, the same weight, nothing to separate "8 deleted" from "3 deleted, 5
+  remaining". It takes the warn container rather than the error container
+  because the two are not the same message — an error is a thing that failed, a
+  warning is a thing that half-worked and still needs a decision — and because
+  the notification history and `.m3-banner--warn` already draw that distinction,
+  so a snackbar that skipped it disagreed with its own history row.
+
+  Status colours are functional data colours; they keep their own roles rather
+  than collapsing onto the primary palette.
+*/
+.m3-snack.warn { background: var(--m3-warn-container); color: var(--m3-on-warn-container); }
 .m3-snack.error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+
+/*
+  The leading tone mark. Sized in the box rather than on the glyph so the row's
+  12px gap and 48px minimum hold whatever the icon component renders, and
+  `flex: 0 0 auto` so a long message shrinks the text rather than the mark.
+*/
+.m3-snack-icon { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; }
+.m3-snack-icon svg { width: 20px; height: 20px; }
+
 .m3-snack-text { min-width: 0; flex: 1 1 auto; }
 .m3-snack-title { font-weight: 500; }
 .m3-snack-body { font-size: var(--t-body-s); opacity: 0.85; }
@@ -600,6 +780,14 @@
   font-weight: 500;
   cursor: pointer;
 }
+/*
+  On a tonal bar the action reverts to the container's own foreground:
+  `--m3-inverse-primary` is chosen to sit on the inverse surface and has no
+  contrast guarantee against the warn or error container. The underline is what
+  keeps it identifiable as an action once it is the same colour as the text
+  beside it.
+*/
+.m3-snack.warn .m3-snack-action { color: var(--m3-on-warn-container); text-decoration: underline; }
 .m3-snack.error .m3-snack-action { color: var(--m3-on-error-container); text-decoration: underline; }
 .m3-snack-action:hover { background: color-mix(in oklab, currentColor 12%, transparent); }
 .m3-snack-close {
@@ -1949,6 +2137,20 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   .m3-mob__send { min-height: 48px; }
   .m3-nav-item { min-height: 48px; }
 
+  /*
+   * The snackbar pair, which this block skipped while raising a dozen controls
+   * around them. They are the worst two to miss: a snackbar is pinned to the
+   * bottom edge, which on a phone is where the thumb is least accurate and where
+   * the home indicator already crowds it — the safe-area rule further down
+   * exists for exactly that reason. Dismiss is a 36x36 icon button, short in
+   * both axes; the action is 36 tall. Both are under the floor by arithmetic
+   * from their own declarations above, not by measurement like the rest of this
+   * block, and both are the only way to answer a message that is covering the
+   * screen's bottom corner.
+   */
+  .m3-snack-close { width: 48px; min-height: 48px; }
+  .m3-snack-action { min-height: 48px; }
+
   .m3-btn,
   .m3-input,
   .m3-chip,
@@ -1968,14 +2170,27 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
 
   /* Width too, or a 48-tall 40-wide icon button is still a miss in one axis.
      Chips and segments join them because a short label — ".*", "v1" — is what
-     makes them narrow: measured at 44.1px and 46.3px. */
+     makes them narrow: measured at 44.1px and 46.3px.
+
+     The snackbar action joins on a different argument: its label is whatever the
+     caller passed to `notify`, so its width is not a property of this stylesheet
+     at all. The only one shipping today is long enough, but "Undo" or "OK" in
+     the 12px side padding lands right on the boundary, and a floor costs nothing
+     when the label is already wide.
+
+     (Selector names are written without their leading dot in this prose. The
+     guard in mobile-shell.test.tsx now anchors each name to a `,` or `{`, so a
+     mention here can no longer stand in for the rule — but the plain-substring
+     version it replaced could, and that is the kind of comment that quietly
+     turns a guard green after somebody deletes what it guards.) */
   .m3-tabstrip-btn,
   .m3-avatar--btn,
   .m3-chip,
   .m3-segment,
   .models-icon-btn,
   .cwi-target-grip,
-  .ocx-tooltip {
+  .ocx-tooltip,
+  .m3-snack-action {
     min-width: 48px;
   }
 }

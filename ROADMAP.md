@@ -95,8 +95,11 @@ than trusting the report. **378 differences closed across all 19 screens**; GUI 
 Parity is **not** 100%, and the remainder is listed honestly under Known gaps below rather than
 rounded away. The largest single category was cross-page settings search; as of the 2026-08-13
 re-check the mechanism ships and its index is registry-driven at 80 settings across 14 pages, past
-the prototype's fourteen entries. The rest are per-screen notes recorded in the wave reports. Those figures — 378 differences, 383 → 494 tests — are from the 2026-07-30 sweep and have
-not been re-counted since. Three of the verifiers caught defects their own implementing
+the prototype's fourteen entries. A seven-slice re-read on **2026-08-13** found 67 further
+differences, 30 of them real; six of those are in an uncommitted working tree and the other 24 are
+written out under [Design parity — the 2026-08-13 survey](#design-parity--the-2026-08-13-survey)
+below, rather than left in a wave report where the last set of per-screen notes went unread. Those figures — 378 differences,
+383 → 494 tests — are from the 2026-07-30 sweep and have not been re-counted since. Three of the verifiers caught defects their own implementing
 agent had missed — a history entry written for a change that never happened, an uncapped regex over
 every log line, and a page claiming to bundle fonts it did not have — which is the argument for
 keeping the verify pass rather than trusting a self-report.
@@ -428,6 +431,262 @@ was told last month that a feature was missing needs to see it corrected, not si
   of change as the one above, and adding those fields to `collection-search-flags.test.ts` is what
   should keep the guard red until they are done. Every `settingsMatcher` caller, by contrast, now
   passes flags — that family is complete.
+
+### Design parity — the 2026-08-13 survey
+
+A seven-slice re-read of `design/` against `gui/` on **2026-08-13** found 67 differences, 30 of them
+real gaps rather than deliberate divergence. **Six are in the working tree of
+`fix/design-parity-gaps` and are uncommitted** — the branch tip is `c8fd307f`, identical to `main`,
+so none of it is on `main`, none of it is in `build-152`, and no user has any of it. The other 24
+are open and are written out below rather than left in a survey report, because a per-screen note in
+a wave report is the thing nobody reads.
+
+Everything in the first list is uncommitted working-tree state and nothing here claims more than
+that:
+
+- **Nav destinations name themselves at rail width.** `gui/src/shell/AdaptiveNav.tsx` rendered the
+  label conditionally, so between 600px and 1240px — an ordinary half-screen window — every
+  destination was an `aria-hidden` icon named only by `title`: the weakest route the accessible name
+  calculation has, and absent to touch, which never produces a tooltip. The label is now always in
+  the DOM and clipped with `m3-visually-hidden` rather than dropped.
+- **The compact drawer is a modal surface instead of one that merely looks like one.** `role="dialog"`
+  and `aria-modal="true"` while open, `inert` on `.m3-main-col` so that second claim is true rather
+  than asserted, and a Tab/Shift+Tab wrap inside the panel. The snackbar host is deliberately left
+  operable — it sits above the scrim, and inerting it would leave a control the user can plainly
+  read and not press.
+- **Snackbars carry a tone.** `IconCheckCircle` and `IconError` added to `gui/src/icons.tsx` and
+  `scripts/gen-icons.ts`; `SnackbarHost.tsx` renders a leading mark per tone plus a visually hidden
+  tone name, so `aria-live` announces a warning as a warning instead of encoding it in colour alone.
+  `.m3-snack.warn` had no rule at all before this, so "3 deleted, 5 remaining" rendered
+  pixel-identical to "8 deleted".
+- **Warnings persist until dismissed.** `PERSISTENT_TONES` in `shell/notifications-context.ts` is
+  `["warn", "error"]`; `info` and `success` still fade at `AUTO_DISMISS_MS`. `design/PORT-TO-GUI.md`
+  item 7 was corrected in the same change — it said only errors persist.
+- **The snackbar's close and action reach the 48px coarse-pointer floor.** Both were under it by
+  arithmetic from their own declarations: a 36×36 dismiss button pinned to the bottom edge of a
+  phone, where the thumb is least accurate. The hand-written inventory in
+  `gui/tests/mobile-shell.test.tsx` now names both, and each selector is anchored to a `,` or `{`,
+  so a selector mentioned in a comment can no longer stand in for the rule it guards.
+- **The app bar has the prototype's preview-size control.** `shell/ViewportPreview.tsx` (251 lines)
+  and `theme/viewport-preview.ts` (109) pin the shell to 412 / 834 / 1280 so the compact and medium
+  layouts can be looked at without dragging the window narrow and back. `PrefsProvider` and
+  `SettingsDraftProvider` both read the one module store, because `usePrefs` resolves through
+  whichever is mounted and a preview only one of them knew about would make the two disagree about
+  the shell's width. It is view state rather than a preference: a persisted preview would reopen the
+  app inside a fake 412px frame with nothing on screen to explain it. The banner states the emulated
+  size, says so when the frame was clamped to the real window, and `viewport.note` says plainly that
+  CSS media queries and full-window overlays still follow the real window — the shell's breakpoints
+  move because `windowClass` is measured in JavaScript, and media queries cannot.
+
+The 24 open ones follow. **None was closed by the pass above**, and two of them sit in files that
+pass rewrote — which is the failure mode this file exists to prevent, so both say so at the point
+they are described.
+
+**Seventeen appearance controls write a variable no rule reads.** The per-element editor renders the
+same six controls for every curated target — `font`, `color`, `bg`, `radius`, `size`, `pad`, the
+`ElementStyle` fields — and compiles each into `--el-<target>-<control>`. The stylesheet has to
+consume it; where it does not, the control moves and the screen does not. **The survey named five of
+these; the real count is seventeen across ten of the sixteen `ELEMENT_TARGETS`**, derived here by
+testing all 96 `<target>×<control>` pairs against every `--el-*` occurrence in the five stylesheets
+that carry them (`gui/src/styles/m3-shell.css`, `styles/provider-overview-dashboard.css`,
+`styles/provider-workspace-shell.css`, `styles-dashboard-workspace.css`, `shared/m3/components.css`
+— checking `m3-shell.css` alone wrongly condemns `table` and `statCard`, whose hooks live in the
+dashboard sheets). Six targets are complete: `input`, `chip`, `select`, `dialog`, `statCard`,
+`remotePanel`.
+
+| Target | Dead controls |
+| --- | --- |
+| `tabStrip` | color, font, radius, size |
+| `navRail` | radius, size |
+| `table` | radius, pad |
+| `iconButton` | font, pad |
+| `banner` | bg, color |
+| `appBar` | size |
+| `card` | size |
+| `menu` | size |
+| `bottomNav` | size |
+| `button` | color |
+
+The five the survey singled out, with what each costs:
+
+- **Filled buttons — Text colour.** No consumer for `--el-button-color`; `.m3-btn--filled` hard-codes
+  `color: var(--m3-on-primary)`. Partly survivable, which is how it survived: the Typography editor's
+  own Colour control on the same panel does reach it, because a curated target's typography compiles
+  to `:root .m3-btn { … }` at specificity (0,2,0) and outranks `.m3-btn--filled` at (0,1,0). So the
+  value is reachable — just not from the control labelled for it, which is the one anybody reaches
+  for first. `shared/m3/components.css:265` carries the identical line, so fixing one and not the
+  other makes the docs site drift.
+- **Tab strip — Text colour and Corner radius, and in fact Font and Size too.** Only `-bg` and
+  `-pad` are read, so **four of the six controls are inert**, not the two the survey found. Radius is
+  the most visible loss — square-versus-rounded tabs is a change people actually make — and unlike
+  the button case there is no typography route to it, because typography carries no border-radius.
+- **Navigation rail — Corner radius, and Size.** No consumer for `--el-navRail-radius` or
+  `--el-navRail-size`; `-bg`, `-color`, `-font` and `-pad` are read. Two dead controls among four
+  live ones reads as a rendering bug rather than as a missing hook.
+- **Banner — Colour and Background.** No consumer for `--el-banner-bg` or `--el-banner-color`;
+  `-pad`, `-radius`, `-font` and `-size` are read. **The one-line fix does not work.** Adding
+  `var(--el-banner-bg, …)` to `.m3-banner` renders nothing, because
+  `.m3-banner--info` / `--success` / `--warn` / `--error` set `background` and `color` further down
+  the same file and win on source order. The hooks belong on the four modifiers, or the modifiers
+  give up the properties. This is the same-selector-decided-by-order failure: a change that looks
+  obviously right, ships cleanly and moves no pixels.
+- **Size is dead on six of sixteen curated targets.** No consumer for `--el-card-size`,
+  `--el-navRail-size`, `--el-appBar-size`, `--el-tabStrip-size`, `--el-menu-size` or
+  `--el-bottomNav-size`. Right-click a card, the rail, the app bar, the tab strip, a menu or the
+  bottom nav, drag Size, and nothing happens — while the same slider works on a button, a chip, a
+  field or a stat card. Derived `auto:` targets are unaffected, their flat six compiling into a real
+  rule. Either add the six hooks or hide the control where a target has none; a slider that works on
+  ten surfaces and not six is worse than one that is consistently absent.
+
+**And the guard on exactly this defect cannot catch a single one of the seventeen.**
+`gui/tests/element-typography.test.ts` asserts that each mapped target consumes *at least one*
+variable, which all ten of the affected targets already do. No direct user impact, but it is why all
+of this sits on `main` under a green suite — and why the survey found five where the tree holds
+seventeen: nothing was counting. The assertion has to be per-target-per-control: for each id in
+`ELEMENT_TARGETS`, every control the editor renders for it must have a consumer, with a hand-written
+allow-list naming the deliberate exemptions rather than letting them pass silently — icon-button
+`font` and `pad` on a fixed 48×48 box holding one glyph are the plausible exemptions in the table
+above, and they should be written down as decisions rather than left indistinguishable from the
+fifteen that are oversights. Break the guard on purpose once before trusting it.
+
+**Six actions that exist everywhere except in the interface.**
+
+- **Provider "Test connection" was never wired into the dashboard.**
+  `gui/src/components/provider-workspace/ProviderOverview.tsx` renders no such control; a grep for
+  `testConnection` across `provider-workspace/` returns nothing. The single most useful diagnostic on
+  the Providers screen is unreachable — a user whose provider is misconfigured sees a status dot and
+  a base URL and has to leave the app for `ocx provider test`. Route, strings and CLI parity all
+  ship; only the button is missing.
+- **`pws.testConnection` is translated into seven locales and has no control.**
+  `provider-workspace/ProviderSettings.tsx`. After editing a base URL, adapter or auth mode there is
+  no way to ask whether the endpoint answers except by making a real request through Codex and
+  reading Logs. The copy cost is already paid in all seven languages; the open question is whether a
+  probe endpoint exists on the management API, which is outside the surveyed slice.
+- **No notification anywhere in the app offers Undo.** `shell/notifications-context.ts` declares
+  `action.onAction` and `SnackbarHost` renders it, but the only caller in `gui/src` is
+  `components/LaunchCard.tsx:201`, and there is no `notif.undo` string in any dictionary to reuse —
+  the label has to be written. Six actions notify and then leave the user with no route back. Two
+  are covered elsewhere (Storage ships the full `storage.trash.*` restore screen; the version-history
+  restore is itself append-only), so the four with no second route are pausing an account, removing
+  an API key, removing a combo target and removing a Claude model-map rule.
+- **Pausing a pooled Codex account has no Undo on its snackbar.**
+  `gui/src/components/CodexAccountPool.tsx`. Low on the single-account path — the pause button on
+  the card is right there and reverses it. It matters for **Pause exhausted accounts**, which touches
+  an unknown number of accounts in one press, reports only a count, and has no single control that
+  reverses the batch.
+- **The Storage cleanup snackbar has no Undo, though the prototype's does and the mechanism
+  exists.** `gui/src/pages/Storage.tsx`. After quarantining, say, 1,204 files the only route back is
+  scrolling to the Quarantine card, identifying the right batch by its `trash-<timestamp>` id among
+  the others, and confirming a dialog. Recoverable either way, so this is convenience rather than
+  data loss, and it must stay off the permanent-delete branch where there is nothing to undo.
+  Whoever adds it should give the action a real `onDone()` refresh rather than fire-and-forget.
+- **Usage and Combos have working export datasets on the server and no button to reach them.**
+  `gui/src/pages/Usage.tsx` renders no `ExportDialog`. The token-accounting tables cannot leave the
+  app — not to a spreadsheet, not to a notebook — although the server will hand them over on
+  request; same for the combo list. One `useState` and one
+  `<ExportDialog apiBase={apiBase} dataset="usage" …>` per screen, copying `Logs.tsx:1032-1037`.
+
+**Three screens that lose or hide what they are showing.**
+
+- **The Usage models table silently drops everything past the top 100.** `Usage.tsx:1059` —
+  `sorted.slice(0, 100)` on the empty query. On a proxy with a long tail of models the table reports
+  a subset as though it were the whole set, and the share column then reads as if it accounts for
+  everything. Search still reaches a hidden model as long as fewer than 100 rows match, so the
+  cheapest honest fix is a count line stating the total and how many are shown.
+- **Subagents edits are local until Save, with no dirty marker and no leave guard.**
+  `gui/src/pages/Subagents.tsx` keeps `persisted.current` but nothing compares against it, so an edit
+  the user believes they made is silently lost on navigation. Explicit Save is the better of the two
+  designs, so the fix is not a return to autosave — track dirty against `persisted.current`, show the
+  state on the card, and disable Save when clean.
+- **Combo target rows carry no ordinal though the card's own subtitle says order matters.**
+  `gui/src/components/combo-workspace-controls.tsx`. Cosmetic in effect — priority order is visible
+  from row order and the end buttons disable correctly — but the copy tells the reader position
+  matters and then makes them count rows, and the same screen family already numbers its other list.
+
+**Three settings searches that answer a question wrongly.**
+
+- **Claude Code's settings search drops the flags the regex builder composed.**
+  `gui/src/pages/claude-settings-search.ts:158` calls `makeMatcher(query, useRegex)` with no third
+  argument, and `ClaudeCode.tsx:109` holds only `settingsQuery` and `settingsRegex`. Set
+  case-sensitive or multiline in the builder, watch the preview change, click apply, and the pattern
+  runs under `i` regardless — the panel's flag chips live in the preview and inert on the card behind
+  it, which is the decorative-control failure this project forbids everywhere else. Fix is `flags` as
+  state beside the other two, both halves written back from `onApply`,
+  `makeMatcher(query, useRegex, flags)`, and a `SearchFlagsRow`. Add the row to
+  `gui/tests/collection-search-flags.test.ts` in the same change or the next one to drift is
+  unguarded too. (This one is also named in the flags entry above, under the six `makeMatcher` call
+  sites; it is repeated here because it is the same defect seen from the screen rather than from the
+  matcher.)
+- **Storage's settings search never consults the cross-page registry, so a hit on another screen is
+  reported as "No matches".** `Storage.tsx:1248` filters a local `otherSettings` list of its own
+  cards. Typing a remembered setting name — "auth mode", "density", "funny level" — answers "No
+  matches" for settings that exist and are indexed, so the user concludes the product has no such
+  setting rather than being told which screen owns it. Startup answers this today. The fix is moving
+  the policy card onto `useSettingsSearch({ options, scope: "storage" })` plus the shared
+  `SettingsSearchRow`; if the local `makeSettingsMatcher` adapter is kept for its bare-"invalid"
+  notice, the minimum is folding `settingsElsewhere("storage", t)` into that `elsewhere` list.
+- **Claude Code's settings search reports only its sibling Desktop tab, never another screen.**
+  `claude-settings-search.ts`. Same loss as Storage one screen over, milder only because this bar
+  does report the one neighbour a user is likeliest to want. Closing it well means
+  `useSettingsSearch({ options, scope: "claude", elsewhere })` — that hook takes an explicit
+  `elsewhere` override for exactly this shape, a sibling tab that is not a page, so the Desktop rows
+  survive alongside the registry rather than being replaced by it.
+
+**Two notification surfaces that drop what the reader needs.**
+
+- **Notifications never record which screen they came from.** `shell/notifications-context.ts`
+  carries no page or source field on `Notice`. The history is capped at 200 and survives reloads, so
+  a user scrolling it sees "Saved" or "Request failed" with no way to tell which screen produced
+  them, while the metadata line spends its slot on the tone name that the coloured chip beside it
+  already shows. Implementing it touches three more files: `notifications.tsx` to stamp the active
+  page at notify time, `Notifications.tsx` and `AppBar.tsx` to render it.
+- **The notification centre popover shows no tone, no timestamp and no clear action.**
+  `shell/AppBar.tsx`. In the one surface a user opens *because* the bell has a badge, a persistent
+  error and a routine success render identically, and nothing says whether a line is from a minute
+  ago or from yesterday's session. The tone marks added to the snackbar in the pass above did **not**
+  reach this panel. The shipped `View all` row is an improvement on the prototype and should be
+  kept; the fix is adding the chip and the time beside it, not replacing the panel.
+
+**Four that are styling, voice or navigation.**
+
+- **Codex Auth's rotation-strategy card is still pre-M3 markup beside an M3 sibling.**
+  `gui/src/components/CodexPoolStrategySetting.tsx:104` opens `<div className="card">` and its copy
+  uses `card-sub`; both classes live in the legacy `gui/src/styles.css`, not in `m3-shell.css`. The
+  last card on Codex Auth therefore reads as a different product from the one directly above it —
+  different surface tone, different border, different control vocabulary — and the strategy picker
+  sits outside the M3 component set, so per-element appearance editing and density tokens do not
+  reach it. The strategy still saves correctly. `AccountPoolStrategyControls.tsx` is shared with the
+  Anthropic pool on Providers (`provider-workspace/OAuthAccountPoolSettings.tsx`), so it must be
+  restyled, not forked.
+- **Error text renders a hard-coded `#c44` that no theme or seed can reach.** Two sites:
+  `CodexPoolStrategySetting.tsx:147` and `components/MemoryObservabilityCard.tsx:417`, both
+  `color: "var(--danger, #c44)"`. **The survey recorded this as two messages in one file; it is one
+  site in each of two files**, and the second was not named at all. `--danger` is defined nowhere in
+  `gui/` or `shared/`, so the fallback is not a fallback — `#c44` is always what renders. It is the
+  only red in the app that is not the M3 error role, it ignores the user's seed colour, and against a
+  dark tonal surface it is the low-contrast case the accessibility rules exist to catch. Replace both
+  with `var(--m3-error)`.
+- **The funny-level slider does not reach most page leads.** `gui/src/i18n/voice.ts`. Of the fourteen
+  leads a grep for `m3-page-lead` can enumerate, **four carry a voice entry** — `dash.subtitle`,
+  `usage.subtitle`, `changelog.subtitle`, `settings.sub` — and ten do not: `appearance.subtitle`,
+  `codexAuth.subtitle`, `cws.overviewBlurb`, `grok.subtitle`, `history.sub`, `lang.subtitle`,
+  `models.subtitle`, `prov.subtitle`, `regex.sub`, `startup.subtitle`. The remaining screens build
+  their lead through their own header component (`DebugPageHeader` and its like) and were not
+  counted, so the total is larger than fourteen. **The survey said "18 of 22, only Dashboard and
+  Usage voiced"; that undercounts the voiced set by two and is not the number in the tree** — the
+  shortfall is real, the figure was not re-derived. It is most visible on Language & voice itself,
+  where `lang.subtitle` is flat while `lang.sub`, the card subtitle directly beneath it, is voiced —
+  the one screen where the user is looking at the slider while they read it. The curated-overlay
+  approach is a documented decision (`voice.ts` header) and the shortfall is disclosed honestly
+  (`lang.funnyCoverage` reports the real count from `voiceCoverage()`), so this is a coverage
+  shortfall rather than a false claim. The prototype supplies wording for most of them in both
+  languages, so closing it is largely transcription plus the ones that need writing.
+- **The compact bottom bar drops the prototype's fifth "More" item.**
+  `gui/src/shell/AdaptiveNav.tsx` — and note that file was rewritten twice in the pass above without
+  this being done, which is exactly the kind of thing that gets rounded up. There is no `nav.more`
+  key in `m3.ts` or `yue.ts`. On a phone the other 19 screens sit behind a control at the top of the
+  window rather than in the thumb-reachable bar the platform convention puts them in. Everything is
+  still reachable, so this is a reach cost rather than a lost capability.
 
 ## Non-goals
 

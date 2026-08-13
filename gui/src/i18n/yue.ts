@@ -2226,6 +2226,23 @@ export const yue: Partial<Record<TKey, string>> = {
   "cost.menuTitle": "估算成本時段",
   "cost.aria": "{range} 內估算嘅 API 成本 {amount}。改時段。",
   "cost.title": "估算 API 成本（{range}）— 撳一下改時段",
+
+  // ---- 視窗尺寸預覽 ----
+  // 「px」係單位，唔翻譯；數字同單位要同英文版一模一樣，因為呢個係量度出嚟嘅
+  // 闊度，唔係形容詞。viewport.note 講明邊樣嘢會郁、邊樣唔會郁——shell 自己嘅
+  // 斷點係喺 JavaScript 度度出嚟，會跟；CSS media query 係瀏覽器對住真窗計嘅，
+  // 唔會跟。講清楚好過畀人當咗係 bug 報上嚟。
+  "viewport.menuTitle": "預覽尺寸",
+  "viewport.auto": "跟住個窗",
+  "viewport.phone": "手機",
+  "viewport.tablet": "平板",
+  "viewport.desktop": "桌面",
+  "viewport.px": "{width} px",
+  "viewport.trigger": "預覽尺寸：{size}。撳一下改模擬闊度。",
+  "viewport.note": "呢個只係模擬 shell 自己嘅斷點。CSS media query 同鋪滿成個窗嘅浮層仲係跟住真窗行，所以有幾樣細節會維持喺呢個窗嘅尺寸。",
+  "viewport.banner": "而家預覽緊 {size}",
+  "viewport.clamped": "呢個窗窄過 {size} — 個框而家畫到 {actual} px。",
+  "viewport.exit": "退出預覽",
   // 「等同 API 標價」跟返 usage.cost.total 嘅講法。呢個唔係帳單，所以「唔收費」
   // 同「唔係帳單」要講到明明白白，唔可以令人以為要俾錢。
   //

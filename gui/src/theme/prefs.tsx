@@ -23,13 +23,22 @@ import {
   type Prefs,
   type PrefsContextValue,
 } from "./prefs-context";
+import { useViewportPreview } from "./viewport-preview";
 import type { ElementStyle } from "./m3";
 import type { TypographyStyle } from "../../../shared/m3/typography";
 
 export function PrefsProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefsState] = useState<Prefs>(readPrefs);
-  const [width, setWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  const [measuredWidth, setMeasuredWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [systemDark, setSystemDark] = useState(() => resolveDark("system"));
+
+  // The same emulated-width override the draft provider reads. Both subscribe to
+  // one module store rather than owning a copy, because `usePrefs` resolves
+  // through whichever of the two is mounted — a preview that only one of them
+  // knew about would make the two disagree about the shell's width depending on
+  // the provider stack a screen happened to be rendered under.
+  const previewWidth = useViewportPreview();
+  const width = previewWidth ?? measuredWidth;
 
   // Track the OS scheme so `theme: "system"` repaints without a reload.
   useEffect(() => {
@@ -41,7 +50,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 
   // Breakpoints are measured, not media-queried, so an emulated preview width works.
   useEffect(() => {
-    const onResize = () => setWidth(window.innerWidth);
+    const onResize = () => setMeasuredWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);

@@ -24,6 +24,7 @@ import {
   type SettingsSnapshot,
 } from "./pages/settings-shared";
 import { SettingsDraftContext } from "./settings-drafts-context";
+import { useViewportPreview } from "./theme/viewport-preview";
 import type { ElementStyle } from "./theme/m3";
 import type { TypographyStyle } from "../../shared/m3/typography";
 
@@ -125,9 +126,17 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
   const [appliedSettings, setAppliedSettings] = useState<SettingsSnapshot | null>(null);
   const [settings, setSettingsState] = useState<SettingsSnapshot | null>(null);
   const [applying, setApplying] = useState(false);
-  const [width, setWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  const [measuredWidth, setMeasuredWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [systemDark, setSystemDark] = useState(() => resolveDark("system"));
   const applyingRef = useRef(false);
+
+  // The app bar's preview-size control pins the shell to an emulated width so
+  // the compact and medium layouts can be looked at without dragging the window.
+  // It is read *instead of* the measured width, never merged with it: a resize
+  // while a preview is pinned must change nothing, which is the whole point of
+  // pinning it. `null` is the ordinary case and hands the real window back.
+  const previewWidth = useViewportPreview();
+  const width = previewWidth ?? measuredWidth;
 
   const dark = prefs.theme === "system" ? systemDark : prefs.theme === "dark";
 
@@ -139,7 +148,7 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
   }, []);
 
   useEffect(() => {
-    const onResize = () => setWidth(window.innerWidth);
+    const onResize = () => setMeasuredWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);

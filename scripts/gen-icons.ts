@@ -62,6 +62,14 @@ const MAP: Record<string, string> = {
   IconTrash: "delete",
   IconAlert: "warning",
   IconInfo: "info",
+  // The snackbar's tone marks. `IconCheck` is a bare tick used inside buttons
+  // and status chips, where it reads as "this one" rather than as a severity;
+  // the prototype's snackbars carry `check_circle` and `error`, which are the
+  // enclosed forms that scan as a severity badge next to a warning triangle.
+  // Repointing `IconCheck` at `check_circle` would have fixed the snackbar and
+  // quietly changed every copy button and provider row in the app.
+  IconCheckCircle: "check_circle",
+  IconError: "error",
   IconSearch: "search",
   IconArrowUp: "arrow_upward",
   IconArrowDown: "arrow_downward",
@@ -137,7 +145,8 @@ const ORDER = [
   "IconWinMinimize", "IconWinMaximize", "IconWinRestore",
   "IconTerminal", "IconActivity", "IconHardDrive", "IconCheck", "IconX",
   "IconPlus", "IconRefresh", "IconPause", "IconPlay", "IconTrash", "IconAlert",
-  "IconInfo", "IconSearch", "IconArrowUp", "IconArrowDown", "IconChevron",
+  "IconInfo", "IconCheckCircle", "IconError",
+  "IconSearch", "IconArrowUp", "IconArrowDown", "IconChevron",
   "IconGithub", "IconPower", "IconExternal", "IconKey", "IconLock",
   "IconTicket", "IconLink", "IconSun", "IconMoon", "IconMonitor", "IconGlobe",
   "IconSparkle", "IconShuffle", "IconGrip", "IconStar", "IconFilter",

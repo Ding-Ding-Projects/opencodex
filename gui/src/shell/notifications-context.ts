@@ -47,7 +47,33 @@ export function useNotifications(): NotificationsApi {
 
 export const HISTORY_KEY = "ocx-m3:notifications";
 export const HISTORY_CAP = 200;
-/** Errors are excluded: they persist until the user dismisses them. */
+
+/**
+ * Tones that hold their place on screen until the user dismisses them.
+ *
+ * A snackbar that fades on a timer is, in effect, a message the product has
+ * decided nobody has to read. That is a fair call for `info` and `success`:
+ * they report something that already went the way the user asked, and the
+ * notification centre keeps a copy for anyone who wants to look afterwards.
+ *
+ * It is the wrong call for `warn`. A warning exists precisely because something
+ * needs attention — a bulk run that stopped part-way with items left untouched,
+ * a key that is now gone — and six seconds only catches a user who happened to
+ * be looking at that corner of the window at that moment. Anyone reading at
+ * their own pace, tabbed away, or using a screen reader that had not yet
+ * reached the announcement is left with nothing to act on, because the history
+ * view records an unread warning exactly as it records an unread success. So
+ * warnings stay up alongside errors, and every snackbar carries a close button
+ * so staying up never means being stuck with one.
+ */
+export const PERSISTENT_TONES: readonly NoticeTone[] = ["warn", "error"];
+
+/** True when a notice of this tone should fade on its own after `AUTO_DISMISS_MS`. */
+export function autoDismisses(tone: NoticeTone): boolean {
+  return !PERSISTENT_TONES.includes(tone);
+}
+
+/** How long a self-dismissing notice stays on screen; see `PERSISTENT_TONES` for the ones that never do. */
 export const AUTO_DISMISS_MS = 6000;
 
 export function readHistory(): Notice[] {
