@@ -176,8 +176,17 @@ function renderAgentDef(def: ClaudeAgentDef): string {
   ].join("\n");
 }
 
-/** True only for a REGULAR file we generated (marker present; symlinks never owned). */
-function isOwnedFile(path: string): boolean {
+/**
+ * True only for a REGULAR file we generated (marker present; symlinks never owned).
+ *
+ * Exported because the ownership rule has to be asked about from outside as well
+ * as enforced inside. `lib/quick-restore.ts` counts what a prune should have
+ * removed in order to report it, and a second "which of these are ours" written
+ * there would eventually disagree with this one — at which point a user-authored
+ * `ocx-*.md` that this function correctly refuses to delete would be reported as
+ * a failed removal.
+ */
+export function isOwnedFile(path: string): boolean {
   try {
     const st = lstatSync(path);
     if (!st.isFile()) return false; // symlink or dir: never touch (audit 071 #2)

@@ -1512,6 +1512,63 @@ html[data-desktop] .m3-appbar .m3-avatar {
   cursor: not-allowed;
 }
 
+/*
+  Quick restore.
+
+  Two forms of the same two actions. Inline in the bar where the row has space
+  for labels, and a single trigger plus an anchored panel everywhere else — the
+  bar already carries a title, the build line, the code name, the cost meter,
+  three icon buttons, the account chip and four window controls, so labelled
+  buttons cannot simply be allowed to grow into that.
+*/
+.m3-quick-restore { flex: 0 0 auto; }
+.m3-quick-restore__inline {
+  gap: 6px;
+  white-space: nowrap;
+}
+.m3-quick-restore__inline svg { width: 18px; height: 18px; flex: 0 0 auto; }
+/*
+  Refused, not `disabled`. The buttons keep `aria-disabled` and stay focusable so
+  the reason they carry is reachable without a mouse, which means the refused
+  look has to be drawn rather than inherited from the native attribute. Same
+  treatment as an unavailable menu row, so the two read as the same state.
+*/
+.m3-quick-restore__inline--inert {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.m3-quick-restore__panel { padding: 8px; }
+.m3-quick-restore__hint {
+  margin: 0 0 8px;
+  padding: 0 12px;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+}
+/*
+  The reason sits under its button rather than beside it: a disabled control owes
+  the reader an explanation somewhere a keyboard or screen-reader user reaches
+  without hovering, and a path is long enough that a side-by-side row would clip
+  it at the widths this panel actually opens at.
+*/
+.m3-quick-restore__row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 12px;
+}
+.m3-quick-restore__reason {
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-quick-restore__status {
+  margin: 4px 0 0;
+  padding: 0 12px;
+  font-size: var(--t-body-s);
+  color: var(--m3-primary);
+}
+
 /* App-bar cost meter: tonal chip, always visible, machine number in mono. */
 .m3-cost-chip {
   flex: 0 0 auto;

@@ -99,6 +99,7 @@ proxy and can reach the same management routes as any other client. See
 | **Remote connection** | Manually open another OpenCodex by IPv4, IPv6, or hostname and its active port. The destination dashboard performs ADMIN authentication. |
 | **Export** | Export dashboard datasets as supported formats/archives. Password-protected 7z is unavailable until a protected password transport exists. |
 | **Stop** | Gracefully stop the proxy and installed background service, restore native Codex, and exit (`POST /api/stop`). |
+| **Quick restore** | Two app-bar actions that hand Codex or Claude its own configuration back and then stop the proxy. The restore runs first and is not conditional on the stop, so it still completes when a normal stop is stuck. See below. |
 | **Tabs** | Browser-style tabs with pinning, drag reordering, an overflow menu, per-tab appearance, named and collapsible **groups**, and four searches that find a tab across this strip, inside a group, by group name, or across every window. See [Tab Groups & Tab Search](/guides/tab-groups-and-search/). |
 
 ### Linking to a section
@@ -108,6 +109,58 @@ addressable instead: `#dashboard` opens Overview, and `#dashboard/providers` and
 `#dashboard/models` open the other two. Reload, bookmark, and Back all keep the section you were
 on. **Logs** works the same way with `#logs` and `#logs/debug`. An older `#providers/workspace`
 bookmark now lands on `#providers`.
+
+### Quick restore
+
+OpenCodex works by rewriting the files your agent tools read — `$CODEX_HOME/config.toml` and the
+routed model catalog for Codex, `~/.claude/agents/ocx-*.md` and (on macOS) the injected Claude
+environment variables and `~/.zshrc` hook for Claude. **Stop**, `ocx stop` and `ocx restore` all
+undo that on the way out.
+
+Quick restore exists for the case where that is not enough. A normal stop drains in-flight requests
+before it touches a file, and it refuses outright when an installed background service belongs to a
+different `OPENCODEX_HOME`. In each of those the stop fails **and the rewritten config stays
+rewritten**, which is the one thing you needed back.
+
+So the app bar carries a **Restore Codex** and a **Restore Claude** action that run the two halves as
+separate steps, in this order:
+
+1. **Restore.** `POST /api/host/quick-restore` rewrites only that tool's own files. It does not
+   drain, does not touch the background service, and does not exit, so nothing in the proxy's
+   shutdown path can hold it up or refuse it.
+2. **Stop.** Only then does the dashboard issue the ordinary `POST /api/stop`, and afterwards it
+   polls `/healthz` to confirm the listener really went away rather than assuming a dropped
+   connection meant success.
+
+Because they are separate requests, both outcomes are always known and both are always reported:
+
+| Restore | Proxy | What you see |
+| --- | --- | --- |
+| Succeeded | Stopped | One success notice naming both. |
+| Succeeded | Still running | A success notice for the restore **and** a persistent error notice saying the proxy did not stop, with the reason. Your config is native again, but starting or syncing OpenCodex re-applies the routing, so run `ocx stop` from a terminal. |
+| Failed | Untouched | An error notice with the exact failure. The proxy is deliberately left running so you can retry, or run `ocx restore`. |
+| No answer | Unknown | An error notice saying so. Nothing is claimed in either direction — check `ocx status`, then `ocx restore`. |
+
+Before writing anything, OpenCodex commits your current `~/.opencodex` state to the local **Version
+history** — the same append-only snapshot the Restore-a-snapshot flow uses, so the action is on the
+record. That snapshot is bounded: if it cannot finish in five seconds it is abandoned and the
+notification says it was not recorded, because the restore matters more than the audit line.
+
+Note what that snapshot does and does not cover. It records OpenCodex's own state
+(`config.json`, `codex-accounts.json`, `auth.json`), not the tool config being rewritten. Getting the
+proxy routing back is not an undo of this action at all — it is `ocx start`, or starting OpenCodex
+from the dashboard, which re-applies the injection from scratch.
+
+An action is disabled, with the reason on the control itself, when that tool is not configured on
+this machine, or when the dashboard could not read the restore status from the proxy. Both routes
+are refused when `OPENCODEX_DEBUG_SANDBOX` is set (they write real files, which the sandbox exists
+to prevent) and when the proxy is listening on anything other than `127.0.0.1` — a management
+credential presented over the LAN must not become the ability to reconfigure the installed software
+on the host.
+
+Below the expanded breakpoint, or while unapplied settings drafts are showing, the two actions
+collapse into a single app-bar button that opens a panel containing the same two actions, so they
+never crowd the window controls off the end of the row.
 
 ### Connect to another OpenCodex
 
@@ -221,6 +274,7 @@ The GUI is a thin client over the proxy's JSON management API. Useful endpoints 
 | `GET` / `PUT /api/oauth/accounts/pool?provider=...` | Read or change one OAuth provider's experimental [account pool](/reference/configuration/#providersnameaccountpool-experimental). `409` when a non-Anthropic provider is not in the config, because there is nowhere to store the setting. |
 | `GET` / `PUT /api/host` | Read the bind status and LAN URLs, or expose/unexpose the proxy. A minted data-plane key is returned in that one response and never again. |
 | `GET /api/host/export` · `GET /api/host/history` · `POST /api/host/restore` | Download the full state bundle (**plaintext secrets**), list account-change snapshots, and restore one. |
+| `GET` / `POST /api/host/quick-restore` | Read per-tool restore readiness (present on this machine, files affected, routing currently injected), or hand one tool (`{"tool":"codex"}` / `{"tool":"claude"}`) its native configuration back. The POST rewrites files only — it never drains, stops the service, or exits. Loopback listener required; refused under `OPENCODEX_DEBUG_SANDBOX`. |
 | `POST /api/stop` | Stop the proxy/service, restore native Codex, and exit. |
 
 :::tip
