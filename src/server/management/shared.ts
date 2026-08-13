@@ -199,7 +199,21 @@ export function costResult(entry: MetricSource): CostResult {
   const apiEquivalent = entry.attempts?.length
     ? comboLaneResult(entry, "api_equivalent", context)
     : singleLaneResult(entry, "api_equivalent", context);
-  const estimate = direct.kind === "value" ? direct.estimate : null;
+  // The top-level figure speaks for the WHOLE entry, so it cannot simply adopt the
+  // direct lane's number. A lane prices only the attempts it recognises: an attempt
+  // whose provider classifies into neither lane is filtered out of `sourceAttempts`
+  // before the lane sums it, so a combo with one unpriceable leg still leaves the
+  // direct lane holding a confident partial total. Publishing that as the entry's
+  // cost would quietly bill a combo for less traffic than it actually ran.
+  // `estimateComboCost` is all-or-nothing across every attempt, so it returns null
+  // for exactly that case and the entry falls through to `combo_attempt_unavailable`
+  // below — while the per-lane detail still reports what each lane could account for.
+  // A combo of subscription attempts is unaffected by this: their providers carry no
+  // direct price schedule, so the all-attempts estimate is null there too and no
+  // money-shaped total is invented for traffic nobody was billed for.
+  const estimate = entry.attempts?.length
+    ? estimateComboCost(entry.attempts, undefined, context)
+    : (direct.kind === "value" ? direct.estimate : null);
   if (!estimate) {
     const reason = unavailableCostReason(entry);
     if (reason === "combo_attempt_unavailable" && entry.attempts?.length) {

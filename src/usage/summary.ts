@@ -109,6 +109,14 @@ export interface UsageProvider {
   attemptCount: number;
   measuredRequests: number;
   reportedRequests: number;
+  /**
+   * Requests whose token counts were estimated rather than reported, matching
+   * `UsageModel.estimatedRequests`. `buildProviders` has always written and
+   * incremented this, and the GUI's provider rows read it, so it is part of the
+   * shape rather than optional detail — it was dropped from this interface by
+   * accident when the API-equivalent cost fields were added directly beneath it.
+   */
+  estimatedRequests: number;
   totalTokens: number;
   shareRatio: number;
   /** Direct API-key spend only, unchanged. Absent for subscription/OAuth rows. */
