@@ -14,6 +14,8 @@ import { joinBilingual } from "../i18n/resolve";
 import { Banner, Button, Card, Chip, TextInput } from "../shell/m3-ui";
 import { useNotifications } from "../shell/notifications-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
 import { attentionCopy } from "./combo-workspace-attention";
@@ -21,6 +23,19 @@ import { comboSettingsSearch } from "./combo-workspace-settings-search";
 import { clampedNumberInput } from "./combo-workspace-utils";
 
 type DetailTab = "config" | "about";
+
+/**
+ * The id the chip row's state line carries, so the search field above it can
+ * point `aria-describedby` here.
+ *
+ * A literal rather than a `useId`, because it has to be unique across the
+ * *screen* rather than merely across this component: only one detail panel is
+ * mounted at a time, and the rail's combo search — the other search bar on this
+ * workspace — owns its own set under its own id. A generated id would be unique
+ * too, but this one names which field it belongs to when it shows up in a test
+ * or an accessibility tree.
+ */
+const SETTINGS_FLAGS_ID = "cws-settings-flags-state";
 
 export function DetailPanel({
   baseline,
@@ -68,6 +83,16 @@ export function DetailPanel({
   // with the rail's combo search, which looks for a different kind of thing.
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsRegex, setSettingsRegex] = useState(false);
+  /**
+   * The flags this field compiles with — state, not the `i` the matcher used to
+   * pin. The builder anchored beside the field composes a pattern *and* its
+   * flags, and a field that dropped the second half showed a popover where
+   * turning on `m` or `s` changed the preview and then changed nothing about
+   * which cards stayed on screen. Owned here alongside the query and the mode,
+   * so it is as private to this tab as they are: the rail's combo search sits in
+   * another component with its own set, and neither can recompile the other.
+   */
+  const [settingsFlags, setSettingsFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const dirty = !draftEquals(draft, baseline);
   const baselineSyncKey = `${baseline.id}:${baseline.alias ?? ""}:${baseline.strategy}:${baseline.stickyLimit}:${baseline.defaultEffort}:${baseline.targets.map((t) => `${t.provider}/${t.model}:${t.weight ?? 1}`).join(",")}`;
   const effortMap = useMemo(() => {
@@ -89,8 +114,8 @@ export function DetailPanel({
     [isCreate, baseline, cataloguedComboIds],
   );
   const settingsSearch = useMemo(
-    () => comboSettingsSearch(settingsQuery, settingsRegex, t),
-    [settingsQuery, settingsRegex, t],
+    () => comboSettingsSearch(settingsQuery, settingsRegex, t, settingsFlags),
+    [settingsQuery, settingsRegex, t, settingsFlags],
   );
   const settingsNote = settingsSearch.error
     ? `${t("regex.invalid")}: ${settingsSearch.error}`
@@ -241,6 +266,10 @@ export function DetailPanel({
                 placeholder={t("settings.search")}
                 aria-label={t("settings.search")}
                 aria-invalid={settingsSearch.error !== null}
+                // Only while the chip row is on screen: in plain-text mode there is
+                // no state line to point at, and a description referencing an id
+                // that is not rendered is announced as nothing at all.
+                aria-describedby={settingsRegex ? SETTINGS_FLAGS_ID : undefined}
                 style={{ flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 420 }}
               />
               <Chip
@@ -253,12 +282,37 @@ export function DetailPanel({
               </Chip>
               <RegexBuilderButton
                 value={settingsQuery}
-                onApply={(pattern) => setSettingsQuery(pattern)}
+                // Both halves of what the builder composed. Taking the pattern and
+                // leaving the flags behind is what made the popover's flag chips
+                // decorative from this field's point of view.
+                onApply={(pattern, appliedFlags) => {
+                  setSettingsQuery(pattern);
+                  setSettingsFlags(appliedFlags);
+                }}
                 regex={settingsRegex}
                 onRegexChange={setSettingsRegex}
+                // Seeds the popover from what this field compiles right now, so
+                // reopening the builder shows the set already in force rather
+                // than resetting the user's choice to the default every time.
+                flags={settingsFlags}
                 label={t("settings.openBuilder")}
               />
             </div>
+            {/*
+              Below the search row rather than inside it: that row is a single flex
+              line already carrying the icon, the field, the `.*` chip and the
+              builder trigger, and six more chips in it would squeeze the input to
+              nothing at the narrow width this panel is checked at. It stays
+              directly under the field it describes, which is what anchoring means
+              here — and it renders only in regex mode, because plain text is a
+              case-insensitive substring search whatever the chips say.
+            */}
+            <SearchFlagsRow
+              regex={settingsRegex}
+              flags={settingsFlags}
+              onFlagsChange={setSettingsFlags}
+              id={SETTINGS_FLAGS_ID}
+            />
             {settingsNote && (
               <p
                 role={settingsSearch.error ? "alert" : "status"}

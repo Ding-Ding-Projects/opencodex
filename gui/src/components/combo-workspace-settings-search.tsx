@@ -1,5 +1,6 @@
 import type { TFn } from "../i18n/shared";
 import { makeMatcher } from "../pages/models-shared";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 
 /**
  * The settings the combo detail's Config tab owns, in render order. The
@@ -78,10 +79,34 @@ export interface ComboSettingsSearch {
  * same capped ECMAScript matcher every other search bar in the GUI uses. An invalid
  * pattern matches nothing rather than falling back to plain text, so the reported
  * error and the visible result never disagree.
+ *
+ * `flags` is what the anchored builder beside the field actually composed. It used
+ * to be nothing at all — this function took a pattern and let `makeMatcher` pin
+ * `i` — so the flag chips inside the popover changed its own preview and then
+ * changed nothing about which of the three cards survived: a pattern deliberately
+ * built as case-sensitive arrived here case-insensitive. It defaults to
+ * `DEFAULT_SEARCH_FLAGS`, the same `i` this compiled before, so a caller that has
+ * not been given a flags control keeps exactly the behaviour it has today rather
+ * than silently changing what it finds.
+ *
+ * `g` and `y` are dropped inside `makeMatcher` before compiling. Both advance
+ * `lastIndex` between calls, and this matcher is deliberately reused — once down
+ * the three setting ids and again over the About tab's text — so a surviving `g`
+ * would make the second card match, the third not, and the cross-tab note appear
+ * or vanish purely on the order the tests happened to run in.
+ *
+ * Plain text is untouched by any of it: it is a substring search over visible
+ * labels and stays case-insensitive whatever the flags say, because the flags
+ * describe a regex that mode never compiles.
  */
-export function comboSettingsSearch(query: string, useRegex: boolean, t: TFn): ComboSettingsSearch {
+export function comboSettingsSearch(
+  query: string,
+  useRegex: boolean,
+  t: TFn,
+  flags = DEFAULT_SEARCH_FLAGS,
+): ComboSettingsSearch {
   const active = query.trim().length > 0;
-  const matcher = makeMatcher(query, useRegex);
+  const matcher = makeMatcher(query, useRegex, flags);
   const index = comboSettingsIndex(t);
   const hitIds = new Set(COMBO_SETTING_IDS.filter((id) => matcher.test(index[id])));
   const other = active ? comboElsewhereIndex(t).filter((row) => matcher.test(row.text)) : [];

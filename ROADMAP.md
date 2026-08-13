@@ -369,16 +369,65 @@ was told last month that a feature was missing needs to see it corrected, not si
   trusted: reverting a matcher to `"i"`, deleting a chip row, dropping the flags out of `onApply`,
   reintroducing `new RegExp(query, "i")`, stopping `stripStatefulFlags` from stripping, and removing
   a row from the inventory each turn it red, and restoring each turns it green.
-- **Still open: two shared matchers the original list of nine did not name.**
-  `gui/src/pages/models-shared.ts`'s `makeMatcher` and `gui/src/pages/history-model.ts`'s
-  `filterTimeline` both still compile `new RegExp(trimmed, "i")` with the flags pinned. Between them
-  they feed seven further surfaces that each render a builder — `Models.tsx`, `Settings.tsx`,
-  `ClaudeDesktop.tsx`, `ComboWorkspace.tsx`, `combo-workspace-settings-search.tsx`,
-  `CodexAccountPool.tsx` and `VersionHistory.tsx` — so the defect there is the same one, at roughly
-  the same size again. Closing it is the same shape of change: thread `flags` through the two shared
-  matchers, write them back from each `onApply`, and give each field a `SearchFlagsRow`. Adding
-  those bars to the inventory in `collection-search-flags.test.ts` is what should make the guard go
-  red until they are done.
+- ~~**Still open: two shared matchers the original list of nine did not name.**~~ Closed for the
+  seven surfaces this named. `gui/src/pages/models-shared.ts`'s `makeMatcher` takes a third `flags`
+  argument and `gui/src/pages/history-model.ts`'s `filterTimeline` an optional `flags` on
+  `TimelineFilter`; both default to `DEFAULT_SEARCH_FLAGS`, which is the same `"i"` they used to
+  compile in — deliberately, because between them they feed more call sites than the seven named
+  here, and a default that changed what an unflagged call finds would have been a silent regression
+  across all of them rather than a fix. Both strip `g` and `y` through `stripStatefulFlags` before
+  compiling: `RegExp.prototype.test` carries `lastIndex` between calls, so one matcher reused down a
+  list keeps every other row, and which half survives depends on nothing but the order the rows were
+  tested in. `comboSettingsSearch` in `gui/src/components/combo-workspace-settings-search.tsx` takes
+  and forwards `flags` for the same reason — it is a third entry point rather than a surface, since
+  it wraps `makeMatcher` for the combo detail's Config tab.
+  - The seven surfaces named above turned out to render **eight** fields. `Models.tsx` has two
+    search bars, the model catalogue search and its own settings search; and the field filed here
+    under `combo-workspace-settings-search.tsx` is rendered by `combo-workspace-detail-panel.tsx`,
+    that file being the matcher rather than the screen. Each of the eight now holds `flags` as
+    state seeded from `DEFAULT_SEARCH_FLAGS`, writes the pattern *and* the flags back from
+    `RegexBuilderButton`'s `onApply`, seeds the builder from its own flags so the round trip is
+    bidirectional, and renders a `SearchFlagsRow` beneath the field under its own state-line id —
+    `models-regex-flags-state`, `models-settings-flags-state`, `settings-regex-flags-state`,
+    `claude-desktop-settings-flags-state`, `cwi-search-flags-state`, `cws-settings-flags-state`,
+    `codex-pool-settings-flags-state`, `history-regex-flags-state`. The ids are per field and never
+    shared: two bars on one screen own two independent flag sets, and one id pointing at both would
+    describe each with the other's state. Each field names its row in `aria-describedby` only in
+    regex mode, because that is the only mode the row renders in and a description pointing at an
+    element that is not on the page is announced as nothing at all.
+  - The rows sit under the search row rather than inside it. Each of these rows is already a single
+    flex line carrying the field, the `.*` chip and the builder trigger, and six more chips in it
+    would squeeze the input to nothing in the narrow columns three of these surfaces are checked at
+    — the models workspace's main column, the combo rail and the combo detail panel.
+  - `gui/tests/models-shared-matcher-flags.test.ts`, `gui/tests/history-model-filter-flags.test.ts`
+    and `gui/tests/combo-settings-flags.test.ts` are the guards: 27 tests, all passing. Each asserts
+    the user-visible defect in one pair — a pattern composed as case-sensitive staying
+    case-sensitive — that an unflagged call still behaves exactly as the pinned `"i"` did, that `g`
+    and `y` do not make a list drop every other row, that plain text is untouched by the flags since
+    it never compiles a regex for them to describe, and that the trim, the empty query, the
+    400-character cap and the match-nothing-and-say-so shape all survive carrying them.
+  - **Still open here: the wiring is asserted for one of the eight fields, not for eight.**
+    `combo-settings-flags.test.ts` checks the combo panel's flags state, its matcher call, the
+    `flags=` hand-down, the write-back out of `onApply` and its chip row's id by exact source
+    string. The other seven are covered only at the matcher level, and a matcher test passes on a
+    field that hands it no flags, because the test hands them itself. The hand-written inventory in
+    `gui/tests/collection-search-flags.test.ts` is still the eleven bars of the entry above and was
+    not extended to these eight, so a field reverting to a query and a mode and no flags at all
+    would go unnoticed. That inventory is where they belong.
+- **Still open: `makeMatcher` feeds six more call sites the entry above did not name, and a third
+  shared matcher sits behind the tab searches.** Each of the six still takes the matcher's default
+  while rendering a builder whose flags it discards: `claude-desktop-lane.ts`'s `laneView` behind
+  every model-family lane filter on Claude Desktop (one builder per lane),
+  `claude-settings-search.ts`'s `claudeSettingsSearch` behind `claude-code-settings.tsx`, both
+  matchers in `use-dashboard-data.ts` behind `dashboard-models-section.tsx` and
+  `dashboard-overview-panels.tsx`, and `ProviderWorkspaceShell.tsx` and `ProviderSettings.tsx` in
+  the provider workspace. Separately, `shared/m3/tabs.ts`'s `tabMatcher` already accepts `flags`
+  and resets `lastIndex` per call, but every caller pins the `TAB_MATCH_FLAGS` constant: the tab
+  search panel, the tab strip's bulk-close and page searches, and the font picker all seed their
+  builder from that constant and never read back what it returns. Closing either is the same shape
+  of change as the one above, and adding those fields to `collection-search-flags.test.ts` is what
+  should keep the guard red until they are done. Every `settingsMatcher` caller, by contrast, now
+  passes flags — that family is complete.
 
 ## Non-goals
 

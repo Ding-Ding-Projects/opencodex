@@ -5,6 +5,8 @@ import { IconChevron, IconSearch } from "../icons";
 import { Banner, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
 import { useNotifications } from "../shell/notifications-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import { makeMatcher } from "./models-shared";
 import { claudeSettingLabels } from "./claude-settings-search";
 import { useT, type TFn, type TKey } from "../i18n/shared";
@@ -172,6 +174,19 @@ const SETTINGS_HIT_LABEL = { fontSize: "var(--t-body-m)", fontWeight: 500 } as c
 const SETTINGS_HIT_DESC = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" } as const;
 const MONO_STYLE = { fontFamily: "var(--mono)" } as const;
 
+/**
+ * The id of this bar's flag state line, which its own search field points
+ * `aria-describedby` at.
+ *
+ * A named constant rather than the same literal typed twice, because the two halves fail
+ * silently and separately when they drift: a field describing an id nothing renders is a
+ * dangling reference no screen catches, and a state line nothing points at is simply never
+ * read aloud. It is scoped to this bar by name — the per-lane model filters below own their
+ * own queries and modes, so if one of them ever grows a chip row it needs an id of its own
+ * rather than a share of this one.
+ */
+const SETTINGS_FLAGS_STATE_ID = "claude-desktop-settings-flags-state";
+
 /** One hit of this surface's settings search — same row anatomy the Codex pool uses. */
 interface DesktopSettingHit {
   id: string;
@@ -338,6 +353,16 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // filtering — and the Code tab's search cannot reinterpret this one.
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsRegex, setSettingsRegex] = useState(false);
+  /**
+   * The flags THIS field compiles with. State rather than the `"i"` the matcher
+   * used to pin: the builder anchored to this field composes a pattern *and* its
+   * flags, so a pattern deliberately built as case-sensitive arrived here
+   * case-insensitive and matched settings the user had ruled out. Held beside the
+   * query and the mode above it, and — like them — owned by this bar alone: the
+   * per-lane model filters below keep their own, so correcting `i` here cannot
+   * recompile what Opus is filtering.
+   */
+  const [settingsFlags, setSettingsFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const importRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -550,8 +575,14 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // Plain text is the default; `.*` is the explicit opt-in, evaluated locally through the
   // shared capped ECMAScript matcher (400 pattern chars). An invalid pattern matches
   // nothing and says so, rather than silently reverting to substring search.
+  //
+  // The flags come from this bar's own state rather than the matcher's default, so the
+  // builder's preview and this hit list cannot report different matches for one pattern.
+  // The matcher drops `g` and `y` before compiling — both carry `lastIndex` between calls,
+  // so one matcher reused down the settings index would keep every other row, and which
+  // half survived would depend only on the order the rows were tested in.
   const settingsActive = settingsQuery.trim().length > 0;
-  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex);
+  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex, settingsFlags);
   // Held rather than rebuilt per use: the anchored builder hands the same rows back
   // as its sample, and two calls could drift into two different indexes.
   const settingsIndex = desktopSettingsIndex(t);
@@ -626,6 +657,10 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={settingsMatcher.error !== null}
+          // Only in regex mode, because that is the only mode the chip row renders in.
+          // Pointing at an id nothing renders would leave a screen reader hunting for a
+          // description that is not on the page.
+          aria-describedby={settingsRegex ? SETTINGS_FLAGS_STATE_ID : undefined}
           style={SETTINGS_SEARCH_INPUT}
         />
         <Chip
@@ -638,12 +673,28 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
         </Chip>
         <RegexBuilderButton
           value={settingsQuery}
-          onApply={pattern => setSettingsQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and leaving the
+          // flags behind is what made the popover's flag chips decorative from this
+          // field's point of view.
+          onApply={(pattern, appliedFlags) => { setSettingsQuery(pattern); setSettingsFlags(appliedFlags); }}
           regex={settingsRegex}
           onRegexChange={setSettingsRegex}
+          // Seeded from this field, so re-opening the panel shows the flags the search is
+          // actually running under instead of resetting them to the shipped default.
+          flags={settingsFlags}
           sample={settingsIndex.map(row => row.haystack).join("\n")}
         />
       </div>
+      {/* Below the row rather than inside it: the row is one flex line already carrying the
+          field, the `.*` chip and the builder trigger, and six more chips in it would crush
+          the field at the narrow widths this tab is checked at. It stays directly under the
+          search it describes, which is what the anchoring is for. */}
+      <SearchFlagsRow
+        regex={settingsRegex}
+        flags={settingsFlags}
+        onFlagsChange={setSettingsFlags}
+        id={SETTINGS_FLAGS_STATE_ID}
+      />
       <p
         role={settingsMatcher.error ? "alert" : "status"}
         style={{

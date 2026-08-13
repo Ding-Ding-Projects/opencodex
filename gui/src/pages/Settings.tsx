@@ -24,7 +24,8 @@
  *    hands its outcome upward rather than reporting it itself.
  * 3. Plain-text search by default, `.*` an explicit opt-in, patterns capped at
  *    400 characters and evaluated locally — the same matcher every other search
- *    bar in the GUI uses.
+ *    bar in the GUI uses, compiled with the flags the anchored builder beside the
+ *    field actually composed rather than a pinned `i`.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -34,6 +35,8 @@ import { IconRefresh, IconSearch } from "../icons";
 import { LOCALES, useI18n, type TKey } from "../i18n/shared";
 import { Button, Card, Chip, Empty, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import { readRevisions } from "../shell/revisions";
 import { usePrefs } from "../theme/prefs-context";
 import { FONT_CHOICES } from "../theme/m3";
@@ -172,6 +175,18 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this one field compiles with, held here rather than pinned inside
+   * the matcher. The builder anchored to the field composes a pattern *and* its
+   * flags; taking only the pattern is what made the popover's flag chips
+   * decorative from this field's point of view — a pattern deliberately built as
+   * case-sensitive arrived case-insensitive, and turning on `m` or `s` changed
+   * the panel's preview and then changed nothing about which settings this page
+   * showed. State per bar, never shared: were a second search bar ever added to
+   * this page it would own its own set, because one shared set would mean turning
+   * on `u` in one field silently recompiled the other.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [revisionCount, setRevisionCount] = useState(0);
   const loadGenerationRef = useRef(0);
 
@@ -619,7 +634,13 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
 
   /* -------------------------------------------------------------- search -- */
 
-  const matcher = useMemo(() => makeMatcher(query, useRegex), [query, useRegex]);
+  // `flags` is passed rather than left to default: the chip row below the field
+  // and this compile step must never be able to disagree about what the search
+  // is running as. `g` and `y` are dropped inside the matcher — their `lastIndex`
+  // survives between calls, so one matcher reused down the row list would keep
+  // every other setting, and which half survived would depend only on the order
+  // the rows were pushed in.
+  const matcher = useMemo(() => makeMatcher(query, useRegex, flags), [query, useRegex, flags]);
   const visible = rows.filter(row => matcher.test(`${row.label} ${row.desc ?? ""} ${row.value}`));
   const groups = SETTINGS_GROUPS
     .map(group => ({ ...group, rows: visible.filter(row => row.group === group.id) }))
@@ -662,6 +683,10 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={!!matcher.error}
+          // Bound only in regex mode, because that is the only mode the chip row
+          // renders in: a reference to an element that is not there resolves to
+          // nothing and quietly costs the field its description.
+          aria-describedby={useRegex ? "settings-regex-flags-state" : undefined}
           style={SEARCH_INPUT}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -670,15 +695,34 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
         </Chip>
         <RegexBuilderButton
           value={query}
-          onApply={pattern => setQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          // Seeded with what this field compiles today, so the round trip closes:
+          // the panel opens showing the flags in force rather than a fresh `i`,
+          // and applying writes whatever it ends up with back.
+          flags={flags}
           // Every indexed setting, label, description and current value alike, so a
           // pattern is tried against the same text this page searches.
           sample={rows.map(row => `${row.label} ${row.desc ?? ""} ${row.value}`).join("\n")}
           label={t("settings.openBuilder")}
         />
       </div>
+      {/* Directly under the field it belongs to, and only in regex mode — plain
+          text is a case-insensitive substring search whatever the chips say, and a
+          control that looks live while changing nothing is the decorative
+          affordance the interface rules forbid. It sits above the status line
+          because it describes what the search compiles to, which is the thing the
+          match count below it is a consequence of. */}
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id="settings-regex-flags-state"
+      />
       <p role="status" style={STATUS}>{status}</p>
 
       {loading && !hasData ? (
