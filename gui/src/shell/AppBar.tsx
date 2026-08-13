@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
-import { IconBell, IconDevices, IconMenu, IconPalette } from "../icons";
+import { IconBell, IconDevices, IconMenu, IconPalette, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
 import CostMeter from "./CostMeter";
@@ -14,6 +14,7 @@ import QuickRestore from "./QuickRestore";
 import ViewportPreview from "./ViewportPreview";
 import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
+import { PALETTE_OPEN_EVENT } from "./CommandPalette";
 import { usePrefs } from "../theme/prefs-context";
 import { useSettingsDrafts } from "../settings-drafts-context";
 import { useSettingsSave } from "./use-settings-save";
@@ -117,6 +118,21 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
           </Button>
         </div>
       )}
+
+      {/* One search over every page and every setting the app has. The keyboard
+          route (Ctrl+Shift+F) works from anywhere; this is the discoverable
+          path for someone who has not learned the shortcut yet. Dispatched as
+          a window event rather than a prop, so this bar does not have to hold
+          the palette's open state on its behalf. */}
+      <button
+        type="button"
+        className="m3-icon-btn"
+        onClick={() => window.dispatchEvent(new Event(PALETTE_OPEN_EVENT))}
+        aria-label={t("commandPalette.trigger")}
+        title={t("commandPalette.trigger")}
+      >
+        <IconSearch aria-hidden />
+      </button>
 
       {/* Ahead of the notification bell on purpose: this is the control somebody
           reaches for when something is wedged, and the far end of the row is

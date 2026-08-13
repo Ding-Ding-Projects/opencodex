@@ -43,6 +43,7 @@ import { useTabRouting } from "./shell/use-tab-routing";
 import { codenameLabel, fullBuildLabel, readBuildInfo, shortBuildLabel, windowTitle } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
+import CommandPalette from "./shell/CommandPalette";
 import ElementAppearanceHost from "./shell/ElementAppearanceHost";
 import TabStrip from "./shell/TabStrip";
 import SnackbarHost from "./shell/SnackbarHost";
@@ -344,6 +345,9 @@ function AppShell() {
 
       <SnackbarHost />
       <DimSumCard version={displayedVersion} />
+      {/* Ctrl+Shift+F, from anywhere in the app — decides for itself whether it
+          is open, exactly like OnboardingWizard below it. */}
+      <CommandPalette tabs={tabs} />
       <RemoteConnectionDialog
         key={remoteDialogOpen ? "open" : "closed"}
         open={remoteDialogOpen}

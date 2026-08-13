@@ -1121,6 +1121,34 @@ export const M3_EN = {
   "grok.noMatch": "No models match your search.",
   "pws.groupNeedsAttention": "Needs attention ({count})",
 
+  // ---- command palette (shell/CommandPalette.tsx) ----
+  // The one search that answers for the whole app rather than for the screen a
+  // user happens to be on: every page, and every setting the cross-page registry
+  // already knows about (`shell/settings-registry.ts`). A row is either a real
+  // control — wired straight into the same draft the surface it belongs to
+  // writes — or an honest readout that says where the real editor lives, never a
+  // switch that looks live and changes nothing.
+  "commandPalette.title": "Command palette",
+  "commandPalette.trigger": "Open command palette",
+  "commandPalette.searchPlaceholder": "Search pages and settings…",
+  "commandPalette.searchLabel": "Search pages and settings",
+  "commandPalette.noResults": "Nothing matches “{query}”.",
+  "commandPalette.destinationsGroup": "Pages",
+  "commandPalette.settingsGroup": "Settings",
+  "commandPalette.kindPage": "Page",
+  "commandPalette.goTo": "Go to {label}",
+  // Shown under a row whose real editor is a screen this cannot safely mirror —
+  // its state is local to that screen's own component, not staged anywhere this
+  // can reach. Selecting the row still opens and highlights it.
+  "commandPalette.editOnPage": "Edited on {tab}. Open it to change this.",
+  // Shown under a row whose value *could* be edited here, but the surface that
+  // loads it has not been opened yet this session, so there is nothing live to
+  // show. Opening it once is enough — after that this row edits it directly.
+  "commandPalette.loadOnPage": "Not loaded yet. Open {tab} once, then this can be changed from here too.",
+  "commandPalette.expand": "Expand to a full window",
+  "commandPalette.collapse": "Collapse to a compact card",
+  "commandPalette.close": "Close the command palette",
+
   // ---- anchored regex builder (shell/RegexBuilderButton.tsx) ----
   // The builder that opens beside a search bar instead of navigating to its own
   // page. Only the strings the popover adds live here; everything it renders in
