@@ -42,16 +42,31 @@ Bun runtime for end users, but contributor commands such as `bun install`, `bun 
 ## Pre-push hook
 
 After cloning, run once to install a local pre-push hook that runs the typecheck,
-GUI eslint, unit-test, privacy-scan, and (when `gui/` changed) React Doctor
-portions of the CI gate:
+unit-test, privacy-scan, and (when `gui/` changed) React Doctor portions of the
+CI gate:
 
 ```sh
 bun run setup:hooks
 ```
 
 This installs a `pre-push` hook (into the hooks dir git reports, so worktrees and
-`core.hooksPath` work) that runs `bun run prepush` — `typecheck`, `lint:gui`,
-`test`, `privacy:scan`, and `doctor:gui:if-changed` — before every `git push`.
-The same checks run on ubuntu-latest, macos-latest, and windows-latest in CI (CI
-additionally builds the GUI and smoke-tests the CLI). Skip in an emergency with
-`git push --no-verify`.
+`core.hooksPath` work) that runs `bun run prepush` — `typecheck`, `test`,
+`privacy:scan`, and `doctor:gui:if-changed` — before every `git push`. The same
+checks run on windows-latest in CI (CI additionally builds the GUI and
+smoke-tests the CLI). Skip in an emergency with `git push --no-verify`.
+
+## Lint
+
+ESLint is not a gate. No workflow runs it, and the pre-push hook does not run it
+either, so nothing withholds a build or a release on a lint verdict. It stays
+installed and runnable on demand:
+
+```sh
+bun run lint:gui        # repo root
+cd gui && bun run lint  # same thing, from gui/
+```
+
+Run it while you work on the dashboard and fix what it reports. Be clear about
+what this costs: a release can ship from a commit ESLint would have complained
+about, because nothing in CI is checking. A green pipeline means the build and
+the tests that still run were fine — never that the code was linted.
