@@ -201,6 +201,16 @@ was told last month that a feature was missing needs to see it corrected, not si
     renderer's queue behaviour are tested, but the synthesis path is proved by a real request made
     by hand (322 voices listed; 14,976 bytes of valid MP3 from `zh-HK-HiuMaanNeural` through the
     route) rather than by CI, which cannot depend on an undocumented third-party endpoint.
+  - **Both routes are driveable from a shell.** `ocx narrator voices|speak|status` (`src/cli/
+    narrator.ts`) calls the same two routes, so the catalogue and the synthesiser are not
+    picker-only — which is what the headless parity guard requires of every management endpoint.
+    `--edge` is required by every path that reaches the network and the refusal without it carries
+    the disclosure; `lib/narrator-control.ts` holds the bounds and the request validation that the
+    route and the CLI both apply, so an over-long line is refused locally rather than on the wire.
+    Installed platform voices are enumerated through the OS speech platform (Windows only today),
+    which is a near — not identical — match for what the browser's picker reports. The narrator's
+    own settings stay per-visitor browser state, and `status` says so rather than inventing a
+    server-side default.
 
 ### Remote access
 

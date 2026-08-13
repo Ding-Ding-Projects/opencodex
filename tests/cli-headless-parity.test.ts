@@ -66,6 +66,10 @@ describe("headless GUI parity CLI", () => {
       ["/api/selected-models", "ocx models"],
       ["/api/custom-models", "ocx models"],
       ["/api/model", "ocx models"],
+      // `ocx narrator voices --source edge --edge` and `ocx narrator speak`
+      // reach these two routes, so the catalogue and the synthesiser are both
+      // driveable from a shell rather than only from the voice picker.
+      ["/api/narrator", "ocx narrator"],
       ["/api/changelog", "ocx changelog"],
       ["/api/combos", "ocx combo"],
       ["/api/debug", "ocx debug/observe"],

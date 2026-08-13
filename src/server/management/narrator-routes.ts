@@ -11,20 +11,17 @@
  * `User-Agent`/`Origin` pair that a browser will not let a page set, so the call
  * has to happen somewhere with real control over its headers regardless.
  *
- * Nothing here is enabled by default. The renderer only calls these routes after
- * the user has explicitly turned the Edge source on, having been told that the
- * narrated text leaves the machine.
+ * Nothing here is enabled by default, on either surface. The renderer only calls
+ * these routes after the user has explicitly turned the Edge source on, having
+ * been told that the narrated text leaves the machine; `ocx narrator` requires
+ * `--edge` on every path that reaches them and prints the same disclosure when
+ * it is missing. Neither caller may ever make this implicit.
  */
 
 import { jsonResponse } from "../auth-cors";
-import { EDGE_TEXT_MAX, listEdgeVoices, synthesizeEdgeSpeech } from "./narrator-tts";
+import { listEdgeVoices, synthesizeEdgeSpeech } from "./narrator-tts";
+import { validateNarratorSpeech } from "../../lib/narrator-control";
 import type { ManagementContext } from "./context";
-
-/** Mirrors the picker's own bounds; a request outside them is a bug, not input. */
-function clampMultiplier(value: unknown): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.min(2, Math.max(0.5, n)) : 1;
-}
 
 export async function handleNarratorRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config } = ctx;
@@ -56,19 +53,16 @@ export async function handleNarratorRoutes(ctx: ManagementContext): Promise<Resp
       return jsonResponse({ error: "malformed request body" }, 400, req, config);
     }
 
-    const text = typeof body.text === "string" ? body.text.trim() : "";
-    const voice = typeof body.voice === "string" ? body.voice : "";
-    if (!text || !voice) return jsonResponse({ error: "text and voice are required" }, 400, req, config);
-    if (text.length > EDGE_TEXT_MAX) {
-      return jsonResponse({ error: `text exceeds ${EDGE_TEXT_MAX} characters` }, 413, req, config);
+    // Shared with `ocx narrator speak`, so the headless surface refuses exactly
+    // what this refuses rather than discovering the bounds from a status code.
+    const checked = validateNarratorSpeech(body);
+    if (!checked.ok) {
+      return jsonResponse({ error: checked.message }, checked.reason === "too-long" ? 413 : 400, req, config);
     }
 
     try {
       const audio = await synthesizeEdgeSpeech({
-        text,
-        voice,
-        rate: clampMultiplier(body.rate),
-        pitch: clampMultiplier(body.pitch),
+        ...checked.request,
         // A superseded utterance aborts its fetch in the renderer; that closes
         // this request, which closes the upstream socket rather than leaving it
         // transferring audio nobody will hear.
