@@ -9,15 +9,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { applyElementTypography, applyLayout, applyTokens, clearElementStyle, fontStackFor, resolveDark, windowClass } from "./theme/m3";
 import { DEFAULT_PREFS, ELEMENT_TARGETS, PREFS_KEY, readPrefs, type Prefs } from "./theme/prefs-context";
-import { detectInitial, readFunny, writeFunny, type FunnyLevels, type Locale, type TKey, type Vars } from "./i18n/shared";
+import { FUNNY_KEY, LOCALES, detectInitial, readFunny, writeFunny, type FunnyLevels, type Locale, type TKey, type Vars } from "./i18n/shared";
 import { translate } from "./i18n/resolve";
 import { recordRevision } from "./shell/revisions";
 import {
   SETTINGS_FIELD_LABELS,
   applySettingsDraft,
+  browserWriteReason,
   countSettingsDraftChanges,
   settingsSnapshotsEqual,
   type AcceptedSettingsChange,
+  type FailedBrowserWrite,
   type SettingsSaveOutcome,
   type SettingsSnapshot,
 } from "./pages/settings-shared";
@@ -237,8 +239,7 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
   }, [appliedFunny, appliedLocale, appliedPrefs, appliedSettings]);
 
   /**
-   * Persist the whole draft, and hand back what the server made of the settings
-   * half of it.
+   * Persist the whole draft, and hand back what became of both halves of it.
    *
    * The return value exists because this provider sits above `LanguageProvider`
    * and `NotificationsProvider` — both read its context — so it can reach
@@ -246,12 +247,32 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
    * this into the notice; a caller that invokes `apply` bare still saves
    * correctly, but says nothing, which is the state a refused write must never
    * be left in.
+   *
+   * `null` means nothing was attempted — a clean draft, or a save already in
+   * flight. It deliberately no longer means "nothing server-backed was written":
+   * that conflated an empty result with an absent one, and browser-owned groups
+   * are exactly the ones that produce no server work, so their failures were the
+   * one kind of failure the return value could not express.
    */
   const apply = useCallback(async (): Promise<SettingsSaveOutcome | null> => {
     if (!dirty || applyingRef.current) return null;
     applyingRef.current = true;
     setApplying(true);
-    let outcome: SettingsSaveOutcome | null = null;
+    const outcome: SettingsSaveOutcome = { accepted: [], refused: [], failed: [], unpersisted: [] };
+    // Each browser-owned group repaints from the draft regardless, so a refusal
+    // here is never fatal: the change is live and simply cannot outlive a
+    // reload. Recording it is what lets the notice say that rather than leaving
+    // a bar that will not clear and no account of why.
+    const unpersisted = (group: FailedBrowserWrite["group"], key: string, error: unknown) => {
+      outcome.unpersisted.push({ group, reason: browserWriteReason(error, key) });
+    };
+    // `translate` rather than `t()`, for the reason `changeSummary` sets out
+    // above: this provider is mounted outside `LanguageProvider`, so the hook
+    // cannot be called from here, and the locale and levels it would resolve
+    // against are this provider's own state anyway. Before this the three
+    // summaries below were English literals, so a Cantonese profile got a
+    // Cantonese Version history with three English rows sitting in it.
+    const summary = (key: TKey, vars?: Vars) => translate(locale, funny, key, vars);
     try {
       // Browser values are persisted only when the user explicitly applies. The
       // write happens before moving the matching applied baseline, so a quota
@@ -260,27 +281,38 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
         try {
           localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
           setAppliedPrefs(prefs);
-          recordRevision({ scope: "settings", label: "Appearance", summary: "Applied appearance settings", before: JSON.stringify(appliedPrefs) });
-        } catch {
+          recordRevision({ scope: "settings", label: "Appearance", summary: summary("appearance.revisionSummary"), before: JSON.stringify(appliedPrefs) });
+        } catch (error) {
           // Keep the old baseline so the bar remains dirty and retryable.
+          unpersisted("appearance", PREFS_KEY, error);
         }
       }
       if (appliedLocale !== locale) {
         try {
           localStorage.setItem(LANGUAGE_KEY, locale);
           setAppliedLocale(locale);
-          recordRevision({ scope: "settings", label: "Language", summary: `Interface language set to ${locale}`, before: appliedLocale });
-        } catch {
+          recordRevision({
+            scope: "settings",
+            label: "Language",
+            // The locale's own endonym, not its code: `lang.revisionSummary`
+            // has been sitting unused since the field-level writes moved here,
+            // and a history line reading "set to bi" names neither a language
+            // nor anything the user chose from.
+            summary: summary("lang.revisionSummary", { name: LOCALES.find(item => item.code === locale)?.name ?? locale }),
+            before: appliedLocale,
+          });
+        } catch (error) {
           // Same retryable semantics as a failed endpoint.
+          unpersisted("language", LANGUAGE_KEY, error);
         }
       }
       if (!equal(appliedFunny, funny)) {
         try {
           writeFunny(funny);
           setAppliedFunny(funny);
-          recordRevision({ scope: "settings", label: "Language", summary: "Applied funny-level settings", before: JSON.stringify(appliedFunny) });
-        } catch {
-          // writeFunny is intentionally quota-tolerant; retain the dirty baseline.
+          recordRevision({ scope: "settings", label: "Language", summary: summary("lang.funnyRevision"), before: JSON.stringify(appliedFunny) });
+        } catch (error) {
+          unpersisted("funny", FUNNY_KEY, error);
         }
       }
       if (appliedSettings && settings && settingsDirty) {
@@ -295,7 +327,9 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
             before: JSON.stringify(change.before),
           });
         }
-        outcome = { accepted: result.accepted, refused: result.refused, failed: result.failed };
+        outcome.accepted = result.accepted;
+        outcome.refused = result.refused;
+        outcome.failed = result.failed;
       }
     } finally {
       applyingRef.current = false;

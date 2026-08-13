@@ -49,8 +49,9 @@ export interface SettingsDraftContextValue {
   setSettingsBaseline: (snapshot: SettingsSnapshot) => void;
   setSettings: (update: (previous: SettingsSnapshot) => SettingsSnapshot) => void;
   /**
-   * Persist the draft and report what the settings endpoints made of it, or
-   * `null` when nothing server-backed was written.
+   * Persist the draft and report what became of it — what the settings
+   * endpoints made of the server-backed half, and which browser-owned groups
+   * the browser refused to store. `null` means nothing was attempted at all.
    *
    * Prefer `useSettingsSave`, which raises the notice. This provider is mounted
    * outside `LanguageProvider` and `NotificationsProvider`, so it can reach
