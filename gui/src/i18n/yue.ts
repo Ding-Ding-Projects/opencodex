@@ -2190,17 +2190,23 @@ export const yue: Partial<Record<TKey, string>> = {
   "cost.menuTitle": "估算成本時段",
   "cost.aria": "{range} 內估算嘅 API 成本 {amount}。改時段。",
   "cost.title": "估算 API 成本（{range}）— 撳一下改時段",
-  "cost.lane.direct": "直接 API key",
-  "cost.lane.directMeaning": "照公佈嘅牌價，直接記喺你個 API key 度找數。",
-  "cost.lane.equivalent": "API 等值",
-  "cost.lane.equivalentTag": "唔使找數",
-  "cost.lane.equivalentMeaning": "呢啲流量如果行 API 會使幾多錢。你個訂閱或者 OAuth 計劃已經包咗，一分錢都唔會收，呢個唔係帳單。",
-  "cost.lane.equivalentAria": "{range} 內 API 等值成本 {amount}。唔使找數 — 你個訂閱已經包咗呢啲流量。改時段。",
-  "cost.lane.equivalentTitle": "API 等值成本（{range}）— 唔使找數，你個訂閱已經包咗。撳一下改時段。",
-  "cost.lane.none": "冇公佈價目",
-  "cost.lane.noneMeaning": "冇任何公佈嘅價目表覆蓋到呢啲流量，所以顯示唔到數字。呢個唔等於免費。",
+  // 「等同 API 標價」跟返 usage.cost.total 嘅講法。呢個唔係帳單，所以「唔收費」
+  // 同「唔係帳單」要講到明明白白，唔可以令人以為要俾錢。
+  //
+  // 兩條 lane 各自譯過呢九個 key。呢版係跟返 usage.cost.disclaimer 現有嘅語氣
+  // 揀嘅，唔係邊條 lane 贏——譯詞一致比譯得靚重要。
+  "cost.lane.direct": "直接用 API key",
+  "cost.lane.directMeaning": "照公開牌價，直接計落你嘅 API key 度。",
+  "cost.lane.equivalent": "等同 API 標價",
+  "cost.lane.equivalentTag": "唔收費",
+  "cost.lane.equivalentMeaning": "呢啲流量如果行 API 會使幾多錢。你嘅訂閱或者 OAuth plan 已經包咗 — 唔會收你錢，呢個唔係帳單。",
+  "cost.lane.equivalentAria": "{range} 內等同 API 標價 {amount}。唔收費 — 你嘅訂閱已經包咗呢啲流量。改時段。",
+  "cost.lane.equivalentTitle": "等同 API 標價（{range}）— 唔收費，你嘅訂閱已經包咗。撳一下改時段。",
+  "cost.lane.none": "冇公開價錢",
+  "cost.lane.noneMeaning": "冇任何公開價目表覆蓋到呢啲流量，所以顯示唔到數字。呢個唔等於免費。",
 
-  // ---- price band (Fast tier, long context) ----
+  // ---- 價格級別（Fast tier、長 context）----
+  // 「標準價」跟返上面「公開牌價」嘅講法。倍數同 model 名保持原樣。
   "cost.tier.priority": "Fast 級別",
   "cost.tier.longContext": "長 context",
   "cost.tier.factorUniform": "×{factor}",
@@ -2441,10 +2447,16 @@ export const yue: Partial<Record<TKey, string>> = {
 
   // ---- usage ----
   "usage.card.estCost": "估算成本",
+  "usage.card.estCostEquivalent": "等同 API 標價",
   "usage.card.costHint": "牌價",
   "usage.card.requestsHint": "量到 {count} 個",
   "usage.card.totalTokensHint": "報咗 {count} 個",
   "usage.card.coverageHint": "{count} 個冇價錢",
+  "usage.cost.laneHeading": "成本計法",
+  "usage.cost.laneDirectRow": "直接 API key 開支",
+  "usage.cost.laneEquivalentRow": "訂閱 — 等同 API 標價",
+  "usage.cost.laneRequests": "{count} 個請求",
+  "logs.detail.costBasis": "成本計法",
 
   // ---- models ----
   "models.ctxValue": "{value} ctx",
@@ -2708,4 +2720,36 @@ export const yue: Partial<Record<TKey, string>> = {
   "claude.maxContextAutomaticValue": "Automatic",
   "claude.maxContextInvalidStoredProvenance": "config 檔有無效嘅 context 大小覆寫。畫面顯示 Automatic；Save 會清走呢個無效值。",
   "claude.maxContextInvalidStoredValue": "無效嘅已儲存值",
+
+  // ---- quick restore ----
+  // 還原同停 proxy 係兩件事，成功失敗都各自計，所以每句都要講清楚邊件做咗、
+  // 邊件冇做。`ocx` 指令同 config 檔名保持原文，因為用家要打得返出嚟。
+  "quickRestore.title": "快速還原",
+  "quickRestore.hint": "將 Codex 或者 Claude 自己嘅 configuration 交返畀佢，跟住停 proxy。還原會行先，唔會等停 proxy，所以就算平時個 stop 卡住咗，還原一樣做到。",
+  "quickRestore.codex": "還原 Codex",
+  "quickRestore.claude": "還原 Claude",
+  // 睇得見嘅 label 一字不改咁開頭，語音輸入先可以用畫面上嗰幾隻字撳到粒掣。
+  "quickRestore.codexAria": "還原 Codex — 交返佢原本嘅 configuration，跟住停 proxy",
+  "quickRestore.claudeAria": "還原 Claude — 交返佢原本嘅 configuration，跟住停 proxy",
+  "quickRestore.toolCodex": "Codex",
+  "quickRestore.toolClaude": "Claude",
+  "quickRestore.confirmTitle": "還原 {tool} 同停 proxy",
+  "quickRestore.confirmBody": "呢啲檔案會重寫，等 {tool} 用返自己嘅 configuration：\n\n{paths}\n\n你而家嘅狀態會先 commit 落本機版本紀錄，之後再開 OpenCodex 就會重新套用路由。\n\n跟住會停 proxy，所以呢個 dashboard 會落線。還原會行先，唔使睇停唔停到，所以就算 proxy 唔肯停，還原一樣會做。",
+  "quickRestore.confirmAction": "還原同停",
+  "quickRestore.loading": "讀緊還原狀態…",
+  "quickRestore.statusUnknown": "喺 proxy 度讀唔到還原狀態。",
+  "quickRestore.unavailable": "呢部機冇配置過 {tool}，所以冇嘢可以還原。",
+  "quickRestore.notInjected": "而家 {tool} 個 config 入面冇 OpenCodex 路由。還原一樣會修返模型目錄同 resume 紀錄。",
+  "quickRestore.restoring": "還原緊 {tool}…",
+  "quickRestore.stopping": "停緊 proxy…",
+  "quickRestore.stopHttp": "proxy 唔肯停（HTTP {status}）。",
+  "quickRestore.doneBoth": "{tool} 已還原，proxy 亦都停咗",
+  "quickRestore.doneRestoreOnly": "{tool} 已還原",
+  "quickRestore.stopFailedTitle": "proxy 冇停到",
+  "quickRestore.stopFailedBody": "{tool} 已經用返自己嘅 configuration，不過 OpenCodex 仲行緊 — 一開佢或者 sync，{tool} 就會再次經 proxy 行。喺 terminal 度行 `ocx stop`，或者喺 dashboard 撳 Stop。",
+  "quickRestore.restoreFailedTitle": "{tool} 還原失敗",
+  "quickRestore.restoreFailedBody": "proxy 冇停低，等你可以再試多次。喺 terminal 行 `ocx restore` 都係做同一件事。",
+  "quickRestore.noAnswer": "唔知 {tool} 還原咗未",
+  "quickRestore.noAnswerBody": "proxy 冇喺時限內回應，所以唔知啲檔案有冇重寫過。睇吓 `ocx status`，跟住喺 terminal 行 `ocx restore`。",
+  "quickRestore.snapshotSkipped": "還原之前嗰個紀錄快照唔夠時間做完，冇記錄到。",
 };

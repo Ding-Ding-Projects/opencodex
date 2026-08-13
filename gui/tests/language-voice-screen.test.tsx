@@ -81,12 +81,20 @@ test("renders the language, narrator and dim sum cards with accessible switches"
   const titles = [...container.querySelectorAll(".m3-card-title")].map(n => n.textContent);
   expect(titles).toEqual(["Interface language", "Narrator", "Dim sum surprise"]);
 
+  // One switch, not two. The dim sum surprise used to carry the second one; it
+  // cannot be opted out of any more, so shipping an off switch here would be the
+  // regression rather than the feature. `prefs.dimsum` went with it.
   const switches = [...container.querySelectorAll('[role="switch"]')];
-  expect(switches).toHaveLength(2);
-  expect(switches.every(s => s.getAttribute("aria-checked") !== null)).toBe(true);
-  // The narrator is off by default; the dim sum surprise is on.
+  expect(switches).toHaveLength(1);
   expect(switches[0].getAttribute("aria-checked")).toBe("false");
-  expect(switches[1].getAttribute("aria-checked")).toBe("true");
+
+  // The card still owes the reader a way to see one on demand rather than waiting
+  // out 1-in-10 odds, so what replaced the switch is a preview and not a gap.
+  const dimSumCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Dim sum surprise");
+  expect(dimSumCard).toBeTruthy();
+  expect(dimSumCard!.querySelector('[role="switch"]')).toBeNull();
+  expect(dimSumCard!.textContent).toContain("Show one now");
 
   // happy-dom exposes no speechSynthesis, so the narrator genuinely cannot run
   // here and the test button is disabled for that reason — not because the

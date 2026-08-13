@@ -65,14 +65,23 @@ test("Usage stat tiles carry the prototype's marks and hints", async () => {
   }
   // Short label on the tile; the long one stays as its tooltip.
   //
-  // Superseded by the cost-lane split: the tile no longer has one label. A
-  // subscription's figure is an API-list-price comparison rather than a bill,
-  // so it must not sit under a heading reading "Est. cost" — the label is
-  // chosen per lane. Pinning the ternary rather than either literal keeps both
-  // halves covered, and keeps the test failing if the surface ever collapses
-  // back to a single unconditional heading.
-  expect(src).toContain('t(equivalentHeadline ? "usage.card.estCostEquivalent" : "usage.card.estCost")');
+  // Matched on the quoted key rather than on `t("…")`, because the tile became
+  // lane-aware: the label is now chosen inside a ternary, so the call and the key
+  // are no longer adjacent in the source. The closing quote is what keeps this
+  // exact — it is the one character that stops `"usage.card.estCost"` from also
+  // being satisfied by `"usage.card.estCostEquivalent"`.
+  //
+  // Two lanes wrote this assertion differently. The other pinned the whole
+  // ternary expression, which is stricter but breaks the moment anyone
+  // reformats the line; this one survives reformatting and, paired with the
+  // equivalent key pinned below, still fails if either lane's headline goes
+  // missing. That pair is the property worth protecting, not the syntax.
+  expect(src).toContain('"usage.card.estCost"');
   expect(src).toContain('t("usage.cost.total")');
+  // Both lanes are pinned, so neither headline can quietly go missing: a
+  // subscription shows the API-equivalent figure where a direct API key shows
+  // real spend, and the two must never be labelled the same way.
+  expect(src).toContain('"usage.card.estCostEquivalent"');
   // "Measured" is the requests hint now, not a tile of its own.
   expect(src).not.toContain('t("usage.card.measured")');
 });
