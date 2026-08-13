@@ -255,7 +255,21 @@ test("off by default: a snackbar shows its title with no decoration", async () =
   await act(async () => { root.unmount(); });
 });
 
-test("each notification tone earns its own mark, and the dismiss button stays plain", async () => {
+// Superseded by the snackbar's own tone system, which landed in the same hour
+// from the design-parity survey: each snack now carries a per-tone SVG icon and
+// a visually-hidden tone name, so a warning is distinguishable from a success
+// both visually and through the live region.
+//
+// The emoji decoration therefore does NOT apply to snackbars. A tone icon and
+// an emoji on one line are two glyphs carrying one signal — which is the exact
+// reasoning this feature already used to leave the notifications history page
+// undecorated, where a tone icon was likewise already present. Decorating here
+// would have contradicted its own boundary.
+//
+// So what this asserts now is that the snackbar stays free of emoji while
+// keeping the tone signal it does have, and that the dismiss control carries an
+// accessible name and no decoration of any kind.
+test("snackbars carry their tone icon rather than an emoji, and the dismiss button stays plain", async () => {
   const { container, root } = await mountSnackbars(true);
   await fire(container, "info");
   await fire(container, "success");
@@ -264,11 +278,15 @@ test("each notification tone earns its own mark, and the dismiss button stays pl
 
   const titles = [...container.querySelectorAll(".m3-snack-title")];
   expect(titles).toHaveLength(4);
-  const marks = titles.map(t => t.querySelector('[aria-hidden="true"]')?.textContent);
-  expect(marks).toEqual(["ℹ️", "✅", "⚠️", "❌"]);
-  // Four distinct marks, matching the four distinct tones — never the same
-  // glyph doing duty for two different kinds of message.
-  expect(new Set(marks).size).toBe(4);
+
+  // No emoji reaches the title, even with the setting on.
+  for (const title of titles) {
+    expect(title.querySelector(".m3-emoji")).toBeNull();
+  }
+
+  // The tone signal the snackbar does carry: one icon per snack, outside the
+  // title, plus the spoken tone name that reaches a screen reader.
+  expect(container.querySelectorAll(".m3-snack-icon")).toHaveLength(4);
 
   const texts = titles.map(t => visibleText(t));
   expect(texts).toEqual([
