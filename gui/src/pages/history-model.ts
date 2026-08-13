@@ -19,6 +19,7 @@
  */
 
 import type { Revision, RevisionScope } from "../shell/revisions";
+import { DEFAULT_SEARCH_FLAGS, stripStatefulFlags } from "../shell/settings-search";
 
 /**
  * Which path set a snapshot commit touched. The server derives it from the
@@ -169,6 +170,21 @@ export interface TimelineFilter {
   to: string;
   query: string;
   useRegex: boolean;
+  /**
+   * The flags the builder anchored beside the field composed, in regex mode.
+   *
+   * Optional, and absent means the `"i"` this filter used to hard-code, so a
+   * caller written before the builder started handing flags back behaves exactly
+   * as it did. Hard-coding them is what made the builder's flag chips decorative
+   * from the timeline's point of view: turning `i` off changed the preview inside
+   * the popover and then changed nothing about which revisions the screen listed,
+   * so a pattern deliberately composed as case-sensitive arrived
+   * case-insensitive.
+   *
+   * They describe the regex, so they are read only when `useRegex` is on — plain
+   * text stays a case-insensitive substring search whatever the chips say.
+   */
+  flags?: string;
 }
 
 export interface TimelineResult {
@@ -184,7 +200,7 @@ export interface TimelineResult {
  * working, which is the behaviour the changelog filter already established.
  */
 export function filterTimeline(entries: readonly TimelineEntry[], filter: TimelineFilter): TimelineResult {
-  const { scope, origins, from, to, query, useRegex } = filter;
+  const { scope, origins, from, to, query, useRegex, flags = DEFAULT_SEARCH_FLAGS } = filter;
 
   let matcher: (text: string) => boolean;
   const trimmed = query.trim();
@@ -192,7 +208,15 @@ export function filterTimeline(entries: readonly TimelineEntry[], filter: Timeli
     matcher = () => true;
   } else if (useRegex) {
     try {
-      const re = new RegExp(trimmed.slice(0, PATTERN_CAP), "i");
+      // The user's own flags rather than a pinned `"i"`, minus `g` and `y`. Those
+      // two make `RegExp.prototype.test` stateful: `lastIndex` survives between
+      // calls, so one regex tested down the timeline returns true, false, true,
+      // false and half the matching revisions vanish — and which half depends only
+      // on the order the two logs happened to interleave in, which is a filter
+      // that returns a different answer for the same pattern on the same data.
+      // They are dropped rather than refused because they are meaningful while
+      // scanning a sample in the builder, where every shipped preset sets `g`.
+      const re = new RegExp(trimmed.slice(0, PATTERN_CAP), stripStatefulFlags(flags));
       matcher = text => re.test(text);
     } catch (e) {
       return { rows: [], patternError: e instanceof Error ? e.message : String(e) };

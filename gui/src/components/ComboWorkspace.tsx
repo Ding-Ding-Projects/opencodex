@@ -18,6 +18,8 @@ import { useConfirm } from "../shell/confirm-context";
 import { useNotifications } from "../shell/notifications-context";
 import { Button, Chip, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import { AddComboModal } from "./combo-workspace-add-modal";
 import { DetailPanel } from "./combo-workspace-detail-panel";
 import { RemoveComboDialog, UnsavedLeaveDialog } from "./combo-workspace-dialogs";
@@ -57,6 +59,16 @@ export default function ComboWorkspace({
   );
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this rail search compiles with, owned here rather than pinned to the
+   * `"i"` the matcher used to default to. The builder anchored beside the field
+   * composes a pattern *and* its flags, so a field that took only the pattern made
+   * the popover's flag chips decorative from the rail's point of view: a combo
+   * search deliberately built as case-sensitive arrived case-insensitive, and
+   * turning on `m` or `s` changed the panel's preview and then changed nothing
+   * about which combos survived.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingSelect, setPendingSelect] = useState<string | null | undefined>(undefined);
   const [removeId, setRemoveId] = useState<string | null>(null);
@@ -76,14 +88,19 @@ export default function ComboWorkspace({
   const { filtered, regexError } = useMemo(() => {
     if (!query.trim()) return { filtered: combos, regexError: null as string | null };
     if (!useRegex) return { filtered: filterCombos(combos, query), regexError: null as string | null };
-    const matcher = makeMatcher(query, true);
+    // The flags the builder beside this field actually applied, so the panel's
+    // preview and the rail cannot report different matches for one pattern. `g`
+    // and `y` are dropped inside the matcher: both carry `lastIndex` between
+    // calls, so one matcher reused down the combo list would keep every other
+    // row, and which half survived would depend only on the rail's ordering.
+    const matcher = makeMatcher(query, true, flags);
     return {
       filtered: combos.filter((combo) => matcher.test(
         [combo.id, combo.model, ...combo.targets.map((target) => `${target.provider}/${target.model}`)].join(" "),
       )),
       regexError: matcher.error,
     };
-  }, [combos, query, useRegex]);
+  }, [combos, query, useRegex, flags]);
   const sections = useMemo(() => groupCombos(filtered), [filtered]);
   // Rail rows carry the prototype's warning marker so a misconfigured combo is
   // visible in the list, not only after you open it.
@@ -238,6 +255,7 @@ export default function ComboWorkspace({
               placeholder={t("cws.searchPlaceholder")}
               aria-label={t("cws.searchPlaceholder")}
               aria-invalid={!!regexError}
+              aria-describedby={useRegex ? "cwi-search-flags-state" : undefined}
             />
           </div>
           {/* The builder sits beside the field it belongs to, per the shared rule. */}
@@ -246,15 +264,40 @@ export default function ComboWorkspace({
           </Chip>
           <RegexBuilderButton
             value={query}
-            onApply={(pattern) => setQuery(pattern)}
+            // Both halves of what the builder composed. Taking the pattern and
+            // leaving the flags behind is what made the popover's flag chips
+            // decorative from this field's point of view.
+            onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
             regex={useRegex}
             onRegexChange={setUseRegex}
+            // Seeded from this bar's own flags, so the round trip is bidirectional:
+            // a set corrected on the chip row below reopens as the set the panel
+            // is composing against rather than reverting to the default.
+            flags={flags}
             // The same text the rail search runs a pattern over, so what the panel
             // reports as matching is what the rail will actually keep.
             sample={combos
               .slice(0, SAMPLE_ROWS)
               .map((combo) => [combo.id, combo.model, ...combo.targets.map((target) => `${target.provider}/${target.model}`)].join(" "))
               .join("\n")}
+          />
+        </div>
+        {/*
+          Its own line under the search row rather than inside it: that row is a
+          single flex line already carrying the field, the `.*` chip and the
+          builder trigger inside a rail that is the narrow column of this layout,
+          and six more chips in it would leave the field nothing. The padding
+          matches `.cwi-search-row` so the chips line up under the field they
+          describe. The wrapper renders whatever the row decides — with regex off
+          the row is nothing, and an empty box with no vertical padding takes no
+          height in the rail's flex column.
+        */}
+        <div style={{ padding: "0 var(--sp-3)", flexShrink: 0 }}>
+          <SearchFlagsRow
+            regex={useRegex}
+            flags={flags}
+            onFlagsChange={setFlags}
+            id="cwi-search-flags-state"
           />
         </div>
         {regexError && (

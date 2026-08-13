@@ -5,6 +5,8 @@ import { Chip, Empty, TextInput } from "../shell/m3-ui";
 import { useNotifications } from "../shell/notifications-context";
 import { useConfirm, usePrompt } from "../shell/confirm-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import { makeMatcher } from "../pages/models-shared";
 import { POOL_GRID, SECTION_TITLE } from "./codex-account-pool-m3";
 import AddCodexAccountModal from "./AddCodexAccountModal";
@@ -28,6 +30,19 @@ import { useCopyFeedback } from "./use-copy-feedback";
 export type { CodexAccountEntry } from "../hooks/useCodexAccountPool";
 
 const DOCTOR_CMD = "ocx doctor";
+
+/**
+ * The flags row's state line, so this surface's search field can point
+ * `aria-describedby` at what its pattern actually compiles to.
+ *
+ * A literal rather than a `useId()`, matching every other search bar that
+ * carries the row: this surface has exactly one search field, so the id names a
+ * fixed element and stays stable for the tests and the capture harness that
+ * look it up. A second search bar added here would need its own id, never a
+ * share of this one — two bars own two independent flag sets, and one id
+ * pointing at both would describe each with the other's state.
+ */
+const SETTINGS_FLAGS_STATE_ID = "codex-pool-settings-flags-state";
 
 /** One hit of the settings search, matching the prototype's settings-index row. */
 interface SettingsHit {
@@ -108,6 +123,19 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   // pick up a query another screen's search bar is holding.
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsRegex, setSettingsRegex] = useState(false);
+  /**
+   * The flags this field compiles with, and this field's alone — the same
+   * per-bar ownership the query above has, for the same reason.
+   *
+   * State rather than the `"i"` this search used to inherit by omission: the
+   * builder anchored beside the field composes a pattern *and* its flags, and a
+   * field that took only the pattern turned the popover's flag chips into
+   * decoration from the search's point of view. Turning on `m` or `s` changed
+   * the panel's own preview and then changed nothing about which settings rows
+   * survived, and a pattern deliberately built as case-sensitive arrived here
+   * case-insensitive because `i` was pinned on the way in.
+   */
+  const [settingsFlags, setSettingsFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const doctorCopy = useCopyFeedback<string>();
 
   const copyDoctor = useCallback((accountId: string) => {
@@ -351,7 +379,12 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
     { id: "anthropicPoolThreshold", label: t("anthropicPool.threshold"), tab: t("nav.providers") },
   ];
 
-  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex);
+  // The flags travel with the query into the matcher. `makeMatcher` drops `g` and
+  // `y` before compiling — both carry `lastIndex` between calls, so this one
+  // matcher reused down `settingsHere` and then again down `settingsElsewhere`
+  // would answer true, false, true, false and lose half the matching rows to
+  // nothing but the order they were tested in.
+  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex, settingsFlags);
   const settingsHits = settingsHere.filter(row => settingsMatcher.test(row.haystack));
   // Only claimed once something was actually typed — an untouched field has not
   // matched anything, here or anywhere else.
@@ -469,6 +502,10 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={settingsMatcher.error !== null}
+          // Only in regex mode, because that is the only mode the flags row
+          // renders in — a description pointing at an element that is not on the
+          // page reads as a broken reference rather than as no description.
+          aria-describedby={settingsRegex ? SETTINGS_FLAGS_STATE_ID : undefined}
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 420 }}
         />
         <Chip
@@ -481,15 +518,38 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
         </Chip>
         <RegexBuilderButton
           value={settingsQuery}
-          onApply={pattern => setSettingsQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setSettingsQuery(pattern); setSettingsFlags(appliedFlags); }}
           regex={settingsRegex}
           onRegexChange={setSettingsRegex}
+          // Seeded from this bar's own flags, so the round trip is bidirectional:
+          // a set corrected on the chip row below is what the panel opens holding,
+          // rather than the panel silently resetting it to the default on open.
+          flags={settingsFlags}
           // The settings this surface indexes, so a pattern is tried against the
           // rows it will actually be run over rather than against an empty box.
           sample={settingsHere.map(row => row.haystack).join("\n")}
           label={t("settings.openBuilder")}
         />
       </div>
+      {/*
+        Under the field rather than inside the search row: that row is a single
+        flex line already carrying the input, the `.*` chip and the builder
+        trigger, and six more chips in it would squeeze the field to nothing at
+        the narrow widths this surface is checked at. It stays directly beneath
+        the search it describes, which is what anchoring it here is for, and it
+        renders only in regex mode — chips that look live while plain text runs a
+        case-insensitive substring search would be exactly the decorative
+        affordance the interface rules forbid.
+      */}
+      <SearchFlagsRow
+        regex={settingsRegex}
+        flags={settingsFlags}
+        onFlagsChange={setSettingsFlags}
+        id={SETTINGS_FLAGS_STATE_ID}
+      />
       <p
         role={settingsMatcher.error ? "alert" : "status"}
         style={{

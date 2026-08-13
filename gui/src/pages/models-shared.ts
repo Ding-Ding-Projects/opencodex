@@ -1,6 +1,7 @@
 import type { TFn } from "../i18n/shared";
 import type { ProviderDiscoverySummary } from "../models-groups";
 import { modelVisible, type ProviderModelMap } from "../model-visibility";
+import { DEFAULT_SEARCH_FLAGS, stripStatefulFlags } from "../shell/settings-search";
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
@@ -63,13 +64,32 @@ export interface Matcher {
  * locally (ECMAScript `RegExp`), so a pasted novel can never become a
  * catastrophic-backtracking payload. An invalid pattern matches nothing rather than
  * silently falling back to plain text, so the reported error and the result agree.
+ *
+ * `flags` is what the anchored regex builder beside the field actually composed.
+ * It used to be a pinned `"i"`, which meant the chips inside the popover changed
+ * its preview and then changed nothing about the list behind it: a pattern
+ * deliberately built as case-sensitive arrived here case-insensitive. It defaults
+ * to `DEFAULT_SEARCH_FLAGS` — the same `"i"` — precisely because this function
+ * feeds six surfaces, so a caller that has not yet been given a flags control
+ * keeps the behaviour it has today rather than silently changing what it finds.
+ *
+ * `g` and `y` are stripped before compiling. Both keep `lastIndex` between calls,
+ * so one matcher reused down a list of models returns true, false, true, false —
+ * half the matching rows vanish, and which half depends only on the order they
+ * were tested in. The builder offers both because they are meaningful when
+ * scanning a sample, so they arrive here legitimately and are dropped rather than
+ * refused: the pattern still works, it just stops being order-dependent.
+ *
+ * Plain text is untouched by any of this. It is a substring search over visible
+ * text and stays case-insensitive whatever the flags say, because the flags
+ * describe a regex that mode never compiles.
  */
-export function makeMatcher(query: string, useRegex: boolean): Matcher {
+export function makeMatcher(query: string, useRegex: boolean, flags = DEFAULT_SEARCH_FLAGS): Matcher {
   const trimmed = query.trim();
   if (!trimmed) return { test: () => true, error: null };
   if (useRegex) {
     try {
-      const re = new RegExp(trimmed.slice(0, 400), "i");
+      const re = new RegExp(trimmed.slice(0, 400), stripStatefulFlags(flags));
       return { test: (text: string) => re.test(text), error: null };
     } catch (e) {
       return { test: () => false, error: e instanceof Error ? e.message : String(e) };
