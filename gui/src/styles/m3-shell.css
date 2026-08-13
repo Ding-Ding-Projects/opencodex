@@ -1536,8 +1536,79 @@ html[data-desktop] .m3-appbar .m3-avatar {
   font-variant-numeric: tabular-nums;
 }
 .m3-cost-range { font-size: var(--t-label-s); opacity: 0.8; }
-/* Compact width: the range word goes; the number stays. */
+/* Compact width: the range word goes; the number stays. Note the equivalent
+   variant overrides this back to visible below — its label is not decoration. */
 .m3-app--compact .m3-cost-range { display: none; }
+
+/* Subscription traffic priced at API-equivalent rates: a distinct tonal
+   container so the chip reads differently at a glance, paired with the visible
+   "not billed" word it always carries. The tone is the hint; the word is the
+   meaning, because colour alone must never be what tells someone whether a
+   dollar figure is a bill. */
+.m3-cost-chip--equivalent {
+  background: var(--m3-tertiary-container);
+  color: var(--m3-on-tertiary-container);
+}
+/* The "not billed" tag survives the compact breakpoint that drops the range
+   word. Hiding it would leave a bare dollar amount reading as money owed —
+   exactly the misreading this variant exists to prevent. */
+.m3-app--compact .m3-cost-chip--equivalent .m3-cost-range {
+  display: inline;
+  font-size: var(--t-label-s);
+  opacity: 0.9;
+}
+
+/* Lane breakdown inside the cost menu: shown when a machine has both an API key
+   and a subscription, so the chip's single headline figure cannot silently
+   stand in for the other lane. Marked up as a description list because that is
+   what it is — a label paired with its value — which also gives assistive
+   technology the pairing for free. */
+.m3-cost-lane-group { margin: 0; }
+.m3-cost-lane {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+}
+.m3-cost-lane-label {
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-cost-lane-value {
+  /* `dd` carries a default indent that would push the figure off the right edge
+     of a narrow panel. */
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface);
+}
+.m3-cost-lane-note {
+  margin: 0;
+  padding: 0 12px 8px;
+  max-width: 34ch;
+  font-size: var(--t-label-s);
+  line-height: 1.4;
+  color: var(--m3-on-surface-variant);
+}
+
+/* The "not billed" marker that rides beside any API-equivalent figure. It is a
+   word in a tonal container rather than a coloured dot, because the thing it
+   communicates — that a dollar amount is a comparison and not a charge — is far
+   too consequential to encode in hue alone. Inline-block so it never collapses
+   at a narrow width, and it wraps with its label rather than clipping. */
+.cost-lane-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--m3-tertiary-container);
+  color: var(--m3-on-tertiary-container);
+  font-size: var(--t-label-s);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
 
 /* Avatar-as-button (account switcher): same look, real affordances. */
 button.m3-avatar--btn { border: none; cursor: pointer; transition: box-shadow 150ms; }

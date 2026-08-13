@@ -680,6 +680,20 @@ export const M3_EN = {
   "cost.aria": "Estimated API cost {amount} over {range}. Change range.",
   "cost.title": "Estimated API cost ({range}) — click to change the range",
 
+  // ---- cost basis (which accounting lane a figure came from) ----
+  // Subscription traffic has a real API-equivalent value but is not billed. The
+  // figure is shown so the meter stops reading "$0", and every one of these
+  // strings exists so the figure can never be mistaken for money owed.
+  "cost.lane.direct": "Direct API key",
+  "cost.lane.directMeaning": "Billed to your API key at published list rates.",
+  "cost.lane.equivalent": "API equivalent",
+  "cost.lane.equivalentTag": "not billed",
+  "cost.lane.equivalentMeaning": "What this traffic would have cost on the API. Your subscription or OAuth plan covers it — nothing is charged and this is not a bill.",
+  "cost.lane.equivalentAria": "API-equivalent cost {amount} over {range}. Not billed — your subscription covers this traffic. Change range.",
+  "cost.lane.equivalentTitle": "API-equivalent cost ({range}) — not billed, your subscription covers this. Click to change the range.",
+  "cost.lane.none": "No published price",
+  "cost.lane.noneMeaning": "No published price schedule covers this traffic, so no figure can be shown. That is not the same as free.",
+
   // ---- dim sum surprise ----
   "dimsum.title": "Dim sum time!",
   "dimsum.hint": "A 1-in-100 launch treat. Turn it off under Appearance.",
@@ -895,7 +909,13 @@ export const M3_EN = {
   "prov.revisionDisabled": "Disabled the provider",
   "prov.revisionSettingsSaved": "Edited the provider settings",
   "usage.card.estCost": "Est. cost",
+  "usage.card.estCostEquivalent": "API equiv. cost",
   "usage.card.costHint": "list price",
+  "usage.cost.laneHeading": "Cost basis",
+  "usage.cost.laneDirectRow": "Direct API-key spend",
+  "usage.cost.laneEquivalentRow": "Subscription — API equivalent",
+  "usage.cost.laneRequests": "{count} requests",
+  "logs.detail.costBasis": "Cost basis",
   "usage.card.requestsHint": "{count} measured",
   "usage.card.totalTokensHint": "{count} reported",
   "usage.card.coverageHint": "{count} unpriced",

@@ -187,7 +187,7 @@ export default function ProviderWorkspaceShell({
     fetch(`${apiBase}/api/usage?range=30d`)
       .then(r => readJsonIfOk<{
         providers?: Array<{ provider: string; requests: number; totalTokens?: number }>;
-        models?: Array<{ provider: string; model: string; resolvedModel?: string; requests: number; totalTokens: number; inputTokens: number; outputTokens: number; shareRatio: number; estimatedCostUsd?: number }>;
+        models?: Array<{ provider: string; model: string; resolvedModel?: string; requests: number; totalTokens: number; inputTokens: number; outputTokens: number; shareRatio: number; estimatedCostUsd?: number; apiEquivalentCostUsd?: number }>;
       }>(r))
       .then((data) => {
         if (cancelled || !data) return;
@@ -208,6 +208,9 @@ export default function ProviderWorkspaceShell({
             outputTokens: m.outputTokens,
             shareRatio: m.shareRatio,
             ...(m.estimatedCostUsd !== undefined ? { estimatedCostUsd: m.estimatedCostUsd } : {}),
+            // Carried through so a subscription model row can show its
+            // API-equivalent figure rather than a bare em dash.
+            ...(m.apiEquivalentCostUsd !== undefined ? { apiEquivalentCostUsd: m.apiEquivalentCostUsd } : {}),
           });
         }
         setUsageModels(byProviderModels);

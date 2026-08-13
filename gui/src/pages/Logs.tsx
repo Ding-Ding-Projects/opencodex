@@ -6,6 +6,7 @@ import { hashLogConversationQuery, matchesLogConversationId } from "../log-conve
 import { statusCodeInfo } from "../status-codes";
 import { IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
+import { resolveCost, type PricingSourceClassification } from "../cost-lanes";
 import { Banner, Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { FLAGS } from "../regex/engine";
@@ -56,18 +57,40 @@ interface MatchedPriceInfo {
   status: "verified" | "verified-derived";
 }
 
+interface CostEstimateInfo {
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  estimated: boolean;
+  price?: MatchedPriceInfo;
+  attempts?: Array<{ ordinal: number; price: MatchedPriceInfo }>;
+}
+
+/**
+ * One accounting lane's result. The management API has emitted both lanes since
+ * the pricing split; this type simply never declared them, so the page could
+ * only see `direct` and rendered an em dash for every subscription request that
+ * had a perfectly good API-equivalent figure sitting unread in the payload.
+ */
+interface CostLaneInfo {
+  kind: "value" | "unavailable";
+  sourceClassification?: PricingSourceClassification;
+  estimate?: CostEstimateInfo;
+  reason?: MetricUnavailableReason;
+}
+
 type CostResult =
   | {
     kind: "value";
-    estimate: {
-      cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-      estimated: boolean;
-      price?: MatchedPriceInfo;
-      attempts?: Array<{ ordinal: number; price: MatchedPriceInfo }>;
-    };
+    estimate: CostEstimateInfo;
     estimateReasons: CostEstimateReason[];
+    direct?: CostLaneInfo;
+    apiEquivalent?: CostLaneInfo;
   }
-  | { kind: "unavailable"; reason: MetricUnavailableReason };
+  | {
+    kind: "unavailable";
+    reason: MetricUnavailableReason;
+    direct?: CostLaneInfo;
+    apiEquivalent?: CostLaneInfo;
+  };
 
 interface LogDisplayMetrics {
   tokPerSecond: TokPerSecondResult;
@@ -210,13 +233,27 @@ function formatTokPerSecond(result: TokPerSecondResult | undefined, localeTag?: 
   return `${result.estimated ? "~" : ""}${value}`;
 }
 
-function formatEstimatedUsd(result: CostResult | undefined, localeTag?: string): string {
-  if (!result || result.kind === "unavailable" || !Number.isFinite(result.estimate.cost.total) || result.estimate.cost.total < 0) return "\u2014";
-  const totalUsd = result.estimate.cost.total;
-  return `~$${new Intl.NumberFormat(localeTag, {
+/**
+ * Resolve a row's cost to the figure it should actually show.
+ *
+ * Returns the lane alongside the text so a caller can tag an API-equivalent
+ * amount. A bare formatted string would have made the tag optional at every call
+ * site, and an untagged equivalent figure is indistinguishable from a bill.
+ */
+function estimatedUsdCell(result: CostResult | undefined, localeTag?: string): {
+  text: string;
+  kind: "direct" | "api_equivalent" | "unpriced";
+} {
+  const resolved = resolveCost<CostEstimateInfo>(result);
+  const total = resolved.estimate?.cost.total;
+  if (resolved.kind === "unpriced" || total === undefined || !Number.isFinite(total) || total < 0) {
+    return { text: "\u2014", kind: "unpriced" };
+  }
+  const text = `~$${new Intl.NumberFormat(localeTag, {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
-  }).format(totalUsd)}`;
+  }).format(total)}`;
+  return { text, kind: resolved.kind };
 }
 
 function formatEstimatedUsdValue(value: number, localeTag?: string): string {
@@ -458,15 +495,30 @@ function modelTitle(log: LogEntry): string {
   return details.join(" \xC2\xB7 ");
 }
 
+/**
+ * Totals for the rows the conversation filter is currently showing.
+ *
+ * The two lanes are accumulated separately and never added together: a direct
+ * total is money owed and an API-equivalent total is a comparison, so one sum
+ * carrying both would be a number that means nothing. Previously only the direct
+ * lane was accumulated at all, which is why a subscription conversation reported
+ * "~$0.0000" beside a perfectly real token count.
+ */
 function summarizeFilteredLogs(entries: LogEntry[]): {
   requests: number;
   totalTokens: number;
-  estimatedCostUsd: number;
+  directCostUsd: number;
+  directRequests: number;
+  apiEquivalentCostUsd: number;
+  apiEquivalentRequests: number;
   unpricedRequests: number;
   unmeteredRequests: number;
 } {
   let totalTokens = 0;
-  let estimatedCostUsd = 0;
+  let directCostUsd = 0;
+  let directRequests = 0;
+  let apiEquivalentCostUsd = 0;
+  let apiEquivalentRequests = 0;
   let unpricedRequests = 0;
   let unmeteredRequests = 0;
   for (const entry of entries) {
@@ -476,15 +528,30 @@ function summarizeFilteredLogs(entries: LogEntry[]): {
       unmeteredRequests += 1;
       continue;
     }
-    const cost = entry.displayMetrics?.cost;
-    const total = cost?.kind === "value" ? cost.estimate.cost.total : undefined;
-    if (total !== undefined && Number.isFinite(total) && total >= 0) {
-      estimatedCostUsd += total;
+    const resolved = resolveCost<CostEstimateInfo>(entry.displayMetrics?.cost);
+    const total = resolved.estimate?.cost.total;
+    if (total === undefined || !Number.isFinite(total) || total < 0) {
+      unpricedRequests += 1;
       continue;
     }
-    unpricedRequests += 1;
+    if (resolved.kind === "direct") {
+      directCostUsd += total;
+      directRequests += 1;
+    } else {
+      apiEquivalentCostUsd += total;
+      apiEquivalentRequests += 1;
+    }
   }
-  return { requests: entries.length, totalTokens, estimatedCostUsd, unpricedRequests, unmeteredRequests };
+  return {
+    requests: entries.length,
+    totalTokens,
+    directCostUsd,
+    directRequests,
+    apiEquivalentCostUsd,
+    apiEquivalentRequests,
+    unpricedRequests,
+    unmeteredRequests,
+  };
 }
 
 export default function Logs({ apiBase }: { apiBase: string }) {
@@ -973,11 +1040,33 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       {conversationTotals && (
         <div style={{ marginBottom: 12 }}>
           <Banner tone="info">
+            {/* The headline figure prefers the billable lane; the equivalent lane is
+                stated on its own line beneath rather than folded into it, so the
+                banner never implies a subscription conversation cost money. */}
             {t("logs.conversation.totals", {
               requests: conversationTotals.requests,
               tokens: formatTokens(conversationTotals.totalTokens, localeTag ?? locale),
-              cost: formatEstimatedUsdValue(conversationTotals.estimatedCostUsd, localeTag),
+              cost: conversationTotals.directRequests > 0
+                ? formatEstimatedUsdValue(conversationTotals.directCostUsd, localeTag)
+                : conversationTotals.apiEquivalentRequests > 0
+                  ? formatEstimatedUsdValue(conversationTotals.apiEquivalentCostUsd, localeTag)
+                  : "—",
             })}
+            {conversationTotals.directRequests === 0 && conversationTotals.apiEquivalentRequests > 0 && (
+              <>
+                {" "}
+                <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+              </>
+            )}
+            {conversationTotals.directRequests > 0 && conversationTotals.apiEquivalentRequests > 0 && (
+              <>
+                {" · "}
+                {t("cost.lane.equivalent")}{" "}
+                <span className="mono">{formatEstimatedUsdValue(conversationTotals.apiEquivalentCostUsd, localeTag)}</span>
+                {" "}
+                <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+              </>
+            )}
             {" "}
             <span className="muted">
               {t("logs.conversation.scope")}
@@ -1113,7 +1202,20 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                     {formatTokPerSecond(log.displayMetrics?.tokPerSecond, localeTag)}
                   </td>
                   <td className="num mono log-col-cost" style={NUM_CELL}>
-                    {formatEstimatedUsd(log.displayMetrics?.cost, localeTag)}
+                    {(() => {
+                      const cell = estimatedUsdCell(log.displayMetrics?.cost, localeTag);
+                      // The tag rides in the cell rather than only in a tooltip: a
+                      // column of dollar amounts is read by scanning, and a hover
+                      // hint reaches neither a scan nor a touch screen.
+                      return cell.kind === "api_equivalent"
+                        ? (
+                          <>
+                            {cell.text}{" "}
+                            <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+                          </>
+                        )
+                        : cell.text;
+                    })()}
                   </td>
                   <td>
                     <button
@@ -1264,36 +1366,62 @@ function LogDetailDialog({
       <section className="log-detail-section" aria-labelledby="log-detail-cost">
         <h4 id="log-detail-cost" className="log-detail-section-title">{t("logs.detail.section.cost")}</h4>
         <p className="log-detail-notes-line muted">{t("usage.cost.disclaimer")}</p>
-        {cost?.kind === "value" ? (
-          <>
-            <div className="log-detail-grid">
-              <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.total, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.input")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.input, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.cacheRead")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.cacheRead, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.cacheWrite")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.cacheWrite, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.output")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.output, localeTag)}</span>
-              {cost.estimate.price && (
-                <>
-                  <span className="muted">{t("logs.detail.matchedKey")}</span>
-                  <span className="mono log-detail-break">{cost.estimate.price.jawcodeProvider ?? cost.estimate.price.provider}/{cost.estimate.price.modelId}</span>
-                  <span className="muted">{t("logs.detail.priceSource")}</span>
-                  <span>{t(`logs.detail.source.${cost.estimate.price.source}`)} · {t(verificationKey(cost.estimate.price.status))}</span>
-                </>
+        {/* Resolve the lane before rendering. This panel used to key off the bare
+            `cost.kind`, which the server derives from the direct lane alone, so a
+            subscription request whose fully priced API-equivalent breakdown was
+            sitting in the very same payload rendered as an em dash and a
+            "price unmatched" reason. */}
+        {(() => {
+          const resolved = resolveCost<CostEstimateInfo>(cost);
+          const estimate = resolved.estimate;
+          if (!estimate) {
+            return (
+              <div className="log-detail-grid">
+                <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{"—"}</span>
+                <span className="muted">{t("logs.detail.costBasis")}</span>
+                <span>{t("cost.lane.none")}</span>
+                <span className="muted">{t("logs.detail.unavailableReason")}</span>
+                <span>{cost?.kind === "unavailable" ? t(metricReasonKey(cost.reason)) : t("logs.detail.reason.usage_missing")}</span>
+              </div>
+            );
+          }
+          const equivalent = resolved.kind === "api_equivalent";
+          return (
+            <>
+              <div className="log-detail-grid">
+                {/* Basis first, money second: the reader learns what kind of number
+                    this is before they read the number itself. */}
+                <span className="muted">{t("logs.detail.costBasis")}</span>
+                <span>
+                  {equivalent
+                    ? <>{t("cost.lane.equivalent")} <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span></>
+                    : t("cost.lane.direct")}
+                </span>
+                <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.total, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.input")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.input, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.cacheRead")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.cacheRead, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.cacheWrite")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.cacheWrite, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.output")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.output, localeTag)}</span>
+                {estimate.price && (
+                  <>
+                    <span className="muted">{t("logs.detail.matchedKey")}</span>
+                    <span className="mono log-detail-break">{estimate.price.jawcodeProvider ?? estimate.price.provider}/{estimate.price.modelId}</span>
+                    <span className="muted">{t("logs.detail.priceSource")}</span>
+                    <span>{t(`logs.detail.source.${estimate.price.source}`)} · {t(verificationKey(estimate.price.status))}</span>
+                  </>
+                )}
+              </div>
+              <p className="log-detail-notes-line muted">
+                {equivalent ? t("cost.lane.equivalentMeaning") : t("cost.lane.directMeaning")}
+              </p>
+              {cost?.kind === "value" && cost.estimateReasons.length > 0 && (
+                <ul className="log-detail-notes">
+                  {cost.estimateReasons.map(reason => <li key={reason}>{t(estimateReasonKey(reason))}</li>)}
+                </ul>
               )}
-            </div>
-            {cost.estimateReasons.length > 0 && (
-              <ul className="log-detail-notes">
-                {cost.estimateReasons.map(reason => <li key={reason}>{t(estimateReasonKey(reason))}</li>)}
-              </ul>
-            )}
-          </>
-        ) : (
-          <div className="log-detail-grid">
-            <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{"\u2014"}</span>
-            <span className="muted">{t("logs.detail.unavailableReason")}</span>
-            <span>{cost?.kind === "unavailable" ? t(metricReasonKey(cost.reason)) : t("logs.detail.reason.usage_missing")}</span>
-          </div>
-        )}
+            </>
+          );
+        })()}
       </section>
 
       {detail.attempts?.length ? (
@@ -1342,7 +1470,19 @@ function LogDetailDialog({
                     </td>
                     <td className="num mono" style={NUM_CELL}>{attempt.durationMs}ms</td>
                     <td className="num mono" style={NUM_CELL}>{formatTokPerSecond(attempt.displayMetrics?.tokPerSecond, localeTag)}</td>
-                    <td className="num mono" style={NUM_CELL}>{formatEstimatedUsd(attemptCost, localeTag)}</td>
+                    <td className="num mono" style={NUM_CELL}>
+                      {(() => {
+                        const cell = estimatedUsdCell(attemptCost, localeTag);
+                        return cell.kind === "api_equivalent"
+                          ? (
+                            <>
+                              {cell.text}{" "}
+                              <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+                            </>
+                          )
+                          : cell.text;
+                      })()}
+                    </td>
                     <td className="log-detail-break">{reason}</td>
                   </tr>
                 );
