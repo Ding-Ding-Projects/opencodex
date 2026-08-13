@@ -6,7 +6,7 @@ import { hashLogConversationQuery, matchesLogConversationId } from "../log-conve
 import { statusCodeInfo } from "../status-codes";
 import { IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
-import { resolveCost, type PricingSourceClassification } from "../cost-lanes";
+import { describePriceTier, resolveCost, type PriceTierInfo, type PricingSourceClassification } from "../cost-lanes";
 import { Banner, Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { FLAGS } from "../regex/engine";
@@ -55,6 +55,8 @@ interface MatchedPriceInfo {
   sourceRef?: string;
   verifiedAt?: string;
   status: "verified" | "verified-derived";
+  /** Set when the matched row is a Fast or long-context band rather than base. */
+  tier?: PriceTierInfo;
 }
 
 interface CostEstimateInfo {
@@ -1396,6 +1398,39 @@ function LogDetailDialog({
                   {equivalent
                     ? <>{t("cost.lane.equivalent")} <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span></>
                     : t("cost.lane.direct")}
+                  {/* A Fast or long-context request is priced from a different
+                      published row, so the total can be 1.5–2.5x what the same
+                      tokens would cost at the base rate. Naming the band here —
+                      beside the basis, before the money — is what stops that
+                      figure reading as a defect. */}
+                  {(() => {
+                    const tier = describePriceTier(estimate.price?.tier);
+                    if (!tier) return null;
+                    const num = (value: number): string => new Intl.NumberFormat(localeTag).format(value);
+                    const band = t(tier.band === "priority" ? "cost.tier.priority" : "cost.tier.longContext");
+                    const factor = tier.uniform
+                      ? t("cost.tier.factorUniform", { factor: num(tier.multiplier.input) })
+                      : t("cost.tier.factorSplit", {
+                        input: num(tier.multiplier.input),
+                        output: num(tier.multiplier.output),
+                      });
+                    const detail = tier.uniform
+                      ? t("cost.tier.detailUniform", { band, factor: num(tier.multiplier.input) })
+                      : t("cost.tier.detailSplit", {
+                        band,
+                        input: num(tier.multiplier.input),
+                        output: num(tier.multiplier.output),
+                        cacheRead: num(tier.multiplier.cacheRead),
+                        cacheWrite: num(tier.multiplier.cacheWrite),
+                      });
+                    return (
+                      <>
+                        {" "}
+                        <span className="cost-tier-tag" title={detail}>{band} {factor}</span>
+                        <span className="m3-visually-hidden">{detail}</span>
+                      </>
+                    );
+                  })()}
                 </span>
                 <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.total, localeTag)}</span>
                 <span className="muted">{t("logs.tokens.input")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.input, localeTag)}</span>

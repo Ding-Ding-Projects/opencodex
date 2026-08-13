@@ -727,6 +727,17 @@ export const M3_EN = {
   "cost.lane.none": "No published price",
   "cost.lane.noneMeaning": "No published price schedule covers this traffic, so no figure can be shown. That is not the same as free.",
 
+  // ---- price band (Fast tier, long context) ----
+  // Some models publish more than one rate for identical tokens. Without these
+  // strings a doubled total looks like an arithmetic bug; with them it says
+  // which published band it came from and by how much it was multiplied.
+  "cost.tier.priority": "Fast tier",
+  "cost.tier.longContext": "Long context",
+  "cost.tier.factorUniform": "×{factor}",
+  "cost.tier.factorSplit": "×{input} in · ×{output} out",
+  "cost.tier.detailUniform": "{band}: every token type is priced at {factor}× this model's standard rate.",
+  "cost.tier.detailSplit": "{band}: input ×{input}, output ×{output}, cache read ×{cacheRead} and cache write ×{cacheWrite}, relative to this model's standard rate.",
+
   // ---- dim sum surprise ----
   "dimsum.title": "Dim sum time!",
   "dimsum.hint": "A 1-in-10 launch treat. It dismisses itself.",

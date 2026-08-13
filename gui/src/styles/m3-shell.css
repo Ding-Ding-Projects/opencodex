@@ -1667,6 +1667,23 @@ html[data-desktop] .m3-appbar .m3-avatar {
   vertical-align: baseline;
 }
 
+/* The band marker that rides beside a Fast or long-context figure. Same anatomy
+   as .cost-lane-tag but a secondary container, because the two say different
+   things and can appear on the same line: one says the money is not a charge,
+   this one says the rate was multiplied. Both carry their meaning in words —
+   the container colour is reinforcement, never the signal. */
+.cost-tier-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font-size: var(--t-label-s);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
 /* Avatar-as-button (account switcher): same look, real affordances. */
 button.m3-avatar--btn { border: none; cursor: pointer; transition: box-shadow 150ms; }
 button.m3-avatar--btn:hover:not(:disabled) { box-shadow: var(--e1); }

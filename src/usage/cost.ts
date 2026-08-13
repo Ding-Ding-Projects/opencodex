@@ -15,6 +15,7 @@ import {
   type Cost4,
   type OfficialPriceContext,
   type OfficialPriceSchedule,
+  type PriceTier,
   type PricingUnavailableReason,
 } from "./expected-prices";
 
@@ -44,6 +45,12 @@ export interface MatchedPrice {
   verifiedAt: string;
   status: "verified";
   conditions?: OfficialPriceSchedule["conditions"];
+  /**
+   * Which published band produced `cost4`, and the factor that got it there.
+   * Carried to the GUI so a doubled figure can say why it doubled instead of
+   * leaving the reader to compare it against a rate card by hand.
+   */
+  tier?: PriceTier;
 }
 
 export type MatchedPriceResolution =
@@ -195,6 +202,7 @@ function matchedPrice(schedule: OfficialPriceSchedule): MatchedPrice {
     verifiedAt: schedule.verifiedAt,
     status: schedule.status,
     ...(schedule.conditions ? { conditions: schedule.conditions } : {}),
+    ...(schedule.tier ? { tier: schedule.tier } : {}),
   };
 }
 

@@ -97,8 +97,18 @@ describe("normalizeCostTokens", () => {
 
 describe("authoritative official schedules", () => {
   test("contains only exact direct products with dated first-party HTTPS sources", () => {
-    expect(OFFICIAL_PRICE_SCHEDULES).toHaveLength(29);
+    // 37 = the previous 25 non-OpenAI rows, plus 4 OpenAI models x 3 published
+    // bands each (standard short, standard long, Fast).
+    expect(OFFICIAL_PRICE_SCHEDULES).toHaveLength(37);
     expect(validateOfficialPriceSchedules(OFFICIAL_PRICE_SCHEDULES)).toEqual([]);
+    // Every OpenAI model carries all three bands, so none can lose one silently.
+    for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]) {
+      const bands = OFFICIAL_PRICE_SCHEDULES
+        .filter(row => row.provider === "openai-apikey" && row.modelId === modelId)
+        .map(row => row.tier?.band)
+        .sort();
+      expect(bands, modelId).toEqual(["long_context", "priority", "standard"]);
+    }
     const providers = new Set(OFFICIAL_PRICE_SCHEDULES.map(row => row.provider));
     expect(providers).toEqual(new Set(["anthropic-apikey", "openai-apikey", "deepseek", "moonshot"]));
     for (const row of OFFICIAL_PRICE_SCHEDULES) {
@@ -330,32 +340,139 @@ describe("product and condition isolation", () => {
     });
   });
 
-  test("OpenAI direct API standard schedules price only the official short-context rows", () => {
+  test("OpenAI direct API prices the standard short-context row", () => {
     const usage = { inputTokens: 1_000, outputTokens: 100 };
-    const standard = requestCost("openai-apikey", "gpt-5.6-sol", { usage });
+    const standard = requestCost("openai-apikey", "gpt-5.6-sol", { usage, promptInputTokens: 1_000 });
     expect(standard?.price).toMatchObject({
       provider: "openai-apikey",
       modelId: "gpt-5.6-sol",
       cost4: { input: 5, cacheRead: 0.5, output: 30 },
       verifiedAt: "2026-08-09",
+      tier: { band: "standard" },
     });
-    for (const serviceTier of ["priority", "fast"] as const) {
-      expect(requestCost("openai-apikey", "gpt-5.6-sol", { usage, serviceTier })).toBeNull();
-      expect(pricingUnavailableReason({
-        provider: "openai-apikey",
-        model: "gpt-5.6-sol",
-        usage,
-        serviceTier,
-      })).toBe("pricing_condition_unmatched");
-    }
-    // The direct official source does not state a long-context threshold. A raw
-    // prompt size therefore never fabricates a long-rate match.
-    expect(requestCost("openai-apikey", "gpt-5.6-sol", {
-      usage,
-      promptInputTokens: 900_000,
-    })?.price?.scheduleId).toContain("short-context");
+    expect(standard?.price?.scheduleId).toContain("standard/short-context");
     expect(effectiveServiceTier({ responseServiceTier: "fast" })).toBe("priority");
     expect(effectiveServiceTier({ responseServiceTier: "default", requestedServiceTier: "priority" })).toBe("default");
+  });
+
+  test("the served-tier wire name 'default' resolves to the standard band", () => {
+    // An OpenAI response echoes service_tier: "default" for ordinary traffic and
+    // effectiveServiceTier() prefers that response-confirmed value, so without
+    // the fold every request that actually reported its tier went unpriced.
+    const usage = { inputTokens: 1_000, outputTokens: 100 };
+    const served = requestCost("openai-apikey", "gpt-5.6-sol", {
+      usage,
+      promptInputTokens: 1_000,
+      serviceTier: "default",
+    });
+    expect(served?.price?.scheduleId).toContain("standard/short-context");
+    expect(served?.cost.total).toBeCloseTo(
+      requestCost("openai-apikey", "gpt-5.6-sol", { usage, promptInputTokens: 1_000 })!.cost.total,
+      12,
+    );
+  });
+
+  test("OpenAI Fast tier prices at the published uniform multiplier", () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 100_000 };
+    // Fast multiplies every token type by the same factor: sol/terra/luna 2x,
+    // gpt-5.5 2.5x (https://openai.com/api-fast-mode/).
+    for (const [model, factor] of [
+      ["gpt-5.6-sol", 2],
+      ["gpt-5.6-terra", 2],
+      ["gpt-5.6-luna", 2],
+      ["gpt-5.5", 2.5],
+    ] as const) {
+      const base = requestCost("openai-apikey", model, { usage, promptInputTokens: 1_000 });
+      for (const serviceTier of ["priority", "fast"] as const) {
+        const fast = requestCost("openai-apikey", model, {
+          usage,
+          promptInputTokens: 1_000,
+          serviceTier,
+        });
+        expect(fast?.price?.tier).toMatchObject({ band: "priority" });
+        expect(fast?.price?.scheduleId).toContain("priority");
+        // Uniform means the whole bill scales, not just one component.
+        expect(fast?.cost.total).toBeCloseTo(base!.cost.total * factor, 9);
+        expect(fast?.cost.input).toBeCloseTo(base!.cost.input * factor, 9);
+        expect(fast?.cost.output).toBeCloseTo(base!.cost.output * factor, 9);
+      }
+    }
+  });
+
+  test("OpenAI long context repricing is exclusive at exactly 272,000 tokens", () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 100_000 };
+    const at = (promptInputTokens: number) =>
+      requestCost("openai-apikey", "gpt-5.6-sol", { usage, promptInputTokens });
+
+    // Just below, exactly at, and just above. The published band is "> 272K",
+    // so the boundary token count itself is still the short rate.
+    expect(at(271_999)?.price?.scheduleId).toContain("standard/short-context");
+    expect(at(272_000)?.price?.scheduleId).toContain("standard/short-context");
+    expect(at(272_001)?.price?.scheduleId).toContain("standard/long-context");
+
+    expect(at(272_000)?.price?.tier).toMatchObject({ band: "standard" });
+    expect(at(272_001)?.price?.tier).toMatchObject({
+      band: "long_context",
+      multiplier: { input: 2, output: 1.5, cacheRead: 2, cacheWrite: 2 },
+    });
+
+    // 2x input and 1.5x output for the full request, not a flat doubling.
+    const short = at(272_000)!;
+    const long = at(272_001)!;
+    expect(long.cost.input).toBeCloseTo(short.cost.input * 2, 9);
+    expect(long.cost.output).toBeCloseTo(short.cost.output * 1.5, 9);
+    expect(long.cost.total).toBeGreaterThan(short.cost.total);
+  });
+
+  test("a missing prompt size is unpriced rather than assumed short", () => {
+    // The prompt size is what chooses between the two bands, so its absence is
+    // a missing price input — never a licence to bill the cheaper one.
+    const usage = { inputTokens: 1_000, outputTokens: 100 };
+    expect(requestCost("openai-apikey", "gpt-5.6-sol", { usage })).toBeNull();
+    expect(pricingUnavailableReason({
+      provider: "openai-apikey",
+      model: "gpt-5.6-sol",
+      usage,
+    })).toBe("pricing_context_missing");
+  });
+
+  test("a Fast request above the long-context boundary declines rather than guessing", () => {
+    // OpenAI does not serve long context in Fast mode, so this request was
+    // served as something else — but the collapsed tier scalar cannot say
+    // whether Fast was confirmed or merely requested and then downgraded.
+    // Pricing it at either band would be a guess, so it matches no row.
+    const usage = { inputTokens: 1_000, outputTokens: 100 };
+    expect(requestCost("openai-apikey", "gpt-5.6-sol", {
+      usage,
+      promptInputTokens: 400_000,
+      serviceTier: "priority",
+    })).toBeNull();
+    expect(pricingUnavailableReason({
+      provider: "openai-apikey",
+      model: "gpt-5.6-sol",
+      usage,
+      promptInputTokens: 400_000,
+      serviceTier: "priority",
+    })).toBe("pricing_condition_unmatched");
+  });
+
+  test("both accounting lanes get the same band, because they read one authority", () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 100_000 };
+    const shape = { usageStatus: "reported" as const, usage, model: "gpt-5.6-sol" };
+    for (const promptInputTokens of [272_001, 1_000]) {
+      const direct = estimateRequestCostLanes({ ...shape, provider: "openai-apikey", promptInputTokens });
+      const equivalent = estimateRequestCostLanes({ ...shape, provider: "chatgpt-pabcdef", promptInputTokens });
+      expect(direct.direct?.price?.scheduleId).toBe(equivalent.apiEquivalent?.price?.scheduleId);
+      expect(direct.direct?.cost.total).toBeCloseTo(equivalent.apiEquivalent!.cost.total, 12);
+    }
+    // And a Fast subscription request is multiplied in the comparison lane too.
+    const fast = estimateRequestCostLanes({
+      ...shape, provider: "chatgpt-pabcdef", promptInputTokens: 1_000, serviceTier: "priority",
+    });
+    const base = estimateRequestCostLanes({
+      ...shape, provider: "chatgpt-pabcdef", promptInputTokens: 1_000,
+    });
+    expect(fast.apiEquivalent?.cost.total).toBeCloseTo(base.apiEquivalent!.cost.total * 2, 9);
   });
 
   test("prices supported OpenAI direct IDs and preserves unavailable cache writes", () => {
@@ -369,18 +486,36 @@ describe("product and condition isolation", () => {
     //   5.5   (5 / 30 / 0.5)     -> same as sol; its cache WRITE is unavailable,
     //                               which this row never exercises (no cache write).
     const usage = { inputTokens: 1_000_000, outputTokens: 100_000, cachedInputTokens: 100_000 };
-    expect(requestCost("openai-apikey", "gpt-5.6-sol", { usage })?.cost.total).toBeCloseTo(7.55, 9);
-    expect(requestCost("openai-apikey", "gpt-5.6-terra", { usage })?.cost.total).toBeCloseTo(3.02, 9);
-    expect(requestCost("openai-apikey", "gpt-5.6-luna", { usage })?.cost.total).toBeCloseTo(0.302, 9);
-    expect(requestCost("openai-apikey", "gpt-5.5", { usage })?.cost.total).toBeCloseTo(7.55, 9);
-    expect(requestCost("openai-apikey", "gpt-5.6-sol-pro", { usage })).toBeNull();
+    // Two lanes touched this block and disagreed, so the resolution is recorded
+    // rather than left to look like one lane simply won.
+    //
+    // The band work added `promptInputTokens`, which is now required: the prompt
+    // size is what selects the band, so without it the resolver correctly answers
+    // `pricing_context_missing` instead of guessing the short rate. 1,000 keeps
+    // these cases in the short band, where the rate is the same one they always
+    // used — adding bands did not change the short figures.
+    //
+    // The figures themselves are the *corrected* ones. The originals (7.85 /
+    // 3.14 / 0.314 / 7.85) were all uniformly consistent with output priced at
+    // 110k tokens, where this usage meters to 100k — one hand-computation slip
+    // applied four times. These were re-derived by running the estimator rather
+    // than on paper: `inputTokens` is inclusive, so the usage below is 900k
+    // uncached input, 100k output and 100k cache read.
+    const short = { usage, promptInputTokens: 1_000 };
+    expect(requestCost("openai-apikey", "gpt-5.6-sol", short)?.cost.total).toBeCloseTo(7.55, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-terra", short)?.cost.total).toBeCloseTo(3.02, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-luna", short)?.cost.total).toBeCloseTo(0.302, 9);
+    expect(requestCost("openai-apikey", "gpt-5.5", short)?.cost.total).toBeCloseTo(7.55, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-sol-pro", short)).toBeNull();
     expect(requestCost("openai-apikey", "gpt-5.5", {
       usage: { inputTokens: 1_000, outputTokens: 1, cacheCreationInputTokens: 1 },
+      promptInputTokens: 1_000,
     })).toBeNull();
     expect(pricingUnavailableReason({
       provider: "openai-apikey",
       model: "gpt-5.5",
       usage: { inputTokens: 1_000, outputTokens: 1, cacheCreationInputTokens: 1 },
+      promptInputTokens: 1_000,
     })).toBe("pricing_context_missing");
   });
 
@@ -390,6 +525,7 @@ describe("product and condition isolation", () => {
       model: "gpt-5.6-luna",
       usageStatus: "reported",
       usage: { inputTokens: 100, outputTokens: 10 },
+      promptInputTokens: 100,
     });
     expect(direct.direct).toMatchObject({ lane: "direct", sourceClassification: "direct_api_key" });
     expect(direct.apiEquivalent).toBeNull();
@@ -399,6 +535,7 @@ describe("product and condition isolation", () => {
       model: "gpt-5.6-luna",
       usageStatus: "reported",
       usage: { inputTokens: 100, outputTokens: 10 },
+      promptInputTokens: 100,
     });
     expect(subscription.direct).toBeNull();
     expect(subscription.apiEquivalent).toMatchObject({
