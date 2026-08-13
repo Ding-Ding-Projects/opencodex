@@ -247,6 +247,12 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
       keywordKeys: ["narrator.edgeEnable", "narrator.edgeCantonese"],
     },
     { id: "dimsum", tkey: "dimsum.toggle" },
+    {
+      id: "vocabulary",
+      tkey: "vocab.title",
+      descKey: "vocab.sub",
+      keywordKeys: ["vocab.uploadLabel", "vocab.replaceLabel", "vocab.clearLabel"],
+    },
   ],
 });
 
