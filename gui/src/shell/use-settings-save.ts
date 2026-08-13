@@ -34,6 +34,7 @@
 
 import { useCallback } from "react";
 import { useT } from "../i18n/shared";
+import { joinBilingual } from "../i18n/resolve";
 import { useNotifications } from "./notifications-context";
 import { useSettingsDrafts } from "../settings-drafts-context";
 import {
@@ -62,7 +63,12 @@ export function useSettingsSave(): SettingsSaveApi {
     // The row label, so the notice names the setting in the same words the
     // screen does rather than by the field name it is sent under.
     const label = (field: SettingsDraftField) => t(SETTINGS_FIELD_LABELS[field]);
-    const list = (fields: SettingsDraftField[]) => fields.map(label).join(", ");
+    // `joinBilingual` rather than `join(", ")`: in bilingual mode each label is
+    // already a pair, and a plain comma join interleaves them into a run the
+    // sentence around it can no longer take apart — every Cantonese name would
+    // land in the English clause and back again. It regroups them into one pair
+    // instead, and in a single-language mode it is exactly a comma join.
+    const list = (fields: SettingsDraftField[]) => joinBilingual(fields.map(label), ", ");
 
     if (outcome.accepted.length > 0) {
       notify({ tone: "success", title: t("settings.savedTitle"), body: t("settings.savedBody") });
@@ -94,7 +100,7 @@ export function useSettingsSave(): SettingsSaveApi {
         tone: "error",
         title: t("settings.saveUnpersistedTitle"),
         body: t("settings.saveUnpersistedBody", {
-          names: outcome.unpersisted.map(write => t(BROWSER_GROUP_LABELS[write.group])).join(", "),
+          names: joinBilingual(outcome.unpersisted.map(write => t(BROWSER_GROUP_LABELS[write.group])), ", "),
           // Same de-duplication as the endpoint case, and it matters more here:
           // storage refuses every key for one reason, so three groups saved
           // together produce three copies of one browser message.

@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Trans } from "../i18n/provider";
 import { useT } from "../i18n/shared";
+import { joinBilingual } from "../i18n/resolve";
 import { IconSearch } from "../icons";
 import { Card, Chip, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
@@ -31,7 +32,9 @@ export function ClaudeSettingsSearchRow({
   const note = search.error
     ? `${t("regex.invalid")}: ${search.error}`
     : search.otherHits > 0
-      ? t("settings.otherTab", { count: search.otherHits, tabs: search.otherTabs.join(", ") })
+      // Tab names are `t()` results, so each is a bilingual pair; regrouped into
+      // one pair rather than comma-joined, which would interleave the languages.
+      ? t("settings.otherTab", { count: search.otherHits, tabs: joinBilingual(search.otherTabs, ", ") })
       : search.active && search.hits === 0
         ? t("settings.noMatch")
         : "";

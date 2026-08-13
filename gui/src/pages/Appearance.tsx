@@ -16,6 +16,7 @@ import { TypographyEditor } from "../components/appearance/TypographyEditor";
 import { TYPOGRAPHY_LABEL_KEYS } from "../components/appearance/typography-labels";
 import { IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
+import { joinBilingual } from "../i18n/resolve";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
 import { DEFAULT_SEED, SEED_SWATCHES, fontStackFor, type DensityLevel, type ThemeMode } from "../theme/m3";
 import { familyOf } from "../theme/fonts";
@@ -193,7 +194,10 @@ export default function Appearance() {
   // Descriptions are matched too, so a search for what a setting *does* finds it
   // as readily as a search for what it is called.
   const otherHits = query ? elsewhere.filter(row => matcher.test(`${row.label} ${row.desc}`)) : [];
-  const otherTabs = [...new Set(otherHits.map(row => row.tab))].join(", ");
+  // These names came out of `t()`, so in bilingual mode each is already a pair.
+  // `joinBilingual` regroups them into one pair the sentence they are pasted
+  // into can still split; a plain comma join would interleave the languages.
+  const otherTabs = joinBilingual([...new Set(otherHits.map(row => row.tab))], ", ");
 
   const onResetElement = () => {
     resetElementStyle(target);

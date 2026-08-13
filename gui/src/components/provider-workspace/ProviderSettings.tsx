@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { baseUrlForChoice, matchChoiceId, resolvedBaseUrlForChoice } from "../../base-url-choice";
 import { readJsonIfOk } from "../../fetch-json";
 import { useT } from "../../i18n/shared";
+import { joinBilingual } from "../../i18n/resolve";
 import { IconLock, IconSearch } from "../../icons";
 import { Chip, TextInput } from "../../shell/m3-ui";
 import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
@@ -309,7 +310,9 @@ export default function ProviderSettings({
       )}
       {!settingsError && searching && elsewhereTabs.length > 0 && (
         <p role="status" style={SEARCH_NOTE}>
-          {t("settings.otherTab", { count: elsewhereTabs.length, tabs: elsewhereTabs.join(", ") })}
+          {/* Tab names come from `t()`, so they are bilingual pairs — regrouped
+              into one pair rather than comma-joined into an unsplittable run. */}
+          {t("settings.otherTab", { count: elsewhereTabs.length, tabs: joinBilingual(elsewhereTabs, ", ") })}
         </p>
       )}
       {!settingsError && searching && settingsHits === 0 && (
