@@ -2566,6 +2566,22 @@ export const yue: Partial<Record<TKey, string>> = {
   // ---- provider workspace ----
   "pws.groupNeedsAttention": "要處理（{count}）",
 
+  // ---- command palette ----
+  "commandPalette.title": "指令面板",
+  "commandPalette.trigger": "打開指令面板",
+  "commandPalette.searchPlaceholder": "搜尋頁面同設定…",
+  "commandPalette.searchLabel": "搜尋頁面同設定",
+  "commandPalette.noResults": "揾唔到同「{query}」符合嘅嘢。",
+  "commandPalette.destinationsGroup": "頁面",
+  "commandPalette.settingsGroup": "設定",
+  "commandPalette.kindPage": "頁面",
+  "commandPalette.goTo": "去 {label}",
+  "commandPalette.editOnPage": "呢樣要喺 {tab} 度改，撳開佢先改到。",
+  "commandPalette.loadOnPage": "仲未載入。去 {tab} 打開一次，之後喺呢度都改到。",
+  "commandPalette.expand": "放大做成個視窗",
+  "commandPalette.collapse": "縮返做細張卡",
+  "commandPalette.close": "閂咗指令面板",
+
   // ---- anchored regex builder ----
   "settings.otherTabHere": "呢版另一個分頁有 {count} 個符合：{tabs}",
   "settings.matchCount": "{total} 個設定入面有 {count} 個符合",

@@ -2045,3 +2045,92 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
  * by side is a trap for whoever does. The row indents by the wrapper instead.
  */
 
+/* ------------------------------------------------- command palette ------- */
+
+/*
+ * `shell/CommandPalette.tsx`. A `<dialog>` — see `m3-ui.tsx`'s `Dialog` — so it
+ * already sits in the top layer above every menu, popover and drawer without
+ * this needing its own place in the z-index scale.
+ */
+.m3-palette-search { gap: var(--sp-2); align-items: center; margin-bottom: 4px; }
+
+.m3-palette-results {
+  display: grid;
+  gap: 2px;
+  max-height: 52vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The full-window size trades the bounded card's cap for most of the viewport,
+   so a long settings index scrolls less inside a smaller box. */
+.m3-palette--full .m3-palette-results { max-height: 68vh; }
+
+.m3-palette-group-heading {
+  padding: 10px 4px 4px;
+  font-size: var(--t-label-m);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.m3-palette-row--active { background: var(--m3-surface-container-highest); border-radius: var(--r-s); }
+
+/* The clickable label/description half of a row — every row has one, whether
+   or not it also carries a live control underneath. Selecting it is always
+   "go there", so it stays a real `<button>` even on a row a live control also
+   lives in, rather than the whole row becoming one giant unclickable target. */
+.m3-palette-row-main {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.m3-palette-row-main:hover { background: var(--m3-surface-container-highest); }
+.m3-palette-row-main svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+.m3-palette-row-text { min-width: 0; flex: 1 1 auto; display: grid; gap: 1px; }
+.m3-palette-row-label { font-size: var(--t-body-m); }
+.m3-palette-row-desc {
+  font-size: var(--t-label-m);
+  color: var(--m3-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-palette-row-badge { flex: 0 0 auto; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+/* The live control (or the readout explaining why there is none), indented to
+   sit under the icon rather than the label — it belongs to the row above it,
+   not to a fresh line starting at the edge. */
+.m3-palette-row-control { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 12px 10px 44px; }
+.m3-palette-row-hint { margin: 0; padding: 0 12px 10px 44px; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-palette-empty { padding: 24px 12px; text-align: center; color: var(--m3-on-surface-variant); }
+
+/*
+ * Where a teleported result actually landed, on whatever page just opened —
+ * not this dialog's own DOM, which is already gone by the time this paints.
+ * Static rather than a pulse: a flash strong enough to notice at a glance and
+ * gone again once the timer clears the class, no keyframes required.
+ */
+.m3-command-palette-highlight {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+  background: color-mix(in oklab, var(--m3-primary) 14%, transparent);
+  border-radius: var(--r-s, 8px);
+}
+@media not (prefers-reduced-motion: reduce) {
+  .m3-command-palette-highlight { transition: background-color 200ms ease, outline-color 200ms ease; }
+}
+
