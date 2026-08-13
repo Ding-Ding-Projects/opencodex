@@ -8,7 +8,7 @@
 
 import { createContext, useContext } from "react";
 import type { Locale, FunnyLevels } from "./i18n/shared";
-import type { SettingsSnapshot } from "./pages/settings-shared";
+import type { SettingsSaveOutcome, SettingsSnapshot } from "./pages/settings-shared";
 import type { ElementStyle, WindowClass } from "./theme/m3";
 import type { Prefs } from "./theme/prefs-context";
 import type { TypographyStyle } from "../../shared/m3/typography";
@@ -48,7 +48,16 @@ export interface SettingsDraftContextValue {
   /** Receive an initial/server refresh without clobbering edits already staged. */
   setSettingsBaseline: (snapshot: SettingsSnapshot) => void;
   setSettings: (update: (previous: SettingsSnapshot) => SettingsSnapshot) => void;
-  apply: () => Promise<void>;
+  /**
+   * Persist the draft and report what the settings endpoints made of it, or
+   * `null` when nothing server-backed was written.
+   *
+   * Prefer `useSettingsSave`, which raises the notice. This provider is mounted
+   * outside `LanguageProvider` and `NotificationsProvider`, so it can reach
+   * neither `t()` nor `notify()` — calling `apply` directly saves silently, and
+   * a refusal then leaves a control staged with nothing to explain it.
+   */
+  apply: () => Promise<SettingsSaveOutcome | null>;
   discard: () => void;
 }
 

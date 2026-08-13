@@ -9,9 +9,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { applyElementTypography, applyLayout, applyTokens, clearElementStyle, fontStackFor, resolveDark, windowClass } from "./theme/m3";
 import { DEFAULT_PREFS, ELEMENT_TARGETS, PREFS_KEY, readPrefs, type Prefs } from "./theme/prefs-context";
-import { detectInitial, readFunny, writeFunny, type FunnyLevels, type Locale } from "./i18n/shared";
+import { detectInitial, readFunny, writeFunny, type FunnyLevels, type Locale, type TKey, type Vars } from "./i18n/shared";
+import { translate } from "./i18n/resolve";
 import { recordRevision } from "./shell/revisions";
-import { applySettingsDraft, countSettingsDraftChanges, settingsSnapshotsEqual, type AcceptedSettingsChange, type SettingsSnapshot } from "./pages/settings-shared";
+import {
+  SETTINGS_FIELD_LABELS,
+  applySettingsDraft,
+  countSettingsDraftChanges,
+  settingsSnapshotsEqual,
+  type AcceptedSettingsChange,
+  type SettingsSaveOutcome,
+  type SettingsSnapshot,
+} from "./pages/settings-shared";
 import { SettingsDraftContext } from "./settings-drafts-context";
 import type { ElementStyle } from "./theme/m3";
 import type { TypographyStyle } from "../../shared/m3/typography";
@@ -69,8 +78,25 @@ function countPrefsChanges(applied: Prefs, draft: Prefs): number {
   return count;
 }
 
-function changeLabel(change: AcceptedSettingsChange): string {
-  return `${change.field}:${JSON.stringify(change.after)}`;
+/**
+ * The Version history line for one accepted field, in the words the user reads.
+ *
+ * `translate` rather than `t()`: this provider is mounted outside
+ * `LanguageProvider`, which reads its context, so the hook cannot be called from
+ * here — but the locale and funny levels that hook would resolve against are
+ * this provider's own state, so resolving directly reaches the same strings by
+ * the same path. Without it the log said `codexAutoStart:true`, which names a
+ * wire field and a JSON literal rather than a setting and a value.
+ */
+function changeSummary(change: AcceptedSettingsChange, locale: Locale, funny: FunnyLevels): string {
+  const tr = (key: TKey, vars?: Vars) => translate(locale, funny, key, vars);
+  const after = change.after;
+  const value = typeof after === "boolean"
+    ? tr(after ? "startup.enabled" : "startup.disabled")
+    // An empty string is a real, chosen value here — "no cap" — so it renders as
+    // the same em dash the Settings rows use for unset rather than as a blank.
+    : typeof after === "string" ? (after || "—") : JSON.stringify(after);
+  return tr("settings.revisionSummary", { label: tr(SETTINGS_FIELD_LABELS[change.field]), value });
 }
 
 /** A non-visual provider: AppBar owns the persistent visible draft bar. */
@@ -210,10 +236,22 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
     setSettingsState(appliedSettings);
   }, [appliedFunny, appliedLocale, appliedPrefs, appliedSettings]);
 
-  const apply = useCallback(async () => {
-    if (!dirty || applyingRef.current) return;
+  /**
+   * Persist the whole draft, and hand back what the server made of the settings
+   * half of it.
+   *
+   * The return value exists because this provider sits above `LanguageProvider`
+   * and `NotificationsProvider` — both read its context — so it can reach
+   * neither `t()` nor `notify()`. `useSettingsSave` runs inside both and turns
+   * this into the notice; a caller that invokes `apply` bare still saves
+   * correctly, but says nothing, which is the state a refused write must never
+   * be left in.
+   */
+  const apply = useCallback(async (): Promise<SettingsSaveOutcome | null> => {
+    if (!dirty || applyingRef.current) return null;
     applyingRef.current = true;
     setApplying(true);
+    let outcome: SettingsSaveOutcome | null = null;
     try {
       // Browser values are persisted only when the user explicitly applies. The
       // write happens before moving the matching applied baseline, so a quota
@@ -246,17 +284,24 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
         }
       }
       if (appliedSettings && settings && settingsDirty) {
-        const outcome = await applySettingsDraft(apiBase, appliedSettings, settings);
-        setAppliedSettings(outcome.applied);
-        setSettingsState(outcome.draft ?? outcome.applied);
-        for (const change of outcome.accepted) {
-          recordRevision({ scope: "settings", label: "Settings", summary: changeLabel(change), before: JSON.stringify(change.before) });
+        const result = await applySettingsDraft(apiBase, appliedSettings, settings);
+        setAppliedSettings(result.applied);
+        setSettingsState(result.draft ?? result.applied);
+        for (const change of result.accepted) {
+          recordRevision({
+            scope: "settings",
+            label: "Settings",
+            summary: changeSummary(change, locale, funny),
+            before: JSON.stringify(change.before),
+          });
         }
+        outcome = { accepted: result.accepted, refused: result.refused, failed: result.failed };
       }
     } finally {
       applyingRef.current = false;
       setApplying(false);
     }
+    return outcome;
   }, [apiBase, appliedFunny, appliedLocale, appliedPrefs, appliedSettings, dirty, funny, locale, prefs, settings, settingsDirty]);
 
   const value = useMemo(() => ({

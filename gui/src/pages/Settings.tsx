@@ -16,7 +16,12 @@
  * 2. A value that did not move records nothing and claims nothing. The Version
  *    history is a list of real events, so a refused or no-op write must not
  *    appear in it, and "Setting saved" must not be shown for a save that the
- *    server declined. A control that visibly springs back still says why.
+ *    server declined. A refused value stays staged rather than springing back,
+ *    so it can be corrected and retried — and the save still says which setting
+ *    was declined and why, because a draft bar that will not clear explains
+ *    nothing on its own. `useSettingsSave` owns that notice; the draft
+ *    coordinator sits outside the language and notification providers and so
+ *    hands its outcome upward rather than reporting it itself.
  * 3. Plain-text search by default, `.*` an explicit opt-in, patterns capped at
  *    400 characters and evaluated locally — the same matcher every other search
  *    bar in the GUI uses.
