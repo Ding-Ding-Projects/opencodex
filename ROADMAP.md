@@ -160,16 +160,27 @@ was told last month that a feature was missing needs to see it corrected, not si
     and a second copy of it would drift from the dictionaries and make the slider lie. The one
     exception is the destructive warning rendered as the ladder, which carries an explicit level 3
     in both tracks so the Cantonese rung reads as Cantonese under an English interface locale.
-- **The narrator speaks one language, not two.** `gui/src/shell/narrator.ts` is 46 lines: it holds a
-  single `lang` string, builds one `SpeechSynthesisUtterance` from it, and `configureNarrator()`
-  takes `{ enabled, lang }`. So there is still **no English-then-Cantonese serialized mode**. The
-  reason this file used to give — that there was no Cantonese locale to serialize — stopped being
-  true on 2026-07-30; the gap is now purely that the narrator has one track where bilingual mode has
-  two. It remains off by default and supersedes a pending utterance rather than stacking.
-- **No narrator voice picker, and no rate or pitch controls.** `prefs.narratorLang` is a single
-  language string; nothing enumerates the machine's installed voices, nothing persists a stable
-  platform voice identity, and there is no per-language picker. A listener gets whichever voice the
-  platform picks for that language tag.
+- **The narrator speaks both languages, serialized.** `configureNarrator()` now takes an ordered
+  list of tracks, and the bilingual chip stores its own `"both"` value rather than the same `"en"`
+  the English chip stores — which is why picking it used to light two chips and narrate in English
+  only. English speaks first, Cantonese follows once the first utterance ends, each in its own
+  `SpeechSynthesisUtterance` with its own `lang`, voice, rate and pitch. It remains off by default
+  and still supersedes rather than stacking; supersession now spans the pair, so interrupting after
+  the English half has started drops the Cantonese half instead of letting a stale second language
+  arrive on top of a newer message.
+- **The narrator has a voice picker per narrated language, with rate and pitch.**
+  `gui/src/shell/narrator-voices.ts` enumerates what the platform actually reports, subscribes to
+  `voiceschanged` because the list arrives late (measured here: **0 voices** on the first
+  synchronous `getVoices()`, **3** after the event fired twice), and unsubscribes on teardown.
+  `prefs.narratorVoices` persists `SpeechSynthesisVoice.voiceURI` — the platform's stable identity,
+  never the display name, which is neither unique nor stable across installs. Bilingual mode gets
+  two independent pickers, because choosing an English voice says nothing about which Cantonese
+  voice should read the other half. Nothing ships with a named voice selected: "Choose
+  automatically" is the default and leaves `utterance.voice` unset so the platform decides.
+  - **Still open: the status line depends on what the platform admits to.** A voice's `lang` is
+    self-reported, so a machine carrying a Cantonese voice that reports only `zh` is treated as
+    region-unknown and offered, while one reporting `zh-CN` is excluded as the wrong dialect. Both
+    are the honest reading of the metadata, but neither is a guarantee about pronunciation.
 
 ### Remote access
 

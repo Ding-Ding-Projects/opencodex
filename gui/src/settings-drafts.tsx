@@ -63,18 +63,31 @@ function resetOneElementStyle(prefs: Prefs, id: string): Prefs {
 }
 
 function resetAppearanceFrom(prefs: Prefs): Prefs {
-  return { ...DEFAULT_PREFS, narrator: prefs.narrator, narratorLang: prefs.narratorLang };
+  // Voices come through with the rest of the narration settings: see the note on
+  // the matching reset in `theme/prefs.tsx`.
+  return {
+    ...DEFAULT_PREFS,
+    narrator: prefs.narrator,
+    narratorLang: prefs.narratorLang,
+    narratorVoices: prefs.narratorVoices,
+    narratorEdge: prefs.narratorEdge,
+  };
 }
 
 function countPrefsChanges(applied: Prefs, draft: Prefs): number {
   let count = 0;
   for (const key of [
-    "theme", "seed", "density", "fontId", "fontStack", "fontScale", "fontWeight", "narrator", "narratorLang", "costRange",
+    "theme", "seed", "density", "fontId", "fontStack", "fontScale", "fontWeight", "narrator", "narratorLang", "narratorEdge", "costRange",
   ] as const) {
     if (!equal(applied[key], draft[key])) count += 1;
   }
   const styleIds = new Set([...Object.keys(applied.elementStyles), ...Object.keys(draft.elementStyles)]);
   for (const id of styleIds) if (!equal(applied.elementStyles[id], draft.elementStyles[id])) count += 1;
+  // Counted per narrated language rather than as one lump, so retuning the
+  // Cantonese voice while leaving English alone reports one staged change
+  // against the track it actually belongs to.
+  const voiceTags = new Set([...Object.keys(applied.narratorVoices), ...Object.keys(draft.narratorVoices)]);
+  for (const tag of voiceTags) if (!equal(applied.narratorVoices[tag], draft.narratorVoices[tag])) count += 1;
   return count;
 }
 

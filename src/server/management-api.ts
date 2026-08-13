@@ -66,6 +66,7 @@ import { handleOauthAccountRoutes } from "./management/oauth-account-routes";
 import { handleComboRoutes } from "./management/combo-routes";
 import { handleSystemRoutes } from "./management/system-routes";
 import { handleChangelogRoutes } from "./management/changelog-routes";
+import { handleNarratorRoutes } from "./management/narrator-routes";
 import { handleExportRoutes, type Dataset } from "./management/export-routes";
 import { DATASETS } from "../lib/export-datasets";
 import { handleHostRoutes } from "./management/host-routes";
@@ -179,6 +180,7 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleComboRoutes(ctx))
     ??     (await handleSystemRoutes(ctx))
     ??     (await handleChangelogRoutes(ctx))
+    ??     (await handleNarratorRoutes(ctx))
     ??     (await handleExportRoutes(ctx, exportDatasets(config)))
     ??     (await handleHostRoutes(ctx));
   if (routed) return routed;

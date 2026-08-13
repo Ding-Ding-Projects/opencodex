@@ -16,13 +16,22 @@
  */
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m3-ui";
+import { Button, Card, Chip, Field, SelectField, Slider, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { IconSearch, IconSparkle, IconVolume } from "../icons";
 import { LOCALES, useI18n, useT, type Locale, type TFn } from "../i18n/shared";
 import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18n/voice";
-import { usePrefs } from "../theme/prefs-context";
+import { resolveTrack } from "../i18n/resolve";
+import {
+  DEFAULT_NARRATOR_VOICE,
+  NARRATOR_BOTH,
+  NARRATOR_PITCH,
+  NARRATOR_RATE,
+  usePrefs,
+  type NarratorVoicePrefs,
+} from "../theme/prefs-context";
 import { cancelNarration, configureNarrator, narrate, narratorAvailable } from "../shell/narrator";
+import { resolveVoice, subscribeVoices, type VoiceOption } from "../shell/narrator-voices";
 import { useNotifications } from "../shell/notifications-context";
 import { DISHES, type DimSumDish } from "../shell/dimsum";
 import { DishArt } from "../shell/DimSumCard";
@@ -98,6 +107,150 @@ function FunnyLadder({ t, level, lang }: { t: TFn; level: number; lang: VoiceLan
   );
 }
 
+/**
+ * How long to wait for the platform's voice list before calling it settled.
+ *
+ * `speechSynthesis.getVoices()` commonly answers with an empty array and fills
+ * in a moment later behind `voiceschanged` — measured on a Windows machine here
+ * as 0 voices synchronously, then 3 after the event fired. A machine with
+ * genuinely none installed may never fire the event at all, so without this the
+ * picker would sit on "reading the voices…" for ever. We ask, we wait, and then
+ * we report what there is.
+ */
+const VOICE_SETTLE_MS = 1500;
+
+/** The narrated tracks, in speaking order, for a stored narrator language. */
+function tracksFor(narratorLang: string): string[] {
+  return narratorLang === NARRATOR_BOTH ? ["en", "zh-HK"] : [narratorLang];
+}
+
+/**
+ * The voices this computer has, kept current as they arrive.
+ *
+ * The subscription is the whole point: a picker that reads `getVoices()` once
+ * reports "no voices installed" on a machine with forty and looks broken rather
+ * than slow. It unsubscribes on teardown, and `loaded` keeps "we have not been
+ * told yet" distinct from "we asked, and there are none" — which are different
+ * sentences the user needs to be able to tell apart.
+ *
+ * Lives here rather than in `narrator-voices.ts` so that module stays free of
+ * React: `narrator.ts` imports it and has no business pulling in a renderer.
+ */
+function useInstalledVoices(): { voices: VoiceOption[]; loaded: boolean } {
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const stop = subscribeVoices(next => {
+      setVoices(next);
+      if (next.length) setLoaded(true);
+    });
+    const settle = setTimeout(() => setLoaded(true), VOICE_SETTLE_MS);
+    return () => {
+      stop();
+      clearTimeout(settle);
+    };
+  }, []);
+
+  return { voices, loaded };
+}
+
+/**
+ * One narrated language's voice, speed and pitch.
+ *
+ * Rendered once per track, so bilingual narration gets two of everything. That
+ * is not duplication for its own sake: choosing an English voice says nothing
+ * about which Cantonese voice should read the other half of the same line, and a
+ * single shared picker would force one answer onto both.
+ */
+function VoiceTrack({ t, tag, label, settings, disabled, voices, loaded, onChange }: {
+  t: TFn;
+  tag: string;
+  label: string;
+  settings: NarratorVoicePrefs;
+  disabled: boolean;
+  voices: VoiceOption[];
+  loaded: boolean;
+  onChange: (patch: Partial<NarratorVoicePrefs>) => void;
+}) {
+  const resolution = resolveVoice(voices, tag, settings.voiceURI, loaded);
+  const statusId = `ocx-narrator-status-${tag}`;
+  const selectId = `ocx-narrator-voice-${tag}`;
+
+  const options = [
+    // Always first, and always the shipped default. Nothing ships with a named
+    // voice selected: the app cannot know what is installed until it asks, so
+    // naming one would be a preference for a voice most machines do not have.
+    { value: "", label: t("narrator.voiceAuto") },
+    ...resolution.candidates.map(voice => ({ value: voice.uri, label: voice.name })),
+  ];
+  // A choice whose voice is not installed here still shows in the control, so
+  // the kept preference is visible rather than silently reading as "automatic".
+  if (resolution.kind === "missing" && settings.voiceURI) {
+    options.push({ value: settings.voiceURI, label: settings.voiceLabel ?? settings.voiceURI });
+  }
+
+  const status: string[] = [];
+  if (resolution.kind === "loading") status.push(t("narrator.voiceLoading"));
+  else if (resolution.kind === "none") status.push(t("narrator.voiceNone", { lang: label }));
+  else if (resolution.kind === "platform") status.push(t("narrator.voicePlatform", { lang: label, n: resolution.candidates.length }));
+  else if (resolution.kind === "chosen") status.push(t("narrator.voiceChosen", { name: resolution.voice!.name, lang: label }));
+  else status.push(t("narrator.voiceMissing", { name: settings.voiceLabel ?? settings.voiceURI ?? "", lang: label }));
+  // Network-backed voices die when the machine goes offline, and nothing about
+  // the name says so.
+  if (resolution.network && resolution.voice) status.push(t("narrator.voiceNetwork", { name: resolution.voice.name }));
+
+  const voiceLabel = t("narrator.voiceFor", { lang: label });
+
+  return (
+    <div style={{ marginTop: "var(--sp-3)" }}>
+      <Field label={voiceLabel} id={selectId}>
+        <SelectField
+          id={selectId}
+          label={voiceLabel}
+          describedBy={statusId}
+          disabled={disabled}
+          value={settings.voiceURI ?? ""}
+          options={options}
+          onChange={uri => onChange({
+            voiceURI: uri || undefined,
+            // Stored beside the identity so a status line can name the voice
+            // that went missing. It is display copy and is never matched on.
+            voiceLabel: uri ? resolution.candidates.find(v => v.uri === uri)?.name : undefined,
+          })}
+        />
+      </Field>
+      <p
+        id={statusId}
+        style={{ margin: "4px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}
+      >
+        {status.join(" ")}
+      </p>
+
+      <Slider
+        id={`ocx-narrator-rate-${tag}`}
+        value={settings.rate}
+        min={NARRATOR_RATE.min}
+        max={NARRATOR_RATE.max}
+        step={NARRATOR_RATE.step}
+        onChange={rate => onChange({ rate })}
+        label={t("narrator.rate", { lang: label })}
+        valueLabel={`${settings.rate.toFixed(1)}×`}
+      />
+      <Slider
+        id={`ocx-narrator-pitch-${tag}`}
+        value={settings.pitch}
+        min={NARRATOR_PITCH.min}
+        max={NARRATOR_PITCH.max}
+        step={NARRATOR_PITCH.step}
+        onChange={pitch => onChange({ pitch })}
+        label={t("narrator.pitch", { lang: label })}
+        valueLabel={settings.pitch.toFixed(1)}
+      />
+    </div>
+  );
+}
+
 function FunnySample({ text }: { text: string }) {
   return (
     <div style={{
@@ -125,10 +278,21 @@ export default function LanguageVoice() {
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
 
+  const { voices, loaded: voicesLoaded } = useInstalledVoices();
+
+  const trackTags = useMemo(() => tracksFor(prefs.narratorLang), [prefs.narratorLang]);
+  const narratorTracks = useMemo(
+    () => trackTags.map(tag => {
+      const settings = prefs.narratorVoices[tag] ?? DEFAULT_NARRATOR_VOICE;
+      return { lang: tag, voiceURI: settings.voiceURI, rate: settings.rate, pitch: settings.pitch };
+    }),
+    [trackTags, prefs.narratorVoices],
+  );
+
   useEffect(() => {
-    configureNarrator({ enabled: prefs.narrator, lang: prefs.narratorLang });
+    configureNarrator({ enabled: prefs.narrator, tracks: narratorTracks });
     return () => cancelNarration();
-  }, [prefs.narrator, prefs.narratorLang]);
+  }, [prefs.narrator, narratorTracks]);
 
   // Non-blocking by contract: the preview never gates anything and clears itself.
   useEffect(() => {
@@ -138,6 +302,40 @@ export default function LanguageVoice() {
   }, [preview]);
 
   const htmlLangFor = (code: string) => LOCALES.find(l => l.code === code)?.htmlLang ?? "en";
+
+  /**
+   * What a narrator-language chip stores.
+   *
+   * The bilingual locale maps to the serialized both-tracks mode rather than to
+   * its html tag. Before this it stored `"en"` — the same value the English chip
+   * stores, because `bi` renders as English — so picking "English + 廣東話" lit
+   * *both* chips and narrated in English only. Bilingual narration is two
+   * utterances, one per language, which needs a value of its own.
+   */
+  const narratorValueFor = (code: string) => (code === "bi" ? NARRATOR_BOTH : htmlLangFor(code));
+
+  /** The display name of a narrated track, for the per-track labels and status. */
+  const trackLabel = (tag: string) =>
+    LOCALES.find(l => l.htmlLang === tag && l.code !== "bi")?.name ?? tag;
+
+  /**
+   * The sample sentence for one narrated track, resolved per track rather than
+   * through `t()`.
+   *
+   * `t()` in bilingual mode returns `English · 廣東話` joined into one string,
+   * and feeding that to one utterance is exactly the failure this whole change
+   * exists to remove: one voice reading the other language's characters.
+   */
+  const sampleFor = (tag: string): string => {
+    if (tag === "zh-HK") return resolveTrack("yue", "yue", funny.yue, "narrator.sample");
+    const code = (LOCALES.find(l => l.htmlLang === tag && l.code !== "bi")?.code ?? "en") as Locale;
+    return resolveTrack(code, "en", funny.en, "narrator.sample");
+  };
+
+  const setTrack = (tag: string, patch: Partial<NarratorVoicePrefs>) => {
+    const current = prefs.narratorVoices[tag] ?? DEFAULT_NARRATOR_VOICE;
+    setPrefs({ narratorVoices: { ...prefs.narratorVoices, [tag]: { ...current, ...patch } } });
+  };
 
   const matcher = useMatcher(query, useRegex);
   const permanentWarn = t("storage.cleanup.permanentWarn");
@@ -206,7 +404,13 @@ export default function LanguageVoice() {
     },
     {
       id: "narrator",
-      text: [t("narrator.title"), t("narrator.sub"), t("narrator.enable"), t("narrator.enableHint"), t("narrator.language"), t("narrator.test")].join(" "),
+      text: [
+        t("narrator.title"), t("narrator.sub"), t("narrator.enable"), t("narrator.enableHint"),
+        t("narrator.language"), t("narrator.test"), t("narrator.langBoth"),
+        t("narrator.voice"), t("narrator.voiceSub"), t("narrator.voiceAuto"),
+        t("narrator.rateShort"), t("narrator.pitchShort"),
+        ...trackTags.map(tag => `${t("narrator.voiceFor", { lang: trackLabel(tag) })} ${t("narrator.rate", { lang: trackLabel(tag) })} ${t("narrator.pitch", { lang: trackLabel(tag) })}`),
+      ].join(" "),
       node: (
         <Card
           key="narrator"
@@ -239,18 +443,45 @@ export default function LanguageVoice() {
                 <Chip
                   key={l.code}
                   lang={l.htmlLang}
-                  selected={prefs.narratorLang === htmlLangFor(l.code)}
-                  onClick={() => setPrefs({ narratorLang: htmlLangFor(l.code) })}
+                  selected={prefs.narratorLang === narratorValueFor(l.code)}
+                  onClick={() => setPrefs({ narratorLang: narratorValueFor(l.code) })}
                 >
-                  {l.name}
+                  {l.code === "bi" ? t("narrator.langBoth") : l.name}
                 </Chip>
               ))}
             </div>
           </Field>
 
+          {prefs.narratorLang === NARRATOR_BOTH && (
+            <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+              {t("narrator.bothOrder")}
+            </p>
+          )}
+
+          {/* One picker per narrated language — two of them in bilingual mode,
+              each with its own voice, speed, pitch and status. */}
+          <div className="m3-field-label" style={{ marginTop: "var(--sp-3)" }}>{t("narrator.voice")}</div>
+          <p style={{ margin: "2px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+            {t("narrator.voiceSub")}
+          </p>
+          {trackTags.map(tag => (
+            <VoiceTrack
+              key={tag}
+              t={t}
+              tag={tag}
+              label={trackLabel(tag)}
+              settings={prefs.narratorVoices[tag] ?? DEFAULT_NARRATOR_VOICE}
+              disabled={!available}
+              voices={voices}
+              loaded={voicesLoaded}
+              onChange={patch => setTrack(tag, patch)}
+            />
+          ))}
+
           <Button
             variant="outlined"
             disabled={!available}
+            style={{ marginTop: "var(--sp-3)" }}
             onClick={() => {
               // The narrator never speaks while it is off — the button says so
               // instead of silently doing nothing.
@@ -258,7 +489,10 @@ export default function LanguageVoice() {
                 notify({ tone: "warn", title: t("narrator.offTitle"), body: t("narrator.offBody") });
                 return;
               }
-              narrate(t("narrator.sample"));
+              // Resolved per track: the bilingual sample is two sentences spoken
+              // one after the other, never one joined string read by one voice.
+              const [first, second] = trackTags;
+              narrate(first ? sampleFor(first) : "", second ? sampleFor(second) : undefined);
               notify({ tone: "success", title: t("narrator.spoke"), body: t("narrator.enableHint") });
             }}
           >

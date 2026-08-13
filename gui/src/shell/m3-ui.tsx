@@ -376,13 +376,22 @@ export function Banner({ tone = "info", title, children, action }: {
  * expect. Where a custom menu is genuinely needed (rich option content, an
  * async list), that is a different component and should say so.
  */
-export function SelectField({ value, options, onChange, label, disabled, id, style }: {
+export function SelectField({ value, options, onChange, label, disabled, id, describedBy, style }: {
   value: string;
   options: { value: string; label: string }[];
   onChange: (value: string) => void;
   label?: string;
   disabled?: boolean;
   id?: string;
+  /**
+   * Ids of the copy explaining what this control is currently doing.
+   *
+   * A select box that merely shows a value implies that value is what will
+   * happen — so where a caller renders a status line saying otherwise, the
+   * screen-reader user has to reach it from the control rather than by
+   * stumbling onto it afterwards.
+   */
+  describedBy?: string;
   style?: CSSProperties;
 }) {
   return (
@@ -392,6 +401,7 @@ export function SelectField({ value, options, onChange, label, disabled, id, sty
       value={value}
       disabled={disabled}
       aria-label={label}
+      aria-describedby={describedBy}
       onChange={event => onChange(event.target.value)}
       style={style}
     >

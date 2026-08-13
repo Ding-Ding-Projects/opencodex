@@ -122,7 +122,14 @@ test("leads with the body-large page lead the prototype opens on", async () => {
 test("ships one funny-level slider per language, each 1–5 and staged as a draft", async () => {
   const { container, root } = await mount();
 
-  const sliders = [...container.querySelectorAll('input[type="range"]')] as unknown as HTMLInputElement[];
+  // Scoped to the funny-level card. It used to query the whole screen, which
+  // asserted "these are the only two sliders anywhere on Language & voice" —
+  // incidentally true at the time, and not the contract. The narrator's
+  // per-language speed and pitch sliders are also range inputs, so the
+  // screen-wide form would now fail on a screen that is more correct, not less.
+  const funnyCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector('input[type="range"]#ocx-fun-en'))!;
+  const sliders = [...funnyCard.querySelectorAll('input[type="range"]')] as unknown as HTMLInputElement[];
   expect(sliders.map(s => s.id)).toEqual(["ocx-fun-en", "ocx-fun-yue"]);
   expect(sliders.every(s => s.min === "1" && s.max === "5")).toBe(true);
 
