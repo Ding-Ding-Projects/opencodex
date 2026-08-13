@@ -9,13 +9,15 @@
  * snackbar carrying the server's own message.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
 import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
+import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
+import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
 
 interface PoolAccount {
   id: string;
@@ -57,12 +59,12 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
   const { notify } = useNotifications();
   const [menuOpen, setMenuOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const [focusIndex, setFocusIndex] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuPlacement = useAnchoredPlacement(wrapRef, menuRef, menuOpen, 260);
+  const filterId = useId();
 
   const poll = useKeyedClientResource(
     `app-codex-pool:${apiBase}`,
@@ -89,9 +91,16 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
       if (!wrapRef.current?.contains(e.target as Node)) setMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // The anchored regex builder is a nested dialog with its own Escape —
+      // stage one (clear the filter) is handled inside `MenuFilterField`
+      // itself, and a builder open inside it owns its own close entirely.
+      // Only an Escape that did not originate inside either reaches here.
+      if ((e.target as Element | null)?.closest?.('[role="dialog"]')) return;
       // Escape returns focus to the trigger; a menu that closes and drops focus to
       // the document leaves a keyboard user at the top of the page.
-      if (e.key === "Escape") { setMenuOpen(false); triggerRef.current?.focus(); }
+      setMenuOpen(false);
+      triggerRef.current?.focus();
     };
     const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
@@ -103,10 +112,13 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
 
   // Opening a menu moves focus into it — that is the whole keyboard contract of
   // role="menu", and without it the rows below are unreachable without a mouse.
+  // It lands on the filter field rather than the first account: typing is the
+  // point of a filter that takes focus on open, and ArrowDown from the field
+  // is what reaches the account list itself (see `onItemKeyDown` below).
   useEffect(() => {
     if (!menuOpen) return;
-    itemRefs.current[focusIndex]?.focus();
-  }, [menuOpen, focusIndex]);
+    focusMenuFilterField(filterId);
+  }, [menuOpen, filterId]);
 
   const state = poll.data ?? null;
   // A null activeCodexAccountId does NOT mean "nothing is active" — it means the
@@ -116,6 +128,10 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
   const active = state
     ? state.accounts.find(account => isActiveAccount(account, state.activeId)) ?? null
     : null;
+
+  const accounts = state?.accounts ?? [];
+  const labelOfAccount = useCallback((account: PoolAccount) => account.email, []);
+  const filter = useMenuFilter(accounts, labelOfAccount);
 
   const switchTo = async (account: PoolAccount) => {
     if (switching || (state && isActiveAccount(account, state.activeId))) { setMenuOpen(false); return; }
@@ -142,18 +158,29 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
     }
   };
 
-  /** Arrow / Home / End movement inside the menu, wrapping at both ends. */
-  const onMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const count = state?.accounts.length ?? 0;
-    if (count === 0) return;
-    const move = (next: number) => {
+  /**
+   * Arrow / Home / End movement among the *visible* (filtered) rows, per row
+   * rather than roving tabindex over the whole container — the same shape
+   * `TabStrip`'s already-compliant new-tab search uses. ArrowUp off the first
+   * row returns focus to the filter field instead of wrapping to the last row,
+   * so a keyboard user can always get back to typing without reaching for Home.
+   */
+  const onItemKeyDown = (event: React.KeyboardEvent, index: number) => {
+    const count = filter.visible.length;
+    if (event.key === "ArrowDown") {
       event.preventDefault();
-      setFocusIndex((next + count) % count);
-    };
-    if (event.key === "ArrowDown") move(focusIndex + 1);
-    else if (event.key === "ArrowUp") move(focusIndex - 1);
-    else if (event.key === "Home") move(0);
-    else if (event.key === "End") move(count - 1);
+      itemRefs.current[(index + 1) % count]?.focus();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (index === 0) focusMenuFilterField(filterId);
+      else itemRefs.current[index - 1]?.focus();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      itemRefs.current[0]?.focus();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      itemRefs.current[count - 1]?.focus();
+    }
   };
 
   // No pool (proxy down, or nothing configured): a plain, non-interactive chip.
@@ -172,9 +199,10 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
         ref={triggerRef}
         className="m3-avatar m3-avatar--btn"
         onClick={() => {
-          // Open focused on the account that is actually routing, not always the first.
-          const activeIndex = state ? state.accounts.findIndex(a => isActiveAccount(a, state.activeId)) : -1;
-          setFocusIndex(activeIndex >= 0 ? activeIndex : 0);
+          // A fresh filter every time the menu opens; a query left over from
+          // the last visit would silently hide accounts the next one.
+          filter.setQuery("");
+          filter.setRegex(false);
           setMenuOpen(o => !o);
         }}
         aria-haspopup="menu"
@@ -192,10 +220,23 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
           role="menu"
           aria-label={t("switcher.title")}
           style={{ ...fixedPanelStyle(menuPlacement), zIndex: 70, minWidth: "min(260px, calc(100vw - 16px))" }}
-          onKeyDown={onMenuKeyDown}
         >
           <div className="m3-menu-heading">{t("switcher.title")}</div>
-          {state.accounts.map((account, index) => {
+          <MenuFilterField
+            id={filterId}
+            query={filter.query}
+            onQuery={filter.setQuery}
+            regex={filter.regex}
+            onRegexChange={filter.setRegex}
+            sample={filter.sample}
+            searchLabel={t("switcher.filterLabel")}
+            builderLabel={t("switcher.filterBuilder")}
+            onArrowDown={() => itemRefs.current[0]?.focus()}
+            onEnterSingle={() => void switchTo(filter.visible[0])}
+            resultCount={filter.visible.length}
+          />
+          <MenuFilterStatus matcher={filter.matcher} query={filter.query} resultCount={filter.visible.length} />
+          {filter.visible.map((account, index) => {
             const isActive = isActiveAccount(account, state.activeId);
             const weekly = account.quota?.weeklyPercent;
             const unavailable = !!account.paused;
@@ -207,8 +248,7 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
                 aria-checked={isActive}
                 className={`m3-menu-item${unavailable ? " m3-menu-item--unavailable" : ""}`}
                 ref={element => { itemRefs.current[index] = element; }}
-                // Roving tabindex: the menu takes one Tab stop, arrows move within it.
-                tabIndex={index === focusIndex ? 0 : -1}
+                onKeyDown={event => onItemKeyDown(event, index)}
                 // aria-disabled rather than only `disabled`, so a screen reader
                 // announces a paused account instead of skipping past it silently.
                 aria-disabled={unavailable || switching}

@@ -465,6 +465,8 @@ export const M3_EN = {
   "appearance.previewTonal": "Tonal",
   "appearance.previewOutlined": "Outlined",
   "appearance.elementsTitle": "Per-element styling",
+  "appearance.elementsFilterLabel": "Filter elements",
+  "appearance.elementsFilterBuilder": "Build a pattern to filter elements",
   "appearance.elementsSub": "Override one surface at a time. Each override is stored separately and can be reset on its own.",
   "appearance.elNavRail": "Navigation rail",
   "appearance.elTabStrip": "Tab strip",
@@ -745,6 +747,8 @@ export const M3_EN = {
   "switcher.weeklyUsed": "{pct}% weekly used",
   "switcher.switched": "Switched active account",
   "switcher.failed": "Could not switch account",
+  "switcher.filterLabel": "Filter accounts",
+  "switcher.filterBuilder": "Build a pattern to filter accounts",
 
   // ---- app-bar cost meter ----
   "cost.rangeAll": "lifetime",
@@ -753,6 +757,8 @@ export const M3_EN = {
   "cost.menuTitle": "Estimated cost range",
   "cost.aria": "Estimated API cost {amount} over {range}. Change range.",
   "cost.title": "Estimated API cost ({range}) — click to change the range",
+  "cost.filterLabel": "Filter ranges",
+  "cost.filterBuilder": "Build a pattern to filter ranges",
 
   // ---- cost basis (which accounting lane a figure came from) ----
   // Subscription traffic has a real API-equivalent value but is not billed. The
@@ -890,6 +896,8 @@ export const M3_EN = {
 
   // ---- providers (M3 restyle: pill tablist + rail landmarks) ----
   "pws.sectionsAria": "Provider sections",
+  "pws.filterFacetsLabel": "Filter these facets",
+  "pws.filterFacetsBuilder": "Build a pattern to filter these facets",
 
   // ---- combos (M3 restyle: pill tablist label) ----
   "cws.tabsAria": "Combo sections",
@@ -1017,6 +1025,18 @@ export const M3_EN = {
   "search.flagsCompiled": "Compiling this search as /…/{flags}.",
   "search.flagsNone": "Compiling this search with no flags: case-sensitive, and . stops at a line break.",
   "search.flagsStateful": "g and y are ignored here — this field tests every row on its own, and a sticky pattern would match only every other one.",
+  // ---- menu filter: the field every dropdown, combobox and context menu
+  // carries at its head, generic on purpose — only one of these is ever open
+  // at a time, so a shared wording never leaves two of them ambiguous. ----
+  "menuFilter.searchLabel": "Filter this menu",
+  "menuFilter.placeholder": "Type to filter",
+  "menuFilter.builder": "Build a pattern to filter this menu",
+  "menuFilter.empty": "Nothing here matches “{query}”.",
+  "menuFilter.invalid": "Invalid pattern: {error}",
+  // ---- RichSelect: the ReactNode-label combobox used by Claude Code's
+  // context-window and small-fast-model pickers ----
+  "richSelect.filterLabel": "Filter options",
+  "richSelect.filterBuilder": "Build a pattern to filter options",
   "changelog.subtitle": "Every released version, with its date and categorized changes. Filter by date, search the text, and export what you see.",
   "changelog.presets": "Presets",
   "changelog.thisYear": "This year",

@@ -15,7 +15,7 @@
  * anything: absence of a figure is not a figure, and neither is zero.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
 import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
@@ -25,6 +25,8 @@ import type { CostRange } from "../theme/prefs-context";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import { formatUsd } from "./cost-format";
 import { resolveSummaryCost, type LaneBearingSummary, type ResolvedSummaryCost } from "../cost-lanes";
+import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
+import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
 
 const RANGES: { range: CostRange; tkey: TKey }[] = [
   { range: "all", tkey: "cost.rangeAll" },
@@ -40,6 +42,13 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuPlacement = useAnchoredPlacement(wrapRef, menuRef, menuOpen, 180);
+  const filterId = useId();
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // Hooks run unconditionally, above the "nothing priced" early return below —
+  // three items is still every item, so the range picker gets the same filter
+  // field as a menu with three hundred.
+  const labelOfRange = useCallback((item: (typeof RANGES)[number]) => t(item.tkey), [t]);
+  const filter = useMenuFilter(RANGES, labelOfRange);
 
   const range = prefs.costRange;
   const poll = useKeyedClientResource(
@@ -61,10 +70,13 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
       if (!wrapRef.current?.contains(e.target as Node)) setMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setMenuOpen(false);
-        triggerRef.current?.focus();
-      }
+      if (e.key !== "Escape") return;
+      // The anchored regex builder is a nested dialog with its own Escape; the
+      // filter field's own first-stage clear is handled inside
+      // `MenuFilterField`, so only an Escape from neither reaches here.
+      if ((e.target as Element | null)?.closest?.('[role="dialog"]')) return;
+      setMenuOpen(false);
+      triggerRef.current?.focus();
     };
     const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
@@ -73,6 +85,34 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
       document.removeEventListener("keydown", onKey);
     };
   }, [menuOpen]);
+
+  // Opens focused on the filter field rather than the first range, matching
+  // every other converted menu — typing is the point, and ArrowDown reaches
+  // the range list from there.
+  useEffect(() => {
+    if (!menuOpen) return;
+    focusMenuFilterField(filterId);
+  }, [menuOpen, filterId]);
+
+  /** Arrow / Home / End among the visible ranges; ArrowUp off the first row
+   * returns focus to the filter field rather than wrapping to the last. */
+  const onItemKeyDown = (event: React.KeyboardEvent, index: number) => {
+    const count = filter.visible.length;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      itemRefs.current[(index + 1) % count]?.focus();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (index === 0) focusMenuFilterField(filterId);
+      else itemRefs.current[index - 1]?.focus();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      itemRefs.current[0]?.focus();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      itemRefs.current[count - 1]?.focus();
+    }
+  };
 
   // No data (proxy down, no usage log yet) and no lane that priced anything both
   // hide the meter rather than showing a misleading $0 — absence of a figure is
@@ -92,7 +132,11 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
         // The equivalent variant carries its own tonal container AND the visible
         // "not billed" word below — the tone alone would be colour-only meaning.
         className={equivalent ? "m3-cost-chip m3-cost-chip--equivalent" : "m3-cost-chip"}
-        onClick={() => setMenuOpen(o => !o)}
+        onClick={() => {
+          filter.setQuery("");
+          filter.setRegex(false);
+          setMenuOpen(o => !o);
+        }}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         aria-label={t(equivalent ? "cost.lane.equivalentAria" : "cost.aria", { amount, range: rangeLabel })}
@@ -134,13 +178,29 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
           )}
           <div className="m3-menu-heading" id="cost-range-heading">{t("cost.menuTitle")}</div>
           <div role="menu" aria-labelledby="cost-range-heading">
-            {RANGES.map(item => (
+            <MenuFilterField
+              id={filterId}
+              query={filter.query}
+              onQuery={filter.setQuery}
+              regex={filter.regex}
+              onRegexChange={filter.setRegex}
+              sample={filter.sample}
+              searchLabel={t("cost.filterLabel")}
+              builderLabel={t("cost.filterBuilder")}
+              onArrowDown={() => itemRefs.current[0]?.focus()}
+              onEnterSingle={() => { const only = filter.visible[0]; setPrefs({ costRange: only.range }); setMenuOpen(false); }}
+              resultCount={filter.visible.length}
+            />
+            <MenuFilterStatus matcher={filter.matcher} query={filter.query} resultCount={filter.visible.length} />
+            {filter.visible.map((item, index) => (
               <button
                 key={item.range}
                 type="button"
                 role="menuitemradio"
                 aria-checked={item.range === range}
                 className="m3-menu-item"
+                ref={element => { itemRefs.current[index] = element; }}
+                onKeyDown={event => onItemKeyDown(event, index)}
                 onClick={() => { setPrefs({ costRange: item.range }); setMenuOpen(false); }}
               >
                 <span style={{ fontWeight: item.range === range ? 600 : 400 }}>{t(item.tkey)}</span>

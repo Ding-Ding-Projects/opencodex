@@ -1986,6 +1986,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "appearance.previewTonal": "色調",
   "appearance.previewOutlined": "外框",
   "appearance.elementsTitle": "逐個元素設樣式",
+  "appearance.elementsFilterLabel": "篩選元素",
+  "appearance.elementsFilterBuilder": "砌個 pattern 嚟篩元素",
   "appearance.elementsSub": "一次覆寫一個表面。每個覆寫都分開存住，可以獨立還原。",
   "appearance.elNavRail": "導覽側欄",
   "appearance.elTabStrip": "分頁列",
@@ -2218,6 +2220,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "switcher.weeklyUsed": "今個星期用咗 {pct}%",
   "switcher.switched": "已切換使用緊嘅帳戶",
   "switcher.failed": "切換帳戶唔到",
+  "switcher.filterLabel": "篩選帳戶",
+  "switcher.filterBuilder": "砌個 pattern 嚟篩帳戶",
 
   // ---- cost meter ----
   "cost.rangeAll": "全部時間",
@@ -2226,6 +2230,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "cost.menuTitle": "估算成本時段",
   "cost.aria": "{range} 內估算嘅 API 成本 {amount}。改時段。",
   "cost.title": "估算 API 成本（{range}）— 撳一下改時段",
+  "cost.filterLabel": "篩選時段",
+  "cost.filterBuilder": "砌個 pattern 嚟篩時段",
   // 「等同 API 標價」跟返 usage.cost.total 嘅講法。呢個唔係帳單，所以「唔收費」
   // 同「唔係帳單」要講到明明白白，唔可以令人以為要俾錢。
   //
@@ -2361,6 +2367,8 @@ export const yue: Partial<Record<TKey, string>> = {
 
   // ---- provider workspace ----
   "pws.sectionsAria": "供應商分區",
+  "pws.filterFacetsLabel": "篩選呢啲facet",
+  "pws.filterFacetsBuilder": "砌個 pattern 嚟篩呢啲facet",
 
   // ---- combo workspace ----
   "cws.tabsAria": "組合分區",
@@ -2506,6 +2514,17 @@ export const yue: Partial<Record<TKey, string>> = {
   "search.flagsCompiled": "呢個搜尋會 compile 做 /…/{flags}。",
   "search.flagsNone": "呢個搜尋 compile 嗰陣一個 flag 都冇：分大細楷，而 . 去到換行就會停。",
   "search.flagsStateful": "g 同 y 喺呢度唔會理 — 呢個欄位係逐行獨立咁試，sticky pattern 就會變成隔行先中到一次。",
+
+  // ---- menu filter ----
+  "menuFilter.searchLabel": "篩選呢個選單",
+  "menuFilter.placeholder": "打字嚟篩選",
+  "menuFilter.builder": "砌個 pattern 嚟篩呢個選單",
+  "menuFilter.empty": "呢度冇嘢夾到「{query}」。",
+  "menuFilter.invalid": "Pattern 有問題：{error}",
+
+  // ---- RichSelect ----
+  "richSelect.filterLabel": "篩選選項",
+  "richSelect.filterBuilder": "砌個 pattern 嚟篩選項",
 
   // ---- changelog ----
   "changelog.subtitle": "每個發佈咗嘅版本，連日期同分好類嘅改動。可以按日期篩選、搵文字，同埋匯出你而家見到嘅嘢。",

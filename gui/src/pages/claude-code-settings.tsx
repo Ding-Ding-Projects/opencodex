@@ -1,10 +1,13 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Trans } from "../i18n/provider";
 import { useT } from "../i18n/shared";
 import { joinBilingual } from "../i18n/resolve";
 import { IconSearch } from "../icons";
 import { Card, Chip, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { onOutsidePress } from "../shell/outside-press";
+import { useMenuFilter, focusMenuFilterField, reactNodeText } from "../shell/menu-filter";
+import { MenuFilterField, MenuFilterStatus } from "../shell/MenuFilterField";
 import { claudeSettingLabels } from "./claude-settings-search";
 import type { ClaudeSettingsSearch } from "./claude-settings-search";
 
@@ -151,8 +154,16 @@ export function SettingToggle({
   );
 }
 
-/** A small M3 combobox that keeps ReactNode labels intact (native option text
- * would stringify model icons to the dreaded [object Object]). */
+/**
+ * A small M3 combobox that keeps ReactNode labels intact (native option text
+ * would stringify model icons to the dreaded [object Object]).
+ *
+ * Carries the same filter field every dropdown in the app owes — the model
+ * catalogue `SmallFastModelSetting` hands this can run long, and "it only has
+ * four items" is not an exemption for the context-window picker either.
+ * `reactNodeText` recovers a plain string to filter on from a label that may
+ * be an icon-plus-text element rather than a string itself.
+ */
 export function RichSelect({
   value,
   options,
@@ -168,36 +179,116 @@ export function RichSelect({
   describedBy?: string;
   style?: CSSProperties;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const selected = options.find(option => option.value === value) ?? options[0];
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const filterId = useId();
+  const labelOfOption = useCallback((option: { value: string; label: ReactNode }) => reactNodeText(option.label), []);
+  const filter = useMenuFilter(options, labelOfOption);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // The anchored regex builder is a nested dialog with its own Escape; the
+      // filter field's own first-stage clear is handled inside
+      // `MenuFilterField`. Only an Escape from neither reaches here.
+      if ((event.target as Element | null)?.closest?.('[role="dialog"]')) return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    const stopOutsidePress = onOutsidePress(onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      stopOutsidePress();
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Opens focused on the filter field, matching every other converted
+  // dropdown — typing is the point, and ArrowDown reaches the options below.
+  useEffect(() => {
+    if (!open) return;
+    focusMenuFilterField(filterId);
+  }, [open, filterId]);
+
+  const onItemKeyDown = (event: React.KeyboardEvent, index: number) => {
+    const count = filter.visible.length;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      itemRefs.current[(index + 1) % count]?.focus();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (index === 0) focusMenuFilterField(filterId);
+      else itemRefs.current[index - 1]?.focus();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      itemRefs.current[0]?.focus();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      itemRefs.current[count - 1]?.focus();
+    }
+  };
+
+  const choose = (optionValue: string) => {
+    onChange(optionValue);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
   return (
-    <div style={{ position: "relative", minWidth: 190, ...style }}>
+    <div ref={wrapRef} style={{ position: "relative", minWidth: 190, ...style }}>
       <button
+        ref={triggerRef}
         type="button"
         className="m3-select"
         role="combobox"
         aria-label={label}
         aria-describedby={describedBy}
         aria-expanded={open}
-        onClick={() => setOpen(current => !current)}
+        onClick={() => {
+          // A fresh filter every time the dropdown opens; a query left over
+          // from the last visit would silently hide options the next one.
+          filter.setQuery("");
+          filter.setRegex(false);
+          setOpen(current => !current);
+        }}
         style={{ width: "100%", justifyContent: "space-between" }}
       >
         <span>{selected?.label}</span><span aria-hidden="true">⌄</span>
       </button>
       {open && (
         <div role="listbox" className="m3-menu" style={{ position: "absolute", zIndex: 10, insetInline: 0, top: "calc(100% + 4px)", maxHeight: 280, overflowY: "auto" }}>
-          {options.map(option => (
+          <MenuFilterField
+            id={filterId}
+            query={filter.query}
+            onQuery={filter.setQuery}
+            regex={filter.regex}
+            onRegexChange={filter.setRegex}
+            sample={filter.sample}
+            searchLabel={t("richSelect.filterLabel")}
+            builderLabel={t("richSelect.filterBuilder")}
+            onArrowDown={() => itemRefs.current[0]?.focus()}
+            onEnterSingle={() => choose(filter.visible[0].value)}
+            resultCount={filter.visible.length}
+          />
+          <MenuFilterStatus matcher={filter.matcher} query={filter.query} resultCount={filter.visible.length} />
+          {filter.visible.map((option, index) => (
             <button
               type="button"
               role="option"
               aria-selected={option.value === value}
               key={option.value}
               className="m3-menu-item"
-              onClick={event => {
-                onChange(option.value);
-                setOpen(false);
-                (event.currentTarget.parentElement?.previousElementSibling as HTMLButtonElement | null)?.focus();
-              }}
+              ref={element => { itemRefs.current[index] = element; }}
+              onKeyDown={event => onItemKeyDown(event, index)}
+              onClick={() => choose(option.value)}
             >
               {option.label}
             </button>
