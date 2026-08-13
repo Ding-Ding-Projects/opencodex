@@ -57,7 +57,8 @@ preference on each edit.
 | `SnackbarHost.tsx` | bottom-left `aria-live="polite"` stack |
 | `use-tabs.ts` | tab state, hash sync |
 | `notifications*.ts(x)` | snackbars + capped, persisted history |
-| `narrator.ts` | single-utterance speech queue that supersedes rather than stacks |
+| `narrator.ts` | one-utterance-at-a-time speech queue; supersedes rather than stacks, across a whole bilingual pair |
+| `narrator-voices.ts` | voice enumeration from both sources, late-arrival subscription, list search, and how a stored `voiceURI` resolves |
 | `revisions.ts` | append-only revision log |
 | `m3-ui.tsx` | Card / Button / Segmented / Slider / Field / TextInput / TextArea / Chip / Toggle / Empty / Dialog / Banner / SelectField |
 | `page-meta.ts` | nav order, icons and label keys for all 19 pages |
@@ -87,7 +88,7 @@ Status and chart colours stay functional data colours, as the spec requires.
 | Screen | Notes |
 |---|---|
 | **Appearance** | theme, seed picker (free hex + 8 curated), density 1–5, font family/scale/weight, live preview, per-element editors with individual reset. Since `4ba0f747`: an infinite colour picker and the word-depth typography editor described under *Deferred by scope* |
-| **Language & voice** | interface language, including Cantonese and the bilingual mode since `499c1bc8`; the two per-language funny-level sliders with a live five-rung ladder; the narrator, off by default and one utterance at a time, with a selectable language; the dim sum surprise, described and previewable but with no off switch |
+| **Language & voice** | interface language, including Cantonese and the bilingual mode since `499c1bc8`; the two per-language funny-level sliders with a live five-rung ladder; the narrator, off by default and one utterance at a time, with a selectable language including a serialized English-then-Cantonese mode, and a voice, speed and pitch picker **per narrated language** that reads the platform's real voice list, offers Microsoft Edge's online neural voices as an opt-in second source (the only Cantonese voices most Windows machines can reach), and says what is actually in effect; the dim sum surprise, described and previewable but with no off switch |
 | **Regex builder** | ECMAScript `RegExp` evaluated locally. Caps enforced: 400-char pattern, 20 000-char sample, 200 matches, forced advance on a zero-width match. Token palette, flags, presets, named groups, copy + Markdown export |
 | **Changelog** | reads `/api/changelog`; ISO date range (typed *and* native picker, invalid input reported inline without discarding text) composed with regex-capable search, Markdown export stating the range |
 | **Version history** | append-only; a restore is recorded as a new revision and the dialog says so |

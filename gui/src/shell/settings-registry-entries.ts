@@ -232,7 +232,20 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
     { id: "mode", tkey: "lang.mode", descKey: "lang.sub" },
     { id: "funnyEn", tkey: "lang.funnyEn", descKey: "lang.funnyLadder" },
     { id: "funnyYue", tkey: "lang.funnyYue", descKey: "lang.funnyLadder" },
-    { id: "narrator", tkey: "narrator.title", descKey: "narrator.sub" },
+    { id: "narrator", tkey: "narrator.title", descKey: "narrator.sub", keywordKeys: ["narrator.langBoth"] },
+    // The voice, speed and pitch controls are separately findable: somebody who
+    // wants the narrator to stop sounding like a robot searches for "voice" or
+    // "speed", not for "narrator", and landing on the card is not the same as
+    // knowing the controls are on it.
+    { id: "narratorVoice", tkey: "narrator.voice", descKey: "narrator.voiceSub", keywordKeys: ["narrator.voiceAuto"] },
+    { id: "narratorRate", tkey: "narrator.rateShort", descKey: "narrator.voiceSub" },
+    { id: "narratorPitch", tkey: "narrator.pitchShort", descKey: "narrator.voiceSub" },
+    {
+      id: "narratorEdge",
+      tkey: "narrator.edgeTitle",
+      descKey: "narrator.edgeDisclosure",
+      keywordKeys: ["narrator.edgeEnable", "narrator.edgeCantonese"],
+    },
     { id: "dimsum", tkey: "dimsum.toggle" },
   ],
 });

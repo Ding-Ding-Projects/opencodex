@@ -81,12 +81,26 @@ test("renders the language, narrator and dim sum cards with accessible switches"
   const titles = [...container.querySelectorAll(".m3-card-title")].map(n => n.textContent);
   expect(titles).toEqual(["Interface language", "Narrator", "Dim sum surprise"]);
 
-  // One switch, not two. The dim sum surprise used to carry the second one; it
-  // cannot be opted out of any more, so shipping an off switch here would be the
-  // regression rather than the feature. `prefs.dimsum` went with it.
+  // Every switch on this screen belongs to the narrator card, and every one of
+  // them is off on a fresh profile. This used to be a screen-wide count of one,
+  // which read as "the dim sum surprise has no off switch" — the real contract,
+  // and one the dim sum card asserts directly a few lines below. The count also
+  // silently asserted that no other switch could ever exist, so the narrator's
+  // Edge online-voice opt-in broke it by existing.
+  //
+  // What is worth pinning instead is that neither defaults to on: the narrator
+  // stays silent until asked, and the network voice source — which sends the
+  // narrated text to Microsoft — must never arrive switched on.
+  const narratorCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Narrator")!;
   const switches = [...container.querySelectorAll('[role="switch"]')];
-  expect(switches).toHaveLength(1);
-  expect(switches[0].getAttribute("aria-checked")).toBe("false");
+  expect(switches).toHaveLength(2);
+  expect(switches.every(s => narratorCard.contains(s))).toBe(true);
+  expect(switches.map(s => s.getAttribute("aria-label"))).toEqual([
+    "Enable narrator",
+    "Use Microsoft Edge online voices",
+  ]);
+  expect(switches.every(s => s.getAttribute("aria-checked") === "false")).toBe(true);
 
   // The card still owes the reader a way to see one on demand rather than waiting
   // out 1-in-10 odds, so what replaced the switch is a preview and not a gap.
@@ -122,11 +136,20 @@ test("leads with the body-large page lead the prototype opens on", async () => {
 test("ships one funny-level slider per language, each 1–5 and staged as a draft", async () => {
   const { container, root } = await mount();
 
-  const sliders = [...container.querySelectorAll('input[type="range"]')] as unknown as HTMLInputElement[];
+  // Scoped to the funny-level card. It used to query the whole screen, which
+  // asserted "these are the only two sliders anywhere on Language & voice" —
+  // incidentally true at the time, and not the contract. The narrator's
+  // per-language speed and pitch sliders are also range inputs, so the
+  // screen-wide form would now fail on a screen that is more correct, not less.
+  const funnyCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector('input[type="range"]#ocx-fun-en'))!;
+  const sliders = [...funnyCard.querySelectorAll('input[type="range"]')] as unknown as HTMLInputElement[];
   expect(sliders.map(s => s.id)).toEqual(["ocx-fun-en", "ocx-fun-yue"]);
   expect(sliders.every(s => s.min === "1" && s.max === "5")).toBe(true);
 
-  const labels = [...container.querySelectorAll(".m3-slider-row .m3-field-label")].map(n => n.textContent);
+  // Scoped for the same reason as the ids above: the narrator's per-language
+  // speed and pitch sliders are `.m3-slider-row`s too.
+  const labels = [...funnyCard.querySelectorAll(".m3-slider-row .m3-field-label")].map(n => n.textContent);
   expect(labels).toEqual(["Funny level — English", "Funny level — 廣東話"]);
 
   await act(async () => { typeInto(sliders[1], "5"); });

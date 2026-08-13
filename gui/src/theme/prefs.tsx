@@ -131,7 +131,17 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 
   const resetAppearance = useCallback(() => {
     for (const target of ELEMENT_TARGETS) clearElementStyle(document.documentElement, target.id);
-    setPrefsState(prev => ({ ...DEFAULT_PREFS, narrator: prev.narrator, narratorLang: prev.narratorLang }));
+    // Narration survives an appearance reset, voices included. "Reset
+    // appearance" is a request about how the app looks; silently discarding the
+    // voice, rate and pitch somebody tuned by ear would be a different, unasked
+    // -for reset that leaves no trace of what the settings used to be.
+    setPrefsState(prev => ({
+      ...DEFAULT_PREFS,
+      narrator: prev.narrator,
+      narratorLang: prev.narratorLang,
+      narratorVoices: prev.narratorVoices,
+      narratorEdge: prev.narratorEdge,
+    }));
   }, []);
 
   const value = useMemo<PrefsContextValue>(() => ({

@@ -160,16 +160,47 @@ was told last month that a feature was missing needs to see it corrected, not si
     and a second copy of it would drift from the dictionaries and make the slider lie. The one
     exception is the destructive warning rendered as the ladder, which carries an explicit level 3
     in both tracks so the Cantonese rung reads as Cantonese under an English interface locale.
-- **The narrator speaks one language, not two.** `gui/src/shell/narrator.ts` is 46 lines: it holds a
-  single `lang` string, builds one `SpeechSynthesisUtterance` from it, and `configureNarrator()`
-  takes `{ enabled, lang }`. So there is still **no English-then-Cantonese serialized mode**. The
-  reason this file used to give — that there was no Cantonese locale to serialize — stopped being
-  true on 2026-07-30; the gap is now purely that the narrator has one track where bilingual mode has
-  two. It remains off by default and supersedes a pending utterance rather than stacking.
-- **No narrator voice picker, and no rate or pitch controls.** `prefs.narratorLang` is a single
-  language string; nothing enumerates the machine's installed voices, nothing persists a stable
-  platform voice identity, and there is no per-language picker. A listener gets whichever voice the
-  platform picks for that language tag.
+- **The narrator speaks both languages, serialized.** `configureNarrator()` now takes an ordered
+  list of tracks, and the bilingual chip stores its own `"both"` value rather than the same `"en"`
+  the English chip stores — which is why picking it used to light two chips and narrate in English
+  only. English speaks first, Cantonese follows once the first utterance ends, each in its own
+  `SpeechSynthesisUtterance` with its own `lang`, voice, rate and pitch. It remains off by default
+  and still supersedes rather than stacking; supersession now spans the pair, so interrupting after
+  the English half has started drops the Cantonese half instead of letting a stale second language
+  arrive on top of a newer message.
+- **The narrator has a voice picker per narrated language, with rate and pitch.**
+  `gui/src/shell/narrator-voices.ts` enumerates what the platform actually reports, subscribes to
+  `voiceschanged` because the list arrives late (measured here: **0 voices** on the first
+  synchronous `getVoices()`, **3** after the event fired twice), and unsubscribes on teardown.
+  `prefs.narratorVoices` persists `SpeechSynthesisVoice.voiceURI` — the platform's stable identity,
+  never the display name, which is neither unique nor stable across installs. Bilingual mode gets
+  two independent pickers, because choosing an English voice says nothing about which Cantonese
+  voice should read the other half. Nothing ships with a named voice selected: "Choose
+  automatically" is the default and leaves `utterance.voice` unset so the platform decides.
+  - **Still open: the status line depends on what the platform admits to.** A voice's `lang` is
+    self-reported, so a machine carrying a Cantonese voice that reports only `zh` is treated as
+    region-unknown and offered, while one reporting `zh-CN` is excluded as the wrong dialect. Both
+    are the honest reading of the metadata, but neither is a guarantee about pronunciation.
+- **Cantonese narration has real voices, from Microsoft Edge's read-aloud service.** Windows installs
+  no Cantonese voice at all — this machine reports three `en-US` voices and nothing else — so the
+  local picker alone left the product's Cantonese narration effectively unusable. `src/server/
+  management/narrator-tts.ts` lists the service's 322 voices and synthesizes MP3 over its WebSocket;
+  `narrator-routes.ts` exposes `/api/narrator/edge-voices` and `/api/narrator/edge-speak`, and the
+  renderer decodes the clip through the Web Audio API. That closes the gap with three neural
+  Cantonese voices (`zh-HK-HiuMaanNeural`, `zh-HK-HiuGaaiNeural`, `zh-HK-WanLungNeural`).
+  - **It is opt-in, and off by default, because the narrated text leaves the machine.** The
+    disclosure saying so sits on the control that enables it. A stored Edge voice makes no network
+    request at all while the source is off; it speaks with a local voice and the surface says so.
+  - **The endpoint is undocumented and unsupported.** Microsoft can change or block it at any time.
+    Offline, blocked and refused all degrade to a local voice with the reason shown, never to
+    silence. The handshake also validates `Sec-MS-GEC-Version` against the `User-Agent`'s Edge major
+    version and answers a bare `403` when they disagree or when the version has aged out — so those
+    two constants must be bumped **as a pair**, and a sudden blanket `403` means the pin is stale
+    rather than that the protocol changed.
+  - **Still open: no automated test covers the live service.** The client, the routes and the
+    renderer's queue behaviour are tested, but the synthesis path is proved by a real request made
+    by hand (322 voices listed; 14,976 bytes of valid MP3 from `zh-HK-HiuMaanNeural` through the
+    route) rather than by CI, which cannot depend on an undocumented third-party endpoint.
 
 ### Remote access
 
