@@ -2816,4 +2816,20 @@ export const yue: Partial<Record<TKey, string>> = {
   "quickRestore.noAnswer": "唔知 {tool} 還原咗未",
   "quickRestore.noAnswerBody": "proxy 冇喺時限內回應，所以唔知啲檔案有冇重寫過。睇吓 `ocx status`，跟住喺 terminal 行 `ocx restore`。",
   "quickRestore.snapshotSkipped": "還原之前嗰個紀錄快照唔夠時間做完，冇記錄到。",
+
+  // ---- destructive-action super confirmation ----
+  "superConfirm.emergencyExit": "緊急退出",
+  "superConfirm.keysHint": "開晒兩條 key 先解鎖到個滑桿。",
+  "superConfirm.slideHint": "一路拖到盡先算授權。中途放手就乜都唔會發生。",
+  "superConfirm.progressAnnounce": "已經拖咗 {percent}%",
+  "superConfirm.authFailed": "授權失敗",
+
+  "storage.cleanup.gateKey1": "我已經睇咗上面嗰 {count} 個檔案",
+  "storage.cleanup.gateKey2": "我明白呢個會唔經隔離區，刪咗就冇得返轉頭",
+  "storage.cleanup.gateSlider": "拖曳以永久刪除",
+  "storage.cleanup.gateWorking": "刪緊 {count} 個檔案，永久嗰種…",
+
+  "codexAuth.gateKey1": "我已經核對過呢個係啱嘅帳戶：{email}",
+  "codexAuth.gateKey2": "我明白呢個重置額度用咗就冚唪唥冇，賺唔返",
+  "codexAuth.gateSlider": "拖曳以使用額度",
 };

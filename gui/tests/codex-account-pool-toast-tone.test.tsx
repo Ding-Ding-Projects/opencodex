@@ -186,13 +186,27 @@ test("a successful redeem reports its own tone, not the failed remove's", async 
   await act(async () => { useCredit!.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 
-  const confirmReset = [...host.querySelectorAll("button")].find((btn) => {
-    const text = (btn.textContent ?? "").trim();
-    return text === "Use Credit" || text.startsWith("Resetting");
+  // Spending a reset credit is irreversible, so the confirm step is the
+  // destructive-action super-confirmation gate rather than a single "Use
+  // Credit" click: both keys have to turn on before the slider unlocks, and
+  // reaching the end of the slider is what actually redeems the credit.
+  const gateDialog = host.querySelector("dialog[open]");
+  expect(gateDialog).toBeTruthy();
+  const keys = [...gateDialog!.querySelectorAll('button[role="switch"]')];
+  expect(keys.length).toBe(2);
+  for (const key of keys) {
+    await act(async () => { key.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
+  }
+
+  const slider = gateDialog!.querySelector('input[type="range"]') as HTMLInputElement | null;
+  expect(slider).toBeTruthy();
+  const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    // Bypasses React's value tracker so the dispatched event counts as a change.
+    setter?.call(slider, "100");
+    slider!.dispatchEvent(new win.Event("input", { bubbles: true }));
   });
-  expect(confirmReset).toBeTruthy();
-  await act(async () => { confirmReset!.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
-  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
 
   // The redeem succeeded, so the message it raised is a success — the earlier
   // failure is still in the list (it happened) but cannot colour this one.

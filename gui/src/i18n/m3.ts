@@ -1274,6 +1274,28 @@ export const M3_EN = {
   "appearance.elTypeNoMatch": "No typography setting matches that search.",
   "appearance.fontPickerTitle": "Interface typeface",
   "appearance.fontPickerSub": "Every font installed on this computer, plus the four bundled with the dashboard. Chinese text always falls back to a face that covers it.",
+
+  // ---- destructive-action super confirmation (shell/super-confirm.tsx) ----
+  // Shared chrome, reused by every genuinely irreversible action that upgrades
+  // from an ordinary `useConfirm()` dialog to the two-key-plus-slider gate.
+  // The action-specific facts (what is being destroyed, what it costs) live
+  // beside each call site instead, so this file never has to guess them.
+  "superConfirm.emergencyExit": "Emergency exit",
+  "superConfirm.keysHint": "Turn on both keys to unlock the slider.",
+  "superConfirm.slideHint": "Drag all the way to the end to authorize. Let go early and nothing happens.",
+  "superConfirm.progressAnnounce": "{percent}% held",
+  "superConfirm.authFailed": "Authorization failed",
+
+  // ---- storage permanent-delete gate ----
+  "storage.cleanup.gateKey1": "I have reviewed the {count} file(s) above",
+  "storage.cleanup.gateKey2": "I understand this skips quarantine and cannot be undone",
+  "storage.cleanup.gateSlider": "Slide to permanently delete",
+  "storage.cleanup.gateWorking": "Deleting {count} file(s) for good…",
+
+  // ---- Codex reset-credit gate ----
+  "codexAuth.gateKey1": "I have checked this is the right account: {email}",
+  "codexAuth.gateKey2": "I understand this reset credit cannot be earned back",
+  "codexAuth.gateSlider": "Slide to use the credit",
 } as const;
 
 export type M3Key = keyof typeof M3_EN;

@@ -116,7 +116,6 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   const [refreshingQuota, setRefreshingQuota] = useState(false);
   const [resetPopup, setResetPopup] = useState<CodexAccountEntry | null>(null);
   const [resetConfirm, setResetConfirm] = useState(false);
-  const [redeeming, setRedeeming] = useState(false);
   const [creditDetails, setCreditDetails] = useState<{ granted_at: string; expires_at: string }[] | null>(null);
   const [creditDetailsLoading, setCreditDetailsLoading] = useState(false);
   // This surface's own settings search. Bound to this field alone, so it can never
@@ -306,18 +305,19 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
     finally { setCreditDetailsLoading(false); }
   };
 
-  const handleRedeem = async (accountId: string) => {
-    setRedeeming(true);
-    try {
-      const result = await redeemResetCredit(apiBase, accountId, t, load);
-      if (result.close) {
-        setResetPopup(null);
-        setResetConfirm(false);
-      }
-      if (result.toast) notify({ tone: result.ok ? "success" : "error", title: result.toast });
-    } finally {
-      setRedeeming(false);
-    }
+  /**
+   * Runs the redemption for the destructive-action gate in
+   * `CodexAccountResetModal`. Unlike the toast-and-close handler this
+   * replaces, it never closes the popup itself — the gate owns that
+   * transition so its completion animation has something to play first — and
+   * it throws on any non-`ok` outcome so a failure (no credit left, a race
+   * with another tab, the network dropping) shows inline in the gate instead
+   * of only in a toast behind an already-closed dialog.
+   */
+  const authorizeRedeem = async (accountId: string): Promise<void> => {
+    const result = await redeemResetCredit(apiBase, accountId, t, load);
+    if (result.toast) notify({ tone: result.ok ? "success" : "error", title: result.toast });
+    if (!result.ok) throw new Error(result.toast ?? t("codexAuth.resetError"));
   };
 
   const main = accounts.find(a => a.isMain);
@@ -611,11 +611,9 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
           resetConfirm={resetConfirm}
           creditDetails={creditDetails}
           creditDetailsLoading={creditDetailsLoading}
-          redeeming={redeeming}
           onClose={() => { setResetPopup(null); setResetConfirm(false); setCreditDetails(null); }}
           onShowConfirm={() => setResetConfirm(true)}
-          onCancelConfirm={() => setResetConfirm(false)}
-          onRedeem={() => { void handleRedeem(resetPopup.id); }}
+          onAuthorize={() => authorizeRedeem(resetPopup.id)}
         />
       )}
 

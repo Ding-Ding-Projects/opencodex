@@ -2260,3 +2260,155 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
  * by side is a trap for whoever does. The row indents by the wrapper instead.
  */
 
+/* ============================================================================
+   Destructive-action super confirmation (shell/super-confirm.tsx)
+   ========================================================================= */
+
+/* The anchored presentation's own surface. `Dialog` supplies everything the
+   modal presentation needs, so only the floating panel gets bespoke chrome
+   here — matching `.m3-rxpop`/the tab-appearance panel rather than inventing
+   a third card shape. */
+.m3-superconfirm-panel {
+  z-index: 90;
+  width: min(380px, calc(100vw - 16px));
+  overflow-y: auto;
+  padding: var(--sp-4, 24px);
+  border-radius: var(--r-xl, 28px);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  border: 1px solid var(--m3-outline-variant);
+  box-shadow: var(--e3);
+  display: grid;
+  gap: var(--sp-3, 16px);
+}
+
+.m3-superconfirm-title {
+  margin: 0;
+  font-size: var(--t-headline-s, 24px);
+  font-weight: 400;
+  color: var(--m3-on-surface);
+}
+
+.m3-superconfirm-body {
+  margin: 0;
+  font-size: var(--t-body-m, 14px);
+  line-height: 1.5;
+  color: var(--m3-on-surface-variant);
+  white-space: pre-line;
+}
+
+.m3-superconfirm-keys {
+  display: grid;
+  gap: var(--sp-2, 12px);
+}
+
+/* Two independent rows, not one control clicked twice: each key carries its
+   own icon, its own sentence, and its own switch. */
+.m3-superconfirm-key {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 12px);
+  padding: var(--sp-2, 12px);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container);
+}
+.m3-superconfirm-key-icon { flex: 0 0 auto; color: var(--m3-error); }
+.m3-superconfirm-key-label { flex: 1 1 auto; min-width: 0; font-size: var(--t-body-s); }
+
+.m3-superconfirm-status {
+  margin: 0;
+  min-height: 1.4em;
+  font-size: var(--t-label-l);
+  color: var(--m3-on-surface-variant);
+}
+
+/*
+ * The track is the "dramatic but non-blocking" progress surface the contract
+ * asks for. The fill is painted on the CONTAINER as a hard-edged gradient
+ * driven by `--sc-progress`, because styling a native range input's own filled
+ * portion is not one property in every engine this renders in — the input
+ * itself is made transparent and sits on top, keeping its real thumb, its real
+ * keyboard behaviour and its real screen-reader semantics.
+ */
+.m3-superconfirm-track {
+  position: relative;
+  height: 48px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background:
+    linear-gradient(to right, var(--m3-error) var(--sc-progress, 0%), var(--m3-surface-container-highest) var(--sc-progress, 0%));
+  border: 1px solid var(--m3-outline-variant);
+  transition: box-shadow 200ms;
+}
+/* Armed (both keys on, not yet dragged): a resting glow says "this now does
+   something" before the user has touched it at all. */
+.m3-superconfirm-track--armed.m3-superconfirm-track--idle {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--m3-error) 24%, transparent);
+  animation: m3-superconfirm-armed-pulse 1800ms ease-in-out infinite;
+}
+.m3-superconfirm-track--authorizing,
+.m3-superconfirm-track--done {
+  background: var(--m3-error);
+  animation: m3-superconfirm-working-pulse 900ms ease-in-out infinite;
+}
+.m3-superconfirm-track--done { animation: none; background: var(--m3-ok, var(--m3-primary)); }
+.m3-superconfirm-track--error { box-shadow: none; animation: none; }
+
+.m3-superconfirm-slider {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 48px;
+  margin: 0;
+  /* Transparent so the container's gradient fill shows through — the same
+     trick `.m3-slider` already uses for its own accent-only styling. */
+  background: transparent;
+  accent-color: var(--m3-on-error, var(--m3-on-primary));
+  cursor: pointer;
+}
+.m3-superconfirm-slider:disabled { cursor: not-allowed; opacity: 0.7; }
+
+@keyframes m3-superconfirm-armed-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--m3-error) 18%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--m3-error) 30%, transparent); }
+}
+@keyframes m3-superconfirm-working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+/* The completion state — visually distinct from the fill animation above,
+   per the contract's "a distinct completion animation after authorization". */
+.m3-superconfirm-done {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto;
+  border-radius: var(--r-pill);
+  background: var(--m3-ok-container, var(--m3-primary-container));
+  color: var(--m3-on-ok-container, var(--m3-on-primary-container));
+  animation: m3-superconfirm-done-pop 420ms cubic-bezier(0.2, 0, 0, 1);
+}
+@keyframes m3-superconfirm-done-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* `.m3-app *` already clamps every animation/transition duration to 1ms under
+   `prefers-reduced-motion: reduce`; this is the explicit, local backstop so the
+   gate degrades to an instant state change even if that surface ever renders
+   outside `.m3-app`. Nothing here is load-bearing for the gate itself — both
+   keys, the slider and every dismissal route work identically either way. */
+@media (prefers-reduced-motion: reduce) {
+  .m3-superconfirm-track,
+  .m3-superconfirm-track--armed.m3-superconfirm-track--idle,
+  .m3-superconfirm-track--authorizing,
+  .m3-superconfirm-done {
+    animation: none;
+    transition: none;
+  }
+}
+
