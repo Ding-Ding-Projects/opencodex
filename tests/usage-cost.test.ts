@@ -4,7 +4,9 @@ import {
   estimateAttemptCost,
   estimateComboCost,
   estimateRequestCost,
+  estimateRequestCostLanes,
   effectiveServiceTier,
+  pricingSourceClassification,
   normalizeCostTokens,
   pricingUnavailableReason,
   resolveMatchedPrice,
@@ -95,12 +97,12 @@ describe("normalizeCostTokens", () => {
 
 describe("authoritative official schedules", () => {
   test("contains only exact direct products with dated first-party HTTPS sources", () => {
-    expect(OFFICIAL_PRICE_SCHEDULES).toHaveLength(25);
+    expect(OFFICIAL_PRICE_SCHEDULES).toHaveLength(29);
     expect(validateOfficialPriceSchedules(OFFICIAL_PRICE_SCHEDULES)).toEqual([]);
     const providers = new Set(OFFICIAL_PRICE_SCHEDULES.map(row => row.provider));
-    expect(providers).toEqual(new Set(["anthropic-apikey", "deepseek", "moonshot"]));
+    expect(providers).toEqual(new Set(["anthropic-apikey", "openai-apikey", "deepseek", "moonshot"]));
     for (const row of OFFICIAL_PRICE_SCHEDULES) {
-      expect(row.verifiedAt).toBe(VERIFIED_AT);
+      expect(row.verifiedAt).toMatch(/^2026-08-(07|09)$/);
       expect(row.status).toBe("verified");
       expect(row.sourceUrl.startsWith("https://")).toBe(true);
     }
@@ -328,19 +330,76 @@ describe("product and condition isolation", () => {
     });
   });
 
-  test("OpenAI context-tier models fail closed even when priority is persisted", () => {
+  test("OpenAI direct API standard schedules price only the official short-context rows", () => {
     const usage = { inputTokens: 1_000, outputTokens: 100 };
-    for (const serviceTier of [undefined, "priority", "fast"] as const) {
+    const standard = requestCost("openai-apikey", "gpt-5.6-sol", { usage });
+    expect(standard?.price).toMatchObject({
+      provider: "openai-apikey",
+      modelId: "gpt-5.6-sol",
+      cost4: { input: 5, cacheRead: 0.5, output: 30 },
+      verifiedAt: "2026-08-09",
+    });
+    for (const serviceTier of ["priority", "fast"] as const) {
       expect(requestCost("openai-apikey", "gpt-5.6-sol", { usage, serviceTier })).toBeNull();
       expect(pricingUnavailableReason({
         provider: "openai-apikey",
         model: "gpt-5.6-sol",
         usage,
         serviceTier,
-      })).toBe("pricing_context_missing");
+      })).toBe("pricing_condition_unmatched");
     }
+    // The direct official source does not state a long-context threshold. A raw
+    // prompt size therefore never fabricates a long-rate match.
+    expect(requestCost("openai-apikey", "gpt-5.6-sol", {
+      usage,
+      promptInputTokens: 900_000,
+    })?.price?.scheduleId).toContain("short-context");
     expect(effectiveServiceTier({ responseServiceTier: "fast" })).toBe("priority");
     expect(effectiveServiceTier({ responseServiceTier: "default", requestedServiceTier: "priority" })).toBe("default");
+  });
+
+  test("prices supported OpenAI direct IDs and preserves unavailable cache writes", () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 100_000, cachedInputTokens: 100_000 };
+    expect(requestCost("openai-apikey", "gpt-5.6-sol", { usage })?.cost.total).toBeCloseTo(7.85, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-terra", { usage })?.cost.total).toBeCloseTo(3.14, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-luna", { usage })?.cost.total).toBeCloseTo(0.314, 9);
+    expect(requestCost("openai-apikey", "gpt-5.5", { usage })?.cost.total).toBeCloseTo(7.85, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-sol-pro", { usage })).toBeNull();
+    expect(requestCost("openai-apikey", "gpt-5.5", {
+      usage: { inputTokens: 1_000, outputTokens: 1, cacheCreationInputTokens: 1 },
+    })).toBeNull();
+    expect(pricingUnavailableReason({
+      provider: "openai-apikey",
+      model: "gpt-5.5",
+      usage: { inputTokens: 1_000, outputTokens: 1, cacheCreationInputTokens: 1 },
+    })).toBe("pricing_context_missing");
+  });
+
+  test("keeps direct API and supported subscription API-equivalent lanes separate", () => {
+    const direct = estimateRequestCostLanes({
+      provider: "openai-apikey",
+      model: "gpt-5.6-luna",
+      usageStatus: "reported",
+      usage: { inputTokens: 100, outputTokens: 10 },
+    });
+    expect(direct.direct).toMatchObject({ lane: "direct", sourceClassification: "direct_api_key" });
+    expect(direct.apiEquivalent).toBeNull();
+
+    const subscription = estimateRequestCostLanes({
+      provider: "chatgpt-pabcdef",
+      model: "gpt-5.6-luna",
+      usageStatus: "reported",
+      usage: { inputTokens: 100, outputTokens: 10 },
+    });
+    expect(subscription.direct).toBeNull();
+    expect(subscription.apiEquivalent).toMatchObject({
+      lane: "api_equivalent",
+      sourceClassification: "subscription_api_equivalent",
+      price: { provider: "openai-apikey", modelId: "gpt-5.6-luna" },
+    });
+    expect(pricingSourceClassification("openai-apikey")?.lane).toBe("direct");
+    expect(pricingSourceClassification("anthropic-pabcdef")?.lane).toBe("api_equivalent");
+    expect(pricingSourceClassification("openrouter")).toBeNull();
   });
 
   test("Google, Vertex, and xAI conditional products remain unpriced without persisted thresholds or region", () => {

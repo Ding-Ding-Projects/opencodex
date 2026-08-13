@@ -72,6 +72,24 @@ export interface CostEstimate {
   price?: MatchedPrice;
 }
 
+/**
+ * Accounting is deliberately split by source product. `direct` is the only
+ * billable-product estimate. `api_equivalent` is an explicit non-billing
+ * comparison for supported subscription/OAuth traffic.
+ */
+export type PricingLane = "direct" | "api_equivalent";
+export type PricingSourceClassification = "direct_api_key" | "subscription_api_equivalent";
+
+export interface LaneCostEstimate extends CostEstimate {
+  lane: PricingLane;
+  sourceClassification: PricingSourceClassification;
+}
+
+export interface CostEstimateLanes {
+  direct: LaneCostEstimate | null;
+  apiEquivalent: LaneCostEstimate | null;
+}
+
 export type UsageCostUnavailableReason =
   | "usage_missing"
   | "usage_unsupported"
@@ -150,7 +168,11 @@ const SUFFIXED_SUBSCRIPTION_LOG_PRODUCTS = new Set([
   "kimi",
 ]);
 
-/** Strip bounded account-log suffixes only for known non-API billing products. */
+/**
+ * Normalize only bounded account-log suffixes. `openai` and legacy
+ * `openai-multi` retain their subscription product identity for accounting;
+ * display-only provider grouping is intentionally handled elsewhere.
+ */
 function billingProviderId(provider: string): string {
   const cut = provider.lastIndexOf("-");
   if (cut <= 0) return provider;
@@ -174,6 +196,114 @@ function matchedPrice(schedule: OfficialPriceSchedule): MatchedPrice {
     status: schedule.status,
     ...(schedule.conditions ? { conditions: schedule.conditions } : {}),
   };
+}
+
+const DIRECT_API_KEY_PRODUCTS = new Set([
+  "openai-apikey",
+  "anthropic-apikey",
+  "deepseek",
+  "moonshot",
+]);
+
+/** Only these subscription/OAuth products have an explicitly supported comparison lane. */
+const API_EQUIVALENT_PRODUCTS = new Map<string, "openai-apikey" | "anthropic-apikey">([
+  ["openai", "openai-apikey"],
+  ["openai-multi", "openai-apikey"],
+  ["chatgpt", "openai-apikey"],
+  ["anthropic", "anthropic-apikey"],
+]);
+
+/**
+ * Resolve a log provider into an accounting lane without collapsing product
+ * boundaries. Suffixes are accepted only for known account log labels.
+ */
+export function pricingSourceClassification(provider: string): {
+  lane: PricingLane;
+  sourceClassification: PricingSourceClassification;
+  pricingProvider: string;
+} | null {
+  const product = billingProviderId(provider);
+  if (DIRECT_API_KEY_PRODUCTS.has(product)) {
+    return {
+      lane: "direct",
+      sourceClassification: "direct_api_key",
+      pricingProvider: product,
+    };
+  }
+  const pricingProvider = API_EQUIVALENT_PRODUCTS.get(product);
+  return pricingProvider
+    ? {
+      lane: "api_equivalent",
+      sourceClassification: "subscription_api_equivalent",
+      pricingProvider,
+    }
+    : null;
+}
+
+function estimateWithPricingProvider(
+  input: {
+    provider: string;
+    pricingProvider: string;
+    model: string;
+    usage?: OcxUsage;
+    usageStatus: UsageStatus;
+    serviceTier?: string;
+    cacheRetention?: CacheRetention;
+    promptInputTokens?: number;
+    timestamp?: number;
+  },
+  schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES,
+): CostEstimate | null {
+  const usage = classifyUsageForCost(input.usage, input.usageStatus);
+  if (usage.kind === "unavailable") return null;
+  const tokens = usage.tokens;
+  const price = resolveMatchedPrice(
+    input.pricingProvider,
+    input.model,
+    {
+      serviceTier: input.serviceTier,
+      cacheRetention: input.cacheRetention,
+      promptInputTokens: input.promptInputTokens,
+      timestamp: input.timestamp,
+    },
+    tokens.cacheWrite,
+    schedules,
+  );
+  if (!price) return null;
+  return {
+    tokens,
+    price,
+    cost: calculateCost(tokens, price.cost4),
+    estimated: isEstimated(input.usage, input.usageStatus),
+  };
+}
+
+function unavailablePricingReasonWithProvider(input: {
+  provider: string;
+  pricingProvider: string;
+  model: string;
+  usage?: OcxUsage;
+  usageStatus?: UsageStatus;
+  serviceTier?: string;
+  cacheRetention?: CacheRetention;
+  promptInputTokens?: number;
+  timestamp?: number;
+}, schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES): PricingUnavailableReason | undefined {
+  const usage = classifyUsageForCost(input.usage, input.usageStatus);
+  if (usage.kind === "unavailable") return undefined;
+  const resolution = resolveMatchedPriceResult(
+    input.pricingProvider,
+    input.model,
+    {
+      serviceTier: input.serviceTier,
+      cacheRetention: input.cacheRetention,
+      promptInputTokens: input.promptInputTokens,
+      timestamp: input.timestamp,
+    },
+    usage.tokens.cacheWrite,
+    schedules,
+  );
+  return resolution.kind === "unavailable" ? resolution.reason : undefined;
 }
 
 export function resolveMatchedPriceResult(
@@ -228,7 +358,7 @@ export function effectiveServiceTier(entry: {
 }
 
 export function estimateAttemptCost(
-  attempt: Pick<PersistedUsageAttempt, "ordinal" | "timestamp" | "provider" | "model" | "usage" | "usageStatus" | "cacheRetention">,
+  attempt: Pick<PersistedUsageAttempt, "ordinal" | "timestamp" | "provider" | "model" | "usage" | "usageStatus" | "cacheRetention" | "promptInputTokens">,
   schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES,
   context: PricingContext = {},
 ): AttemptCostEstimate | null {
@@ -239,6 +369,7 @@ export function estimateAttemptCost(
     ...context,
     timestamp: attempt.timestamp ?? context.timestamp,
     cacheRetention: attempt.cacheRetention ?? context.cacheRetention,
+    promptInputTokens: attempt.promptInputTokens ?? context.promptInputTokens,
   };
   const price = resolveMatchedPrice(
     attempt.provider,
@@ -261,7 +392,7 @@ export function estimateAttemptCost(
 
 /** Combo estimates are all-or-nothing; one unavailable attempt nulls the sum. */
 export function estimateComboCost(
-  attempts: readonly Pick<PersistedUsageAttempt, "ordinal" | "timestamp" | "provider" | "model" | "usage" | "usageStatus" | "cacheRetention">[],
+  attempts: readonly Pick<PersistedUsageAttempt, "ordinal" | "timestamp" | "provider" | "model" | "usage" | "usageStatus" | "cacheRetention" | "promptInputTokens">[],
   schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES,
   context: PricingContext = {},
 ): CostEstimate | null {
@@ -301,31 +432,39 @@ export function estimateRequestCost(
     usageStatus: UsageStatus;
     serviceTier?: string;
     cacheRetention?: CacheRetention;
+    promptInputTokens?: number;
     timestamp?: number;
   },
   schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES,
 ): CostEstimate | null {
-  const usage = classifyUsageForCost(input.usage, input.usageStatus);
-  if (usage.kind === "unavailable") return null;
-  const tokens = usage.tokens;
-  const price = resolveMatchedPrice(
-    input.provider,
-    input.model,
-    {
-      serviceTier: input.serviceTier,
-      cacheRetention: input.cacheRetention,
-      timestamp: input.timestamp,
-    },
-    tokens.cacheWrite,
-    schedules,
-  );
-  if (!price) return null;
-  return {
-    tokens,
-    price,
-    cost: calculateCost(tokens, price.cost4),
-    estimated: isEstimated(input.usage, input.usageStatus),
-  };
+  return estimateWithPricingProvider({ ...input, pricingProvider: input.provider }, schedules);
+}
+
+/**
+ * Build isolated accounting outputs. A request can belong to exactly one lane:
+ * direct API-key traffic or explicitly labelled subscription API equivalent.
+ */
+export function estimateRequestCostLanes(
+  input: {
+    provider: string;
+    model: string;
+    usage?: OcxUsage;
+    usageStatus: UsageStatus;
+    serviceTier?: string;
+    cacheRetention?: CacheRetention;
+    promptInputTokens?: number;
+    timestamp?: number;
+  },
+  schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES,
+): CostEstimateLanes {
+  const source = pricingSourceClassification(input.provider);
+  if (!source) return { direct: null, apiEquivalent: null };
+  const estimate = estimateWithPricingProvider({ ...input, pricingProvider: source.pricingProvider }, schedules);
+  if (!estimate) return { direct: null, apiEquivalent: null };
+  const laneEstimate: LaneCostEstimate = { ...estimate, lane: source.lane, sourceClassification: source.sourceClassification };
+  return source.lane === "direct"
+    ? { direct: laneEstimate, apiEquivalent: null }
+    : { direct: null, apiEquivalent: laneEstimate };
 }
 
 export function pricingUnavailableReason(input: {
@@ -335,22 +474,29 @@ export function pricingUnavailableReason(input: {
   usageStatus?: UsageStatus;
   serviceTier?: string;
   cacheRetention?: CacheRetention;
+  promptInputTokens?: number;
   timestamp?: number;
 }, schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES): PricingUnavailableReason | undefined {
-  const usage = classifyUsageForCost(input.usage, input.usageStatus);
-  if (usage.kind === "unavailable") return undefined;
-  const resolution = resolveMatchedPriceResult(
-    input.provider,
-    input.model,
-    {
-      serviceTier: input.serviceTier,
-      cacheRetention: input.cacheRetention,
-      timestamp: input.timestamp,
-    },
-    usage.tokens.cacheWrite,
-    schedules,
-  );
-  return resolution.kind === "unavailable" ? resolution.reason : undefined;
+  return unavailablePricingReasonWithProvider({ ...input, pricingProvider: input.provider }, schedules);
+}
+
+export function pricingLaneUnavailableReason(
+  lane: PricingLane,
+  input: {
+    provider: string;
+    model: string;
+    usage?: OcxUsage;
+    usageStatus?: UsageStatus;
+    serviceTier?: string;
+    cacheRetention?: CacheRetention;
+    promptInputTokens?: number;
+    timestamp?: number;
+  },
+  schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES,
+): PricingUnavailableReason | undefined {
+  const source = pricingSourceClassification(input.provider);
+  if (!source || source.lane !== lane) return undefined;
+  return unavailablePricingReasonWithProvider({ ...input, pricingProvider: source.pricingProvider }, schedules);
 }
 
 export function comboUsageUnavailableReason(
@@ -364,7 +510,7 @@ export function comboUsageUnavailableReason(
 }
 
 export function comboPricingUnavailableReason(
-  attempts: readonly Pick<PersistedUsageAttempt, "timestamp" | "provider" | "model" | "usage" | "usageStatus" | "cacheRetention">[],
+  attempts: readonly Pick<PersistedUsageAttempt, "timestamp" | "provider" | "model" | "usage" | "usageStatus" | "cacheRetention" | "promptInputTokens">[],
   context: PricingContext = {},
   schedules: readonly OfficialPriceSchedule[] = OFFICIAL_PRICE_SCHEDULES,
 ): PricingUnavailableReason | undefined {
@@ -375,6 +521,7 @@ export function comboPricingUnavailableReason(
       ...context,
       timestamp: attempt.timestamp ?? context.timestamp,
       cacheRetention: attempt.cacheRetention ?? context.cacheRetention,
+      promptInputTokens: attempt.promptInputTokens ?? context.promptInputTokens,
     };
     const resolution = resolveMatchedPriceResult(
       attempt.provider,
