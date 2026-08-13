@@ -87,7 +87,7 @@ Status and chart colours stay functional data colours, as the spec requires.
 | Screen | Notes |
 |---|---|
 | **Appearance** | theme, seed picker (free hex + 8 curated), density 1–5, font family/scale/weight, live preview, per-element editors with individual reset. Since `4ba0f747`: an infinite colour picker and the word-depth typography editor described under *Deferred by scope* |
-| **Language & voice** | interface language, including Cantonese and the bilingual mode since `499c1bc8`; the two per-language funny-level sliders with a live five-rung ladder; the narrator, off by default and one utterance at a time, with a selectable language; the dim sum off switch |
+| **Language & voice** | interface language, including Cantonese and the bilingual mode since `499c1bc8`; the two per-language funny-level sliders with a live five-rung ladder; the narrator, off by default and one utterance at a time, with a selectable language; the dim sum surprise, described and previewable but with no off switch |
 | **Regex builder** | ECMAScript `RegExp` evaluated locally. Caps enforced: 400-char pattern, 20 000-char sample, 200 matches, forced advance on a zero-width match. Token palette, flags, presets, named groups, copy + Markdown export |
 | **Changelog** | reads `/api/changelog`; ISO date range (typed *and* native picker, invalid input reported inline without discarding text) composed with regex-capable search, Markdown export stating the range |
 | **Version history** | append-only; a restore is recorded as a new revision and the dialog says so |

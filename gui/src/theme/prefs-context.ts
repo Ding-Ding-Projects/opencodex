@@ -75,8 +75,11 @@ export interface Prefs {
   /** Narrator (speech synthesis) is off by default and never auto-enables. */
   narrator: boolean;
   narratorLang: string;
-  /** Dim sum surprise: one 1% draw per launch. On by default; the switch is honoured before the draw. */
-  dimsum: boolean;
+  /**
+   * There is no `dimsum` key here on purpose. The surprise is one 10% draw per
+   * launch and cannot be opted out of, so there is nothing to store — see
+   * `readPrefs` for how an older profile's stored switch is dropped.
+   */
   /** App-bar cost meter range. "all" = lifetime, the default. */
   costRange: CostRange;
   elementStyles: Record<string, ElementStyle>;
@@ -96,7 +99,6 @@ export const DEFAULT_PREFS: Prefs = {
   fontWeight: 400,
   narrator: false,
   narratorLang: "en",
-  dimsum: true,
   costRange: "all",
   elementStyles: {},
 };
@@ -149,14 +151,21 @@ export function readPrefs(): Prefs {
     const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
     if (!raw || typeof raw !== "object") return DEFAULT_PREFS;
     const density = Number(raw.density);
+    // Forward-migrate the retired dim sum off switch. A profile saved while the
+    // switch existed still holds `dimsum: false`, and the spread below would
+    // carry it into the object that `JSON.stringify(prefs)` writes back — so the
+    // key would outlive the code that read it and quietly re-save itself
+    // forever. Dropping it here is what makes an old profile simply rejoin the
+    // draw, which is the point: the surprise is no longer opt-out.
+    const stored: Record<string, unknown> = { ...raw };
+    delete stored.dimsum;
     return {
       ...DEFAULT_PREFS,
-      ...raw,
+      ...stored,
       theme: raw.theme === "light" || raw.theme === "dark" ? raw.theme : "system",
       density: (density >= 1 && density <= 5 ? Math.round(density) : DEFAULT_PREFS.density) as DensityLevel,
       fontScale: Number.isFinite(Number(raw.fontScale)) ? Math.min(1.6, Math.max(0.8, Number(raw.fontScale))) : 1,
       fontWeight: Number.isFinite(Number(raw.fontWeight)) ? Math.min(700, Math.max(300, Number(raw.fontWeight))) : 400,
-      dimsum: typeof raw.dimsum === "boolean" ? raw.dimsum : true,
       costRange: raw.costRange === "7d" || raw.costRange === "30d" || raw.costRange === "all" ? raw.costRange : "all",
       fontStack: typeof raw.fontStack === "string" && raw.fontStack.trim() ? raw.fontStack.trim().slice(0, 400) : undefined,
       elementStyles: readElementStyles(raw.elementStyles),

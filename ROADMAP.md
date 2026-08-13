@@ -75,7 +75,7 @@ uncommitted as of the 2026-07-30 sweep and have not been re-checked.
 | Desktop build narrowed to the Windows target; nav Claude toggle restored | `f19016a7` |
 | All thirteen product screens rewritten onto the M3 prototype | `f0c7bb07` |
 | Frameless desktop window — the M3 app bar is the chrome | `72871770` |
-| Dim sum surprise — one draw per launch, off-switch on Appearance | `3df26e8a` |
+| Dim sum surprise — one draw per launch, no off switch | `3df26e8a` |
 | Dim sum photographs — eleven bundled `.webp` dish photos replace the emoji placeholders | `58fb0eb7` |
 | `ocx host` — reach the proxy and dashboard from other devices | `1a316b5f` |
 | `ocx changelog` and the in-app changelog viewer | `4c41de91` |

@@ -2188,9 +2188,10 @@ export const yue: Partial<Record<TKey, string>> = {
 
   // ---- dim sum surprise ----
   "dimsum.title": "點心時間到！",
-  "dimsum.hint": "百分之一開機機率嘅小驚喜。想熄可以喺外觀度熄。",
+  "dimsum.hint": "十次開機有一次嘅小驚喜。佢會自己收埋。",
   "dimsum.toggle": "點心驚喜",
-  "dimsum.toggleHint": "大約每一百次開機，會有一次彈張細細張點心卡。第一次執行同啱啱更新完就唔會出。",
+  "dimsum.toggleHint": "大約每十次開機，會有一次彈張細細張點心卡。第一次執行同啱啱更新完就唔會出，亦都唔會阻住你做緊嘅嘢。",
+  "dimsum.always": "一直開住",
 
   // ---- regex builder ----
   "regex.title": "Regex 建構器",

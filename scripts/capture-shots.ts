@@ -886,11 +886,9 @@ async function forceDimSum(): Promise<() => Promise<void>> {
       try {
         localStorage.setItem("ocx-m3:launched", "1");
         localStorage.setItem("ocx-m3:last-version", ${lit(version)});
-        const KEY = "ocx-m3:v1";
-        const prefs = JSON.parse(localStorage.getItem(KEY) || "{}");
-        prefs.dimsum = true;
-        localStorage.setItem(KEY, JSON.stringify(prefs));
       } catch (err) { /* storage disabled */ }
+      // Nothing seeds a preference here any more: the surprise has no off
+      // switch, so seeding the launch markers is the whole of the setup.
     `,
   });
   await send("Page.reload");

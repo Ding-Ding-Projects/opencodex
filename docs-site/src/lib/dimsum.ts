@@ -1,12 +1,11 @@
 /**
- * The 1 % dim sum surprise, as this site runs it.
+ * The 10 % dim sum surprise, as this site runs it.
  *
  * The draw itself is not reimplemented here. `shared/m3/dimsum.ts` re-exports
  * the dashboard's `drawDimSum`, which already encodes the whole contract — one
- * draw per launch, never on a first run, the off switch honoured *before* the
- * draw rather than after, no network fetch ever — and that table of dishes is
- * also what names a release build, so a second copy would eventually give one
- * commit two different codenames.
+ * draw per launch, never on a first run, no off switch anywhere, no network
+ * fetch ever — and that table of dishes is also what names a release build, so
+ * a second copy would eventually give one commit two different codenames.
  *
  * What this module owns is the three things the shared draw deliberately leaves
  * to its consumer.
@@ -35,7 +34,7 @@
  * constant here: the branch that matters on this surface is the first-visit
  * suppression, and a deploy is not a first visit. Making `version` a build id
  * instead would silently suppress the draw for every reader's first visit after
- * every deploy, which would push the real frequency well under the stated 1 %.
+ * every deploy, which would push the real frequency well under the stated 10 %.
  */
 
 import { DISHES, drawDimSum, photoSrc, type DimSumDish } from "../../../shared/m3/dimsum";
@@ -44,7 +43,14 @@ import { BASE } from "./routes";
 export type { DimSumDish };
 export { DISHES };
 
-export const ENABLED_KEY = "ocx-docs:dimsum";
+/**
+ * The retired off switch's storage key.
+ *
+ * Exported only so the migration below can name what it is deleting, and so a
+ * test can prove the key is actually cleared rather than merely ignored. There
+ * is no reader for it any more: the surprise cannot be opted out of.
+ */
+export const LEGACY_ENABLED_KEY = "ocx-docs:dimsum";
 const NAMESPACE = "ocx-docs:";
 
 /** See the module comment — deliberately not a build id. */
@@ -56,24 +62,21 @@ export function dishImage(dish: DimSumDish): string {
 }
 
 /**
- * The off switch, read before anything else happens.
+ * Forget a reader's old opt-out, once, on the way past.
  *
- * Defaults to on. A reader who has never touched the setting has not opted out
- * of it, and the surprise is the documented behaviour rather than something
- * that needs consent — but the switch is one click away and is honoured
- * absolutely, including before the coin is flipped.
+ * A visitor who switched the surprise off while the switch existed still has
+ * `"0"` sitting in their browser storage. Ignoring it would be enough to make
+ * them rejoin the draw, but it would also leave a key nothing reads sitting in
+ * local storage forever, looking to the next reader of this file like a setting
+ * that is still honoured somewhere. Deleting it says plainly that it is gone.
+ *
+ * `removeItem` is not part of the narrowed `Storage` view the draw uses, so this
+ * takes the real store and checks for the method — a test double that only
+ * implements get/set is not an error, it simply has nothing to clean up.
  */
-export function readEnabled(storage?: Pick<Storage, "getItem">): boolean {
+function forgetLegacyOptOut(store: Pick<Storage, "getItem" | "setItem"> & { removeItem?: Storage["removeItem"] }): void {
   try {
-    return (storage ?? localStorage).getItem(ENABLED_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
-export function writeEnabled(enabled: boolean, storage?: Pick<Storage, "setItem">): void {
-  try {
-    (storage ?? localStorage).setItem(ENABLED_KEY, enabled ? "1" : "0");
+    store.removeItem?.(LEGACY_ENABLED_KEY);
   } catch {
     /* private mode */
   }
@@ -110,24 +113,23 @@ export interface DrawOptions {
   /**
    * The **raw** store, not a namespaced view of one.
    *
-   * `drawOnce` reads the off switch and the launch markers from the same place,
-   * and the off switch's key is already spelled with the site's prefix while the
-   * markers' keys are not. Taking the raw store here and namespacing internally
-   * is what keeps a test able to prove the switch is honoured *before* the draw
-   * rather than having to trust that it is.
+   * The launch markers are namespaced internally, but the retired off switch's
+   * key was already spelled with the site's prefix — so the migration that
+   * clears it needs the store as the browser sees it, not a prefixed view that
+   * would look for `ocx-docs:ocx-docs:dimsum`.
    */
   storage?: Pick<Storage, "getItem" | "setItem">;
-  /** Bypasses both the once-per-launch guard and the 1 % odds. */
+  /** Bypasses both the once-per-launch guard and the 10 % odds. */
   force?: boolean;
 }
 
 /**
- * Run this launch's draw. Returns a dish, or null far more often than not.
+ * Run this launch's draw. Returns a dish, or null more often than not.
  *
- * `force` exists for the "show me one now" button in Settings: a reader who has
- * just enabled the feature deserves to see what they enabled without waiting for
- * a hundred visits, and a preview that shared the real draw would either lie
- * about the odds or consume the launch's one chance.
+ * `force` exists for the "show me one now" button in Settings: a reader who
+ * wants to know what the surprise looks like should not have to wait out the
+ * odds, and a preview that shared the real draw would either lie about those
+ * odds or consume the launch's one chance.
  */
 export function drawOnce(options: DrawOptions = {}): DimSumDish | null {
   const random = options.random ?? Math.random;
@@ -136,8 +138,8 @@ export function drawOnce(options: DrawOptions = {}): DimSumDish | null {
   drawn = true;
   if (typeof localStorage === "undefined" && !options.storage) return null;
   const store = options.storage ?? localStorage;
+  forgetLegacyOptOut(store);
   return drawDimSum({
-    enabled: readEnabled(store),
     version: SITE_VERSION,
     random,
     storage: namespacedStorage(store),

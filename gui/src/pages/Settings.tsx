@@ -574,7 +574,11 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
       group: "appearance",
       label: t("dimsum.toggle"),
       desc: t("dimsum.toggleHint"),
-      value: onOff(prefs.dimsum),
+      // Not `onOff(...)`: there is no switch behind this row any more. It stays
+      // searchable because somebody who has just been surprised by a dumpling
+      // will come here looking for it, and a row that reports "Always on" tells
+      // them the truth faster than an empty result would.
+      value: t("dimsum.always"),
       jump: { page: "language", tkey: "nav.language" },
     },
   );

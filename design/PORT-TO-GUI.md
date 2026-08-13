@@ -134,10 +134,11 @@ Tooltip — the primitives the M3 components replace).
    warning at all five levels so the rule is visible, not just claimed.
 5. **TTS narrator** — off by default, serialized single-utterance queue that
    supersedes rather than stacks, language selectable, follows the funny level.
-6. **Dim sum surprise** — one 1% draw per launch, non-blocking card, auto-dismiss,
-   never on first run / error / update, off switch honoured. Ships with a labelled
-   image placeholder: **drop real bundled dish photos in before shipping** (no
-   network fetch, alt text names the dish).
+6. **Dim sum surprise** — one 10% draw per launch, non-blocking card, auto-dismiss,
+   never on first run / error / update, and **no off switch**: it cannot be opted
+   out of, which is exactly why the politeness rules above are mandatory rather
+   than nice-to-have. Ships with a labelled image placeholder: **drop real bundled
+   dish photos in before shipping** (no network fetch, alt text names the dish).
 7. **Non-blocking notifications** — snackbars bottom-left, stack, errors persist,
    optional action (Undo / View details), plus a notification centre and the
    Notifications screen for history.

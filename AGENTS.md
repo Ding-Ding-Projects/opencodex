@@ -332,11 +332,11 @@ These are durable user-level defaults. A current explicit request and higher-pri
 
 ## Dim sum surprise
 
-- Every user-facing app has a **1% chance at startup** of showing a randomly chosen dim sum dish — its name plus a picture of it. It is a small delight, not a feature the user has to manage.
+- Every user-facing app has a **10% chance at startup** of showing a randomly chosen dim sum dish — its name plus a picture of it. It is a small delight, not a feature the user has to manage.
 - Name the dish in both languages (English and Cantonese, e.g. "Shrimp dumpling · 蝦餃"), honour the active language mode, and let the per-language funny level style the surrounding copy while the dish's actual name stays correct.
 - Present it as a **non-blocking**, auto-dismissing surface that never gates startup, never steals focus, and never delays the app becoming usable. It must not appear during a first run, an error path, an update, or any flow where the user is mid-task.
 - Ship the images as bundled local assets — no network fetch, no third-party CDN, no tracking. Give each a meaningful alt text naming the dish so screen-reader users get the same delight, and respect reduced-motion and any quiet/do-not-disturb setting.
-- Provide a setting to turn it off, persisted like every other preference, and honour it absolutely. Derive the 1% from a fresh random draw per launch; never make it more frequent than stated, and never let it fire twice in one launch.
+- The surprise **cannot be opted out of**: ship no setting that disables it, and remove any existing off switch (migrating stored preferences forward so old profiles simply rejoin the draw). Derive the 10% from a fresh random draw per launch; never make it more frequent than stated, and never let it fire twice in one launch. The non-blocking rules above are what keep an un-optable surprise polite — it still never gates startup, steals focus, or interrupts a task.
 
 ### Dim sum release code names
 

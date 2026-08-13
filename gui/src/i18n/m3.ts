@@ -682,9 +682,10 @@ export const M3_EN = {
 
   // ---- dim sum surprise ----
   "dimsum.title": "Dim sum time!",
-  "dimsum.hint": "A 1-in-100 launch treat. Turn it off under Appearance.",
+  "dimsum.hint": "A 1-in-10 launch treat. It dismisses itself.",
   "dimsum.toggle": "Dim sum surprise",
-  "dimsum.toggleHint": "Roughly one launch in a hundred shows a small dim sum card. Never on your first run or right after an update.",
+  "dimsum.toggleHint": "Roughly one launch in ten shows a small dim sum card. Never on your first run or right after an update, and it never gets in the way of what you are doing.",
+  "dimsum.always": "Always on",
 
   // ---- regex builder ----
   "regex.title": "Regex builder",
