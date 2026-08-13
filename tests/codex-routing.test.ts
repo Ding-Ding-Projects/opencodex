@@ -157,11 +157,26 @@ describe("codex routing", () => {
     expect(pickLowestUsageCodexAccount(config)).not.toBeNull();
   });
 
-  test("routing returns no account when every configured account is confirmed exhausted", () => {
+  test("routing still returns an account when every configured account reports 100%", () => {
+    // A reported percentage is not an upstream refusal. Codex keeps serving past a
+    // reported 100% for an unknowable number of further requests, so refusing here
+    // ended sessions mid-task that upstream would have continued. Running out of
+    // PREFERRED accounts is not the same as running out of accounts.
     const config = makeConfig({ activeCodexAccountId: "a" });
     updateAccountQuota("a", 100);
     updateAccountQuota("b", 100);
-    expect(resolveCodexAccountForThread("all-exhausted-thread", config)).toBeNull();
+    expect(resolveCodexAccountForThread("all-exhausted-thread", config)).not.toBeNull();
+  });
+
+  test("a real 429 cooldown still removes an account even when the alternate reports 100%", () => {
+    // The other half of the same rule: only an actual upstream refusal takes an
+    // account out of rotation, and that must keep working unchanged.
+    const config = makeConfig({ activeCodexAccountId: "a" });
+    updateAccountQuota("a", 100);
+    updateAccountQuota("b", 100);
+    recordCodexUpstreamOutcome(config, "a", 429, { retryAfter: "3600" });
+    expect(isCodexAccountInCooldown("a")).toBe(true);
+    expect(resolveCodexAccountForThread("cooled-primary-thread", config)).toBe("b");
   });
 
   test("bulk pause exhaustion requires an explicit 100% relevant window", () => {

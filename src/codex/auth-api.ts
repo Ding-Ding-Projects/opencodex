@@ -16,6 +16,7 @@ import { isCodexAccountPaused, setCodexAccountPaused } from "./account-pause";
 import {
   clearCodexAccountCooldown,
   clearThreadAccountMapForAccount,
+  getCodexSaturatedRoutingNotice,
   getEffectiveActiveCodexAccountId,
   reconcileCodexActiveAfterExclusion,
   resetCodexRoutingForManualSelection,
@@ -843,6 +844,11 @@ export async function handleCodexAuthAPI(
       upstreamFailoverThreshold: runtimeConfig.upstreamFailoverThreshold ?? 3,
       accountPoolStrategy: normalizeAccountPoolStrategy(runtimeConfig.accountPoolStrategy),
       accountPoolStickyLimit: normalizeAccountPoolStickyLimit(runtimeConfig.accountPoolStickyLimit),
+      // Honest routing state rather than a silent one: non-null means requests are
+      // currently going out on an account whose REPORTED usage has reached 100%
+      // because no cooler account exists. That is "still going, past reported
+      // quota" — not an error, and not a claim that upstream has refused anything.
+      routingPastReportedQuota: getCodexSaturatedRoutingNotice(),
     });
   }
 

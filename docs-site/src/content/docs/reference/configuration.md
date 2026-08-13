@@ -60,7 +60,7 @@ differing backup and rewrites known legacy namespaced selected ids to bare ids.
 | `pausedCodexAccountIds?` | `string[]` | `[]` | Accounts excluded from every future Pool selection until resumed in Codex Auth. Includes the main `__main__` account when paused. |
 | `codexAccountNamespaces?` | `Record<string,string>` | — | Optional public model-selector namespace → stored Codex account target map. This foundation layer validates and persists the map but does not add picker rows or change routing. |
 | `activeCodexAccountId?` | `string` | — | Manually selected Pool account. Selection clears existing thread affinity and applies to the next request; in-flight requests keep their captured account. |
-| `autoSwitchThreshold?` | `number` | `80` | Usage percent threshold for new-session auto-switching. The score uses the hottest known 5h, weekly, or 30d quota window. Set `0` to disable quota auto-switching. Used by the `quota` strategy and as the drain threshold for `fill-first`. |
+| `autoSwitchThreshold?` | `number` | `80` | Usage percent threshold for new-session auto-switching. The score uses the hottest known 5h, weekly, or 30d quota window. Set `0` to disable quota auto-switching. Used by the `quota` strategy and as the drain threshold for `fill-first`. **The threshold governs preference, not permission** — see [Reported usage never refuses a request](#reported-usage-never-refuses-a-request). |
 | `accountPoolStrategy?` | `"quota" \| "round-robin" \| "fill-first"` | `"quota"` | New-session rotation strategy for the Codex pool. Applies to **new sessions only**; existing thread ids keep affinity. `quota` — today's default: pick the lowest known usage when the active account crosses `autoSwitchThreshold`. `round-robin` — even spread across eligible accounts via smooth weighted selection. `fill-first` — keep the active account until it cools down, becomes unusable, or crosses `autoSwitchThreshold` when set (unknown usage does not force a switch), then advance to the next eligible account in stable sorted order. |
 | `accountPoolStickyLimit?` | `number` | `1` | Successful new-session binds retained on one round-robin selection before advancing. Range 1–100; only applies when `accountPoolStrategy` is `round-robin`. |
 | `upstreamFailoverThreshold?` | `number` | `3` | Consecutive transient upstream failures before future new sessions fail over to another eligible pool account. Set `0` to disable failure failover. |
@@ -157,12 +157,49 @@ and unknown or failed quota refreshes are left unchanged.
 
 | Strategy | Behaviour |
 | --- | --- |
-| `quota` (default) | When the active account's known usage crosses `autoSwitchThreshold`, pick the lowest-usage eligible account across 5h, weekly, and 30d windows. `autoSwitchThreshold: 0` disables quota-based picking. |
+| `quota` (default) | When the active account's known usage crosses `autoSwitchThreshold`, pick the lowest-usage eligible account across 5h, weekly, and 30d windows. `autoSwitchThreshold: 0` disables quota-based picking. When every eligible account reports 100%, the lowest-usage one is still selected rather than the request being refused — see [Reported usage never refuses a request](#reported-usage-never-refuses-a-request). |
 | `round-robin` | Even spread across eligible accounts. `accountPoolStickyLimit` (default `1`, range 1–100) keeps that many successful new-session binds on one pick before advancing. |
 | `fill-first` | Drain the active account until cooldown, reauthentication, or (when set) `autoSwitchThreshold`; unknown usage does not force a switch. Then advance to the next eligible account in stable sorted order. |
 
 Rotation strategies do not protect against provider enforcement — multi-account use may violate
 provider terms of service.
+
+#### Reported usage never refuses a request
+
+`autoSwitchThreshold` and the reported usage percentages behind it decide **which** account is
+reached for first. They never decide **whether** a request may be attempted at all.
+
+A usage percentage is a local reading of a quota window, not a statement from the provider. Codex
+routinely keeps serving past a reported **100%** for a further, unknowable number of requests, so
+treating that reading as exhaustion ended sessions that upstream would have continued — and left
+the work in them unfinished. The only authoritative statement that an account cannot serve is an
+actual upstream refusal (**429** or **402**), which records a cooldown.
+
+What follows from that:
+
+- An account at or over the threshold — **including one reporting 100%** — is **demoted, never
+  removed**. Every account below the threshold is preferred over it, exactly as before.
+- When no cooler account exists, routing still returns the saturated account and the request still
+  goes out. Running out of *preferred* accounts is not the same as running out of accounts.
+- A bound thread stays bound to an account that merely reports 100%; it moves only when a
+  strictly cooler account exists, or when something real (cooldown, pause, reauth, failover
+  streak) makes the account unusable.
+- Only a **real upstream refusal** takes an account out of rotation: a 429/402 records a cooldown
+  from `Retry-After` or the quota reset, clears that account's thread affinity, and fails over.
+  Cooldown behaviour, recovery probes, and the same-request alternate retry are unchanged.
+- Explicit operator exclusions are unchanged and still absolute: `pausedCodexAccountIds`, the
+  **Pause exhausted** action, and `needsReauth` all remove an account from selection outright.
+
+While requests are going out on a saturated account because nothing cooler exists, the proxy says
+so rather than continuing silently: a `[codex-routing]` warning (at most one per account every five
+minutes) and a `routingPastReportedQuota` object on `GET /api/codex-auth/active` carrying the
+account, its reported percent, and when the run started. Both are `null`/absent again as soon as
+routing picks an account under 100%. This is a status, not an error — it does not claim the
+provider has refused anything.
+
+This is not a way around a provider's limits. Nothing here retries harder against an account that
+has actually refused, shortens a real cooldown, or rotates to evade enforcement; it only stops the
+proxy from refusing on its own guess before the provider has said no.
 
 ### anthropicAccountPool (experimental)
 
