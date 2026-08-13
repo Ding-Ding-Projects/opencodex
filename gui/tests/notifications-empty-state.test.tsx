@@ -16,7 +16,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { M3_EN } from "../src/i18n/m3";
 import NotificationsPage from "../src/pages/Notifications";
 import { NotificationsContext, type Notice, type NotificationsApi } from "../src/shell/notifications-context";
@@ -79,11 +79,11 @@ async function mount(history: Notice[]): Promise<void> {
   root = createRoot(host as never);
   await act(async () => {
     root?.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsContext.Provider value={api(history)}>
           <NotificationsPage />
         </NotificationsContext.Provider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
 }

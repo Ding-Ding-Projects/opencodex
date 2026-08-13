@@ -14,7 +14,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import LanguageVoice from "../src/pages/LanguageVoice";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 
@@ -52,11 +52,11 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsProvider>
             <LanguageVoice />
           </NotificationsProvider>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });
@@ -111,7 +111,7 @@ test("leads with the body-large page lead the prototype opens on", async () => {
 
 // Two independent sliders, one per language, are a shipping requirement — a single
 // shared control does not satisfy it.
-test("ships one funny-level slider per language, each 1–5 and persisted", async () => {
+test("ships one funny-level slider per language, each 1–5 and staged as a draft", async () => {
   const { container, root } = await mount();
 
   const sliders = [...container.querySelectorAll('input[type="range"]')] as unknown as HTMLInputElement[];
@@ -123,7 +123,17 @@ test("ships one funny-level slider per language, each 1–5 and persisted", asyn
 
   await act(async () => { typeInto(sliders[1], "5"); });
 
-  expect(JSON.parse(localStorage.getItem("ocx-m3:funny") ?? "{}")).toEqual({ en: 3, yue: 5 });
+  // Moving a slider used to write `ocx-m3:funny` on the spot. It no longer does,
+  // and the change is deliberate rather than a regression: the settings-draft
+  // coordinator owns the only durable write, and it happens in its `apply()` —
+  // reached from the app bar's Save action, which this screen does not mount. So
+  // the assertion moved from "it persisted" to the pair that actually holds now:
+  // the control repaints from the draft immediately, and nothing is written until
+  // the user applies. The English slider is untouched, which is the real point of
+  // shipping two of them.
+  expect(sliders[1].value).toBe("5");
+  expect(sliders[0].value).toBe("3");
+  expect(localStorage.getItem("ocx-m3:funny")).toBeNull();
 
   await act(async () => { root.unmount(); });
 });

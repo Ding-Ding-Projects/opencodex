@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 import CodexAuth from "../src/pages/CodexAuth";
@@ -112,13 +112,13 @@ async function mountPage() {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <ConfirmProvider>
             <CodexAuth apiBase="" />
           </ConfirmProvider>
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   // CodexAuth loads mode via setTimeout(0); pool controller settles shortly after.

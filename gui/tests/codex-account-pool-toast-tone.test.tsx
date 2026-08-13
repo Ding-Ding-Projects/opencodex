@@ -4,7 +4,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import CodexAccountPool from "../src/components/CodexAccountPool";
 import type { CodexAccountEntry, CodexAccountPoolController } from "../src/hooks/useCodexAccountPool";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsContext, type Notice, type NotificationsApi } from "../src/shell/notifications-context";
 
@@ -142,13 +142,13 @@ async function mountPool(controller: CodexAccountPoolController) {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsContext.Provider value={api}>
           <ConfirmProvider>
             <CodexAccountPool apiBase="" controller={controller} />
           </ConfirmProvider>
         </NotificationsContext.Provider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });

@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import { type Root } from "react-dom/client";
 import Subagents from "../src/pages/Subagents";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 
 /**
@@ -97,11 +97,11 @@ async function mount() {
     root.render(
       // Save outcomes are snackbars now, so the page needs the notification
       // provider the shell mounts — rendering it bare throws from useNotifications.
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <Subagents apiBase="" />
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => {

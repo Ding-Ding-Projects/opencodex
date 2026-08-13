@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import MemoryObservabilityCard from "../src/components/MemoryObservabilityCard";
 
@@ -93,11 +93,11 @@ async function mountCard(respond: (url: string) => Promise<Response> | Response)
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ConfirmProvider>
           <MemoryObservabilityCard apiBase="http://localhost" />
         </ConfirmProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise(resolve => testWindow.setTimeout(resolve, 0)); });

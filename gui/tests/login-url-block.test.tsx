@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { LoginUrlBlock } from "../src/components/login-url-block";
 
 /**
@@ -65,9 +65,9 @@ async function render(url: string) {
   await act(async () => {
     root ??= createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <LoginUrlBlock url={url} />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
 }

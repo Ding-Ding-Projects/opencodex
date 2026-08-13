@@ -4,7 +4,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import ComboWorkspace from "../src/components/ComboWorkspace";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 import SnackbarHost from "../src/shell/SnackbarHost";
@@ -36,7 +36,7 @@ afterEach(() => {
 
 test("an empty combo list renders the first-combo editor inline", () => {
   const html = renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <NotificationsProvider>
             <ConfirmProvider>
         <ComboWorkspace
@@ -54,7 +54,7 @@ test("an empty combo list renders the first-combo editor inline", () => {
         />
       </ConfirmProvider>
           </NotificationsProvider>
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 
   expect(html).toContain("combos-workspace-root");
@@ -79,7 +79,7 @@ test("an empty combo list creates the first combo and shows confirmation", async
       // "Created combo/first." lands as a snackbar now rather than an inline
       // notice, so the host that renders snackbars is mounted inside the same
       // container the assertion reads. What the user is told is unchanged.
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
             <ConfirmProvider>
           <ComboWorkspace
@@ -101,7 +101,7 @@ test("an empty combo list creates the first combo and shows confirmation", async
           <SnackbarHost />
         </ConfirmProvider>
           </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => {

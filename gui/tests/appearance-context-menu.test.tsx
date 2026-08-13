@@ -26,7 +26,7 @@ import type { ReactNode } from "react";
 import type { Root } from "react-dom/client";
 
 import ElementAppearanceHost from "../src/shell/ElementAppearanceHost";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -61,9 +61,9 @@ async function mount(node: ReactNode): Promise<{ container: HTMLElement; root: R
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <ElementAppearanceHost>{node}</ElementAppearanceHost>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });

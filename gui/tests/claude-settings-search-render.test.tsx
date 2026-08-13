@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { useT } from "../src/i18n/shared";
 import { ClaudeCodeSettingsCard } from "../src/pages/claude-code-sections";
 import { ClaudeSettingsSearchRow } from "../src/pages/claude-code-settings";
@@ -43,14 +43,14 @@ const STATE: ClaudeCodeState = {
 
 function renderCard(match: (id: ClaudeSettingId) => boolean): string {
   return renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <ClaudeCodeSettingsCard
         state={STATE}
         autoCompactOptions={[]}
         onStateChange={() => {}}
         match={match}
       />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 }
 
@@ -62,7 +62,7 @@ function renderRow(query: string, regexOn: boolean): string {
     const search = claudeSettingsSearch(query, regexOn, t);
     return <ClaudeSettingsSearchRow query={query} onQuery={() => {}} regexOn={regexOn} onRegex={() => {}} search={search} />;
   };
-  return renderToStaticMarkup(<LanguageProvider><Probe /></LanguageProvider>);
+  return renderToStaticMarkup(<TestLanguageProvider><Probe /></TestLanguageProvider>);
 }
 
 test("with no query every settings row is rendered", () => {

@@ -4,7 +4,7 @@ import { act, StrictMode } from "react";
 import type { Root } from "react-dom/client";
 import type { ComboItem } from "../src/combo-workspace-data";
 import ComboWorkspace from "../src/components/ComboWorkspace";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 
@@ -83,7 +83,7 @@ test("Strict Mode: edit, revert, and unsaved navigation keep dirty state coheren
     root = createRoot(container);
     root.render(
       <StrictMode>
-        <LanguageProvider>
+        <TestLanguageProvider>
           {/* The detail panel reports a successful save as a snackbar now, so the
               provider it reads has to exist even where no save happens. */}
           <NotificationsProvider>
@@ -103,7 +103,7 @@ test("Strict Mode: edit, revert, and unsaved navigation keep dirty state coheren
             />
           </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </StrictMode>,
     );
   });

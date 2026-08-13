@@ -14,7 +14,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 
 import { StartProxyButton } from "../src/components/StartProxyButton";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import SnackbarHost from "../src/shell/SnackbarHost";
 
@@ -49,7 +49,7 @@ async function mount(onStarted?: () => void): Promise<{ container: HTMLElement; 
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <StartProxyButton onStarted={onStarted} />
           {/* The host is what actually paints a notification. Mounting only the
@@ -57,7 +57,7 @@ async function mount(onStarted?: () => void): Promise<{ container: HTMLElement; 
               the visible text passes or fails for the wrong reason. */}
           <SnackbarHost />
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   return { container, root };

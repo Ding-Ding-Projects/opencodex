@@ -19,7 +19,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 
 import Network from "../src/pages/Network";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { ConfirmProvider } from "../src/shell/confirm";
@@ -90,13 +90,13 @@ async function mount(apiBase: string): Promise<{ container: HTMLElement; root: R
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsProvider>
             <ConfirmProvider>
               <Network apiBase={apiBase} />
             </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });

@@ -20,7 +20,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 
 import Mobile from "../src/pages/Mobile";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { ConfirmProvider } from "../src/shell/confirm";
@@ -145,13 +145,13 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsProvider>
             <ConfirmProvider>
               <Mobile apiBase="" />
             </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });
@@ -275,9 +275,9 @@ test("the stored key survives a reload, with no token in the URL to re-claim", a
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <PrefsProvider><LanguageProvider><NotificationsProvider><ConfirmProvider>
+        <PrefsProvider><TestLanguageProvider><NotificationsProvider><ConfirmProvider>
           <Mobile apiBase="" />
-        </ConfirmProvider></NotificationsProvider></LanguageProvider></PrefsProvider>,
+        </ConfirmProvider></NotificationsProvider></TestLanguageProvider></PrefsProvider>,
       );
     });
     await act(async () => { await Promise.resolve(); });

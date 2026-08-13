@@ -25,7 +25,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import OnboardingWizard from "../src/shell/OnboardingWizard";
 import { hasConfiguredProvider, resetLaunchLatch } from "../src/shell/onboarding-state";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -84,11 +84,11 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <OnboardingWizard apiBase="" />
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   // The decision is asynchronous: the dialog only appears once the provider
@@ -332,26 +332,32 @@ test("skipping with don't-show-again turned off defers instead of completing", a
   await act(async () => { root.unmount(); });
 });
 
-// The language step writes the app-wide locale, not a wizard-local key, and the
-// change lands in the append-only revision log.
-test("picking a language sets the shared locale and records a revision", async () => {
+// The language step still reaches the app-wide locale rather than a wizard-local
+// key — but it now *stages* it. The settings-draft coordinator owns the only
+// durable write to `ocx-lang` and the only revision-log entry, and both happen in
+// its `apply()`, which the app bar's Save action triggers. So this used to assert
+// "persisted and logged" and now asserts "staged, and deliberately neither".
+//
+// Worth pinning rather than deleting: a first-run wizard whose language choice
+// needs a separate Apply is a product decision, not an implementation detail, and
+// this is the test that would notice it changing back by accident.
+test("picking a language stages the shared locale without persisting it yet", async () => {
   stubProviders([]);
   const { container, root } = await mount();
 
   const chip = [...container.querySelectorAll(".m3-chip")].find(c => c.textContent === "日本語")!;
   await click(chip);
 
-  expect(localStorage.getItem("ocx-lang")).toBe("ja");
+  // The draft repaints immediately, which is the half that must keep working —
+  // a picker that does not visibly take the choice is broken whatever it stores.
   expect(chip.getAttribute("aria-pressed")).toBe("true");
+  expect(localStorage.getItem("ocx-lang")).toBeNull();
+  expect(JSON.parse(localStorage.getItem("ocx-m3:revisions") ?? "[]")).toEqual([]);
 
-  const revisions = JSON.parse(localStorage.getItem("ocx-m3:revisions") ?? "[]");
-  expect(revisions).toHaveLength(1);
-  expect(revisions[0].scope).toBe("settings");
-  expect(revisions[0].summary).toContain("日本語");
-
-  // Re-picking the same language is not a mutation, so it records nothing more.
+  // Re-picking the same language is still not a mutation.
   await click(chip);
-  expect(JSON.parse(localStorage.getItem("ocx-m3:revisions") ?? "[]")).toHaveLength(1);
+  expect(chip.getAttribute("aria-pressed")).toBe("true");
+  expect(JSON.parse(localStorage.getItem("ocx-m3:revisions") ?? "[]")).toEqual([]);
 
   await act(async () => { root.unmount(); });
 });

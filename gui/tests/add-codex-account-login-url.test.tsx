@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import AddCodexAccountModal from "../src/components/AddCodexAccountModal";
 
 /**
@@ -99,9 +99,9 @@ async function mountReauthModal() {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <AddCodexAccountModal apiBase="" onClose={() => {}} onAdded={() => {}} reauthAccountId="acct-1" />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => {

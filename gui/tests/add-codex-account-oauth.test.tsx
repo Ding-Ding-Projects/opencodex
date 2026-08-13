@@ -7,7 +7,7 @@ import {
   initialAddCodexAccountUiState,
 } from "../src/components/add-codex-account-reducer";
 import { useAddCodexAccountOAuth } from "../src/components/use-add-codex-account-oauth";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 /**
  * StrictMode reauth latch + login-status single-flight / abort contracts for
@@ -115,7 +115,7 @@ async function mountProbe(strict: boolean) {
   const { createRoot } = await import("react-dom/client");
   await act(async () => {
     root = createRoot(host);
-    const tree = <LanguageProvider><Probe reauthAccountId="acct-1" /></LanguageProvider>;
+    const tree = <TestLanguageProvider><Probe reauthAccountId="acct-1" /></TestLanguageProvider>;
     root.render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });

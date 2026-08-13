@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { ConfirmProvider } from "../src/shell/confirm";
 import ApiKeys from "../src/pages/ApiKeys";
@@ -96,7 +96,7 @@ test("successful key create keeps last-good keys visible when follow-up refresh 
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           {/* The screen's icon-only copy buttons acknowledge through the snackbar host. */}
           <NotificationsProvider>
             {/* Bulk revoke asks before it runs, so the page needs the confirm
@@ -106,7 +106,7 @@ test("successful key create keeps last-good keys visible when follow-up refresh 
               <ApiKeys apiBase="http://localhost" />
             </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
     await act(async () => {
@@ -179,14 +179,14 @@ test("successful key delete keeps last-good keys visible when follow-up refresh 
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           {/* The screen's icon-only copy buttons acknowledge through the snackbar host. */}
           <NotificationsProvider>
             <ConfirmProvider>
               <ApiKeys apiBase="http://localhost" />
             </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
     await act(async () => {

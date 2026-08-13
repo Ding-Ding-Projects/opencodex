@@ -13,7 +13,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import Changelog from "../src/pages/Changelog";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsContext, type Notice, type NotificationsApi } from "../src/shell/notifications-context";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -83,11 +83,11 @@ async function mount(apiBase: string): Promise<{ container: HTMLElement; root: R
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsContext.Provider value={api}>
           <Changelog apiBase={apiBase} />
         </NotificationsContext.Provider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
 

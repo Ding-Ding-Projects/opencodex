@@ -14,7 +14,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import Storage from "../src/pages/Storage";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -96,11 +96,11 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <Storage apiBase="http://api" />
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await settle();

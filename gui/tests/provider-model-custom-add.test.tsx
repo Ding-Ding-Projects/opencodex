@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import ProviderModels from "../src/components/provider-workspace/ProviderModels";
 import type { WorkspaceItem } from "../src/provider-workspace/catalog";
 
@@ -53,7 +53,7 @@ async function mountProviderModels(
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ProviderModels
           item={providerItem}
           availableModels={availableModels}
@@ -62,7 +62,7 @@ async function mountProviderModels(
           apiBase="http://localhost:10100"
           onRetryModels={onRetryModels}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   const input = container.querySelector<HTMLInputElement>('input[aria-label="Add custom model"]')!;

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import SnackbarHost from "../src/shell/SnackbarHost";
 import ClaudeCode from "../src/pages/ClaudeCode";
@@ -80,12 +80,12 @@ async function mountClaudeCode(): Promise<{ container: HTMLElement; root: Root; 
       // A save outcome is a snackbar now rather than an inline notice, so the
       // host that renders snackbars is mounted inside the same container the
       // assertions read. The message the user sees is the assertion either way.
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <ClaudeCode apiBase="http://localhost" />
           <SnackbarHost />
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => {

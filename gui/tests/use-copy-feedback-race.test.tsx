@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { useCopyFeedback } from "../src/components/use-copy-feedback";
 
 /**
@@ -77,7 +77,7 @@ async function mount() {
   const { createRoot } = await import("react-dom/client");
   await act(async () => {
     root = createRoot(host);
-    root.render(<LanguageProvider><Probe /></LanguageProvider>);
+    root.render(<TestLanguageProvider><Probe /></TestLanguageProvider>);
   });
 }
 

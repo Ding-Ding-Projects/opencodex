@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import Debug from "../src/pages/Debug";
 import type { DebugSettings } from "../src/pages/debug-shared";
 
@@ -148,9 +148,9 @@ test("rapid Debug flag/reset keeps controls busy and applies only the latest mut
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <Debug apiBase="http://localhost" />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await waitFor(() => container.querySelector('button[role="switch"][aria-label="Usage extraction"]') != null);
@@ -270,9 +270,9 @@ test("Debug PUTs are serialized so reverse-order response settlement cannot leav
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <Debug apiBase="http://localhost" />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await waitFor(() => container.querySelector('button[role="switch"][aria-label="Usage extraction"]') != null);

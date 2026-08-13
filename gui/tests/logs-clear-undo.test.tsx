@@ -13,7 +13,7 @@ import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { readHistory } from "../src/shell/notifications-context";
 import { ConfirmProvider } from "../src/shell/confirm";
@@ -126,13 +126,13 @@ async function mountLogs(): Promise<{ root: Root; container: HTMLElement }> {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <ConfirmProvider>
             <Logs apiBase="http://localhost" />
           </ConfirmProvider>
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await settle();

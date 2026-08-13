@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import ApiKeys from "../src/pages/ApiKeys";
 
 const originalFetch = globalThis.fetch;
@@ -103,7 +103,7 @@ async function mountApiKeys(fetchImpl: typeof fetch) {
   let root!: Root;
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider><ApiKeys apiBase="http://localhost" /></LanguageProvider>);
+    root.render(<TestLanguageProvider><ApiKeys apiBase="http://localhost" /></TestLanguageProvider>);
   });
   await act(async () => {
     await new Promise<void>(resolve => testWindow.setTimeout(resolve, 0));

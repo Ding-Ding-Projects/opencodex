@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import ProviderWorkspaceShell from "../src/components/provider-workspace/ProviderWorkspaceShell";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 /**
  * WP4 rendered-DOM contract. The sibling .ts file pins source invariants; this file
@@ -102,7 +102,7 @@ async function mountShell() {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ProviderWorkspaceShell
           providers={providers}
           apiBase=""
@@ -114,7 +114,7 @@ async function mountShell() {
           modelsLoadFailed={false}
           detail={() => null}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });

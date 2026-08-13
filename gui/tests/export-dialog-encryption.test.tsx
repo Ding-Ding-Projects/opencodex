@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import ExportDialog from "../src/components/ExportDialog";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 const globals = ["document", "window", "navigator", "localStorage", "fetch", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -90,9 +90,9 @@ test("unencrypted 7z stays available while password controls stay hidden", async
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ExportDialog apiBase="" dataset="requests" onClose={() => {}} />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await settle();

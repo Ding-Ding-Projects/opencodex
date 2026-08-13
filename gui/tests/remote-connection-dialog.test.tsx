@@ -4,7 +4,7 @@ import { act, useState } from "react";
 import type { Root } from "react-dom/client";
 
 import RemoteConnectionDialog from "../src/components/RemoteConnectionDialog";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 const globals = [
   "document",
@@ -53,7 +53,7 @@ async function mount(node: React.ReactNode): Promise<HTMLElement> {
   document.body.append(container);
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider>{node}</LanguageProvider>);
+    root.render(<TestLanguageProvider>{node}</TestLanguageProvider>);
   });
   return container;
 }
