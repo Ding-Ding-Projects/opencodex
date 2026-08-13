@@ -216,6 +216,27 @@ const helpEntries: Record<string, HelpEntry> = {
     usage: "ocx observe <logs|usage|storage|memory|debug|claude-inbound|injection> ...",
     summary: "Inspect proxy requests, usage, storage, memory, and debug data.",
   },
+  narrator: {
+    usage: "ocx narrator <status|voices|speak> [--source <local|edge|all>] [--lang <tag>] [--voice <name>] [--edge] [--json]",
+    summary: "List narrator voices and speak a line without a browser.",
+    details: [
+      "status    Installed voices, the synthesis bounds, and where the narrator's settings actually live.",
+      "voices    List installed platform voices; --source edge|all adds the Microsoft Edge online catalogue.",
+      "speak     Synthesize one line to an MP3; --out <path> or --out - for stdout.",
+      "--lang <tag> filters by language (zh matches zh-HK and zh-CN); --search matches names and locales.",
+      "--rate and --pitch are multipliers from 0.5 to 2, where 1 is the voice's own normal delivery.",
+      "",
+      "--edge is required by every path that reaches the network, and is never implied.",
+      "Edge online voices send the text you pass to Microsoft over the internet every time they speak;",
+      "installed platform voices stay on this computer and need no network at all.",
+      "That service is the undocumented one Edge uses to read pages aloud and can change or be blocked",
+      "at any time, so a sudden refusal is the service refusing this client rather than a fault in your text.",
+      "",
+      "Whether the narrator speaks, its language, and the voice chosen per language are the dashboard's own",
+      "browser-profile state, not server configuration, so this command reports them as unreadable rather",
+      "than guessing. Change them in the dashboard under Language & voice.",
+    ],
+  },
   logs: { usage: "ocx logs [filters] [--follow] [--json|--jsonl]", summary: "Alias of ocx observe logs." },
   usage: { usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", summary: "Alias of ocx observe usage." },
   storage: { usage: "ocx storage [--json]", summary: "Alias of ocx observe storage." },
@@ -355,6 +376,7 @@ Usage:
   ocx combo <sub>             Combo failover/round-robin routing
   ocx agent <sub>             Subagents, injection, effort caps, and sidecars
   ocx observe <sub>           Logs, usage, storage, memory, and debug data
+  ocx narrator <sub>          Narrator voices and speech (installed voices; --edge adds Microsoft's)
   ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply

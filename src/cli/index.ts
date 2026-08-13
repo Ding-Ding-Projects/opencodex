@@ -1110,6 +1110,11 @@ switch (command) {
     process.exitCode = await handleObserveCommand([command, ...args.slice(1)]);
     break;
   }
+  case "narrator": {
+    const { handleNarratorCommand } = await import("./narrator");
+    process.exitCode = await handleNarratorCommand(args.slice(1));
+    break;
+  }
   case "access": {
     const { handleAccessCommand } = await import("./access");
     process.exitCode = await handleAccessCommand(args.slice(1));

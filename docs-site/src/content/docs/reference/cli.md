@@ -248,6 +248,7 @@ routes, validation, live configuration, and catalog refresh side effects as the 
 | Routing | `ocx combo ...` or `ocx route combo ...` |
 | Agent policy | `ocx agent injection|effort|subagents|fallback|sidecar ...` |
 | Observability | `ocx observe logs|usage|storage|memory|debug ...` |
+| Narrator voices | `ocx narrator status|voices|speak ...` |
 | API admission | `ocx access key|endpoints|models|test ...` |
 | Claude Code | `ocx claude config status|set ...` |
 | Grok Build | `ocx grok status|exclude|include|set|clear|apply ...` |
@@ -270,7 +271,10 @@ ocx system settings --stream-mode eager-relay
 ```
 
 Theme, language, navigation, and other purely visual browser state intentionally have no CLI
-equivalent. Cloudflare Tunnel setup is not part of this command set.
+equivalent — including the narrator's own on/off switch and its per-language voice choice, which are
+per-visitor browser state rather than server configuration. The narrator's voice catalogues and its
+synthesis are management routes, so those do have one: see `ocx narrator` below. Cloudflare Tunnel
+setup is not part of this command set.
 
 ### `ocx models [subcommand]`
 
@@ -434,6 +438,50 @@ security find-generic-password -w openrouter | ocx account add-key openrouter --
 ```
 
 `--json` returns `{ ok: true, id: string | null, label?: string }` and never includes the key.
+
+### `ocx narrator <status|voices|speak>`
+
+The headless counterpart to the dashboard's narrator voice picker. It lists the voices this computer
+can speak with, lists the Microsoft Edge online catalogue, and synthesizes one line to an MP3 through
+the same `/api/narrator/*` routes the dashboard uses.
+
+| Subcommand | Supported flags | Action |
+| --- | --- | --- |
+| `status` | `--edge`, `--json` | Installed voices, the synthesis bounds, and where the narrator's settings actually live. |
+| `voices` | `--source <local\|edge\|all>`, `--lang <tag>`, `--search <text>`, `--limit <n>`, `--edge`, `--json` | List voices from either source. Defaults to `local`. |
+| `speak` | `--voice <name>`, `--rate <n>`, `--pitch <n>`, `--out <path>\|-`, `--edge`, `--json` | Synthesize one line and write the MP3. |
+
+```bash
+ocx narrator status
+ocx narrator voices --lang en
+ocx narrator voices --source edge --lang zh-HK --edge
+ocx narrator speak "早晨" --voice zh-HK-HiuMaanNeural --edge --out morning.mp3
+```
+
+`--lang` matches on the subtag boundary, so `zh` finds both `zh-HK` and `zh-CN` while `en` does not
+claim `enm`. `--rate` and `--pitch` are multipliers from 0.5 to 2, where 1 is the voice's own normal
+delivery. A line is capped at 600 characters, and the command refuses a longer one locally rather
+than sending it. `--out -` writes raw MP3 bytes to stdout and refuses to do so into a terminal.
+
+**Microsoft Edge online voices are a network source, and `--edge` is required by every path that
+reaches it.** Speaking with one sends the text you pass to Microsoft, over the internet, every time
+it speaks; listing the catalogue contacts the same service but sends no narrated text. Installed
+platform voices stay on this computer and need no network at all. Nothing here contacts Microsoft
+without `--edge`, and the refusal you get without it states what would be sent and to whom. The
+service is the undocumented one Edge itself uses to read pages aloud: Microsoft publishes no contract
+for it and can change or block it at any time, so a sudden refusal is the service refusing this
+client rather than a fault in your text or your chosen voice.
+
+Installed voices are enumerated from the operating system's own speech platform, which is Windows
+only today; elsewhere `status` reports them as unavailable with the reason rather than as an empty
+list. That set is the machine's, not the browser's, so it can differ slightly from what the
+dashboard's picker offers.
+
+Whether the narrator speaks at all, which language it narrates, the voice, rate and pitch chosen for
+each narrated language, and whether the Edge source is switched on are stored per visitor in the
+dashboard's own browser profile (local storage key `ocx-m3:v1`). They are not server configuration,
+so `ocx narrator status` reports them as unreadable rather than guessing at a default. Change them in
+the dashboard under **Language & voice**.
 
 ## Authentication
 
