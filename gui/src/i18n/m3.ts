@@ -754,6 +754,24 @@ export const M3_EN = {
   "cost.aria": "Estimated API cost {amount} over {range}. Change range.",
   "cost.title": "Estimated API cost ({range}) — click to change the range",
 
+  // ---- app-bar viewport preview ----
+  // Pins the shell to an emulated width so the compact and medium layouts can be
+  // seen without dragging the window. `viewport.note` is the honest half: the
+  // shell's own breakpoints are measured in JavaScript and do move, while the
+  // stylesheet's media queries are evaluated against the real window and cannot.
+  // Saying so here is what stops somebody reporting the difference as a bug.
+  "viewport.menuTitle": "Preview size",
+  "viewport.auto": "Fit window",
+  "viewport.phone": "Phone",
+  "viewport.tablet": "Tablet",
+  "viewport.desktop": "Desktop",
+  "viewport.px": "{width} px",
+  "viewport.trigger": "Preview size: {size}. Change the emulated width.",
+  "viewport.note": "Emulates the shell's own breakpoints. Media queries and full-window overlays still follow the real window, so some details stay at this window's size.",
+  "viewport.banner": "Previewing {size}",
+  "viewport.clamped": "Too narrow for {size} — the frame is drawn at {actual} px.",
+  "viewport.exit": "Exit preview",
+
   // ---- cost basis (which accounting lane a figure came from) ----
   // Subscription traffic has a real API-equivalent value but is not billed. The
   // figure is shown so the meter stops reading "$0", and every one of these

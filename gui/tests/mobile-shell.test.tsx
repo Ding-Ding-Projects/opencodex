@@ -451,9 +451,15 @@ test("the coarse-pointer block lifts every named control to the 44px floor", () 
   expect(block).not.toBe("");
   const body = block.slice(0, block.indexOf("\n}"));
 
-  // The controls that were under the floor before this block existed.
-  for (const selector of [".m3-tab-close", ".m3-tab-btn", ".m3-tabgroup-head", ".m3-chip", ".m3-menu-item", ".m3-mob__navbtn", ".m3-mob__model", ".m3-nav-item"]) {
-    expect(body).toContain(selector);
+  // The controls that were under the floor before this block existed. This list
+  // is hand-written on purpose: a rule that only checked the selectors already
+  // present would pass on a block that had quietly lost one. The snackbar pair
+  // is here because it was missing from this block for exactly that reason —
+  // nothing failed while a phone's dismiss button sat at 36x36.
+  for (const selector of [".m3-tab-close", ".m3-tab-btn", ".m3-tabgroup-head", ".m3-chip", ".m3-menu-item", ".m3-mob__navbtn", ".m3-mob__model", ".m3-nav-item", ".m3-snack-close", ".m3-snack-action"]) {
+    // Anchored to a declaration position, so a selector merely mentioned in a
+    // comment inside the block cannot stand in for the rule itself.
+    expect(body).toMatch(new RegExp(`\\${selector}\\s*[,{]`));
   }
   // Every min-height in the block is at least 44px — a rule that named a
   // selector and then set 36px would pass a "contains" check and fail the user.

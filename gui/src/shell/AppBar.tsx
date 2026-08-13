@@ -1,6 +1,7 @@
 /**
  * Top app bar: page title, live proxy status, quick restore, notification
- * centre, a shortcut to Appearance, and the signed-in account chip.
+ * centre, the viewport preview-size control, a shortcut to Appearance, and the
+ * signed-in account chip.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -10,6 +11,7 @@ import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
 import CostMeter from "./CostMeter";
 import QuickRestore from "./QuickRestore";
+import ViewportPreview from "./ViewportPreview";
 import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
 import { usePrefs } from "../theme/prefs-context";
@@ -158,6 +160,14 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
         aria-label={t("remote.connectTitle")} title={t("remote.connectTitle")}>
         <IconDevices aria-hidden />
       </button>
+
+      {/* Pins the shell to an emulated width so the compact and medium layouts
+          can be looked at without dragging the window narrow and back. The
+          prototype puts it in this slot behind the `devices` glyph; that glyph
+          is spoken for here by the remote connection above, so this takes the
+          screen mark instead rather than shipping two identical icons a row
+          apart. Renders its own fixed exit banner while a preview is pinned. */}
+      <ViewportPreview />
 
       <button type="button" className="m3-icon-btn" onClick={() => onOpen("appearance", false)}
         aria-label={t("nav.appearance")} title={t("nav.appearance")}>
