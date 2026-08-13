@@ -43,6 +43,8 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button, Dialog, Field, TextInput } from "./m3-ui";
 import { useT } from "../i18n/shared";
+import { usePrefs } from "../theme/prefs-context";
+import { decorateMessage } from "./message-emoji";
 import {
   ConfirmContext,
   PromptContext,
@@ -78,6 +80,12 @@ function dismiss(pending: Pending): void {
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const t = useT();
+  // "Show emojis in dialogs and message boxes." Read once here rather than
+  // inside `Dialog` itself: `Dialog` is exercised bare, with no settings
+  // provider in the tree at all (see `tests/m3-dialog.test.tsx`), so the
+  // decoration is resolved at this call site and handed down as an already-built
+  // title instead.
+  const { prefs } = usePrefs();
   const [queue, setQueue] = useState<Pending[]>([]);
   const seq = useRef(0);
 
@@ -144,7 +152,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         {current?.kind === "confirm" && (
           <Dialog
             key={current.id}
-            title={current.request.title}
+            // "danger" earns the same alarm mark a standing warning does; every
+            // other confirmation is a plain decision, not a warning at all, so it
+            // gets the question mark rather than borrowing the danger tone's.
+            title={decorateMessage(current.request.tone === "danger" ? "danger" : "question", current.request.title, prefs.showEmojis)}
             description={current.request.body
               ? <span style={{ whiteSpace: "pre-line" }}>{current.request.body}</span>
               : undefined}
@@ -173,6 +184,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             key={current.id}
             request={current.request}
             cancelLabel={current.request.cancelLabel ?? t("common.cancel")}
+            showEmojis={prefs.showEmojis}
             onSettle={value => { current.settle(value); dequeue(current.id); }}
           />
         )}
@@ -190,9 +202,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
  * user saves it somewhere it does not belong. Mounting a fresh component per
  * request makes the reset structural instead of remembered.
  */
-function PromptDialog({ request, cancelLabel, onSettle }: {
+function PromptDialog({ request, cancelLabel, showEmojis, onSettle }: {
   request: PromptRequest;
   cancelLabel: string;
+  showEmojis: boolean;
   onSettle: (value: string | null) => void;
 }) {
   const [value, setValue] = useState(request.initialValue ?? "");
@@ -202,7 +215,7 @@ function PromptDialog({ request, cancelLabel, onSettle }: {
 
   return (
     <Dialog
-      title={request.title}
+      title={decorateMessage("prompt", request.title, showEmojis)}
       description={request.body
         ? <span style={{ whiteSpace: "pre-line" }}>{request.body}</span>
         : undefined}

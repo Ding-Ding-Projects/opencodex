@@ -2267,6 +2267,15 @@ export const yue: Partial<Record<TKey, string>> = {
   "cost.tier.detailUniform": "{band}：每一種 token 都係按呢個 model 標準價嘅 {factor} 倍計。",
   "cost.tier.detailSplit": "{band}：對比呢個 model 嘅標準價，input ×{input}、output ×{output}、cache read ×{cacheRead}、cache write ×{cacheWrite}。",
 
+  // ---- emoji decoration ----
+  "emoji.title": "喺對話框同提示訊息度顯示表情符號",
+  "emoji.sub": "會喺對話框或者通知嘅標題旁邊加返個細細嘅裝飾符號——唔會擺喺掣、標籤，或者任何讀出嚟做名稱嘅嘢度。閂咗嘅話，一樣嘅字照樣喺度，淨係冇符號啫。",
+  "emoji.previewCaption": "而家四種通知符號會係咁樣：",
+  "emoji.previewInfo": "Proxy port 改咗",
+  "emoji.previewSuccess": "匯出完成",
+  "emoji.previewWarn": "儲存空間就嚟爆",
+  "emoji.previewError": "連唔到 proxy",
+
   // ---- dim sum surprise ----
   "dimsum.title": "點心時間到！",
   "dimsum.hint": "十次開機有一次嘅小驚喜。佢會自己收埋。",

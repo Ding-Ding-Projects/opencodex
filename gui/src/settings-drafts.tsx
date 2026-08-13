@@ -67,20 +67,24 @@ function resetOneElementStyle(prefs: Prefs, id: string): Prefs {
 
 function resetAppearanceFrom(prefs: Prefs): Prefs {
   // Voices come through with the rest of the narration settings: see the note on
-  // the matching reset in `theme/prefs.tsx`.
+  // the matching reset in `theme/prefs.tsx`. `showEmojis` rides along for the
+  // same reason — it is a Language & voice setting, not an Appearance one, so a
+  // reset triggered from the Appearance screen must not reach over and silently
+  // flip it.
   return {
     ...DEFAULT_PREFS,
     narrator: prefs.narrator,
     narratorLang: prefs.narratorLang,
     narratorVoices: prefs.narratorVoices,
     narratorEdge: prefs.narratorEdge,
+    showEmojis: prefs.showEmojis,
   };
 }
 
 function countPrefsChanges(applied: Prefs, draft: Prefs): number {
   let count = 0;
   for (const key of [
-    "theme", "seed", "density", "fontId", "fontStack", "fontScale", "fontWeight", "narrator", "narratorLang", "narratorEdge", "costRange",
+    "theme", "seed", "density", "fontId", "fontStack", "fontScale", "fontWeight", "narrator", "narratorLang", "narratorEdge", "costRange", "showEmojis",
   ] as const) {
     if (!equal(applied[key], draft[key])) count += 1;
   }

@@ -246,6 +246,7 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
       descKey: "narrator.edgeDisclosure",
       keywordKeys: ["narrator.edgeEnable", "narrator.edgeCantonese"],
     },
+    { id: "showEmojis", tkey: "emoji.title", descKey: "emoji.sub" },
     { id: "dimsum", tkey: "dimsum.toggle" },
   ],
 });

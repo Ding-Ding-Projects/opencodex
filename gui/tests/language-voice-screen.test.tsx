@@ -1,12 +1,13 @@
 /**
  * Language & voice screen structure.
  *
- * The prototype's screen carries a body-large page lead, three titled cards —
- * interface language, narrator, dim sum — an untitled funny-level card holding
- * both per-language sliders and the five-level ladder, and a settings search.
- * Both switches must expose `role="switch"` + `aria-checked`, which is the
- * accessibility contract the shell's design handoff states. A card or control
- * silently dropping out of this screen is the failure these guard.
+ * The prototype's screen carries a body-large page lead, four titled cards —
+ * interface language, narrator, the emoji decoration toggle, dim sum — an
+ * untitled funny-level card holding both per-language sliders and the
+ * five-level ladder, and a settings search. Every switch must expose
+ * `role="switch"` + `aria-checked`, which is the accessibility contract the
+ * shell's design handoff states. A card or control silently dropping out of
+ * this screen is the failure these guard.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -75,32 +76,49 @@ function typeInto(el: HTMLInputElement, value: string): void {
   el.dispatchEvent(new testWindow.Event("input", { bubbles: true }) as never);
 }
 
-test("renders the language, narrator and dim sum cards with accessible switches", async () => {
+test("renders the language, narrator, emoji and dim sum cards with accessible switches", async () => {
   const { container, root } = await mount();
 
   const titles = [...container.querySelectorAll(".m3-card-title")].map(n => n.textContent);
-  expect(titles).toEqual(["Interface language", "Narrator", "Dim sum surprise"]);
+  expect(titles).toEqual([
+    "Interface language",
+    "Narrator",
+    "Show emojis in dialogs and message boxes",
+    "Dim sum surprise",
+  ]);
 
-  // Every switch on this screen belongs to the narrator card, and every one of
-  // them is off on a fresh profile. This used to be a screen-wide count of one,
-  // which read as "the dim sum surprise has no off switch" — the real contract,
-  // and one the dim sum card asserts directly a few lines below. The count also
-  // silently asserted that no other switch could ever exist, so the narrator's
-  // Edge online-voice opt-in broke it by existing.
+  // Every switch on this screen belongs to either the narrator card or the
+  // emoji card, and every one of them is off on a fresh profile. This used to
+  // be a screen-wide count of one, which read as "the dim sum surprise has no
+  // off switch" — the real contract, and one the dim sum card asserts directly
+  // a few lines below. The count also silently asserted that no other switch
+  // could ever exist, so the narrator's Edge online-voice opt-in broke it by
+  // existing, and the emoji toggle would break it again the same way.
   //
-  // What is worth pinning instead is that neither defaults to on: the narrator
-  // stays silent until asked, and the network voice source — which sends the
-  // narrated text to Microsoft — must never arrive switched on.
+  // What is worth pinning instead is that none of the three defaults to on:
+  // the narrator stays silent until asked, the network voice source — which
+  // sends the narrated text to Microsoft — must never arrive switched on, and
+  // emoji decoration stays off until a profile opts in.
   const narratorCard = [...container.querySelectorAll(".m3-card")]
     .find(card => card.querySelector(".m3-card-title")?.textContent === "Narrator")!;
+  const emojiCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Show emojis in dialogs and message boxes")!;
   const switches = [...container.querySelectorAll('[role="switch"]')];
-  expect(switches).toHaveLength(2);
-  expect(switches.every(s => narratorCard.contains(s))).toBe(true);
+  expect(switches).toHaveLength(3);
+  expect(switches.filter(s => narratorCard.contains(s))).toHaveLength(2);
+  expect(switches.filter(s => emojiCard.contains(s))).toHaveLength(1);
   expect(switches.map(s => s.getAttribute("aria-label"))).toEqual([
     "Enable narrator",
     "Use Microsoft Edge online voices",
+    "Show emojis in dialogs and message boxes",
   ]);
   expect(switches.every(s => s.getAttribute("aria-checked") === "false")).toBe(true);
+
+  // The preview rows are live output, not description: with the toggle off,
+  // none of them carry a mark, and the sample copy renders exactly as it would
+  // in a real snackbar with the same setting off.
+  expect(emojiCard.textContent).toContain("Proxy port changed");
+  expect(emojiCard.querySelector(".m3-emoji")).toBeNull();
 
   // The card still owes the reader a way to see one on demand rather than waiting
   // out 1-in-10 odds, so what replaced the switch is a preview and not a gap.

@@ -144,12 +144,18 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     // appearance" is a request about how the app looks; silently discarding the
     // voice, rate and pitch somebody tuned by ear would be a different, unasked
     // -for reset that leaves no trace of what the settings used to be.
+    //
+    // `showEmojis` lives on the same Language & voice screen as narration, not
+    // on Appearance, for the same reason: a "how the app looks" reset triggered
+    // from a different tab should not reach across and silently flip a switch
+    // that screen owns.
     setPrefsState(prev => ({
       ...DEFAULT_PREFS,
       narrator: prev.narrator,
       narratorLang: prev.narratorLang,
       narratorVoices: prev.narratorVoices,
       narratorEdge: prev.narratorEdge,
+      showEmojis: prev.showEmojis,
     }));
   }, []);
 
