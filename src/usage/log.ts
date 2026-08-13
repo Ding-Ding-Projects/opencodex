@@ -33,6 +33,8 @@ export interface PersistedUsageAttempt {
   usageStatus: UsageStatus;
   /** Effective prompt-cache tier for Anthropic adapter attempts only. */
   cacheRetention?: "none" | "short" | "long";
+  /** Raw request prompt size retained for price schedules; never derived from response usage. */
+  promptInputTokens?: number;
   inputTokenEstimate?: number;
   usage?: OcxUsage;
   totalTokens?: number;
@@ -68,6 +70,8 @@ export interface PersistedUsageEntry {
   responseServiceTier?: string;
   /** Effective Anthropic prompt-cache retention used by the request adapter. */
   cacheRetention?: "none" | "short" | "long";
+  /** Raw RequestLogContext.usageLogInputTokens for new records; legacy rows omit it. */
+  promptInputTokens?: number;
   status: number;
   durationMs: number;
   /** TTFT relative to the request start (WP4); unset for non-streaming/tool-only. */
@@ -213,6 +217,8 @@ function normalizeUsageAttempt(raw: unknown): PersistedUsageAttempt | null {
   if ("timestamp" in attempt && !isNonNegativeFiniteNumber(attempt.timestamp)) return null;
   if ("inputTokenEstimate" in attempt
     && !isNonNegativeFiniteNumber(attempt.inputTokenEstimate)) return null;
+  if ("promptInputTokens" in attempt
+    && !isNonNegativeFiniteNumber(attempt.promptInputTokens)) return null;
   if ("firstOutputMs" in attempt
     && !isNonNegativeFiniteNumber(attempt.firstOutputMs)) return null;
   if ("totalTokens" in attempt
@@ -244,6 +250,9 @@ function normalizeUsageAttempt(raw: unknown): PersistedUsageAttempt | null {
       : {}),
     ...(isNonNegativeFiniteNumber(attempt.inputTokenEstimate)
       ? { inputTokenEstimate: attempt.inputTokenEstimate }
+      : {}),
+    ...(isNonNegativeFiniteNumber(attempt.promptInputTokens)
+      ? { promptInputTokens: attempt.promptInputTokens }
       : {}),
     ...(usage ? { usage } : {}),
     ...(isNonNegativeFiniteNumber(attempt.totalTokens)
@@ -325,6 +334,9 @@ function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
       : {}),
     ...(entry.cacheRetention === "none" || entry.cacheRetention === "short" || entry.cacheRetention === "long"
       ? { cacheRetention: entry.cacheRetention }
+      : {}),
+    ...(isNonNegativeFiniteNumber(entry.promptInputTokens)
+      ? { promptInputTokens: entry.promptInputTokens }
       : {}),
     status: entry.status,
     durationMs: entry.durationMs,

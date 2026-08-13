@@ -80,17 +80,27 @@ describe("GET /api/logs display metrics", () => {
     });
   });
 
-  test("subscription products expose an exact unpriced-product reason", async () => {
+  test("subscription products stay out of direct billing and expose an API-equivalent lane", async () => {
     addRequestLog(baseEntry({
       provider: "anthropic",
       model: "claude-opus-5",
       usage: { inputTokens: 100, outputTokens: 10 },
     }));
     const [dto] = await readLogs();
-    expect(dto!.displayMetrics.cost).toEqual({
+    expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
       reason: "price_unmatched",
       pricingReason: "pricing_product_unpriced",
+      direct: { kind: "unavailable", reason: "price_unmatched" },
+      apiEquivalent: {
+        kind: "value",
+        sourceClassification: "subscription_api_equivalent",
+        estimate: {
+          lane: "api_equivalent",
+          sourceClassification: "subscription_api_equivalent",
+          price: { provider: "anthropic-apikey", modelId: "claude-opus-5" },
+        },
+      },
     });
   });
 
@@ -100,10 +110,11 @@ describe("GET /api/logs display metrics", () => {
       usage: { inputTokens: 100, outputTokens: 10, cacheCreationInputTokens: 50 },
     }));
     const [dto] = await readLogs();
-    expect(dto!.displayMetrics.cost).toEqual({
+    expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
       reason: "price_unmatched",
       pricingReason: "pricing_context_missing",
+      direct: { kind: "unavailable", reason: "price_unmatched", pricingReason: "pricing_context_missing" },
     });
   });
 
@@ -116,10 +127,11 @@ describe("GET /api/logs display metrics", () => {
         usage: { inputTokens: 100, outputTokens: 10 },
       }));
       const [dto] = await readLogs();
-      expect(dto!.displayMetrics.cost).toEqual({
+      expect(dto!.displayMetrics.cost).toMatchObject({
         kind: "unavailable",
         reason: "price_unmatched",
         pricingReason: "pricing_condition_unmatched",
+        direct: { kind: "unavailable", reason: "price_unmatched", pricingReason: "pricing_condition_unmatched" },
       });
     }
   });
@@ -133,7 +145,12 @@ describe("GET /api/logs display metrics", () => {
       clearRequestLogsForTests();
       addRequestLog(baseEntry({ usage: usage as RequestLogEntry["usage"] }));
       const [dto] = await readLogs();
-      expect(dto!.displayMetrics.cost).toEqual({ kind: "unavailable", reason });
+      expect(dto!.displayMetrics.cost).toMatchObject({
+        kind: "unavailable",
+        reason,
+        direct: { kind: "unavailable", reason },
+        apiEquivalent: { kind: "unavailable", reason },
+      });
       expect(dto!.displayMetrics.cost).not.toHaveProperty("pricingReason");
     }
   });
@@ -169,7 +186,12 @@ describe("GET /api/logs display metrics", () => {
     addRequestLog(baseEntry({ usageStatus: "unreported", usage: undefined }));
     const [dto] = await readLogs();
     expect(dto!.displayMetrics.tokPerSecond).toEqual({ kind: "unavailable", reason: "usage_missing" });
-    expect(dto!.displayMetrics.cost).toEqual({ kind: "unavailable", reason: "usage_missing" });
+    expect(dto!.displayMetrics.cost).toMatchObject({
+      kind: "unavailable",
+      reason: "usage_missing",
+      direct: { kind: "unavailable", reason: "usage_missing" },
+      apiEquivalent: { kind: "unavailable", reason: "usage_missing" },
+    });
   });
 
   test("zero output is output_missing, not 0 tok/s", async () => {
@@ -211,10 +233,12 @@ describe("GET /api/logs display metrics", () => {
       ],
     }));
     const [dto] = await readLogs();
-    expect(dto!.displayMetrics.cost).toEqual({
+    expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
       reason: "combo_attempt_unavailable",
       pricingReason: "price_unmatched",
+      direct: { kind: "value", sourceClassification: "direct_api_key" },
+      apiEquivalent: { kind: "unavailable", reason: "combo_attempt_unavailable" },
     });
     expect(dto!.attempts).toHaveLength(2);
     expect(dto!.attempts[0].displayMetrics.cost.kind).toBe("value");
@@ -240,7 +264,12 @@ describe("GET /api/logs display metrics", () => {
       usage: { inputTokens: 50, outputTokens: 10, cachedInputTokens: 60, cacheCreationInputTokens: 20 },
     }));
     const [dto] = await readLogs();
-    expect(dto!.displayMetrics.cost).toEqual({ kind: "unavailable", reason: "invalid_cache_breakdown" });
+    expect(dto!.displayMetrics.cost).toMatchObject({
+      kind: "unavailable",
+      reason: "invalid_cache_breakdown",
+      direct: { kind: "unavailable", reason: "invalid_cache_breakdown" },
+      apiEquivalent: { kind: "unavailable", reason: "invalid_cache_breakdown" },
+    });
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";

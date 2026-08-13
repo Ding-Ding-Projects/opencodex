@@ -129,6 +129,7 @@ describe("usage log", () => {
         usageStatus: "estimated",
         cacheRetention: "long",
         inputTokenEstimate: 5,
+        promptInputTokens: 5,
         usage: { inputTokens: 5, outputTokens: 0, estimated: true },
         totalTokens: 5,
         requestedEffort: "max",
@@ -167,6 +168,7 @@ describe("usage log", () => {
       usageStatus: "estimated",
       cacheRetention: "long",
       inputTokenEstimate: 5,
+      promptInputTokens: 5,
       usage: { inputTokens: 5, outputTokens: 0, estimated: true },
       totalTokens: 5,
       requestedEffort: "max",
@@ -174,6 +176,38 @@ describe("usage log", () => {
       reasoningWireField: "reasoning_effort",
       reasoningWireValue: "high",
     }]);
+  });
+
+  test("persists bounded raw prompt input tokens without inferring them from usage", () => {
+    appendUsageEntry({
+      requestId: "ocx-prompt-size",
+      timestamp: 1,
+      provider: "openai-apikey",
+      model: "gpt-5.6-sol",
+      promptInputTokens: 271_999,
+      status: 200,
+      durationMs: 1,
+      usageStatus: "reported",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    expect(readUsageEntries()[0]).toMatchObject({
+      requestId: "ocx-prompt-size",
+      promptInputTokens: 271_999,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+
+    appendUsageEntry({
+      requestId: "ocx-invalid-prompt-size",
+      timestamp: 2,
+      provider: "openai-apikey",
+      model: "gpt-5.6-sol",
+      promptInputTokens: -1,
+      status: 200,
+      durationMs: 1,
+      usageStatus: "reported",
+      usage: { inputTokens: 999_999, outputTokens: 1 },
+    } as never);
+    expect(readUsageEntries()[1]).not.toHaveProperty("promptInputTokens");
   });
 
   test("omits malformed optional attempt cache retention without dropping the attempt", () => {

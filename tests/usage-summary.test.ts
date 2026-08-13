@@ -107,6 +107,90 @@ describe("summarizeUsage", () => {
     expect(none.summary.pricedRequests).toBe(0);
   });
 
+  test("adds non-billing OpenAI and Anthropic subscription equivalents without altering direct totals", () => {
+    const entries: PersistedUsageEntry[] = [
+      entry({
+        ts: FIXED_NOW - 1,
+        provider: "openai-apikey",
+        model: "gpt-5.6-luna",
+        usageStatus: "reported",
+        usage: { inputTokens: 1_000, outputTokens: 100 },
+      }),
+      entry({
+        ts: FIXED_NOW - 2,
+        provider: "openai-pabcdef",
+        model: "gpt-5.6-luna",
+        usageStatus: "reported",
+        usage: { inputTokens: 2_000, outputTokens: 200 },
+      }),
+      entry({
+        ts: FIXED_NOW - 3,
+        provider: "anthropic-pabcdef",
+        model: "claude-opus-5",
+        usageStatus: "reported",
+        usage: { inputTokens: 1_000, outputTokens: 100 },
+      }),
+      entry({
+        ts: FIXED_NOW - 4,
+        provider: "anthropic",
+        model: "unknown-model",
+        usageStatus: "reported",
+        usage: { inputTokens: 1_000, outputTokens: 100 },
+      }),
+    ];
+    const sum = summarizeUsage(entries, "30d", FIXED_NOW);
+    expect(sum.summary.direct).toMatchObject({
+      pricedRequests: 1,
+      unpricedRequests: 0,
+      sources: [expect.objectContaining({
+        provider: "openai-apikey",
+        model: "gpt-5.6-luna",
+        sourceClassification: "direct_api_key",
+        pricedRequests: 1,
+      })],
+    });
+    expect(sum.summary.apiEquivalent).toMatchObject({
+      pricedRequests: 2,
+      unpricedRequests: 1,
+      unpricedReasons: { price_unmatched: 1 },
+    });
+    expect(sum.summary.apiEquivalent.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: "openai-pabcdef",
+        model: "gpt-5.6-luna",
+        sourceClassification: "subscription_api_equivalent",
+        pricedRequests: 1,
+      }),
+      expect.objectContaining({
+        provider: "anthropic-pabcdef",
+        model: "claude-opus-5",
+        sourceClassification: "subscription_api_equivalent",
+        pricedRequests: 1,
+      }),
+      expect.objectContaining({
+        provider: "anthropic",
+        model: "unknown-model",
+        unpricedRequests: 1,
+        unpricedReasons: { price_unmatched: 1 },
+      }),
+    ]));
+    // Legacy aggregate stays strict: only direct actual list-price traffic counts.
+    expect(sum.summary.pricedRequests).toBe(1);
+  });
+
+  test("historical OpenAI subscription rows without raw prompt context remain unpriced only when needed", () => {
+    const historic = entry({
+      ts: FIXED_NOW - 1,
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      usageStatus: "reported",
+      usage: { inputTokens: 500, outputTokens: 50 },
+    });
+    const sum = summarizeUsage([historic], "30d", FIXED_NOW);
+    expect(sum.summary.apiEquivalent).toMatchObject({ pricedRequests: 1, unpricedRequests: 0 });
+    expect(sum.summary.direct).toMatchObject({ pricedRequests: 0, unpricedRequests: 0 });
+  });
+
   test("extreme finite timestamps fail closed in Usage without throwing", () => {
     for (const timestamp of [Number.MAX_VALUE, -Number.MAX_VALUE]) {
       const row = entry({

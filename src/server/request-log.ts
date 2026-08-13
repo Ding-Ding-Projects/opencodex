@@ -55,6 +55,7 @@ export interface RequestLogContext {
   cacheRetention?: "none" | "short" | "long";
   resolvedModel?: string;
   usage?: OcxUsage;
+  /** Raw request prompt size persisted for pricing-context selection; not response usage. */
   usageLogInputTokens?: number;
   attempts?: PersistedUsageAttempt[];
   /** Internal mutable final attempt; omitted from RequestLogEntry/JSONL. */
@@ -107,6 +108,8 @@ export interface RequestLogEntry {
   modelSupportsServiceTier?: boolean;
   responseServiceTier?: string;
   cacheRetention?: "none" | "short" | "long";
+  /** Persisted raw prompt size used by price schedules; absent on historical logs. */
+  promptInputTokens?: number;
   resolvedModel?: string;
   status: number;
   durationMs: number;
@@ -177,6 +180,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
       : {}),
     ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
     ...(entry.cacheRetention ? { cacheRetention: entry.cacheRetention } : {}),
+    ...(entry.promptInputTokens !== undefined ? { promptInputTokens: entry.promptInputTokens } : {}),
     ...(entry.resolvedModel ? { resolvedModel: entry.resolvedModel } : {}),
     status: entry.status,
     durationMs: entry.durationMs,
@@ -259,6 +263,7 @@ export function addRequestLog(entry: RequestLogEntry) {
         : {}),
       ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
       ...(entry.cacheRetention ? { cacheRetention: entry.cacheRetention } : {}),
+      ...(entry.promptInputTokens !== undefined ? { promptInputTokens: entry.promptInputTokens } : {}),
       status: entry.status,
       durationMs: entry.durationMs,
       ...(entry.firstOutputMs !== undefined ? { firstOutputMs: entry.firstOutputMs } : {}),
@@ -712,6 +717,9 @@ export function addFinalRequestLog(
     ...(logCtx.modelSupportsServiceTier !== undefined ? { modelSupportsServiceTier: logCtx.modelSupportsServiceTier } : {}),
     ...(logCtx.responseServiceTier ? { responseServiceTier: logCtx.responseServiceTier } : {}),
     ...(logCtx.cacheRetention ? { cacheRetention: logCtx.cacheRetention } : {}),
+    ...(typeof logCtx.usageLogInputTokens === "number" && Number.isFinite(logCtx.usageLogInputTokens) && logCtx.usageLogInputTokens >= 0
+      ? { promptInputTokens: logCtx.usageLogInputTokens }
+      : {}),
     ...(logCtx.resolvedModel ? { resolvedModel: logCtx.resolvedModel } : {}),
     status: effectiveStatus,
     durationMs: Date.now() - start,
@@ -845,6 +853,9 @@ export function noteAttemptSend(
     && Number.isFinite(inputTokenEstimate)
     && inputTokenEstimate >= 0) {
     attempt.inputTokenEstimate = inputTokenEstimate;
+    // The request-builder metric is retained separately from measured response
+    // usage so long-context pricing cannot reverse-engineer a threshold later.
+    attempt.promptInputTokens = inputTokenEstimate;
   }
   if (recovery && !attempt.recoveryKinds.includes(recovery)) {
     attempt.recoveryKinds.push(recovery);

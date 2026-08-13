@@ -234,6 +234,7 @@ describe("request log metadata", () => {
       status: 503,
       sendCount: 3,
       inputTokenEstimate: 120,
+      promptInputTokens: 120,
       recoveryKinds: ["transient-5xx"],
       usageStatus: "estimated",
       usage: { inputTokens: 120, outputTokens: 0, estimated: true },
@@ -435,6 +436,27 @@ describe("request log metadata", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ surface: "claude" });
+  });
+
+  test("final logging persists raw prompt input tokens separately from response usage", () => {
+    const entries: RequestLogEntry[] = [];
+    addFinalRequestLog(
+      "ocx-prompt-size",
+      Date.now(),
+      {
+        model: "gpt-5.6-sol",
+        provider: "openai-apikey",
+        usageLogInputTokens: 12_345,
+        usage: { inputTokens: 200, outputTokens: 20 },
+      },
+      200,
+      undefined,
+      entry => entries.push(entry),
+    );
+    expect(entries[0]).toMatchObject({
+      promptInputTokens: 12_345,
+      usage: { inputTokens: 200, outputTokens: 20 },
+    });
   });
 
   test("cursor rows: adapter drives estimated status and the input estimate fills in:0 (devlog 130 B2)", () => {

@@ -51,7 +51,7 @@ import type { OcxClaudeCodeConfig, OcxClaudeDesktopProfile, OcxConfig, OcxCustom
 import type { DesktopProfileModel } from "../../claude/desktop-profile";
 import { drainAndShutdown } from "../lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
-import { classifyUsageForCost, comboPricingUnavailableReason, comboUsageUnavailableReason, estimateComboCost, estimateRequestCost, effectiveServiceTier, pricingUnavailableReason, tokensPerSecond } from "../../usage/cost";
+import { classifyUsageForCost, comboPricingUnavailableReason, comboUsageUnavailableReason, estimateComboCost, estimateRequestCost, estimateRequestCostLanes, effectiveServiceTier, pricingLaneUnavailableReason, pricingSourceClassification, pricingUnavailableReason, tokensPerSecond } from "../../usage/cost";
 import type { PricingUnavailableReason } from "../../usage/expected-prices";
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
@@ -85,11 +85,20 @@ export type TokPerSecondResult =
 
 export type CostEstimateReason = "usage_estimated" | "cache_detail_missing" | "expected_price_overlay";
 
-export type CostResult =
-  | { kind: "value"; estimate: NonNullable<ReturnType<typeof estimateRequestCost>>; estimateReasons: CostEstimateReason[] }
-  | { kind: "unavailable"; reason: MetricUnavailableReason; pricingReason?: PricingUnavailableReason };
+export interface CostLaneResult {
+  kind: "value" | "unavailable";
+  /** Direct is billable-product list price; equivalent is explicitly non-billing. */
+  sourceClassification?: "direct_api_key" | "subscription_api_equivalent";
+  estimate?: NonNullable<ReturnType<typeof estimateRequestCost>>;
+  reason?: MetricUnavailableReason;
+  pricingReason?: PricingUnavailableReason;
+}
 
-export type MetricSource = Pick<RequestLogEntry, "provider" | "model" | "durationMs" | "usageStatus" | "usage"> & Partial<Pick<RequestLogEntry, "timestamp" | "requestedServiceTier" | "configuredServiceTier" | "responseServiceTier" | "cacheRetention">> & {
+export type CostResult =
+  | { kind: "value"; estimate: NonNullable<ReturnType<typeof estimateRequestCost>>; estimateReasons: CostEstimateReason[]; direct?: CostLaneResult; apiEquivalent?: CostLaneResult }
+  | { kind: "unavailable"; reason: MetricUnavailableReason; pricingReason?: PricingUnavailableReason; direct?: CostLaneResult; apiEquivalent?: CostLaneResult };
+
+export type MetricSource = Pick<RequestLogEntry, "provider" | "model" | "durationMs" | "usageStatus" | "usage"> & Partial<Pick<RequestLogEntry, "timestamp" | "requestedServiceTier" | "configuredServiceTier" | "responseServiceTier" | "cacheRetention" | "promptInputTokens">> & {
   attempts?: readonly PersistedUsageAttempt[];
 };
 
@@ -114,22 +123,83 @@ export function unavailableCostReason(entry: MetricSource): MetricUnavailableRea
   return usage.kind === "unavailable" ? usage.reason : "price_unmatched";
 }
 
+function unavailableLane(reason: MetricUnavailableReason, pricingReason?: PricingUnavailableReason): CostLaneResult {
+  return { kind: "unavailable", reason, ...(pricingReason ? { pricingReason } : {}) };
+}
+
+function singleLaneResult(entry: MetricSource, lane: "direct" | "api_equivalent", context: {
+  serviceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
+  promptInputTokens?: number;
+  timestamp?: number;
+}): CostLaneResult {
+  const source = pricingSourceClassification(entry.provider);
+  const baseReason = unavailableCostReason(entry);
+  if (!source || source.lane !== lane) return unavailableLane(baseReason);
+  const estimate = estimateRequestCostLanes({
+    provider: entry.provider,
+    model: entry.model,
+    usage: entry.usage,
+    usageStatus: entry.usageStatus,
+    ...context,
+  })[lane === "direct" ? "direct" : "apiEquivalent"];
+  if (estimate) {
+    return {
+      kind: "value",
+      estimate,
+      sourceClassification: estimate.sourceClassification,
+    };
+  }
+  const pricingReason = pricingLaneUnavailableReason(lane, {
+    provider: entry.provider,
+    model: entry.model,
+    usage: entry.usage,
+    usageStatus: entry.usageStatus,
+    ...context,
+  });
+  return unavailableLane(baseReason, pricingReason);
+}
+
+function comboLaneResult(entry: MetricSource, lane: "direct" | "api_equivalent", context: {
+  serviceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
+  promptInputTokens?: number;
+  timestamp?: number;
+}): CostLaneResult {
+  if (!entry.attempts?.length) return unavailableLane(unavailableCostReason(entry));
+  const sourceAttempts = entry.attempts.filter(attempt => pricingSourceClassification(attempt.provider)?.lane === lane);
+  if (sourceAttempts.length === 0) return unavailableLane("combo_attempt_unavailable");
+  const estimate = estimateComboCost(sourceAttempts, undefined, context);
+  if (estimate) {
+    return {
+      kind: "value",
+      estimate,
+      sourceClassification: lane === "direct" ? "direct_api_key" : "subscription_api_equivalent",
+    };
+  }
+  const reason = comboUsageUnavailableReason(sourceAttempts) ?? "combo_attempt_unavailable";
+  const pricingReason = comboPricingUnavailableReason(sourceAttempts, context);
+  return unavailableLane(reason, pricingReason);
+}
+
 export function costResult(entry: MetricSource): CostResult {
+  const hasLaneSource = entry.attempts?.length
+    ? entry.attempts.some(attempt => pricingSourceClassification(attempt.provider) !== null)
+    : pricingSourceClassification(entry.provider) !== null;
   const tier = effectiveServiceTier(entry);
   const context = {
     serviceTier: tier,
     cacheRetention: entry.cacheRetention,
+    promptInputTokens: entry.promptInputTokens,
     timestamp: entry.timestamp,
   };
-  const estimate = entry.attempts?.length
-    ? estimateComboCost(entry.attempts, undefined, context)
-    : estimateRequestCost({
-      provider: entry.provider,
-      model: entry.model,
-      usage: entry.usage,
-      usageStatus: entry.usageStatus,
-      ...context,
-    });
+  const direct = entry.attempts?.length
+    ? comboLaneResult(entry, "direct", context)
+    : singleLaneResult(entry, "direct", context);
+  const apiEquivalent = entry.attempts?.length
+    ? comboLaneResult(entry, "api_equivalent", context)
+    : singleLaneResult(entry, "api_equivalent", context);
+  const estimate = direct.kind === "value" ? direct.estimate : null;
   if (!estimate) {
     const reason = unavailableCostReason(entry);
     if (reason === "combo_attempt_unavailable" && entry.attempts?.length) {
@@ -138,6 +208,7 @@ export function costResult(entry: MetricSource): CostResult {
         kind: "unavailable",
         reason,
         ...(pricingReason ? { pricingReason } : {}),
+        ...(hasLaneSource ? { direct, apiEquivalent } : {}),
       };
     }
     if (reason === "price_unmatched" && entry.usage) {
@@ -152,9 +223,10 @@ export function costResult(entry: MetricSource): CostResult {
         kind: "unavailable",
         reason,
         ...(pricingReason ? { pricingReason } : {}),
+        ...(hasLaneSource ? { direct, apiEquivalent } : {}),
       };
     }
-    return { kind: "unavailable", reason };
+    return { kind: "unavailable", reason, ...(hasLaneSource ? { direct, apiEquivalent } : {}) };
   }
   const estimateReasons = [
     entry.usageStatus === "estimated" || entry.usage?.estimated ? "usage_estimated" as const : undefined,
@@ -164,7 +236,7 @@ export function costResult(entry: MetricSource): CostResult {
     estimate.price?.source === "expected" || estimate.attempts?.some(a => a.price.source === "expected")
       ? "expected_price_overlay" as const : undefined,
   ].filter((reason): reason is CostEstimateReason => reason !== undefined);
-  return { kind: "value", estimate, estimateReasons };
+  return { kind: "value", estimate, estimateReasons, ...(hasLaneSource ? { direct, apiEquivalent } : {}) };
 }
 
 export function requestLogDto(entry: RequestLogEntry): Record<string, unknown> {
@@ -188,6 +260,7 @@ export function requestLogDto(entry: RequestLogEntry): Record<string, unknown> {
               configuredServiceTier: entry.configuredServiceTier,
               responseServiceTier: entry.responseServiceTier,
               cacheRetention: entry.cacheRetention,
+              promptInputTokens: attempt.promptInputTokens ?? entry.promptInputTokens,
             }),
           },
         })),

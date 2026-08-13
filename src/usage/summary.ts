@@ -2,11 +2,32 @@ import { baseProviderLabel } from "../providers/label";
 import { canonicalAntigravityUsageModel } from "../providers/antigravity-models";
 import { usageDisplayTotalTokens } from "./totals";
 import type { PersistedUsageEntry, UsageStatus } from "./log";
-import { classifyUsageForCost, comboPricingUnavailableReason, comboUsageUnavailableReason, estimateComboCost, estimateRequestCost, effectiveServiceTier, pricingUnavailableReason, type UsageCostUnavailableReason } from "./cost";
+import { classifyUsageForCost, comboPricingUnavailableReason, comboUsageUnavailableReason, estimateComboCost, estimateRequestCost, estimateRequestCostLanes, effectiveServiceTier, pricingLaneUnavailableReason, pricingSourceClassification, pricingUnavailableReason, type UsageCostUnavailableReason } from "./cost";
 import type { PricingUnavailableReason } from "./expected-prices";
 
 export type UsageRange = "7d" | "30d" | "all";
 export type UsageSurface = "all" | "codex" | "claude" | "grok";
+
+export interface PricingLaneTotals {
+  /** Sum for this lane only. `api_equivalent` is explicitly non-billing. */
+  estimatedCostUsd: number;
+  pricedRequests: number;
+  unpricedRequests: number;
+  unpricedReasons: Partial<Record<PricingUnavailableReason | UsageCostUnavailableReason, number>>;
+  /** Per provider/model rows make each lane's source classification inspectable. */
+  sources: PricingLaneSource[];
+}
+
+export interface PricingLaneSource {
+  provider: string;
+  model: string;
+  sourceClassification: "direct_api_key" | "subscription_api_equivalent";
+  requests: number;
+  pricedRequests: number;
+  unpricedRequests: number;
+  estimatedCostUsd: number;
+  unpricedReasons: Partial<Record<PricingUnavailableReason | UsageCostUnavailableReason, number>>;
+}
 
 export interface UsageSummaryTotals {
   requests: number;
@@ -33,6 +54,10 @@ export interface UsageSummaryTotals {
   unpricedRequests: number;
   /** Machine-readable exact-price failure counts for the filtered window. */
   unpricedReasons: Partial<Record<PricingUnavailableReason | UsageCostUnavailableReason, number>>;
+  /** Strict direct API-key actual list-price accounting only. */
+  direct: PricingLaneTotals;
+  /** Explicit non-billing API-equivalent accounting for supported subscription/OAuth rows. */
+  apiEquivalent: PricingLaneTotals;
   /** Requests whose usage itself is missing/unsupported, so no cost can be computed. */
   unmeteredRequests: number;
 }
@@ -126,6 +151,16 @@ function dayCountForAllRange(entries: PersistedUsageEntry[], now: number): numbe
   return Math.max(1, days);
 }
 
+function emptyPricingLaneTotals(): PricingLaneTotals {
+  return {
+    estimatedCostUsd: 0,
+    pricedRequests: 0,
+    unpricedRequests: 0,
+    unpricedReasons: {},
+    sources: [],
+  };
+}
+
 export function emptyUsageSummaryTotals(): UsageSummaryTotals {
   return {
     requests: 0,
@@ -147,6 +182,8 @@ export function emptyUsageSummaryTotals(): UsageSummaryTotals {
     pricedRequests: 0,
     unpricedRequests: 0,
     unpricedReasons: {},
+    direct: emptyPricingLaneTotals(),
+    apiEquivalent: emptyPricingLaneTotals(),
     unmeteredRequests: 0,
   };
 }
@@ -270,9 +307,42 @@ function finalizeCoverage(totals: UsageSummaryTotals): void {
   totals.coverageRatio = totals.requests === 0 ? 0 : totals.measuredRequests / totals.requests;
 }
 
+function addLaneReason(
+  lane: PricingLaneTotals,
+  source: PricingLaneSource,
+  reason: PricingUnavailableReason | UsageCostUnavailableReason,
+): void {
+  lane.unpricedReasons[reason] = (lane.unpricedReasons[reason] ?? 0) + 1;
+  source.unpricedReasons[reason] = (source.unpricedReasons[reason] ?? 0) + 1;
+}
+
+function laneSource(
+  lane: PricingLaneTotals,
+  provider: string,
+  model: string,
+  sourceClassification: PricingLaneSource["sourceClassification"],
+): PricingLaneSource {
+  const existing = lane.sources.find(row => (
+    row.provider === provider && row.model === model && row.sourceClassification === sourceClassification
+  ));
+  if (existing) return existing;
+  const created: PricingLaneSource = {
+    provider,
+    model,
+    sourceClassification,
+    requests: 0,
+    pricedRequests: 0,
+    unpricedRequests: 0,
+    estimatedCostUsd: 0,
+    unpricedReasons: {},
+  };
+  lane.sources.push(created);
+  return created;
+}
+
 function addEstimatedCost(
   totals: UsageSummaryTotals,
-  entry: Pick<PersistedUsageEntry, "timestamp" | "provider" | "model" | "usageStatus" | "usage" | "attempts" | "responseServiceTier" | "requestedServiceTier" | "configuredServiceTier" | "cacheRetention">,
+  entry: Pick<PersistedUsageEntry, "timestamp" | "provider" | "model" | "usageStatus" | "usage" | "attempts" | "responseServiceTier" | "requestedServiceTier" | "configuredServiceTier" | "cacheRetention" | "promptInputTokens">,
 ): void {
   const comboUsageReason = entry.attempts?.length
     ? comboUsageUnavailableReason(entry.attempts)
@@ -294,8 +364,12 @@ function addEstimatedCost(
   const context = {
     serviceTier: effectiveServiceTier(entry),
     cacheRetention: entry.cacheRetention,
+    promptInputTokens: entry.promptInputTokens,
     timestamp: entry.timestamp,
   };
+
+  // Preserve the old aggregate fields as the strict direct actual-list-price lane.
+  // Combo rows remain all-or-nothing for that legacy projection.
   const estimate = entry.attempts?.length
     ? estimateComboCost(entry.attempts, undefined, context)
     : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, ...context });
@@ -306,10 +380,72 @@ function addEstimatedCost(
       : pricingUnavailableReason({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, ...context });
     const exactReason = reason ?? "price_unmatched";
     totals.unpricedReasons[exactReason] = (totals.unpricedReasons[exactReason] ?? 0) + 1;
-    return;
+  } else {
+    totals.pricedRequests += 1;
+    totals.estimatedCostUsd += estimate.cost.total;
   }
-  totals.pricedRequests += 1;
-  totals.estimatedCostUsd += estimate.cost.total;
+
+  const addOne = (provider: string, model: string, usage: PersistedUsageEntry["usage"], usageStatus: UsageStatus, promptInputTokens: number | undefined, timestamp: number | undefined, cacheRetention: PersistedUsageEntry["cacheRetention"]): void => {
+    const source = pricingSourceClassification(provider);
+    if (!source) return;
+    const lane = source.lane === "direct" ? totals.direct : totals.apiEquivalent;
+    const row = laneSource(lane, provider, model, source.sourceClassification);
+    row.requests += 1;
+    const laneEstimate = estimateRequestCostLanes({
+      provider,
+      model,
+      usage,
+      usageStatus,
+      serviceTier: context.serviceTier,
+      cacheRetention,
+      promptInputTokens,
+      timestamp,
+    })[source.lane === "direct" ? "direct" : "apiEquivalent"];
+    if (laneEstimate) {
+      lane.pricedRequests += 1;
+      lane.estimatedCostUsd += laneEstimate.cost.total;
+      row.pricedRequests += 1;
+      row.estimatedCostUsd += laneEstimate.cost.total;
+      return;
+    }
+    lane.unpricedRequests += 1;
+    row.unpricedRequests += 1;
+    const reason = pricingLaneUnavailableReason(source.lane, {
+      provider,
+      model,
+      usage,
+      usageStatus,
+      serviceTier: context.serviceTier,
+      cacheRetention,
+      promptInputTokens,
+      timestamp,
+    }) ?? "price_unmatched";
+    addLaneReason(lane, row, reason);
+  };
+
+  if (entry.attempts?.length) {
+    for (const attempt of entry.attempts) {
+      addOne(
+        attempt.provider,
+        attempt.model,
+        attempt.usage,
+        attempt.usageStatus,
+        attempt.promptInputTokens ?? entry.promptInputTokens,
+        attempt.timestamp ?? entry.timestamp,
+        attempt.cacheRetention ?? entry.cacheRetention,
+      );
+    }
+  } else {
+    addOne(
+      entry.provider,
+      entry.model,
+      entry.usage,
+      entry.usageStatus,
+      entry.promptInputTokens,
+      entry.timestamp,
+      entry.cacheRetention,
+    );
+  }
 }
 
 function buildDayGrid(range: UsageRange, since: number | null, now: number, entries: PersistedUsageEntry[]): UsageDay[] {

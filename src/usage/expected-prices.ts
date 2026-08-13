@@ -1,11 +1,15 @@
 /**
- * Authoritative first-party API price schedules verified on 2026-08-07.
+ * Release-versioned first-party API price authority.
  *
- * Prices are display-time estimates in USD per 1M tokens. A row is usable only
- * for the exact OpenCodex billing product and model ID named here. Provider
- * catalog aliases, OAuth products, coding plans, routers, regions, and matching
- * model names never inherit these rates.
+ * Prices are display-time list-price estimates in USD per 1M tokens. A row is
+ * usable only for the exact OpenCodex billing product and model ID named here.
+ * Provider catalog aliases, OAuth products, coding plans, routers, regions,
+ * and matching model names never inherit direct-billing rates implicitly.
  */
+
+/** The OpenCodex release carrying this immutable pricing authority. */
+export const OFFICIAL_PRICE_CATALOG_VERSION = "2.7.42+build.152" as const;
+export const OFFICIAL_PRICE_CATALOG_RELEASE_VERSION = "2.7.42" as const;
 
 export interface Cost4 {
   input: number;
@@ -22,6 +26,12 @@ export interface OfficialPriceConditions {
   cacheRetention?: "short" | "long";
   /** Exact upstream service tier required by this schedule. */
   serviceTier?: string;
+  /** Raw prompt-token range. It is never inferred from response usage. */
+  promptInputTokensMinExclusive?: number;
+  /** Raw prompt-token range. It is never inferred from response usage. */
+  promptInputTokensMaxInclusive?: number;
+  /** The official source does not publish a separate cache-write price. */
+  cacheWriteAvailability?: "priced" | "unavailable";
   /** Inclusive UTC calendar date on which a price starts. */
   validFrom?: string;
   /** Inclusive UTC calendar date for a temporary price. */
@@ -34,7 +44,7 @@ export interface OfficialPriceSchedule {
   modelId: string;
   cost4: Cost4;
   sourceUrl: string;
-  verifiedAt: "2026-08-07";
+  verifiedAt: string;
   status: OfficialPriceStatus;
   conditions?: OfficialPriceConditions;
 }
@@ -42,6 +52,8 @@ export interface OfficialPriceSchedule {
 export interface OfficialPriceContext {
   cacheRetention?: CacheRetention;
   serviceTier?: string;
+  /** Persisted raw request prompt size, not inclusive response usage. */
+  promptInputTokens?: number;
   timestamp?: number;
 }
 
@@ -57,8 +69,33 @@ export type OfficialPriceResolution =
   | { kind: "unavailable"; reason: PricingUnavailableReason };
 
 const VERIFIED_AT = "2026-08-07" as const;
+const OPENAI_VERIFIED_AT = "2026-08-09" as const;
 const ANTHROPIC_PRICING = "https://platform.claude.com/docs/en/about-claude/pricing";
+const OPENAI_PRICING = "https://developers.openai.com/api/docs/pricing";
 const DEEPSEEK_PRICING = "https://api-docs.deepseek.com/quick_start/pricing";
+
+/**
+ * The verified source publishes standard short-context rates but does not state
+ * a cross-model long-context threshold. Keep long rows out of the authority
+ * until a persisted raw prompt-size metric can be compared against an official
+ * threshold; never infer a threshold from response usage or model capacity.
+ */
+function openAiStandardSchedule(
+  modelId: "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.5",
+  cost4: Cost4,
+  cacheWriteAvailability: "priced" | "unavailable" = "priced",
+): OfficialPriceSchedule {
+  return {
+    scheduleId: `openai-apikey/${modelId}/standard/short-context`,
+    provider: "openai-apikey",
+    modelId,
+    cost4,
+    sourceUrl: OPENAI_PRICING,
+    verifiedAt: OPENAI_VERIFIED_AT,
+    status: "verified",
+    conditions: { serviceTier: "standard", cacheWriteAvailability },
+  };
+}
 
 function anthropicSchedules(
   modelId: string,
@@ -97,6 +134,23 @@ function anthropicSchedules(
 }
 
 export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
+  openAiStandardSchedule(
+    "gpt-5.6-sol",
+    { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+  ),
+  openAiStandardSchedule(
+    "gpt-5.6-terra",
+    { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
+  ),
+  openAiStandardSchedule(
+    "gpt-5.6-luna",
+    { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
+  ),
+  openAiStandardSchedule(
+    "gpt-5.5",
+    { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
+    "unavailable",
+  ),
   ...anthropicSchedules(
     "claude-fable-5",
     { input: 10, output: 50, cacheRead: 1 },
@@ -283,6 +337,8 @@ function selectorKey(row: OfficialPriceSchedule): string {
     row.modelId,
     row.conditions?.cacheRetention ?? null,
     row.conditions?.serviceTier ?? null,
+    row.conditions?.promptInputTokensMinExclusive ?? null,
+    row.conditions?.promptInputTokensMaxInclusive ?? null,
     row.conditions?.validFrom ?? null,
     row.conditions?.validThrough ?? null,
   ]);
@@ -307,7 +363,7 @@ export function validateOfficialPriceSchedules(
     selectors.add(selector);
     if (!validCost4(row.cost4)) errors.push(`invalid cost tuple: ${row.scheduleId}`);
     if (row.status !== "verified") errors.push(`invalid status: ${row.scheduleId}`);
-    if (row.verifiedAt !== VERIFIED_AT) errors.push(`invalid verification date: ${row.scheduleId}`);
+    if (!validDateOnly(row.verifiedAt)) errors.push(`invalid verification date: ${row.scheduleId}`);
     try {
       const source = new URL(row.sourceUrl);
       if (source.protocol !== "https:") errors.push(`non-HTTPS source: ${row.scheduleId}`);
@@ -321,6 +377,24 @@ export function validateOfficialPriceSchedules(
     }
     if (row.conditions?.serviceTier !== undefined && !row.conditions.serviceTier.trim()) {
       errors.push(`invalid service tier: ${row.scheduleId}`);
+    }
+    for (const [key, value] of [
+      ["promptInputTokensMinExclusive", row.conditions?.promptInputTokensMinExclusive],
+      ["promptInputTokensMaxInclusive", row.conditions?.promptInputTokensMaxInclusive],
+    ] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+        errors.push(`invalid ${key}: ${row.scheduleId}`);
+      }
+    }
+    if (row.conditions?.promptInputTokensMinExclusive !== undefined
+      && row.conditions?.promptInputTokensMaxInclusive !== undefined
+      && row.conditions.promptInputTokensMinExclusive >= row.conditions.promptInputTokensMaxInclusive) {
+      errors.push(`invalid prompt input range: ${row.scheduleId}`);
+    }
+    if (row.conditions?.cacheWriteAvailability !== undefined
+      && row.conditions.cacheWriteAvailability !== "priced"
+      && row.conditions.cacheWriteAvailability !== "unavailable") {
+      errors.push(`invalid cache write availability: ${row.scheduleId}`);
     }
     if (row.conditions?.validFrom && !validDateOnly(row.conditions.validFrom)) {
       errors.push(`invalid valid-from date: ${row.scheduleId}`);
@@ -340,7 +414,9 @@ export function validateOfficialPriceSchedules(
       const sameConditionLane = left.provider === right.provider
         && left.modelId === right.modelId
         && left.conditions?.cacheRetention === right.conditions?.cacheRetention
-        && normalizedServiceTier(left.conditions?.serviceTier) === normalizedServiceTier(right.conditions?.serviceTier);
+        && normalizedServiceTier(left.conditions?.serviceTier) === normalizedServiceTier(right.conditions?.serviceTier)
+        && left.conditions?.promptInputTokensMinExclusive === right.conditions?.promptInputTokensMinExclusive
+        && left.conditions?.promptInputTokensMaxInclusive === right.conditions?.promptInputTokensMaxInclusive;
       if (!sameConditionLane) continue;
       const leftStart = left.conditions?.validFrom ?? "0000-01-01";
       const leftEnd = left.conditions?.validThrough ?? "9999-12-31";
@@ -402,6 +478,7 @@ export function resolveOfficialPriceSchedule(
       modelId,
       context.cacheRetention ?? null,
       normalizedServiceTier(context.serviceTier) ?? null,
+      context.promptInputTokens ?? null,
       timestampDate,
       cacheWriteTokens > 0,
     ]);
@@ -458,12 +535,41 @@ function resolveOfficialPriceScheduleUncached(
 
   const serviceTierRows = candidates.filter(row => row.conditions?.serviceTier !== undefined);
   if (serviceTierRows.length > 0) {
-    const tier = normalizedServiceTier(context.serviceTier);
-    if (!tier) return { kind: "unavailable", reason: "pricing_context_missing" };
+    // An omitted service tier is OpenAI's documented standard tier. An explicit
+    // nonstandard tier must match an explicit schedule; never silently bill it as standard.
+    const tier = normalizedServiceTier(context.serviceTier) ?? "standard";
     candidates = serviceTierRows.filter(row => normalizedServiceTier(row.conditions?.serviceTier) === tier);
     if (candidates.length === 0) {
       return { kind: "unavailable", reason: "pricing_condition_unmatched" };
     }
+  }
+
+  const promptRangeRows = candidates.filter(row => (
+    row.conditions?.promptInputTokensMinExclusive !== undefined
+    || row.conditions?.promptInputTokensMaxInclusive !== undefined
+  ));
+  if (promptRangeRows.length > 0) {
+    const rawPromptInputTokens = context.promptInputTokens;
+    if (!Number.isSafeInteger(rawPromptInputTokens) || rawPromptInputTokens === undefined || rawPromptInputTokens < 0) {
+      return { kind: "unavailable", reason: "pricing_context_missing" };
+    }
+    const promptInputTokens = rawPromptInputTokens;
+    candidates = promptRangeRows.filter(row => {
+      const min = row.conditions?.promptInputTokensMinExclusive;
+      const max = row.conditions?.promptInputTokensMaxInclusive;
+      return (min === undefined || promptInputTokens > min)
+        && (max === undefined || promptInputTokens <= max);
+    });
+    if (candidates.length === 0) {
+      return { kind: "unavailable", reason: "pricing_condition_unmatched" };
+    }
+  }
+
+  const cacheWriteUnavailable = candidates.some(row => (
+    row.conditions?.cacheWriteAvailability === "unavailable"
+  ));
+  if (cacheWriteTokens > 0 && cacheWriteUnavailable) {
+    return { kind: "unavailable", reason: "pricing_context_missing" };
   }
 
   const retentionRows = candidates.filter(row => row.conditions?.cacheRetention !== undefined);
