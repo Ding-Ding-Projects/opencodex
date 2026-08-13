@@ -155,10 +155,18 @@ Checked in the tree; each of these is genuinely absent, not merely undocumented.
   a shared `useSettingsSearch(sectionId, localEntries)` in `gui/src/shell/` would let each screen
   contribute its rows and query the whole set. That is the honest remaining half of "a search on
   every settings surface".
-- The regex-builder hand-off carries a pattern into a search bar but **drops flags**: the receiving
-  rows compile with a fixed `"i"`, matching the prototype, so a pattern built as case-sensitive
-  arrives case-insensitive. Either the builder should stop sending flags a row cannot represent, or
-  the rows need a flags affordance and the copy to label it.
+- ~~The regex-builder hand-off carries a pattern into a search bar but **drops flags**.~~ Fixed. The
+  hand-off record now carries `flags` alongside the pattern, and `gui/src/pages/logs-search-handoff.ts`
+  owns the key, the shape and the validation for both ends — `RegexBuilder.tsx` used to declare a
+  private second copy of the key, which is how it came to write a field nothing read. Flags out of
+  storage are treated as untrusted input: real `RegExp` flag characters only, no duplicates, capped
+  at one of each, rejected whole rather than filtered down, since a half-honoured flags string
+  compiles fine and then searches under rules nobody chose. A record with no `flags` — one written by
+  an earlier build and still in `sessionStorage` — falls back to the field's existing `"i"` rather
+  than being refused. The Logs search bar holds flags as state instead of the fixed `"i"`, compiles
+  them (minus `g` and `y`, which make `RegExp.prototype.test` stateful and would drop every other
+  matching row), and shows them as a chip row with a line saying what the current set means, so a
+  carried flag is visible and correctable rather than silent.
 
 ## Non-goals
 

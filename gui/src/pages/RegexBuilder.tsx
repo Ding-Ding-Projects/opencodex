@@ -26,15 +26,8 @@ import {
   EMPTY_MARK, FLAGS, MATCH_CAP, NO_VALUE_MARK, PATTERN_CAP, SAMPLE_CAP, TOKEN_GROUPS,
   capPattern, capSample, describeGroups, evaluate, groupNameMap, groupsLabel,
 } from "../regex/engine";
+import { writeLogsSearchHandoff } from "./logs-search-handoff";
 import type { TKey } from "../i18n/shared";
-
-/**
- * Where "Use in search" leaves the pattern for the receiving screen. Written on
- * the way out so the target search bar can adopt the pattern the moment it
- * learns to read this key; the snackbar carries the pattern in the meantime, so
- * the hand-off is never silent.
- */
-const SEARCH_HANDOFF_KEY = "ocx-m3:search-handoff";
 
 /** A preset carries its own sample, or it would be tested against unrelated text. */
 /*
@@ -147,14 +140,15 @@ export default function RegexBuilder() {
 
   /**
    * Hand the finished pattern to the Logs search, the way the prototype does.
-   * The snackbar repeats the pattern so the hand-off is visible even before the
-   * receiving search bar reads the stored record.
+   * The record is written through `logs-search-handoff`, which owns the key and
+   * the shape both ends have to agree on — this page used to declare its own
+   * copy of both, and the flags it put in the record were read by nobody.
+   *
+   * The snackbar repeats the whole literal, flags included, so the hand-off is
+   * visible before the receiving search bar has rendered anything.
    */
   const useInLogs = () => {
-    const handoff = { page: "logs", pattern, flags, regex: true };
-    try {
-      sessionStorage.setItem(SEARCH_HANDOFF_KEY, JSON.stringify(handoff));
-    } catch { /* storage refused (private mode): the snackbar still carries it */ }
+    writeLogsSearchHandoff(pattern, flags);
     notify({ tone: "info", title: t("regex.useHere"), body: `/${pattern}/${flags}` });
     window.location.hash = "logs";
   };
