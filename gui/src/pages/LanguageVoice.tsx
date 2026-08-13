@@ -18,6 +18,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconSearch, IconSparkle, IconVolume } from "../icons";
 import { LOCALES, useI18n, useT, type Locale, type TFn } from "../i18n/shared";
 import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18n/voice";
@@ -56,22 +58,28 @@ const PREVIEW_MS = 12_000;
  * Plain text is the default on every search bar; `.*` is an explicit opt-in.
  * An invalid pattern matches everything rather than blanking the screen, and the
  * error is reported beside the field instead of discarding what was typed.
+ *
+ * The shared matcher rather than a `new RegExp(query, "i")` of its own, so the
+ * flags the anchored builder applied are the flags this screen is filtered by.
+ * Compiling `i` regardless is what made the builder's own flag chips decorative
+ * here, and made a pattern deliberately built as case-sensitive arrive
+ * case-insensitive. It also drops `g`/`y`, whose `lastIndex` survives between
+ * calls and would otherwise make one matcher reused down the sections keep every
+ * other one.
+ *
+ * The one place this deliberately parts company with the shared result is the
+ * invalid case. `settingsMatcher` matches *nothing* on a compile failure, which
+ * is right for a settings list where an empty screen and a visible error read
+ * together. This screen decided the other way — a half-typed pattern must not
+ * blank a page the user is reading — so the error is surfaced and the list is
+ * left alone.
  */
-function useMatcher(query: string, useRegex: boolean): { test: (s: string) => boolean; error: string } {
+function useMatcher(query: string, useRegex: boolean, flags: string): { test: (s: string) => boolean; error: string } {
   return useMemo(() => {
-    const q = query.trim().slice(0, 400);
-    if (!q) return { test: () => true, error: "" };
-    if (useRegex) {
-      try {
-        const re = new RegExp(q, "i");
-        return { test: (s: string) => re.test(s), error: "" };
-      } catch (err) {
-        return { test: () => true, error: err instanceof Error ? err.message : String(err) };
-      }
-    }
-    const needle = q.toLowerCase();
-    return { test: (s: string) => s.toLowerCase().includes(needle), error: "" };
-  }, [query, useRegex]);
+    const matcher = settingsMatcher(query, useRegex, flags);
+    if (matcher.error) return { test: () => true, error: matcher.error };
+    return { test: matcher.test, error: "" };
+  }, [query, useRegex, flags]);
 }
 
 /**
@@ -219,16 +227,19 @@ function VoiceTrack({ t, tag, label, settings, disabled, voices, loaded, edge, o
   edge: { enabled: boolean; available: boolean };
   onChange: (patch: Partial<NarratorVoicePrefs>) => void;
 }) {
-  // Each track owns its own query and mode. One shared search would filter the
-  // Cantonese list while the user was typing into the English one.
+  // Each track owns its own query, mode and flags. One shared search would filter
+  // the Cantonese list while the user was typing into the English one, and one
+  // shared flag set would recompile the other track's pattern from here.
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   const resolution = resolveVoice(voices, tag, settings.voiceURI, loaded, edge);
   const statusId = `ocx-narrator-status-${tag}`;
   const selectId = `ocx-narrator-voice-${tag}`;
+  const flagsId = `ocx-narrator-flags-${tag}`;
 
-  const matched = filterVoices(resolution.candidates, query, useRegex);
+  const matched = filterVoices(resolution.candidates, query, useRegex, flags);
   const local = matched.filter(voice => voice.source === "local");
   const online = matched.filter(voice => voice.source === "edge");
 
@@ -268,6 +279,7 @@ function VoiceTrack({ t, tag, label, settings, disabled, voices, loaded, edge, o
           onChange={e => setQuery(e.target.value)}
           placeholder={t("narrator.voiceSearch")}
           aria-label={searchLabel}
+          aria-describedby={useRegex ? flagsId : undefined}
           disabled={disabled}
           style={{ flex: "1 1 180px", width: "auto", minWidth: 0 }}
         />
@@ -276,13 +288,24 @@ function VoiceTrack({ t, tag, label, settings, disabled, voices, loaded, edge, o
         </Chip>
         <RegexBuilderButton
           value={query}
-          onApply={setQuery}
+          // Both halves of what the builder composed, and this track's own flags
+          // rather than the other track's — the two bars are independent, exactly
+          // as their queries are.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          flags={flags}
           sample={resolution.candidates.map(voice => `${voice.name} ${voice.lang}`).join("\n")}
           label={searchLabel}
         />
       </div>
+
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id={flagsId}
+      />
 
       <Field label={voiceLabel} id={selectId}>
         {/* Grouped rather than one flat list: which voices leave the machine and
@@ -387,6 +410,13 @@ export default function LanguageVoice() {
   const [preview, setPreview] = useState<DimSumDish | null>(null);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` showed a panel where turning on `m` or `s`
+   * changed the preview and then changed nothing about which sections stayed.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   const apiBase = import.meta.env.VITE_API_BASE || "";
   const { voices: localVoices, loaded: voicesLoaded } = useInstalledVoices();
@@ -458,7 +488,7 @@ export default function LanguageVoice() {
     setPrefs({ narratorVoices: { ...prefs.narratorVoices, [tag]: { ...current, ...patch } } });
   };
 
-  const matcher = useMatcher(query, useRegex);
+  const matcher = useMatcher(query, useRegex, flags);
   const permanentWarn = t("storage.cleanup.permanentWarn");
 
   const sections: { id: string; text: string; node: ReactNode }[] = [
@@ -748,7 +778,7 @@ export default function LanguageVoice() {
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={!!matcher.error}
-          aria-describedby="lang-regex-error"
+          aria-describedby={useRegex ? "lang-regex-error lang-regex-flags-state" : "lang-regex-error"}
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")} aria-label={t("regex.regexMode")}>
@@ -756,15 +786,25 @@ export default function LanguageVoice() {
         </Chip>
         <RegexBuilderButton
           value={query}
-          onApply={pattern => setQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          flags={flags}
           // The searchable text of this screen's own sections, so a pattern is
           // tried against the settings it will actually filter.
           sample={sections.map(s => s.text).join("\n")}
           label={t("settings.openBuilder")}
         />
       </div>
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id="lang-regex-flags-state"
+      />
       {matcher.error && (
         <p id="lang-regex-error" role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
           {`${t("regex.invalid")}: ${matcher.error}`}

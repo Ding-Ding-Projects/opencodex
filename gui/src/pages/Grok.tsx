@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Button, Card, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconSearch } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
@@ -39,10 +41,6 @@ const searchRowStyle: CSSProperties = { marginBottom: "var(--sp-3)" };
 const searchInputStyle: CSSProperties = { flex: "1 1 240px", width: "auto", minWidth: 0 };
 const regexErrorStyle: CSSProperties = { color: "var(--m3-error)", fontSize: "var(--t-body-s)" };
 const monoStyle: CSSProperties = { fontFamily: "var(--mono)" };
-
-/** Pattern cap, mirroring the regex builder: a pasted novel can never become a
- *  catastrophic-backtracking payload, and evaluation stays local to this page. */
-const PATTERN_CAP = 400;
 
 /**
  * How many candidates the anchored builder is given as sample text. Bounded
@@ -138,6 +136,13 @@ export default function Grok({ apiBase }: { apiBase: string }) {
   // opt-in, exactly as on every other search bar in the app.
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, so a pattern built as case-sensitive used to arrive here
+   * case-insensitive and quietly match aliases the user had ruled out.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,28 +185,20 @@ export default function Grok({ apiBase }: { apiBase: string }) {
   const registered = candidates.reduce((count, c) => count + (excluded.has(c.id) ? 0 : 1), 0);
 
   const { matchesRow, regexError } = useMemo(() => {
-    const trimmed = query.trim();
-    const all = { matchesRow: () => true, regexError: null as string | null };
-    if (!trimmed) return all;
-    if (useRegex) {
-      try {
-        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), "i");
-        return {
-          matchesRow: (row: GrokGroupRow) => re.test(grokRowHaystack(row)),
-          regexError: null as string | null,
-        };
-      } catch (e) {
-        // An invalid pattern matches nothing and says so, rather than silently
-        // falling back to plain text and showing rows the user did not ask for.
-        return { matchesRow: () => false, regexError: e instanceof Error ? e.message : String(e) };
-      }
-    }
-    const needle = trimmed.toLowerCase();
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own: it
+    // compiles the flags the builder beside this field actually applied, so the
+    // panel's preview and this list cannot report different matches for the same
+    // pattern. It also drops `g`/`y`, which carry `lastIndex` between calls and
+    // would otherwise make `.test` down the candidate rows keep every other one.
+    //
+    // An invalid pattern still matches nothing and says so, rather than silently
+    // falling back to plain text and showing rows the user did not ask for.
+    const matcher = settingsMatcher(query, useRegex, flags);
     return {
-      matchesRow: (row: GrokGroupRow) => grokRowHaystack(row).toLowerCase().includes(needle),
-      regexError: null as string | null,
+      matchesRow: (row: GrokGroupRow) => matcher.test(grokRowHaystack(row)),
+      regexError: matcher.error,
     };
-  }, [query, useRegex]);
+  }, [query, useRegex, flags]);
 
   const toggleModel = (id: string, currentlyExcluded: boolean) => {
     setExcluded(current => {
@@ -336,6 +333,7 @@ export default function Grok({ apiBase }: { apiBase: string }) {
               placeholder={t("grok.search")}
               aria-label={t("grok.search")}
               aria-invalid={!!regexError}
+              aria-describedby={useRegex ? "grok-regex-flags-state" : undefined}
               style={searchInputStyle}
             />
             {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -344,9 +342,13 @@ export default function Grok({ apiBase }: { apiBase: string }) {
             </Chip>
             <RegexBuilderButton
               value={query}
-              onApply={pattern => setQuery(pattern)}
+              // Both halves of what the builder composed. Taking the pattern and
+              // leaving the flags behind is what made the popover's flag chips
+              // decorative from this field's point of view.
+              onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
               regex={useRegex}
               onRegexChange={setUseRegex}
+              flags={flags}
               // The candidate ids and aliases this screen searches, so the pattern
               // is tried against real model names rather than an empty box.
               sample={candidates
@@ -356,6 +358,12 @@ export default function Grok({ apiBase }: { apiBase: string }) {
               label={t("settings.openBuilder")}
             />
           </div>
+          <SearchFlagsRow
+            regex={useRegex}
+            flags={flags}
+            onFlagsChange={setFlags}
+            id="grok-regex-flags-state"
+          />
           {regexError && (
             <p role="alert" style={regexErrorStyle}>{t("regex.invalid")}: {regexError}</p>
           )}

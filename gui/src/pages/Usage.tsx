@@ -13,6 +13,8 @@ import {
 } from "../icons";
 import { Banner, Button, Chip, Empty } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { modelLabel } from "../model-display";
 import { resolveSummaryCost, type PricingLaneTotals } from "../cost-lanes";
 
@@ -713,6 +715,8 @@ function UsageModelsTable({
   onModelQuery,
   useRegex,
   onUseRegex,
+  flags,
+  onFlags,
   regexError,
   locale,
   t,
@@ -729,6 +733,9 @@ function UsageModelsTable({
   onModelQuery: (query: string) => void;
   useRegex: boolean;
   onUseRegex: (next: boolean) => void;
+  /** The flags the page compiles this query with; the chip row below edits them. */
+  flags: string;
+  onFlags: (next: string) => void;
   regexError: string | null;
   locale: Locale;
   t: TFn;
@@ -752,6 +759,7 @@ function UsageModelsTable({
         aria-label={searchLabel}
         placeholder={searchLabel}
         aria-invalid={!!regexError}
+        aria-describedby={useRegex ? "usage-models-flags-state" : undefined}
         value={modelQuery}
         onChange={event => onModelQuery(event.target.value)}
       />
@@ -762,9 +770,13 @@ function UsageModelsTable({
       {/* The builder sits beside the field it serves, not behind a menu. */}
       <RegexBuilderButton
         value={modelQuery}
-        onApply={pattern => onModelQuery(pattern)}
+        // Both halves of what the builder composed. Taking the pattern and
+        // leaving the flags behind is what made the popover's flag chips
+        // decorative from this field's point of view.
+        onApply={(pattern, appliedFlags) => { onModelQuery(pattern); onFlags(appliedFlags); }}
         regex={useRegex}
         onRegexChange={onUseRegex}
+        flags={flags}
         sample={sample}
       />
     </div>
@@ -811,6 +823,19 @@ function UsageModelsTable({
         </div>
         <div className="m3-card-actions">{searchInput}</div>
       </header>
+      {/*
+        Below the header rather than inside `.m3-card-actions` beside the field:
+        the actions row is a single flex line that already carries the input, the
+        `.*` chip and the builder trigger, and six more chips in it would push the
+        field to nothing at the narrow widths this card is checked at. It stays
+        directly under the search it describes, which is what the anchoring is for.
+      */}
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={onFlags}
+        id="usage-models-flags-state"
+      />
       {regexError ? (
         <p role="alert" style={REGEX_ERROR_TEXT}>{t("regex.invalid")}: {regexError}</p>
       ) : null}
@@ -977,6 +1002,13 @@ export default function Usage({ apiBase }: { apiBase: string }) {
   const [error, setError] = useState<string | null>(null);
   const [modelQuery, setModelQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` showed a panel where turning on `m` or `s`
+   * changed the preview and then changed nothing about what the table found.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const loadGenerationRef = useRef(0);
 
   const fetchUsage = useCallback(async (nextRange: Range, nextSurface: UsageSurface, signal: AbortSignal) => {
@@ -1026,22 +1058,18 @@ export default function Usage({ apiBase }: { apiBase: string }) {
     const sorted = models.toSorted((a, b) => b.totalTokens - a.totalTokens);
     if (!query) return { filteredModels: sorted.slice(0, 100), regexError: null as string | null };
 
-    let matches: (haystack: string) => boolean;
-    if (useRegex) {
-      try {
-        const re = new RegExp(query.slice(0, 400), "i");
-        matches = haystack => re.test(haystack);
-      } catch (cause) {
-        // An in-progress pattern must not blank the screen silently — the row below says why.
-        return { filteredModels: [], regexError: cause instanceof Error ? cause.message : String(cause) };
-      }
-    } else {
-      const needle = query.toLowerCase();
-      matches = haystack => haystack.toLowerCase().includes(needle);
-    }
-    const filtered = sorted.filter(m => matches(`${m.model} ${m.provider} ${m.resolvedModel ?? ""}`));
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own: it
+    // compiles the flags the builder beside this field actually applied, so the
+    // panel's preview and this table cannot report different matches for one
+    // pattern. Same 400-character bound as before, and `g`/`y` are dropped —
+    // their `lastIndex` survives between calls, so one matcher reused down the
+    // model list would keep every other row.
+    const matcher = settingsMatcher(query, useRegex, flags);
+    // An in-progress pattern must not blank the screen silently — the row below says why.
+    if (matcher.error) return { filteredModels: [], regexError: matcher.error };
+    const filtered = sorted.filter(m => matcher.test(`${m.model} ${m.provider} ${m.resolvedModel ?? ""}`));
     return { filteredModels: filtered.slice(0, 100), regexError: null as string | null };
-  }, [data?.models, modelQuery, useRegex]);
+  }, [data?.models, modelQuery, useRegex, flags]);
 
   // The same haystack `filteredModels` matches against, from the unfiltered list.
   const modelSample = useMemo(
@@ -1096,6 +1124,8 @@ export default function Usage({ apiBase }: { apiBase: string }) {
             onModelQuery={setModelQuery}
             useRegex={useRegex}
             onUseRegex={setUseRegex}
+            flags={flags}
+            onFlags={setFlags}
             regexError={regexError}
             locale={locale}
             t={t}

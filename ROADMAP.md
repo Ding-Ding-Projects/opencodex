@@ -330,11 +330,55 @@ was told last month that a feature was missing needs to see it corrected, not si
   `"i"` rather than being refused. The Logs row holds flags as state, compiles them minus `g` and
   `y`, and shows them as a chip row with a line naming the literal it actually compiles, so a
   carried flag is visible and correctable instead of silent.
-- **The flags gap survives on the search bars that compile their own `RegExp`.** API keys,
-  Appearance, Changelog, Grok, Language & voice, Notifications, Storage, Subagents and Usage each
-  still build `new RegExp(query, "i")` directly, so a pattern built as case-sensitive arrives
-  case-insensitive there. These are collection searches rather than the shared settings row; moving
-  them onto `settingsMatcher` is what would close it. Logs was the tenth and is done.
+- ~~**The flags gap survives on the nine search bars the audit named.**~~ Closed for those nine. API
+  keys, Appearance (both bars), Changelog, Grok, Language & voice (the page search and each narrator
+  track's voice picker), Notifications, Storage, Subagents and Usage each built
+  `new RegExp(query, "i")` directly, so a pattern built as case-sensitive arrived case-insensitive
+  there. All eleven now hold `flags` as state seeded from `DEFAULT_SEARCH_FLAGS`, write the pattern
+  *and* the flags back from `RegexBuilderButton`'s `onApply`, and compile through `settingsMatcher`
+  — which strips `g` and `y` before compiling, since a matcher reused down a list would otherwise
+  keep every other row depending on call order. Moving onto the shared matcher also gave Changelog
+  and Notifications the 400-character pattern bound they had been missing entirely.
+  - `Appearance.makeMatcher`, `Storage.makeSettingsMatcher` and `LanguageVoice.useMatcher` survive
+    as thin adapters rather than being deleted: the first two report a bare "invalid" notice and
+    want a boolean where the shared result carries the compiler's message, and the third
+    deliberately keeps its own answer to an unusable pattern (see below).
+  - `settingsMatcher` trims before matching, and five of these bars did not. In plain-text mode a
+    query with leading or trailing whitespace now finds what the same query without it finds, which
+    is the only behaviour these eleven searches changed outside the regex path.
+  - **Two bars keep matching *everything* on an invalid pattern** rather than adopting
+    `settingsMatcher`'s match-nothing: the Language & voice page search and `filterVoices` behind
+    each narrator track's picker. A half-typed pattern must not blank a page the user is reading or
+    a list of 322 voices, so the error is surfaced beside the field and the list is left alone.
+    Both are documented at the call site.
+- Every one of those bars shows the flags it is compiling. `gui/src/shell/SearchFlagsRow.tsx` is the
+  shared affordance — the `FLAGS` chips plus a line naming the literal the field compiles to, and a
+  sentence saying so whenever `g` or `y` was dropped. It renders only in regex mode, because plain
+  text is a case-insensitive substring search whatever the chips say and a control that looks live
+  while changing nothing is the decorative affordance the interface rules forbid. Its
+  "these were ignored" line is derived by calling `stripStatefulFlags` rather than by a hand-written
+  `g`/`y` check, so the row and the matcher cannot disagree about what was dropped. `Logs.tsx` keeps
+  the inline copy this was generalized from; the two are held together by the shared
+  `search.flags*` translation keys they both render.
+- `gui/tests/collection-search-flags.test.ts` is the guard. It carries a **hand-written** inventory
+  of the eleven bars, because a rule shaped "wherever flags are held, hold them correctly" passes
+  cleanly on a bar that holds none — only a list can fail for a surface that never adopted the
+  contract. Each row asserts the flags state, the exact matcher call, the `flags={…}` hand-down, the
+  write-back out of `onApply` and the chip row's own id; a separate row forbids the hard-coded
+  compile coming back. Every one of those assertion classes was watched failing before it was
+  trusted: reverting a matcher to `"i"`, deleting a chip row, dropping the flags out of `onApply`,
+  reintroducing `new RegExp(query, "i")`, stopping `stripStatefulFlags` from stripping, and removing
+  a row from the inventory each turn it red, and restoring each turns it green.
+- **Still open: two shared matchers the original list of nine did not name.**
+  `gui/src/pages/models-shared.ts`'s `makeMatcher` and `gui/src/pages/history-model.ts`'s
+  `filterTimeline` both still compile `new RegExp(trimmed, "i")` with the flags pinned. Between them
+  they feed seven further surfaces that each render a builder — `Models.tsx`, `Settings.tsx`,
+  `ClaudeDesktop.tsx`, `ComboWorkspace.tsx`, `combo-workspace-settings-search.tsx`,
+  `CodexAccountPool.tsx` and `VersionHistory.tsx` — so the defect there is the same one, at roughly
+  the same size again. Closing it is the same shape of change: thread `flags` through the two shared
+  matchers, write them back from each `onApply`, and give each field a `SearchFlagsRow`. Adding
+  those bars to the inventory in `collection-search-flags.test.ts` is what should make the guard go
+  red until they are done.
 
 ## Non-goals
 
