@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import ProviderAuthPanel from "../src/components/provider-workspace/ProviderAuthPanel";
 import type { WorkspaceItem } from "../src/provider-workspace/catalog";
 import type { LoginHint, ProviderAuthHandlers } from "../src/components/provider-workspace/types";
@@ -86,7 +86,7 @@ async function mountPanel(hint: LoginHint) {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ProviderAuthPanel
           item={ITEM}
           apiBase=""
@@ -94,7 +94,7 @@ async function mountPanel(hint: LoginHint) {
           loginHint={hint}
           authHandlers={HANDLERS}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
 }

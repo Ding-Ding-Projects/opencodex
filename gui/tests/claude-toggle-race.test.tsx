@@ -118,38 +118,20 @@ test("rapid Claude toggle clicks issue only one PUT until the first settles", as
   installApiAuthFetch();
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: window.fetch });
 
-  // App reads appearance tokens, the snackbar host and the confirmation dialog,
-  // so it needs the same provider stack main.tsx mounts — rendering it bare
-  // throws from usePrefs, and now from useConfirm too.
-  const [
-    { createRoot },
-    { LanguageProvider },
-    { PrefsProvider },
-    { NotificationsProvider },
-    { ConfirmProvider },
-    { default: App },
-  ] = await Promise.all([
+  // `App` now mounts the whole provider stack itself — SettingsDraftProvider,
+  // LanguageProvider, PrefsProvider, NotificationsProvider and ConfirmProvider —
+  // so it renders bare. The stack this test used to spell out around it was left
+  // over from when `App` was only the shell; repeating it today would put a
+  // second SettingsDraftProvider above one nothing inside `App` ever reads, and
+  // its outer LanguageProvider would sit above every draft provider and throw.
+  const [{ createRoot }, { default: App }] = await Promise.all([
     import("react-dom/client"),
-    import("../src/i18n/provider"),
-    import("../src/theme/prefs"),
-    import("../src/shell/notifications"),
-    import("../src/shell/confirm"),
     import("../src/App"),
   ]);
 
   await act(async () => {
     root = createRoot(container);
-    root.render(
-      <LanguageProvider>
-        <PrefsProvider>
-          <NotificationsProvider>
-            <ConfirmProvider>
-              <App />
-            </ConfirmProvider>
-          </NotificationsProvider>
-        </PrefsProvider>
-      </LanguageProvider>,
-    );
+    root.render(<App />);
   });
 
   await waitFor(() => {

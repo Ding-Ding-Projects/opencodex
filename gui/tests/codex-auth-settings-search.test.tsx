@@ -5,7 +5,7 @@ import type { Root } from "react-dom/client";
 import CodexAccountPool from "../src/components/CodexAccountPool";
 import CodexAuth from "../src/pages/CodexAuth";
 import type { CodexAccountPoolController } from "../src/hooks/useCodexAccountPool";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 
@@ -96,7 +96,7 @@ async function mountPool(lead?: string) {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <ConfirmProvider>
             <CodexAccountPool
@@ -106,7 +106,7 @@ async function mountPool(lead?: string) {
             />
           </ConfirmProvider>
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
@@ -142,13 +142,13 @@ test("the Codex Auth page supplies the real subtitle as its lead", async () => {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <ConfirmProvider>
             <CodexAuth apiBase="" />
           </ConfirmProvider>
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });

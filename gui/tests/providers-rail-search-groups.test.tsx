@@ -4,7 +4,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import ProviderWorkspaceShell from "../src/components/provider-workspace/ProviderWorkspaceShell";
 import type { ProviderUpdatePatch, WorkspaceItem } from "../src/components/provider-workspace/types";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 /**
  * M3 parity for the Providers rail (design/OpenCodex M3.dc.html → pageProviders):
@@ -121,7 +121,7 @@ async function mountShell(activeAccountNeedsReauth: Record<string, boolean> = {}
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ProviderWorkspaceShell
           providers={providers}
           apiBase=""
@@ -132,7 +132,7 @@ async function mountShell(activeAccountNeedsReauth: Record<string, boolean> = {}
           activeAccountNeedsReauth={activeAccountNeedsReauth}
           detail={() => null}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
@@ -274,13 +274,13 @@ async function mountSettings({
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ProviderSettings
           item={item}
           onUpdateProvider={onUpdateProvider}
           otherTabSettings={[{ tab: "Accounts", text: "Accounts Add account Add API key" }]}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });

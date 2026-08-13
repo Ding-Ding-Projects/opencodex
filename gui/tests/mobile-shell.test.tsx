@@ -27,7 +27,7 @@ import type { Root } from "react-dom/client";
 import TabStrip from "../src/shell/TabStrip";
 import ElementAppearanceHost from "../src/shell/ElementAppearanceHost";
 import { useTabs, type Tab, type TabGroup } from "../src/shell/use-tabs";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { PAGE_META } from "../src/shell/page-meta";
 import { VALID_PAGES } from "../src/app-routing";
@@ -96,13 +96,13 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <PrefsProvider>
           <ElementAppearanceHost>
             <Harness />
           </ElementAppearanceHost>
         </PrefsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   return { container, root };

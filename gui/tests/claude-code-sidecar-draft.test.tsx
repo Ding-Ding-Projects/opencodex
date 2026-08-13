@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act, useState } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ClaudeCodeSettingsCard } from "../src/pages/claude-code-sections";
 import type { ClaudeCodeState } from "../src/pages/claude-code-types";
 
@@ -61,7 +61,7 @@ async function mountSettings(
     const [state, setState] = useState(initial);
     latest = state;
     return (
-      <LanguageProvider>
+      <TestLanguageProvider>
         <ClaudeCodeSettingsCard
           state={state}
           contextWindowOptions={[
@@ -73,7 +73,7 @@ async function mountSettings(
           autoCompactOptions={[{ value: "", label: "Default" }]}
           onStateChange={setState}
         />
-      </LanguageProvider>
+      </TestLanguageProvider>
     );
   }
   const { createRoot } = await import("react-dom/client");

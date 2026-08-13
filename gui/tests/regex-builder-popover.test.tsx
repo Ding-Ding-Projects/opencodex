@@ -20,7 +20,7 @@ import { Window } from "happy-dom";
 import { act, useState } from "react";
 import type { Root } from "react-dom/client";
 import { RegexBuilderButton, SearchField } from "../src/shell/RegexBuilderButton";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -83,7 +83,7 @@ async function mount(node: React.ReactNode): Promise<{ container: HTMLElement; r
   let root!: Root;
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider>{node}</LanguageProvider>);
+    root.render(<TestLanguageProvider>{node}</TestLanguageProvider>);
   });
   return { container, root };
 }

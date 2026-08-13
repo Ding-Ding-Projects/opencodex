@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import ClaudeDesktop from "../src/pages/ClaudeDesktop";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 
 /**
@@ -83,7 +83,7 @@ async function mount() {
       // The screen reports save/import outcomes through the notification system
       // now, so the provider it reads has to exist even when a test never
       // triggers one — without it the whole screen throws on mount.
-      <LanguageProvider><NotificationsProvider><ClaudeDesktop apiBase="" /></NotificationsProvider></LanguageProvider>,
+      <TestLanguageProvider><NotificationsProvider><ClaudeDesktop apiBase="" /></NotificationsProvider></TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise(r => setTimeout(r, 50)); });

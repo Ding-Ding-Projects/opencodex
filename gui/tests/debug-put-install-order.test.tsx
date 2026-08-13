@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { clearClientResourceStoresForTests } from "../src/client-resource";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import Debug from "../src/pages/Debug";
 import type { DebugSettings } from "../src/pages/debug-shared";
 
@@ -164,9 +164,9 @@ test("the PUT response is installed before controls re-enable", async () => {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <Debug apiBase="http://localhost" />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await waitFor(() => container.querySelector('button[role="switch"][aria-label="Usage extraction"]') != null);

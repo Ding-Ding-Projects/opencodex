@@ -14,7 +14,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { ComboItem } from "../src/combo-workspace-data";
 import ComboWorkspace from "../src/components/ComboWorkspace";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { HISTORY_KEY } from "../src/shell/notifications-context";
 import { NotificationsProvider } from "../src/shell/notifications";
@@ -75,7 +75,7 @@ async function mount(onRemove?: (id: string) => Promise<{ ok: true } | { ok: fal
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <ConfirmProvider>
             <ComboWorkspace
@@ -96,7 +96,7 @@ async function mount(onRemove?: (id: string) => Promise<{ ok: true } | { ok: fal
             />
           </ConfirmProvider>
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await flush();

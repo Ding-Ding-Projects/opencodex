@@ -11,7 +11,7 @@ import {
   type AutoSwitchFetch,
 } from "../src/codex-auto-switch";
 import { CodexAutoSwitchSetting as AutoSwitchSetting } from "../src/components/CodexAutoSwitchSetting";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 let previousLanguage: unknown;
 
@@ -38,7 +38,7 @@ function renderSetting(
   feedback: { tone: "ok" | "err"; message: string } | null = null,
 ): string {
   return renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <AutoSwitchSetting
         threshold={threshold}
         draft={draft}
@@ -52,7 +52,7 @@ function renderSetting(
         onToggle={async () => true}
         onRetry={() => {}}
       />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 }
 

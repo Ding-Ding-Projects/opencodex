@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act, useState } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import Storage from "../src/pages/Storage";
 
@@ -75,11 +75,11 @@ test("an aborted Storage fetch must not clear loading while its replacement is i
     const [apiBase, setApiBase] = useState("http://old");
     (window as unknown as { __bumpApiBase?: () => void }).__bumpApiBase = () => setApiBase("http://new");
     return (
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <Storage apiBase={apiBase} />
         </NotificationsProvider>
-      </LanguageProvider>
+      </TestLanguageProvider>
     );
   }
 
@@ -191,11 +191,11 @@ test("effect cleanup invalidates generation before abort so loading stays owned 
     const [apiBase, setApiBase] = useState("http://old");
     (window as unknown as { __bumpApiBase?: () => void }).__bumpApiBase = () => setApiBase("http://new");
     return (
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <Storage apiBase={apiBase} />
         </NotificationsProvider>
-      </LanguageProvider>
+      </TestLanguageProvider>
     );
   }
 

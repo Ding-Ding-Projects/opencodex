@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { SmallFastModelSetting } from "../src/pages/ClaudeCode";
 
 let originalLanguageDescriptor: PropertyDescriptor | undefined;
@@ -28,14 +28,14 @@ const options = [
 
 function renderSetting(value: string, tierHaikuModel?: string): string {
   return renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <SmallFastModelSetting
         value={value}
         tierHaikuModel={tierHaikuModel}
         options={options}
         onChange={() => {}}
       />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 }
 

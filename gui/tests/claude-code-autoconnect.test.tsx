@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { reconcileAutoConnectState } from "../src/pages/claude-autoconnect";
 import { AutoConnectSetting } from "../src/pages/ClaudeCode";
 
@@ -25,9 +25,9 @@ afterEach(() => {
 
 function renderAutoConnect(supported: boolean, checked: boolean): string {
   return renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <AutoConnectSetting supported={supported} checked={checked} onChange={() => {}} />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 }
 

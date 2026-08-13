@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import Grok from "../src/pages/Grok";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import SnackbarHost from "../src/shell/SnackbarHost";
 
@@ -90,12 +90,12 @@ async function mount() {
     // The page reports through the snackbar host now, so both live here: the
     // provider owns the queue and the host is what the user actually reads.
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <Grok apiBase="" />
           <SnackbarHost />
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise(r => setTimeout(r, 50)); });
