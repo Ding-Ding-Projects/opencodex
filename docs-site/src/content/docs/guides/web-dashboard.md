@@ -182,9 +182,29 @@ observe them; OpenCodex will not enable encryption until a protected password-in
 Use an unencrypted 7z/ZIP for non-secret datasets, or protect a sensitive export outside OpenCodex
 with an appropriate secret-safe tool.
 
-Cost values in **Logs** and **Usage** are API list-price equivalents calculated from reported tokens.
-They are not billing receipts or evidence of an actual charge; subscription usage or provider credits
-may apply instead.
+## Cost figures and what they mean
+
+Cost values in **Logs** and **Usage** are calculated from reported tokens against published price
+schedules. They are never billing receipts or evidence of an actual charge.
+
+OpenCodex keeps two separate kinds of cost figure and never adds them together, because they mean
+different things:
+
+| Basis | What it is | Where it comes from |
+| --- | --- | --- |
+| **Direct API key** | Money actually owed, at the provider's published list rate. | Requests sent with your own API key — the OpenAI, Anthropic, DeepSeek and Moonshot API-key providers. |
+| **API equivalent** | What the same traffic *would have* cost on the API. Nothing is charged. | Requests sent over a subscription or OAuth plan — ChatGPT/Codex and Claude sign-in. |
+
+An API-equivalent figure is always shown with a **not billed** tag beside it, in the app-bar cost
+chip, the Usage tiles, the Logs table and detail panel, and the provider workspace. It exists so a
+subscription plan shows the real value of its traffic instead of a misleading `$0`; the tag exists so
+that figure is never mistaken for a bill. Where both kinds of traffic are present, the billable total
+is the headline and the equivalent total is listed separately rather than folded into it.
+
+Some traffic has **no published price** — a provider with no schedule OpenCodex can cite. Those
+requests show an em dash and say so. That is deliberately not the same as `$0`: zero is a claim that
+something was free, and an absent price is a claim about nothing at all. They are counted separately
+as unpriced requests in the Usage coverage panel.
 
 ## Model visibility
 

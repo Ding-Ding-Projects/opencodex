@@ -92,7 +92,15 @@ export interface UsageModel {
   inputTokens: number;
   outputTokens: number;
   shareRatio: number;
+  /** Direct API-key spend only, unchanged. Absent for subscription/OAuth rows. */
   estimatedCostUsd?: number;
+  /**
+   * Explicitly non-billing API-equivalent total for subscription/OAuth rows, so a
+   * per-model breakdown can show a figure instead of an em dash. Kept as its own
+   * field rather than folded into `estimatedCostUsd` because the two are
+   * different kinds of number and must never be summed into one.
+   */
+  apiEquivalentCostUsd?: number;
 }
 
 export interface UsageProvider {
@@ -101,10 +109,12 @@ export interface UsageProvider {
   attemptCount: number;
   measuredRequests: number;
   reportedRequests: number;
-  estimatedRequests: number;
   totalTokens: number;
   shareRatio: number;
+  /** Direct API-key spend only, unchanged. Absent for subscription/OAuth rows. */
   estimatedCostUsd?: number;
+  /** Non-billing API-equivalent total; see `UsageModel.apiEquivalentCostUsd`. */
+  apiEquivalentCostUsd?: number;
 }
 
 export interface UsageSummary {
@@ -577,6 +587,39 @@ function buildModels(entries: PersistedUsageEntry[], totalTokens: number): Usage
       if (m) m.estimatedCostUsd = (m.estimatedCostUsd ?? 0) + estimate.cost.total;
     }
   }
+  // Second pass for the non-billing lane. Deliberately separate from the loop
+  // above rather than merged into it: that one is the direct lane and its field
+  // keeps its existing meaning exactly, so a subscription row gains a figure
+  // without a billable row's number moving by a cent.
+  for (const entry of entries) {
+    const serviceTier = effectiveServiceTier(entry);
+    const attributions = entry.attempts?.length
+      ? entry.attempts.map(attempt => ({
+        provider: attempt.provider,
+        model: attempt.model,
+        usage: attempt.usage,
+        usageStatus: attempt.usageStatus,
+        promptInputTokens: attempt.promptInputTokens ?? entry.promptInputTokens,
+        cacheRetention: attempt.cacheRetention ?? entry.cacheRetention,
+        timestamp: attempt.timestamp ?? entry.timestamp,
+      }))
+      : [{
+        provider: entry.provider,
+        model: entry.model,
+        usage: entry.usage,
+        usageStatus: entry.usageStatus,
+        promptInputTokens: entry.promptInputTokens,
+        cacheRetention: entry.cacheRetention,
+        timestamp: entry.timestamp,
+      }];
+    for (const row of attributions) {
+      const laneEstimate = estimateRequestCostLanes({ ...row, serviceTier }).apiEquivalent;
+      if (!laneEstimate) continue;
+      const key = usageModelKey(baseProviderLabel(row.provider), antigravityUsageModel(row.provider, row.model));
+      const m = byKey.get(key);
+      if (m) m.apiEquivalentCostUsd = (m.apiEquivalentCostUsd ?? 0) + laneEstimate.cost.total;
+    }
+  }
   const models = [...byKey.values()];
   for (const m of models) m.shareRatio = totalTokens === 0 ? 0 : m.totalTokens / totalTokens;
   return models.sort((a, b) => b.requests - a.requests);
@@ -644,6 +687,36 @@ function buildProviders(entries: PersistedUsageEntry[], totalTokens: number): Us
       const providerKey = baseProviderLabel(entry.provider);
       const p = byKey.get(providerKey);
       if (p) p.estimatedCostUsd = (p.estimatedCostUsd ?? 0) + estimate.cost.total;
+    }
+  }
+  // Non-billing lane, kept in its own pass for the same reason as the model
+  // rollup above: the direct field's meaning must not shift.
+  for (const entry of entries) {
+    const serviceTier = effectiveServiceTier(entry);
+    const attributions = entry.attempts?.length
+      ? entry.attempts.map(attempt => ({
+        provider: attempt.provider,
+        model: attempt.model,
+        usage: attempt.usage,
+        usageStatus: attempt.usageStatus,
+        promptInputTokens: attempt.promptInputTokens ?? entry.promptInputTokens,
+        cacheRetention: attempt.cacheRetention ?? entry.cacheRetention,
+        timestamp: attempt.timestamp ?? entry.timestamp,
+      }))
+      : [{
+        provider: entry.provider,
+        model: entry.model,
+        usage: entry.usage,
+        usageStatus: entry.usageStatus,
+        promptInputTokens: entry.promptInputTokens,
+        cacheRetention: entry.cacheRetention,
+        timestamp: entry.timestamp,
+      }];
+    for (const row of attributions) {
+      const laneEstimate = estimateRequestCostLanes({ ...row, serviceTier }).apiEquivalent;
+      if (!laneEstimate) continue;
+      const p = byKey.get(baseProviderLabel(row.provider));
+      if (p) p.apiEquivalentCostUsd = (p.apiEquivalentCostUsd ?? 0) + laneEstimate.cost.total;
     }
   }
   const providers = [...byKey.values()];
