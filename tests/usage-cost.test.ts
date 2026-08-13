@@ -359,11 +359,20 @@ describe("product and condition isolation", () => {
   });
 
   test("prices supported OpenAI direct IDs and preserves unavailable cache writes", () => {
+    // `inputTokens` is inclusive of the cache read, so `classifyUsageForCost` meters
+    // this row as 900k uncached input + 100k output + 100k cache read — never 1M
+    // input alongside a separately charged 100k, which would bill the cached tokens
+    // twice. Each total below is that split against the published per-1M rates:
+    //   sol   (5 / 30 / 0.5)     -> 0.9*5    + 0.1*30   + 0.1*0.5   = 7.55
+    //   terra (2 / 12 / 0.2)     -> 0.9*2    + 0.1*12   + 0.1*0.2   = 3.02
+    //   luna  (0.2 / 1.2 / 0.02) -> 0.9*0.2  + 0.1*1.2  + 0.1*0.02  = 0.302
+    //   5.5   (5 / 30 / 0.5)     -> same as sol; its cache WRITE is unavailable,
+    //                               which this row never exercises (no cache write).
     const usage = { inputTokens: 1_000_000, outputTokens: 100_000, cachedInputTokens: 100_000 };
-    expect(requestCost("openai-apikey", "gpt-5.6-sol", { usage })?.cost.total).toBeCloseTo(7.85, 9);
-    expect(requestCost("openai-apikey", "gpt-5.6-terra", { usage })?.cost.total).toBeCloseTo(3.14, 9);
-    expect(requestCost("openai-apikey", "gpt-5.6-luna", { usage })?.cost.total).toBeCloseTo(0.314, 9);
-    expect(requestCost("openai-apikey", "gpt-5.5", { usage })?.cost.total).toBeCloseTo(7.85, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-sol", { usage })?.cost.total).toBeCloseTo(7.55, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-terra", { usage })?.cost.total).toBeCloseTo(3.02, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-luna", { usage })?.cost.total).toBeCloseTo(0.302, 9);
+    expect(requestCost("openai-apikey", "gpt-5.5", { usage })?.cost.total).toBeCloseTo(7.55, 9);
     expect(requestCost("openai-apikey", "gpt-5.6-sol-pro", { usage })).toBeNull();
     expect(requestCost("openai-apikey", "gpt-5.5", {
       usage: { inputTokens: 1_000, outputTokens: 1, cacheCreationInputTokens: 1 },

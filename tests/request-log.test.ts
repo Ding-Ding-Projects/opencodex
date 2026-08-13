@@ -453,9 +453,41 @@ describe("request log metadata", () => {
       undefined,
       entry => entries.push(entry),
     );
+    // `usageLogInputTokens` has two jobs and they are deliberately independent.
+    // It is persisted verbatim as `promptInputTokens` — the raw request prompt
+    // size, which price schedules read for context selection — and it separately
+    // acts as a floor on the response-reported input count, because an adapter
+    // reporting 200 input tokens for a 12,345-token prompt is under-reporting.
+    // The floor is long-standing behaviour proved by the cursor `in:0` row below.
+    // What matters here is that the raw metric survives on its own field rather
+    // than being reconstructed from usage afterwards, so both are asserted.
     expect(entries[0]).toMatchObject({
       promptInputTokens: 12_345,
-      usage: { inputTokens: 200, outputTokens: 20 },
+      usageStatus: "estimated",
+      usage: { inputTokens: 12_345, outputTokens: 20, estimated: true },
+    });
+
+    // The separation is only visible when the floor does NOT fire: a response that
+    // reports more input than the prompt carried leaves usage untouched, and
+    // `promptInputTokens` still holds the raw prompt size rather than the reported
+    // count. If the two ever collapsed into one field, this row would fail.
+    const untouched: RequestLogEntry[] = [];
+    addFinalRequestLog(
+      "ocx-prompt-size-reported-higher",
+      Date.now(),
+      {
+        model: "gpt-5.6-sol",
+        provider: "openai-apikey",
+        usageLogInputTokens: 12_345,
+        usage: { inputTokens: 50_000, outputTokens: 20 },
+      },
+      200,
+      undefined,
+      entry => untouched.push(entry),
+    );
+    expect(untouched[0]).toMatchObject({
+      promptInputTokens: 12_345,
+      usage: { inputTokens: 50_000, outputTokens: 20 },
     });
   });
 

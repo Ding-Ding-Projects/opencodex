@@ -555,12 +555,19 @@ describe("codex-auth API", () => {
     const req = new Request("http://localhost/api/codex-auth/active", { method: "GET" });
     const resp = await handleCodexAuthAPI(req, new URL(req.url), config);
     const data = await resp!.json() as { activeCodexAccountId: string | null; autoSwitchThreshold: number };
+    // Kept as an exact-shape assertion so a field cannot leak into this response
+    // unnoticed. `routingPastReportedQuota` is a deliberate addition: it reports
+    // whether requests are currently going out on an account whose locally
+    // computed usage has reached 100% because nothing cooler exists. Null is the
+    // ordinary case — no saturated routing in effect — and the key is always
+    // present so a caller never has to distinguish "absent" from "not happening".
     expect(data).toEqual({
       activeCodexAccountId: "pool-live",
       autoSwitchThreshold: 55,
       upstreamFailoverThreshold: 3,
       accountPoolStrategy: "quota",
       accountPoolStickyLimit: 1,
+      routingPastReportedQuota: null,
     });
   });
 
