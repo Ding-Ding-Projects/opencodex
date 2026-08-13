@@ -21,7 +21,7 @@
  * focus goes back to the element that opened it.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { INITIAL_PLACEMENT, fixedPanelStyle } from "../../../shared/m3/anchor";
 import { computeViewportPlacement } from "./use-anchored-placement";
 import { clampToViewport } from "../../../shared/m3/tabs";
@@ -33,6 +33,8 @@ import { onOutsidePress } from "./outside-press";
 import { ElementAppearanceContext, type ElementAppearanceApi } from "./element-appearance-context";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
 import { ELEMENT_SELECTORS, FONT_CHOICES, elementSelectorFor } from "../theme/m3";
+import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
+import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
 import type { TKey } from "../i18n/shared";
 
 /**
@@ -329,6 +331,13 @@ function AppearanceChainMenu(
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const filterId = useId();
+
+  const phrase = useTargetPhrase();
+  const nameOf = useCallback((entry: ChainEntry) => targetName(entry.id, entry.node, t), [t]);
+  // Bounded at four entries (`editableChain`'s own limit), and still every
+  // entry gets the filter — the rule draws no line at "the list is short".
+  const filter = useMenuFilter(menu.chain, nameOf);
 
   // Measured, then clamped, so a right-click near an edge shifts the menu onto
   // the screen rather than rendering it half off.
@@ -344,7 +353,7 @@ function AppearanceChainMenu(
   }, [menu]);
 
   /**
-   * Focus the first item — but only once the menu is actually visible.
+   * Focus the filter field — but only once the menu is actually visible.
    *
    * This used to sit at the end of the layout effect above, one line after
    * `setPos`. React does not flush that state update inside the effect body, so
@@ -362,33 +371,46 @@ function AppearanceChainMenu(
    */
   useEffect(() => {
     if (!pos) return;
-    ref.current?.querySelector<HTMLElement>("button")?.focus();
-  }, [pos]);
+    focusMenuFilterField(filterId);
+  }, [pos, filterId]);
 
   useEffect(() => {
     const stop = onOutsidePress(event => {
       if (!ref.current?.contains(event.target as Node)) onClose();
     });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { onClose(); return; }
+      if (event.key === "Escape") {
+        // The anchored regex builder is a nested dialog with its own Escape;
+        // the filter field's own first-stage clear is handled inside
+        // `MenuFilterField`. Only an Escape from neither reaches here.
+        if ((event.target as Element | null)?.closest?.('[role="dialog"]')) return;
+        onClose();
+        return;
+      }
       // Arrow keys, Home and End: a `role="menu"` promises them, and a screen
       // reader in application mode swallows Tab inside one — so without these
       // the second item of a two-item menu had no keyboard route at all.
+      // Scoped to `[role='menuitem']`, which is exactly the *visible* (filtered)
+      // rows — the filter field's own regex-builder trigger carries no such role.
       const items = [...(ref.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? [])];
       if (!items.length) return;
       const here = items.indexOf(document.activeElement as HTMLElement);
       const move = (to: number) => { event.preventDefault(); items[(to + items.length) % items.length].focus(); };
       if (event.key === "ArrowDown") move(here + 1);
-      else if (event.key === "ArrowUp") move(here - 1);
+      else if (event.key === "ArrowUp") {
+        // From the first item, back to the field rather than wrapping to the
+        // last row. From the field itself (`here === -1`) the arithmetic below
+        // already lands on the last row, which is the sensible "one step up
+        // from nothing selected" reading and needs no special case.
+        if (here === 0) { event.preventDefault(); focusMenuFilterField(filterId); }
+        else move(here - 1);
+      }
       else if (event.key === "Home") move(0);
       else if (event.key === "End") move(items.length - 1);
     };
     document.addEventListener("keydown", onKey);
     return () => { stop(); document.removeEventListener("keydown", onKey); };
-  }, [onClose]);
-
-  const phrase = useTargetPhrase();
-  const nameOf = (entry: ChainEntry) => targetName(entry.id, entry.node, t);
+  }, [onClose, filterId]);
 
   return (
     <div
@@ -407,7 +429,20 @@ function AppearanceChainMenu(
         visibility: pos ? "visible" : "hidden",
       }}
     >
-      {menu.chain.map((entry, index) => (
+      <MenuFilterField
+        id={filterId}
+        query={filter.query}
+        onQuery={filter.setQuery}
+        regex={filter.regex}
+        onRegexChange={filter.setRegex}
+        sample={filter.sample}
+        searchLabel={t("appearance.elementsFilterLabel")}
+        builderLabel={t("appearance.elementsFilterBuilder")}
+        onEnterSingle={() => onPick(filter.visible[0])}
+        resultCount={filter.visible.length}
+      />
+      <MenuFilterStatus matcher={filter.matcher} query={filter.query} resultCount={filter.visible.length} />
+      {filter.visible.map(entry => (
         <button
           key={entry.id}
           type="button"
@@ -415,7 +450,7 @@ function AppearanceChainMenu(
           className="m3-menu-item"
           onClick={() => onPick(entry)}
         >
-          {index === 0
+          {entry === menu.chain[0]
             ? phrase("appearance.editElement", nameOf(entry))
             : phrase("appearance.editContainer", nameOf(entry))}
         </button>

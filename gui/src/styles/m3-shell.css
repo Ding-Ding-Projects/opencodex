@@ -681,6 +681,11 @@ html[data-viewport-preview] .m3-app {
   text-transform: uppercase;
   letter-spacing: 0.6px;
 }
+/* The filter row every dropdown/context menu carries at its head, per
+   `MenuFilterField.tsx`. Matches the padding the tab strip's own "+" new-tab
+   search already used inline, so a converted menu and the menu it was
+   modelled on read as one control rather than two slightly different ones. */
+.m3-menu-filter { padding: 0 4px 8px; }
 
 /* ------------------------------------------------------------ page area -- */
 

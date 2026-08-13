@@ -115,14 +115,17 @@ test("right-clicking inside a card offers the thing clicked and the card", async
   );
   await rightClick(container.querySelector(".m3-card-title")!);
 
-  const items = [...(openMenu()?.querySelectorAll("button") ?? [])].map(b => b.textContent ?? "");
+  // Scoped to `[role="menuitem"]`: the menu also carries its own filter field
+  // (a plain `<button>` search-adjacent to it opens the regex builder), and a
+  // bare `querySelectorAll("button")` would count that trigger as a third item.
+  const items = [...(openMenu()?.querySelectorAll('button[role="menuitem"]') ?? [])].map(b => b.textContent ?? "");
   expect(items.length).toBe(2);
   // Derived targets carry no translation and cannot have one — nobody can
   // pre-translate a class name — so they are named from the id itself.
   expect(items[0]).toContain("Card title");
   expect(items[1]).toContain("Cards");
 
-  await act(async () => { openMenu()!.querySelectorAll("button")[1].click(); });
+  await act(async () => { openMenu()!.querySelectorAll('button[role="menuitem"]')[1].click(); });
   expect(openEditor()?.getAttribute("data-element-style-editor")).toBe("card");
 });
 
@@ -162,12 +165,13 @@ test("a button inside a card offers both, nearest first", async () => {
   expect(menu).not.toBeNull();
   expect(openEditor()).toBeNull();
 
-  const items = [...menu!.querySelectorAll("button")].map(b => b.textContent ?? "");
+  // Scoped to `[role="menuitem"]` — see the note above on the previous test.
+  const items = [...menu!.querySelectorAll('button[role="menuitem"]')].map(b => b.textContent ?? "");
   expect(items.length).toBe(2);
   expect(items[0]).toContain("Filled buttons");
   expect(items[1]).toContain("Cards");
 
-  await act(async () => { menu!.querySelectorAll("button")[1].click(); });
+  await act(async () => { menu!.querySelectorAll('button[role="menuitem"]')[1].click(); });
   expect(openEditor()?.getAttribute("data-element-style-editor")).toBe("card");
   expect(openMenu()).toBeNull();
 });
