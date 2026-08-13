@@ -16,9 +16,10 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleSquirrelEvent } from "./squirrel.mjs";
+import { handleSquirrelEvent, planSquirrelEvent } from "./squirrel.mjs";
 import { readBuildStamp } from "./build-stamp.mjs";
 import { describeConflict, planProxyAdoption } from "./proxy-adoption.mjs";
+import { installCliOnPath, recordDesktopCliPathStatus } from "./cli-path.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
@@ -54,7 +55,27 @@ const HEALTH_POLL_MS = 250;
  *
  * `app.exit(0)` rather than `app.quit()`: quit runs `before-quit` and the whole
  * shutdown path, and this process has started nothing to shut down.
+ *
+ * `--squirrel-install` and `--squirrel-updated` are also when this app makes
+ * sure its own `ocx` shim is on the user's PATH (`./cli-path.mjs`) — without
+ * this, a Squirrel-only install (no npm, nobody ran scripts/install.ps1 by
+ * hand) ships a GUI and no usable command line. It runs BEFORE
+ * handleSquirrelEvent below so it completes while Squirrel is still waiting
+ * on this process, and it must never throw or block that exit: installCliOnPath
+ * already fails closed and returns a result object instead of throwing for
+ * every failure it anticipates, and the try/catch here is the last-resort net
+ * for anything it does not.
  */
+const squirrelPlan = planSquirrelEvent(process.argv, process.execPath, process.platform);
+if (squirrelPlan && (squirrelPlan.event === "--squirrel-install" || squirrelPlan.event === "--squirrel-updated")) {
+  try {
+    recordDesktopCliPathStatus(installCliOnPath(process.execPath));
+  } catch {
+    // Never let a PATH-install surprise block Squirrel's own install/update —
+    // it is waiting on this process to exit within about a second either way.
+  }
+}
+
 if (handleSquirrelEvent({ spawn, exit: code => app.exit(code) })) {
   // Nothing below this line may run: the process is on its way out.
 } else if (!app.requestSingleInstanceLock()) {

@@ -51,6 +51,32 @@ try {
     exit 1
 }
 
+# A second `ocx` can already be on PATH — an unrelated global install, a stale
+# copy under a different npm prefix, an upstream checkout. Whichever directory
+# resolves first silently wins, so check what a FRESH shell would actually
+# run, not this process: Add-NpmGlobalBinToUserPath already prepended our
+# directory to *this* process's $env:Path, which would hide a real collision
+# by making us look first here no matter what a new shell would resolve.
+# A new shell's PATH is the machine PATH followed by the (now-repaired)
+# persisted user PATH, so that is what gets simulated here.
+try {
+    $freshShellPath = @(
+        [Environment]::GetEnvironmentVariable("Path", "Machine"),
+        [Environment]::GetEnvironmentVariable("Path", "User")
+    ) -join ";"
+    $collision = Resolve-OcxPathCollision -NpmGlobalBin $npmPrefix -ResolvedOcxPaths (Get-OcxCommandPaths -PathValue $freshShellPath)
+} catch {
+    $collision = $null
+    Write-Warning "Could not check for another 'ocx' on PATH: $($_.Exception.Message)"
+}
+if ($collision -and $collision.Collision) {
+    if ($collision.Reordered) {
+        Write-Host "Another 'ocx' was found on PATH at '$($collision.Winner)'. This fork's directory ($npmPrefix) now comes first, so new shells will run this fork's build." -ForegroundColor Yellow
+    } elseif ($collision.MachineBlocked) {
+        Write-Warning "Another 'ocx' is on the system (machine-wide) PATH at '$($collision.Winner)' and will keep winning over this fork's install at '$npmPrefix' — this script only changes your user PATH and never the machine PATH. If that is not the build you want, remove or rename that install, or run 'ocx' by its full path: $npmPrefix\ocx.cmd"
+    }
+}
+
 $ocx = Get-Command ocx.cmd -ErrorAction SilentlyContinue
 if (-not $ocx) {
     $ocx = Get-Command ocx -ErrorAction SilentlyContinue

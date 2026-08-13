@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readPackageIdentity } from "../lib/build-identity";
 
 const repoRoot = dirname(fileURLToPath(new URL("../../package.json", import.meta.url)));
 
@@ -333,7 +334,15 @@ function packageVersion(): string {
 }
 
 export function printVersion(): void {
-  console.log(`opencodex ${packageVersion()}`);
+  // The package name rides along on this same line, kept single-line and
+  // script-friendly (tests parse the leading "opencodex <version>" with a
+  // regex and require exactly one output line): a user with more than one
+  // `ocx` on their machine — a stale global install, a different fork — can
+  // tell which npm package this one actually is without a second command.
+  // `ocx doctor` carries the fuller build/commit identity where multi-line
+  // output is safe.
+  const { name } = readPackageIdentity();
+  console.log(`opencodex ${packageVersion()} (${name})`);
 }
 
 export function printUsage(): void {
