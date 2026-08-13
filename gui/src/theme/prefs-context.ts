@@ -149,6 +149,16 @@ export interface Prefs {
    */
   /** App-bar cost meter range. "all" = lifetime, the default. */
   costRange: CostRange;
+  /**
+   * "Show emojis in dialogs and message boxes." Off by default, matching the
+   * other opt-in decorations in this file (`narrator`, `narratorEdge`): an
+   * existing profile that has never seen an emoji in a destructive confirmation
+   * should not wake up to one after an update, and a control-plane app for a
+   * proxy is a reasonable place to ask before adding cosmetic decoration rather
+   * than assuming it. `shell/message-emoji.tsx` is what actually reads this —
+   * confirmations, prompts and snackbars each resolve their own glyph from it.
+   */
+  showEmojis: boolean;
   elementStyles: Record<string, ElementStyle>;
 }
 
@@ -173,6 +183,8 @@ export const DEFAULT_PREFS: Prefs = {
   // Off. A network voice source is never the default, and never auto-enables.
   narratorEdge: false,
   costRange: "all",
+  // Off. See the field's own doc comment above for why.
+  showEmojis: false,
   elementStyles: {},
 };
 
@@ -245,6 +257,10 @@ export function readPrefs(): Prefs {
       // Strict `=== true`: anything else from disk means off. A network source
       // must never be switched on by a truthy value nobody intended to write.
       narratorEdge: raw.narratorEdge === true,
+      // Same strict check, for the same reason minus the network concern: a
+      // corrupted or hand-edited profile should read as "off" rather than as
+      // whatever JavaScript's truthiness happens to make of the stored value.
+      showEmojis: raw.showEmojis === true,
       elementStyles: readElementStyles(raw.elementStyles),
     };
   } catch {

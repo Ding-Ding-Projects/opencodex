@@ -779,6 +779,15 @@ export const M3_EN = {
   "cost.tier.detailUniform": "{band}: every token type is priced at {factor}× this model's standard rate.",
   "cost.tier.detailSplit": "{band}: input ×{input}, output ×{output}, cache read ×{cacheRead} and cache write ×{cacheWrite}, relative to this model's standard rate.",
 
+  // ---- emoji decoration ----
+  "emoji.title": "Show emojis in dialogs and message boxes",
+  "emoji.sub": "Adds one small decorative mark beside a dialog's or notification's headline — never on a button, a label, or anything read aloud as its name. Off leaves the same words in place with no mark at all.",
+  "emoji.previewCaption": "How the four notification marks look right now:",
+  "emoji.previewInfo": "Proxy port changed",
+  "emoji.previewSuccess": "Export finished",
+  "emoji.previewWarn": "Storage nearing its limit",
+  "emoji.previewError": "Could not reach the proxy",
+
   // ---- dim sum surprise ----
   "dimsum.title": "Dim sum time!",
   "dimsum.hint": "A 1-in-10 launch treat. It dismisses itself.",

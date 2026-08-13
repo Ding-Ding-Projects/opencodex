@@ -1,5 +1,7 @@
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
+import { usePrefs } from "../theme/prefs-context";
+import { decorateMessage } from "./message-emoji";
 import { useNotifications } from "./notifications-context";
 
 /**
@@ -8,6 +10,7 @@ import { useNotifications } from "./notifications-context";
  */
 export default function SnackbarHost() {
   const { live, dismiss } = useNotifications();
+  const { prefs } = usePrefs();
   const t = useT();
 
   if (!live.length) return null;
@@ -17,7 +20,11 @@ export default function SnackbarHost() {
       {live.map(notice => (
         <div key={notice.id} className={`m3-snack${notice.tone === "error" ? " error" : ""}`} role={notice.tone === "error" ? "alert" : undefined}>
           <div className="m3-snack-text">
-            <div className="m3-snack-title">{notice.title}</div>
+            {/* A Notice's own tone is already one of `decorateMessage`'s kinds
+                (info/success/warn/error), so the mark it draws lines up with the
+                same tone the history page's icon and the snackbar's own error
+                styling already use — nothing here invents a second taxonomy. */}
+            <div className="m3-snack-title">{decorateMessage(notice.tone, notice.title, prefs.showEmojis)}</div>
             {notice.body && <div className="m3-snack-body">{notice.body}</div>}
           </div>
           {notice.action && (

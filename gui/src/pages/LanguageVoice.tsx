@@ -21,9 +21,10 @@ import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconSearch, IconSparkle, IconVolume } from "../icons";
-import { LOCALES, useI18n, useT, type Locale, type TFn } from "../i18n/shared";
+import { LOCALES, useI18n, useT, type Locale, type TFn, type TKey } from "../i18n/shared";
 import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18n/voice";
 import { resolveTrack } from "../i18n/resolve";
+import { decorateMessage, type MessageMarkKind } from "../shell/message-emoji";
 import {
   DEFAULT_NARRATOR_VOICE,
   NARRATOR_BOTH,
@@ -53,6 +54,22 @@ const FUNNY_LEVELS = [1, 2, 3, 4, 5];
 
 /** The "show one now" preview clears itself on the same timer as the launch card. */
 const PREVIEW_MS = 12_000;
+
+/**
+ * The four live preview rows on the emoji card, one per snackbar tone. These are
+ * the exact tones `SnackbarHost` reads `prefs.showEmojis` for, so what this card
+ * shows is what a real notification will show — not a mocked-up sample of a
+ * different decoration. Confirmation dialogs draw from two further marks
+ * ("danger" and "question", see `shell/message-emoji.tsx`) that are not
+ * previewed here separately: they style the same on/off switch, and a card
+ * with six sample rows for one toggle is more clutter than confirmation.
+ */
+const EMOJI_PREVIEW_TONES: { kind: MessageMarkKind; tkey: TKey }[] = [
+  { kind: "info", tkey: "emoji.previewInfo" },
+  { kind: "success", tkey: "emoji.previewSuccess" },
+  { kind: "warn", tkey: "emoji.previewWarn" },
+  { kind: "error", tkey: "emoji.previewError" },
+];
 
 /**
  * Plain text is the default on every search bar; `.*` is an explicit opt-in.
@@ -705,6 +722,50 @@ export default function LanguageVoice() {
             <IconVolume aria-hidden />
             {t("narrator.test")}
           </Button>
+        </Card>
+      ),
+    },
+    {
+      id: "emoji",
+      text: [
+        t("emoji.title"), t("emoji.sub"), t("emoji.previewCaption"),
+        ...EMOJI_PREVIEW_TONES.map(item => t(item.tkey)),
+      ].join(" "),
+      node: (
+        <Card
+          key="emoji"
+          title={t("emoji.title")}
+          subtitle={t("emoji.sub")}
+          actions={
+            <Toggle
+              on={prefs.showEmojis}
+              label={t("emoji.title")}
+              onChange={next => setPrefs({ showEmojis: next })}
+            />
+          }
+        >
+          <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+            {t("emoji.previewCaption")}
+          </p>
+          {/* Live previews, not a description of the feature: each row runs the
+              exact same `decorateMessage` call a real snackbar makes, with the
+              toggle above driving both. Proof that the switch changes rendered
+              output, in the one place a reader can see it change as they flip it. */}
+          <div style={{ display: "grid", gap: 6 }}>
+            {EMOJI_PREVIEW_TONES.map(item => (
+              <div
+                key={item.kind}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "var(--r-m)",
+                  background: "var(--m3-surface-container-highest)",
+                  fontSize: "var(--t-body-s)",
+                }}
+              >
+                {decorateMessage(item.kind, t(item.tkey), prefs.showEmojis)}
+              </div>
+            ))}
+          </div>
         </Card>
       ),
     },

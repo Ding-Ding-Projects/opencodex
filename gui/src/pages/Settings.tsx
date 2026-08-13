@@ -590,6 +590,14 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
       jump: { page: "language", tkey: "nav.language" },
     },
     {
+      id: "showEmojis",
+      group: "appearance",
+      label: t("emoji.title"),
+      desc: t("emoji.sub"),
+      value: onOff(prefs.showEmojis),
+      jump: { page: "language", tkey: "nav.language" },
+    },
+    {
       id: "dimsum",
       group: "appearance",
       label: t("dimsum.toggle"),
