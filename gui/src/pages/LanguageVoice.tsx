@@ -24,7 +24,6 @@ import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18
 import { usePrefs } from "../theme/prefs-context";
 import { cancelNarration, configureNarrator, narrate, narratorAvailable } from "../shell/narrator";
 import { useNotifications } from "../shell/notifications-context";
-import { recordRevision } from "../shell/revisions";
 import { DISHES, type DimSumDish } from "../shell/dimsum";
 import { DishArt } from "../shell/DimSumCard";
 
@@ -156,14 +155,7 @@ export default function LanguageVoice() {
                   key={l.code}
                   lang={l.htmlLang}
                   selected={locale === l.code}
-                  onClick={() => {
-                    setLocale(l.code as Locale);
-                    recordRevision({
-                      scope: "settings",
-                      label: t("nav.language"),
-                      summary: t("lang.revisionSummary", { name: l.name }),
-                    });
-                  }}
+                  onClick={() => setLocale(l.code as Locale)}
                 >
                   {l.name}
                 </Chip>
@@ -228,7 +220,6 @@ export default function LanguageVoice() {
               onChange={next => {
                 setPrefs({ narrator: next });
                 if (!next) cancelNarration();
-                recordRevision({ scope: "settings", label: t("nav.language"), summary: t("lang.narratorRevision") });
               }}
             />
           }
@@ -249,10 +240,7 @@ export default function LanguageVoice() {
                   key={l.code}
                   lang={l.htmlLang}
                   selected={prefs.narratorLang === htmlLangFor(l.code)}
-                  onClick={() => {
-                    setPrefs({ narratorLang: htmlLangFor(l.code) });
-                    recordRevision({ scope: "settings", label: t("nav.language"), summary: t("lang.narratorRevision") });
-                  }}
+                  onClick={() => setPrefs({ narratorLang: htmlLangFor(l.code) })}
                 >
                   {l.name}
                 </Chip>

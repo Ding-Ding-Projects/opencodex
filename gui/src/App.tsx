@@ -32,6 +32,11 @@ import type { Page } from "./app-routing";
 import { openRemoteDashboard } from "./remote-navigation";
 import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
+import { SettingsDraftProvider } from "./settings-drafts";
+import { LanguageProvider } from "./i18n/provider";
+import { PrefsProvider } from "./theme/prefs";
+import { NotificationsProvider } from "./shell/notifications";
+import { ConfirmProvider } from "./shell/confirm";
 import { useNotifications } from "./shell/notifications-context";
 import { useConfirm } from "./shell/confirm-context";
 import { useTabRouting } from "./shell/use-tab-routing";
@@ -99,6 +104,23 @@ function renderPage(page: Page): ReactNode {
 }
 
 export default function App() {
+  return (
+    <SettingsDraftProvider>
+      <LanguageProvider>
+        <PrefsProvider>
+          <NotificationsProvider>
+            <ConfirmProvider>
+              <AppShell />
+            </ConfirmProvider>
+          </NotificationsProvider>
+        </PrefsProvider>
+      </LanguageProvider>
+    </SettingsDraftProvider>
+  );
+}
+
+/** Allows direct component tests to retain the same provider stack as main.tsx. */
+function AppShell() {
   const { windowClass } = usePrefs();
   const { notify } = useNotifications();
   // Shadows the global `confirm` deliberately: an accidental native call in this

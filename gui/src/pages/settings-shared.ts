@@ -257,3 +257,280 @@ export async function loadSettingsSnapshot(apiBase: string, signal?: AbortSignal
     },
   };
 }
+
+/**
+ * A server-backed field that Settings can stage. The identifiers deliberately
+ * describe data rather than screen rows: one endpoint may echo more than one
+ * row, but a revision is only earned by the field the user actually changed.
+ */
+export type SettingsDraftField =
+  | "codexAutoStart"
+  | "shadowCall"
+  | "maMode"
+  | "multiAgentGuidanceEnabled"
+  | "syncCodexSubagentDefaults"
+  | "effortCap"
+  | "subagentEffortCap"
+  | "policyEnabled"
+  | "policySchedule"
+  | "debug"
+  | "usage"
+  | "injection"
+  | "claude";
+
+export interface AcceptedSettingsChange {
+  field: SettingsDraftField;
+  before: unknown;
+  after: unknown;
+}
+
+export type SettingsEndpoint =
+  | "settings"
+  | "shadow"
+  | "mode"
+  | "injection"
+  | "effortCaps"
+  | "policy"
+  | "debug";
+
+export interface SettingsApplyResult {
+  /** Server-confirmed baseline, including any endpoint side effects it echoed. */
+  applied: SettingsSnapshot;
+  /** Only fields an endpoint did not accept remain staged for another attempt. */
+  draft: SettingsSnapshot | null;
+  /** User-requested fields whose echoed value proves that they were accepted. */
+  accepted: AcceptedSettingsChange[];
+  /** Endpoint groups that could not be written or did not return a usable echo. */
+  failed: SettingsEndpoint[];
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** The one equality used for persisted snapshots and staged server echoes. */
+export function settingsSnapshotsEqual(left: SettingsSnapshot, right: SettingsSnapshot): boolean {
+  return sameValue(left, right);
+}
+
+function changed<T extends object>(before: T, desired: T, fields: readonly (keyof T)[]): (keyof T)[] {
+  return fields.filter(field => !sameValue(before[field], desired[field]));
+}
+
+function retainUnaccepted<T extends object>(echoed: T, desired: T, fields: readonly (keyof T)[]): T {
+  const next = { ...echoed } as T;
+  for (const field of fields) {
+    if (!sameValue(echoed[field], desired[field])) {
+      Object.assign(next, { [field]: desired[field] });
+    }
+  }
+  return next;
+}
+
+function acceptedChanges<T extends object>(
+  fields: readonly (keyof T)[],
+  before: T,
+  desired: T,
+  echoed: T,
+  names: Record<keyof T, SettingsDraftField | undefined>,
+): AcceptedSettingsChange[] {
+  const out: AcceptedSettingsChange[] = [];
+  for (const field of fields) {
+    const name = names[field];
+    if (name && sameValue(echoed[field], desired[field]) && !sameValue(echoed[field], before[field])) {
+      out.push({ field: name, before: before[field], after: echoed[field] });
+    }
+  }
+  return out;
+}
+
+/** Count only editable values; read-only endpoint echoes must never make a draft look dirty. */
+export function countSettingsDraftChanges(applied: SettingsSnapshot, draft: SettingsSnapshot): number {
+  let count = 0;
+  if (applied.proxy && draft.proxy && applied.proxy.codexAutoStart !== draft.proxy.codexAutoStart) count += 1;
+  if (applied.shadowCall && draft.shadowCall && applied.shadowCall.enabled !== draft.shadowCall.enabled) count += 1;
+  if (applied.maMode !== null && draft.maMode !== null && applied.maMode !== draft.maMode) count += 1;
+  if (applied.injection && draft.injection) {
+    if (applied.injection.multiAgentGuidanceEnabled !== draft.injection.multiAgentGuidanceEnabled) count += 1;
+    if (applied.injection.syncCodexSubagentDefaults !== draft.injection.syncCodexSubagentDefaults) count += 1;
+  }
+  if (applied.effortCaps && draft.effortCaps) {
+    if (applied.effortCaps.effortCap !== draft.effortCaps.effortCap) count += 1;
+    if (applied.effortCaps.subagentEffortCap !== draft.effortCaps.subagentEffortCap) count += 1;
+  }
+  if (applied.policy && draft.policy) {
+    if (applied.policy.enabled !== draft.policy.enabled) count += 1;
+    if (applied.policy.schedule !== draft.policy.schedule) count += 1;
+  }
+  if (applied.debug && draft.debug) {
+    for (const key of ["debug", "usage", "injection", "claude"] as const) {
+      if (applied.debug[key] !== draft.debug[key]) count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * Apply one staged settings snapshot with at most one PUT per endpoint.
+ *
+ * The coordinator owns the only call site for this helper. It starts from the
+ * durable baseline, sends all changed fields for each endpoint together, trusts
+ * only parsed server echoes, and leaves a refused or failed field in `draft`.
+ * That makes a partial save retryable without pretending the rejected values
+ * landed or recording a revision for them.
+ */
+export async function applySettingsDraft(
+  apiBase: string,
+  applied: SettingsSnapshot,
+  desired: SettingsSnapshot,
+): Promise<SettingsApplyResult> {
+  let nextApplied: SettingsSnapshot = { ...applied };
+  let nextDraft: SettingsSnapshot = { ...desired };
+  const accepted: AcceptedSettingsChange[] = [];
+  const failed: SettingsEndpoint[] = [];
+
+  if (applied.proxy && desired.proxy) {
+    const fields = changed(applied.proxy, desired.proxy, ["codexAutoStart"]);
+    if (fields.length) {
+      try {
+        const data = await putSetting<SettingsResponse>(apiBase, "/api/settings", {
+          codexAutoStart: desired.proxy.codexAutoStart,
+        });
+        const echoed = readProxy(data);
+        nextApplied = { ...nextApplied, proxy: echoed };
+        nextDraft = { ...nextDraft, proxy: retainUnaccepted(echoed, desired.proxy, fields) };
+        accepted.push(...acceptedChanges(fields, applied.proxy, desired.proxy, echoed, {
+          codexAutoStart: "codexAutoStart", port: undefined, hostname: undefined,
+        }));
+      } catch {
+        failed.push("settings");
+      }
+    }
+  }
+
+  if (applied.shadowCall && desired.shadowCall) {
+    const fields = changed(applied.shadowCall, desired.shadowCall, ["enabled"]);
+    if (fields.length) {
+      try {
+        const data = await putSetting<ShadowCallResponse>(apiBase, "/api/shadow-call-settings", {
+          enabled: desired.shadowCall.enabled,
+        });
+        const echoed = readShadowCall(data);
+        nextApplied = { ...nextApplied, shadowCall: echoed };
+        nextDraft = { ...nextDraft, shadowCall: retainUnaccepted(echoed, desired.shadowCall, fields) };
+        accepted.push(...acceptedChanges(fields, applied.shadowCall, desired.shadowCall, echoed, {
+          enabled: "shadowCall", model: undefined,
+        }));
+      } catch {
+        failed.push("shadow");
+      }
+    }
+  }
+
+  if (applied.maMode !== null && desired.maMode !== null && applied.maMode !== desired.maMode) {
+    try {
+      const data = await putSetting<V2Response>(apiBase, "/api/v2", { multiAgentMode: desired.maMode });
+      const echoed = readMode(data);
+      nextApplied = { ...nextApplied, maMode: echoed };
+      nextDraft = { ...nextDraft, maMode: echoed === desired.maMode ? echoed : desired.maMode };
+      if (echoed === desired.maMode) accepted.push({ field: "maMode", before: applied.maMode, after: echoed });
+    } catch {
+      failed.push("mode");
+    }
+  }
+
+  if (applied.injection && desired.injection) {
+    const fields = changed(applied.injection, desired.injection, [
+      "multiAgentGuidanceEnabled",
+      "syncCodexSubagentDefaults",
+    ]);
+    if (fields.length) {
+      try {
+        const body: Partial<Pick<InjectionSettings, "multiAgentGuidanceEnabled" | "syncCodexSubagentDefaults">> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.injection[field] });
+        const data = await putSetting<InjectionResponse>(apiBase, "/api/injection-model", body);
+        const echoed = readInjection(data);
+        nextApplied = { ...nextApplied, injection: echoed };
+        nextDraft = { ...nextDraft, injection: retainUnaccepted(echoed, desired.injection, fields) };
+        accepted.push(...acceptedChanges(fields, applied.injection, desired.injection, echoed, {
+          multiAgentGuidanceEnabled: "multiAgentGuidanceEnabled",
+          syncCodexSubagentDefaults: "syncCodexSubagentDefaults",
+          model: undefined,
+          effort: undefined,
+        }));
+      } catch {
+        failed.push("injection");
+      }
+    }
+  }
+
+  if (applied.effortCaps && desired.effortCaps) {
+    const fields = changed(applied.effortCaps, desired.effortCaps, ["effortCap", "subagentEffortCap"]);
+    if (fields.length) {
+      try {
+        const body: Partial<Record<keyof EffortCapSettings, string | null>> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.effortCaps[field] || null });
+        const data = await putSetting<EffortCapsResponse>(apiBase, "/api/effort-caps", body);
+        const echoed = readEffortCaps(data);
+        nextApplied = { ...nextApplied, effortCaps: echoed };
+        nextDraft = { ...nextDraft, effortCaps: retainUnaccepted(echoed, desired.effortCaps, fields) };
+        accepted.push(...acceptedChanges(fields, applied.effortCaps, desired.effortCaps, echoed, {
+          effortCap: "effortCap", subagentEffortCap: "subagentEffortCap",
+        }));
+      } catch {
+        failed.push("effortCaps");
+      }
+    }
+  }
+
+  if (applied.policy && desired.policy) {
+    const fields = changed(applied.policy, desired.policy, ["enabled", "schedule"]);
+    if (fields.length) {
+      try {
+        const body: Partial<Pick<CleanupPolicySettings, "enabled" | "schedule">> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.policy[field] });
+        const data = await putSetting<{ policy?: PolicyResponse }>(apiBase, "/api/storage/cleanup-policy", body);
+        if (!data.policy) throw new Error("/api/storage/cleanup-policy");
+        const echoed = readPolicy(data.policy);
+        nextApplied = { ...nextApplied, policy: echoed };
+        nextDraft = { ...nextDraft, policy: retainUnaccepted(echoed, desired.policy, fields) };
+        accepted.push(...acceptedChanges(fields, applied.policy, desired.policy, echoed, {
+          enabled: "policyEnabled",
+          schedule: "policySchedule",
+          mode: undefined,
+          archivedBytesOver: undefined,
+          removeOldestPercent: undefined,
+          reduceToBytes: undefined,
+        }));
+      } catch {
+        failed.push("policy");
+      }
+    }
+  }
+
+  if (applied.debug && desired.debug) {
+    const fields = changed(applied.debug, desired.debug, ["debug", "usage", "injection", "claude"]);
+    if (fields.length) {
+      try {
+        const body: Partial<DebugFlags> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.debug[field] });
+        const data = await putSetting<DebugResponse>(apiBase, "/api/debug", body);
+        const echoed = readDebug(data);
+        nextApplied = { ...nextApplied, debug: echoed };
+        nextDraft = { ...nextDraft, debug: retainUnaccepted(echoed, desired.debug, fields) };
+        accepted.push(...acceptedChanges(fields, applied.debug, desired.debug, echoed, {
+          debug: "debug", usage: "usage", injection: "injection", claude: "claude",
+        }));
+      } catch {
+        failed.push("debug");
+      }
+    }
+  }
+
+  return {
+    applied: nextApplied,
+    draft: settingsSnapshotsEqual(nextApplied, nextDraft) ? null : nextDraft,
+    accepted,
+    failed,
+  };
+}

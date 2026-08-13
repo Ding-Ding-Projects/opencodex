@@ -21,7 +21,6 @@ import { DEFAULT_SEED, SEED_SWATCHES, fontStackFor, type DensityLevel, type Them
 import { familyOf } from "../theme/fonts";
 import { formatHex, parseColor } from "../../../shared/m3/color";
 import { elsewhereFor } from "./settings-elsewhere";
-import { recordRevision } from "../shell/revisions";
 import { useNotifications } from "../shell/notifications-context";
 import type { TKey } from "../i18n/shared";
 
@@ -205,7 +204,6 @@ export default function Appearance() {
   };
 
   const onResetAll = () => {
-    recordRevision({ scope: "settings", label: t("appearance.title"), summary: t("appearance.resetRecorded") });
     resetAppearance();
     notify({ tone: "info", title: t("appearance.resetDone") });
   };
