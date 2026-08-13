@@ -360,8 +360,15 @@ Add-Codex-Account modal writes those class names by hand.
   HK, but no font files are bundled — the stacks fall through to system faces
   today. `docs/design-system/foundations.md` forbids CDN fonts, so these must be
   vendored into `gui/public/` before the family picker means anything.
-- **Settings search across every settings surface.** Not built; needs a generated
-  index over the real settings components.
+- **Settings search across every settings surface.** Built. `gui/src/shell/settings-registry.ts`
+  holds one index of every setting; each screen contributes its rows in
+  `gui/src/shell/settings-registry-entries.ts`, and `useSettingsSearch` takes a
+  `scope` naming the page a surface is, so a query reports matches on other pages
+  by their navigation name. 80 settings across 14 pages are registered. Rows are
+  i18n keys resolved at query time rather than strings captured at render time,
+  because the index has to describe screens that are not mounted — which also
+  rules out registering from a component effect. What it still does not carry is a
+  setting's live value on a page that is not open, or navigation to the hit.
 
 ---
 

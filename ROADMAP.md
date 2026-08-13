@@ -72,8 +72,8 @@ Three waves, one agent per screen, each verified by a second agent that re-read 
 than trusting the report. **378 differences closed across all 19 screens**; GUI tests went 383 → 494.
 
 Parity is **not** 100%, and the remainder is listed honestly under Known gaps below rather than
-rounded away. The largest single category is cross-page settings search; the rest are per-screen
-notes recorded in the wave reports. Three of the verifiers caught defects their own implementing
+rounded away. The largest single category was cross-page settings search, which has since landed
+(see Search below); the rest are per-screen notes recorded in the wave reports. Three of the verifiers caught defects their own implementing
 agent had missed — a history entry written for a change that never happened, an uncapped regex over
 every log line, and a page claiming to bundle fonts it did not have — which is the argument for
 keeping the verify pass rather than trusting a self-report.
@@ -149,12 +149,27 @@ Checked in the tree; each of these is genuinely absent, not merely undocumented.
   offers a plain-text default with a `.*` regex opt-in, and the **settings-search row now ships on
   the settings surfaces** (Codex Auth, Providers, Models, Storage, Startup, Claude Code) with a
   builder shortcut beside it.
-- What remains is **cross-page settings search**. Each surface builds its own local index, so
-  `settings.otherTab` can only name another card on the same screen — not another page. The
-  prototype's `settingsIndex` (`design/ocx-data.js`) is one flat array of `{tab, label, desc, value}`;
-  a shared `useSettingsSearch(sectionId, localEntries)` in `gui/src/shell/` would let each screen
-  contribute its rows and query the whole set. That is the honest remaining half of "a search on
-  every settings surface".
+- **Cross-page settings search has landed.** `gui/src/shell/settings-registry.ts` holds one index
+  of every setting the app has; `gui/src/shell/settings-registry-entries.ts` is where each screen
+  contributes its rows, and `useSettingsSearch` reads it through a new `scope` argument naming the
+  page a surface is (or `"all"` for a popover, which is not a page at all). A query on any settings
+  surface now reports matches on *other pages* by their navigation name, not merely on another card
+  of the same screen.
+  - **80 settings across 14 pages** are registered: Dashboard 12, Claude 15, Startup 8, Storage 7,
+    Logs & Debug 7, Appearance 6, Remote access 6, Language & voice 5, Remote control 4, Codex Auth
+    3, Notifications 3, Models 2, API 1, Grok 1. `Settings` registers none of its own — it is the
+    aggregate view, and a setting belongs to the page that owns its real editor rather than to every
+    page that mirrors it.
+  - Rows are i18n keys resolved at query time, not strings captured at render time, because the
+    whole point is to describe screens that are **not mounted**. That also makes a row pointing at a
+    key which does not exist a compile error rather than a search result leading nowhere, and it
+    keeps the cross-page note in whatever language the reader has selected.
+  - `gui/src/pages/settings-elsewhere.ts` — the eight hand-curated rows this replaces — is now a
+    thin shim deriving its list from the registry, kept only until `Settings` and `Appearance` move
+    their hand-built searches onto `useSettingsSearch`.
+  - Still open: the registry indexes labels, descriptions and option names, but not a setting's
+    **live value** on a page that is not open, and selecting a cross-page hit reports where the
+    setting lives rather than navigating there.
 - The regex-builder hand-off carries a pattern into a search bar but **drops flags**: the receiving
   rows compile with a fixed `"i"`, matching the prototype, so a pattern built as case-sensitive
   arrives case-insensitive. Either the builder should stop sending flags a row cannot represent, or

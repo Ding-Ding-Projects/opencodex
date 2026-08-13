@@ -227,7 +227,10 @@ export default function Debug({ apiBase, embedded }: { apiBase: string; embedded
     ];
   }, [t, debug, stream, follow]);
 
-  const search = useSettingsSearch({ options });
+  // `logs` rather than a page of its own: this panel is a half of the Logs
+  // tablist, so a hit on one of *its* settings is a hit on Logs & Debug, and the
+  // registry must not offer to send the user somewhere they already are.
+  const search = useSettingsSearch({ options, scope: "logs" });
   const { matches } = search;
 
   return (

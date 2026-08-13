@@ -254,7 +254,7 @@ export default function Startup({ apiBase }: { apiBase: string }) {
     return rows;
   }, [t, data, failed, tray, trayLoading, trayError]);
 
-  const search = useSettingsSearch({ options });
+  const search = useSettingsSearch({ options, scope: "startup" });
   const { matches } = search;
 
   const copyCommand = async (command: string) => {

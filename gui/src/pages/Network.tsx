@@ -435,7 +435,7 @@ export default function Network({ apiBase }: { apiBase: string }) {
   // Flat surface: four stacked cards, no tabs. So no `tab` on any option and no
   // `activeTab` here — inventing one would have the status line offer to send the
   // user to a tab this screen does not have.
-  const settingsSearch = useSettingsSearch({ options: settingsOptions });
+  const settingsSearch = useSettingsSearch({ options: settingsOptions, scope: "network" });
   const { matches } = settingsSearch;
 
   /**

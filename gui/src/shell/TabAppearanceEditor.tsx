@@ -173,7 +173,11 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
     return rows;
   }, [t, accent, onAccentChange, style.color, style.bg, style.font, style.size, style.weight, style.badge]);
 
-  const search = useSettingsSearch({ options });
+  // `"all"`, not a page id: this panel is anchored to a tab and can be opened
+  // from any screen, so none of the app's pages is "here" and every registered
+  // setting is legitimately somewhere else. Typing "theme" into a tab's style
+  // editor should say that theme lives on Appearance rather than nothing at all.
+  const search = useSettingsSearch({ options, scope: "all" });
   const { matches } = search;
 
   // Measured after paint and re-measured when the page moves under it, so the
