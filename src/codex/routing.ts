@@ -22,6 +22,7 @@ import {
 } from "./quota";
 import { MAIN_CODEX_ACCOUNT_ID, getMainAccountPlan } from "./main-account";
 import { isSelectableCodexPoolAccount } from "./account-id";
+import { maskAccountId } from "../lib/privacy";
 import type { OcxConfig } from "../types";
 
 type ThreadAffinityEntry = {
@@ -214,6 +215,8 @@ export function clearCodexUpstreamHealth(): void {
   upstreamHealth.clear();
   quotaScopedHealth.clear();
   runtimeActiveCodexAccountId = undefined;
+  saturatedRoutingNotice = null;
+  saturatedRoutingLoggedAt.clear();
 }
 
 export function clearCodexUpstreamHealthForAccount(accountId: string): void {
@@ -588,10 +591,35 @@ export function isCodexAccountSoftAvoided(accountId: string, now = Date.now()): 
   return getCodexAccountSoftAvoidUntil(accountId, now) !== null;
 }
 
+/**
+ * True when the account's own REPORTED usage has reached the exhaustion percent.
+ *
+ * "Reported" is the load-bearing word. This is a locally computed reading of a
+ * quota window, not a statement from upstream, and upstream routinely keeps
+ * serving past a reported 100% for a further, unknowable number of requests. It
+ * is therefore evidence about PREFERENCE (which account to reach for first) and
+ * never about PERMISSION (whether a request may be attempted at all) — see
+ * {@link isCodexAccountSelectable} and {@link isCodexAccountPreferred}.
+ */
 function isCodexAccountExplicitlyExhausted(config: OcxConfig, accountId: string): boolean {
   return isCodexQuotaExhausted(getAccountQuota(accountId), getPoolAccountPlan(config, accountId));
 }
 
+/**
+ * May this account be used at all?
+ *
+ * Only a real refusal answers no: an administrative pause, a hard cooldown
+ * recorded from an actual upstream 429/402, a transient soft-avoid after
+ * connect/timeout/5xx failures, or a credential that cannot authenticate. Every
+ * one of those is something that happened, not something that was computed.
+ *
+ * Reported usage is deliberately absent from this list. It used to be here, and
+ * that is exactly what cut a working session off the moment an account's
+ * percentage touched 100: the account vanished from the pool, thread affinity
+ * was dropped mid-task, and when no cooler peer existed the request was refused
+ * outright — while upstream would still have served it. A guess must never
+ * revoke permission; that is the authoritative signal's job.
+ */
 function isCodexAccountSelectable(
   config: OcxConfig,
   accountId: string,
@@ -599,10 +627,119 @@ function isCodexAccountSelectable(
   quotaScope?: CodexQuotaScope,
 ): boolean {
   return !isCodexAccountPaused(config, accountId)
-    && !isCodexAccountExplicitlyExhausted(config, accountId)
     && getCodexQuotaHealthSnapshot(accountId, quotaScope, now) === null
     && !isCodexAccountSoftAvoided(accountId, now)
     && isCodexAccountUsable(config, accountId);
+}
+
+/**
+ * Would this account be reached for before a saturated one?
+ *
+ * This is the demotion that replaces the old exclusion. An account reporting
+ * 100% stays permitted but sits in a second tier, so every strategy keeps the
+ * candidate list it always had while any unsaturated account exists, and only
+ * sees the saturated ones when the alternative would be returning nothing.
+ */
+function isCodexAccountPreferred(config: OcxConfig, accountId: string): boolean {
+  return !isCodexAccountExplicitlyExhausted(config, accountId);
+}
+
+/**
+ * Narrow a permitted candidate list to the preferred tier, but only while that
+ * tier has somebody in it.
+ *
+ * Running out of PREFERRED accounts is not the same as running out of accounts.
+ * Collapsing those two states into one is the whole defect: the pool reported
+ * "no account available" on the strength of a percentage, and a session that
+ * was mid-task ended with the work unfinished. When every account reads as
+ * saturated the honest answer is still an account — the request goes out, and
+ * upstream decides.
+ */
+function preferUnsaturatedAccounts(config: OcxConfig, ids: string[]): string[] {
+  const preferred = ids.filter(id => isCodexAccountPreferred(config, id));
+  return preferred.length > 0 ? preferred : ids;
+}
+
+export type CodexSaturatedRoutingNotice = {
+  accountId: string;
+  /** Reported usage percent at the moment routing fell back to this account. */
+  usagePercent: number;
+  /** First request in the current uninterrupted run of saturated routing. */
+  since: number;
+  /** Most recent request routed this way. */
+  lastAt: number;
+};
+
+/**
+ * Current "still going, past reported quota" state, or null while routing is
+ * picking an account that has not reached the reported exhaustion percent.
+ */
+let saturatedRoutingNotice: CodexSaturatedRoutingNotice | null = null;
+const saturatedRoutingLoggedAt = new Map<string, number>();
+/** One log line per account per interval; this fires on a live request path. */
+const CODEX_SATURATED_ROUTING_LOG_INTERVAL_MS = 5 * 60_000;
+
+/** Masked label for logs and API bodies; the main login has no secret id. */
+function saturatedRoutingLabel(accountId: string): string {
+  return accountId === MAIN_CODEX_ACCOUNT_ID ? "main" : maskAccountId(accountId) ?? "account-…????";
+}
+
+/**
+ * Record that a request is going out on an account whose reported usage has
+ * reached 100% because nothing cooler is available.
+ *
+ * This is not an error and never blocks anything — it is the state being said
+ * out loud. Silently continuing here is indistinguishable from a proxy that has
+ * quietly stopped rotating, and silently REFUSING here is the defect this
+ * replaces. A user should be able to tell "still going, past reported quota"
+ * apart from "everything is fine", so the run is logged once per account per
+ * interval (this sits on the request path) and exposed as routing state.
+ */
+function noteSaturatedCodexRouting(config: OcxConfig, accountId: string, now: number): void {
+  if (!isCodexAccountExplicitlyExhausted(config, accountId)) {
+    // Back on an unsaturated account: the run is over, so stop reporting it.
+    if (saturatedRoutingNotice) saturatedRoutingNotice = null;
+    saturatedRoutingLoggedAt.delete(accountId);
+    return;
+  }
+  const usagePercent = computeCodexUsageScore(
+    getAccountQuota(accountId),
+    getPoolAccountPlan(config, accountId),
+  );
+  saturatedRoutingNotice = saturatedRoutingNotice?.accountId === accountId
+    ? { ...saturatedRoutingNotice, usagePercent, lastAt: now }
+    : { accountId, usagePercent, since: now, lastAt: now };
+
+  const loggedAt = saturatedRoutingLoggedAt.get(accountId);
+  if (loggedAt !== undefined && now - loggedAt < CODEX_SATURATED_ROUTING_LOG_INTERVAL_MS) return;
+  saturatedRoutingLoggedAt.set(accountId, now);
+  console.warn(
+    `[codex-routing] ${saturatedRoutingLabel(accountId)} reports ${Number.isFinite(usagePercent) ? `${usagePercent}%` : "unknown"} usage`
+    + ` and no cooler account is available; continuing on it anyway.`
+    + ` A reported percentage is not a refusal — only an upstream 429/402 takes an account out of rotation.`,
+  );
+}
+
+/**
+ * Read the current saturated-routing state for surfaces that report routing.
+ * Null means the last routing decision picked an account under 100%.
+ */
+export function getCodexSaturatedRoutingNotice(): CodexSaturatedRoutingNotice | null {
+  return saturatedRoutingNotice;
+}
+
+/**
+ * Wrap a resolved account so every "selected" exit reports whether it is a
+ * past-reported-quota last resort. Centralising it here is what stops one of
+ * the several selected-return paths from silently skipping the notice.
+ */
+function selectedCodexAccount(
+  config: OcxConfig,
+  accountId: string,
+  now: number,
+): CodexThreadResolution {
+  noteSaturatedCodexRouting(config, accountId, now);
+  return { status: "selected", accountId };
 }
 
 function threadAffinityScope(quotaScope?: CodexQuotaScope): ThreadAffinityScope {
@@ -718,7 +855,11 @@ function getEligiblePoolAccounts(
   ) {
     ids.unshift(MAIN_CODEX_ACCOUNT_ID);
   }
-  return ids;
+  // Single choke point for the preference/permission split: every strategy
+  // (quota, round-robin, fill-first, same-request 429 alternate) draws its
+  // candidates from here, so demoting saturated accounts once keeps all of them
+  // behaving exactly as before while a cooler account exists.
+  return preferUnsaturatedAccounts(config, ids);
 }
 
 function listEligibleCodexAccountIds(
@@ -733,6 +874,13 @@ function stickyLimitForConfig(config: OcxConfig): number {
   return normalizeAccountPoolStickyLimit(config.accountPoolStickyLimit);
 }
 
+/**
+ * Fill-first drain check. This is a PREFERENCE question — "has the active account
+ * drained enough that the next one should take over?" — and a false answer only
+ * advances to another eligible account. It never denies the request: when the
+ * successor search finds nothing under threshold, {@link pickNextFillFirstCodexAccount}
+ * falls back to the first eligible successor rather than returning nothing.
+ */
 function isActiveUnderFillFirstThreshold(config: OcxConfig, accountId: string): boolean {
   const threshold = config.autoSwitchThreshold ?? 80;
   if (threshold <= 0) return true;
@@ -985,6 +1133,16 @@ function isUnknownUsage(usage: number): boolean {
   return usage === CODEX_UNKNOWN_USAGE_SCORE;
 }
 
+/**
+ * Quota strategy preference step: move off the active account when it has crossed
+ * the threshold AND a strictly cooler account exists.
+ *
+ * Note what it cannot do. It only ever returns an account — `active` itself when
+ * nothing cooler is available — so crossing the threshold, at any percentage
+ * including 100, can change WHICH account serves the request but never whether
+ * one does. The comparison is strict, so a saturated peer never displaces an
+ * equally saturated active either.
+ */
 function applyQuotaAutoSwitch(
   config: OcxConfig,
   active: string,
@@ -1091,8 +1249,11 @@ export function previewCodexAccountForRequest(
     if (fallback) active = fallback;
     else if (
       hasConfiguredPoolAccount(config, active)
+      // Saturation is no longer part of this guard: a configured, unpaused
+      // account reporting 100% is still an account, and the preview must agree
+      // with resolve about that or subagent fallback decides against a route
+      // the real request would happily have taken.
       && !isCodexAccountPaused(config, active)
-      && !isCodexAccountExplicitlyExhausted(config, active)
     ) return active;
     else return null;
   }
@@ -1108,7 +1269,6 @@ export function previewCodexAccountForRequest(
     const best = pickLowestUsageCodexAccount(config, active, now, quotaScope);
     if (best) active = best;
   }
-  if (isCodexAccountExplicitlyExhausted(config, active)) return null;
   if (!isCodexAccountUsable(config, active)) {
     return hasConfiguredPoolAccount(config, active) ? active : null;
   }
@@ -1164,18 +1324,21 @@ export function resolveCodexAccountForThreadDetailed(
             if (best !== entry.accountId) {
               if (!isIndependentCodexQuotaScope(quotaScope)) setActiveCodexAccount(config, best);
               bindThreadAffinity(threadId, best, now, quotaScope); // rebinds + resets clocks
-              return { status: "selected", accountId: best };
+              return selectedCodexAccount(config, best, now);
             }
           }
         }
       }
-      return { status: "selected", accountId: entry.accountId };
+      // A bound thread whose account has merely reported 100% keeps its binding.
+      // Unbinding it here is what ended sessions mid-task: the account had not
+      // refused anything, and no cooler peer existed to move the work to.
+      return selectedCodexAccount(config, entry.accountId, now);
     }
     deleteThreadAffinity(threadId, quotaScope);
   }
 
   const strategyPick = pickUnboundStrategyAccount(config, threadId, now, true, quotaScope);
-  if (strategyPick) return { status: "selected", accountId: strategyPick };
+  if (strategyPick) return selectedCodexAccount(config, strategyPick, now);
 
   let active = getEffectiveActiveCodexAccountId(config);
   if (!active) {
@@ -1191,26 +1354,36 @@ export function resolveCodexAccountForThreadDetailed(
       active = fallback;
     } else if (
       hasConfiguredPoolAccount(config, active)
+      // Same as the preview guard: reported saturation is not grounds for
+      // refusing. A live cooldown still reaches auth resolution below, where the
+      // probe lease decides, so a genuinely refused account is unaffected.
       && !isCodexAccountPaused(config, active)
-      && !isCodexAccountExplicitlyExhausted(config, active)
     ) {
-      return { status: "selected", accountId: active };
+      return selectedCodexAccount(config, active, now);
     } else {
       return { status: "none" };
     }
   }
   active = applyQuotaAutoSwitch(config, active, now, quotaScope);
   active = applyFailureFailover(config, active, now);
-  if (isCodexAccountExplicitlyExhausted(config, active)) return { status: "none" };
+  // Deliberately no exhaustion check here. This line used to return
+  // `{ status: "none" }` for an account reporting 100%, which surfaced to the
+  // caller as CodexPoolAuthenticationError and ended the session — on the
+  // strength of a percentage that upstream had never confirmed. Refusal is now
+  // reserved for a real refusal.
   if (!isCodexAccountUsable(config, active)) {
-    return hasConfiguredPoolAccount(config, active) ? { status: "selected", accountId: active } : { status: "none" };
+    return hasConfiguredPoolAccount(config, active)
+      ? selectedCodexAccount(config, active, now)
+      : { status: "none" };
   }
   if (isCodexAccountPaused(config, active)) return { status: "none" };
   if (getCodexQuotaHealthSnapshot(active, quotaScope, now)) {
-    return hasConfiguredPoolAccount(config, active) ? { status: "selected", accountId: active } : { status: "none" };
+    return hasConfiguredPoolAccount(config, active)
+      ? selectedCodexAccount(config, active, now)
+      : { status: "none" };
   }
   if (threadId) bindThreadAffinity(threadId, active, now, quotaScope);
-  return { status: "selected", accountId: active };
+  return selectedCodexAccount(config, active, now);
 }
 
 export function recordCodexUpstreamOutcome(
