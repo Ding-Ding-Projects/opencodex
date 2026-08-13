@@ -128,6 +128,20 @@ export function readFunny(storage?: Pick<Storage, "getItem">): FunnyLevels {
   }
 }
 
+/**
+ * Persist the funny levels. Throws whatever the browser threw.
+ *
+ * It used to catch its own failure and return normally, which read as
+ * tolerance and was really concealment: the sole caller — the draft
+ * coordinator's `apply()` — already wraps this in a `try`, so that `catch` could
+ * never run. A quota or policy refusal therefore vanished at the exact point
+ * where the only code able to report it was standing, and the levels silently
+ * failed to survive a reload.
+ *
+ * Tolerance did not go away, it moved to where it belongs: the caller keeps
+ * going after a refusal and says so on screen, rather than this deciding on its
+ * behalf that nobody needed to know.
+ */
 export function writeFunny(levels: FunnyLevels, storage?: Pick<Storage, "setItem">): void {
-  try { (storage ?? localStorage).setItem(FUNNY_KEY, JSON.stringify(levels)); } catch { /* quota */ }
+  (storage ?? localStorage).setItem(FUNNY_KEY, JSON.stringify(levels));
 }

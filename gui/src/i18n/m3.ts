@@ -221,6 +221,13 @@ export const M3_EN = {
   "settings.saveFailed": "Could not save that setting",
   "settings.saveRefusedBody": "The server kept its own value for {names}. Your change is still staged, so you can adjust it and save again.",
   "settings.saveErrorBody": "{names} could not be written: {reason}. The change is still staged, so you can try again.",
+  // Deliberately not "could not be saved". These settings live in this browser
+  // rather than on the proxy, and a refused write leaves them applied: the
+  // interface has already changed, and only the storing of it failed. Both
+  // halves are said, in that order, because a user looking at an interface that
+  // visibly did change will not believe a notice that opens by denying it.
+  "settings.saveUnpersistedTitle": "Applied, but not saved in this browser",
+  "settings.saveUnpersistedBody": "{names} changed straight away, but this browser refused to store it: {reason}. It will revert the next time this page loads. The change is still staged, so you can try saving again — or free up some browser storage, or leave private browsing, and then save.",
   "settings.revisionSummary": "{label} set to {value}",
   "settings.draftChanged": "{count} unapplied setting(s)",
   "settings.saveApply": "Save and apply",
@@ -434,6 +441,7 @@ export const M3_EN = {
   "appearance.reset": "Reset appearance",
   "appearance.resetDone": "Appearance reset to defaults",
   "appearance.resetRecorded": "Appearance reset to defaults",
+  "appearance.revisionSummary": "Applied appearance settings",
   "appearance.seedTitle": "Seed colour",
   "appearance.seedSub": "One colour derives the whole Material 3 palette. Any hex works — the eight below are curated starting points.",
   "appearance.seedPicker": "Pick a seed colour",
@@ -902,6 +910,11 @@ export const M3_EN = {
   "lang.mode": "Language mode",
   "lang.funnyEn": "Funny level — English",
   "lang.funnyYue": "Funny level — 廣東話",
+  // The pair, under one name. Both sliders are written under a single storage
+  // key, so a notice about that write cannot borrow either row's own label
+  // without naming half of what it is talking about.
+  "lang.funnyLevels": "Funny levels",
+  "lang.funnyRevision": "Applied funny-level settings",
   "lang.funnyLadder": "The same destructive warning at every level",
   "lang.funnyLevel": "Level {n}",
   "narrator.offTitle": "Narrator is off",

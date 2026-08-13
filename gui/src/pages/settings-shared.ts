@@ -321,12 +321,10 @@ export interface FailedSettingsWrite {
 }
 
 /**
- * What one apply did, in the three states a caller has to tell apart: stored,
- * refused, and never written. The draft coordinator hands this back so a surface
- * that sits inside the language and notification providers — which the
- * coordinator itself does not — can say so on screen.
+ * What the settings endpoints made of one apply, in the three states a caller
+ * has to tell apart: stored, refused, and never written.
  */
-export interface SettingsSaveOutcome {
+export interface ServerSaveOutcome {
   /** User-requested fields whose echoed value proves that they were accepted. */
   accepted: AcceptedSettingsChange[];
   /** Fields the endpoint answered for but did not store, still staged for another attempt. */
@@ -335,7 +333,63 @@ export interface SettingsSaveOutcome {
   failed: FailedSettingsWrite[];
 }
 
-export interface SettingsApplyResult extends SettingsSaveOutcome {
+/**
+ * A settings group this browser owns outright: it is stored in `localStorage`
+ * and never sent to the proxy, so nothing about it has an endpoint, an echo or
+ * a `SettingsDraftField`.
+ */
+export type BrowserSettingsGroup = "appearance" | "language" | "funny";
+
+/**
+ * A browser-owned group whose durable write the browser refused.
+ *
+ * This is deliberately not a `FailedSettingsWrite`, because it is not the same
+ * event and must not be described as one. A failed endpoint write changed
+ * nothing anywhere; a refused `localStorage.setItem` leaves the value **applied
+ * to the running interface** — the draft is what the tokens, the document
+ * language and every `t()` already render — and merely unable to survive a
+ * reload. Saying "could not be saved" would be true and would still mislead, so
+ * the third state gets its own name rather than being folded into the second.
+ */
+export interface FailedBrowserWrite {
+  group: BrowserSettingsGroup;
+  /** Whatever the browser said, verbatim. */
+  reason: string;
+}
+
+/**
+ * The screen name each browser-owned group is known by, for the same reason
+ * `SETTINGS_FIELD_LABELS` exists: a notice has to name what could not be stored,
+ * and the only name the user has ever seen for it is the one on its own surface.
+ *
+ * Two of the three are already-shipped keys rather than new copy — "Appearance"
+ * is the nav entry the whole group lives under, and "Interface language" is the
+ * row that sets the locale. Only the funny levels needed a name of their own:
+ * they are two rows written under one storage key, so neither row's label can
+ * stand for the pair.
+ */
+export const BROWSER_GROUP_LABELS: Record<BrowserSettingsGroup, TKey> = {
+  appearance: "nav.appearance",
+  language: "lang.title",
+  funny: "lang.funnyLevels",
+};
+
+/**
+ * What one apply did across both halves of the draft — the server-backed fields
+ * and the browser-owned groups. The draft coordinator hands this back so a
+ * surface that sits inside the language and notification providers — which the
+ * coordinator itself does not — can say so on screen.
+ */
+export interface SettingsSaveOutcome extends ServerSaveOutcome {
+  /**
+   * Browser-owned groups that repainted but could not be stored. Named for the
+   * state it leaves the user in rather than for the operation that failed:
+   * applied, not saved.
+   */
+  unpersisted: FailedBrowserWrite[];
+}
+
+export interface SettingsApplyResult extends ServerSaveOutcome {
   /** Server-confirmed baseline, including any endpoint side effects it echoed. */
   applied: SettingsSnapshot;
   /** Only fields an endpoint did not accept remain staged for another attempt. */
@@ -451,6 +505,33 @@ function requestedFields<T extends object>(
  */
 function reasonOf(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message;
+  const text = String(error).trim();
+  return text && text !== "[object Object]" ? text : fallback;
+}
+
+/**
+ * What the browser said when it refused to store something, in its own words.
+ *
+ * Unlike `reasonOf` this keeps the `name` alongside the message, because for a
+ * storage failure the name is the more actionable half and the message is the
+ * part that varies. `QuotaExceededError` means something has to be freed up or
+ * that this is a private window; `SecurityError` means storage is switched off
+ * for this document by policy — and a user can act on that distinction, while
+ * the accompanying message is engine-specific, occasionally empty, and in
+ * Safari's case identical for both. The name is omitted only when the message
+ * already carries it, so nothing ever renders `QuotaExceededError:
+ * QuotaExceededError: …`.
+ *
+ * The fallback is the storage key. It is a thin thing to tell someone, but it is
+ * a true statement about which write failed, which a generic apology is not.
+ */
+export function browserWriteReason(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    const name = error.name.trim();
+    if (name && name !== "Error" && !message.includes(name)) return message ? `${name}: ${message}` : name;
+    if (message) return message;
+  }
   const text = String(error).trim();
   return text && text !== "[object Object]" ? text : fallback;
 }

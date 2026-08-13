@@ -14,14 +14,19 @@
  * will not go away, which reads as a broken Save rather than as a server that
  * said no.
  *
- * Three outcomes, told apart on purpose:
+ * Four outcomes, told apart on purpose:
  *
- *   - accepted — a success snackbar that auto-dismisses; the change is in the
+ *   - accepted    — a success snackbar that auto-dismisses; the change is in the
  *     Version history and the body says so.
- *   - refused  — the endpoint answered and kept its own value. An error
+ *   - refused     — the endpoint answered and kept its own value. An error
  *     snackbar, so it persists until dismissed, naming the settings involved.
- *   - failed   — the write never landed. Also persistent, and it quotes the
+ *   - failed      — the write never landed. Also persistent, and it quotes the
  *     server's own message rather than a generic apology.
+ *   - unpersisted — the browser refused to store a group it owns outright. Also
+ *     persistent, and deliberately not worded as either of the two above: the
+ *     change *is* in effect, it just cannot survive a reload, and a user told
+ *     "could not be saved" about an interface that visibly did change has been
+ *     given a sentence that contradicts the screen in front of them.
  *
  * A partial save raises more than one: half a save reported as a whole one is
  * the same lie in the opposite direction.
@@ -31,7 +36,11 @@ import { useCallback } from "react";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
 import { useSettingsDrafts } from "../settings-drafts-context";
-import { SETTINGS_FIELD_LABELS, type SettingsDraftField } from "../pages/settings-shared";
+import {
+  BROWSER_GROUP_LABELS,
+  SETTINGS_FIELD_LABELS,
+  type SettingsDraftField,
+} from "../pages/settings-shared";
 
 export interface SettingsSaveApi {
   /** Apply the draft and raise the resulting notice. Never rejects. */
@@ -47,8 +56,7 @@ export function useSettingsSave(): SettingsSaveApi {
 
   const save = useCallback(async () => {
     const outcome = await apply();
-    // Nothing server-backed was written — an appearance-only save repaints as it
-    // is staged, so the draft bar clearing is the confirmation.
+    // Nothing was attempted: a clean draft, or a save already in flight.
     if (!outcome) return;
 
     // The row label, so the notice names the setting in the same words the
@@ -77,6 +85,20 @@ export function useSettingsSave(): SettingsSaveApi {
           // Endpoints commonly fail together for one cause; repeating the same
           // sentence per route reads as several faults instead of one.
           reason: [...new Set(outcome.failed.map(write => write.reason))].join("; "),
+        }),
+      });
+    }
+
+    if (outcome.unpersisted.length > 0) {
+      notify({
+        tone: "error",
+        title: t("settings.saveUnpersistedTitle"),
+        body: t("settings.saveUnpersistedBody", {
+          names: outcome.unpersisted.map(write => t(BROWSER_GROUP_LABELS[write.group])).join(", "),
+          // Same de-duplication as the endpoint case, and it matters more here:
+          // storage refuses every key for one reason, so three groups saved
+          // together produce three copies of one browser message.
+          reason: [...new Set(outcome.unpersisted.map(write => write.reason))].join("; "),
         }),
       });
     }
