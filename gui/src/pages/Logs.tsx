@@ -8,6 +8,8 @@ import { IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
 import { Banner, Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { FLAGS } from "../regex/engine";
+import { DEFAULT_SEARCH_FLAGS, stripStatefulFlags } from "../shell/settings-search";
 import { useConfirm } from "../shell/confirm-context";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
@@ -500,6 +502,16 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   const [surfaceFilter, setSurfaceFilter] = useState<SurfaceFilter>("all");
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the constant `"i"` it
+   * used to be: the builder — anchored beside the field or handed over from the
+   * full page — composes a pattern *and* its flags, and a field that pinned `i`
+   * showed a preview where turning on `m` or `s` changed the matches in the
+   * panel and then changed nothing about what the table found. A pattern built
+   * as case-sensitive arriving case-insensitive is the same bug read the other
+   * way round.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [conversationFilter, setConversationFilter] = useState("");
   const [conversationQueryHash, setConversationQueryHash] = useState<string | undefined>();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -523,6 +535,9 @@ export default function Logs({ apiBase }: { apiBase: string }) {
     if (!handoff) return;
     setQuery(handoff.pattern);
     setUseRegex(handoff.regex);
+    // Already validated, and already defaulted where the record carried nothing
+    // usable, so this is a plain adoption rather than another round of guessing.
+    setFlags(handoff.flags);
   }, []);
 
   const selectTab = selectLogsTab;
@@ -656,12 +671,20 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   // outside the screen, so it is the only search bar whose input does not come
   // from the box in front of the user — and it was the only one without the cap.
   // An unbounded pattern over every log line is a page the tab cannot recover from.
+  //
+  // The flags are the user's own, from the chip row below the field or carried
+  // in by the builder, minus `g` and `y`. Those two make `RegExp.prototype.test`
+  // stateful — `lastIndex` survives between calls, so testing one regex down a
+  // list of log rows returns true, false, true, false and half the matching rows
+  // disappear. They are dropped rather than refused because they are meaningful
+  // while *scanning a sample* in the builder, which is where every shipped preset
+  // sets `g`; the pattern still works here, it just stops depending on row order.
   const { matchesQuery, regexError } = useMemo(() => {
     const trimmed = query.trim();
     if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
     if (useRegex) {
       try {
-        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), "i");
+        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), stripStatefulFlags(flags));
         return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
       } catch (cause) {
         return {
@@ -670,12 +693,22 @@ export default function Logs({ apiBase }: { apiBase: string }) {
         };
       }
     }
+    // Plain text stays case-insensitive whatever the flags say: it is a substring
+    // search over visible text, and the flags describe the regex the builder
+    // composes, so they only take effect in the mode that compiles one.
     const needle = trimmed.toLowerCase();
     return {
       matchesQuery: (text: string) => text.toLowerCase().includes(needle),
       regexError: null as string | null,
     };
-  }, [query, useRegex]);
+  }, [query, useRegex, flags]);
+
+  const toggleFlag = (flag: string) => {
+    setFlags(prev => (prev.includes(flag) ? prev.replace(flag, "") : prev + flag));
+  };
+
+  /** Whether the row has to explain that a selected chip is not being compiled. */
+  const statefulFlagsIgnored = flags.includes("g") || flags.includes("y");
 
   const filteredLogs = logs.filter(log => (
     matchesSurfaceFilter(surfaceFilter, log.surface)
@@ -811,9 +844,14 @@ export default function Logs({ apiBase }: { apiBase: string }) {
           </Chip>
           <RegexBuilderButton
             value={query}
-            onApply={pattern => setQuery(pattern)}
+            // Both halves of what the builder composed, not just the pattern.
+            // Taking the pattern and leaving the flags behind is what made the
+            // popover's own flag chips decorative from this field's point of
+            // view: they changed the match list in the panel and nothing here.
+            onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
             regex={useRegex}
             onRegexChange={setUseRegex}
+            flags={flags}
             // The unfiltered log lines, exactly as the search matches them: a
             // sample taken from `filteredLogs` would hide every row the pattern
             // being written is meant to find.
@@ -839,6 +877,61 @@ export default function Logs({ apiBase }: { apiBase: string }) {
           <Toggle on={autoRefresh} onChange={setAutoRefresh} label={t("logs.autoRefresh")} />
         </div>
       </div>
+
+      {/*
+        The flags this field is actually compiling, as controls rather than as a
+        secret. The builder hands flags over now, and a search quietly running
+        under flags the user can neither see nor change is the same invisible
+        state the hand-off used to have — moved one screen along rather than
+        fixed. So the carried flags land in chips that show what arrived and let
+        it be corrected, and a line underneath says what the current set means.
+
+        Shown only in regex mode because that is the only mode that compiles
+        them: plain text is a case-insensitive substring search whatever the
+        chips say, and a control that changes nothing while looking live is
+        exactly the decorative affordance the rules forbid.
+      */}
+      {useRegex && (
+        <>
+          <div className="m3-row" style={{ gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>
+              {t("search.flags")}
+            </span>
+            <div
+              className="m3-row"
+              role="group"
+              aria-label={t("search.flags")}
+              // The state line is the description, so a screen reader reaching
+              // the group hears what the current set actually compiles to rather
+              // than six unexplained single letters.
+              aria-describedby="logs-regex-flags-state"
+              style={{ gap: 6 }}
+            >
+              {FLAGS.map(f => (
+                <Chip
+                  key={f.flag}
+                  selected={flags.includes(f.flag)}
+                  onClick={() => toggleFlag(f.flag)}
+                  title={t(f.tkey)}
+                >
+                  <code style={{ fontFamily: "var(--mono)" }}>{f.flag}</code>
+                </Chip>
+              ))}
+            </div>
+          </div>
+          <p
+            id="logs-regex-flags-state"
+            style={{ margin: "0 0 8px", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}
+          >
+            {flags ? t("search.flagsCompiled", { flags }) : t("search.flagsNone")}
+            {/* `g` and `y` are dropped before compiling, so the row has to say so
+                rather than leaving the user to wonder why a global pattern
+                behaves identically with the chip on and off. */}
+            {statefulFlagsIgnored ? ` ${t("search.flagsStateful")}` : ""}
+          </p>
+        </>
+      )}
+
       {/* Height is reserved so an invalid pattern does not reflow the table, as
           in the prototype's fixed 20px error line. */}
       <p id="logs-regex-error" role="alert" style={{ minHeight: 20, margin: "0 0 12px", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>

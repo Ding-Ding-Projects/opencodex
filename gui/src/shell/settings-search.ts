@@ -89,6 +89,21 @@ export const DEFAULT_SEARCH_FLAGS = "i";
  */
 const STATEFUL_FLAGS = /[gy]/g;
 
+/**
+ * The same drop, for a search bar that compiles its own regex rather than going
+ * through `settingsMatcher`.
+ *
+ * Exported because the Logs search bar is exactly that: it holds its own
+ * `RegExp` so it can bound the pattern and report the compile error on its own
+ * line, and once the regex-builder hand-off started carrying flags it inherited
+ * this hazard verbatim. Every preset the builder ships sets `g`, so a hand-off
+ * that passed `g` through untouched would have made half the matching log rows
+ * vanish — and which half would have depended on the order they arrived in.
+ */
+export function stripStatefulFlags(flags: string): string {
+  return flags.replace(STATEFUL_FLAGS, "");
+}
+
 /** Every word a search runs over for one option, in one string. */
 export function optionText(option: SettingsOption): string {
   return [option.label, option.desc, option.value, option.keywords]
@@ -115,8 +130,7 @@ export function settingsMatcher(query: string, useRegex: boolean, flags = DEFAUL
     return { test: text => text.toLowerCase().includes(needle), error: null };
   }
   try {
-    const safe = flags.replace(STATEFUL_FLAGS, "");
-    const re = new RegExp(trimmed.slice(0, PATTERN_CAP), safe);
+    const re = new RegExp(trimmed.slice(0, PATTERN_CAP), stripStatefulFlags(flags));
     return { test: text => re.test(text), error: null };
   } catch (e) {
     return { test: () => false, error: e instanceof Error ? e.message : String(e) };
