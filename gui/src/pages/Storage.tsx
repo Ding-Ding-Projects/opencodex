@@ -8,6 +8,7 @@ import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefre
 import { formatBytes } from "../format-bytes";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
+import { SuperConfirmGate } from "../shell/super-confirm";
 
 interface StorageLargestEntry {
   path: string;
@@ -443,6 +444,11 @@ function ArchivedCleanupPanel({
   const [permanent, setPermanent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The destructive-action super-confirmation gate anchors beside the control
+  // that opened this flow — the button below, not the dialog's own confirm
+  // button, because that button is what the user actually pressed and where
+  // focus has to land back once the gate closes.
+  const previewButtonRef = useRef<HTMLButtonElement>(null);
 
   // The permanent switch lives on the card, not in the dialog, so closing the
   // dialog must not silently flip the mode the user already chose.
@@ -547,6 +553,54 @@ function ArchivedCleanupPanel({
     }
   };
 
+  /**
+   * The permanent half of cleanup, run only by the destructive-action gate
+   * below — never by the quarantine path, which stays on `runCleanup` and its
+   * ordinary confirm dialog because quarantine is recoverable from the
+   * Quarantine section underneath this card.
+   *
+   * Unlike `runCleanup`, this never closes the confirm surface itself: the
+   * gate owns that transition so its completion animation has something to
+   * play before the panel goes away, and it REJECTS on failure — rather than
+   * only setting local `error` state — because that is what lets the gate
+   * show the failure inline and offer a retry without walking back through
+   * both keys.
+   */
+  const runPermanentCleanup = async (): Promise<void> => {
+    if (!preview) throw new Error(t("storage.cleanup.cleanupFailed"));
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/api/storage/cleanup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ percent: preview.percent, mode: "permanent", digest: preview.digest }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({})) as CleanupResult;
+        if (json.error === "stale_preview") setPreview(null);
+        throw new Error(mapCleanupError(json.error, json.message, json.trashDir));
+      }
+      const json = await res.json() as CleanupResult;
+      if (!json.ok) {
+        if (json.error === "stale_preview") setPreview(null);
+        throw new Error(mapCleanupError(json.error, json.message, json.trashDir));
+      }
+      const done = t("storage.cleanup.donePermanent", { count: String(json.count), size: formatBytes(json.bytes, locale) });
+      // Archived sessions are a user-visible record, so the cleanup is listed in
+      // Version history — quarantine is recoverable, permanent delete is not.
+      recordRevision({ scope: "settings", label: t("storage.cleanup.title"), summary: done });
+      notify({ tone: "success", title: done, body: t("storage.cleanup.permanentWarn") });
+      onDone();
+    } catch (e) {
+      const message = localizedCatch(e, t("storage.cleanup.cleanupFailed"));
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-cleanup-title">
       <header className="m3-card-head">
@@ -617,14 +671,33 @@ function ArchivedCleanupPanel({
           the share-of-storage wedge, which is exactly what the slider selects and
           the preview reports. Swap it for the real broom when one exists. */}
       <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
-        <Button variant="filled" disabled={busy} onClick={() => void runPreview()}>
+        {/*
+          A native <button>, not the shared `Button` component: `Button` is a
+          plain function component with no `forwardRef`, so a `ref` handed to
+          it silently attaches to nothing. This renders the exact same markup
+          `Button` would (`m3-btn m3-btn--filled`) so it is indistinguishable
+          on screen, but the ref this anchors the destructive-action gate to —
+          and returns focus to — actually reaches the DOM.
+        */}
+        <button
+          ref={previewButtonRef}
+          type="button"
+          className="m3-btn m3-btn--filled"
+          disabled={busy}
+          onClick={() => void runPreview()}
+        >
           <IconDataUsage aria-hidden="true" /> {t("storage.cleanup.previewAndClean")}
-        </Button>
+        </button>
       </div>
 
       {error && !confirmOpen && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
-      {confirmOpen && preview && (
+      {/* Quarantine stays on the ordinary confirm dialog: it is recoverable —
+          the Quarantine section below can restore exactly what this removes.
+          Permanent delete is the one genuinely irreversible action on this
+          screen, so it alone gets the destructive-action super-confirmation
+          gate rather than a single click on a red button. */}
+      {confirmOpen && preview && !permanent && (
         <Dialog
           // Escape and the scrim both arrive here, and neither may abandon a
           // cleanup that is already deleting — the same guard the hand-rolled
@@ -642,11 +715,11 @@ function ArchivedCleanupPanel({
                 {t("storage.cleanup.cancel")}
               </Button>
               <Button
-                variant={permanent ? "danger" : "filled"}
+                variant="filled"
                 disabled={busy || preview.count === 0}
                 onClick={() => void runCleanup()}
               >
-                {permanent ? t("storage.cleanup.confirmPermanent") : t("storage.cleanup.confirmQuarantine")}
+                {t("storage.cleanup.confirmQuarantine")}
               </Button>
             </>
           }
@@ -664,10 +737,49 @@ function ArchivedCleanupPanel({
           {/* No marginTop: the dialog body is a grid and owns the spacing the
               legacy modal card left to each child's own margin. */}
           <p style={{ fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
-            {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
+            {t("storage.cleanup.quarantineNote")}
           </p>
           {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
         </Dialog>
+      )}
+
+      {confirmOpen && preview && permanent && (
+        <SuperConfirmGate
+          anchorRef={previewButtonRef}
+          presentation="anchored"
+          title={t("storage.cleanup.confirmTitle")}
+          body={
+            <>
+              <p style={{ margin: 0 }}>
+                {t("storage.cleanup.confirmBody", {
+                  count: String(preview.count),
+                  size: formatBytes(preview.bytes, locale),
+                  percent: String(preview.percent),
+                })}
+              </p>
+              <p style={{ margin: "8px 0 0" }}>{t("storage.cleanup.permanentWarn")}</p>
+              {preview.candidates.length > 0 && (
+                <ul className="mono" style={{ maxHeight: 140, overflow: "auto", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)", margin: "8px 0 0", paddingLeft: 20 }}>
+                  {preview.candidates.slice(0, 8).map(c => (
+                    <li key={c.relPath}>{c.relPath}</li>
+                  ))}
+                  {preview.count > 8 && (
+                    <li>{t("storage.cleanup.moreFiles", { n: String(Math.max(0, preview.count - 8)) })}</li>
+                  )}
+                </ul>
+              )}
+            </>
+          }
+          keyLabels={[
+            t("storage.cleanup.gateKey1", { count: String(preview.count) }),
+            t("storage.cleanup.gateKey2"),
+          ]}
+          sliderLabel={t("storage.cleanup.gateSlider")}
+          workingLabel={t("storage.cleanup.gateWorking", { count: String(preview.count) })}
+          doneLabel={t("storage.cleanup.donePermanent", { count: String(preview.count), size: formatBytes(preview.bytes, locale) })}
+          onAuthorize={runPermanentCleanup}
+          onClose={() => closeConfirm(true)}
+        />
       )}
     </section>
   );
