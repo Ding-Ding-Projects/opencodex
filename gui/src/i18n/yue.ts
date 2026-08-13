@@ -1742,6 +1742,11 @@ export const yue: Partial<Record<TKey, string>> = {
   "settings.savedTitle": "設定已儲存",
   "settings.savedBody": "已記入本機紀錄 — 如果撳錯咗，可以喺版本紀錄度還原返。",
   "settings.saveFailed": "儲存唔到嗰個設定",
+  "settings.draftChanged": "{count} 個設定仲未套用",
+  "settings.saveApply": "儲存同套用",
+  "settings.discardDraft": "唔要",
+  "settings.draftApplying": "套用緊設定…",
+  "settings.draftPartialFailure": "有啲設定套用唔到。失敗嗰啲嘅預覽仲擺喺度，可以再試一次或者唔要佢。",
   "settings.jumpTo": "打開 {page}",
   "settings.historyNote": "呢一版每個改動都會喺你 config 目錄嘅本機 git 紀錄寫低一個快照。唔會 push 去任何地方。",
 
@@ -2429,6 +2434,10 @@ export const yue: Partial<Record<TKey, string>> = {
 
   // ---- search ----
   "search.openBuilder": "打開 regex 建構器",
+  "search.flags": "Regex flags",
+  "search.flagsCompiled": "呢個搜尋會 compile 做 /…/{flags}。",
+  "search.flagsNone": "呢個搜尋 compile 嗰陣一個 flag 都冇：分大細楷，而 . 去到換行就會停。",
+  "search.flagsStateful": "g 同 y 喺呢度唔會理 — 呢個欄位係逐行獨立咁試，sticky pattern 就會變成隔行先中到一次。",
 
   // ---- changelog ----
   "changelog.subtitle": "每個發佈咗嘅版本，連日期同分好類嘅改動。可以按日期篩選、搵文字，同埋匯出你而家見到嘅嘢。",
