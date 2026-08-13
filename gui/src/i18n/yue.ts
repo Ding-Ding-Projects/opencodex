@@ -2190,6 +2190,23 @@ export const yue: Partial<Record<TKey, string>> = {
   "cost.menuTitle": "估算成本時段",
   "cost.aria": "{range} 內估算嘅 API 成本 {amount}。改時段。",
   "cost.title": "估算 API 成本（{range}）— 撳一下改時段",
+  "cost.lane.direct": "直接 API key",
+  "cost.lane.directMeaning": "照公佈嘅牌價，直接記喺你個 API key 度找數。",
+  "cost.lane.equivalent": "API 等值",
+  "cost.lane.equivalentTag": "唔使找數",
+  "cost.lane.equivalentMeaning": "呢啲流量如果行 API 會使幾多錢。你個訂閱或者 OAuth 計劃已經包咗，一分錢都唔會收，呢個唔係帳單。",
+  "cost.lane.equivalentAria": "{range} 內 API 等值成本 {amount}。唔使找數 — 你個訂閱已經包咗呢啲流量。改時段。",
+  "cost.lane.equivalentTitle": "API 等值成本（{range}）— 唔使找數，你個訂閱已經包咗。撳一下改時段。",
+  "cost.lane.none": "冇公佈價目",
+  "cost.lane.noneMeaning": "冇任何公佈嘅價目表覆蓋到呢啲流量，所以顯示唔到數字。呢個唔等於免費。",
+
+  // ---- price band (Fast tier, long context) ----
+  "cost.tier.priority": "Fast 級別",
+  "cost.tier.longContext": "長 context",
+  "cost.tier.factorUniform": "×{factor}",
+  "cost.tier.factorSplit": "×{input} 入 · ×{output} 出",
+  "cost.tier.detailUniform": "{band}：每一種 token 都係按呢個 model 標準價嘅 {factor} 倍計。",
+  "cost.tier.detailSplit": "{band}：對比呢個 model 嘅標準價，input ×{input}、output ×{output}、cache read ×{cacheRead}、cache write ×{cacheWrite}。",
 
   // ---- dim sum surprise ----
   "dimsum.title": "點心時間到！",

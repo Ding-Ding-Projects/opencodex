@@ -23,6 +23,54 @@
 export type PricingSourceClassification = "direct_api_key" | "subscription_api_equivalent";
 
 /**
+ * Which published price band produced a figure (`src/usage/expected-prices.ts`).
+ *
+ * Some models publish more than one rate for the same tokens: a Fast tier that
+ * multiplies every token type, and a long-context band that reprices the whole
+ * request once the prompt crosses a published threshold. Both can double a
+ * number the reader was expecting, so the band travels with the price and the
+ * surface names it rather than leaving a 2x figure to look like a defect.
+ */
+export type PriceTierBand = "standard" | "priority" | "long_context";
+
+export interface PriceTierMultiplier {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface PriceTierInfo {
+  band: PriceTierBand;
+  multiplier: PriceTierMultiplier;
+}
+
+/**
+ * A band worth announcing, or `null`. `standard` returns `null` deliberately:
+ * it is the rate the reader already assumes, and a chip on every row would
+ * train them to ignore the chip that actually matters.
+ *
+ * `uniform` is true when all four token types take the same factor, which is
+ * the Fast case and lets the surface render one short `x2.5` instead of four.
+ */
+export interface DescribedPriceTier {
+  band: "priority" | "long_context";
+  uniform: boolean;
+  multiplier: PriceTierMultiplier;
+}
+
+export function describePriceTier(tier: PriceTierInfo | undefined | null): DescribedPriceTier | null {
+  if (!tier || tier.band === "standard") return null;
+  const { input, output, cacheRead, cacheWrite } = tier.multiplier;
+  if (![input, output, cacheRead, cacheWrite].every(v => Number.isFinite(v) && v > 0)) return null;
+  return {
+    band: tier.band,
+    uniform: input === output && input === cacheRead && input === cacheWrite,
+    multiplier: tier.multiplier,
+  };
+}
+
+/**
  * What a surface should render. `unpriced` means no published schedule covers
  * this traffic — it is rendered as an em dash and a reason, never as `$0`,
  * because zero is a claim about price and absence is not.

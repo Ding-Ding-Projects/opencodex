@@ -21,6 +21,26 @@ export interface Cost4 {
 export type OfficialPriceStatus = "verified";
 export type CacheRetention = "none" | "short" | "long";
 
+/**
+ * Which published price band a schedule row represents.
+ *
+ * `standard` is the model's base list rate. The other two are separately
+ * published bands that reprice the WHOLE request, so they are real rows in this
+ * authority rather than a factor applied somewhere downstream — a reader of a
+ * doubled figure can point at the exact row that produced it.
+ */
+export type PriceTierBand = "standard" | "priority" | "long_context";
+
+export interface PriceTier {
+  band: PriceTierBand;
+  /**
+   * Per-field factor from the model's base published rate to this row's rate.
+   * `standard` carries an all-1 factor so every row answers the question
+   * "what was multiplied?" without the caller special-casing absence.
+   */
+  multiplier: Cost4;
+}
+
 export interface OfficialPriceConditions {
   /** Exact prompt-cache write tier selected by OpenCodex configuration. */
   cacheRetention?: "short" | "long";
@@ -47,6 +67,8 @@ export interface OfficialPriceSchedule {
   verifiedAt: string;
   status: OfficialPriceStatus;
   conditions?: OfficialPriceConditions;
+  /** Present on every row whose model publishes more than one band. */
+  tier?: PriceTier;
 }
 
 export interface OfficialPriceContext {
@@ -75,26 +97,128 @@ const OPENAI_PRICING = "https://developers.openai.com/api/docs/pricing";
 const DEEPSEEK_PRICING = "https://api-docs.deepseek.com/quick_start/pricing";
 
 /**
- * The verified source publishes standard short-context rates but does not state
- * a cross-model long-context threshold. Keep long rows out of the authority
- * until a persisted raw prompt-size metric can be compared against an official
- * threshold; never infer a threshold from response usage or model capacity.
+ * OpenAI Fast mode (`service_tier=priority`) price factors, by exact model slug.
+ * Source: https://openai.com/api-fast-mode/. Fast applies ONE uniform factor to
+ * every token type — input, output, cache read and cache write alike.
+ *
+ * A model absent from this map has no published Fast rate, so it gets no
+ * priority row at all and a Fast request against it resolves to
+ * `pricing_condition_unmatched`. That is deliberate: billing an unlisted model
+ * at its standard rate would under-charge it by exactly the factor we could not
+ * find, which is the failure this table exists to prevent.
  */
-function openAiStandardSchedule(
+export const OPENAI_PRIORITY_MULTIPLIERS: Readonly<Record<string, number>> = {
+  "gpt-5.6-sol": 2,
+  "gpt-5.6-terra": 2,
+  "gpt-5.6-luna": 2,
+  "gpt-5.5": 2.5,
+};
+
+/**
+ * OpenAI long-context band: prompts above 272K input tokens are priced at 2x
+ * input and 1.5x output for the full request; cached input and cache writes
+ * double alongside input, per the published short/long columns.
+ *
+ * THE COMPARISON IS EXCLUSIVE (`>`), so a prompt of exactly 272,000 tokens is
+ * still SHORT. That is expressed here as `promptInputTokensMaxInclusive` on the
+ * short row and `promptInputTokensMinExclusive` on the long row, both at the
+ * same number: the resolver tests `<= max` and `> min`, so the two rows meet
+ * exactly at the boundary with neither a gap nor an overlap.
+ *
+ * The measured quantity is the persisted RAW request prompt size
+ * (`promptInputTokens`, written by the request builder at send time), never the
+ * normalized billable input. Normalization subtracts cache read and write, so a
+ * 280k prompt sitting on a 200k cache read has only 80k billable input and would
+ * fall back under the boundary — under-charging exactly the cache-heavy long
+ * requests the band exists to catch.
+ */
+export const OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS = 272_000;
+export const OPENAI_LONG_CONTEXT_MULTIPLIER: Cost4 = {
+  input: 2,
+  output: 1.5,
+  cacheRead: 2,
+  cacheWrite: 2,
+};
+
+const NO_MULTIPLIER: Cost4 = { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 };
+
+function uniformMultiplier(factor: number): Cost4 {
+  return { input: factor, output: factor, cacheRead: factor, cacheWrite: factor };
+}
+
+/**
+ * Derive a band's rate from the model's base tuple rather than restating it.
+ *
+ * A hand-typed derived rate is a second declaration of the same price, and the
+ * two only agree until someone corrects one of them — at which point the stale
+ * copy keeps billing silently. Multiplying keeps every band arithmetically
+ * bound to the one base tuple above it.
+ */
+function scaleCost4(base: Cost4, factor: Cost4): Cost4 {
+  return {
+    input: base.input * factor.input,
+    output: base.output * factor.output,
+    cacheRead: base.cacheRead * factor.cacheRead,
+    cacheWrite: base.cacheWrite * factor.cacheWrite,
+  };
+}
+
+/**
+ * Every published band for one OpenAI model: standard short, standard long, and
+ * Fast where the model publishes a Fast rate.
+ *
+ * The Fast row is capped at the same 272k boundary ON PURPOSE. OpenAI does not
+ * serve long context in Fast mode, so a Fast-tagged request above the boundary
+ * was necessarily served as something else — but this fork's pricing layer
+ * receives only the collapsed service-tier scalar from `effectiveServiceTier()`,
+ * which cannot distinguish a response-confirmed Fast request from one that was
+ * merely requested Fast and then downgraded. Rather than guess between the Fast
+ * rate and the long rate, that combination matches no row and reports
+ * `pricing_condition_unmatched`. A response-confirmed downgrade already reports
+ * its served tier ("default"), so the ordinary case still prices correctly as
+ * standard-long; only the genuinely ambiguous request declines.
+ */
+function openAiSchedules(
   modelId: "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.5",
   cost4: Cost4,
   cacheWriteAvailability: "priced" | "unavailable" = "priced",
-): OfficialPriceSchedule {
-  return {
-    scheduleId: `openai-apikey/${modelId}/standard/short-context`,
+): OfficialPriceSchedule[] {
+  const row = (
+    suffix: string,
+    multiplier: Cost4,
+    band: PriceTierBand,
+    conditions: Omit<OfficialPriceConditions, "cacheWriteAvailability">,
+  ): OfficialPriceSchedule => ({
+    scheduleId: `openai-apikey/${modelId}/${suffix}`,
     provider: "openai-apikey",
     modelId,
-    cost4,
+    cost4: scaleCost4(cost4, multiplier),
     sourceUrl: OPENAI_PRICING,
     verifiedAt: OPENAI_VERIFIED_AT,
     status: "verified",
-    conditions: { serviceTier: "standard", cacheWriteAvailability },
-  };
+    conditions: { ...conditions, cacheWriteAvailability },
+    tier: { band, multiplier },
+  });
+
+  const schedules: OfficialPriceSchedule[] = [
+    row("standard/short-context", NO_MULTIPLIER, "standard", {
+      serviceTier: "standard",
+      promptInputTokensMaxInclusive: OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS,
+    }),
+    row("standard/long-context", OPENAI_LONG_CONTEXT_MULTIPLIER, "long_context", {
+      serviceTier: "standard",
+      promptInputTokensMinExclusive: OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS,
+    }),
+  ];
+
+  const priority = OPENAI_PRIORITY_MULTIPLIERS[modelId];
+  if (priority !== undefined) {
+    schedules.push(row("priority/short-context", uniformMultiplier(priority), "priority", {
+      serviceTier: "priority",
+      promptInputTokensMaxInclusive: OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS,
+    }));
+  }
+  return schedules;
 }
 
 function anthropicSchedules(
@@ -134,19 +258,19 @@ function anthropicSchedules(
 }
 
 export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
-  openAiStandardSchedule(
+  ...openAiSchedules(
     "gpt-5.6-sol",
     { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
   ),
-  openAiStandardSchedule(
+  ...openAiSchedules(
     "gpt-5.6-terra",
     { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
   ),
-  openAiStandardSchedule(
+  ...openAiSchedules(
     "gpt-5.6-luna",
     { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
   ),
-  openAiStandardSchedule(
+  ...openAiSchedules(
     "gpt-5.5",
     { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
     "unavailable",
@@ -396,6 +520,20 @@ export function validateOfficialPriceSchedules(
       && row.conditions.cacheWriteAvailability !== "unavailable") {
       errors.push(`invalid cache write availability: ${row.scheduleId}`);
     }
+    if (row.tier) {
+      // Strictly positive, not merely non-negative: a zero factor would silently
+      // render a whole band free, which is the one arithmetic error a price
+      // table must never be able to express.
+      const factors = row.tier.multiplier;
+      const positive = (value: number): boolean => Number.isFinite(value) && value > 0;
+      if (!positive(factors.input) || !positive(factors.output)
+        || !positive(factors.cacheRead) || !positive(factors.cacheWrite)) {
+        errors.push(`invalid tier multiplier: ${row.scheduleId}`);
+      }
+      if (row.tier.band !== "standard" && row.tier.band !== "priority" && row.tier.band !== "long_context") {
+        errors.push(`invalid tier band: ${row.scheduleId}`);
+      }
+    }
     if (row.conditions?.validFrom && !validDateOnly(row.conditions.validFrom)) {
       errors.push(`invalid valid-from date: ${row.scheduleId}`);
     }
@@ -432,9 +570,22 @@ export function validateOfficialPriceSchedules(
 
 const OFFICIAL_PRICE_SCHEDULE_ERRORS = validateOfficialPriceSchedules(OFFICIAL_PRICE_SCHEDULES);
 
+/**
+ * Fold the wire spellings of a service tier onto the names this authority's rows
+ * use. `fast` is the product name for `priority`; `default` is what the upstream
+ * response reports for the tier this authority calls `standard`.
+ *
+ * The `default` alias is load-bearing rather than cosmetic. A served response
+ * echoes `service_tier: "default"` for ordinary traffic, and
+ * `effectiveServiceTier()` prefers that response-confirmed value over anything
+ * requested — so without this fold, every OpenAI request that actually reported
+ * its served tier matched no row at all and went unpriced.
+ */
 function normalizedServiceTier(value: string | undefined): string | undefined {
   const normalized = value?.trim().toLowerCase();
-  return normalized === "fast" ? "priority" : normalized || undefined;
+  if (normalized === "fast") return "priority";
+  if (normalized === "default") return "standard";
+  return normalized || undefined;
 }
 
 function utcDateOnly(timestamp: number): string | null {

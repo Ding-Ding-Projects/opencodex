@@ -20,6 +20,7 @@ function entry(overrides: Partial<PersistedUsageEntry> & { ts: number }): Persis
     ...(rest.totalTokens !== undefined ? { totalTokens: rest.totalTokens } : {}),
     ...(rest.attempts ? { attempts: rest.attempts } : {}),
     ...(rest.cacheRetention ? { cacheRetention: rest.cacheRetention } : {}),
+    ...(rest.promptInputTokens !== undefined ? { promptInputTokens: rest.promptInputTokens } : {}),
     ...(rest.requestedServiceTier ? { requestedServiceTier: rest.requestedServiceTier } : {}),
     ...(rest.configuredServiceTier ? { configuredServiceTier: rest.configuredServiceTier } : {}),
     ...(rest.responseServiceTier ? { responseServiceTier: rest.responseServiceTier } : {}),
@@ -115,6 +116,7 @@ describe("summarizeUsage", () => {
         model: "gpt-5.6-luna",
         usageStatus: "reported",
         usage: { inputTokens: 1_000, outputTokens: 100 },
+        promptInputTokens: 1_000,
       }),
       entry({
         ts: FIXED_NOW - 2,
@@ -122,6 +124,7 @@ describe("summarizeUsage", () => {
         model: "gpt-5.6-luna",
         usageStatus: "reported",
         usage: { inputTokens: 2_000, outputTokens: 200 },
+        promptInputTokens: 2_000,
       }),
       entry({
         ts: FIXED_NOW - 3,
@@ -178,7 +181,12 @@ describe("summarizeUsage", () => {
     expect(sum.summary.pricedRequests).toBe(1);
   });
 
-  test("historical OpenAI subscription rows without raw prompt context remain unpriced only when needed", () => {
+  test("historical OpenAI rows without raw prompt context are unpriced, not priced short", () => {
+    // Before the long-context band existed there was one OpenAI rate, so a row
+    // with no persisted prompt size could safely be priced at it. Now there are
+    // two rates either side of 272k and the prompt size is what chooses between
+    // them, so a row that never recorded one cannot be priced at all: guessing
+    // "short" would silently halve every long request that predates the metric.
     const historic = entry({
       ts: FIXED_NOW - 1,
       provider: "openai",
@@ -187,8 +195,23 @@ describe("summarizeUsage", () => {
       usage: { inputTokens: 500, outputTokens: 50 },
     });
     const sum = summarizeUsage([historic], "30d", FIXED_NOW);
-    expect(sum.summary.apiEquivalent).toMatchObject({ pricedRequests: 1, unpricedRequests: 0 });
+    expect(sum.summary.apiEquivalent).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 1,
+      unpricedReasons: { pricing_context_missing: 1 },
+    });
     expect(sum.summary.direct).toMatchObject({ pricedRequests: 0, unpricedRequests: 0 });
+
+    // The same row prices normally once the prompt size is on it.
+    const recorded = summarizeUsage([entry({
+      ts: FIXED_NOW - 1,
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      usageStatus: "reported",
+      usage: { inputTokens: 500, outputTokens: 50 },
+      promptInputTokens: 500,
+    })], "30d", FIXED_NOW);
+    expect(recorded.summary.apiEquivalent).toMatchObject({ pricedRequests: 1, unpricedRequests: 0 });
   });
 
   test("extreme finite timestamps fail closed in Usage without throwing", () => {

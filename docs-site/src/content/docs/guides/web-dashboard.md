@@ -206,6 +206,39 @@ requests show an em dash and say so. That is deliberately not the same as `$0`: 
 something was free, and an absent price is a claim about nothing at all. They are counted separately
 as unpriced requests in the Usage coverage panel.
 
+### Price bands: Fast tier and long context
+
+A model can publish more than one rate for identical tokens. OpenCodex prices each band from its own
+schedule row, so a total that looks unexpectedly large is traceable to a published rate rather than
+to an arithmetic slip. Both bands apply to **both** cost bases above — the API-equivalent comparison
+reads exactly the same schedules as direct billing, or it would stop being comparable.
+
+| Band | When it applies | Effect on the published standard rate |
+| --- | --- | --- |
+| **Fast tier** | The request was sent with OpenAI's Fast mode (`service_tier=priority`, also reported as `fast`). | One uniform factor on every token type: **×2** for `gpt-5.6-sol`, `gpt-5.6-terra` and `gpt-5.6-luna`; **×2.5** for `gpt-5.5`. |
+| **Long context** | The raw request prompt is **more than 272,000 tokens**. | **×2 input**, **×1.5 output**, **×2 cache read** and **×2 cache write**, for the whole request. |
+
+The long-context threshold is exclusive: a prompt of exactly 272,000 tokens is still priced at the
+short-context rate, and the band begins at 272,001. The measured quantity is the raw prompt size
+recorded when the request was sent, not the billable input left after cache tokens are subtracted —
+a 280,000-token prompt served largely from cache still crosses the boundary.
+
+Where a band applied, the Logs detail panel names it beside **Cost basis**, with the factor that was
+applied, so a doubled figure explains itself.
+
+Two cases are deliberately left **unpriced** rather than estimated:
+
+- **No recorded prompt size.** The prompt size is what selects between the short and long bands, so a
+  request that never recorded one cannot be priced at either. This affects rows written before
+  OpenCodex began persisting that metric; they report `pricing_context_missing` instead of being
+  assumed short, because assuming short would silently halve every long request among them.
+- **A Fast request above the long-context boundary.** OpenAI does not serve long context in Fast
+  mode, so such a request was served as something else — and the recorded tier alone cannot say
+  which. It reports `pricing_condition_unmatched` rather than guessing between two rates.
+
+A model with no published Fast rate has no Fast row at all, so a Fast request against it is unpriced
+rather than quietly billed at the standard rate.
+
 ## Model visibility
 
 The **Models** switches show final Codex visibility: a routed model is on only when its provider allowlist includes it (or no allowlist is set) and it is not disabled. Turning a model on reconciles both filters atomically; **All on** clears the provider allowlist so newly discovered models are also on.
