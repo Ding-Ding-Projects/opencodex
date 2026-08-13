@@ -56,7 +56,7 @@ export const yue: DeckDict = {
   "dimsum.title": "有籠點心出現咗",
   "dimsum.dismiss": "收咗佢",
   "dimsum.why": "點解會有呢樣嘢？",
-  "dimsum.explain": "一百次入面得一次開站會出點心。唔想睇就去設定閂咗佢。",
+  "dimsum.explain": "十次開站有一次會出點心。唔使你趕，佢自己收埋。",
   "dimsum.settings": "設定",
 
   "changelog.title": "更新紀錄",
@@ -150,8 +150,9 @@ export const yue: DeckDict = {
   "notifpref.test": "彈個測試通知",
   "notifpref.testBody": "用你而家嘅設定，通知就係咁樣。",
 
-  "dimsumpref.enabled": "偶爾出一籠點心",
-  "dimsumpref.hint": "一百次開站得一次，第一次嚟唔會出，你做緊嘢嗰陣都唔會出。張相同網站一齊 bundle 埋，唔會出去攞嘢，亦都唔會數你。",
+  "dimsumpref.enabled": "點心驚喜",
+  "dimsumpref.always": "一直開住",
+  "dimsumpref.hint": "十次開站得一次，第一次嚟唔會出，你做緊嘢嗰陣都唔會出，而且佢自己會收埋。冇開關：咁識做嘅嘢唔使開關。張相同網站一齊 bundle 埋，唔會出去攞嘢，亦都唔會數你。",
   "dimsumpref.preview": "而家出一個嚟睇下",
 
   "common.on": "開",
@@ -182,7 +183,7 @@ export const ja: DeckDict = {
   "dimsum.title": "飲茶が出ました",
   "dimsum.dismiss": "閉じる",
   "dimsum.why": "これは何ですか",
-  "dimsum.explain": "100 回に 1 回だけ点心が出ます。設定でオフにできます。",
+  "dimsum.explain": "10 回に 1 回だけ点心が出ます。放っておけば自分で消えます。",
   "dimsum.settings": "設定",
 
   "changelog.title": "変更履歴",
@@ -276,8 +277,9 @@ export const ja: DeckDict = {
   "notifpref.test": "テスト通知を表示",
   "notifpref.testBody": "現在の設定では通知はこう見えます。",
 
-  "dimsumpref.enabled": "まれに点心を表示する",
-  "dimsumpref.hint": "100 回に 1 回だけ。初回訪問では出ませんし、作業中にも出ません。画像はサイトに同梱されていて、取得も計測もしません。",
+  "dimsumpref.enabled": "点心のサプライズ",
+  "dimsumpref.always": "常にオン",
+  "dimsumpref.hint": "10 回に 1 回だけ。初回訪問では出ませんし、作業中にも出ません。放っておけば自分で消えます。オフにするスイッチはありません — これだけ控えめなら必要ないからです。画像はサイトに同梱されていて、取得も計測もしません。",
   "dimsumpref.preview": "今すぐ見てみる",
 
   "common.on": "オン",
@@ -308,7 +310,7 @@ export const ko: DeckDict = {
   "dimsum.title": "딤섬이 나왔습니다",
   "dimsum.dismiss": "닫기",
   "dimsum.why": "이건 뭔가요",
-  "dimsum.explain": "100번에 한 번만 딤섬이 나옵니다. 설정에서 끌 수 있습니다.",
+  "dimsum.explain": "10번에 한 번만 딤섬이 나옵니다. 그냥 두면 알아서 사라집니다.",
   "dimsum.settings": "설정",
 
   "changelog.title": "변경 내역",
@@ -402,8 +404,9 @@ export const ko: DeckDict = {
   "notifpref.test": "테스트 알림 보기",
   "notifpref.testBody": "지금 설정에서 알림은 이렇게 보입니다.",
 
-  "dimsumpref.enabled": "가끔 딤섬 보여주기",
-  "dimsumpref.hint": "100번에 한 번만. 첫 방문에는 나오지 않고, 무언가 하는 중에도 나오지 않습니다. 그림은 사이트에 함께 들어 있어 가져오지도 세지도 않습니다.",
+  "dimsumpref.enabled": "딤섬 서프라이즈",
+  "dimsumpref.always": "항상 켜짐",
+  "dimsumpref.hint": "10번에 한 번만. 첫 방문에는 나오지 않고, 무언가 하는 중에도 나오지 않으며, 알아서 사라집니다. 끄는 스위치는 없습니다 — 이 정도로 조용하면 필요하지 않으니까요. 그림은 사이트에 함께 들어 있어 가져오지도 세지도 않습니다.",
   "dimsumpref.preview": "지금 하나 보기",
 
   "common.on": "켜짐",
@@ -434,7 +437,7 @@ export const ru: DeckDict = {
   "dimsum.title": "Появился дим-сам",
   "dimsum.dismiss": "Закрыть",
   "dimsum.why": "Что это?",
-  "dimsum.explain": "Блюдо показывается один раз из ста запусков. Отключается в настройках.",
+  "dimsum.explain": "Блюдо показывается один раз из десяти запусков и закрывается само.",
   "dimsum.settings": "Настройки",
 
   "changelog.title": "История изменений",
@@ -528,8 +531,9 @@ export const ru: DeckDict = {
   "notifpref.test": "Показать тестовое уведомление",
   "notifpref.testBody": "Так выглядит уведомление при ваших текущих настройках.",
 
-  "dimsumpref.enabled": "Изредка показывать блюдо",
-  "dimsumpref.hint": "Один раз из ста, никогда при первом визите и никогда посреди дела. Картинка входит в состав сайта — ничего не загружается и не считается.",
+  "dimsumpref.enabled": "Дим-сам-сюрприз",
+  "dimsumpref.always": "Всегда включено",
+  "dimsumpref.hint": "Один раз из десяти, никогда при первом визите и никогда посреди дела, и закрывается сам. Выключателя нет: столь деликатной подсказке он не нужен. Картинка входит в состав сайта — ничего не загружается и не считается.",
   "dimsumpref.preview": "Показать сейчас",
 
   "common.on": "Вкл.",
@@ -560,7 +564,7 @@ export const zhCn: DeckDict = {
   "dimsum.title": "出现了一笼点心",
   "dimsum.dismiss": "关闭",
   "dimsum.why": "这是什么？",
-  "dimsum.explain": "每一百次访问才会出现一次点心。可以在设置里关掉。",
+  "dimsum.explain": "每十次访问会出现一次点心，它会自己消失。",
   "dimsum.settings": "设置",
 
   "changelog.title": "更新日志",
@@ -654,8 +658,9 @@ export const zhCn: DeckDict = {
   "notifpref.test": "显示一条测试通知",
   "notifpref.testBody": "在你当前的设置下，通知就是这个样子。",
 
-  "dimsumpref.enabled": "偶尔显示一笼点心",
-  "dimsumpref.hint": "一百次里只有一次，第一次访问不会出现，你正在做事的时候也不会。图片和网站打包在一起——不联网，也不统计。",
+  "dimsumpref.enabled": "点心惊喜",
+  "dimsumpref.always": "始终开启",
+  "dimsumpref.hint": "十次里有一次，第一次访问不会出现，你正在做事的时候也不会，而且它会自己消失。没有开关：这么懂事的提示不需要开关。图片和网站打包在一起——不联网，也不统计。",
   "dimsumpref.preview": "现在给我看一个",
 
   "common.on": "开",

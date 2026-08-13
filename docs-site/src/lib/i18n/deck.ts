@@ -56,7 +56,7 @@ export const en = {
   "dimsum.title": "A dim sum appeared",
   "dimsum.dismiss": "Dismiss",
   "dimsum.why": "Why this?",
-  "dimsum.explain": "One launch in a hundred shows a dish. Turn it off in Settings.",
+  "dimsum.explain": "One launch in ten shows a dish. It sees itself out.",
   "dimsum.settings": "Settings",
 
   /* ----------------------------------------------------------- changelog -- */
@@ -152,8 +152,9 @@ export const en = {
   "notifpref.test": "Show a test notification",
   "notifpref.testBody": "This is what a notification looks like at your current settings.",
 
-  "dimsumpref.enabled": "Show a dim sum dish, rarely",
-  "dimsumpref.hint": "One launch in a hundred, never on your first visit, never while you are in the middle of something. The picture is bundled with the site — nothing is fetched and nothing is counted.",
+  "dimsumpref.enabled": "Dim sum surprise",
+  "dimsumpref.always": "Always on",
+  "dimsumpref.hint": "One launch in ten, never on your first visit, never while you are in the middle of something, and it dismisses itself. There is no switch: an interruption this polite does not need one. The picture is bundled with the site — nothing is fetched and nothing is counted.",
   "dimsumpref.preview": "Show me one now",
 
   /* ------------------------------------------------------------- generic -- */

@@ -422,32 +422,32 @@ const TABLE: VoiceTable<UiKey> = {
   "dimsum.explain": {
     cat: "delight",
     en: {
-      1: "A dish is shown on one visit in a hundred. It can be turned off in Settings.",
-      2: "One launch in a hundred shows a dish. Turn it off in Settings.",
-      4: "One visit in a hundred gets a dish. Settings has the off switch.",
-      5: "One visit in a hundred gets a dish — that is the whole feature. The off switch is in Settings and it is honoured before the coin is even flipped.",
+      1: "A dish is shown on one visit in ten. It closes itself.",
+      2: "One launch in ten shows a dish. It sees itself out.",
+      4: "One visit in ten gets a dish. It leaves without being asked.",
+      5: "One visit in ten gets a dish — that is the whole feature. There is no off switch, because a guest who shows up rarely and leaves on their own has never needed to be shown the door.",
     },
     yue: {
-      1: "每一百次到訪會出一次點心。可以喺設定度閂咗佢。",
-      2: "一百次入面得一次開站會出點心。唔想睇就去設定閂咗佢。",
-      4: "一百次到訪得一次有點心。設定度有個掣熄得。",
-      5: "一百次到訪得一次有點心 — 成個功能就係咁多。設定度嗰個掣，喺擲毫之前就已經計咗數。",
+      1: "每十次到訪會出一次點心。佢會自己收埋。",
+      2: "十次入面有一次開站會出點心。唔使你趕，佢自己走。",
+      4: "十次到訪有一次有點心。你唔理佢，佢自己收工。",
+      5: "十次到訪有一次有點心 — 成個功能就係咁多。冇掣熄得，因為一個好耐先嚟一次、又識自己走嘅客，本來就唔使趕。",
     },
   },
 
   "dimsumpref.hint": {
     cat: "delight",
     en: {
-      1: "Shown at most once per hundred visits. Never on a first visit and never during another task. The image ships with the site: no network request is made and no visit is counted.",
-      2: "One launch in a hundred, never on your first visit, never while you are in the middle of something. The picture is bundled with the site — nothing is fetched and nothing is counted.",
-      4: "One visit in a hundred. Never your first, never while you are busy. The picture is already in the download — nothing fetched, nobody counting.",
-      5: "One visit in a hundred, and it still waits its turn: not your first, not while you are mid-task. The picture came down with the site, so nothing is fetched and there is nobody on the other end counting.",
+      1: "Shown at most once per ten visits. Never on a first visit, never during another task, and it dismisses itself. No switch is provided. The image ships with the site: no network request is made and no visit is counted.",
+      2: "One launch in ten, never on your first visit, never while you are in the middle of something, and it dismisses itself. There is no switch. The picture is bundled with the site — nothing is fetched and nothing is counted.",
+      4: "One visit in ten. Never your first, never while you are busy, and it lets itself out. No switch, because it never needs one. The picture is already in the download — nothing fetched, nobody counting.",
+      5: "One visit in ten, and it still waits its turn: not your first, not while you are mid-task, and gone before you have to do anything about it. There is no off switch, which is only fair — you cannot switch off something that has already left. The picture came down with the site, so nothing is fetched and there is nobody on the other end counting.",
     },
     yue: {
-      1: "最多每一百次到訪出一次。第一次到訪唔會出，做緊嘢嗰陣亦唔會出。張相同網站一齊送落嚟：唔會發任何網絡請求，亦唔會記你嘅到訪。",
-      2: "一百次開站得一次，第一次嚟唔會出，你做緊嘢嗰陣都唔會出。張相同網站一齊 bundle 埋，唔會出去攞嘢，亦都唔會數你。",
-      4: "一百次到訪得一次。唔會喺你第一次，唔會喺你忙嗰陣。張相早就落咗嚟 — 唔使攞，冇人數。",
-      5: "一百次到訪得一次，而且仲要排隊：唔會揀你第一次，唔會揀你做緊嘢。張相係同網站一齊落嚟嘅，所以乜都唔使攞，另一邊亦都冇人喺度數。",
+      1: "最多每十次到訪出一次。第一次到訪唔會出，做緊嘢嗰陣亦唔會出，而且佢會自己收埋。冇提供開關。張相同網站一齊送落嚟：唔會發任何網絡請求，亦唔會記你嘅到訪。",
+      2: "十次開站有一次，第一次嚟唔會出，你做緊嘢嗰陣都唔會出，而且佢自己會收埋。冇掣熄。張相同網站一齊 bundle 埋，唔會出去攞嘢，亦都唔會數你。",
+      4: "十次到訪有一次。唔會喺你第一次，唔會喺你忙嗰陣，仲要自己識走。冇掣，因為根本唔使。張相早就落咗嚟 — 唔使攞，冇人數。",
+      5: "十次到訪有一次，而且仲要排隊：唔會揀你第一次，唔會揀你做緊嘢，仲未等你出手佢就走咗。冇掣熄得，其實都合理 — 走咗嘅嘢，你想熄都熄唔到。張相係同網站一齊落嚟嘅，所以乜都唔使攞，另一邊亦都冇人喺度數。",
     },
   },
 };

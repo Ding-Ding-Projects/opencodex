@@ -60,7 +60,7 @@ function resetAppearanceFrom(prefs: Prefs): Prefs {
 function countPrefsChanges(applied: Prefs, draft: Prefs): number {
   let count = 0;
   for (const key of [
-    "theme", "seed", "density", "fontId", "fontStack", "fontScale", "fontWeight", "narrator", "narratorLang", "dimsum", "costRange",
+    "theme", "seed", "density", "fontId", "fontStack", "fontScale", "fontWeight", "narrator", "narratorLang", "costRange",
   ] as const) {
     if (!equal(applied[key], draft[key])) count += 1;
   }

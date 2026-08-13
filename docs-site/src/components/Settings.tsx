@@ -59,7 +59,7 @@ import {
   setPrefs,
   subscribeNotifications,
 } from "../lib/notifications";
-import { DISHES, readEnabled, writeEnabled, drawOnce } from "../lib/dimsum";
+import { DISHES, drawOnce } from "../lib/dimsum";
 import { haystackOf, searchSettings, type SettingOption } from "../lib/settings-search";
 import { useEffect } from "react";
 
@@ -129,11 +129,11 @@ export default function Settings() {
 
   /* ------------------------------------------------------------- dim sum */
 
-  const [dimsum, setDimsum] = useState(() => (typeof window === "undefined" ? true : readEnabled()));
-  const toggleDimsum = useCallback((next: boolean) => {
-    setDimsum(next);
-    writeEnabled(next);
-  }, []);
+  /*
+    There is no state here any more. The surprise cannot be switched off, so the
+    delight section holds a description and a preview button and nothing that
+    could disagree with what the site actually does.
+  */
 
   /* --------------------------------------------------------------- voices */
 
@@ -277,13 +277,9 @@ export default function Settings() {
       section: "delight",
       label: t("dimsumpref.enabled"),
       description: t("dimsumpref.hint"),
-      value: dimsum ? t("common.on") : t("common.off"),
+      value: t("dimsumpref.always"),
       body: (
         <>
-          <div className="m3-row">
-            <Switch on={dimsum} onChange={toggleDimsum} label={t("dimsumpref.enabled")} />
-            <span>{dimsum ? t("common.on") : t("common.off")}</span>
-          </div>
           <p className="m3-field-hint">{t("dimsumpref.hint")}</p>
           <Button
             variant="outlined"
@@ -337,9 +333,10 @@ export default function Settings() {
   const resetSection = useCallback(() => {
     if (section === "language") ui.setFunny({ en: 3, yue: 3 });
     if (section === "notifications") setPrefs(DEFAULT_PREFS);
-    if (section === "delight") toggleDimsum(true);
+    // "delight" has nothing resettable left — the dim sum surprise has no stored
+    // state to restore — so reset is a no-op there rather than a lie.
     notify({ tone: "success", title: t("settings.resetDone") });
-  }, [section, ui, toggleDimsum, t]);
+  }, [section, ui, t]);
 
   return (
     <div className="ocx-settings">

@@ -271,21 +271,15 @@ export default function LanguageVoice() {
     {
       id: "dimsum",
       text: [t("dimsum.toggle"), t("dimsum.toggleHint"), t("dimsum.showNow")].join(" "),
+      // No `actions` switch on this card, by contract: the surprise cannot be
+      // turned off. What the card still owes the reader is an honest account of
+      // when it can appear and a way to see one on demand, so nobody has to wait
+      // out the odds to find out what the thing they cannot disable looks like.
       node: (
         <Card
           key="dimsum"
           title={t("dimsum.toggle")}
           subtitle={t("dimsum.toggleHint")}
-          actions={
-            <Toggle
-              on={prefs.dimsum}
-              label={t("dimsum.toggle")}
-              // No revision is recorded here yet: the dictionaries hold no summary
-              // for this switch, and labelling it "Narration settings changed"
-              // would put a false line in an append-only history.
-              onChange={dimsum => setPrefs({ dimsum })}
-            />
-          }
         >
           <Button
             variant="outlined"

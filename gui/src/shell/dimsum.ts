@@ -2,11 +2,14 @@
  * Dim sum surprise — the draw logic, separated from the card so it is testable.
  *
  * The contract, from the design spec:
- * - exactly ONE 1% draw per launch;
+ * - exactly ONE 10% draw per launch;
  * - never on first run (a new user's first impression is not a lottery);
  * - never on an update launch (the user is assessing whether the update broke
  *   anything — a surprise reads as "something is wrong");
- * - the off switch is honoured before the draw, not after;
+ * - there is no off switch. The surprise cannot be opted out of, which is what
+ *   makes the rules above load-bearing rather than decorative: an un-optable
+ *   card has to be polite, so it stays non-blocking, auto-dismissing, never
+ *   focus-stealing and never in the way of a task;
  * - no network fetch, ever. Art ships bundled; alt text names the dish.
  */
 
@@ -91,11 +94,9 @@ export function codenameFor(sha: string, dishes: DimSumDish[] = DISHES): DimSumD
 
 const LAUNCHED_KEY = "ocx-m3:launched";
 const LAST_VERSION_KEY = "ocx-m3:last-version";
-export const DRAW_CHANCE = 0.01;
+export const DRAW_CHANCE = 0.1;
 
 export interface DrawContext {
-  /** The dim sum off switch from prefs. */
-  enabled: boolean;
   /** The running app version, used to detect an update launch. */
   version: string;
   random?: () => number;
@@ -106,8 +107,12 @@ export interface DrawContext {
  * Run the once-per-launch draw. Returns the dish to show, or null.
  *
  * Always records launch state (so the *next* launch is no longer "first run" /
- * "update launch") even when the draw is skipped — otherwise a disabled toggle
- * would freeze the first-run marker forever.
+ * "update launch") even when the draw loses — a launch that rolled and missed
+ * is still a launch, and leaving the marker unwritten would freeze the
+ * first-run suppression forever.
+ *
+ * There is deliberately no `enabled` parameter. The draw cannot be switched
+ * off, so a caller has nothing to pass and no way to pass something wrong.
  */
 export function drawDimSum(ctx: DrawContext): DimSumDish | null {
   const storage = ctx.storage ?? localStorage;
@@ -126,7 +131,7 @@ export function drawDimSum(ctx: DrawContext): DimSumDish | null {
     return null;
   }
 
-  if (!ctx.enabled || firstRun || updated) return null;
+  if (firstRun || updated) return null;
   if (random() >= DRAW_CHANCE) return null;
   return DISHES[Math.floor(random() * DISHES.length) % DISHES.length];
 }

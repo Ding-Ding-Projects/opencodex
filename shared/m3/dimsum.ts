@@ -1,10 +1,10 @@
 /**
  * The dim sum draw, as one import path for every surface.
  *
- * `gui/src/shell/dimsum.ts` already encodes the whole contract — one 1 % draw
- * per launch, never on a first run, never on an update launch, the off switch
- * honoured *before* the draw, no network fetch ever — and it does it with no
- * imports at all, so re-exporting it costs a consumer nothing.
+ * `gui/src/shell/dimsum.ts` already encodes the whole contract — one 10 % draw
+ * per launch, never on a first run, never on an update launch, no off switch
+ * anywhere, no network fetch ever — and it does it with no imports at all, so
+ * re-exporting it costs a consumer nothing.
  *
  * Copying it would have been the expensive mistake here, and not for the usual
  * reason. `codenameFor` in that file is also what the release pipeline uses to

@@ -1,23 +1,21 @@
 /**
- * The 1 % dim sum surprise, and the four ways it is allowed to say no.
+ * The 10 % dim sum surprise, and the three ways it is allowed to say no.
  *
- * The interesting assertions here are all negative: the switch is honoured
- * *before* the coin is flipped, a first visit never draws, a draw happens once
- * per launch, and the art is a local file under this deployment's base. Each of
- * those is a rule that fails quietly — a surprise that fires slightly too often,
- * or on a first visit, or fetches a 404 — and none of them shows up in a build.
+ * The interesting assertions here are all negative: a first visit never draws, a
+ * draw happens once per launch, and the art is a local file under this
+ * deployment's base. Each of those is a rule that fails quietly — a surprise
+ * that fires slightly too often, or on a first visit, or fetches a 404 — and
+ * none of them shows up in a build.
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   DISHES,
-  ENABLED_KEY,
+  LEGACY_ENABLED_KEY,
   dishImage,
   drawOnce,
   namespacedStorage,
-  readEnabled,
   resetDrawForTests,
-  writeEnabled,
 } from "../src/lib/dimsum";
 import { DRAW_CHANCE, codenameFor } from "../../shared/m3/dimsum";
 
@@ -28,6 +26,9 @@ function fakeStore(initial: Record<string, string> = {}) {
     map,
     getItem: (key: string) => map.get(key) ?? null,
     setItem: (key: string, value: string) => { map.set(key, value); },
+    // Present so the legacy-opt-out migration has something real to delete. The
+    // draw itself never calls it — its `Storage` view is get/set only.
+    removeItem: (key: string) => { map.delete(key); },
   };
 }
 
@@ -44,24 +45,19 @@ beforeEach(() => {
   resetDrawForTests();
 });
 
-describe("the off switch", () => {
-  test("is honoured before the odds are consulted", () => {
-    const store = returningVisitor({ [ENABLED_KEY]: "0" });
-    // `random` would return a value inside the 1 %, so anything but null here
-    // means the switch was checked after the draw — or not at all.
-    let rolls = 0;
-    const drawn = drawOnce({ storage: store, random: () => { rolls++; return 0; } });
-    expect(drawn).toBeNull();
-    expect(rolls).toBe(0);
+describe("the retired off switch", () => {
+  test("a reader who had switched it off rejoins the draw", () => {
+    // This replaces "the off switch is honoured before the odds are consulted".
+    // The surprise cannot be opted out of any more, so the stored "0" from a
+    // reader who opted out under the old contract must no longer suppress it.
+    const store = returningVisitor({ [LEGACY_ENABLED_KEY]: "0" });
+    expect(drawOnce({ storage: store, random: () => 0 })).not.toBeNull();
   });
 
-  test("defaults to on, and round-trips", () => {
-    const store = fakeStore();
-    expect(readEnabled(store)).toBe(true);
-    writeEnabled(false, store);
-    expect(readEnabled(store)).toBe(false);
-    writeEnabled(true, store);
-    expect(readEnabled(store)).toBe(true);
+  test("and the stale key is cleared rather than merely ignored", () => {
+    const store = returningVisitor({ [LEGACY_ENABLED_KEY]: "0" });
+    drawOnce({ storage: store, random: () => 0 });
+    expect(store.map.has(LEGACY_ENABLED_KEY)).toBe(false);
   });
 });
 
@@ -87,13 +83,13 @@ describe("when it refuses to draw", () => {
     expect(drawOnce({ storage: store, random: () => 0 })).toBeNull();
   });
 
-  test("a roll outside the 1 % draws nothing", () => {
+  test("a roll outside the 10 % draws nothing", () => {
     const store = returningVisitor();
     expect(drawOnce({ storage: store, random: () => DRAW_CHANCE })).toBeNull();
   });
 
-  test("the stated odds are one in a hundred", () => {
-    expect(DRAW_CHANCE).toBe(0.01);
+  test("the stated odds are one in ten", () => {
+    expect(DRAW_CHANCE).toBe(0.1);
   });
 });
 
