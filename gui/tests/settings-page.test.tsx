@@ -31,6 +31,7 @@ import { NotificationsProvider } from "../src/shell/notifications";
 import { readHistory } from "../src/shell/notifications-context";
 import { readRevisions } from "../src/shell/revisions";
 import { useSettingsDrafts } from "../src/settings-drafts-context";
+import { useSettingsSave } from "../src/shell/use-settings-save";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -45,6 +46,11 @@ let state: {
   shadowCallEnabled: boolean;
   /** When true the shadow-call route stores nothing and echoes what it already had. */
   refuseShadowCall: boolean;
+  /**
+   * When set, the shadow-call route fails outright with this status and error
+   * body — the write never lands, as distinct from landing and being refused.
+   */
+  rejectShadowCall: { status: number; error: string } | null;
 };
 
 let puts: Array<{ url: string; body: unknown }>;
@@ -60,7 +66,7 @@ beforeEach(() => {
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-  state = { codexAutoStart: false, shadowCallEnabled: false, refuseShadowCall: false };
+  state = { codexAutoStart: false, shadowCallEnabled: false, refuseShadowCall: false, rejectShadowCall: null };
   puts = [];
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -73,6 +79,12 @@ beforeEach(() => {
         return Response.json({ ok: true, codexAutoStart: state.codexAutoStart });
       }
       if (url.includes("/api/shadow-call-settings")) {
+        if (state.rejectShadowCall) {
+          return Response.json(
+            { error: state.rejectShadowCall.error },
+            { status: state.rejectShadowCall.status },
+          );
+        }
         if (!state.refuseShadowCall && typeof body?.enabled === "boolean") state.shadowCallEnabled = body.enabled;
         return Response.json({ ok: true, enabled: state.shadowCallEnabled, model: "gpt-5.6-luna" });
       }
@@ -127,12 +139,19 @@ afterEach(() => {
  * `SettingsDraftProvider.apply()` is the only place a Settings endpoint is ever
  * written, and the real trigger lives in `AppBar`. Mounting the whole app bar
  * here would drag the cost meter and quick-restore polls in for one button, so
- * this reaches `apply` through the same public context the app bar itself uses.
+ * this reaches the save through the same public hook the app bar itself uses.
+ *
+ * `useSettingsSave` rather than `apply` directly, and that is load-bearing
+ * rather than incidental: the notice is raised by the hook, so a stand-in that
+ * called `apply` bare would make every assertion about what the user is told
+ * pass for the wrong reason — including the negative one, which would then hold
+ * on a build that raises no notices at all.
  */
 function DraftSaveButton() {
-  const { apply, applying, dirtyCount } = useSettingsDrafts();
+  const { dirtyCount } = useSettingsDrafts();
+  const { save, applying } = useSettingsSave();
   return (
-    <button type="button" aria-label="Save changes" disabled={applying} onClick={() => { void apply(); }}>
+    <button type="button" aria-label="Save changes" disabled={applying} onClick={() => { void save(); }}>
       {dirtyCount}
     </button>
   );
@@ -229,14 +248,25 @@ test("a change the server accepts records one revision naming the setting and it
   const revisions = readRevisions();
   expect(revisions).toHaveLength(1);
   expect(revisions[0].scope).toBe("settings");
-  // The summary is the changed field and the value the server echoed back. It is
-  // written by `SettingsDraftProvider`, which sits above `LanguageProvider` by
-  // design, so it cannot reach `t()` for the row's English label the way the
-  // page's own writes once could.
+  // The summary is the changed setting and the value the server echoed back, in
+  // the words the row itself uses. It supersedes `codexAutoStart:true`, which is
+  // what this asserted while `SettingsDraftProvider` — mounted above
+  // `LanguageProvider` by design — was assumed unable to reach any copy at all.
+  // It reaches `translate()` directly instead, with the locale and funny levels
+  // it already owns, so Version history reads as prose rather than as wire names.
   expect(revisions[0].label).toBe("Settings");
-  expect(revisions[0].summary).toBe("codexAutoStart:true");
+  expect(revisions[0].summary).toBe("Start opencodex with Codex set to Enabled");
   // The prior value rides along, so a restore has something to put back.
   expect(revisions[0].before).toBe(JSON.stringify(false));
+
+  // And the save says so, once, rather than leaving the disappearing draft bar
+  // as the only evidence that anything reached the server.
+  const saved = readHistory().filter(notice => notice.title === "Setting saved");
+  expect(saved).toHaveLength(1);
+  expect(saved[0].tone).toBe("success");
+  // Auto-dismissing is the point of a success tone here: it is confirmation, not
+  // something the user has to clear. Only errors persist.
+  expect(saved[0].body).toContain("Version history");
 
   await act(async () => { root.unmount(); });
 });
@@ -261,6 +291,45 @@ test("a write the server refuses records nothing and does not claim it saved", a
   // So the one thing that must not happen is a claim that it saved. The draft bar
   // still reads dirty, because applying it changed nothing on the server.
   expect(readHistory().some(notice => notice.title === "Setting saved")).toBe(false);
+  expect(saveButton(container).textContent).toBe("1");
+
+  // The other thing that must not happen is silence. A staged control that will
+  // not clear, with nothing on screen to explain it, reads as a broken Save
+  // rather than as a server that declined — so the refusal is stated, it names
+  // the setting, and it says the value is still staged for another attempt.
+  const refusal = readHistory().filter(notice => notice.title === "Could not save that setting");
+  expect(refusal).toHaveLength(1);
+  expect(refusal[0].body).toContain("Shadow Call Intercept");
+  expect(refusal[0].body).toContain("still staged");
+  // Error tone, which is what keeps it on screen: `NotificationsProvider` sets an
+  // auto-dismiss timer for every tone except this one.
+  expect(refusal[0].tone).toBe("error");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a write that never lands names the setting and quotes the server's own message", async () => {
+  // Distinct from a refusal: the endpoint did not answer with a usable echo at
+  // all, so there is no stored value to report — only the reason it failed, which
+  // is the server's own copy rather than a generic apology invented here.
+  state.rejectShadowCall = { status: 503, error: "shadow call worker is restarting" };
+  const { container, root } = await mount();
+
+  await click(switchFor(container, "Shadow Call Intercept"));
+  await click(saveButton(container));
+
+  expect(readRevisions()).toHaveLength(0);
+  expect(readHistory().some(notice => notice.title === "Setting saved")).toBe(false);
+
+  const failure = readHistory().filter(notice => notice.title === "Could not save that setting");
+  expect(failure).toHaveLength(1);
+  expect(failure[0].tone).toBe("error");
+  expect(failure[0].body).toContain("Shadow Call Intercept");
+  expect(failure[0].body).toContain("shadow call worker is restarting");
+
+  // Unchanged by any of this: the value stays staged so it can be retried, which
+  // is exactly the state the notice exists to explain.
+  expect(switchFor(container, "Shadow Call Intercept").getAttribute("aria-checked")).toBe("true");
   expect(saveButton(container).textContent).toBe("1");
 
   await act(async () => { root.unmount(); });

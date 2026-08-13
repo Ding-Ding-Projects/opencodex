@@ -14,6 +14,7 @@ import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
 import { usePrefs } from "../theme/prefs-context";
 import { useSettingsDrafts } from "../settings-drafts-context";
+import { useSettingsSave } from "./use-settings-save";
 import { Button } from "./m3-ui";
 import { useAppearanceTarget } from "./use-appearance-target";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
@@ -40,7 +41,11 @@ interface AppBarProps {
 export default function AppBar({ apiBase, title, statusLine, statusTitle, codename, onOpenDrawer, drawerOpen, onOpen, onConnectRemote }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
-  const { dirty, dirtyCount, applying, apply, discard } = useSettingsDrafts();
+  const { dirty, dirtyCount, discard } = useSettingsDrafts();
+  // Not `apply` from the draft context: the app bar sits inside the language and
+  // notification providers that the coordinator sits outside of, so this is the
+  // layer that can actually report what the save did.
+  const { save, applying } = useSettingsSave();
   const { history, unreadCount, markAllRead } = useNotifications();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -105,7 +110,7 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
         <div className="m3-draft-bar" role="status" aria-live="polite">
           <span className="m3-draft-bar__count">{t("settings.draftChanged", { count: dirtyCount })}</span>
           <Button variant="text" disabled={applying} onClick={discard}>{t("settings.discardDraft")}</Button>
-          <Button variant="tonal" disabled={applying} onClick={() => void apply()}>
+          <Button variant="tonal" disabled={applying} onClick={() => void save()}>
             {t(applying ? "settings.draftApplying" : "settings.saveApply")}
           </Button>
         </div>
