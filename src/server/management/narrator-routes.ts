@@ -74,7 +74,10 @@ export async function handleNarratorRoutes(ctx: ManagementContext): Promise<Resp
         // transferring audio nobody will hear.
         signal: req.signal,
       });
-      return new Response(audio, {
+      // The underlying buffer, not the view. `synthesizeEdgeSpeech` allocates a
+      // fresh exactly-sized `Uint8Array`, so the two describe the same bytes —
+      // and `BodyInit` does not accept a typed-array view under this lib target.
+      return new Response(audio.buffer as ArrayBuffer, {
         status: 200,
         headers: {
           "Content-Type": "audio/mpeg",

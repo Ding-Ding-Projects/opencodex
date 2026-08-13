@@ -240,6 +240,12 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
     { id: "narratorVoice", tkey: "narrator.voice", descKey: "narrator.voiceSub", keywordKeys: ["narrator.voiceAuto"] },
     { id: "narratorRate", tkey: "narrator.rateShort", descKey: "narrator.voiceSub" },
     { id: "narratorPitch", tkey: "narrator.pitchShort", descKey: "narrator.voiceSub" },
+    {
+      id: "narratorEdge",
+      tkey: "narrator.edgeTitle",
+      descKey: "narrator.edgeDisclosure",
+      keywordKeys: ["narrator.edgeEnable", "narrator.edgeCantonese"],
+    },
     { id: "dimsum", tkey: "dimsum.toggle" },
   ],
 });

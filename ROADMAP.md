@@ -181,6 +181,26 @@ was told last month that a feature was missing needs to see it corrected, not si
     self-reported, so a machine carrying a Cantonese voice that reports only `zh` is treated as
     region-unknown and offered, while one reporting `zh-CN` is excluded as the wrong dialect. Both
     are the honest reading of the metadata, but neither is a guarantee about pronunciation.
+- **Cantonese narration has real voices, from Microsoft Edge's read-aloud service.** Windows installs
+  no Cantonese voice at all — this machine reports three `en-US` voices and nothing else — so the
+  local picker alone left the product's Cantonese narration effectively unusable. `src/server/
+  management/narrator-tts.ts` lists the service's 322 voices and synthesizes MP3 over its WebSocket;
+  `narrator-routes.ts` exposes `/api/narrator/edge-voices` and `/api/narrator/edge-speak`, and the
+  renderer decodes the clip through the Web Audio API. That closes the gap with three neural
+  Cantonese voices (`zh-HK-HiuMaanNeural`, `zh-HK-HiuGaaiNeural`, `zh-HK-WanLungNeural`).
+  - **It is opt-in, and off by default, because the narrated text leaves the machine.** The
+    disclosure saying so sits on the control that enables it. A stored Edge voice makes no network
+    request at all while the source is off; it speaks with a local voice and the surface says so.
+  - **The endpoint is undocumented and unsupported.** Microsoft can change or block it at any time.
+    Offline, blocked and refused all degrade to a local voice with the reason shown, never to
+    silence. The handshake also validates `Sec-MS-GEC-Version` against the `User-Agent`'s Edge major
+    version and answers a bare `403` when they disagree or when the version has aged out — so those
+    two constants must be bumped **as a pair**, and a sudden blanket `403` means the pin is stale
+    rather than that the protocol changed.
+  - **Still open: no automated test covers the live service.** The client, the routes and the
+    renderer's queue behaviour are tested, but the synthesis path is proved by a real request made
+    by hand (322 voices listed; 14,976 bytes of valid MP3 from `zh-HK-HiuMaanNeural` through the
+    route) rather than by CI, which cannot depend on an undocumented third-party endpoint.
 
 ### Remote access
 

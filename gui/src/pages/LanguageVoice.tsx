@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button, Card, Chip, Field, SelectField, Slider, TextInput, Toggle } from "../shell/m3-ui";
+import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { IconSearch, IconSparkle, IconVolume } from "../icons";
 import { LOCALES, useI18n, useT, type Locale, type TFn } from "../i18n/shared";
@@ -31,7 +31,13 @@ import {
   type NarratorVoicePrefs,
 } from "../theme/prefs-context";
 import { cancelNarration, configureNarrator, narrate, narratorAvailable } from "../shell/narrator";
-import { resolveVoice, subscribeVoices, type VoiceOption } from "../shell/narrator-voices";
+import {
+  fetchEdgeVoices,
+  filterVoices,
+  resolveVoice,
+  subscribeVoices,
+  type VoiceOption,
+} from "../shell/narrator-voices";
 import { useNotifications } from "../shell/notifications-context";
 import { DISHES, type DimSumDish } from "../shell/dimsum";
 import { DishArt } from "../shell/DimSumCard";
@@ -156,6 +162,45 @@ function useInstalledVoices(): { voices: VoiceOption[]; loaded: boolean } {
 }
 
 /**
+ * The Microsoft Edge online voice catalogue, fetched only once opted in.
+ *
+ * Gated on `enabled` rather than fetched eagerly and hidden: an app that
+ * contacts a third party before the user has agreed to it has already done the
+ * thing the disclosure was asking permission for.
+ */
+function useEdgeVoices(enabled: boolean, apiBase: string): {
+  voices: VoiceOption[];
+  loading: boolean;
+  available: boolean;
+  error: string;
+} {
+  const [state, setState] = useState<{ voices: VoiceOption[]; loading: boolean; available: boolean; error: string }>(
+    { voices: [], loading: false, available: false, error: "" },
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      setState({ voices: [], loading: false, available: false, error: "" });
+      return;
+    }
+    const controller = new AbortController();
+    setState(previous => ({ ...previous, loading: true, error: "" }));
+    void fetchEdgeVoices(apiBase, controller.signal).then(result => {
+      if (controller.signal.aborted) return;
+      setState({
+        voices: result.voices,
+        loading: false,
+        available: result.available,
+        error: result.error ?? "",
+      });
+    });
+    return () => controller.abort();
+  }, [enabled, apiBase]);
+
+  return state;
+}
+
+/**
  * One narrated language's voice, speed and pitch.
  *
  * Rendered once per track, so bilingual narration gets two of everything. That
@@ -163,7 +208,7 @@ function useInstalledVoices(): { voices: VoiceOption[]; loaded: boolean } {
  * about which Cantonese voice should read the other half of the same line, and a
  * single shared picker would force one answer onto both.
  */
-function VoiceTrack({ t, tag, label, settings, disabled, voices, loaded, onChange }: {
+function VoiceTrack({ t, tag, label, settings, disabled, voices, loaded, edge, onChange }: {
   t: TFn;
   tag: string;
   label: string;
@@ -171,55 +216,120 @@ function VoiceTrack({ t, tag, label, settings, disabled, voices, loaded, onChang
   disabled: boolean;
   voices: VoiceOption[];
   loaded: boolean;
+  edge: { enabled: boolean; available: boolean };
   onChange: (patch: Partial<NarratorVoicePrefs>) => void;
 }) {
-  const resolution = resolveVoice(voices, tag, settings.voiceURI, loaded);
+  // Each track owns its own query and mode. One shared search would filter the
+  // Cantonese list while the user was typing into the English one.
+  const [query, setQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
+
+  const resolution = resolveVoice(voices, tag, settings.voiceURI, loaded, edge);
   const statusId = `ocx-narrator-status-${tag}`;
   const selectId = `ocx-narrator-voice-${tag}`;
 
-  const options = [
-    // Always first, and always the shipped default. Nothing ships with a named
-    // voice selected: the app cannot know what is installed until it asks, so
-    // naming one would be a preference for a voice most machines do not have.
-    { value: "", label: t("narrator.voiceAuto") },
-    ...resolution.candidates.map(voice => ({ value: voice.uri, label: voice.name })),
-  ];
-  // A choice whose voice is not installed here still shows in the control, so
-  // the kept preference is visible rather than silently reading as "automatic".
-  if (resolution.kind === "missing" && settings.voiceURI) {
-    options.push({ value: settings.voiceURI, label: settings.voiceLabel ?? settings.voiceURI });
-  }
+  const matched = filterVoices(resolution.candidates, query, useRegex);
+  const local = matched.filter(voice => voice.source === "local");
+  const online = matched.filter(voice => voice.source === "edge");
+
+  // A choice whose voice is not reachable right now still shows in the control,
+  // so the kept preference is visible rather than silently reading as
+  // "automatic" — the select would otherwise fall back to its first option and
+  // quietly misreport what the user asked for.
+  const keptElsewhere = ["missing", "edgeOff", "edgeUnavailable"].includes(resolution.kind)
+    && settings.voiceURI
+    && !matched.some(voice => voice.uri === settings.voiceURI);
 
   const status: string[] = [];
   if (resolution.kind === "loading") status.push(t("narrator.voiceLoading"));
   else if (resolution.kind === "none") status.push(t("narrator.voiceNone", { lang: label }));
   else if (resolution.kind === "platform") status.push(t("narrator.voicePlatform", { lang: label, n: resolution.candidates.length }));
   else if (resolution.kind === "chosen") status.push(t("narrator.voiceChosen", { name: resolution.voice!.name, lang: label }));
+  else if (resolution.kind === "edgeOff") status.push(t("narrator.edgeOff", { name: settings.voiceLabel ?? settings.voiceURI ?? "", lang: label }));
+  else if (resolution.kind === "edgeUnavailable") status.push(t("narrator.edgeUnavailable", { lang: label }));
   else status.push(t("narrator.voiceMissing", { name: settings.voiceLabel ?? settings.voiceURI ?? "", lang: label }));
   // Network-backed voices die when the machine goes offline, and nothing about
   // the name says so.
   if (resolution.network && resolution.voice) status.push(t("narrator.voiceNetwork", { name: resolution.voice.name }));
+  if (edge.enabled && edge.available && online.length) status.push(t("narrator.edgeCount", { n: online.length, lang: label }));
 
   const voiceLabel = t("narrator.voiceFor", { lang: label });
+  const searchLabel = `${t("narrator.voiceSearch")} — ${label}`;
 
   return (
     <div style={{ marginTop: "var(--sp-3)" }}>
+      {/* The Edge catalogue runs to several hundred voices, so the list carries
+          the same search-plus-anchored-builder every other list in the app has.
+          Plain text stays the default; `.*` is an explicit opt-in. */}
+      <div className="m3-row" role="search" style={{ marginBottom: 8 }}>
+        <IconSearch width={20} height={20} aria-hidden="true" />
+        <TextInput
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={t("narrator.voiceSearch")}
+          aria-label={searchLabel}
+          disabled={disabled}
+          style={{ flex: "1 1 180px", width: "auto", minWidth: 0 }}
+        />
+        <Chip selected={useRegex} onClick={() => setUseRegex(v => !v)} title={t("search.regexHint")} aria-label={t("regex.regexMode")}>
+          <code style={MONO}>.*</code>
+        </Chip>
+        <RegexBuilderButton
+          value={query}
+          onApply={setQuery}
+          regex={useRegex}
+          onRegexChange={setUseRegex}
+          sample={resolution.candidates.map(voice => `${voice.name} ${voice.lang}`).join("\n")}
+          label={searchLabel}
+        />
+      </div>
+
       <Field label={voiceLabel} id={selectId}>
-        <SelectField
+        {/* Grouped rather than one flat list: which voices leave the machine and
+            which do not is the most important thing about this control, so it
+            is structure rather than a suffix on a name. */}
+        <select
           id={selectId}
-          label={voiceLabel}
-          describedBy={statusId}
+          className="m3-select"
+          aria-label={voiceLabel}
+          aria-describedby={statusId}
           disabled={disabled}
           value={settings.voiceURI ?? ""}
-          options={options}
-          onChange={uri => onChange({
-            voiceURI: uri || undefined,
-            // Stored beside the identity so a status line can name the voice
-            // that went missing. It is display copy and is never matched on.
-            voiceLabel: uri ? resolution.candidates.find(v => v.uri === uri)?.name : undefined,
-          })}
-        />
+          onChange={event => {
+            const uri = event.target.value;
+            onChange({
+              voiceURI: uri || undefined,
+              // Stored beside the identity so a status line can name the voice
+              // that went missing. It is display copy and is never matched on.
+              voiceLabel: uri ? resolution.candidates.find(v => v.uri === uri)?.name : undefined,
+            });
+          }}
+        >
+          {/* Always first, and always the shipped default. Nothing ships with a
+              named voice selected: the app cannot know what is installed until
+              it asks, so naming one would be a preference for a voice most
+              machines do not have. */}
+          <option value="">{t("narrator.voiceAuto")}</option>
+          {keptElsewhere && (
+            <option value={settings.voiceURI}>{settings.voiceLabel ?? settings.voiceURI}</option>
+          )}
+          {local.length > 0 && (
+            <optgroup label={t("narrator.edgeGroupLocal")}>
+              {local.map(voice => <option key={voice.uri} value={voice.uri}>{voice.name}</option>)}
+            </optgroup>
+          )}
+          {online.length > 0 && (
+            <optgroup label={t("narrator.edgeGroupOnline")}>
+              {online.map(voice => <option key={voice.uri} value={voice.uri}>{voice.name}</option>)}
+            </optgroup>
+          )}
+        </select>
       </Field>
+      {query.trim() && !matched.length && (
+        <p style={{ margin: "4px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+          {t("narrator.voiceNoMatch")}
+        </p>
+      )}
       <p
         id={statusId}
         style={{ margin: "4px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}
@@ -278,7 +388,13 @@ export default function LanguageVoice() {
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
 
-  const { voices, loaded: voicesLoaded } = useInstalledVoices();
+  const apiBase = import.meta.env.VITE_API_BASE || "";
+  const { voices: localVoices, loaded: voicesLoaded } = useInstalledVoices();
+  const edge = useEdgeVoices(prefs.narratorEdge, apiBase);
+
+  // One list behind one picker. The `source` field on each entry is what keeps
+  // "this one leaves the machine" answerable after the merge.
+  const voices = useMemo(() => [...localVoices, ...edge.voices], [localVoices, edge.voices]);
 
   const trackTags = useMemo(() => tracksFor(prefs.narratorLang), [prefs.narratorLang]);
   const narratorTracks = useMemo(
@@ -290,9 +406,14 @@ export default function LanguageVoice() {
   );
 
   useEffect(() => {
-    configureNarrator({ enabled: prefs.narrator, tracks: narratorTracks });
+    configureNarrator({
+      enabled: prefs.narrator,
+      tracks: narratorTracks,
+      apiBase,
+      edgeEnabled: prefs.narratorEdge,
+    });
     return () => cancelNarration();
-  }, [prefs.narrator, narratorTracks]);
+  }, [prefs.narrator, narratorTracks, apiBase, prefs.narratorEdge]);
 
   // Non-blocking by contract: the preview never gates anything and clears itself.
   useEffect(() => {
@@ -409,6 +530,8 @@ export default function LanguageVoice() {
         t("narrator.language"), t("narrator.test"), t("narrator.langBoth"),
         t("narrator.voice"), t("narrator.voiceSub"), t("narrator.voiceAuto"),
         t("narrator.rateShort"), t("narrator.pitchShort"),
+        t("narrator.edgeTitle"), t("narrator.edgeEnable"), t("narrator.edgeDisclosure"),
+        t("narrator.voiceSearch"), t("narrator.installMore"),
         ...trackTags.map(tag => `${t("narrator.voiceFor", { lang: trackLabel(tag) })} ${t("narrator.rate", { lang: trackLabel(tag) })} ${t("narrator.pitch", { lang: trackLabel(tag) })}`),
       ].join(" "),
       node: (
@@ -474,9 +597,62 @@ export default function LanguageVoice() {
               disabled={!available}
               voices={voices}
               loaded={voicesLoaded}
+              edge={{ enabled: prefs.narratorEdge, available: edge.available }}
               onChange={patch => setTrack(tag, patch)}
             />
           ))}
+
+          {/* The offline answer to "more voices", stated in words rather than
+              as a button that may not be able to open anything. */}
+          <p style={{ margin: "var(--sp-3) 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+            {t("narrator.installMore")}
+          </p>
+
+          {/* The network source. Its disclosure sits on the control that turns
+              it on, not in a tooltip — enabling it is the moment the user is
+              agreeing to send text to Microsoft, so that is where it is said. */}
+          <div
+            style={{
+              marginTop: "var(--sp-3)",
+              padding: "12px 16px",
+              borderRadius: "var(--r-l)",
+              background: "var(--m3-surface-container-highest)",
+            }}
+          >
+            <div className="m3-row" style={{ justifyContent: "space-between", gap: 12 }}>
+              <div className="m3-field-label" style={{ margin: 0 }}>{t("narrator.edgeTitle")}</div>
+              <Toggle
+                on={prefs.narratorEdge}
+                label={t("narrator.edgeEnable")}
+                onChange={next => setPrefs({ narratorEdge: next })}
+              />
+            </div>
+            <p style={{ margin: "8px 0 0", fontSize: "var(--t-body-s)" }}>
+              {t("narrator.edgeDisclosure")}
+            </p>
+            <p style={{ margin: "6px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+              {t("narrator.edgeUnsupported")}
+            </p>
+            <p style={{ margin: "6px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+              {t("narrator.edgeCantonese")}
+            </p>
+            {prefs.narratorEdge && (
+              <p
+                role="status"
+                style={{
+                  margin: "6px 0 0",
+                  fontSize: "var(--t-label-m)",
+                  color: edge.available || edge.loading ? "var(--m3-on-surface-variant)" : "var(--m3-error)",
+                }}
+              >
+                {edge.loading
+                  ? t("narrator.edgeLoading")
+                  : edge.available
+                    ? t("narrator.edgeCount", { n: edge.voices.length, lang: trackLabel(trackTags[0] ?? "en") })
+                    : t("narrator.edgeFailed", { reason: edge.error || "unavailable" })}
+              </p>
+            )}
+          </div>
 
           <Button
             variant="outlined"

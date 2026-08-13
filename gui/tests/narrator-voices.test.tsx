@@ -28,7 +28,15 @@ import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { DEFAULT_PREFS, readPrefs, PREFS_KEY } from "../src/theme/prefs-context";
-import { resolveVoice, voiceReadsLang, voicesForLang, type VoiceOption } from "../src/shell/narrator-voices";
+import {
+  EDGE_URI_PREFIX,
+  filterVoices,
+  isEdgeUri,
+  resolveVoice,
+  voiceReadsLang,
+  voicesForLang,
+  type VoiceOption,
+} from "../src/shell/narrator-voices";
 import { cancelNarration, configureNarrator, narrate } from "../src/shell/narrator";
 
 /* ------------------------------------------------------------ fake platform */
@@ -102,7 +110,10 @@ afterEach(() => {
 });
 
 const option = (uri: string, name: string, lang: string, localService = true): VoiceOption =>
-  ({ uri, name, lang, localService });
+  ({ uri, name, lang, localService, source: "local" });
+
+const edgeOption = (shortName: string, name: string, lang: string): VoiceOption =>
+  ({ uri: `${EDGE_URI_PREFIX}${shortName}`, name, lang, localService: false, source: "edge" });
 
 /* ------------------------------------------------------ language matching -- */
 
@@ -184,6 +195,89 @@ describe("what the status line beneath a picker has to say", () => {
   test("a network-backed voice is flagged, because nothing in its name says so", () => {
     expect(resolveVoice(voices, "en", "uri:cloud", true).network).toBe(true);
     expect(resolveVoice(voices, "en", "uri:david", true).network).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------- the Edge source -- */
+
+describe("the Microsoft Edge online voice source", () => {
+  // The gap this exists to close: Windows installs no Cantonese voice, so the
+  // local list for zh-HK is empty on a stock machine while Edge carries three.
+  const cantonese = [
+    edgeOption("zh-HK-HiuMaanNeural", "Microsoft HiuMaan Online (Natural)", "zh-HK"),
+    edgeOption("zh-HK-WanLungNeural", "Microsoft WanLung Online (Natural)", "zh-HK"),
+  ];
+  const english = [option("uri:david", "David", "en-US")];
+
+  test("an Edge identity is namespaced so it cannot collide with a platform one", () => {
+    expect(isEdgeUri("edge:zh-HK-HiuMaanNeural")).toBe(true);
+    expect(isEdgeUri("Microsoft David - English (United States)")).toBe(false);
+  });
+
+  test("local voices are listed before online ones", () => {
+    const mixed = [...cantonese, ...english, option("uri:zira", "Zira", "en-US")];
+    const ordered = voicesForLang(mixed, "en");
+    expect(ordered.map(v => v.source)).toEqual(["local", "local"]);
+
+    const hk = voicesForLang(mixed, "zh-HK");
+    expect(hk.map(v => v.source)).toEqual(["edge", "edge"]);
+  });
+
+  // The whole point: with the source on, Cantonese stops being unspeakable.
+  test("Cantonese becomes selectable once the source is on", () => {
+    const withoutEdge = resolveVoice(english, "zh-HK", undefined, true, { enabled: false, available: false });
+    expect(withoutEdge.kind).toBe("none");
+
+    const withEdge = resolveVoice([...english, ...cantonese], "zh-HK", undefined, true, { enabled: true, available: true });
+    expect(withEdge.kind).toBe("platform");
+    expect(withEdge.candidates).toHaveLength(2);
+  });
+
+  // Never a silent fallback, in either direction: the user is told a local
+  // voice is speaking, and their network choice is not thrown away.
+  test("a stored Edge voice with the source off degrades loudly and keeps the choice", () => {
+    const resolved = resolveVoice(
+      [...english, ...cantonese], "zh-HK", "edge:zh-HK-HiuMaanNeural", true,
+      { enabled: false, available: false },
+    );
+    expect(resolved.kind).toBe("edgeOff");
+    expect(resolved.voice).toBeUndefined();
+  });
+
+  test("an unreachable service degrades loudly rather than going quiet", () => {
+    const resolved = resolveVoice(
+      english, "zh-HK", "edge:zh-HK-HiuMaanNeural", true,
+      { enabled: true, available: false },
+    );
+    expect(resolved.kind).toBe("edgeUnavailable");
+  });
+
+  test("every Edge voice is flagged as network-backed", () => {
+    const resolved = resolveVoice(cantonese, "zh-HK", "edge:zh-HK-HiuMaanNeural", true, { enabled: true, available: true });
+    expect(resolved.kind).toBe("chosen");
+    expect(resolved.network).toBe(true);
+  });
+
+  // 322 voices is past the size where scrolling is a reasonable ask.
+  test("the list is searchable by plain text and by pattern", () => {
+    const all = [...english, ...cantonese];
+    expect(filterVoices(all, "hiumaan", false).map(v => v.uri)).toEqual(["edge:zh-HK-HiuMaanNeural"]);
+    expect(filterVoices(all, "zh-HK", false)).toHaveLength(2);
+    expect(filterVoices(all, "^Microsoft (HiuMaan|WanLung)", true)).toHaveLength(2);
+    // An invalid pattern shows everything rather than blanking the list.
+    expect(filterVoices(all, "([unclosed", true)).toHaveLength(3);
+    expect(filterVoices(all, "", false)).toHaveLength(3);
+  });
+
+  test("the stored preference is off, so nothing reaches the network unasked", () => {
+    expect(DEFAULT_PREFS.narratorEdge).toBe(false);
+    // Anything other than a literal `true` from disk means off.
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ narratorEdge: "yes" }));
+    expect(readPrefs().narratorEdge).toBe(false);
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ narratorEdge: 1 }));
+    expect(readPrefs().narratorEdge).toBe(false);
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ narratorEdge: true }));
+    expect(readPrefs().narratorEdge).toBe(true);
   });
 });
 
@@ -307,6 +401,68 @@ describe("bilingual narration is serialized, one track at a time", () => {
     expect(spoken).toHaveLength(1);
     expect(spoken[0]!.voice).toBeNull();
     expect(spoken[0]!.lang).toBe("en");
+  });
+});
+
+describe("narrating through the Edge source", () => {
+  const edgeTrack = { lang: "zh-HK", voiceURI: "edge:zh-HK-HiuMaanNeural", rate: 1, pitch: 1 };
+  let realFetch: typeof fetch;
+  let calls: { url: string; signal?: AbortSignal | null }[];
+
+  beforeEach(() => {
+    realFetch = globalThis.fetch;
+    calls = [];
+    // Never resolves, so the request stays in flight and supersession has
+    // something real to abort.
+    globalThis.fetch = ((url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), signal: init?.signal });
+      return new Promise<Response>(() => {});
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  // The single most important property of an opt-in network feature: the stored
+  // preference alone must never be enough to make a request.
+  test("a stored Edge voice speaks locally while the source is off", () => {
+    configureNarrator({ enabled: true, tracks: [edgeTrack], edgeEnabled: false });
+    narrate("你好。");
+    expect(calls).toHaveLength(0);
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]!.lang).toBe("zh-HK");
+  });
+
+  test("with the source on it goes to this app's own server, not to Microsoft", () => {
+    configureNarrator({ enabled: true, tracks: [edgeTrack], edgeEnabled: true, apiBase: "" });
+    narrate("你好。");
+    expect(calls).toHaveLength(1);
+    // Same-origin: the page's CSP is `connect-src 'self'`, and the server holds
+    // the headers the speech service requires.
+    expect(calls[0]!.url).toBe("/api/narrator/edge-speak");
+    // Nothing was handed to the platform synthesizer for this segment.
+    expect(spoken).toHaveLength(0);
+  });
+
+  test("superseding aborts the in-flight request instead of letting it play late", () => {
+    configureNarrator({ enabled: true, tracks: [edgeTrack], edgeEnabled: true });
+    narrate("第一。");
+    const first = calls[0]!.signal!;
+    expect(first.aborted).toBe(false);
+
+    narrate("第二。");
+    expect(first.aborted).toBe(true);
+    // ...and the queue is released rather than wedged: an aborted request never
+    // reports that it finished, so the newer message must still get out.
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.signal!.aborted).toBe(false);
+  });
+
+  test("cancelling stops the request too", () => {
+    configureNarrator({ enabled: true, tracks: [edgeTrack], edgeEnabled: true });
+    narrate("你好。");
+    const signal = calls[0]!.signal!;
+    cancelNarration();
+    expect(signal.aborted).toBe(true);
   });
 });
 
