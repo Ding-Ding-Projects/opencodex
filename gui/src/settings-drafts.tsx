@@ -119,7 +119,13 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
   }, [prefs, dark]);
 
-  useEffect(() => applyLayout(document.documentElement, width), [width]);
+  // Block body, not a concise one: `applyLayout` returns the resolved
+  // `WindowClass`, and a concise arrow would hand that string back as the
+  // effect's cleanup function. React only ever calls what an effect returns,
+  // so the string is not merely unused — it is a teardown that cannot run.
+  useEffect(() => {
+    applyLayout(document.documentElement, width);
+  }, [width]);
 
   useEffect(() => {
     const meta = (awaitedLocale => awaitedLocale)(locale);

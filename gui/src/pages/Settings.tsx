@@ -127,13 +127,6 @@ interface SettingRow {
   jump?: JumpTarget;
 }
 
-/** One recorded change: the setting's name, the value it moved to, what it replaced. */
-interface SettingChange {
-  setting: string;
-  value: string;
-  before: string;
-}
-
 function SelectControl({ label, value, options, disabled, onChange }: {
   label: string;
   value: string;
