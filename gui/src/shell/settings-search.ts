@@ -64,6 +64,13 @@ export interface SettingsOption {
 export interface ElsewhereOption {
   label: string;
   desc?: string;
+  /**
+   * Extra words that should match but are not the label, exactly as on a local
+   * option. None of these three fields is ever rendered — only `tab` is — so
+   * they exist purely to widen what a cross-page hit can be found by, and a
+   * setting has to be as findable from another screen as it is from its own.
+   */
+  keywords?: string;
   /** The tab/screen name to send the user to, translated. */
   tab: string;
 }
@@ -211,7 +218,7 @@ export function runSettingsSearch({
   const offTab = active ? matched.filter(option => !onThisTab(option)) : [];
 
   const elsewhereHitRows = active
-    ? elsewhere.filter(row => matcher.test([row.label, row.desc].filter(Boolean).join(" ")))
+    ? elsewhere.filter(row => matcher.test([row.label, row.desc, row.keywords].filter(Boolean).join(" ")))
     : [];
 
   return {

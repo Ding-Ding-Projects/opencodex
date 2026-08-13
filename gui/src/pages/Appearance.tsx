@@ -164,11 +164,13 @@ export default function Appearance() {
   ];
 
   /**
-   * Settings that live on another surface, so a miss here can still point
+   * Settings that live on another screen, so a miss here can still point
    * somewhere. Taken from the shared registry rather than listed here: this
    * screen knew about three entries on one tab while `Settings` knew about five
    * on four others, so the same query answered differently depending on which
-   * search bar it was typed into.
+   * search bar it was typed into — and between them they covered eight settings
+   * out of the app's eighty. The registry is contributed per page, so this now
+   * reports every setting the app has except the six on this screen.
    */
   const elsewhere = elsewhereFor("nav.appearance").map(entry => ({
     id: entry.tkey,

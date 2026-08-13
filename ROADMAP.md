@@ -93,9 +93,8 @@ than trusting the report. **378 differences closed across all 19 screens**; GUI 
 
 Parity is **not** 100%, and the remainder is listed honestly under Known gaps below rather than
 rounded away. The largest single category was cross-page settings search; as of the 2026-08-13
-re-check the mechanism ships and what remains of it is that its cross-page index is hand-curated at
-eight of the prototype's fourteen entries. The rest are per-screen notes recorded in the wave
-reports. Those figures — 378 differences, 383 → 494 tests — are from the 2026-07-30 sweep and have
+re-check the mechanism ships and its index is registry-driven at 80 settings across 14 pages, past
+the prototype's fourteen entries. The rest are per-screen notes recorded in the wave reports. Those figures — 378 differences, 383 → 494 tests — are from the 2026-07-30 sweep and have
 not been re-counted since. Three of the verifiers caught defects their own implementing
 agent had missed — a history entry written for a change that never happened, an uncapped regex over
 every log line, and a page claiming to bundle fonts it did not have — which is the argument for
@@ -245,13 +244,32 @@ was told last month that a feature was missing needs to see it corrected, not si
   the second is `SETTINGS_ELSEWHERE` in `gui/src/pages/settings-elsewhere.ts`: **one** shared array
   imported by every surface, which filters out its own rows, so registering a setting once makes it
   findable from every search bar.
-- What genuinely remains is that `SETTINGS_ELSEWHERE` is **hand-curated, not generated**. It holds
-  eight entries across five tabs (Codex Auth, Models, Grok, API, Language & voice) where the
-  prototype's `settingsIndex` in `design/ocx-data.js` reports fourteen. The shortfall is deliberate
-  and documented in the file: it lists only entries whose keys genuinely resolve today, because a
-  row pointing at a key that renders as nothing sends the user to a tab to look for something that
-  is not there. A generated index over the real settings components is the honest remaining half —
-  until then, a setting is discoverable from another page only if someone remembered to register it.
+- ~~What genuinely remains is that `SETTINGS_ELSEWHERE` is **hand-curated, not generated**, at eight
+  entries where the prototype reports fourteen.~~ Closed. `gui/src/shell/settings-registry.ts` holds
+  the contract and `settings-registry-entries.ts` the contributions: **80 settings across 14 pages**
+  — Dashboard 12, Claude 15, Startup 8, Storage 7, Logs & Debug 7, Appearance 6, Remote access 6,
+  Language & voice 5, Remote control 4, Codex Auth 3, Notifications 3, Models 2, API 1, Grok 1. All
+  eight hand-written rows are gone; `settings-elsewhere.ts` is now a shim deriving its list from the
+  registry.
+  - `useSettingsSearch` reads it through a new `scope` argument with three states, not two: a page
+    id means the surface *is* that page, `"all"` means nothing on screen is here (what a popover or
+    dialog needs, since a dialog is not a page), and omitting it opts out — which is what every
+    caller that was not rewired silently gets, so no unwired surface changed behaviour.
+  - Rows are i18n **keys** resolved at query time rather than strings captured at render time,
+    because the index has to describe screens that are **not mounted** — a mount-time registry would
+    have rebuilt the same blindness with more machinery. It also makes a row pointing at a
+    nonexistent key a compile error instead of a search result leading nowhere, and keeps the
+    cross-page note in the reader's own language. Page ids reuse the router's `Page` union, so an
+    entry for a screen that does not exist fails to compile.
+  - `Settings` registers none of its own rows. It is the aggregate view, and a setting belongs to
+    the page owning its real editor — a mirror that registered too would report the same setting
+    twice under two page names.
+  - Still open: the registry indexes labels, descriptions and option names but **not a setting's
+    live value** on a page that is not open, because a screen that has never read a control cannot
+    honestly say what it is set to. Selecting a cross-page hit reports where the setting lives
+    rather than navigating there. `Settings.tsx` and `Appearance.tsx` still build their searches by
+    hand and reach the registry through the shim, so they match labels and descriptions but not the
+    registry's keyword terms.
 - The regex-builder hand-off **no longer drops flags on the shared row**, and did when this was
   written. `useSettingsSearch` holds `flags` as state with `setFlags`; `SettingsSearchRow` seeds
   `RegexBuilderButton` from its own query *and* its own flags and writes the pattern, the flags and

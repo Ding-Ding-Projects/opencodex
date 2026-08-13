@@ -289,7 +289,7 @@ export default function Mobile({ apiBase }: { apiBase: string }) {
     ];
   }, [t, tabs, panel, model, models, draft, logs, host, apiKey]);
 
-  const search = useSettingsSearch({ options, activeTab: tabs[panel] });
+  const search = useSettingsSearch({ options, scope: "mobile", activeTab: tabs[panel] });
   const { matches } = search;
   const showTranscript = matches("transcript");
 

@@ -55,12 +55,21 @@ const DEBUG_ROW = "debug-";
 const DEBUG_FLAGS = ["debug", "usage", "injection", "claude"] as const;
 
 /**
- * Settings this page deliberately does not aggregate, because their editors are
- * whole workspaces (a provider table, a model catalogue, an account pool). The
- * search reports a hit on one of these by name and says which tab owns it, so a
- * miss here never reads as "that setting does not exist".
+ * Every setting the app has, each tagged with the screen that owns its real
+ * editor, so a hit this page cannot show is still named and located.
+ *
+ * This page aggregates a lot but not everything: some editors are whole
+ * workspaces (a provider table, a model catalogue, an account pool), and even
+ * the values it does mirror are fully editable only on their own screen. Reading
+ * the shared registry rather than a list kept here means a setting added
+ * anywhere becomes findable from this search bar without anyone remembering to
+ * come and add it — which is what the eight hand-written rows this replaced
+ * could never promise.
+ *
+ * Read at module scope, which is safe because the registry is contributed
+ * statically: it describes screens that are not open, so it is complete before
+ * the first render rather than filling in as pages mount.
  */
-// One shared registry, so every settings search reports the same neighbours.
 const ELSEWHERE = elsewhereFor("nav.settings");
 
 const LEAD_ROW: CSSProperties = { marginBottom: "var(--sp-3)", alignItems: "flex-start" };

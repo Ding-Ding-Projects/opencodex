@@ -429,11 +429,25 @@ file.
   surface, and another screen — from the shared `SETTINGS_ELSEWHERE` array in
   `gui/src/pages/settings-elsewhere.ts`.
 
-  **What this entry got right is what is still open:** the generated index. That
-  shared array is hand-curated at eight entries across five tabs where the
-  prototype reports fourteen, deliberately listing only keys that resolve today.
-  Until it is generated from the real settings components, a setting is findable
-  from another page only if somebody remembered to register it.
+  **The generated index this entry called out as still open has since landed.**
+  `gui/src/shell/settings-registry.ts` holds the contract and
+  `settings-registry-entries.ts` the contributions — 80 settings across 14 pages,
+  replacing all eight hand-written rows, with `settings-elsewhere.ts` reduced to a
+  shim that derives its list from the registry.
+
+  Two shapes worth keeping if this is touched. Rows are **i18n keys resolved at
+  query time**, not strings captured at render time, because the index exists to
+  describe screens that are *not mounted* — registering from a component effect
+  would have rebuilt the original blindness behind more machinery. Keys also turn
+  a row pointing at a nonexistent key into a compile error rather than a search
+  result that leads nowhere. And the registry is imported for side effect inside
+  `use-settings-search.ts` rather than at the app root, so a new surface cannot
+  forget to register.
+
+  Still open, and smaller: the index carries labels, descriptions and option
+  names but not a setting's **live value** on a page nobody has opened — a screen
+  that has not read a control cannot honestly report what it holds. A cross-page
+  hit says where the setting lives; it does not navigate there.
 - **Word-depth typography** landed in `4ba0f747` and was never listed here as
   deferred, but `ROADMAP.md` claimed it was missing, so it is worth naming:
   `gui/src/components/appearance/TypographyEditor.tsx` carries underline styles
