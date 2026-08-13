@@ -83,10 +83,8 @@ jobs:
       - name: Check release helper syntax
         run: bun build scripts/release.ts --target=bun --outdir=.tmp/ci-release-script-check
 
-      - name: GUI lint
-        run: |
-          cd gui
-          bun run lint
+      # No lint step, by project policy: lint does not gate CI or a release.
+      # ESLint stays installed and is run deliberately with `bun run lint:gui`.
 
       - name: GUI build
         run: |

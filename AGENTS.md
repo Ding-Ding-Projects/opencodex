@@ -32,7 +32,7 @@ directory (`src/`, `gui/`, `docs-site/`, `scripts/`, `.github/`).
 bun install
 bun run typecheck      # bun x tsc --noEmit (strict)
 bun run test           # full tests/ suite
-bun run lint:gui       # GUI eslint
+bun run lint:gui       # GUI eslint — on demand only; not a gate, CI never runs it
 bun run privacy:scan   # credential/privacy scan used by CI
 bun run build:gui      # Vite GUI build
 ```

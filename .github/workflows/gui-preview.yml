@@ -53,9 +53,8 @@ jobs:
         working-directory: gui
         run: bun x tsc -b
 
-      - name: Lint
-        working-directory: gui
-        run: bun run lint
+      # No lint step, by project policy: lint does not gate this build. ESLint
+      # stays installed and is run deliberately with `bun run lint` in gui/.
 
       - name: Test
         working-directory: gui

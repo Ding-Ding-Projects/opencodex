@@ -218,7 +218,7 @@ feature. Every enable-path test asserts the bind is *still loopback* afterwards.
 
 ### 10. CI — `.github/workflows/gui-preview.yml`
 
-Typecheck → lint → test → build, then uploads `gui/dist` as an artifact
+Typecheck → test → build, then uploads `gui/dist` as an artifact
 (`opencodex-dashboard-<sha>`, 14-day retention) with a `HOW-TO-RUN.txt`
 explaining how to serve it and which screens work without a proxy.
 

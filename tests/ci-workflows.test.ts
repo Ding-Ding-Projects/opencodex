@@ -159,15 +159,34 @@ describe("GitHub Actions hardening", () => {
     expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
   });
 
-  test("Windows CI keeps the GUI lint and build gates", async () => {
+  test("Windows CI keeps the GUI build gate", async () => {
     // Review finding (PR #97): the GUI build gate was silently dropped once; assert the
     // enhanced gate (PR #99) stays wired so broken GUI builds cannot merge unnoticed.
     const workflow = await readText(".github/workflows/ci.yml");
 
-    expect(workflow).toContain("- name: GUI lint");
-    expect(workflow).toContain("bun run lint");
     expect(workflow).toContain("- name: GUI build");
     expect(workflow).toContain("bun run build");
+  });
+
+  test("no workflow runs lint, so no lint verdict can withhold a build or a release", async () => {
+    // Lint is deliberately not a gate anywhere. ESLint stays installed and is run
+    // on demand (`bun run lint:gui`); nothing in Actions runs it.
+    //
+    // Assert against parsed steps rather than raw file text: the comments left where
+    // the lint steps used to be mention `bun run lint:gui`, so a substring check over
+    // the whole file would pass regardless of what the job actually runs.
+    const runsLint = (step: WorkflowStep): boolean =>
+      /\beslint\b|\brun\s+lint\b/.test(step.run ?? "");
+
+    for (const path of [".github/workflows/ci.yml", ".github/workflows/gui-preview.yml"]) {
+      const parsed = Bun.YAML.parse(await readText(path)) as WorkflowDocument;
+      const lintSteps = Object.entries(parsed.jobs ?? {}).flatMap(([jobName, job]) =>
+        (job.steps ?? [])
+          .filter(runsLint)
+          .map(step => `${jobName}:${step.name ?? "(unnamed)"}`),
+      );
+      expect(lintSteps, `${path} must not run lint`).toEqual([]);
+    }
   });
 
   test("Windows producers retain safe artifacts after failures", async () => {
@@ -2237,9 +2256,12 @@ describe("GitHub Actions hardening", () => {
     expect(rootPkg).not.toContain("react-doctor@latest");
     expect(doctorConfig).toContain('"blocking": "warning"');
     expect(rootPkg).toContain('"doctor:gui:if-changed": "bun scripts/doctor-gui-if-changed.ts"');
+    // `lint:gui` survives as the deliberate on-demand entry point, but it is not
+    // wired into `prepush`: lint gates nothing, locally or in CI.
     expect(rootPkg).toContain('"lint:gui": "cd gui && bun run lint"');
+    expect(rootPkg).not.toContain("bun run lint:gui && ");
     // Gating steps include React Doctor after privacy scan on gui/ pushes.
-    expect(rootPkg).toContain("bun run typecheck && bun run lint:gui && bun run test");
+    expect(rootPkg).toContain("bun run typecheck && bun run test");
     expect(rootPkg).toContain("bun run privacy:scan && bun run doctor:gui:if-changed");
   });
 });

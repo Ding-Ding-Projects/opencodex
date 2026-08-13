@@ -2,8 +2,10 @@
  * Sets up the git pre-push hook for local development.
  * Run once after cloning: bun run setup:hooks
  *
- * The hook runs `bun run prepush` (typecheck + gui eslint + tests + privacy scan +
- * React Doctor when `gui/` changed) before every push — the local portion of the CI gate.
+ * The hook runs `bun run prepush` (typecheck + tests + privacy scan + React Doctor
+ * when `gui/` changed) before every push — the local portion of the CI gate.
+ * ESLint is deliberately not in that list: lint is not a gate anywhere. Run it on
+ * demand with `bun run lint:gui`.
  *
  * To skip in an emergency: git push --no-verify
  */
@@ -58,5 +60,5 @@ try {
   // Windows: Git for Windows calls sh.exe directly, executable bit not required.
 }
 
-console.log(`pre-push hook installed at ${dest}. Runs typecheck + gui eslint + tests + privacy scan (+ React Doctor when gui/ changed) before every push.`);
+console.log(`pre-push hook installed at ${dest}. Runs typecheck + tests + privacy scan (+ React Doctor when gui/ changed) before every push. Lint is not a gate; run it on demand with: bun run lint:gui`);
 console.log("Skip in an emergency with: git push --no-verify");
