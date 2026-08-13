@@ -36,7 +36,6 @@ import { IconCheck, IconDevices, IconServer, IconTranslate, IconX } from "../ico
 import { LOCALES, useI18n, useT, type Locale } from "../i18n/shared";
 import { Button, Chip, Dialog, TextInput, Toggle } from "./m3-ui";
 import { useNotifications } from "./notifications-context";
-import { recordRevision } from "./revisions";
 import {
   closeForLaunch,
   completeOnboarding,
@@ -129,16 +128,9 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
     }
   }, [dontShow, notify, t]);
 
-  const pickLocale = useCallback((next: Locale, name: string) => {
-    // An unchanged value is not a mutation, so it records nothing.
-    if (next === locale) return;
-    setLocale(next);
-    recordRevision({
-      scope: "settings",
-      label: t("nav.language"),
-      summary: t("lang.revisionSummary", { name }),
-    });
-  }, [locale, setLocale, t]);
+  const pickLocale = useCallback((next: Locale) => {
+    if (next !== locale) setLocale(next);
+  }, [locale, setLocale]);
 
   if (!open) return null;
 
@@ -223,7 +215,7 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
                   key={l.code}
                   lang={l.htmlLang}
                   selected={locale === l.code}
-                  onClick={() => pickLocale(l.code, l.name)}
+                  onClick={() => pickLocale(l.code)}
                 >
                   {l.name}
                 </Chip>

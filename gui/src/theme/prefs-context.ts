@@ -7,6 +7,7 @@
  */
 
 import { createContext, useContext } from "react";
+import { SettingsDraftContext } from "../settings-drafts-context";
 import { readTypography } from "../../../shared/m3/typography";
 import type { TypographyStyle } from "../../../shared/m3/typography";
 import { elementSelectorFor } from "./m3";
@@ -124,9 +125,23 @@ export interface PrefsContextValue {
 export const PrefsContext = createContext<PrefsContextValue | null>(null);
 
 export function usePrefs(): PrefsContextValue {
-  const ctx = useContext(PrefsContext);
-  if (!ctx) throw new Error("usePrefs must be used within PrefsProvider");
-  return ctx;
+  const drafts = useContext(SettingsDraftContext);
+  const legacy = useContext(PrefsContext);
+  if (drafts) {
+    return {
+      prefs: drafts.prefs,
+      setPrefs: drafts.setPrefs,
+      setElementStyle: drafts.setElementStyle,
+      setElementTypography: drafts.setElementTypography,
+      resetElementStyle: drafts.resetElementStyle,
+      resetAppearance: drafts.resetAppearance,
+      dark: drafts.dark,
+      windowClass: drafts.windowClass,
+      width: drafts.width,
+    };
+  }
+  if (!legacy) throw new Error("usePrefs must be used within SettingsDraftProvider or PrefsProvider");
+  return legacy;
 }
 
 export function readPrefs(): Prefs {

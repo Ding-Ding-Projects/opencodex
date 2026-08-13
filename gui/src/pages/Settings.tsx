@@ -23,13 +23,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useSettingsDrafts } from "../settings-drafts-context";
 import { elsewhereFor } from "./settings-elsewhere";
 import { IconRefresh, IconSearch } from "../icons";
 import { LOCALES, useI18n, type TKey } from "../i18n/shared";
 import { Button, Card, Chip, Empty, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
-import { useNotifications } from "../shell/notifications-context";
-import { readRevisions, recordRevision } from "../shell/revisions";
+import { readRevisions } from "../shell/revisions";
 import { usePrefs } from "../theme/prefs-context";
 import { FONT_CHOICES } from "../theme/m3";
 import { formatBytes } from "../format-bytes";
@@ -39,19 +39,11 @@ import {
   EMPTY_SNAPSHOT,
   SETTINGS_GROUPS,
   loadSettingsSnapshot,
-  putSetting,
-  readDebug,
-  readEffortCaps,
-  readInjection,
-  readMode,
-  readPolicy,
-  readShadowCall,
   snapshotHasData,
   type CleanupSchedule,
   type JumpTarget,
   type MultiAgentMode,
   type SettingsGroupId,
-  type SettingsSnapshot,
 } from "./settings-shared";
 
 /** Placeholder for a value the server reports as unset. Punctuation, not prose. */
@@ -167,13 +159,10 @@ function SelectControl({ label, value, options, disabled, onChange }: {
 
 export default function SettingsPage({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
-  const { notify } = useNotifications();
   const { prefs } = usePrefs();
-  const [snapshot, setSnapshot] = useState<SettingsSnapshot>(EMPTY_SNAPSHOT);
+  const { settings, setSettingsBaseline, setSettings, applying } = useSettingsDrafts();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  /** Id of the control being written, or null. One write at a time keeps server order. */
-  const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
   const [revisionCount, setRevisionCount] = useState(0);
@@ -198,14 +187,14 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
     try {
       const { snapshot: next, error } = await loadSettingsSnapshot(apiBase, signal);
       if (signal?.aborted || generation !== loadGenerationRef.current) return;
-      setSnapshot(next);
+      setSettingsBaseline(next);
       setLoadError(error);
     } catch {
       if (signal?.aborted || generation !== loadGenerationRef.current) return;
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, setSettingsBaseline]);
 
   // Deferred a tick so the fetch does not cascade renders out of the effect body.
   useEffect(() => {
@@ -234,213 +223,51 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
     }
   }, [t]);
 
-  /**
-   * One settings write, start to finish.
-   *
-   * `optimistic` paints immediately, `request` returns the snapshot the *server*
-   * reports plus the values that genuinely moved. Nothing is recorded and nothing
-   * is claimed when that list is empty.
-   */
-  const runSave = async (
-    id: string,
-    optimistic: SettingsSnapshot,
-    request: () => Promise<{ next: SettingsSnapshot; changes: SettingChange[] }>,
-  ) => {
-    if (busy !== null) return;
-    const before = snapshot;
-    setBusy(id);
-    setSnapshot(optimistic);
-    try {
-      const { next, changes } = await request();
-      setSnapshot(next);
-      if (changes.length === 0) {
-        // The server echoed the value it already had: refused, or a no-op. Recording
-        // it would put a change that never happened into the history. The control
-        // has just sprung back to the server's value, so say why rather than
-        // leaving the user to wonder whether the click registered.
-        if (JSON.stringify(next) !== JSON.stringify(optimistic)) {
-          notify({ tone: "warn", title: t("settings.saveFailed") });
-        }
-        return;
-      }
-      for (const change of changes) {
-        recordRevision({
-          scope: "settings",
-          label: t("settings.title"),
-          summary: change.value
-            ? t("dash.revision.changed", { setting: change.setting, value: change.value })
-            : t("dash.revision.cleared", { setting: change.setting }),
-          before: change.before,
-        });
-      }
-      notify({ tone: "success", title: t("settings.savedTitle"), body: t("settings.savedBody") });
-    } catch {
-      setSnapshot(before);
-      notify({ tone: "error", title: t("settings.saveFailed") });
-    } finally {
-      setBusy(null);
-    }
-  };
-
+  // Server-backed rows edit the coordinator's snapshot only. The endpoint PUTs
+  // and revision writes are centralized in SettingsDraftProvider.apply(), so an
+  // edit can preview across tabs without becoming durable by accident.
+  const snapshot = settings ?? EMPTY_SNAPSHOT;
+  const saving = applying;
   const { proxy, injection, effortCaps, maMode, shadowCall, sidecar, policy, debug } = snapshot;
-  const saving = busy !== null;
-
-  /* ------------------------------------------------------------- handlers -- */
 
   const saveCodexAutoStart = (nextValue: boolean) => {
-    if (!proxy) return;
-    void runSave("codexAutoStart", { ...snapshot, proxy: { ...proxy, codexAutoStart: nextValue } }, async () => {
-      const data = await putSetting<{ codexAutoStart?: unknown }>(apiBase, "/api/settings", { codexAutoStart: nextValue });
-      const echoed = data.codexAutoStart === true;
-      return {
-        next: { ...snapshot, proxy: { ...proxy, codexAutoStart: echoed } },
-        changes: echoed === proxy.codexAutoStart ? [] : [{
-          setting: t("dash.codexAutoStart"),
-          value: onOff(echoed),
-          before: JSON.stringify({ codexAutoStart: proxy.codexAutoStart }),
-        }],
-      };
-    });
+    setSettings(previous => previous.proxy
+      ? { ...previous, proxy: { ...previous.proxy, codexAutoStart: nextValue } }
+      : previous);
   };
 
   const saveShadowCall = (nextValue: boolean) => {
-    if (!shadowCall) return;
-    void runSave("shadowCall", { ...snapshot, shadowCall: { ...shadowCall, enabled: nextValue } }, async () => {
-      const data = await putSetting<{ enabled?: unknown; model?: unknown }>(
-        apiBase,
-        "/api/shadow-call-settings",
-        { enabled: nextValue },
-      );
-      const echoed = readShadowCall(data);
-      return {
-        next: { ...snapshot, shadowCall: echoed },
-        changes: echoed.enabled === shadowCall.enabled ? [] : [{
-          setting: t("dash.shadowCallIntercept"),
-          value: onOff(echoed.enabled),
-          before: JSON.stringify(shadowCall),
-        }],
-      };
-    });
+    setSettings(previous => previous.shadowCall
+      ? { ...previous, shadowCall: { ...previous.shadowCall, enabled: nextValue } }
+      : previous);
   };
 
   const saveMode = (nextValue: MultiAgentMode) => {
-    if (maMode === null || maMode === nextValue) return;
-    void runSave("maMode", { ...snapshot, maMode: nextValue }, async () => {
-      const data = await putSetting<{ multiAgentMode?: unknown }>(apiBase, "/api/v2", { multiAgentMode: nextValue });
-      const echoed = readMode(data);
-      return {
-        next: { ...snapshot, maMode: echoed },
-        changes: echoed === maMode ? [] : [{
-          setting: t("dash.multiAgent"),
-          value: t(`models.v2Mode_${echoed}` as TKey),
-          before: JSON.stringify({ multiAgentMode: maMode }),
-        }],
-      };
-    });
+    setSettings(previous => previous.maMode === null ? previous : { ...previous, maMode: nextValue });
   };
 
-  const saveInjectionFlag = (
-    id: "multiAgentGuidanceEnabled" | "syncCodexSubagentDefaults",
-    nextValue: boolean,
-  ) => {
-    if (!injection) return;
-    void runSave(id, { ...snapshot, injection: { ...injection, [id]: nextValue } }, async () => {
-      const data = await putSetting<{
-        multiAgentGuidanceEnabled?: unknown;
-        syncCodexSubagentDefaults?: unknown;
-        model?: unknown;
-        effort?: unknown;
-      }>(apiBase, "/api/injection-model", { [id]: nextValue });
-      const echoed = readInjection(data);
-      const before = JSON.stringify(injection);
-      const changes: SettingChange[] = [];
-      // The endpoint echoes all four fields and can clear the model-dependent ones
-      // as a side effect, so each is compared rather than assuming only `id` moved.
-      if (echoed.multiAgentGuidanceEnabled !== injection.multiAgentGuidanceEnabled) {
-        changes.push({ setting: t("dash.multiAgentGuidance"), value: onOff(echoed.multiAgentGuidanceEnabled), before });
-      }
-      if (echoed.syncCodexSubagentDefaults !== injection.syncCodexSubagentDefaults) {
-        changes.push({
-          setting: t("dash.syncCodexSubagentDefaults"),
-          value: onOff(echoed.syncCodexSubagentDefaults),
-          before,
-        });
-      }
-      if (echoed.model !== injection.model) {
-        changes.push({ setting: t("dash.injectionLabel"), value: echoed.model, before });
-      }
-      if (echoed.effort !== injection.effort) {
-        changes.push({ setting: t("dash.injectionEffortLabel"), value: echoed.effort, before });
-      }
-      return { next: { ...snapshot, injection: echoed }, changes };
-    });
+  const saveInjectionFlag = (id: "multiAgentGuidanceEnabled" | "syncCodexSubagentDefaults", nextValue: boolean) => {
+    setSettings(previous => previous.injection
+      ? { ...previous, injection: { ...previous.injection, [id]: nextValue } }
+      : previous);
   };
 
   const saveEffortCap = (field: "effortCap" | "subagentEffortCap", nextValue: string) => {
-    if (!effortCaps) return;
-    void runSave(field, { ...snapshot, effortCaps: { ...effortCaps, [field]: nextValue } }, async () => {
-      const data = await putSetting<{ effortCap?: unknown; subagentEffortCap?: unknown }>(
-        apiBase,
-        "/api/effort-caps",
-        { [field]: nextValue || null },
-      );
-      const echoed = readEffortCaps(data);
-      const before = JSON.stringify(effortCaps);
-      const changes: SettingChange[] = [];
-      if (echoed.effortCap !== effortCaps.effortCap) {
-        changes.push({ setting: t("dash.effortCapLabel"), value: echoed.effortCap, before });
-      }
-      if (echoed.subagentEffortCap !== effortCaps.subagentEffortCap) {
-        changes.push({ setting: t("dash.subagentEffortCapLabel"), value: echoed.subagentEffortCap, before });
-      }
-      return { next: { ...snapshot, effortCaps: echoed }, changes };
-    });
+    setSettings(previous => previous.effortCaps
+      ? { ...previous, effortCaps: { ...previous.effortCaps, [field]: nextValue } }
+      : previous);
   };
 
-  const savePolicy = (id: string, patch: { enabled?: boolean; schedule?: CleanupSchedule }) => {
-    if (!policy) return;
-    void runSave(id, { ...snapshot, policy: { ...policy, ...patch } }, async () => {
-      const data = await putSetting<{
-        policy?: {
-          enabled?: unknown;
-          schedule?: unknown;
-          mode?: unknown;
-          trigger?: { archivedBytesOver?: unknown };
-          target?: { removeOldestPercent?: unknown; reduceToBytes?: unknown };
-        };
-      }>(apiBase, "/api/storage/cleanup-policy", patch);
-      if (!data.policy) throw new Error("/api/storage/cleanup-policy");
-      const echoed = readPolicy(data.policy);
-      const before = JSON.stringify(policy);
-      const changes: SettingChange[] = [];
-      if (echoed.enabled !== policy.enabled) {
-        changes.push({ setting: t("storage.policy.enabled"), value: onOff(echoed.enabled), before });
-      }
-      if (echoed.schedule !== policy.schedule) {
-        changes.push({ setting: t("storage.policy.schedule"), value: scheduleLabel(echoed.schedule), before });
-      }
-      return { next: { ...snapshot, policy: echoed }, changes };
-    });
+  const savePolicy = (patch: { enabled?: boolean; schedule?: CleanupSchedule }) => {
+    setSettings(previous => previous.policy
+      ? { ...previous, policy: { ...previous.policy, ...patch } }
+      : previous);
   };
 
   const saveDebugFlag = (flag: (typeof DEBUG_FLAGS)[number], nextValue: boolean) => {
-    if (!debug) return;
-    void runSave(DEBUG_ROW + flag, { ...snapshot, debug: { ...debug, [flag]: nextValue } }, async () => {
-      const data = await putSetting<{
-        enabled?: unknown; usage?: unknown; injection?: unknown; claude?: unknown;
-      }>(apiBase, "/api/debug", { [flag]: nextValue });
-      const echoed = readDebug(data);
-      const before = JSON.stringify(debug);
-      const changes: SettingChange[] = [];
-      // The endpoint returns the whole settings object, so every stream is compared:
-      // an env-driven flag that flips alongside the one clicked is a real change too.
-      for (const key of DEBUG_FLAGS) {
-        if (echoed[key] !== debug[key]) {
-          changes.push({ setting: t(`debug.${key}` as TKey), value: onOff(echoed[key]), before });
-        }
-      }
-      return { next: { ...snapshot, debug: echoed }, changes };
-    });
+    setSettings(previous => previous.debug
+      ? { ...previous, debug: { ...previous.debug, [flag]: nextValue } }
+      : previous);
   };
 
   /* ---------------------------------------------------------------- rows -- */
@@ -644,7 +471,7 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
           on={policy.enabled}
           disabled={saving}
           label={t("storage.policy.enabled")}
-          onChange={next => savePolicy("policyEnabled", { enabled: next })}
+          onChange={next => savePolicy({ enabled: next })}
         />
       ),
     });
@@ -665,7 +492,7 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
             { value: "daily", label: t("storage.policy.schedule.daily") },
             { value: "weekly", label: t("storage.policy.schedule.weekly") },
           ]}
-          onChange={next => savePolicy("policySchedule", { schedule: next as CleanupSchedule })}
+          onChange={next => savePolicy({ schedule: next as CleanupSchedule })}
         />
       ),
     });

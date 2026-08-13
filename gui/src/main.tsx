@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { LanguageProvider } from "./i18n/provider";
 import { PrefsProvider } from "./theme/prefs";
+import { SettingsDraftProvider } from "./settings-drafts";
 import { NotificationsProvider } from "./shell/notifications";
 import { ConfirmProvider } from "./shell/confirm";
 import "./styles.css";
@@ -16,17 +17,19 @@ if (window.opencodexDesktop?.isDesktop) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <LanguageProvider>
-      <PrefsProvider>
-        <NotificationsProvider>
-          {/* Inside the notifications provider so a confirmation renders above a
-              live snackbar rather than under it — the dialog is the thing the
-              user has to answer before anything else continues. */}
-          <ConfirmProvider>
-            <App />
-          </ConfirmProvider>
-        </NotificationsProvider>
-      </PrefsProvider>
-    </LanguageProvider>
+    <SettingsDraftProvider>
+      <LanguageProvider>
+        <PrefsProvider>
+          <NotificationsProvider>
+            {/* Inside the notifications provider so a confirmation renders above a
+                live snackbar rather than under it — the dialog is the thing the
+                user has to answer before anything else continues. */}
+            <ConfirmProvider>
+              <App />
+            </ConfirmProvider>
+          </NotificationsProvider>
+        </PrefsProvider>
+      </LanguageProvider>
+    </SettingsDraftProvider>
   </React.StrictMode>
 );

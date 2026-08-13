@@ -256,6 +256,36 @@
   white-space: nowrap;
 }
 
+/* Global draft controls stay in the app bar, so every tab exposes the same
+   explicit apply/discard decision without a second save surface per editor. */
+.m3-draft-bar {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+.m3-draft-bar__count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-label-s);
+  font-weight: 600;
+}
+.m3-draft-bar .m3-btn { min-height: 36px; }
+@media (max-width: 860px) {
+  .m3-draft-bar__count { display: none; }
+  .m3-draft-bar { padding-left: 4px; }
+}
+@media (max-width: 620px) {
+  .m3-draft-bar .m3-btn--text { display: none; }
+}
+
 /* 48px icon buttons: M3 states layer + Material's 48px minimum hit target. */
 .m3-icon-btn {
   position: relative;

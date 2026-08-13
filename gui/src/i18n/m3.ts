@@ -186,6 +186,11 @@ export const M3_EN = {
   "settings.savedTitle": "Setting saved",
   "settings.savedBody": "Recorded in the local history — restore it from Version history if this was a mistake.",
   "settings.saveFailed": "Could not save that setting",
+  "settings.draftChanged": "{count} unapplied setting(s)",
+  "settings.saveApply": "Save and apply",
+  "settings.discardDraft": "Discard",
+  "settings.draftApplying": "Applying settings…",
+  "settings.draftPartialFailure": "Some settings could not be applied. Their previews are still staged for retry or discard.",
   "settings.jumpTo": "Open {page}",
   "settings.historyNote": "Every change on this page writes a snapshot to the local git history in your config directory. Nothing is pushed anywhere.",
 

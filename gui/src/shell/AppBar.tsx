@@ -12,6 +12,8 @@ import CostMeter from "./CostMeter";
 import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
 import { usePrefs } from "../theme/prefs-context";
+import { useSettingsDrafts } from "../settings-drafts-context";
+import { Button } from "./m3-ui";
 import { useAppearanceTarget } from "./use-appearance-target";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import type { Page } from "../app-routing";
@@ -37,6 +39,7 @@ interface AppBarProps {
 export default function AppBar({ apiBase, title, statusLine, statusTitle, codename, onOpenDrawer, drawerOpen, onOpen, onConnectRemote }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
+  const { dirty, dirtyCount, applying, apply, discard } = useSettingsDrafts();
   const { history, unreadCount, markAllRead } = useNotifications();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -96,6 +99,16 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
       </div>
 
       <CostMeter apiBase={apiBase} />
+
+      {dirty && (
+        <div className="m3-draft-bar" role="status" aria-live="polite">
+          <span className="m3-draft-bar__count">{t("settings.draftChanged", { count: dirtyCount })}</span>
+          <Button variant="text" disabled={applying} onClick={discard}>{t("settings.discardDraft")}</Button>
+          <Button variant="tonal" disabled={applying} onClick={() => void apply()}>
+            {t(applying ? "settings.draftApplying" : "settings.saveApply")}
+          </Button>
+        </div>
+      )}
 
       <div ref={notifRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
         <button ref={notifTriggerRef} type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}
