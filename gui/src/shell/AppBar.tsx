@@ -1,6 +1,6 @@
 /**
- * Top app bar: page title, live proxy status, notification centre, a shortcut to
- * Appearance, and the signed-in account chip.
+ * Top app bar: page title, live proxy status, quick restore, notification
+ * centre, a shortcut to Appearance, and the signed-in account chip.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { IconBell, IconDevices, IconMenu, IconPalette } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "./notifications-context";
 import CostMeter from "./CostMeter";
+import QuickRestore from "./QuickRestore";
 import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
 import { usePrefs } from "../theme/prefs-context";
@@ -109,6 +110,11 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
           </Button>
         </div>
       )}
+
+      {/* Ahead of the notification bell on purpose: this is the control somebody
+          reaches for when something is wedged, and the far end of the row is
+          where the window controls live. */}
+      <QuickRestore apiBase={apiBase} />
 
       <div ref={notifRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
         <button ref={notifTriggerRef} type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}
