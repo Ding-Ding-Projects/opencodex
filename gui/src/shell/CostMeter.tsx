@@ -104,10 +104,10 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
         </span>
       </button>
       {menuOpen && (
-        {/* The panel itself carries no ARIA role: `role="menu"` requires its owned
-            children to be menu items, and the lane breakdown below is descriptive
-            content rather than a set of choices. The role therefore sits on the
-            inner group that actually holds the range radios. */}
+        // The panel itself carries no ARIA role: `role="menu"` requires its owned
+        // children to be menu items, and the lane breakdown below is descriptive
+        // content rather than a set of choices. The role therefore sits on the
+        // inner group that actually holds the range radios.
         <div ref={menuRef} className="m3-menu" style={{ ...fixedPanelStyle(menuPlacement), zIndex: 70, minWidth: "min(230px, calc(100vw - 16px))" }}>
           {/* The chip has room for one figure. When both lanes have traffic this is
               where the split becomes visible, so the headline number can never

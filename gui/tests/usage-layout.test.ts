@@ -64,8 +64,18 @@ test("Usage stat tiles carry the prototype's marks and hints", async () => {
     expect(src).toContain(`t("${hint}"`);
   }
   // Short label on the tile; the long one stays as its tooltip.
-  expect(src).toContain('t("usage.card.estCost")');
+  //
+  // Matched on the quoted key rather than on `t("…")`, because the tile became
+  // lane-aware: the label is now chosen inside a ternary, so the call and the key
+  // are no longer adjacent in the source. The closing quote is what keeps this
+  // exact — it is the one character that stops `"usage.card.estCost"` from also
+  // being satisfied by `"usage.card.estCostEquivalent"`.
+  expect(src).toContain('"usage.card.estCost"');
   expect(src).toContain('t("usage.cost.total")');
+  // Both lanes are pinned, so neither headline can quietly go missing: a
+  // subscription shows the API-equivalent figure where a direct API key shows
+  // real spend, and the two must never be labelled the same way.
+  expect(src).toContain('"usage.card.estCostEquivalent"');
   // "Measured" is the requests hint now, not a tile of its own.
   expect(src).not.toContain('t("usage.card.measured")');
 });
