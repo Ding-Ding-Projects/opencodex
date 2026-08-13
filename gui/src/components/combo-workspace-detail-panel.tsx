@@ -10,6 +10,7 @@ import {
 } from "../combo-workspace-data";
 import { IconAlert, IconChevron, IconSearch, IconTrash } from "../icons";
 import { useT } from "../i18n/shared";
+import { joinBilingual } from "../i18n/resolve";
 import { Banner, Button, Card, Chip, TextInput } from "../shell/m3-ui";
 import { useNotifications } from "../shell/notifications-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
@@ -96,7 +97,9 @@ export function DetailPanel({
     : settingsSearch.otherHits > 0
       ? t("settings.otherTab", {
         count: settingsSearch.otherHits,
-        tabs: settingsSearch.otherTabs.join(", "),
+        // `t()` results, so bilingual pairs: regrouped into one pair rather
+        // than comma-joined into a run the sentence cannot take apart again.
+        tabs: joinBilingual(settingsSearch.otherTabs, ", "),
       })
       : settingsSearch.active && settingsSearch.hits === 0
         ? t("settings.noMatch")

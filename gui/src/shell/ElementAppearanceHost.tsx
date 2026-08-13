@@ -28,8 +28,7 @@ import { clampToViewport } from "../../../shared/m3/tabs";
 import { labelFor, targetFor } from "../../../shared/m3/elements";
 import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
 import { IconX } from "../icons";
-import { useI18n, useT } from "../i18n/shared";
-import { translateWithBilingualVars } from "../i18n/resolve";
+import { useT } from "../i18n/shared";
 import { onOutsidePress } from "./outside-press";
 import { ElementAppearanceContext, type ElementAppearanceApi } from "./element-appearance-context";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
@@ -195,14 +194,15 @@ function targetName(id: string, node: Element | null, t: ReturnType<typeof useT>
 /**
  * "Edit appearance: <name>", with the name landing in the right language.
  *
- * `t(key, { name })` would paste the whole bilingual name into both halves of a
- * bilingual template — see `translateWithBilingualVars`. This is the surface
- * where that was first noticed, because every row of this menu is exactly that
- * shape.
+ * This is the surface where bilingual placeholders were first noticed going
+ * wrong, because every row of this menu is exactly that shape: a translated
+ * template with a translated name inside it. It used to reach past `t()` for an
+ * opt-in helper, which fixed this menu and nothing else — `translate` now
+ * resolves per track for every caller, so plain `t()` is the whole answer here.
  */
 function useTargetPhrase(): (key: TKey, name: string) => string {
-  const { locale, funny } = useI18n();
-  return (key, name) => translateWithBilingualVars(locale, funny, key, { name });
+  const t = useT();
+  return (key, name) => t(key, { name });
 }
 
 export default function ElementAppearanceHost({ children }: { children: ReactNode }) {

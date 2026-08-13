@@ -19,6 +19,7 @@ import { Chip, TextInput } from "./m3-ui";
 import { RegexBuilderButton } from "./RegexBuilderButton";
 import { IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
+import { joinBilingual } from "../i18n/resolve";
 import type { SettingsSearch } from "./use-settings-search";
 import type { CSSProperties } from "react";
 
@@ -93,11 +94,15 @@ export function SettingsSearchRow({ search, label, builderLabel, compact, style 
   if (active) {
     notes.push(t("settings.matchCount", { count: hits, total }));
   }
+  // Both lists hold `t()` results, so in bilingual mode each name is already a
+  // pair. `joinBilingual` regroups a list into one pair that the sentence it is
+  // pasted into can still split; a plain comma join interleaves the languages
+  // and the whole run then lands in both clauses.
   if (otherTabHits > 0) {
-    notes.push(t("settings.otherTabHere", { count: otherTabHits, tabs: otherTabs.join(", ") }));
+    notes.push(t("settings.otherTabHere", { count: otherTabHits, tabs: joinBilingual(otherTabs, ", ") }));
   }
   if (elsewhereHits > 0) {
-    notes.push(t("settings.otherTab", { count: elsewhereHits, tabs: elsewhereTabs.join(", ") }));
+    notes.push(t("settings.otherTab", { count: elsewhereHits, tabs: joinBilingual(elsewhereTabs, ", ") }));
   }
   if (active && hits === 0 && otherTabHits === 0 && elsewhereHits === 0) {
     notes.push(t("settings.noMatch"));
