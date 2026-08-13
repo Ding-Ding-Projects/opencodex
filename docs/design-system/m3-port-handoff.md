@@ -4,6 +4,13 @@ Status of the port of `design/OpenCodex M3.dc.html` into `gui/`, as of the first
 stage. The plan of record is `design/PORT-TO-GUI.md`; this file records what has
 actually landed, what has not, and where the seams are.
 
+**Dates are per-section.** The body below is the first-stage record and is not
+re-verified. The **Deferred by scope** list and the sections marked with a
+2026-08-13 note were re-checked against the tree on that date, because four
+"not built" entries turned out to describe code that had shipped the day after
+this file was written. Numbers not carrying a re-check date — test counts,
+key counts — are from the original stage and have not been re-counted.
+
 **Chosen approach:** full per-screen rewrite of all 19 screens, staged. Stage 1
 (below) lands the foundation and the six new system screens. The thirteen
 product screens still render their existing markup, restyled through the token
@@ -79,8 +86,8 @@ Status and chart colours stay functional data colours, as the spec requires.
 
 | Screen | Notes |
 |---|---|
-| **Appearance** | theme, seed picker (free hex + 8 curated), density 1–5, font family/scale/weight, live preview, per-element editors with individual reset |
-| **Language & voice** | interface language; narrator off by default, one utterance at a time, language selectable |
+| **Appearance** | theme, seed picker (free hex + 8 curated), density 1–5, font family/scale/weight, live preview, per-element editors with individual reset. Since `4ba0f747`: an infinite colour picker and the word-depth typography editor described under *Deferred by scope* |
+| **Language & voice** | interface language, including Cantonese and the bilingual mode since `499c1bc8`; the two per-language funny-level sliders with a live five-rung ladder; the narrator, off by default and one utterance at a time, with a selectable language; the dim sum off switch |
 | **Regex builder** | ECMAScript `RegExp` evaluated locally. Caps enforced: 400-char pattern, 20 000-char sample, 200 matches, forced advance on a zero-width match. Token palette, flags, presets, named groups, copy + Markdown export |
 | **Changelog** | reads `/api/changelog`; ISO date range (typed *and* native picker, invalid input reported inline without discarding text) composed with regex-capable search, Markdown export stating the range |
 | **Version history** | append-only; a restore is recorded as a new revision and the dialog says so |
@@ -94,6 +101,18 @@ translation is still a compile error; M3 keys resolve through `M3_OVERRIDES`
 with an English fallback and can be filled in per locale, per screen, without
 breaking the build. Nav labels are translated for all five; the rest currently
 renders English outside `en`.
+
+**Re-checked 2026-08-13:** two locales joined that arrangement without changing
+it. `yue` is a *partial* dictionary in `PARTIAL_DICTS` rather than a member of
+`DICTS`, precisely so it can be filled in incrementally instead of forcing ~1,500
+placeholder strings, and it resolves through the same fallback chain. `bi` is a
+**rendering mode, not a dictionary** — nothing is ever looked up under it;
+`resolveKey()` in `i18n/resolve.ts` resolves the English and Cantonese tracks
+separately and joins them with a middle dot, and only when they differ, so an
+untranslated key does not print in English twice. The full order per track is
+funny-level variant → the locale's full dictionary → its partial dictionary →
+its `M3_OVERRIDES` → English in the same order → the key itself, so a typo shows
+as the key name in the UI rather than as blank space.
 
 ### 7. Supporting backend (minimal, needed by the Changelog screen)
 
@@ -210,7 +229,14 @@ environment for the docs site.
 
 ## Verification
 
-Run locally, all green:
+**These are first-stage figures and have not been re-run since.** The suite has
+grown a long way past them — `ROADMAP.md` records 494 GUI tests at the 2026-07-30
+sweep and 874 at the 2026-08-04 one — so treat the count below as a record of
+what that stage verified, not as the current state. The 2026-08-13 pass that
+corrected this file was a documentation review and deliberately ran no tests, so
+it re-dated nothing here.
+
+Run locally at the first stage, all green:
 
 - `bun test tests` (in `gui/`) — **373 pass, 0 fail**
 - `bun x tsc -b` (gui) and `bun x tsc --noEmit` (root) — clean
@@ -244,9 +270,16 @@ check that list before anything else.
 
 ---
 
-## Not landed
+## Landed after the first stage, and what is still deferred
 
-### 11. Export + account-change history
+This section was headed **"Not landed"** until the 2026-08-13 re-check, which was
+wrong for everything except the last list: items 11 and 12, the thirteen product
+screens and the `ui.tsx` retirement had all shipped, and item 12's own first line
+said so. `ocx export` and the account-change history landed in `1b2558e0`
+(2026-07-29). Only **Deferred by scope** at the end holds items that had not
+landed — and four of the five in it since have.
+
+### 11. Export + account-change history — landed in `1b2558e0`
 
 - `ocx export <path|-> --yes` — full-state bundle (config, Codex accounts with
   OAuth credentials, auth record). Refuses without `--yes`; warning on stderr so
@@ -347,21 +380,68 @@ Add-Codex-Account modal writes those class names by hand.
   which is where it belongs; this file is not the place to look it up.
 - ~~**Codex account switching.**~~ Landed as the app-bar switcher in item 12 above
   (`gui/src/shell/AccountSwitcher.tsx`).
-- **Funny-level voice ladder** (levels 1–5). The mechanism is not built. It needs
-  array-valued dictionary entries; `M3_OVERRIDES` is the natural place to add
-  the shape. Note the rule the prototype demonstrates: facts are identical at
-  every level, only voice changes — the destructive warning reads the same at
-  level 1 and level 5.
-- **Dim sum surprise.** Built (`gui/src/shell/DimSumCard.tsx` + `shell/dimsum.ts`,
-  one draw per launch, off-switch on Appearance) but each dish still renders an
-  emoji placeholder rather than a photo, and `dimsum.ts` says so in the source.
-  Real bundled dish images are the remaining half.
-- **Bundled fonts.** `FONT_CHOICES` names Roboto Flex / Roboto Mono / Noto Sans
-  HK, but no font files are bundled — the stacks fall through to system faces
-  today. `docs/design-system/foundations.md` forbids CDN fonts, so these must be
-  vendored into `gui/public/` before the family picker means anything.
-- **Settings search across every settings surface.** Not built; needs a generated
-  index over the real settings components.
+Re-checked against the tree on **2026-08-13**. Four entries below said "not built"
+about code that had already landed on 2026-07-30 and 2026-07-31 — within a day of
+this list being written — and nothing corrected them afterwards. They are struck
+through with the commit that landed them. `ROADMAP.md` carries the same four
+corrections; if these two files ever disagree again, check the tree, not either
+file.
+
+- ~~**Funny-level voice ladder** (levels 1–5).~~ Landed in `499c1bc8`. The
+  mechanism is `gui/src/i18n/voice.ts` (1,531 lines), and it is a *curated
+  overlay* rather than the array-valued dictionary entries this entry predicted —
+  `M3_OVERRIDES` was not the shape used. `resolveTrack()` in `i18n/resolve.ts`
+  consults `voiceFor()` ahead of every dictionary, so the level styles whatever is
+  under it. Two independent sliders (English and Cantonese) live on Language &
+  voice with a live five-rung ladder. The rule this entry stated held: facts are
+  identical at every level and only voice changes, which
+  `tests/i18n-voice-and-locales.test.ts` enforces by re-deriving each entry's
+  identifiers, placeholders and consequence words from its neutral wording and
+  asserting they survive all five levels in both languages. Level 3 is
+  deliberately absent from the overlay — the shipped neutral wording *is* level 3,
+  and a second copy of it would drift.
+- ~~**Dim sum surprise** renders an emoji placeholder.~~ Photos landed in
+  `58fb0eb7`. Eleven `.webp` files sit in `gui/public/dimsum/`, one per dish in
+  `DISHES`, and `photoSrc()` resolves `dimsum/<id>.webp` from the build output
+  with no network fetch. `DimSumCard.tsx` renders the photo optimistically and
+  falls back to the emoji only on `onError`, so the emoji is now insurance
+  against an unbundled dish rather than the shipped art. The source comment in
+  `dimsum.ts` was updated with it and no longer calls the art a placeholder.
+- ~~**Bundled fonts.**~~ Landed in `5d18a875`. Eleven woff2 files (Roboto Flex,
+  Roboto, Roboto Mono, Noto Sans HK — Latin subsets, 0.41 MB total) live in
+  `gui/public/fonts/` with `@font-face` declarations in
+  `gui/src/styles/fonts.css`. Nothing is fetched at runtime, so
+  `foundations.md`'s CDN prohibition holds. **Noto Sans HK's CJK coverage is
+  deliberately not bundled** — one weight is 6.7 MB and three would be ~20 MB in
+  every clone and installer, duplicating a face Windows (Microsoft JhengHei) and
+  macOS (PingFang) already ship. The stacks name it first and fall through to the
+  system's Chinese face, which is why Cantonese renders without it. If that is
+  revisited, subset it to the glyphs the interface uses rather than shipping the
+  whole font.
+- ~~**Settings search across every settings surface.** Not built.~~ Landed in
+  `e5897a08`, with the cross-page half in `ee0c3186`. The behaviour lives once in
+  `gui/src/shell/settings-search.ts` and `use-settings-search.ts`; a surface
+  declares an option list rather than reimplementing a matcher.
+  `SettingsSearchRow` ships on Claude Code, Debug, Mobile, Network, Startup,
+  Storage and the tab appearance editor, and `settingsMatcher` is reused directly
+  by Codex Auth's account pool, the provider catalog, provider models and Claude
+  Desktop. Off-screen hits are reported in two kinds — another tab of this
+  surface, and another screen — from the shared `SETTINGS_ELSEWHERE` array in
+  `gui/src/pages/settings-elsewhere.ts`.
+
+  **What this entry got right is what is still open:** the generated index. That
+  shared array is hand-curated at eight entries across five tabs where the
+  prototype reports fourteen, deliberately listing only keys that resolve today.
+  Until it is generated from the real settings components, a setting is findable
+  from another page only if somebody remembered to register it.
+- **Word-depth typography** landed in `4ba0f747` and was never listed here as
+  deferred, but `ROADMAP.md` claimed it was missing, so it is worth naming:
+  `gui/src/components/appearance/TypographyEditor.tsx` carries underline styles
+  with colour and thickness, overline, single and double strikethrough, small
+  caps and all-small-caps, super/subscript, letter and word spacing, line height,
+  baseline shift, outline, shadow, glow, alignment and direction. Variable axes
+  come from the font's own `fvar` table via `readVariationAxes()` in
+  `shared/m3/fonts.ts`, not a hard-coded list.
 
 ---
 
