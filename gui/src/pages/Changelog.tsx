@@ -9,6 +9,8 @@
 import { useMemo, useState } from "react";
 import { Button, Card, Chip, Empty, Field, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconSearch } from "../icons";
 import { useKeyedClientResource } from "../client-resource";
 import { useT } from "../i18n/shared";
@@ -105,6 +107,13 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
   const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` let the panel's preview change under `m`
+   * or `s` while the entry list behind it did not move.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   const poll = useKeyedClientResource(
     `ocx-changelog:${apiBase}`,
@@ -128,19 +137,15 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
   const hi = toValid ? to : "";
 
   const { rows, regexError } = useMemo(() => {
-    let matcher: (text: string) => boolean;
-    if (!query) matcher = () => true;
-    else if (useRegex) {
-      try {
-        const re = new RegExp(query, "i");
-        matcher = text => re.test(text);
-      } catch (e) {
-        return { rows: [] as Release[], regexError: e instanceof Error ? e.message : String(e) };
-      }
-    } else {
-      const needle = query.toLowerCase();
-      matcher = text => text.toLowerCase().includes(needle);
-    }
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own, so
+    // the flags the builder applied are the flags these entries are filtered by.
+    // It also bounds the pattern — this search had no cap, and a changelog is the
+    // longest corpus on the screen — and drops `g`/`y`, whose `lastIndex` would
+    // otherwise make one matcher reused down a release's entries keep every
+    // other one, in an order nobody chose.
+    const compiled = settingsMatcher(query, useRegex, flags);
+    if (compiled.error) return { rows: [] as Release[], regexError: compiled.error };
+    const matcher = compiled.test;
 
     const filtered = releases
       .filter(r => (!lo || (r.date ?? "") >= lo) && (!hi || (r.date ?? "") <= hi))
@@ -152,7 +157,7 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
       .filter(r => !query || r.entries.length > 0);
 
     return { rows: filtered, regexError: null as string | null };
-  }, [releases, lo, hi, query, useRegex]);
+  }, [releases, lo, hi, query, useRegex, flags]);
 
   /**
    * Real changelog lines for the anchored builder to test a pattern against. Taken
@@ -274,7 +279,7 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
             placeholder={t("changelog.search")}
             aria-label={t("changelog.search")}
             aria-invalid={!!regexError}
-            aria-describedby="cl-regex-error"
+            aria-describedby={useRegex ? "cl-regex-error cl-regex-flags-state" : "cl-regex-error"}
             style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
           />
           {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -283,9 +288,13 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
           </Chip>
           <RegexBuilderButton
             value={query}
-            onApply={pattern => setQuery(pattern)}
+            // Both halves of what the builder composed. Taking the pattern and
+            // leaving the flags behind is what made the popover's flag chips
+            // decorative from this field's point of view.
+            onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
             regex={useRegex}
             onRegexChange={setUseRegex}
+            flags={flags}
             sample={changelogSample}
           />
         </div>
@@ -293,6 +302,13 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
         <p id="cl-regex-error" role="alert" style={{ minHeight: 20, margin: "4px 0 0", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
           {regexError ? `${t("regex.invalid")}: ${regexError}` : ""}
         </p>
+
+        <SearchFlagsRow
+          regex={useRegex}
+          flags={flags}
+          onFlagsChange={setFlags}
+          id="cl-regex-flags-state"
+        />
 
         <div className="m3-row" style={{ gap: 8, marginTop: "var(--sp-2)" }}>
           <span style={{ ...MONO, flex: "1 1 auto", minWidth: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>

@@ -9,6 +9,7 @@ import { useI18n, LOCALES } from "../i18n/shared";
 import { NotificationsContext } from "../shell/notifications-context";
 import { ConfirmContext } from "../shell/confirm-context";
 import { recordRevision } from "../shell/revisions";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import {
   classifyExternalModel,
@@ -82,6 +83,15 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags the catalog search compiles with. State rather than the `"i"` it
+   * used to hard-code: the builder anchored beside that field composes a pattern
+   * *and* its flags, and a field that pinned `i` showed a panel where turning on
+   * `m` or `s` changed the preview and then changed nothing about which models
+   * the list kept. A pattern built as case-sensitive arriving here
+   * case-insensitive is the same defect read the other way round.
+   */
+  const [modelFlags, setModelFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [modelTests, setModelTests] = useState<Record<string, { state: ModelTestState; detail?: string }>>({});
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -217,36 +227,29 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   }, [fetchCopilotProfile, fetchKeys]);
 
   /**
-   * Catalog search: plain text by default, `.*` as an explicit opt-in. The
-   * pattern is capped at 400 characters and evaluated locally with no `g` flag,
-   * so a pasted novel can never become a catastrophic-backtracking payload and
-   * no lastIndex state leaks between rows.
+   * Catalog search: plain text by default, `.*` as an explicit opt-in.
+   *
+   * The shared matcher rather than a `new RegExp(query, "i")` of its own, so the
+   * flags the anchored builder applied are the flags this list is filtered by
+   * and the panel's preview cannot report matches the catalog then does not
+   * show. It keeps the same 400-character bound, so a pasted novel can never
+   * become a catastrophic-backtracking payload, and it drops `g`/`y` — their
+   * `lastIndex` survives between calls, and this search tests three fields per
+   * row, so a sticky pattern would keep whichever rows happened to be tested at
+   * the right offset.
    */
   const { filteredModels, modelQueryError } = useMemo(() => {
-    const query = modelQuery.trim();
-    if (!query) return { filteredModels: models, modelQueryError: null as string | null };
+    if (!modelQuery.trim()) return { filteredModels: models, modelQueryError: null as string | null };
     const fields = (model: ExternalModelRow) => [externalModelId(model), model.displayName, model.provider];
-    if (useRegex) {
-      let pattern: RegExp;
-      try {
-        pattern = new RegExp(query.slice(0, 400), "i");
-      } catch (error) {
-        return {
-          filteredModels: [] as ExternalModelRow[],
-          modelQueryError: error instanceof Error ? error.message : String(error),
-        };
-      }
-      return {
-        filteredModels: models.filter(model => fields(model).some(field => pattern.test(field))),
-        modelQueryError: null as string | null,
-      };
+    const matcher = settingsMatcher(modelQuery, useRegex, modelFlags);
+    if (matcher.error) {
+      return { filteredModels: [] as ExternalModelRow[], modelQueryError: matcher.error };
     }
-    const needle = query.toLowerCase();
     return {
-      filteredModels: models.filter(model => fields(model).some(field => field.toLowerCase().includes(needle))),
+      filteredModels: models.filter(model => fields(model).some(field => matcher.test(field))),
       modelQueryError: null as string | null,
     };
-  }, [modelQuery, models, useRegex]);
+  }, [modelQuery, models, useRegex, modelFlags]);
 
   const handleCreate = async (name?: string, purpose?: ApiKeyEntry["purpose"]): Promise<boolean> => {
     if (creatingRef.current) return false;
@@ -520,11 +523,13 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         modelQuery={modelQuery}
         modelQueryError={modelQueryError}
         useRegex={useRegex}
+        modelFlags={modelFlags}
         copyOutcomeFor={copyOutcomeFor}
         modelTests={modelTests}
         claudeCodeEnabled={claudeCodeEnabled}
         onModelQueryChange={setModelQuery}
         onUseRegexChange={setUseRegex}
+        onModelFlagsChange={setModelFlags}
         onCopyModelId={copyModelId}
         onTestModel={(model) => { void testModel(model); }}
         sourceLabel={sourceLabel}

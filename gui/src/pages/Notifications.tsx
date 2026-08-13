@@ -9,6 +9,8 @@
 import { useMemo, useState } from "react";
 import { Button, Chip, Empty, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconAlert, IconCheck, IconInfo, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications, type NoticeTone } from "../shell/notifications-context";
@@ -63,26 +65,30 @@ export default function NotificationsPage() {
   const [tone, setTone] = useState<NoticeTone | "all">("all");
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` showed a panel where turning on `m` or `s`
+   * changed the preview and then changed nothing about what the history list
+   * found. A pattern built as case-sensitive arriving case-insensitive is the
+   * same defect read the other way round.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   const { rows, error } = useMemo(() => {
-    let matcher: (text: string) => boolean;
-    if (!query) matcher = () => true;
-    else if (useRegex) {
-      try {
-        const re = new RegExp(query, "i");
-        matcher = text => re.test(text);
-      } catch (e) {
-        return { rows: [], error: e instanceof Error ? e.message : String(e) };
-      }
-    } else {
-      const needle = query.toLowerCase();
-      matcher = text => text.toLowerCase().includes(needle);
-    }
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own, so
+    // the flags the builder applied are the flags this list is filtered by, and
+    // the panel's preview and these rows cannot report different matches for one
+    // pattern. It also bounds the pattern — this search had no cap at all — and
+    // drops `g`/`y`, which carry `lastIndex` between calls and would otherwise
+    // make one matcher reused down the history match every other row.
+    const matcher = settingsMatcher(query, useRegex, flags);
+    if (matcher.error) return { rows: [], error: matcher.error };
     return {
-      rows: history.filter(n => (tone === "all" || n.tone === tone) && matcher(`${n.title} ${n.body ?? ""}`)),
+      rows: history.filter(n => (tone === "all" || n.tone === tone) && matcher.test(`${n.title} ${n.body ?? ""}`)),
       error: null as string | null,
     };
-  }, [history, tone, query, useRegex]);
+  }, [history, tone, query, useRegex, flags]);
 
   return (
     <>
@@ -118,7 +124,10 @@ export default function NotificationsPage() {
           placeholder={t("notif.search")}
           aria-label={t("notif.search")}
           aria-invalid={!!error}
-          aria-describedby={error ? "notif-regex-error" : undefined}
+          aria-describedby={
+            [error ? "notif-regex-error" : null, useRegex ? "notif-regex-flags-state" : null]
+              .filter(Boolean).join(" ") || undefined
+          }
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -128,15 +137,26 @@ export default function NotificationsPage() {
         {/* Every search bar reaches the full builder from an affordance beside it. */}
         <RegexBuilderButton
           value={query}
-          onApply={pattern => setQuery(pattern)}
+          // Both halves of what the builder composed, not just the pattern.
+          // Taking the pattern and leaving the flags behind is what made the
+          // popover's own flag chips decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          flags={flags}
           // The whole history, not the tone-filtered rows: the sample exists to
           // test a pattern, and hiding half the notifications behind the active
           // chip would make it test the wrong corpus.
           sample={history.slice(0, SAMPLE_ROWS).map(n => `${n.title} ${n.body ?? ""}`.trim()).join("\n")}
         />
       </div>
+
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id="notif-regex-flags-state"
+      />
 
       {error && (
         <p id="notif-regex-error" role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>

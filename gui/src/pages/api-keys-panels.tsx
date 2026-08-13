@@ -3,6 +3,7 @@ import { IconAlert, IconCheck, IconCopy, IconKey, IconSearch, IconTrash } from "
 import { useI18n } from "../i18n/shared";
 import { Button, Card, Chip, Dialog, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import type { CopyOutcome } from "../components/use-copy-feedback";
 import {
   externalModelId,
@@ -398,11 +399,13 @@ export function ApiKeysModelsPanel({
   modelQuery,
   modelQueryError,
   useRegex,
+  modelFlags,
   copyOutcomeFor,
   modelTests,
   claudeCodeEnabled,
   onModelQueryChange,
   onUseRegexChange,
+  onModelFlagsChange,
   onCopyModelId,
   onTestModel,
   sourceLabel,
@@ -414,11 +417,14 @@ export function ApiKeysModelsPanel({
   modelQuery: string;
   modelQueryError: string | null;
   useRegex: boolean;
+  /** The flags the page compiles this query with; the chip row below edits them. */
+  modelFlags: string;
   copyOutcomeFor: (modelId: string) => CopyOutcome | null;
   modelTests: Record<string, { state: ModelTestState; detail?: string }>;
   claudeCodeEnabled: boolean;
   onModelQueryChange: (value: string) => void;
   onUseRegexChange: (next: boolean) => void;
+  onModelFlagsChange: (next: string) => void;
   onCopyModelId: (modelId: string) => void;
   onTestModel: (model: ExternalModelRow) => void;
   sourceLabel: (model: ExternalModelRow) => string;
@@ -440,7 +446,9 @@ export function ApiKeysModelsPanel({
           placeholder={t("api.modelsSearch")}
           aria-label={t("api.modelsSearch")}
           aria-invalid={!!modelQueryError}
-          aria-describedby="api-models-regex-error"
+          aria-describedby={
+            useRegex ? "api-models-regex-error api-models-flags-state" : "api-models-regex-error"
+          }
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -452,10 +460,15 @@ export function ApiKeysModelsPanel({
             pattern's survivors. An empty box is honest; a misleading one is not. */}
         <RegexBuilderButton
           value={modelQuery}
-          onApply={pattern => onModelQueryChange(pattern)}
-          onDraftChange={pattern => onModelQueryChange(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view: they changed the match
+          // list in the panel and nothing in the catalog underneath it.
+          onApply={(pattern, appliedFlags) => { onModelQueryChange(pattern); onModelFlagsChange(appliedFlags); }}
+          onDraftChange={(pattern, draftFlags) => { onModelQueryChange(pattern); onModelFlagsChange(draftFlags); }}
           regex={useRegex}
           onRegexChange={onUseRegexChange}
+          flags={modelFlags}
           label="Regex"
           dialogLabel="Model-search regex builder"
         />
@@ -467,6 +480,12 @@ export function ApiKeysModelsPanel({
       >
         {modelQueryError ? `${t("regex.invalid")}: ${modelQueryError}` : ""}
       </p>
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={modelFlags}
+        onFlagsChange={onModelFlagsChange}
+        id="api-models-flags-state"
+      />
       {modelsLoading ? (
         <p className="m3-empty">{t("api.modelsLoading")}</p>
       ) : modelsLoadFailed && filteredModels.length === 0 ? (

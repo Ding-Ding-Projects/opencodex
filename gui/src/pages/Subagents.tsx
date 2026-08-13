@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readJsonOrThrow } from "../fetch-json";
 import { Button, Card, Chip, Empty, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconPlus, IconSearch, IconInfo } from "../icons";
 import { useT } from "../i18n/shared";
 import { Trans } from "../i18n/provider";
@@ -103,6 +105,13 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   const [query, setQuery] = useState("");
   /** Plain text is the default on every search bar; `.*` is the explicit opt-in. */
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` let the panel's preview move under `m` or
+   * `s` while the model list behind it stayed put.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   /** Sync guard: state-only `busy` can miss clicks before the disabled re-render commits. */
@@ -195,23 +204,16 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   };
 
   const { matchesQuery, regexError } = useMemo(() => {
-    const trimmed = query.trim();
-    if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
-    if (useRegex) {
-      try {
-        // 400-char cap: the regex-builder safety bound applies wherever a pattern is evaluated.
-        const re = new RegExp(trimmed.slice(0, 400), "i");
-        return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
-      } catch (e) {
-        return { matchesQuery: () => false, regexError: e instanceof Error ? e.message : String(e) };
-      }
-    }
-    const needle = trimmed.toLowerCase();
-    return {
-      matchesQuery: (text: string) => text.toLowerCase().includes(needle),
-      regexError: null as string | null,
-    };
-  }, [query, useRegex]);
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own: it
+    // compiles the flags the builder beside this field actually applied, so the
+    // panel's preview and this list cannot report different matches for one
+    // pattern. It keeps the same 400-character bound — the regex-builder safety
+    // cap applies wherever a pattern is evaluated — and drops `g`/`y`, whose
+    // `lastIndex` would otherwise make one matcher reused down the model list
+    // keep every other row.
+    const matcher = settingsMatcher(query, useRegex, flags);
+    return { matchesQuery: matcher.test, regexError: matcher.error };
+  }, [query, useRegex, flags]);
 
   const filtered = useMemo(
     () => available.filter(m => matchesQuery(`${m} ${modelLabel(m)} ${providerPrefix(m) ?? ""}`)),
@@ -290,6 +292,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
             placeholder={t("sub.search")}
             aria-label={t("sub.search")}
             aria-invalid={!!regexError}
+            aria-describedby={useRegex ? "sub-regex-flags-state" : undefined}
             style={{ flex: "1 1 200px", width: "auto", minWidth: 0 }}
           />
           {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -298,9 +301,13 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
           </Chip>
           <RegexBuilderButton
             value={query}
-            onApply={pattern => setQuery(pattern)}
+            // Both halves of what the builder composed. Taking the pattern and
+            // leaving the flags behind is what made the popover's flag chips
+            // decorative from this field's point of view.
+            onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
             regex={useRegex}
             onRegexChange={setUseRegex}
+            flags={flags}
             // Every available model, not the ones the current query kept: the
             // sample exists to try a new pattern against, and pre-filtering it
             // would hide exactly the rows that pattern is being written to reach.
@@ -310,6 +317,12 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
               .join("\n")}
           />
         </div>
+        <SearchFlagsRow
+          regex={useRegex}
+          flags={flags}
+          onFlagsChange={setFlags}
+          id="sub-regex-flags-state"
+        />
         {regexError && (
           <p role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
             {t("regex.invalid")}: {regexError}

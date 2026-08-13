@@ -34,6 +34,8 @@
  * means the narrated text is sent to Microsoft — so it is opt-in, never
  * selected automatically, and never used as a silent fallback.
  */
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "./settings-search";
+
 export type VoiceSource = "local" | "edge";
 
 /** The prefix that keeps an Edge identity from colliding with a platform one. */
@@ -208,21 +210,32 @@ export function voicesForLang(voices: readonly VoiceOption[], wantLang: string):
  * in the app has. Plain text is the default; an invalid pattern matches
  * everything rather than blanking the list, and the error is reported beside the
  * field instead of discarding what was typed.
+ *
+ * `flags` are the ones the builder anchored beside that field composed, and they
+ * default to the `"i"` this function used to hard-code so an older caller keeps
+ * its behaviour. Hard-coding them is what made the builder's flag chips
+ * decorative from the picker's point of view: they changed the preview in the
+ * panel and nothing in the list behind it, and a pattern deliberately built as
+ * case-sensitive arrived case-insensitive. The shared matcher underneath also
+ * bounds the pattern at the same 400 characters and drops `g`/`y`, whose
+ * `lastIndex` survives between calls — a sticky pattern tested down 322 voices
+ * would keep every other one, in whatever order they happened to be tested.
+ *
+ * The invalid case deliberately parts company with `settingsMatcher`, which
+ * matches nothing on a compile failure: a half-typed pattern must not blank a
+ * list of 322 voices while the user is still typing it.
  */
-export function filterVoices(voices: readonly VoiceOption[], query: string, useRegex: boolean): VoiceOption[] {
-  const trimmed = query.trim().slice(0, 400);
-  if (!trimmed) return [...voices];
+export function filterVoices(
+  voices: readonly VoiceOption[],
+  query: string,
+  useRegex: boolean,
+  flags: string = DEFAULT_SEARCH_FLAGS,
+): VoiceOption[] {
+  if (!query.trim()) return [...voices];
   const haystack = (voice: VoiceOption) => `${voice.name} ${voice.lang}`;
-  if (useRegex) {
-    try {
-      const pattern = new RegExp(trimmed, "i");
-      return voices.filter(voice => pattern.test(haystack(voice)));
-    } catch {
-      return [...voices];
-    }
-  }
-  const needle = trimmed.toLowerCase();
-  return voices.filter(voice => haystack(voice).toLowerCase().includes(needle));
+  const matcher = settingsMatcher(query, useRegex, flags);
+  if (matcher.error) return [...voices];
+  return voices.filter(voice => matcher.test(haystack(voice)));
 }
 
 /**

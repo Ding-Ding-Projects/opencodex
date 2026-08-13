@@ -10,6 +10,8 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Button, Card, Chip, Segmented, Slider, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { ColorField } from "../components/appearance/ColorPicker";
 import { FontPicker } from "../components/appearance/FontPicker";
 import { TypographyEditor } from "../components/appearance/TypographyEditor";
@@ -28,9 +30,6 @@ import type { TKey } from "../i18n/shared";
 /** Shown when a target carries no override of its own; mirrors the prototype. */
 const EL_RADIUS_DEFAULT = 16;
 const EL_PAD_DEFAULT = 16;
-
-/** The regex builder's own cap, applied here too so one search cannot outgrow it. */
-const PATTERN_CAP = 400;
 
 const MONO: CSSProperties = { fontFamily: "var(--mono)" };
 
@@ -73,19 +72,25 @@ interface SettingRow {
   value: string;
 }
 
-/** Plain text is the default; regex only when the `.*` chip is pressed. */
-function makeMatcher(query: string, useRegex: boolean): { test: (text: string) => boolean; invalid: boolean } {
-  if (!query) return { test: () => true, invalid: false };
-  if (useRegex) {
-    try {
-      const re = new RegExp(query.slice(0, PATTERN_CAP), "i");
-      return { test: (text: string) => re.test(text), invalid: false };
-    } catch {
-      return { test: () => false, invalid: true };
-    }
-  }
-  const q = query.toLowerCase();
-  return { test: (text: string) => text.toLowerCase().includes(q), invalid: false };
+/**
+ * Plain text is the default; regex only when the `.*` chip is pressed.
+ *
+ * A thin adapter over the shared matcher rather than its own `new RegExp(query,
+ * "i")`, so the flags the anchored builder applied are the flags the list is
+ * filtered by. Compiling `i` regardless is what made the builder's own flag
+ * chips decorative here: they moved the preview inside the panel and nothing on
+ * the screen behind it, and a pattern built as case-sensitive arrived
+ * case-insensitive. The shared matcher also drops `g`/`y`, whose `lastIndex`
+ * survives between calls and would otherwise make one matcher reused down the
+ * settings rows keep every other one.
+ *
+ * Kept as a local function because both of this screen's searches report a bare
+ * "invalid" notice rather than the compiler's message, so they want a boolean
+ * where the shared result carries a string.
+ */
+function makeMatcher(query: string, useRegex: boolean, flags: string): { test: (text: string) => boolean; invalid: boolean } {
+  const matcher = settingsMatcher(query, useRegex, flags);
+  return { test: matcher.test, invalid: matcher.error !== null };
 }
 
 /** Label and hint above the control, the reading order the prototype uses. */
@@ -116,11 +121,24 @@ export default function Appearance() {
   const [target, setTarget] = useState<string>(ELEMENT_TARGETS[0].id);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags each field compiles with. State rather than the `"i"` both searches
+   * used to hard-code: the builder anchored beside a field composes a pattern
+   * *and* its flags, and a field that pinned `i` showed a panel where turning on
+   * `m` or `s` changed the preview and then changed nothing about what the screen
+   * kept.
+   *
+   * Two separate values for the same reason the two queries are separate — one
+   * shared flag set would mean turning on `u` in the typography panel silently
+   * recompiled the page search above it.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   // The typography panel's own search, kept separate from the page search
   // above: they filter different things, and one shared string would make
   // typing in either quietly reach into the other.
   const [typeQuery, setTypeQuery] = useState("");
   const [typeRegex, setTypeRegex] = useState(false);
+  const [typeFlags, setTypeFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   /**
    * The seed is stored as a hex, and the picker is not restricted to one.
@@ -180,10 +198,10 @@ export default function Appearance() {
     tab: t(entry.tabKey),
   }));
 
-  const matcher = makeMatcher(query, useRegex);
+  const matcher = makeMatcher(query, useRegex, flags);
   const hits = here.filter(row => matcher.test(`${row.label} ${row.desc} ${row.value}`));
 
-  const typeMatcher = makeMatcher(typeQuery, typeRegex);
+  const typeMatcher = makeMatcher(typeQuery, typeRegex, typeFlags);
   const typeLabels = TYPOGRAPHY_LABEL_KEYS.map(key => t(key));
   // Only asked once something was typed: an untouched field has not failed to
   // match anything, so claiming "no match" there would be a lie about a search
@@ -226,6 +244,7 @@ export default function Appearance() {
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={matcher.invalid}
+          aria-describedby={useRegex ? "appearance-regex-flags-state" : undefined}
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0, maxWidth: 460 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -234,15 +253,25 @@ export default function Appearance() {
         </Chip>
         <RegexBuilderButton
           value={query}
-          onApply={pattern => setQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          flags={flags}
           // This screen's own settings rows, values included, so a pattern can be
           // tried against the text the search actually runs over.
           sample={here.map(row => `${row.label} ${row.desc} ${row.value}`).join("\n")}
           label={t("settings.openBuilder")}
         />
       </div>
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id="appearance-regex-flags-state"
+      />
       <p
         role="status"
         style={{ minHeight: 20, margin: "4px 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}
@@ -439,6 +468,7 @@ export default function Appearance() {
               placeholder={t("appearance.elTypeSearch")}
               aria-label={t("appearance.elTypeSearch")}
               aria-invalid={typeMatcher.invalid}
+              aria-describedby={typeRegex ? "appearance-type-flags-state" : undefined}
               style={{ flex: "1 1 200px", width: "auto", minWidth: 0, maxWidth: 380 }}
             />
             <Chip selected={typeRegex} onClick={() => setTypeRegex(v => !v)} title={t("regex.regexMode")}>
@@ -446,13 +476,23 @@ export default function Appearance() {
             </Chip>
             <RegexBuilderButton
               value={typeQuery}
-              onApply={pattern => setTypeQuery(pattern)}
+              // Both halves of what the builder composed, and this field's own
+              // flags rather than the page search's — the two bars are
+              // independent, exactly as their queries are.
+              onApply={(pattern, appliedFlags) => { setTypeQuery(pattern); setTypeFlags(appliedFlags); }}
               regex={typeRegex}
               onRegexChange={setTypeRegex}
+              flags={typeFlags}
               sample={typeLabels.join("\n")}
               label={t("settings.openBuilder")}
             />
           </div>
+          <SearchFlagsRow
+            regex={typeRegex}
+            flags={typeFlags}
+            onFlagsChange={setTypeFlags}
+            id="appearance-type-flags-state"
+          />
           <p role="status" style={{ minHeight: 20, margin: "4px 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
             {typeMatcher.invalid ? t("regex.invalid") : typeHasHits ? "" : t("appearance.elTypeNoMatch")}
           </p>

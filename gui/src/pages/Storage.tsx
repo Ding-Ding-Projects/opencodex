@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
 import { Button, Chip, Dialog, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh } from "../icons";
 import { formatBytes } from "../format-bytes";
 import { useNotifications } from "../shell/notifications-context";
@@ -199,25 +201,26 @@ interface SettingEntry {
   value?: string;
 }
 
-const SETTINGS_PATTERN_CAP = 400;
-
 /**
  * Plain text by default; the regex engine is the browser's own `RegExp`, capped at
  * 400 characters exactly as the regex builder screen documents. An invalid pattern
  * matches nothing rather than throwing, and the caller shows the invalid notice.
+ *
+ * A thin adapter over the shared matcher rather than its own `new RegExp(query,
+ * "i")`, so the flags the anchored builder applied are the flags this card is
+ * filtered by. Compiling `i` regardless is what made the builder's own flag chips
+ * decorative here: they moved the preview inside the panel and nothing on the
+ * card behind it. The shared matcher also drops `g`/`y`, whose `lastIndex`
+ * survives between calls and would otherwise make one matcher reused across the
+ * policy rows keep every other one.
+ *
+ * Kept as a local function because this surface reports a bare "invalid" notice
+ * rather than the compiler's message, so it wants a boolean where the shared
+ * result carries a string.
  */
-function makeSettingsMatcher(query: string, useRegex: boolean): { test: (text: string) => boolean; invalid: boolean } {
-  if (!query) return { test: () => true, invalid: false };
-  if (useRegex) {
-    try {
-      const re = new RegExp(query.slice(0, SETTINGS_PATTERN_CAP), "i");
-      return { test: text => re.test(text), invalid: false };
-    } catch {
-      return { test: () => false, invalid: true };
-    }
-  }
-  const needle = query.toLowerCase();
-  return { test: text => text.toLowerCase().includes(needle), invalid: false };
+function makeSettingsMatcher(query: string, useRegex: boolean, flags: string): { test: (text: string) => boolean; invalid: boolean } {
+  const matcher = settingsMatcher(query, useRegex, flags);
+  return { test: matcher.test, invalid: matcher.error !== null };
 }
 
 function settingText(entry: SettingEntry): string {
@@ -242,45 +245,61 @@ const SEARCH_NOTE: CSSProperties = {
  * default, an explicit `.*` regex opt-in, and the full builder one click away —
  * anchored to the field it belongs to rather than hidden behind a menu.
  */
-function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, sample, t }: {
+function SettingsSearchRow({ query, onQuery, regexOn, onRegex, flags, onFlags, invalid, sample, t }: {
   query: string;
   onQuery: (next: string) => void;
   regexOn: boolean;
   onRegex: (next: boolean) => void;
+  /** The flags this row compiles with; the chip row underneath edits them. */
+  flags: string;
+  onFlags: (next: string) => void;
   invalid: boolean;
   /** The rows this row's query is run over, handed to the builder to test against. */
   sample: string;
   t: TFn;
 }) {
   return (
-    <div style={SEARCH_ROW}>
-      <TextInput
-        type="search"
-        value={query}
-        placeholder={t("settings.search")}
-        aria-label={t("settings.search")}
-        aria-invalid={invalid}
-        style={SEARCH_INPUT}
-        onChange={e => onQuery(e.target.value)}
-      />
-      <Chip
-        selected={regexOn}
-        title={t("regex.regexMode")}
-        aria-label={t("regex.regexMode")}
-        style={{ minHeight: 48, fontFamily: "var(--mono)" }}
-        onClick={() => onRegex(!regexOn)}
-      >
-        .*
-      </Chip>
-      <RegexBuilderButton
-        value={query}
-        onApply={pattern => onQuery(pattern)}
+    <>
+      <div style={SEARCH_ROW}>
+        <TextInput
+          type="search"
+          value={query}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={invalid}
+          aria-describedby={regexOn ? "storage-regex-flags-state" : undefined}
+          style={SEARCH_INPUT}
+          onChange={e => onQuery(e.target.value)}
+        />
+        <Chip
+          selected={regexOn}
+          title={t("regex.regexMode")}
+          aria-label={t("regex.regexMode")}
+          style={{ minHeight: 48, fontFamily: "var(--mono)" }}
+          onClick={() => onRegex(!regexOn)}
+        >
+          .*
+        </Chip>
+        <RegexBuilderButton
+          value={query}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { onQuery(pattern); onFlags(appliedFlags); }}
+          regex={regexOn}
+          onRegexChange={onRegex}
+          flags={flags}
+          sample={sample}
+          label={t("settings.openBuilder")}
+        />
+      </div>
+      <SearchFlagsRow
         regex={regexOn}
-        onRegexChange={onRegex}
-        sample={sample}
-        label={t("settings.openBuilder")}
+        flags={flags}
+        onFlagsChange={onFlags}
+        id="storage-regex-flags-state"
       />
-    </div>
+    </>
   );
 }
 
@@ -897,6 +916,13 @@ function AutoCleanupPolicyPanel({
   const { notify } = useNotifications();
   const [query, setQuery] = useState("");
   const [regexOn, setRegexOn] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this card
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` showed a panel where turning on `m` or `s`
+   * changed the preview and then changed nothing about which policy rows stayed.
+   */
+  const [regexFlags, setRegexFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [policy, setPolicy] = useState<CleanupPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1216,7 +1242,7 @@ function AutoCleanupPolicyPanel({
     ]
     : [];
 
-  const matcher = makeSettingsMatcher(query, regexOn);
+  const matcher = makeSettingsMatcher(query, regexOn, regexFlags);
   const hits = new Set(entries.filter(e => matcher.test(settingText(e))).map(e => e.id));
   const shows = (id: string) => query === "" || hits.has(id);
   const elsewhere = query === "" ? [] : otherSettings.filter(e => matcher.test(settingText(e)));
@@ -1229,6 +1255,8 @@ function AutoCleanupPolicyPanel({
         onQuery={setQuery}
         regexOn={regexOn}
         onRegex={setRegexOn}
+        flags={regexFlags}
+        onFlags={setRegexFlags}
         invalid={matcher.invalid}
         // The unfiltered policy settings, in the same words the search indexes them.
         sample={entries.map(settingText).join("\n")}

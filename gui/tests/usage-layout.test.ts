@@ -1,5 +1,24 @@
 import { expect, test } from "bun:test";
 
+/**
+ * The source with whole-line comments dropped.
+ *
+ * Only whole-line ones — a line whose trimmed form starts `//`, `*` or `/*` — so
+ * this can never delete real code and turn a negative assertion into a false
+ * pass. It exists because a file that documents the construct it stopped using
+ * would otherwise fail a `not.toContain` on that construct's own name, which
+ * would punish the code for explaining itself.
+ */
+function codeOnly(source: string): string {
+  return source
+    .split("\n")
+    .filter(line => {
+      const trimmed = line.trimStart();
+      return !trimmed.startsWith("//") && !trimmed.startsWith("*") && !trimmed.startsWith("/*");
+    })
+    .join("\n");
+}
+
 test("Usage renders the single stacked layout (no layout toggle, no workspace rail)", async () => {
   const page = await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text();
   const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
@@ -97,7 +116,23 @@ test("Usage model search offers regex opt-in and the anchored builder", async ()
   // `<a href="#regex">` navigated away from the table the pattern was written for.
   expect(src).toContain("<RegexBuilderButton");
   expect(src).not.toContain('href="#regex"');
-  expect(src).toContain("new RegExp(query.slice(0, 400)");
+  // Compiled through the shared matcher, which keeps the 400-character bound
+  // this line used to assert directly and additionally strips `g`/`y` — their
+  // `lastIndex` survives between calls, so one matcher reused down the model
+  // table would keep every other row.
+  expect(src).toContain("settingsMatcher(query, useRegex, flags)");
+  // And never back to a hard-coded compile: pinning the flags is what made the
+  // builder's own flag chips decorative from this field's point of view.
+  //
+  // Asserted against the code with whole-line comments dropped, because the
+  // source now *explains* what it stopped doing and the prose would otherwise
+  // fail the check that the prose is describing.
+  expect(codeOnly(src)).not.toContain("new RegExp(query");
+  // The flags the builder composed are the flags the table compiles, and they
+  // are visible and correctable rather than silent.
+  expect(src).toContain("const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS)");
+  expect(src).toContain("onFlags(appliedFlags)");
+  expect(src).toContain("<SearchFlagsRow");
   // An invalid in-progress pattern reports itself instead of silently blanking the table.
   expect(src).toContain('role="alert"');
   expect(src).toContain('t("regex.invalid")');
