@@ -6,7 +6,7 @@ an item is only "done" when the code exists in this repository.
 > **Feature completeness lives in [`docs/FEATURE-INVENTORY.md`](docs/FEATURE-INVENTORY.md), not
 > here.** That file is the authority: it names every canonical feature contract — including the ones
 > with no implementation at all — and carries a status, the evidence, and for anything short of
-> complete, precisely which half is missing. As of 2026-08-13 it reads 9 complete, 31 partial, 24
+> complete, precisely which half is missing. As of 2026-08-14 it reads 11 complete, 37 partial, 16
 > absent, 1 not applicable, out of 65.
 >
 > This roadmap remains the record of **work**: what was built, when, and under which commit. The two
@@ -138,7 +138,7 @@ merely undocumented.
 
 This section covers the gaps in *shipped* areas — language and voice, remote access, pooling,
 appearance, search. It is **not** the complete gap list, and reading it as one is the mistake this
-paragraph exists to prevent: it says nothing about the twenty-four feature contracts that were never
+paragraph exists to prevent: it says nothing about the sixteen feature contracts that were never
 started, because there is no work here to describe. Those live in
 [`docs/FEATURE-INVENTORY.md`](docs/FEATURE-INVENTORY.md), which lists them by name with the searches
 that confirmed the absence.
