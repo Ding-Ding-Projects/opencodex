@@ -50,10 +50,15 @@ import SnackbarHost from "./shell/SnackbarHost";
 import DimSumCard from "./shell/DimSumCard";
 import { PAGE_META_BY_ID } from "./shell/page-meta";
 import { readJsonIfOk } from "./fetch-json";
+import { configureSchoolModeApiBase } from "./school-mode/client";
 
 installApiAuthFetch();
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+// School Mode's store polls `/api/school-mode` on its own — see
+// `school-mode/client.ts` — and needs to know where "own server" is before
+// its first poll fires, exactly like `configureNarrator`'s `apiBase`.
+configureSchoolModeApiBase(API_BASE);
 
 interface Health {
   version: string | null;

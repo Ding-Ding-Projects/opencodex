@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { drawDimSum, photoSrc, type DimSumDish } from "./dimsum";
+import { useSchoolModeActive } from "../school-mode/hooks";
 
 const AUTO_DISMISS_MS = 12_000;
 
@@ -67,6 +68,14 @@ export default function DimSumCard({ version }: { version: string }) {
   // localStorage and produces the initial state, so an effect would only add a
   // second render (and trip the set-state-in-effect rule).
   const [dish, setDish] = useState<DimSumDish | null>(() => drawOncePerLaunch(version));
+  // School Mode makes the surprise "behave as if it is not installed" — not
+  // merely quieter. Checked here, at render, rather than only inside the
+  // draw itself: if the roll already happened earlier in this launch (before
+  // School Mode turned on, or before its own status fetch resolved), the
+  // "once per launch" slot is already spent and cannot be re-rolled — but
+  // this still keeps it from ever becoming *visible* while the mode is on,
+  // and it reacts live if the mode flips while the card is already showing.
+  const schoolModeActive = useSchoolModeActive();
 
   useEffect(() => {
     if (!dish) return;
@@ -74,7 +83,7 @@ export default function DimSumCard({ version }: { version: string }) {
     return () => clearTimeout(timer);
   }, [dish]);
 
-  if (!dish) return null;
+  if (!dish || schoolModeActive) return null;
 
   return (
     <div

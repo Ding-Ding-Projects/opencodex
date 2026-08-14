@@ -230,8 +230,15 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
   navKey: "nav.language",
   rows: [
     { id: "mode", tkey: "lang.mode", descKey: "lang.sub" },
-    { id: "funnyEn", tkey: "lang.funnyEn", descKey: "lang.funnyLadder" },
-    { id: "funnyYue", tkey: "lang.funnyYue", descKey: "lang.funnyLadder" },
+    // Suppressed while School Mode is forcing English presentation, per the
+    // universal contract: Cantonese, bilingual, funny-level, personal-
+    // vocabulary and dim-sum "behave as if they are not installed" — omitted
+    // from search and the palette, not merely hidden from the card. See
+    // `visibleSettingsRows()` in `settings-registry.ts` for where this flag
+    // is actually enforced, and `schoolMode` below for the control that owns
+    // the mode itself, which is never suppressed.
+    { id: "funnyEn", tkey: "lang.funnyEn", descKey: "lang.funnyLadder", schoolModeSuppressed: true },
+    { id: "funnyYue", tkey: "lang.funnyYue", descKey: "lang.funnyLadder", schoolModeSuppressed: true },
     { id: "narrator", tkey: "narrator.title", descKey: "narrator.sub", keywordKeys: ["narrator.langBoth"] },
     // The voice, speed and pitch controls are separately findable: somebody who
     // wants the narrator to stop sounding like a robot searches for "voice" or
@@ -247,12 +254,21 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
       keywordKeys: ["narrator.edgeEnable", "narrator.edgeCantonese"],
     },
     { id: "showEmojis", tkey: "emoji.title", descKey: "emoji.sub" },
-    { id: "dimsum", tkey: "dimsum.toggle" },
+    { id: "dimsum", tkey: "dimsum.toggle", schoolModeSuppressed: true },
     {
       id: "vocabulary",
       tkey: "vocab.title",
       descKey: "vocab.sub",
       keywordKeys: ["vocab.uploadLabel", "vocab.replaceLabel", "vocab.clearLabel"],
+      schoolModeSuppressed: true,
+    },
+    // Never suppressed — "the mode control itself remains discoverable and
+    // accessible" even while the mode it controls is on.
+    {
+      id: "schoolMode",
+      tkey: "schoolMode.title",
+      descKey: "schoolMode.sub",
+      keywordKeys: ["schoolMode.renameLabel", "schoolMode.credentialTitle"],
     },
   ],
 });

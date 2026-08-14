@@ -27,6 +27,7 @@ import LanguageVoice from "../src/pages/LanguageVoice";
 import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
+import { ConfirmProvider } from "../src/shell/confirm";
 import { DEFAULT_PREFS, readPrefs, PREFS_KEY } from "../src/theme/prefs-context";
 import {
   EDGE_URI_PREFIX,
@@ -522,7 +523,9 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
       <PrefsProvider>
         <TestLanguageProvider>
           <NotificationsProvider>
-            <LanguageVoice />
+            <ConfirmProvider>
+              <LanguageVoice />
+            </ConfirmProvider>
           </NotificationsProvider>
         </TestLanguageProvider>
       </PrefsProvider>,

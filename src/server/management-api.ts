@@ -70,6 +70,7 @@ import { handleNarratorRoutes } from "./management/narrator-routes";
 import { handleExportRoutes, type Dataset } from "./management/export-routes";
 import { DATASETS } from "../lib/export-datasets";
 import { handleHostRoutes } from "./management/host-routes";
+import { handleSchoolModeRoutes } from "./management/school-mode-routes";
 import type { ManagementContext } from "./management/context";
 export type { ManagementApiDeps } from "./management/context";
 import { fetchAllModels } from "./management/shared";
@@ -182,7 +183,8 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleChangelogRoutes(ctx))
     ??     (await handleNarratorRoutes(ctx))
     ??     (await handleExportRoutes(ctx, exportDatasets(config)))
-    ??     (await handleHostRoutes(ctx));
+    ??     (await handleHostRoutes(ctx))
+    ??     (await handleSchoolModeRoutes(ctx));
   if (routed) return routed;
 
   if (url.pathname === "/api/stop" && req.method === "POST") {

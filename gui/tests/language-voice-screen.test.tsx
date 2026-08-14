@@ -18,6 +18,7 @@ import LanguageVoice from "../src/pages/LanguageVoice";
 import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
+import { ConfirmProvider } from "../src/shell/confirm";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -55,7 +56,9 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
       <PrefsProvider>
         <TestLanguageProvider>
           <NotificationsProvider>
-            <LanguageVoice />
+            <ConfirmProvider>
+              <LanguageVoice />
+            </ConfirmProvider>
           </NotificationsProvider>
         </TestLanguageProvider>
       </PrefsProvider>,
@@ -82,6 +85,12 @@ test("renders the language, narrator, emoji and dim sum cards with accessible sw
   const titles = [...container.querySelectorAll(".m3-card-title")].map(n => n.textContent);
   expect(titles).toEqual([
     "Interface language",
+    // The School Mode card sits right after the language picker: it is the
+    // control that forces every other card on this screen (and every other
+    // app sharing the switch) to render as if the rest of them were never
+    // installed, so it is discoverable before any of the things it can
+    // suppress.
+    "School Mode",
     "Narrator",
     "Show emojis in dialogs and message boxes",
     "Dim sum surprise",
@@ -91,32 +100,40 @@ test("renders the language, narrator, emoji and dim sum cards with accessible sw
     "Personal vocabulary",
   ]);
 
-  // Every switch on this screen belongs to either the narrator card or the
-  // emoji card, and every one of them is off on a fresh profile. This used to
-  // be a screen-wide count of one, which read as "the dim sum surprise has no
-  // off switch" — the real contract, and one the dim sum card asserts directly
-  // a few lines below. The count also silently asserted that no other switch
-  // could ever exist, so the narrator's Edge online-voice opt-in broke it by
-  // existing, and the emoji toggle would break it again the same way.
+  // Every switch on this screen belongs to the School Mode card, the narrator
+  // card or the emoji card, and every one of them is off on a fresh profile.
+  // This used to be a screen-wide count of one, which read as "the dim sum
+  // surprise has no off switch" — the real contract, and one the dim sum card
+  // asserts directly a few lines below. The count also silently asserted that
+  // no other switch could ever exist, so the narrator's Edge online-voice
+  // opt-in broke it by existing, the emoji toggle broke it again the same
+  // way, and School Mode's own toggle now does too.
   //
-  // What is worth pinning instead is that none of the three defaults to on:
-  // the narrator stays silent until asked, the network voice source — which
-  // sends the narrated text to Microsoft — must never arrive switched on, and
-  // emoji decoration stays off until a profile opts in.
+  // What is worth pinning instead is that none of the four defaults to on:
+  // School Mode is off on a fresh profile (and disabled — no unlock
+  // credential exists yet, so there would be no way to turn it back off), the
+  // narrator stays silent until asked, the network voice source — which sends
+  // the narrated text to Microsoft — must never arrive switched on, and emoji
+  // decoration stays off until a profile opts in.
+  const schoolModeCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "School Mode")!;
   const narratorCard = [...container.querySelectorAll(".m3-card")]
     .find(card => card.querySelector(".m3-card-title")?.textContent === "Narrator")!;
   const emojiCard = [...container.querySelectorAll(".m3-card")]
     .find(card => card.querySelector(".m3-card-title")?.textContent === "Show emojis in dialogs and message boxes")!;
   const switches = [...container.querySelectorAll('[role="switch"]')];
-  expect(switches).toHaveLength(3);
+  expect(switches).toHaveLength(4);
+  expect(switches.filter(s => schoolModeCard.contains(s))).toHaveLength(1);
   expect(switches.filter(s => narratorCard.contains(s))).toHaveLength(2);
   expect(switches.filter(s => emojiCard.contains(s))).toHaveLength(1);
   expect(switches.map(s => s.getAttribute("aria-label"))).toEqual([
+    "School Mode",
     "Enable narrator",
     "Use Microsoft Edge online voices",
     "Show emojis in dialogs and message boxes",
   ]);
   expect(switches.every(s => s.getAttribute("aria-checked") === "false")).toBe(true);
+  expect(schoolModeCard.querySelector('[role="switch"]')?.hasAttribute("disabled")).toBe(true);
 
   // The preview rows are live output, not description: with the toggle off,
   // none of them carry a mark, and the sample copy renders exactly as it would
