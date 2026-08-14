@@ -1120,6 +1120,11 @@ switch (command) {
     process.exitCode = await handleScheduleCommand(args.slice(1));
     break;
   }
+  case "school-mode": {
+    const { handleSchoolModeCommand } = await import("./school-mode");
+    process.exitCode = await handleSchoolModeCommand(args.slice(1));
+    break;
+  }
   case "access": {
     const { handleAccessCommand } = await import("./access");
     process.exitCode = await handleAccessCommand(args.slice(1));
