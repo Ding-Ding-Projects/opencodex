@@ -29,7 +29,8 @@ export type Page =
   | "terminal"
   | "mobile"
   | "docs"
-  | "locks";
+  | "locks"
+  | "authenticator";
 
 export const VALID_PAGES = new Set<Page>([
   "dashboard",
@@ -58,6 +59,7 @@ export const VALID_PAGES = new Set<Page>([
   "mobile",
   "docs",
   "locks",
+  "authenticator",
 ]);
 
 /** Product pages sit above the system pages in the nav, separated by a divider. */
@@ -88,6 +90,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   mobile: "system",
   docs: "system",
   locks: "system",
+  authenticator: "system",
 };
 
 /**

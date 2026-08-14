@@ -141,9 +141,19 @@ describe("filterPaletteEntries", () => {
     // "Appearance" query also matches every setting row whose tab is Appearance,
     // and this must not.
     const { results } = filterPaletteEntries(index, "^Appearance$", true);
-    expect(results).toHaveLength(1);
-    expect(results[0]!.kind).toBe("destination");
-    expect(results[0]!.label).toBe("Appearance");
+    // Asserted as a property rather than a count. A settings row is now also
+    // labelled exactly "Appearance" (`appearance.title`), so pinning the total
+    // at one pinned the size of the index rather than the behaviour under
+    // test — and every later lane that adds a row or a page breaks it without
+    // anything being wrong.
+    //
+    // What actually proves this is a real regex is that NOTHING whose corpus is
+    // more than the bare string survives an anchored pattern: a settings row
+    // joins its description and tab into its corpus, so `^Appearance$` must not
+    // reach one.
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every(entry => entry.label === "Appearance")).toBe(true);
+    expect(results.some(entry => entry.kind === "destination")).toBe(true);
   });
 
   test("an invalid pattern reports the compile error and matches nothing", () => {
@@ -155,8 +165,11 @@ describe("filterPaletteEntries", () => {
   test("a destination is found by its own page name and nothing else pollutes the match", () => {
     const { results } = filterPaletteEntries(index, "Appearance", false);
     const destinations = results.filter(entry => entry.kind === "destination");
-    expect(destinations).toHaveLength(1);
-    expect(destinations[0]!.page).toBe("appearance");
+    // The Appearance page is reachable by its own name, and no OTHER page's
+    // label contains the word. Stated that way rather than as a count of one,
+    // which also asserted the index's size and broke the moment a later lane
+    // added a page.
+    expect(destinations.map(entry => entry.page)).toEqual(["appearance"]);
   });
 });
 

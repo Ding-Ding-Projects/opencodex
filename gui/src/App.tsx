@@ -25,6 +25,7 @@ import Docs from "./pages/Docs";
 import VersionHistory from "./pages/VersionHistory";
 import NotificationsPage from "./pages/Notifications";
 import Network from "./pages/Network";
+import Authenticator from "./pages/Authenticator";
 import SettingsPage from "./pages/Settings";
 import LocksPage from "./pages/Locks";
 import OnboardingWizard from "./shell/OnboardingWizard";
@@ -78,7 +79,7 @@ function readHealth(data: unknown): Health {
 }
 
 /** Pages that need the full width; everything else is centred at 1180px. */
-const WIDE_PAGES = new Set<Page>(["combos", "providers", "models", "logs", "docs"]);
+const WIDE_PAGES = new Set<Page>(["combos", "providers", "models", "logs", "docs", "authenticator"]);
 
 
 /** One mounted instance per open tab; the switch keeps each page's JSX greppable. */
@@ -106,7 +107,8 @@ function renderPage(page: Page): ReactNode {
     case "history": return <VersionHistory />;
     case "notifications": return <NotificationsPage />;
     case "network": return <Network apiBase={API_BASE} />;
-    case "locks": return <LocksPage />;
+    case "locks": return <LocksPage />
+    case "authenticator": return <Authenticator apiBase={API_BASE} />;
     case "settings": return <SettingsPage apiBase={API_BASE} />;
     case "terminal": return <Terminal apiBase={API_BASE} />;
     case "mobile": return <MobileRemote apiBase={API_BASE} />;
