@@ -524,6 +524,8 @@ export default function ProviderWorkspaceShell({
                   onQuery={optionFilter.setQuery}
                   regex={optionFilter.regex}
                   onRegexChange={optionFilter.setRegex}
+            flags={optionFilter.flags}
+            onFlags={optionFilter.setFlags}
                   sample={optionFilter.sample}
                   searchLabel={t("pws.filterFacetsLabel")}
                   builderLabel={t("pws.filterFacetsBuilder")}

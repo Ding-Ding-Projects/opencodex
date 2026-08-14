@@ -184,6 +184,8 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
               onQuery={filter.setQuery}
               regex={filter.regex}
               onRegexChange={filter.setRegex}
+            flags={filter.flags}
+            onFlags={filter.setFlags}
               sample={filter.sample}
               searchLabel={t("cost.filterLabel")}
               builderLabel={t("cost.filterBuilder")}

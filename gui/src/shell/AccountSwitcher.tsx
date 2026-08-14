@@ -228,6 +228,8 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
             onQuery={filter.setQuery}
             regex={filter.regex}
             onRegexChange={filter.setRegex}
+            flags={filter.flags}
+            onFlags={filter.setFlags}
             sample={filter.sample}
             searchLabel={t("switcher.filterLabel")}
             builderLabel={t("switcher.filterBuilder")}

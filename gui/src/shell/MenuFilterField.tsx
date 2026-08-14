@@ -40,6 +40,11 @@ import { MENU_FILTER_FLAGS } from "./menu-filter";
 import type { TabMatcher } from "../../../shared/m3/tabs";
 
 export interface MenuFilterFieldProps {
+  /** The flags this filter compiles, and the setter the builder writes back
+   * through. Held by the host's `useMenuFilter` so the field and the matcher
+   * can never disagree about what is being compiled. */
+  flags?: string;
+  onFlags?: (flags: string) => void;
   /** DOM id of the rendered `<input>`. Also how this component tells its own
    * keystrokes apart from ones bubbling up from a nested dialog. */
   id: string;
@@ -64,8 +69,7 @@ export interface MenuFilterFieldProps {
 
 export function MenuFilterField({
   id, query, onQuery, regex, onRegexChange, sample,
-  searchLabel, placeholder, builderLabel, onArrowDown, onEnterSingle, resultCount,
-}: MenuFilterFieldProps) {
+  searchLabel, placeholder, builderLabel, onArrowDown, onEnterSingle, resultCount, flags, onFlags,}: MenuFilterFieldProps) {
   const t = useT();
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -102,7 +106,15 @@ export function MenuFilterField({
         placeholder={placeholder ?? t("menuFilter.placeholder")}
         regex={regex}
         onRegexChange={onRegexChange}
-        flags={MENU_FILTER_FLAGS}
+        flags={flags ?? MENU_FILTER_FLAGS}
+        onApply={(pattern, appliedFlags) => {
+          // Both halves, deliberately. `SearchField`'s default `onApply` writes
+          // only the pattern, which is exactly how the flags row beside it
+          // became decorative: the builder showed a live control, the user
+          // toggled it, and the matcher went on compiling the constant.
+          onQuery(pattern);
+          onFlags?.(appliedFlags);
+        }}
         sample={sample}
         label={builderLabel ?? t("menuFilter.builder")}
       />

@@ -28,9 +28,21 @@ export const MENU_FILTER_FLAGS = TAB_MATCH_FLAGS;
 export interface MenuFilterState {
   query: string;
   regex: boolean;
+  /**
+   * The flags this filter actually compiles.
+   *
+   * Held as state rather than pinned to `MENU_FILTER_FLAGS`, because the
+   * anchored builder beside every one of these fields shows a flags row the
+   * user can operate. Pinning the constant here made that row decorative: a
+   * pattern built as case-sensitive arrived case-insensitive, and nothing on
+   * screen said so. That is the same defect this project has now closed at
+   * every other search bar, and it reached here by the shortest possible
+   * route — a default argument nobody passed.
+   */
+  flags: string;
 }
 
-export const EMPTY_MENU_FILTER: MenuFilterState = { query: "", regex: false };
+export const EMPTY_MENU_FILTER: MenuFilterState = { query: "", regex: false, flags: MENU_FILTER_FLAGS };
 
 /**
  * Filter any labeled row set with the shared predicate.
@@ -45,7 +57,7 @@ export function filterMenuRows<T>(
   labelOf: (row: T) => string,
   state: MenuFilterState,
 ): { visible: T[]; matcher: TabMatcher } {
-  const matcher = tabMatcher(state.query, state.regex);
+  const matcher = tabMatcher(state.query, state.regex, state.flags);
   if (matcher.ok) return { visible: rows.filter(row => matcher.test(labelOf(row))), matcher };
   // An empty query compiles to nothing, deliberately: `tabMatcher` treats a
   // blank field as "no filter" rather than "match nothing", so the unfiltered
@@ -59,6 +71,8 @@ export interface UseMenuFilterResult<T> {
   setQuery: (query: string) => void;
   regex: boolean;
   setRegex: (regex: boolean) => void;
+  flags: string;
+  setFlags: (flags: string) => void;
   /** The rows that survive the current query, in their original order. */
   visible: T[];
   matcher: TabMatcher;
@@ -82,6 +96,8 @@ export function useMenuFilter<T>(rows: readonly T[], labelOf: (row: T) => string
     setQuery: query => setState(current => ({ ...current, query })),
     regex: state.regex,
     setRegex: regex => setState(current => ({ ...current, regex })),
+    flags: state.flags,
+    setFlags: flags => setState(current => ({ ...current, flags })),
     visible,
     matcher,
     sample: rows.map(labelOf).join("\n"),

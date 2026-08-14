@@ -271,6 +271,8 @@ export function RichSelect({
             onQuery={filter.setQuery}
             regex={filter.regex}
             onRegexChange={filter.setRegex}
+            flags={filter.flags}
+            onFlags={filter.setFlags}
             sample={filter.sample}
             searchLabel={t("richSelect.filterLabel")}
             builderLabel={t("richSelect.filterBuilder")}
