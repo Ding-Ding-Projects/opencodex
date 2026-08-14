@@ -238,6 +238,30 @@ const helpEntries: Record<string, HelpEntry> = {
       "than guessing. Change them in the dashboard under Language & voice.",
     ],
   },
+  schedule: {
+    usage: "ocx schedule <status|list|show|active|test-api|test-ha|ha-token> ...",
+    summary: "Headless checks for scheduled-settings rules, without a browser.",
+    details: [
+      "status/list/show/active   Rules live only in the dashboard's own browser profile (local storage",
+      "                          key ocx-m3:schedule), so these report that plainly and name where to",
+      "                          manage rules instead — the same shape ocx narrator status uses for the",
+      "                          narrator's own browser-only preferences.",
+      "test-api <url>            Test an api-sourced rule's endpoint through the same server-side",
+      "                          resolve-api route the dashboard uses (SSRF-checked, bounded, https or",
+      "                          loopback http only).",
+      "test-ha --base-url <url> --entity-id <id> --token-ref <ref>",
+      "                          Test a Home Assistant-gated rule's entity through the same server-side",
+      "                          ha-state route the dashboard uses.",
+      "ha-token status --token-ref <ref>",
+      "                          Whether a Home Assistant token is stored for a rule — never its value.",
+      "ha-token clear --token-ref <ref>",
+      "                          Delete a stored Home Assistant token.",
+      "",
+      "There is deliberately no ha-token set: storing a token requires the plaintext value, and this",
+      "command never accepts, prints, or logs a secret. Type it once into the dashboard's own password",
+      "field under Scheduled settings.",
+    ],
+  },
   logs: { usage: "ocx logs [filters] [--follow] [--json|--jsonl]", summary: "Alias of ocx observe logs." },
   usage: { usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", summary: "Alias of ocx observe usage." },
   storage: { usage: "ocx storage [--json]", summary: "Alias of ocx observe storage." },
@@ -386,6 +410,7 @@ Usage:
   ocx agent <sub>             Subagents, injection, effort caps, and sidecars
   ocx observe <sub>           Logs, usage, storage, memory, and debug data
   ocx narrator <sub>          Narrator voices and speech (installed voices; --edge adds Microsoft's)
+  ocx schedule <sub>          Headless checks for scheduled-settings rules (status|test-api|test-ha|ha-token)
   ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply

@@ -1115,6 +1115,11 @@ switch (command) {
     process.exitCode = await handleNarratorCommand(args.slice(1));
     break;
   }
+  case "schedule": {
+    const { handleScheduleCommand } = await import("./schedule");
+    process.exitCode = await handleScheduleCommand(args.slice(1));
+    break;
+  }
   case "access": {
     const { handleAccessCommand } = await import("./access");
     process.exitCode = await handleAccessCommand(args.slice(1));
