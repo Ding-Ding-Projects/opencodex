@@ -118,6 +118,10 @@ const MAP: Record<string, string> = {
   IconEyedropper: "colorize",
   IconDownload: "download",
   IconVolume: "volume_up",
+  // The in-app documentation browser's nav glyph. `menu_book` rather than the
+  // plainer `book` or `article`, because this destination is specifically a
+  // browsable collection of pages with a contents list, not a single document.
+  IconMenuBook: "menu_book",
 };
 
 /**
@@ -153,7 +157,7 @@ const ORDER = [
   "IconPalette", "IconTranslate", "IconRegex", "IconChangelog", "IconHistory",
   "IconBell", "IconPin", "IconDevices", "IconBolt", "IconUndo", "IconCopy",
   "IconEyedropper", "IconDownload", "IconVolume",
-  "IconReceiptLong", "IconApi", "IconRestartAlt",
+  "IconReceiptLong", "IconApi", "IconRestartAlt", "IconMenuBook",
 ];
 
 interface Geometry { inner: string; viewBox: string }

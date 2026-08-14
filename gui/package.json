@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && bun ../scripts/stamp-gui-build.ts",
+    "build": "bun ../scripts/gen-docs-articles.ts && tsc -b && vite build && bun ../scripts/stamp-gui-build.ts",
     "lint": "eslint .",
     "test": "bun test tests",
     "lint:i18n": "eslint src/pages src/components src/App.tsx src/ui.tsx",

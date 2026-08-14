@@ -19,6 +19,7 @@ import Appearance from "./pages/Appearance";
 import LanguageVoice from "./pages/LanguageVoice";
 import RegexBuilder from "./pages/RegexBuilder";
 import Changelog from "./pages/Changelog";
+import Docs from "./pages/Docs";
 import VersionHistory from "./pages/VersionHistory";
 import NotificationsPage from "./pages/Notifications";
 import Network from "./pages/Network";
@@ -72,7 +73,7 @@ function readHealth(data: unknown): Health {
 }
 
 /** Pages that need the full width; everything else is centred at 1180px. */
-const WIDE_PAGES = new Set<Page>(["combos", "providers", "models", "logs"]);
+const WIDE_PAGES = new Set<Page>(["combos", "providers", "models", "logs", "docs"]);
 
 
 /** One mounted instance per open tab; the switch keeps each page's JSX greppable. */
@@ -95,6 +96,7 @@ function renderPage(page: Page): ReactNode {
     case "language": return <LanguageVoice />;
     case "regex": return <RegexBuilder />;
     case "changelog": return <Changelog apiBase={API_BASE} />;
+    case "docs": return <Docs />;
     case "history": return <VersionHistory />;
     case "notifications": return <NotificationsPage />;
     case "network": return <Network apiBase={API_BASE} />;
