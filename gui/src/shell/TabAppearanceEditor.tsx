@@ -315,7 +315,7 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
 
       {lockWizardOpen && (
         <LockWizard
-          anchor={panelRef.current}
+          anchor={lockAnchorEl}
           kind={kind}
           targetId={id}
           targetLabel={label}
