@@ -1,5 +1,77 @@
 # Handoff
 
+## Universal feature contract — inventory, and the first two waves — 2026-08-14
+
+### What this session was, and what it turned out to be
+
+It began as "continue matching the design folder" and immediately found something else: **26 files of uncommitted work in two abandoned linked worktrees** — a pricing-accounting split and a settings-draft coordinator, roughly 1,560 lines, four days old, on branches not ahead of `main`. A cleanup pass had been authorised. That sweep would have destroyed all of it permanently.
+
+Rescuing it was right. But **that code had never been compiled or run by anyone**, and much of what followed was the bill:
+
+- It broke the dashboard build twice — once a type error, once a JSX comment placed in an expression position, where `{/* … */}` is an object literal rather than a comment and makes the file unparseable.
+- **CI was dying at Typecheck before executing a single one of 6,631 tests**, because `ci.yml` runs Typecheck before Test *in the same job*. The five failures everyone was chasing came from an older run. The cause was an accidental deletion: `estimatedRequests` dropped from the `UsageProvider` interface while two doc comments were added directly beneath it, with nothing in the commit message mentioning it.
+- Combo costs were being published from **one lane's partial view** of the attempts — a lane prices only the attempts it recognises, so an unmatched leg was silently dropped and a partial total published as whole.
+- `normalizedServiceTier()` had no case for `"default"`, the wire value OpenAI returns for ordinary traffic, so **every request that honestly reported its served tier went unpriced**.
+
+### Test and release position
+
+| | Start of session | End |
+| --- | --- | --- |
+| Dashboard suite | 474 pass / 434 fail | **1361 pass / 0 fail** |
+| Root typecheck | failing | clean |
+| Releases published | none for four days | **build-159, 161, 165, 168, 170, 171** |
+
+The release deadlock is worth recording because it was structural rather than a bug. `Auto release` gates on a **successful Windows CI run for the exact commit**, and Windows CI declares `cancel-in-progress: true`. Per-lane pushing — which the working discipline requires — cancelled every one of them, so the gate could never be satisfied. A cancelled run is not a pass, and the gate was right to refuse. **The fix was to stop pushing and let one run finish.** Releases have shipped unattended since.
+
+**A trap worth naming for whoever reads a workflow next.** `Auto release` reports `success`, and its gate step reports `success`, even when the gate exits 1 — because the step carries `continue-on-error: true`. Neither is evidence a release published. Only `Create the release` showing `success` rather than `skipped`, and the release record itself, tell the truth.
+
+### The feature inventory
+
+`docs/FEATURE-INVENTORY.md` is new and is now the authority on completeness: **65 canonical contracts, hand-written, naming every one including the absent ones.**
+
+That last part is the whole point. A checklist that enumerates only what it found cannot detect a feature that was never built — it scans, discovers eleven things, reports eleven things, and is silent about the fifty-four it never knew to look for. That silence reads as completeness. The file exists because the previous count was wrong in exactly that way: `ROADMAP.md` recorded six shipped features as missing and left them so for a fortnight.
+
+Three rules the file enforces, each of which changed a verdict during this session:
+
+- **"Optional" describes a user's runtime choice, never an implementation exemption.** A narrator shipped disabled is shipped; a narrator that does not exist is absent.
+- **A contract is not satisfied by a sibling surface having it.** The desktop app owning a colour picker does not give the documentation site one.
+- **A contract that cannot apply names itself and its reason.** Exactly one row does, with the clause quoted.
+
+The shared Markdown renderer is the model for `partial`: it exists, it is isolated, it is tested — and only the documentation browser consumes it, so release notes, issue bodies and commit messages are still printed rather than rendered. Recording it as `present` would have quietly closed a contract about **adoption** rather than existence.
+
+### Landed
+
+Fourteen product lanes plus two orchestrated multi-agent runs:
+
+| Area | What landed |
+| --- | --- |
+| Cost accounting | Direct and API-equivalent lanes; `$0` on subscriptions fixed and labelled four ways so it cannot read as a bill; priority and long-context bands; the `"default"` tier fix |
+| Codex routing | A reported 100% no longer refuses a request. The threshold governs *preference*; only a real upstream 429/402 governs *permission*. The worst site was thread affinity unbinding mid-task |
+| Search | Flags carried through every search bar, both shared matchers and the builder hand-off; cross-page settings search grew from 8 hand-written rows to 80 across 14 pages |
+| Narrator | Per-language voice, rate and pitch; Edge neural voices as an opt-in second source, verified by real synthesis; `ocx narrator` |
+| Install | `ocx` on PATH automatically from this fork, with upstream-collision detection that touches nothing it does not own |
+| New surfaces | Command palette (`Ctrl+Shift+F`), destructive super-confirmation, emoji-in-dialogs toggle, personal-vocabulary upload, dropdown and context-menu filters, offline documentation browser, app-logo customization, scheduled settings |
+
+### Verification boundary, stated plainly
+
+The dashboard suite and both typechecks were run before every push. **The full 6,637-test root suite was not run locally** — it takes about twelve minutes and, under agent-fleet contention, manufactures timeout-shaped failures that are not real. Windows CI on a clean runner is the authoritative verdict and has been green on every published build.
+
+No installer was downloaded or executed. Asset sizes come from the release record rather than from opening the files.
+
+### Open, and honest about it
+
+- **Fifty of sixty-five contracts remain partial or absent.** The largest are unbuilt products rather than missing switches: the universal file converter, the Ollama suite manager, per-element toy locks, the built-in authenticator, School mode's cross-app record, and browser-extension download capture. `docs/FEATURE-INVENTORY.md` names each with its evidence.
+- **Four lanes were in flight when this handoff was written**, with work preserved on their own branches: the authenticator, toy locks with Support Tickets, School mode, and a re-derivation of the inventory itself. None is claimed as landed.
+- **`ocx schedule` was outstanding.** The scheduled-settings routes landed without a CLI counterpart, and `tests/cli-headless-parity.test.ts` correctly refused them. That guard pairs each API prefix with a real command, so adding a coverage row without building the command defeats it rather than satisfying it.
+- **React Doctor still gates** every pull request and push to `main`. Lint was removed as a gate at the owner's instruction; React Doctor is static analysis rather than ESLint, so it was flagged rather than removed.
+- **This fork is roughly 2,979 commits behind upstream** (`lidge-jun/opencodex`), diverged 2026-07-29. Reported, not ported.
+
+### Two lessons worth keeping
+
+**A guard that shares its subject's implementation agrees with its bugs.** The documentation completeness check re-walks the source tree with its own code rather than calling the generator's discovery function, precisely so it can detect that generator dropping a file. The same reasoning condemns the appearance guard a survey found this session: it only checks that a target reads *at least one* variable, so it passes cleanly on a target where five of six controls are dead.
+
+**An assertion like `expect(el).toBeNull()` against a real DOM element prints the entire happy-dom window as a diff.** Megabytes of it. The run then looks like it *hangs* rather than fails, which cost two ten-minute timeouts before the cause was found. Scope DOM queries to the region actually meant.
+
 ## Windows release and lifecycle reconciliation — 2026-08-09
 
 - Resolved the integration source merge against current `main` without leaving any unmerged paths. The result retains current management-plane behavior while carrying GUI build identity, lifecycle locking, duplicate-start winner adoption, loopback process-action gates, fail-closed update resolution, and strict full-state export handling.
