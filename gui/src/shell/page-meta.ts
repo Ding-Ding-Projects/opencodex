@@ -1,7 +1,7 @@
 /** Nav order, icon and label key for every page. Mirrors `PAGES` in the design prototype. */
 
 import {
-  IconActivity, IconApi, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconDevices, IconGrid,
+  IconActivity, IconApi, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconClock, IconDevices, IconGrid,
   IconHardDrive, IconHistory, IconKey, IconPalette, IconReceiptLong, IconRegex, IconRestartAlt, IconServer,
   IconShuffle, IconSliders, IconSparkle, IconTerminal, IconTranslate,
 } from "../icons";
@@ -31,6 +31,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   startup: IconRestartAlt,
   appearance: IconPalette,
   language: IconTranslate,
+  schedule: IconClock,
   regex: IconRegex,
   changelog: IconChangelog,
   history: IconHistory,
@@ -57,6 +58,7 @@ const TKEYS: Record<Page, TKey> = {
   startup: "nav.startup",
   appearance: "nav.appearance",
   language: "nav.language",
+  schedule: "nav.schedule",
   regex: "nav.regex",
   changelog: "nav.changelog",
   history: "nav.history",
@@ -71,7 +73,7 @@ const TKEYS: Record<Page, TKey> = {
 const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
-  "appearance", "language", "regex", "changelog", "history", "notifications", "network", "settings", "terminal", "mobile",
+  "appearance", "language", "schedule", "regex", "changelog", "history", "notifications", "network", "settings", "terminal", "mobile",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({

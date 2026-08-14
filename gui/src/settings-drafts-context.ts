@@ -9,6 +9,8 @@
 import { createContext, useContext } from "react";
 import type { Locale, FunnyLevels } from "./i18n/shared";
 import type { SettingsSaveOutcome, SettingsSnapshot } from "./pages/settings-shared";
+import type { ScheduleFailureNotice, ScheduleOverride } from "./scheduling/runtime";
+import type { ScheduleRule } from "./scheduling/types";
 import type { ElementStyle, WindowClass } from "./theme/m3";
 import type { Prefs } from "./theme/prefs-context";
 import type { TypographyStyle } from "../../shared/m3/typography";
@@ -60,6 +62,24 @@ export interface SettingsDraftContextValue {
    */
   apply: () => Promise<SettingsSaveOutcome | null>;
   discard: () => void;
+
+  /**
+   * Scheduled-settings rules — see `scheduling/schema.ts` for the stored
+   * shape and `scheduling/runtime.ts` for how one gets picked and resolved.
+   * `scheduleOverride` is a *temporary* overlay applied only at render time
+   * (see the token/locale effects in `settings-drafts.tsx` and
+   * `i18n/provider.tsx`): it is never written into `prefs`, `locale` or
+   * `funny`, so editing or saving settings while a rule is active can never
+   * capture the override as the user's own base value.
+   */
+  scheduleRules: ScheduleRule[];
+  setScheduleRules: (next: ScheduleRule[]) => void;
+  scheduleActiveRuleId: string | null;
+  scheduleOverride: ScheduleOverride | null;
+  /** The most recent remote-source failure, plus a sequence number a listener uses to detect a new one. */
+  scheduleFailure: ScheduleFailureNotice | null;
+  scheduleFailureSeq: number;
+  retrySchedule: () => void;
 }
 
 export const SettingsDraftContext = createContext<SettingsDraftContextValue | null>(null);
