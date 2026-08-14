@@ -2506,3 +2506,137 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   .m3-command-palette-highlight { transition: background-color 200ms ease, outline-color 200ms ease; }
 }
 
+
+/* ============================================================================
+   Built-in authenticator (pages/Authenticator.tsx, components/authenticator/*)
+   ========================================================================= */
+
+.m3-authenticator-list { list-style: none; margin: 0 0 var(--sp-4, 24px); padding: 0; display: grid; gap: var(--sp-2, 12px); }
+
+.m3-authenticator-group-section { margin-bottom: var(--sp-3, 16px); }
+.m3-authenticator-group-heading {
+  margin: 0 0 var(--sp-2, 12px);
+  font-size: var(--t-title-s, 16px);
+  font-weight: 500;
+  color: var(--m3-on-surface);
+}
+
+.m3-authenticator-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3, 16px);
+  padding: var(--sp-3, 16px);
+  border-radius: var(--r-l, 16px);
+  background: var(--m3-surface-container);
+  border: 1px solid transparent;
+}
+.m3-authenticator-row[data-selected] {
+  border-color: var(--m3-primary);
+  background: color-mix(in oklab, var(--m3-primary) 6%, var(--m3-surface-container));
+}
+.m3-authenticator-row > input[type="checkbox"] { margin-top: 4px; flex: 0 0 auto; }
+
+.m3-authenticator-row-main { flex: 1 1 auto; min-width: 0; display: grid; gap: var(--sp-2, 12px); }
+.m3-authenticator-row-head { display: flex; align-items: baseline; gap: var(--sp-2, 12px); flex-wrap: wrap; }
+.m3-authenticator-row-issuer { font-size: var(--t-title-s, 16px); font-weight: 500; color: var(--m3-on-surface); }
+.m3-authenticator-row-account { font-size: var(--t-body-m, 14px); color: var(--m3-on-surface-variant); }
+.m3-authenticator-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 12px);
+  font-size: var(--t-label-m, 12px);
+  color: var(--m3-on-surface-variant);
+}
+.m3-authenticator-row-edit { display: grid; gap: var(--sp-2, 12px); max-width: 360px; }
+.m3-authenticator-row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+/* Grouped, selectable digits — large enough to read at a glance, monospace so
+   every digit occupies the same width and the grouping spaces line up. */
+.m3-authenticator-code-row { display: flex; align-items: center; gap: var(--sp-3, 16px); flex-wrap: wrap; }
+.m3-authenticator-code {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-headline-s, 24px);
+  letter-spacing: 0.06em;
+  color: var(--m3-on-surface);
+  user-select: all;
+}
+.m3-authenticator-code--failed { font-size: var(--t-body-m, 14px); color: var(--m3-error); font-family: inherit; letter-spacing: normal; }
+.m3-authenticator-code-copy { padding: 4px; min-width: 0; }
+
+.m3-authenticator-countdown { display: flex; align-items: center; gap: 6px; }
+.m3-authenticator-countdown-ring {
+  --m3-auth-pct: 0%;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: conic-gradient(var(--m3-primary) var(--m3-auth-pct), var(--m3-surface-container-highest) var(--m3-auth-pct));
+}
+@media (prefers-reduced-motion: reduce) {
+  .m3-authenticator-countdown-ring { background: var(--m3-surface-container-highest); }
+}
+.m3-authenticator-countdown-text {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-label-m, 12px);
+  color: var(--m3-on-surface-variant);
+  min-width: 2.5em;
+}
+.m3-authenticator-next-code {
+  font-family: var(--font-code);
+  font-size: var(--t-label-m, 12px);
+  color: var(--m3-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Move-into-group picker (shared/m3/anchor.ts-free: a real Dialog, per the
+   contract's rule against inlining one menu item per group). */
+.m3-authenticator-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.m3-authenticator-group-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2, 12px);
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--r-m, 12px);
+  background: transparent;
+  color: var(--m3-on-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.m3-authenticator-group-option:hover,
+.m3-authenticator-group-option:focus-visible { background: var(--m3-surface-container-highest); }
+.m3-authenticator-group-empty { padding: 10px 12px; color: var(--m3-on-surface-variant); font-size: var(--t-body-s); }
+
+/* Add-account confirm step. */
+.m3-authenticator-confirm-qr { display: flex; justify-content: center; margin: 0 0 var(--sp-3, 16px); }
+
+/* Live camera scan. */
+.m3-authenticator-camera { display: grid; gap: var(--sp-2, 12px); justify-items: center; }
+.m3-authenticator-camera-video {
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: var(--r-l, 16px);
+  background: #000;
+}
