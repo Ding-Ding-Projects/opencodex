@@ -308,6 +308,26 @@ function registerWindowIpc() {
   ipcMain.handle("app:exit", () => { quitting = true; app.quit(); });
 
   /**
+   * The two channels behind the toy-lock recovery route and the Support
+   * Tickets "resolution" step (see `gui/src/shell/app-data-path.ts`).
+   *
+   * Both are the same shape as every other bridge call in this file: a fixed
+   * channel, no caller-supplied argument, so the renderer can ask "where is
+   * it?" and "open it" and nothing else — it cannot name an arbitrary path for
+   * this to open. `app.getPath("userData")` is Electron's own answer for
+   * "where does this app's data actually live on this machine", which is what
+   * lets the recovery copy name the real folder instead of a guessed one.
+   */
+  ipcMain.handle("appData:path", () => app.getPath("userData"));
+  ipcMain.handle("appData:open", async () => {
+    const dir = app.getPath("userData");
+    // `shell.openPath` resolves to an error string on failure, "" on success —
+    // never rejects, so there is nothing to catch here.
+    const error = await shell.openPath(dir);
+    return { ok: !error, path: dir, error: error || undefined };
+  });
+
+  /**
    * Is it running, and start it if not.
    *
    * The dashboard's offline screen used to say "Cannot connect to proxy. Is it
