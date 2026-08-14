@@ -96,9 +96,14 @@ test("the per-element editor names its colour group and its reset target", async
   const labels = [...container.querySelectorAll(".m3-field-label")].map(node => node.textContent);
   expect(labels).toContain("Colour");
 
-  // The per-target reset is the row's only outlined button; the two beside it
-  // (reset-all and reset-appearance) are text buttons.
-  const resetButton = () => container.querySelector("button.m3-btn--outlined");
+  // The per-target reset is the only outlined button *inside the per-element
+  // card* — scoped there rather than to the whole page, because the App logo
+  // card above it (`AppLogoPicker`) also renders its own outlined
+  // upload/replace button, and a plain `container.querySelector` would find
+  // that one first.
+  const perElementCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Per-element styling");
+  const resetButton = () => perElementCard?.querySelector("button.m3-btn--outlined") ?? null;
 
   // The first target is selected on mount, so the button names it outright.
   expect(resetButton()?.textContent).toBe("Reset Navigation rail");
@@ -132,8 +137,9 @@ test("the settings search filters this surface and reports matches on another ta
     [...(container.querySelector("[data-settings-hits]")?.children ?? [])]
       .map(node => node.firstElementChild?.textContent);
 
-  // Unfiltered, the index lists every setting this surface owns.
-  expect(hitLabels()).toEqual(["Theme", "Seed colour", "Density", "Interface font", "Text size", "Text weight"]);
+  // Unfiltered, the index lists every setting this surface owns — including
+  // the app-logo customization row `AppLogoPicker` contributes.
+  expect(hitLabels()).toEqual(["Theme", "Seed colour", "Density", "Interface font", "Text size", "Text weight", "App logo"]);
 
   await act(async () => { typeInto(search!, "density"); });
   expect(hitLabels()).toEqual(["Density"]);

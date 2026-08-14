@@ -220,6 +220,20 @@ export const APPEARANCE_SETTINGS = registerSettingsPage({
     { id: "font", tkey: "appearance.font", descKey: "appearance.typeSub" },
     { id: "fontScale", tkey: "appearance.fontScale", descKey: "appearance.typeTitle" },
     { id: "fontWeight", tkey: "appearance.fontWeight", descKey: "appearance.typeTitle" },
+    {
+      id: "logo",
+      tkey: "appearance.logoTitle",
+      descKey: "appearance.logoSub",
+      keywordKeys: [
+        "appearance.logoUploadLabel",
+        "appearance.logoReplaceLabel",
+        "appearance.logoResetLabel",
+        "appearance.logoPresetShipped",
+        "appearance.logoPresetCircle",
+        "appearance.logoPresetSquare",
+        "appearance.logoPresetOutline",
+      ],
+    },
   ],
 });
 

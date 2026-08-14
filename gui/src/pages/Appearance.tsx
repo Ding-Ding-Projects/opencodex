@@ -16,6 +16,7 @@ import { ColorField } from "../components/appearance/ColorPicker";
 import { FontPicker } from "../components/appearance/FontPicker";
 import { TypographyEditor } from "../components/appearance/TypographyEditor";
 import { TYPOGRAPHY_LABEL_KEYS } from "../components/appearance/typography-labels";
+import { AppLogoPicker } from "../components/appearance/AppLogoPicker";
 import { IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { joinBilingual } from "../i18n/resolve";
@@ -25,6 +26,8 @@ import { familyOf } from "../theme/fonts";
 import { formatHex, parseColor } from "../../../shared/m3/color";
 import { elsewhereFor } from "./settings-elsewhere";
 import { useNotifications } from "../shell/notifications-context";
+import { CUSTOM_SOURCE_ID, findPreset, SHIPPED_LOGO_PRESET_ID } from "../theme/app-logo";
+import { useAppLogo } from "../theme/use-app-logo";
 import type { TKey } from "../i18n/shared";
 
 /** Shown when a target carries no override of its own; mirrors the prototype. */
@@ -118,6 +121,7 @@ export default function Appearance() {
   const t = useT();
   const { prefs, setPrefs, setElementStyle, setElementTypography, resetElementStyle, resetAppearance } = usePrefs();
   const { notify } = useNotifications();
+  const appLogo = useAppLogo();
   const [target, setTarget] = useState<string>(ELEMENT_TARGETS[0].id);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
@@ -180,6 +184,14 @@ export default function Appearance() {
       value: `${Math.round(prefs.fontScale * 100)}%`,
     },
     { id: "fontWeight", label: t("appearance.fontWeight"), desc: t("appearance.typeTitle"), value: String(prefs.fontWeight) },
+    {
+      id: "logo",
+      label: t("appearance.logoTitle"),
+      desc: t("appearance.logoSub"),
+      value: appLogo.applied.sourceId === CUSTOM_SOURCE_ID
+        ? "Custom"
+        : t((findPreset(appLogo.applied.sourceId) ?? findPreset(SHIPPED_LOGO_PRESET_ID))!.tkey as TKey),
+    },
   ];
 
   /**
@@ -399,6 +411,8 @@ export default function Appearance() {
           />
         </div>
       </Card>
+
+      <AppLogoPicker />
 
       <Card title={t("appearance.elementsTitle")} subtitle={t("appearance.elementsSub")}>
         <div className="m3-row" style={{ gap: 8, marginBottom: "var(--sp-3)" }}>

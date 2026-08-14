@@ -9,6 +9,7 @@ import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type React
 import { IconMoon, IconPower, IconSun, IconMonitor, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
+import { useAppLogoSrc } from "../theme/use-app-logo";
 import { useAppearanceTarget } from "./use-appearance-target";
 import { Toggle } from "./m3-ui";
 import { BOTTOM_NAV_PAGES, PAGE_META, PAGE_META_BY_ID, type PageMeta } from "./page-meta";
@@ -112,6 +113,7 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
   } = props;
   const { windowClass, prefs, setPrefs } = usePrefs();
   const t = useT();
+  const logoSrc = useAppLogoSrc();
   const drawerRef = useRef<HTMLElement>(null);
   // Right-click, press-and-hold or Shift+F10 anywhere on the rail restyles it.
   const navAppearance = useAppearanceTarget("navRail");
@@ -267,7 +269,22 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
       onKeyDown={handleKeyDown}
     >
       <div className="m3-nav-brand">
-        <img src="/logo.png" alt="" aria-hidden="true" />
+        {/*
+          Reads the live app-logo store (`theme/use-app-logo.ts`) rather than
+          the shipped `/logo.png` directly, so a chosen preset or converted
+          custom upload appears here the moment it is applied — no reload, no
+          "Apply" click. When the label text beside it is hidden (the
+          collapsed rail), this image is the *only* thing on the rail naming
+          the app, so it carries the real accessible name instead of being
+          hidden from assistive technology; the expanded drawer keeps it
+          decorative because the visible "opencodex" text already speaks for it.
+        */}
+        <img
+          src={logoSrc}
+          alt=""
+          aria-hidden={showLabels ? "true" : undefined}
+          aria-label={showLabels ? undefined : t("app.logoAria")}
+        />
         {showLabels && (
           <div className="m3-nav-brand-text">
             <div className="m3-nav-brand-name">opencodex</div>
