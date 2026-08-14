@@ -71,6 +71,7 @@ import type {
 } from "../pages/settings-shared";
 import { formatHex, parseColor } from "../../../shared/m3/color";
 import type { TabsApi } from "./use-tabs";
+import { SHORTCUTS, matchesShortcut } from "./keyboard-shortcuts";
 
 const MONO = { fontFamily: "var(--mono)" } as const;
 const SIZE_KEY = "ocx-m3:palette-size";
@@ -454,7 +455,7 @@ export default function CommandPalette({ tabs }: CommandPaletteProps) {
   // during render (react.dev's "adjusting state when a prop changes" pattern)
   // rather than a `useEffect`, so the very first paint of a new filter already
   // shows the right row highlighted instead of flashing the stale one for a frame.
-  const filterKey = `${query} ${String(useRegex)} ${flags}`;
+  const filterKey = `${query} ${String(useRegex)} ${flags}`;
   const [committedFilterKey, setCommittedFilterKey] = useState(filterKey);
   if (filterKey !== committedFilterKey) {
     setCommittedFilterKey(filterKey);
@@ -465,9 +466,7 @@ export default function CommandPalette({ tabs }: CommandPaletteProps) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const isShortcut = event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey
-        && (event.key === "F" || event.key === "f" || event.code === "KeyF");
-      if (!isShortcut) return;
+      if (!matchesShortcut(event, SHORTCUTS.commandPalette)) return;
       event.preventDefault();
       setOpen(o => !o);
     };
