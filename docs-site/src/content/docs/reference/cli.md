@@ -249,6 +249,7 @@ routes, validation, live configuration, and catalog refresh side effects as the 
 | Agent policy | `ocx agent injection|effort|subagents|fallback|sidecar ...` |
 | Observability | `ocx observe logs|usage|storage|memory|debug ...` |
 | Narrator voices | `ocx narrator status|voices|speak ...` |
+| Scheduled settings | `ocx schedule status|list|show|active|test-api|test-ha|ha-token ...` |
 | API admission | `ocx access key|endpoints|models|test ...` |
 | Claude Code | `ocx claude config status|set ...` |
 | Grok Build | `ocx grok status|exclude|include|set|clear|apply ...` |
@@ -271,10 +272,13 @@ ocx system settings --stream-mode eager-relay
 ```
 
 Theme, language, navigation, and other purely visual browser state intentionally have no CLI
-equivalent — including the narrator's own on/off switch and its per-language voice choice, which are
-per-visitor browser state rather than server configuration. The narrator's voice catalogues and its
-synthesis are management routes, so those do have one: see `ocx narrator` below. Cloudflare Tunnel
-setup is not part of this command set.
+equivalent — including the narrator's own on/off switch and its per-language voice choice, and
+scheduled-settings *rules* themselves (their days/time window, priority, and what they set), all of
+which are per-visitor browser state rather than server configuration. The narrator's voice catalogues
+and its synthesis are management routes, so those do have one: see `ocx narrator` below. Likewise, a
+scheduled rule's remote sources (a candidate API URL, a Home Assistant entity) are validated through
+real management routes, so those are headlessly testable too: see `ocx schedule` below. Cloudflare
+Tunnel setup is not part of this command set.
 
 ### `ocx models [subcommand]`
 
@@ -482,6 +486,54 @@ each narrated language, and whether the Edge source is switched on are stored pe
 dashboard's own browser profile (local storage key `ocx-m3:v1`). They are not server configuration,
 so `ocx narrator status` reports them as unreadable rather than guessing at a default. Change them in
 the dashboard under **Language & voice**.
+
+### `ocx schedule <status|list|show|active|test-api|test-ha|ha-token>`
+
+The headless counterpart to the dashboard's **Scheduled settings** page — with one honest limit: a
+scheduled-settings *rule* (its days/time window, priority, and what it sets) lives only in the
+dashboard's own browser profile (local storage key `ocx-m3:schedule`), created, edited and deleted
+entirely client-side. Nothing about a rule's shape, or which one is currently matching, is ever sent
+to or stored by the proxy process, so this command cannot list, inspect, or report the active rule —
+and says so plainly, the same way `ocx narrator status` reports the narrator's own browser-only
+preferences as unreadable rather than guessing.
+
+| Subcommand | Supported flags | Action |
+| --- | --- | --- |
+| `status` | `--json` | Where rules live, the precedence rule, and which checks below are available headlessly. |
+| `list` | `--json` | States that rules cannot be listed from here and names where to find them. |
+| `show <id>` | `--json` | States that a rule cannot be inspected by id from here and names where to find it. |
+| `active` | `--json` | States that the currently-winning rule cannot be reported from here and names where to find it. |
+| `test-api <url>` | `--json` | Test an api-sourced rule's endpoint through the same server-side `resolve-api` route the dashboard uses. |
+| `test-ha` | `--base-url <url>`, `--entity-id <id>`, `--token-ref <ref>`, `--json` | Test a Home Assistant-gated rule's entity through the same server-side `ha-state` route the dashboard uses. |
+| `ha-token status` | `--token-ref <ref>`, `--json` | Whether a Home Assistant token is stored for a rule — never its value. |
+| `ha-token clear` | `--token-ref <ref>`, `--json` | Delete a stored Home Assistant token. |
+
+```bash
+ocx schedule status
+ocx schedule test-api https://example.com/opencodex-schedule.json
+ocx schedule test-ha --base-url https://homeassistant.local:8123 --entity-id input_boolean.evening_mode --token-ref my-rule-id
+ocx schedule ha-token status --token-ref my-rule-id
+```
+
+**Precedence rule** (stated here, never recomputed — there is no rule data in this process to compute
+it over): when more than one enabled rule matches the current moment, the highest `priority` wins; a
+tie goes to whichever rule was created more recently.
+
+**What genuinely is headless.** An `api`- or `homeAssistant`-sourced rule depends on a remote endpoint
+the dashboard already validates through `/api/schedule/resolve-api` and `/api/schedule/ha-state` —
+server-side, bounded, SSRF-checked (`https://`, or `http://127.0.0.1`/`http://localhost` for local
+development), and never called directly from the renderer. `test-api` and `test-ha` are thin
+passthroughs onto those same routes, so you can find out whether a candidate URL or Home Assistant
+entity will actually resolve *before* pasting it into the dashboard's rule editor, without a browser.
+A reported failure (an unreachable host, a malformed response, a wrong entity state) exits `0` just
+like `ocx narrator voices --edge` reporting an unreachable Edge catalogue — the check ran and gave a
+definite answer, which is success for this command even when the answer is "no". A request rejected
+at the SSRF boundary (an invalid URL) is a genuine usage problem and exits non-zero.
+
+**There is no `ha-token set`.** Storing one requires the plaintext token, and this command never
+accepts, prints, or logs a secret. Type it once into the dashboard's own password field under
+**Scheduled settings** — the same boundary `ocx host` draws around minting a data-plane key versus
+ever printing one back out.
 
 ## Authentication
 

@@ -70,6 +70,11 @@ describe("headless GUI parity CLI", () => {
       // reach these two routes, so the catalogue and the synthesiser are both
       // driveable from a shell rather than only from the voice picker.
       ["/api/narrator", "ocx narrator"],
+      // `ocx schedule test-api`/`test-ha`/`ha-token status|clear` reach these
+      // three routes headlessly; `status`/`list`/`show`/`active` cover the
+      // rest of the family by honestly reporting that rules themselves are
+      // browser-only state (see src/cli/schedule.ts).
+      ["/api/schedule", "ocx schedule"],
       ["/api/changelog", "ocx changelog"],
       ["/api/combos", "ocx combo"],
       ["/api/debug", "ocx debug/observe"],
