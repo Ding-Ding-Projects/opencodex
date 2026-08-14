@@ -16,6 +16,7 @@ export const ko: Record<TKey, string> = {
   "common.cancel": "취소",
   "common.discard": "버리기",
   "common.remove": "삭제",
+  "common.edit": "편집",
   "common.loading": "불러오는 중…",
   "common.retry": "재시도",
   "theme.label": "테마",

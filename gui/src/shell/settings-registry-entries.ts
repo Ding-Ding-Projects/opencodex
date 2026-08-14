@@ -271,6 +271,19 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
   ],
 });
 
+/* ---------------------------------------------------------------- schedule -- */
+
+export const SCHEDULE_SETTINGS = registerSettingsPage({
+  page: "schedule",
+  navKey: "nav.schedule",
+  rows: [
+    { id: "rules", tkey: "schedule.title", descKey: "schedule.subtitle" },
+    { id: "addRule", tkey: "schedule.addRule" },
+    { id: "precedence", tkey: "schedule.priority", descKey: "schedule.precedenceNote" },
+    { id: "source", tkey: "schedule.source", keywordKeys: ["schedule.sourceLocal", "schedule.sourceApi", "schedule.sourceHomeAssistant"] },
+  ],
+});
+
 /* --------------------------------------------------------- notifications -- */
 
 export const NOTIFICATIONS_SETTINGS = registerSettingsPage({

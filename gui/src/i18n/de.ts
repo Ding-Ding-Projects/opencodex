@@ -16,6 +16,7 @@ export const de: Record<TKey, string> = {
   "common.cancel": "Abbrechen",
   "common.discard": "Verwerfen",
   "common.remove": "Entfernen",
+  "common.edit": "Bearbeiten",
   "common.loading": "Lädt…",
   "common.retry": "Wiederholen",
   "theme.label": "Design",

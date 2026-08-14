@@ -17,6 +17,8 @@ import Grok from "./pages/Grok";
 import Startup from "./pages/Startup";
 import Appearance from "./pages/Appearance";
 import LanguageVoice from "./pages/LanguageVoice";
+import ScheduledSettings from "./pages/ScheduledSettings";
+import ScheduleNotificationBridge from "./scheduling/ScheduleNotificationBridge";
 import RegexBuilder from "./pages/RegexBuilder";
 import Changelog from "./pages/Changelog";
 import Docs from "./pages/Docs";
@@ -95,6 +97,7 @@ function renderPage(page: Page): ReactNode {
     case "grok": return <Grok apiBase={API_BASE} />;
     case "appearance": return <Appearance />;
     case "language": return <LanguageVoice />;
+    case "schedule": return <ScheduledSettings apiBase={API_BASE} />;
     case "regex": return <RegexBuilder />;
     case "changelog": return <Changelog apiBase={API_BASE} />;
     case "docs": return <Docs />;
@@ -364,6 +367,8 @@ function AppShell() {
       />
       {/* Decides for itself whether this is a first run; renders nothing otherwise. */}
       <OnboardingWizard apiBase={API_BASE} />
+      {/* Renders nothing; raises a snackbar when a scheduled rule's remote source fails. */}
+      <ScheduleNotificationBridge />
     </div>
     </ElementAppearanceHost>
   );

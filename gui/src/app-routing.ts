@@ -19,6 +19,7 @@ export type Page =
   // System pages introduced by the Material 3 shell.
   | "appearance"
   | "language"
+  | "schedule"
   | "regex"
   | "changelog"
   | "history"
@@ -45,6 +46,7 @@ export const VALID_PAGES = new Set<Page>([
   "grok",
   "appearance",
   "language",
+  "schedule",
   "regex",
   "changelog",
   "history",
@@ -73,6 +75,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   startup: "product",
   appearance: "system",
   language: "system",
+  schedule: "system",
   regex: "system",
   changelog: "system",
   history: "system",

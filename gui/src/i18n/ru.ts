@@ -18,6 +18,7 @@ export const ru: Record<TKey, string> = {
   "common.close": "Закрыть",
   "common.ok": "ОК",
   "common.remove": "Удалить",
+  "common.edit": "Изменить",
   "common.loading": "Загрузка…",
   "common.retry": "Повторить",
   "app.logoAria": "Логотип opencodex",

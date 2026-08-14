@@ -12,6 +12,7 @@ import { DEFAULT_PREFS, ELEMENT_TARGETS, PREFS_KEY, readPrefs, type Prefs } from
 import { FUNNY_KEY, LOCALES, detectInitial, readFunny, writeFunny, type FunnyLevels, type Locale, type TKey, type Vars } from "./i18n/shared";
 import { translate } from "./i18n/resolve";
 import { recordRevision } from "./shell/revisions";
+import { useScheduleRuntime } from "./scheduling/runtime";
 import {
   SETTINGS_FIELD_LABELS,
   applySettingsDraft,
@@ -142,7 +143,30 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
   const previewWidth = useViewportPreview();
   const width = previewWidth ?? measuredWidth;
 
-  const dark = prefs.theme === "system" ? systemDark : prefs.theme === "dark";
+  // See `scheduling/runtime.ts` for the engine and `scheduling/types.ts` for
+  // exactly which fields a rule may set. `schedule.override` is applied only
+  // where rendering actually happens (the token effect below, and locale/funny
+  // in `i18n/provider.tsx`) — never into `prefs` itself, so a scheduled rule
+  // can never be captured by Save and never disturbs a draft the user is
+  // mid-edit on. When the rule stops matching, `override` simply goes back to
+  // `null` and this effect re-runs against the untouched `prefs` — recovery is
+  // automatic because nothing was ever overwritten.
+  const schedule = useScheduleRuntime(apiBase);
+  const effectivePrefs = useMemo(() => {
+    const values = schedule.override?.values;
+    if (!values) return prefs;
+    const patch: Partial<Prefs> = {};
+    if (values.theme !== undefined) patch.theme = values.theme;
+    if (values.seed !== undefined) patch.seed = values.seed;
+    if (values.density !== undefined) patch.density = values.density;
+    if (values.fontId !== undefined) patch.fontId = values.fontId;
+    if (values.fontStack !== undefined) patch.fontStack = values.fontStack;
+    if (values.fontScale !== undefined) patch.fontScale = values.fontScale;
+    if (values.fontWeight !== undefined) patch.fontWeight = values.fontWeight;
+    return { ...prefs, ...patch };
+  }, [prefs, schedule.override]);
+
+  const dark = effectivePrefs.theme === "system" ? systemDark : effectivePrefs.theme === "dark";
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -161,17 +185,20 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
   // repaint immediately, but no durable write happens on this render path.
   useEffect(() => {
     applyTokens(document.documentElement, {
-      seed: prefs.seed,
+      seed: effectivePrefs.seed,
       dark,
-      density: prefs.density,
-      fontStack: prefs.fontStack || fontStackFor(prefs.fontId),
-      fontScale: prefs.fontScale,
-      fontWeight: prefs.fontWeight,
+      density: effectivePrefs.density,
+      fontStack: effectivePrefs.fontStack || fontStackFor(effectivePrefs.fontId),
+      fontScale: effectivePrefs.fontScale,
+      fontWeight: effectivePrefs.fontWeight,
+      // Per-element overrides are not part of the schedulable value set (see
+      // the doc comment on `ScheduleValues`), so these always come from the
+      // real draft rather than the effective/overridden view.
       elementStyles: prefs.elementStyles,
     });
     applyElementTypography(document, prefs.elementStyles);
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-  }, [prefs, dark]);
+  }, [effectivePrefs, prefs.elementStyles, dark]);
 
   // Block body, not a concise one: `applyLayout` returns the resolved
   // `WindowClass`, and a concise arrow would hand that string back as the
@@ -370,11 +397,17 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
     setPrefs, setElementStyle, setElementTypography, resetElementStyle, resetAppearance,
     setLocale, setFunny, setSettingsBaseline, setSettings, apply, discard,
     dark, windowClass: windowClass(width), width,
+    scheduleRules: schedule.rules, setScheduleRules: schedule.setRules,
+    scheduleActiveRuleId: schedule.activeRuleId, scheduleOverride: schedule.override,
+    scheduleFailure: schedule.failure, scheduleFailureSeq: schedule.failureSeq,
+    retrySchedule: schedule.retry,
   }), [
     appliedPrefs, prefs, appliedLocale, locale, appliedFunny, funny,
     appliedSettings, settings, dirtyCount, dirty, applying,
     setPrefs, setElementStyle, setElementTypography, resetElementStyle, resetAppearance,
     setLocale, setFunny, setSettingsBaseline, setSettings, apply, discard, dark, width,
+    schedule.rules, schedule.setRules, schedule.activeRuleId, schedule.override,
+    schedule.failure, schedule.failureSeq, schedule.retry,
   ]);
 
   return <SettingsDraftContext.Provider value={value}>{children}</SettingsDraftContext.Provider>;

@@ -16,6 +16,7 @@ export const zh: Record<TKey, string> = {
   "common.cancel": "取消",
   "common.discard": "丢弃",
   "common.remove": "移除",
+  "common.edit": "编辑",
   "common.loading": "加载中…",
   "common.retry": "重试",
   "theme.label": "主题",

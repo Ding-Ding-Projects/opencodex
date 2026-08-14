@@ -18,6 +18,7 @@ export const en = {
   "common.close": "Close",
   "common.ok": "OK",
   "common.remove": "Remove",
+  "common.edit": "Edit",
   "common.loading": "Loading…",
   "common.retry": "Retry",
   "app.logoAria": "opencodex logo",
