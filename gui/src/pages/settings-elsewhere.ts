@@ -21,10 +21,11 @@
  */
 
 import type { TKey } from "../i18n/shared";
-import { settingsRegistryPages } from "../shell/settings-registry";
-// Side-effect import, and load-bearing: `Settings.tsx` calls `elsewhereFor` at
-// module scope, so the registry has to be populated by the time this module's
-// exports are first evaluated rather than at first render.
+import { settingsRegistryPages, visibleSettingsRows } from "../shell/settings-registry";
+// Side-effect import, and load-bearing: `elsewhereFor` reads the registry on
+// every call (see its own doc comment for why that is no longer a one-time
+// read), so the registry has to be populated before this module's first call
+// rather than merely before its exports are first evaluated.
 import "../shell/settings-registry-entries";
 
 export interface ElsewhereSetting {
@@ -43,27 +44,29 @@ export interface ElsewhereSetting {
 }
 
 /**
- * Every registered setting, flattened into the older row shape.
- *
- * Derived rather than declared: there is one index now, and a second copy of it
- * here would be the exact drift this file's own history is a record of.
- */
-export const SETTINGS_ELSEWHERE: ReadonlyArray<ElsewhereSetting> = settingsRegistryPages().flatMap(
-  entry => entry.rows.map((row): ElsewhereSetting => ({
-    tkey: row.tkey,
-    descKey: row.descKey,
-    keywordKeys: row.keywordKeys,
-    tabKey: entry.navKey,
-  })),
-);
-
-/**
  * The entries a given screen should offer, i.e. everything not on that screen.
  *
  * Passing the screen's own nav key rather than hand-curating a list is what
  * stops the lists drifting apart again: a screen states where it *is*, and the
  * registry works out what counts as elsewhere.
+ *
+ * Computed fresh on every call rather than cached — the registry itself is
+ * static, but which of its rows are *visible* is not: `visibleSettingsRows()`
+ * drops anything School Mode is currently suppressing, and School Mode can
+ * turn on or off at any moment this page is already open. A version of this
+ * function memoized at module scope (as it used to be, in `SETTINGS_ELSEWHERE`)
+ * would freeze that answer at whatever the mode happened to be when the module
+ * first loaded — almost always "off" — and go on reporting a suppressed
+ * setting as findable "elsewhere" for the rest of the session. Iterating ~90
+ * rows on every call is cheap enough that this costs nothing worth caching.
  */
 export function elsewhereFor(ownTabKey: TKey): ElsewhereSetting[] {
-  return SETTINGS_ELSEWHERE.filter(entry => entry.tabKey !== ownTabKey);
+  const out: ElsewhereSetting[] = [];
+  for (const entry of settingsRegistryPages()) {
+    if (entry.navKey === ownTabKey) continue;
+    for (const row of visibleSettingsRows(entry)) {
+      out.push({ tkey: row.tkey, descKey: row.descKey, keywordKeys: row.keywordKeys, tabKey: entry.navKey });
+    }
+  }
+  return out;
 }

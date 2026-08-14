@@ -25,6 +25,7 @@ import {
 } from "../src/shell/settings-registry";
 import "../src/shell/settings-registry-entries";
 import { paletteSettings } from "../src/shell/command-palette-index";
+import { elsewhereFor } from "../src/pages/settings-elsewhere";
 
 function memoryStorage(): VocabStorageLike & { raw: Map<string, string> } {
   const raw = new Map<string, string>();
@@ -161,5 +162,31 @@ describe("the settings registry excludes suppressed rows from every enumeration 
     visibleSettingsRows({ page: "language", navKey: "nav.language", rows: settingsRegistryRows("language") });
     setSchoolModeStateForTests({ enabled: false });
     expect(settingsRegistryRows("language").length).toBe(before);
+  });
+
+  // `settings-elsewhere.ts` (the older `{tkey, descKey, tabKey}` shape `Settings.tsx`
+  // and `Appearance.tsx` still consume) used to memoize its whole flattened row
+  // list once at module-import time — long before this feature existed, and
+  // therefore long before "visible" could ever change mid-session. That made it
+  // a real leak once School Mode could turn on after the module had already
+  // loaded: a suppressed row would go on being reported as findable "elsewhere"
+  // for the rest of the session. `elsewhereFor` now recomputes on every call.
+  test("elsewhereFor recomputes live rather than freezing its answer at import time", () => {
+    const before = elsewhereFor("nav.dashboard");
+    expect(before.some(entry => entry.tkey === "vocab.title")).toBe(true);
+    expect(before.some(entry => entry.tkey === "dimsum.toggle")).toBe(true);
+
+    setSchoolModeStateForTests({ enabled: true });
+    const during = elsewhereFor("nav.dashboard");
+    expect(during.some(entry => entry.tkey === "vocab.title")).toBe(false);
+    expect(during.some(entry => entry.tkey === "dimsum.toggle")).toBe(false);
+    expect(during.some(entry => entry.tkey === "lang.funnyEn")).toBe(false);
+    expect(during.some(entry => entry.tkey === "lang.funnyYue")).toBe(false);
+    // The mode control is still reported as findable from every other screen.
+    expect(during.some(entry => entry.tkey === "schoolMode.title")).toBe(true);
+
+    setSchoolModeStateForTests({ enabled: false });
+    const after = elsewhereFor("nav.dashboard");
+    expect(after.some(entry => entry.tkey === "vocab.title")).toBe(true);
   });
 });
