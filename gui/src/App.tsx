@@ -33,6 +33,7 @@ import type { Page } from "./app-routing";
 import { openRemoteDashboard } from "./remote-navigation";
 import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
+import { useAppLogoFaviconSync } from "./theme/use-app-logo";
 import { SettingsDraftProvider } from "./settings-drafts";
 import { LanguageProvider } from "./i18n/provider";
 import { PrefsProvider } from "./theme/prefs";
@@ -130,6 +131,11 @@ function AppShell() {
   // file is now a type error rather than a grey Windows box at runtime.
   const confirm = useConfirm();
   const t = useT();
+  // Keeps the document's browser-tab favicon in step with the active app
+  // logo — the one piece of chrome the nav rail's own `<img>` cannot reach,
+  // since it lives in `<head>` rather than in this component tree. Mounted
+  // once, here, rather than in every screen that happens to render.
+  useAppLogoFaviconSync();
 
   // The tab strip owns the active page and the hash follows it. Both directions
   // live in one hook because wiring them as a pair of effects here is a cycle
