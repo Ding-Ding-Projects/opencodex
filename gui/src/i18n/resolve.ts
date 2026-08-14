@@ -15,6 +15,7 @@ import {
 import { en } from "./en";
 import { M3_EN, M3_OVERRIDES, type M3Key } from "./m3";
 import { voiceFor, type FunnyLevel, type VoiceLang } from "./voice";
+import { applyVocabularyToTemplate, getActiveVocabularyEntries } from "./personal-vocabulary";
 
 /**
  * Resolution order for one voice track: the funny-level variant, then the
@@ -173,16 +174,34 @@ export function joinBilingual(values: string[], separator: string): string {
  * variables, and no separator to look for. Splitting there would be a new bug
  * rather than a fix, because a value that happens to contain the separator
  * character is a value, not a pair, and half of it would silently disappear.
+ *
+ * ## The personal-vocabulary boundary
+ *
+ * This is also the one place the user's local vocabulary — see
+ * `personal-vocabulary.ts` — is ever applied. It runs on the *resolved
+ * template*, after `resolveTrack`/`bilingualParts` but strictly before
+ * `interpolate`, which is what keeps it from ever touching a value that
+ * arrived through `vars`: a model id, a path, a command, a server's own error
+ * text. Those are substituted in afterwards, so a vocabulary term can only ever
+ * match the dictionary's own authored words. With no vocabulary loaded — the
+ * default, and the state every existing caller of `translate` was written
+ * against — `applyVocabularyToTemplate` is a same-string no-op, so this changes
+ * nothing about how any of the above behaves until a user actually uploads a
+ * file.
  */
 export function translate(locale: Locale, funny: FunnyLevels, key: TKey, vars?: Vars): string {
+  const vocabulary = getActiveVocabularyEntries();
   const tracks = voiceLangsFor(locale);
   if (tracks.length === 1) {
     const only = tracks[0]!;
-    return interpolate(resolveTrack(locale, only, funny[only], key), vars);
+    const template = applyVocabularyToTemplate(resolveTrack(locale, only, funny[only], key), vocabulary);
+    return interpolate(template, vars);
   }
   const parts = bilingualParts(locale, funny, key);
-  const english = interpolate(parts.primary, trackVars(vars, 0));
-  if (!parts.secondary) return english;
-  const cantonese = interpolate(parts.secondary, trackVars(vars, 1));
+  const primary = applyVocabularyToTemplate(parts.primary, vocabulary);
+  const secondary = applyVocabularyToTemplate(parts.secondary, vocabulary);
+  const english = interpolate(primary, trackVars(vars, 0));
+  if (!secondary) return english;
+  const cantonese = interpolate(secondary, trackVars(vars, 1));
   return cantonese === english ? english : `${english}${BILINGUAL_SEP}${cantonese}`;
 }

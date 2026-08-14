@@ -85,6 +85,10 @@ test("renders the language, narrator, emoji and dim sum cards with accessible sw
     "Narrator",
     "Show emojis in dialogs and message boxes",
     "Dim sum surprise",
+    // The personal-vocabulary upload sits last on purpose: it is the only card
+    // here that does nothing at all until the user supplies a file, so it reads
+    // as an addition rather than as a setting they have skipped over.
+    "Personal vocabulary",
   ]);
 
   // Every switch on this screen belongs to either the narrator card or the
@@ -225,13 +229,21 @@ test("show one now reveals a named dim sum dish without blocking anything", asyn
 
   const button = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Show one now"));
   expect(button).toBeTruthy();
-  expect(container.querySelector('[role="status"]')).toBeNull();
+
+  // Scoped to the dim sum card rather than the whole screen. This used to be a
+  // container-wide `toBeNull`, which quietly also asserted that no other card
+  // could ever carry a live region — and the personal-vocabulary card does, to
+  // announce its own no-file/loaded/invalid state. What this test is actually
+  // about is that the dish appears only after the button is pressed.
+  const dimSumCard = [...container.querySelectorAll(".m3-card")]
+    .find(c => c.contains(button!))!;
+  expect(dimSumCard.querySelector('[role="status"]')).toBeNull();
 
   await act(async () => {
     button!.dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true }) as never);
   });
 
-  const card = container.querySelector('[role="status"]');
+  const card = dimSumCard.querySelector('[role="status"]');
   expect(card).toBeTruthy();
   // The dish is named for screen readers too — the art alone is not the label.
   // The name is plain text now rather than an aria-label on a `role="img"`

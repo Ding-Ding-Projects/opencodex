@@ -248,6 +248,12 @@ export const LANGUAGE_SETTINGS = registerSettingsPage({
     },
     { id: "showEmojis", tkey: "emoji.title", descKey: "emoji.sub" },
     { id: "dimsum", tkey: "dimsum.toggle" },
+    {
+      id: "vocabulary",
+      tkey: "vocab.title",
+      descKey: "vocab.sub",
+      keywordKeys: ["vocab.uploadLabel", "vocab.replaceLabel", "vocab.clearLabel"],
+    },
   ],
 });
 

@@ -13,18 +13,39 @@
  * The dim sum switch lives here rather than under Appearance because it is a
  * voice-and-delight setting, not a theming one — and because the surprise it
  * governs is bilingual copy, so it belongs beside the language controls.
+ *
+ * The personal-vocabulary card closes the screen. It is the settings-page half
+ * of the universal "local personal-vocabulary JSON upload" contract — the
+ * other half is `src/i18n/personal-vocabulary.ts`, which this card is a thin
+ * shell around, and `resolve.ts`'s `translate()`, which is where an uploaded
+ * vocabulary actually takes effect. This card only ever shows a term count and
+ * a rejection reason, never the terms themselves, so nothing about a user's
+ * private glossary is legible from a screenshot of this screen.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
 import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { IconSearch, IconSparkle, IconVolume } from "../icons";
-import { LOCALES, useI18n, useT, type Locale, type TFn, type TKey } from "../i18n/shared";
+import { LOCALES, useI18n, useT, type Locale, type TFn, type TKey, type Vars } from "../i18n/shared";
 import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18n/voice";
 import { resolveTrack } from "../i18n/resolve";
 import { decorateMessage, type MessageMarkKind } from "../shell/message-emoji";
+import {
+  clearVocabulary,
+  getVocabularySnapshot,
+  loadVocabularyFile,
+  subscribeVocabulary,
+  VOCAB_MAX_ENTRIES,
+  VOCAB_MAX_FILE_BYTES,
+  VOCAB_MAX_KEY_LENGTH,
+  VOCAB_MAX_VALUE_LENGTH,
+  type VocabParseResult,
+  type VocabRejectReason,
+  type VocabState,
+} from "../i18n/personal-vocabulary";
 import {
   DEFAULT_NARRATOR_VOICE,
   NARRATOR_BOTH,
@@ -412,6 +433,153 @@ function FunnySample({ text }: { text: string }) {
     }}>
       {text}
     </div>
+  );
+}
+
+/**
+ * A thin React binding over the module-level vocabulary store. Lives here
+ * rather than in `personal-vocabulary.ts` for the same reason
+ * `useInstalledVoices` above lives here rather than in `narrator-voices.ts`:
+ * that module stays free of React so `translate()` can import it with no
+ * renderer in its dependency graph at all.
+ */
+function useVocabulary(): VocabState & {
+  load: (file: File) => Promise<VocabParseResult>;
+  clear: () => void;
+} {
+  const snapshot = useSyncExternalStore(subscribeVocabulary, getVocabularySnapshot, getVocabularySnapshot);
+  return { ...snapshot, load: loadVocabularyFile, clear: clearVocabulary };
+}
+
+/** Every {@link VocabRejectReason} to the key that explains it in words a user
+ *  can act on. Exhaustive by construction — a `VocabRejectReason` added to the
+ *  schema without a row here is a compile error, not a silent "invalid". */
+const VOCAB_REASON_KEY: Record<VocabRejectReason, TKey> = {
+  "empty-file": "vocab.reason.emptyFile",
+  "too-large": "vocab.reason.tooLarge",
+  "malformed-json": "vocab.reason.malformedJson",
+  "too-deep": "vocab.reason.tooDeep",
+  "not-an-object": "vocab.reason.notAnObject",
+  "unexpected-field": "vocab.reason.unexpectedField",
+  "missing-field": "vocab.reason.missingField",
+  "unknown-version": "vocab.reason.unknownVersion",
+  "entries-not-object": "vocab.reason.entriesNotObject",
+  "duplicate-key": "vocab.reason.duplicateKey",
+  "unsafe-key": "vocab.reason.unsafeKey",
+  "empty-key": "vocab.reason.emptyKey",
+  "key-too-long": "vocab.reason.keyTooLong",
+  "non-string-value": "vocab.reason.nonStringValue",
+  "value-too-long": "vocab.reason.valueTooLong",
+  "too-many-entries": "vocab.reason.tooManyEntries",
+};
+
+/** The `{limit}` a rejection's copy interpolates, in whichever unit the
+ *  schema itself is bounded in — kilobytes for the file-size ceiling,
+ *  characters or a count everywhere else. A reason that names no number
+ *  resolves to no vars at all, which `t()` simply ignores. */
+function vocabReasonVars(reason: VocabRejectReason): Vars | undefined {
+  switch (reason) {
+    case "too-large": return { limit: Math.round(VOCAB_MAX_FILE_BYTES / 1024) };
+    case "key-too-long": return { limit: VOCAB_MAX_KEY_LENGTH };
+    case "value-too-long": return { limit: VOCAB_MAX_VALUE_LENGTH };
+    case "too-many-entries": return { limit: VOCAB_MAX_ENTRIES };
+    default: return undefined;
+  }
+}
+
+function describeVocabRejection(t: TFn, reason: VocabRejectReason): string {
+  return t(VOCAB_REASON_KEY[reason], vocabReasonVars(reason));
+}
+
+/**
+ * The personal-vocabulary card: a semantic file picker with no-file, loaded,
+ * invalid, replace and clear states — per the universal contract, present on
+ * every settings surface even before a file has ever been chosen.
+ *
+ * What it deliberately never renders is the vocabulary itself. The status
+ * line says how many terms are active and, on a rejection, which documented
+ * bound the file failed — never a term, a replacement, or the source file's
+ * name. That is what keeps this card safe to screenshot: the evidence a
+ * capture harness collects for this screen can never leak a user's private
+ * glossary, because the glossary was never text this component put on screen.
+ */
+function VocabularyCard({ t }: { t: TFn }) {
+  const vocab = useVocabulary();
+  const { notify } = useNotifications();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const count = vocab.doc ? Object.keys(vocab.doc.entries).length : 0;
+
+  const onPick = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset immediately, and unconditionally: without this, picking the exact
+    // same filename twice in a row (to retry after fixing it, say) would not
+    // fire a second `change` event at all.
+    event.target.value = "";
+    if (!file) return;
+    const result = await vocab.load(file);
+    if (result.ok) {
+      notify({
+        tone: "success",
+        title: t("vocab.loadedNotice"),
+        body: t("vocab.loadedNoticeBody", { count: Object.keys(result.doc.entries).length }),
+      });
+    } else {
+      notify({ tone: "error", title: t("vocab.invalidNotice"), body: describeVocabRejection(t, result.reason) });
+    }
+  };
+
+  const onClear = () => {
+    vocab.clear();
+    notify({ tone: "info", title: t("vocab.clearedNotice"), body: t("vocab.clearedNoticeBody") });
+  };
+
+  return (
+    <Card key="vocab" title={t("vocab.title")} subtitle={t("vocab.sub")}>
+      <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+        {t("vocab.privacyHint")}
+      </p>
+      <p style={{ margin: "0 0 var(--sp-3)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+        {t("vocab.limitsHint", {
+          maxKb: Math.round(VOCAB_MAX_FILE_BYTES / 1024),
+          maxEntries: VOCAB_MAX_ENTRIES,
+          maxKeyLen: VOCAB_MAX_KEY_LENGTH,
+          maxValueLen: VOCAB_MAX_VALUE_LENGTH,
+        })}
+      </p>
+
+      {/* Hidden and triggered from the Button below — same shape as the
+          profile importer on the Claude Desktop screen. A hidden input takes
+          no place in the tab order, so the accessible control is the button. */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/json,.json"
+        hidden
+        onChange={event => void onPick(event)}
+      />
+
+      <div className="m3-row" style={{ gap: 8 }}>
+        <Button variant="outlined" onClick={() => fileRef.current?.click()}>
+          {vocab.doc ? t("vocab.replaceLabel") : t("vocab.uploadLabel")}
+        </Button>
+        {vocab.doc && (
+          <Button variant="outlined" onClick={onClear}>
+            {t("vocab.clearLabel")}
+          </Button>
+        )}
+      </div>
+
+      <p
+        role="status"
+        style={{ margin: "var(--sp-2) 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}
+      >
+        {vocab.lastRejection
+          ? t("vocab.stateInvalid", { reason: describeVocabRejection(t, vocab.lastRejection.reason) })
+          : vocab.doc
+            ? t("vocab.stateLoaded", { count })
+            : t("vocab.stateNone")}
+      </p>
+    </Card>
   );
 }
 
@@ -821,6 +989,13 @@ export default function LanguageVoice() {
           )}
         </Card>
       ),
+    },
+    {
+      id: "vocabulary",
+      text: [
+        t("vocab.title"), t("vocab.sub"), t("vocab.uploadLabel"), t("vocab.replaceLabel"), t("vocab.clearLabel"),
+      ].join(" "),
+      node: <VocabularyCard key="vocab" t={t} />,
     },
   ];
 
