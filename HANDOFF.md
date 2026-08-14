@@ -54,7 +54,11 @@ Fourteen product lanes plus two orchestrated multi-agent runs:
 
 ### Verification boundary, stated plainly
 
-The dashboard suite and both typechecks were run before every push. **The full 6,637-test root suite was not run locally** — it takes about twelve minutes and, under agent-fleet contention, manufactures timeout-shaped failures that are not real. Windows CI on a clean runner is the authoritative verdict and has been green on every published build.
+The dashboard suite and both typechecks were run before every push. **The full root suite was not run locally by the integrator** — it takes about twelve minutes and, under agent-fleet contention, manufactures timeout-shaped failures that are not real.
+
+It *was* run once, by the School Mode lane, in the project's own isolated-environment mode: **6,727 pass, 3 skip, 0 fail across 6,730 tests**. Two caveats on that figure, because it is the strongest evidence here and would be easy to over-claim. It was measured on `feat/w2-schoolmode` at `8daa079f`, not on `main`: that branch is an ancestor of `main` **plus** its own alternative `ocx school-mode`, which was deliberately not merged. So it demonstrates the tree is healthy, not that this exact `main` is green.
+
+Windows CI on a clean runner remains the authoritative verdict for `main`, and has been green on every published build.
 
 No installer was downloaded or executed. Asset sizes come from the release record rather than from opening the files.
 
