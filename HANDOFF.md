@@ -17,7 +17,7 @@ Rescuing it was right. But **that code had never been compiled or run by anyone*
 
 | | Start of session | End |
 | --- | --- | --- |
-| Dashboard suite | 474 pass / 434 fail | **1361 pass / 0 fail** |
+| Dashboard suite | 474 pass / 434 fail | **1492 pass / 0 fail**, 177 files |
 | Root typecheck | failing | clean |
 | Releases published | none for four days | **build-159, 161, 165, 168, 170, 171** |
 
@@ -61,8 +61,8 @@ No installer was downloaded or executed. Asset sizes come from the release recor
 ### Open, and honest about it
 
 - **Fifty of sixty-five contracts remain partial or absent.** The largest are unbuilt products rather than missing switches: the universal file converter, the Ollama suite manager, per-element toy locks, the built-in authenticator, School mode's cross-app record, and browser-extension download capture. `docs/FEATURE-INVENTORY.md` names each with its evidence.
-- **Four lanes were in flight when this handoff was written**, with work preserved on their own branches: the authenticator, toy locks with Support Tickets, School mode, and a re-derivation of the inventory itself. None is claimed as landed.
-- **`ocx schedule` was outstanding.** The scheduled-settings routes landed without a CLI counterpart, and `tests/cli-headless-parity.test.ts` correctly refused them. That guard pairs each API prefix with a real command, so adding a coverage row without building the command defeats it rather than satisfying it.
+- **All wave-two lanes landed**: the built-in authenticator with TOTP pairing, per-element toy locks with the Support Tickets desk, School mode, scheduled settings, app-logo customization, the offline documentation browser, and `ocx schedule`.
+- **`tests/cli-headless-parity.test.ts` is still red, for a reason unrelated to any of it.** Seven endpoints are uncovered because they appear as third-party API paths quoted in the documentation browser's *generated article text* — `/api/paas/v4`, `/api/gateway` and similar — rather than in any real call site. Proved by stashing every change and watching the same failure. Two of the seven (`/api/disabled-models`, `/api/key-providers`) are real routes mentioned only in a reference table, with no GUI code and no CLI command reaching either. The scan matches strings in bundled prose; that is the defect to fix, not the routes.
 - **React Doctor still gates** every pull request and push to `main`. Lint was removed as a gate at the owner's instruction; React Doctor is static analysis rather than ESLint, so it was flagged rather than removed.
 - **This fork is roughly 2,979 commits behind upstream** (`lidge-jun/opencodex`), diverged 2026-07-29. Reported, not ported.
 
@@ -71,6 +71,10 @@ No installer was downloaded or executed. Asset sizes come from the release recor
 **A guard that shares its subject's implementation agrees with its bugs.** The documentation completeness check re-walks the source tree with its own code rather than calling the generator's discovery function, precisely so it can detect that generator dropping a file. The same reasoning condemns the appearance guard a survey found this session: it only checks that a target reads *at least one* variable, so it passes cleanly on a target where five of six controls are dead.
 
 **An assertion like `expect(el).toBeNull()` against a real DOM element prints the entire happy-dom window as a diff.** Megabytes of it. The run then looks like it *hangs* rather than fails, which cost two ten-minute timeouts before the cause was found. Scope DOM queries to the region actually meant.
+
+**A test that passes alone and fails in the suite is a leak, not a flake.** Integration produced one: `configureSchoolModeApiBase` both recorded an API base and started a 1.5-second poll, and `App.tsx` calls it at module scope — so merely *importing* `App` started an interval no test could clean up. It outlived every teardown and fired into a later file's mocked `fetch`, surfacing there as a probe that file never made. Recording configuration at module scope is fine; starting a timer there is not, and the fix was to move the start into a mounted effect with a teardown.
+
+**A count assertion is usually an assertion about the size of the codebase.** Several tests broke this session by pinning "exactly one match" or "exactly N cards" — statements that quietly also said *nothing else may ever exist*. Most were retargeted to the property they meant. One was not, and that is the useful case: a palette test asserting exactly one destination per page found a genuine duplicate introduced while resolving a merge. It was about to be relaxed for looking stale; it was right.
 
 ## Windows release and lifecycle reconciliation — 2026-08-09
 
