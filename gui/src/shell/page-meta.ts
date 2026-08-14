@@ -2,8 +2,8 @@
 
 import {
   IconActivity, IconApi, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconClock, IconDevices, IconGrid,
-  IconHardDrive, IconHistory, IconKey, IconMenuBook, IconPalette, IconReceiptLong, IconRegex, IconRestartAlt,
-  IconServer, IconShuffle, IconSliders, IconSparkle, IconTerminal, IconTranslate,
+  IconHardDrive, IconHistory, IconKey, IconLock, IconMenuBook, IconPalette, IconReceiptLong, IconRegex,
+  IconRestartAlt, IconServer, IconShuffle, IconSliders, IconSparkle, IconTerminal, IconTranslate,
 } from "../icons";
 import { PAGE_GROUP, type Page } from "../app-routing";
 import type { TKey } from "../i18n/shared";
@@ -41,6 +41,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   mobile: IconDevices,
   settings: IconSliders,
   docs: IconMenuBook,
+  locks: IconLock,
 };
 
 const TKEYS: Record<Page, TKey> = {
@@ -69,13 +70,14 @@ const TKEYS: Record<Page, TKey> = {
   mobile: "nav.mobile",
   settings: "nav.settings",
   docs: "nav.docs",
+  locks: "nav.locks",
 };
 
 /** Nav order is deliberate: dashboard first, then auth, then the rest of the product. */
 const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
-  "appearance", "language", "schedule", "regex", "changelog", "docs", "history", "notifications", "network", "settings", "terminal", "mobile",
+  "appearance", "language", "schedule", "regex", "changelog", "docs", "history", "notifications", "network", "locks", "settings", "terminal", "mobile",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({

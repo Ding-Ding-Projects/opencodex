@@ -26,6 +26,7 @@ import VersionHistory from "./pages/VersionHistory";
 import NotificationsPage from "./pages/Notifications";
 import Network from "./pages/Network";
 import SettingsPage from "./pages/Settings";
+import LocksPage from "./pages/Locks";
 import OnboardingWizard from "./shell/OnboardingWizard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import RemoteConnectionDialog from "./components/RemoteConnectionDialog";
@@ -54,6 +55,7 @@ import SnackbarHost from "./shell/SnackbarHost";
 import DimSumCard from "./shell/DimSumCard";
 import { PAGE_META_BY_ID } from "./shell/page-meta";
 import { readJsonIfOk } from "./fetch-json";
+import { applyLockedOnLaunch } from "./shell/locks";
 
 installApiAuthFetch();
 
@@ -104,6 +106,7 @@ function renderPage(page: Page): ReactNode {
     case "history": return <VersionHistory />;
     case "notifications": return <NotificationsPage />;
     case "network": return <Network apiBase={API_BASE} />;
+    case "locks": return <LocksPage />;
     case "settings": return <SettingsPage apiBase={API_BASE} />;
     case "terminal": return <Terminal apiBase={API_BASE} />;
     case "mobile": return <MobileRemote apiBase={API_BASE} />;
@@ -167,6 +170,14 @@ function AppShell() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Every toy lock configured to "lock again on launch" (the default) drops
+  // any session unlock that survived from before this app instance started.
+  // Explicit function call rather than a module-load side effect in
+  // `locks.ts` itself — see that function's own doc for why: this is the one
+  // place "the app started" actually means something, and a hot reload during
+  // development must not relock a lock the developer just unlocked.
+  useEffect(() => { applyLockedOnLaunch(); }, []);
 
   const compact = windowClass === "compact";
   const drawerOpen = compact && drawerRequested;

@@ -72,4 +72,17 @@ contextBridge.exposeInMainWorld("opencodexDesktop", {
      */
     start: () => ipcRenderer.invoke("proxy:start"),
   },
+  /**
+   * The toy-lock recovery route: "delete this app's local application-data
+   * folder" (see `gui/src/shell/app-data-path.ts` and the Support Tickets
+   * surface). Two fixed channels, no caller-supplied argument — the renderer
+   * can ask where the folder is and ask to have it opened, and cannot name any
+   * other path for either call to act on.
+   */
+  appData: {
+    /** The real, resolved absolute path — named exactly, not guessed. */
+    path: () => ipcRenderer.invoke("appData:path"),
+    /** Opens it in the platform's own file manager. Never deletes anything itself. */
+    open: () => ipcRenderer.invoke("appData:open"),
+  },
 });
