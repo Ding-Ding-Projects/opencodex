@@ -1130,6 +1130,11 @@ switch (command) {
     process.exitCode = await handleGrokCommand(args.slice(1));
     break;
   }
+  case "school-mode": {
+    const { handleSchoolModeCommand } = await import("./school-mode");
+    process.exitCode = await handleSchoolModeCommand(args.slice(1));
+    break;
+  }
   case "changelog": {
     const { handleChangelogCommand } = await import("./changelog");
     process.exitCode = await handleChangelogCommand(args.slice(1));

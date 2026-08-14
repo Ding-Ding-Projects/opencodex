@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { handleAccessCommand } from "../src/cli/access";
 import { handleAgentCommand } from "../src/cli/agent";
 import { handleComboCommand } from "../src/cli/combo";
@@ -9,7 +10,16 @@ import { handleConfigCommand } from "../src/cli/config-command";
 import { handleGrokCommand } from "../src/cli/integrations";
 import { handleModelsRuntimeCommand } from "../src/cli/models-runtime";
 import { handleProviderRuntimeCommand } from "../src/cli/provider-runtime";
+import { handleSchoolModeCommand } from "../src/cli/school-mode";
+import type { CliStdin } from "../src/cli/runtime-api";
 import { removeTempDir } from "./helpers/temp-dir";
+
+/** Same shape `cli-account.test.ts` uses: a one-shot readable stdin carrying exactly one secret line. */
+function stdinFrom(value: string): CliStdin {
+  const input = Readable.from([value]) as unknown as CliStdin;
+  input.isTTY = false;
+  return input;
+}
 
 type Recorded = { path: string; method: string; body: unknown };
 const servers: Array<ReturnType<typeof Bun.serve>> = [];
@@ -79,6 +89,7 @@ describe("headless GUI parity CLI", () => {
       // the route uses, so neither surface can offer a list the other cannot.
       ["/api/export", "ocx export data"],
       ["/api/grok", "ocx grok"],
+      ["/api/school-mode", "ocx school-mode"],
       ["/api/host", "ocx host/export"],
       ["/api/injection", "ocx agent"],
       ["/api/keys", "ocx access"],
@@ -174,6 +185,61 @@ describe("headless GUI parity CLI", () => {
     });
     expect(await handleGrokCommand(["include", "a", "--json"], runtime.deps)).toBe(0);
     expect(runtime.requests[1]).toEqual({ path: "/api/grok/selection", method: "PUT", body: { excluded: ["b"] } });
+  });
+
+  test("school-mode status reaches the shared GUI endpoint and prints the reset path", async () => {
+    const runtime = fakeRuntime((req) => (new URL(req.url).pathname === "/api/school-mode" && req.method === "GET"
+      ? { enabled: true, hasCustomName: false, customName: null, hasCredential: true, recordReadable: true, recordWatchable: true, recordDir: "/tmp/school-mode" }
+      : undefined));
+    const code = await handleSchoolModeCommand(["status", "--json"], runtime.deps);
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{ path: "/api/school-mode", method: "GET", body: null }]);
+  });
+
+  test("school-mode enable reaches the same route the GUI card's toggle does", async () => {
+    const runtime = fakeRuntime();
+    const code = await handleSchoolModeCommand(["enable", "--json"], runtime.deps);
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{ path: "/api/school-mode/enable", method: "POST", body: null }]);
+  });
+
+  test("school-mode disable reads the PIN from stdin, never from argv", async () => {
+    const runtime = fakeRuntime();
+    const code = await handleSchoolModeCommand(["disable", "--json"], { ...runtime.deps, stdinImpl: stdinFrom("correct-pin\n") });
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{ path: "/api/school-mode/disable", method: "POST", body: { secret: "correct-pin" } }]);
+  });
+
+  test("school-mode set-credential reads the current secret first only when one is already set", async () => {
+    const runtime = fakeRuntime((req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/api/school-mode" && req.method === "GET") return { hasCredential: true };
+      return undefined;
+    });
+    const code = await handleSchoolModeCommand(
+      ["set-credential", "--json"],
+      { ...runtime.deps, stdinImpl: stdinFrom("old-pin\nnew-pin\n") },
+    );
+    expect(code).toBe(0);
+    expect(runtime.requests[1]).toEqual({
+      path: "/api/school-mode/credential",
+      method: "POST",
+      body: { newSecret: "new-pin", currentSecret: "old-pin" },
+    });
+  });
+
+  test("school-mode rename reaches the same route the GUI's rename control does", async () => {
+    const runtime = fakeRuntime();
+    const code = await handleSchoolModeCommand(["rename", "Focus mode", "--json"], runtime.deps);
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{ path: "/api/school-mode/rename", method: "POST", body: { name: "Focus mode" } }]);
+  });
+
+  test("school-mode rename --clear sends null, restoring the shipped name", async () => {
+    const runtime = fakeRuntime();
+    const code = await handleSchoolModeCommand(["rename", "--clear", "--json"], runtime.deps);
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{ path: "/api/school-mode/rename", method: "POST", body: { name: null } }]);
   });
 
   test("config set validates the complete candidate before the atomic write", async () => {

@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useSettingsDrafts } from "../settings-drafts-context";
 import { elsewhereFor } from "./settings-elsewhere";
+import { useSchoolModeActive } from "../school-mode/hooks";
 import { IconRefresh, IconSearch } from "../icons";
 import { LOCALES, useI18n, type TKey } from "../i18n/shared";
 import { Button, Card, Chip, Empty, Segmented, TextInput, Toggle } from "../shell/m3-ui";
@@ -74,11 +75,12 @@ const DEBUG_FLAGS = ["debug", "usage", "injection", "claude"] as const;
  * come and add it — which is what the eight hand-written rows this replaced
  * could never promise.
  *
- * Read at module scope, which is safe because the registry is contributed
- * statically: it describes screens that are not open, so it is complete before
- * the first render rather than filling in as pages mount.
+ * Read inside the component, on every render that cares — see
+ * `elsewhereFor`'s own doc comment. It used to be read once at module scope,
+ * which was safe back when the registry was contributed purely statically;
+ * School Mode's live suppression is exactly what makes that unsafe now, since
+ * "which rows are visible" can change while this page is already open.
  */
-const ELSEWHERE = elsewhereFor("nav.settings");
 
 const LEAD_ROW: CSSProperties = { marginBottom: "var(--sp-3)", alignItems: "flex-start" };
 const LEAD: CSSProperties = { margin: 0 };
@@ -189,6 +191,12 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
   const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [revisionCount, setRevisionCount] = useState(0);
   const loadGenerationRef = useRef(0);
+
+  // Recomputed whenever School Mode flips — see `elsewhereFor`'s own doc
+  // comment for why a module-scope constant went stale the moment the mode
+  // could change live while this page was already open.
+  const schoolModeActive = useSchoolModeActive();
+  const ELSEWHERE = useMemo(() => elsewhereFor("nav.settings"), [schoolModeActive]);
 
   // `recordRevision` fires this event, so the history count stays honest whether the
   // change was made here or on another screen.
