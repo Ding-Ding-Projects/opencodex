@@ -44,6 +44,7 @@
 import type { Page } from "../app-routing";
 import type { TFn, TKey } from "../i18n/shared";
 import type { ElsewhereOption } from "./settings-search";
+import { isSchoolModeActive } from "../school-mode/client";
 
 /**
  * A screen's identity, borrowed from the router rather than invented here.
@@ -77,6 +78,17 @@ export interface SettingsRegistryRow {
    * has to be able to find it.
    */
   keywordKeys?: readonly TKey[];
+  /**
+   * True when this row must behave as "not installed" while School Mode is
+   * forcing English presentation — Cantonese, bilingual, funny-level,
+   * personal-vocabulary and dim-sum rows. Declared right beside the row it
+   * describes (in `settings-registry-entries.ts`) rather than in a separate
+   * keyed list elsewhere, so a reader can see the suppression the moment they
+   * see the row itself. `visibleSettingsRows()` below is the one place this
+   * flag is ever consulted — every reader of the registry (cross-page search,
+   * the command palette) goes through it rather than `entry.rows` directly.
+   */
+  schoolModeSuppressed?: boolean;
 }
 
 /** Every setting one screen owns, under the name the navigation gives that screen. */
@@ -112,9 +124,23 @@ export function settingsRegistryPages(): SettingsPageEntry[] {
   return [...PAGES.values()];
 }
 
+/**
+ * One page's rows with anything School Mode must currently hide removed.
+ *
+ * The single choke point every reader of the registry goes through — cross-
+ * page search below, and the command palette's `paletteSettings()` — so a
+ * suppressed row can never leak through one enumeration while correctly
+ * hidden from another.
+ */
+export function visibleSettingsRows(entry: SettingsPageEntry): SettingsRegistryRow[] {
+  if (!isSchoolModeActive()) return [...entry.rows];
+  return entry.rows.filter(row => !row.schoolModeSuppressed);
+}
+
 /** One page's contributed rows, or an empty list if it has contributed none. */
 export function settingsRegistryRows(page: SettingsPageId): readonly SettingsRegistryRow[] {
-  return PAGES.get(page)?.rows ?? [];
+  const entry = PAGES.get(page);
+  return entry ? visibleSettingsRows(entry) : [];
 }
 
 /** How many settings the whole index holds. Used by docs and by callers reporting coverage. */
@@ -140,7 +166,7 @@ export function settingsElsewhere(ownPage: SettingsPageId | undefined, t: TFn): 
   for (const entry of PAGES.values()) {
     if (entry.page === ownPage) continue;
     const tab = t(entry.navKey);
-    for (const row of entry.rows) {
+    for (const row of visibleSettingsRows(entry)) {
       out.push({
         label: t(row.tkey),
         desc: row.descKey ? t(row.descKey) : undefined,

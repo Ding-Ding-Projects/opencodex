@@ -9,13 +9,14 @@
  */
 
 import {
-  DICTS, PARTIAL_DICTS, interpolate, voiceLangsFor,
+  DICTS, FUNNY_DEFAULT, PARTIAL_DICTS, interpolate, voiceLangsFor,
   type FunnyLevels, type Locale, type TKey, type Vars,
 } from "./shared";
 import { en } from "./en";
 import { M3_EN, M3_OVERRIDES, type M3Key } from "./m3";
 import { voiceFor, type FunnyLevel, type VoiceLang } from "./voice";
 import { applyVocabularyToTemplate, getActiveVocabularyEntries } from "./personal-vocabulary";
+import { isSchoolModeActive } from "../school-mode/client";
 
 /**
  * Resolution order for one voice track: the funny-level variant, then the
@@ -188,16 +189,42 @@ export function joinBilingual(values: string[], separator: string): string {
  * against — `applyVocabularyToTemplate` is a same-string no-op, so this changes
  * nothing about how any of the above behaves until a user actually uploads a
  * file.
+ *
+ * ## The School Mode boundary
+ *
+ * This is also the one place School Mode (`../school-mode/client`) is ever
+ * applied. While it is active, every one of `locale`, `funny` and the
+ * personal vocabulary is overridden before anything below runs: `locale`
+ * forces `"en"` (the contract's "apps force English presentation", covering
+ * every shipped language, not only Cantonese/bilingual), `funny` forces the
+ * neutral house voice on both tracks (the contract's "funny-level...
+ * capabilities behave as if they are not installed" — not merely quieter,
+ * gone, which for a voice overlay means the default level rather than any
+ * level the user actually chose), and the vocabulary is dropped entirely
+ * (same reasoning as above). The caller's real `locale`/`funny` arguments,
+ * and whatever vocabulary file is loaded, are left completely untouched in
+ * storage — this only changes what one call renders, which is what lets "the
+ * user's prior choices remain stored and return only after the mode is
+ * turned off" hold without this function needing to know anything about
+ * persistence.
+ *
+ * Gating here rather than in each caller is deliberate: `settings-drafts.tsx`
+ * also calls `translate()` directly (for a settings-saved notification), and
+ * gating there too would be a second place this could quietly drift out of
+ * step with the first.
  */
 export function translate(locale: Locale, funny: FunnyLevels, key: TKey, vars?: Vars): string {
-  const vocabulary = getActiveVocabularyEntries();
-  const tracks = voiceLangsFor(locale);
+  const forced = isSchoolModeActive();
+  const effectiveLocale: Locale = forced ? "en" : locale;
+  const effectiveFunny: FunnyLevels = forced ? { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT } : funny;
+  const vocabulary = forced ? null : getActiveVocabularyEntries();
+  const tracks = voiceLangsFor(effectiveLocale);
   if (tracks.length === 1) {
     const only = tracks[0]!;
-    const template = applyVocabularyToTemplate(resolveTrack(locale, only, funny[only], key), vocabulary);
+    const template = applyVocabularyToTemplate(resolveTrack(effectiveLocale, only, effectiveFunny[only], key), vocabulary);
     return interpolate(template, vars);
   }
-  const parts = bilingualParts(locale, funny, key);
+  const parts = bilingualParts(effectiveLocale, effectiveFunny, key);
   const primary = applyVocabularyToTemplate(parts.primary, vocabulary);
   const secondary = applyVocabularyToTemplate(parts.secondary, vocabulary);
   const english = interpolate(primary, trackVars(vars, 0));

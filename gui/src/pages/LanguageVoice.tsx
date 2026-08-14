@@ -28,8 +28,19 @@ import { Button, Card, Chip, Field, Slider, TextInput, Toggle } from "../shell/m
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconSearch, IconSparkle, IconVolume } from "../icons";
+import { IconLock, IconSearch, IconSparkle, IconVolume } from "../icons";
 import { LOCALES, useI18n, useT, type Locale, type TFn, type TKey, type Vars } from "../i18n/shared";
+import { usePrompt } from "../shell/confirm-context";
+import {
+  disableSchoolMode,
+  enableSchoolMode,
+  renameSchoolMode,
+  SCHOOL_MODE_MIN_SECRET_LENGTH,
+  setSchoolModeCredential,
+  validateSchoolModeSecret,
+  type SchoolModeState,
+} from "../school-mode/client";
+import { useSchoolModeActive, useSchoolModeSnapshot } from "../school-mode/hooks";
 import { voiceCoverage, voiceFor, type FunnyLevel, type VoiceLang } from "../i18n/voice";
 import { resolveTrack } from "../i18n/resolve";
 import { decorateMessage, type MessageMarkKind } from "../shell/message-emoji";
@@ -583,6 +594,202 @@ function VocabularyCard({ t }: { t: TFn }) {
   );
 }
 
+/** The name every surface must use — the shipped default, or the user's chosen one, and never both at once. */
+function schoolModeDisplayName(t: TFn, snapshot: SchoolModeState): string {
+  return snapshot.customName ?? t("schoolMode.shippedName");
+}
+
+/**
+ * School Mode — the universal, cross-app toggle that forces English
+ * presentation everywhere and makes Cantonese, bilingual, funny-level,
+ * personal-vocabulary and dim-sum "behave as if they are not installed".
+ *
+ * This card is the one place the mode is actually turned on or off; every
+ * other surface only *reacts* to `useSchoolModeActive()`. It never claims to
+ * be a security boundary — the copy says outright that it is a for-fun
+ * toggle and that deleting the shared file resets it — and it stays honest
+ * when the shared record cannot be read or watched, rather than quietly
+ * reading as "off".
+ */
+function SchoolModeCard({ t }: { t: TFn }) {
+  const snapshot = useSchoolModeSnapshot();
+  const prompt = usePrompt();
+  const { notify } = useNotifications();
+  const [busy, setBusy] = useState(false);
+  const name = schoolModeDisplayName(t, snapshot);
+
+  const onToggle = async (next: boolean): Promise<void> => {
+    if (busy) return;
+    if (next && !snapshot.hasCredential) {
+      // The toggle itself stays disabled in this state (see the render below),
+      // so reaching here at all would mean the disabled attribute failed —
+      // this is the honest fallback, not the primary guard.
+      notify({ tone: "warn", title: t("schoolMode.needsCredentialTitle"), body: t("schoolMode.needsCredential", { name }) });
+      return;
+    }
+    setBusy(true);
+    try {
+      if (next) {
+        const result = await enableSchoolMode();
+        if (result.ok) {
+          notify({ tone: "success", title: t("schoolMode.enabledNotice", { name }), body: t("schoolMode.enabledNoticeBody") });
+        } else {
+          notify({ tone: "error", title: t("schoolMode.actionFailedTitle"), body: result.message ?? t("schoolMode.actionFailedBody") });
+        }
+        return;
+      }
+      const secret = await prompt({
+        title: t("schoolMode.promptUnlockTitle", { name }),
+        body: t("schoolMode.promptUnlockHint"),
+        label: t("schoolMode.promptUnlockLabel"),
+        secret: true,
+        confirmLabel: t("schoolMode.promptUnlockConfirm"),
+      });
+      if (secret === null) return;
+      const result = await disableSchoolMode(secret);
+      if (result.ok) {
+        notify({ tone: "success", title: t("schoolMode.disabledNotice", { name }), body: t("schoolMode.disabledNoticeBody") });
+      } else {
+        notify({ tone: "error", title: t("schoolMode.disableFailedTitle"), body: result.message ?? t("schoolMode.disableFailedBody") });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSetCredential = async (): Promise<void> => {
+    if (busy) return;
+    let currentSecret: string | undefined;
+    if (snapshot.hasCredential) {
+      const current = await prompt({
+        title: t("schoolMode.promptCurrentSecretTitle", { name }),
+        label: t("schoolMode.promptCurrentSecretLabel"),
+        secret: true,
+        confirmLabel: t("schoolMode.promptContinue"),
+      });
+      if (current === null) return;
+      currentSecret = current;
+    }
+    const next = await prompt({
+      title: snapshot.hasCredential
+        ? t("schoolMode.changeCredentialTitle", { name })
+        : t("schoolMode.setCredentialTitle", { name }),
+      label: t("schoolMode.promptNewSecretLabel"),
+      hint: t("schoolMode.promptNewSecretHint", { min: SCHOOL_MODE_MIN_SECRET_LENGTH }),
+      secret: true,
+      confirmLabel: t("common.save"),
+    });
+    if (next === null) return;
+    const validation = validateSchoolModeSecret(next);
+    if (!validation.ok) {
+      notify({ tone: "error", title: t("schoolMode.credentialTooShortTitle"), body: t("schoolMode.promptNewSecretHint", { min: SCHOOL_MODE_MIN_SECRET_LENGTH }) });
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await setSchoolModeCredential(next, currentSecret);
+      if (result.ok) {
+        notify({ tone: "success", title: t("schoolMode.credentialSetNotice"), body: t("schoolMode.credentialSetNoticeBody") });
+      } else {
+        notify({ tone: "error", title: t("schoolMode.credentialChangeFailedTitle"), body: result.message ?? t("schoolMode.credentialChangeFailedBody") });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRename = async (): Promise<void> => {
+    if (busy) return;
+    const value = await prompt({
+      title: t("schoolMode.renamePromptTitle"),
+      body: t("schoolMode.renameHint"),
+      label: t("schoolMode.renamePromptLabel"),
+      initialValue: snapshot.customName ?? "",
+      hint: t("schoolMode.renamePromptFieldHint", { max: 80 }),
+      confirmLabel: t("common.save"),
+    });
+    if (value === null) return;
+    const trimmed = value.trim();
+    setBusy(true);
+    try {
+      const result = await renameSchoolMode(trimmed.length > 0 ? trimmed : null);
+      if (result.ok) {
+        notify(trimmed.length > 0
+          ? { tone: "success", title: t("schoolMode.renamedNotice", { name: trimmed }), body: t("schoolMode.renamedNoticeBody") }
+          : { tone: "info", title: t("schoolMode.renameClearedNotice"), body: t("schoolMode.renameClearedNoticeBody") });
+      } else {
+        notify({ tone: "error", title: t("schoolMode.renameFailedTitle"), body: result.message ?? t("schoolMode.renameFailedBody") });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleDisabled = busy || (!snapshot.enabled && !snapshot.hasCredential);
+
+  return (
+    <Card
+      key="schoolMode"
+      title={<span className="m3-row" style={{ gap: 8 }}><IconLock aria-hidden width={20} height={20} />{t("schoolMode.title")}</span>}
+      subtitle={t("schoolMode.sub")}
+      actions={
+        <Toggle on={snapshot.enabled} disabled={toggleDisabled} label={t("schoolMode.toggleAria", { name })} onChange={next => void onToggle(next)} />
+      }
+    >
+      {!snapshot.loaded && (
+        <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+          {t("schoolMode.loading")}
+        </p>
+      )}
+      {snapshot.fetchError && (
+        <p role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
+          {t("schoolMode.fetchError", { error: snapshot.fetchError })}
+        </p>
+      )}
+      {snapshot.loaded && !snapshot.recordReadable && (
+        <p role="alert" style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-body-s)" }}>
+          {t("schoolMode.unreadable", { name, error: snapshot.readError ?? "" })}
+        </p>
+      )}
+      {snapshot.loaded && !snapshot.recordWatchable && (
+        <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
+          {t("schoolMode.unwatchable", { name, error: snapshot.watchError ?? "" })}
+        </p>
+      )}
+
+      <p style={{ margin: "0 0 var(--sp-2)", fontSize: "var(--t-body-s)" }}>
+        {snapshot.enabled ? t("schoolMode.stateOn", { name }) : t("schoolMode.stateOff", { name })}
+      </p>
+      {!snapshot.enabled && !snapshot.hasCredential && (
+        <p style={{ margin: "0 0 var(--sp-3)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+          {t("schoolMode.needsCredential", { name })}
+        </p>
+      )}
+
+      <div className="m3-row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <Button variant="outlined" disabled={busy} onClick={() => void onSetCredential()}>
+          {snapshot.hasCredential ? t("schoolMode.changeCredentialLabel") : t("schoolMode.setCredentialLabel")}
+        </Button>
+        <Button variant="outlined" disabled={busy} onClick={() => void onRename()}>
+          {t("schoolMode.renameLabel")}
+        </Button>
+      </div>
+
+      <p style={{ margin: "var(--sp-3) 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+        {t("schoolMode.disclosure")}
+      </p>
+      <p style={{ margin: "6px 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+        {t("schoolMode.resetNote")}
+      </p>
+      {snapshot.recordDir && (
+        <p style={{ margin: "4px 0 0", fontSize: "var(--t-label-m)", ...MONO }}>
+          {snapshot.recordDir}
+        </p>
+      )}
+    </Card>
+  );
+}
+
 export default function LanguageVoice() {
   const t = useT();
   const { locale, setLocale } = useI18n();
@@ -611,7 +818,28 @@ export default function LanguageVoice() {
   // "this one leaves the machine" answerable after the merge.
   const voices = useMemo(() => [...localVoices, ...edge.voices], [localVoices, edge.voices]);
 
-  const trackTags = useMemo(() => tracksFor(prefs.narratorLang), [prefs.narratorLang]);
+  /**
+   * School Mode forces English presentation everywhere `t()` is read (see
+   * `resolve.ts`'s `translate()`), but the *controls* on this page also have
+   * to stop offering a language `t()` would then override — a picker that
+   * still shows "廣東話" selectable, rendering an English label, is not "not
+   * installed", it is a control lying about what it does. `visibleLocales`
+   * is what both the mode picker and the narrator-language picker filter
+   * through; `effectiveNarratorLang` is the same override applied to the
+   * *stored* narrator preference, so a Cantonese or bilingual choice made
+   * before the mode turned on renders as English now and reverts to exactly
+   * what it was — `prefs.narratorLang` itself is never written here — the
+   * moment the mode turns back off.
+   */
+  const schoolModeActive = useSchoolModeActive();
+  const schoolMode = useSchoolModeSnapshot();
+  const visibleLocales = useMemo(
+    () => (schoolModeActive ? LOCALES.filter(l => l.code === "en") : LOCALES),
+    [schoolModeActive],
+  );
+  const effectiveNarratorLang = schoolModeActive ? "en" : prefs.narratorLang;
+
+  const trackTags = useMemo(() => tracksFor(effectiveNarratorLang), [effectiveNarratorLang]);
   const narratorTracks = useMemo(
     () => trackTags.map(tag => {
       const settings = prefs.narratorVoices[tag] ?? DEFAULT_NARRATOR_VOICE;
@@ -679,12 +907,12 @@ export default function LanguageVoice() {
   const sections: { id: string; text: string; node: ReactNode }[] = [
     {
       id: "mode",
-      text: [t("lang.title"), t("lang.sub"), t("lang.mode"), ...LOCALES.map(l => l.name)].join(" "),
+      text: [t("lang.title"), t("lang.sub"), t("lang.mode"), ...visibleLocales.map(l => l.name)].join(" "),
       node: (
         <Card key="mode" title={t("lang.title")} subtitle={t("lang.sub")}>
           <Field label={t("lang.mode")}>
             <div className="m3-row" style={{ gap: 8 }}>
-              {LOCALES.map(l => (
+              {visibleLocales.map(l => (
                 <Chip
                   key={l.code}
                   lang={l.htmlLang}
@@ -696,10 +924,26 @@ export default function LanguageVoice() {
               ))}
             </div>
           </Field>
+          {schoolModeActive && (
+            <p style={{ margin: "var(--sp-2) 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+              {t("schoolMode.languageForced")}
+            </p>
+          )}
         </Card>
       ),
     },
     {
+      id: "schoolMode",
+      text: [t("schoolMode.title"), t("schoolMode.sub"), schoolModeDisplayName(t, schoolMode)].join(" "),
+      node: <SchoolModeCard key="schoolMode" t={t} />,
+    },
+    // Suppressed entirely while School Mode is on, per the universal
+    // contract: this is not a quieter funny level, it is the section behaving
+    // as if it were never installed. `schoolModeActive` also forces
+    // `funny.en`/`funny.yue` to the neutral default inside `translate()`
+    // itself, so even a stray call site that ignores this suppression cannot
+    // render a customized voice while the mode is on.
+    ...(schoolModeActive ? [] : [{
       id: "funny",
       text: [t("lang.funnyEn"), t("lang.funnyYue"), t("lang.funnyLadder"), permanentWarn].join(" "),
       node: (
@@ -737,7 +981,7 @@ export default function LanguageVoice() {
           </p>
         </Card>
       ),
-    },
+    }]),
     {
       id: "narrator",
       text: [
@@ -777,11 +1021,11 @@ export default function LanguageVoice() {
 
           <Field label={t("narrator.language")}>
             <div className="m3-row" style={{ gap: 8 }}>
-              {LOCALES.map(l => (
+              {visibleLocales.map(l => (
                 <Chip
                   key={l.code}
                   lang={l.htmlLang}
-                  selected={prefs.narratorLang === narratorValueFor(l.code)}
+                  selected={effectiveNarratorLang === narratorValueFor(l.code)}
                   onClick={() => setPrefs({ narratorLang: narratorValueFor(l.code) })}
                 >
                   {l.code === "bi" ? t("narrator.langBoth") : l.name}
@@ -789,8 +1033,13 @@ export default function LanguageVoice() {
               ))}
             </div>
           </Field>
+          {schoolModeActive && (
+            <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
+              {t("schoolMode.languageForced")}
+            </p>
+          )}
 
-          {prefs.narratorLang === NARRATOR_BOTH && (
+          {effectiveNarratorLang === NARRATOR_BOTH && (
             <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
               {t("narrator.bothOrder")}
             </p>
@@ -937,7 +1186,12 @@ export default function LanguageVoice() {
         </Card>
       ),
     },
-    {
+    // Suppressed while School Mode is on: the surprise itself is silenced by
+    // `useSchoolModeActive()` inside `DimSumCard.tsx` (so a draw already
+    // consumed for this launch before the mode turned on still cannot
+    // display), and this settings section — the "show one now" preview —
+    // disappears from search and the page alongside it.
+    ...(schoolModeActive ? [] : [{
       id: "dimsum",
       text: [t("dimsum.toggle"), t("dimsum.toggleHint"), t("dimsum.showNow")].join(" "),
       // No `actions` switch on this card, by contract: the surprise cannot be
@@ -989,14 +1243,18 @@ export default function LanguageVoice() {
           )}
         </Card>
       ),
-    },
-    {
+    }]),
+    // Suppressed while School Mode is on. The upload/replace/clear state
+    // this card would show is left completely untouched underneath — it is
+    // this section's *visibility* that is gone, never the stored file — so
+    // it returns exactly as it was the moment the mode turns back off.
+    ...(schoolModeActive ? [] : [{
       id: "vocabulary",
       text: [
         t("vocab.title"), t("vocab.sub"), t("vocab.uploadLabel"), t("vocab.replaceLabel"), t("vocab.clearLabel"),
       ].join(" "),
       node: <VocabularyCard key="vocab" t={t} />,
-    },
+    }]),
   ];
 
   const visible = sections.filter(s => matcher.test(s.text));

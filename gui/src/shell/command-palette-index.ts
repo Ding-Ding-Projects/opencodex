@@ -31,7 +31,7 @@
  */
 
 import { PAGE_META, type PageMeta } from "./page-meta";
-import { settingsRegistryPages, type SettingsPageId } from "./settings-registry";
+import { settingsRegistryPages, visibleSettingsRows, type SettingsPageId } from "./settings-registry";
 // Registers every settings page's rows as a side effect. Imported here, not
 // only from `use-settings-search.ts`, so the palette's index is complete even
 // on a build where nothing else happened to import the registrations first.
@@ -147,7 +147,7 @@ export function paletteSettings(t: TFn): PaletteSetting[] {
   const out: PaletteSetting[] = [];
   for (const entry of settingsRegistryPages()) {
     const tabLabel = t(entry.navKey);
-    for (const row of entry.rows) {
+    for (const row of visibleSettingsRows(entry)) {
       out.push({
         kind: "setting",
         entryId: `setting:${entry.page}:${row.id}`,

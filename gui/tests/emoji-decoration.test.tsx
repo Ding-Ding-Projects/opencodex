@@ -347,7 +347,9 @@ function mountLanguageVoice(): Promise<{ container: HTMLElement; root: Root }> {
   return mount(
     <TestLanguageProvider>
       <NotificationsProvider>
-        <LanguageVoice />
+        <ConfirmProvider>
+          <LanguageVoice />
+        </ConfirmProvider>
       </NotificationsProvider>
     </TestLanguageProvider>,
   );

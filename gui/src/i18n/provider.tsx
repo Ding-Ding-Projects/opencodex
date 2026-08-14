@@ -7,6 +7,7 @@ import {
 import { detectInitial, readFunny, writeFunny } from "./shared";
 import { translate } from "./resolve";
 import { useI18n } from "./shared";
+import { useSchoolModeActive } from "../school-mode/hooks";
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const drafts = useSettingsDrafts();
@@ -25,15 +26,32 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     en: drafts.scheduleOverride?.values.funnyEn ?? funny.en,
     yue: drafts.scheduleOverride?.values.funnyYue ?? funny.yue,
   }), [drafts.scheduleOverride, funny]);
+  // `translate()` reads School Mode internally and needs no argument for it,
+  // but `t`'s own memoization does: `locale`/`funny` do not change when the
+  // mode flips on or off, so without this dependency every consumer of
+  // `useT()` would keep rendering whatever it last rendered until some
+  // unrelated state change happened to re-render the tree. Subscribing here
+  // gives `t` — and therefore the context `value` below — a new identity the
+  // instant School Mode changes, which is what makes every surface update
+  // live rather than only on the next unrelated render.
+  //
+  // Two overrides stack here, and the order is deliberate: a scheduled rule
+  // decides which locale the app *would* render, and School Mode then forces
+  // English over whatever that produced. The schedule never has to know the
+  // mode exists, and the mode never has to know a schedule does.
+  const schoolModeActive = useSchoolModeActive();
 
   // The document language previews immediately. Durable localStorage ownership is
   // in SettingsDraftProvider.apply(), never in a field-level change handler.
   useEffect(() => {
     const meta = LOCALES.find(l => l.code === effectiveLocale) ?? LOCALES[0];
-    document.documentElement.lang = meta.htmlLang;
-  }, [effectiveLocale]);
+    document.documentElement.lang = schoolModeActive ? "en" : meta.htmlLang;
+  }, [effectiveLocale, schoolModeActive]);
 
-  const t: TFn = useCallback((key, vars) => translate(effectiveLocale, effectiveFunny, key, vars), [effectiveLocale, effectiveFunny]);
+  const t: TFn = useCallback(
+    (key, vars) => translate(effectiveLocale, effectiveFunny, key, vars),
+    [effectiveLocale, effectiveFunny, schoolModeActive],
+  );
   // `value.locale`/`value.funny` stay the true draft — same rule as
   // `usePrefs().prefs` for theme/density/seed/fonts: a settings screen always
   // shows and edits what is actually saved, never a temporary override, so

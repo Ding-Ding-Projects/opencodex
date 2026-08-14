@@ -56,11 +56,25 @@ import SnackbarHost from "./shell/SnackbarHost";
 import DimSumCard from "./shell/DimSumCard";
 import { PAGE_META_BY_ID } from "./shell/page-meta";
 import { readJsonIfOk } from "./fetch-json";
-import { applyLockedOnLaunch } from "./shell/locks";
+import { applyLockedOnLaunch } from "./shell/locks"
+import { configureSchoolModeApiBase, startSchoolModeSync, stopSchoolModeSync } from "./school-mode/client";
 
 installApiAuthFetch();
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+// School Mode's store polls `/api/school-mode` on its own — see
+// `school-mode/client.ts` — and needs to know where "own server" is before
+// its first poll fires, exactly like `configureNarrator`'s `apiBase`.
+//
+// Recording the base is safe at module scope; **starting the poll is not**.
+// This module is imported by well over a hundred test files, and a timer
+// started at import time is one no test can clean up: it survives every
+// teardown, fires into a later file's mocked `fetch`, and shows up there as a
+// stray probe that file never made. That is precisely how the onboarding
+// wizard's "does not probe" assertion started failing in the suite while
+// passing alone. The interval belongs to a mounted app, so it starts in an
+// effect and is torn down with it.
+configureSchoolModeApiBase(API_BASE);
 
 interface Health {
   version: string | null;
@@ -180,6 +194,15 @@ function AppShell() {
   // place "the app started" actually means something, and a hot reload during
   // development must not relock a lock the developer just unlocked.
   useEffect(() => { applyLockedOnLaunch(); }, []);
+
+  // The shared School Mode record is watched for as long as this app is
+  // mounted, and no longer. See the note beside `configureSchoolModeApiBase`:
+  // starting this at module scope leaked a timer into every test file that
+  // imports `App`.
+  useEffect(() => {
+    startSchoolModeSync();
+    return () => { stopSchoolModeSync(); };
+  }, []);
 
   const compact = windowClass === "compact";
   const drawerOpen = compact && drawerRequested;
