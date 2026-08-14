@@ -77,20 +77,35 @@ interface SchoolModeStatus {
 }
 
 /**
- * Read one secret from standard input.
+ * Read every line of standard input, once.
  *
- * Trailing newlines are stripped because a shell heredoc and a piped `echo`
- * both add one, and a credential that silently differs by an invisible
- * character fails verification with nothing to read. Interior whitespace is
- * kept: a passphrase may legitimately contain spaces.
+ * Deliberately one read for the whole stream rather than a helper called per
+ * secret. Standard input is a stream, not a queue of prompts: whatever is
+ * piped in may arrive as a single chunk, and a second `for await` over an
+ * already-drained stream returns nothing at all. A per-secret reader
+ * therefore looks correct, works when a human types slowly enough for two
+ * chunks to arrive, and silently loses the second value the moment anything
+ * pipes both lines at once — which is every scripted use.
+ *
+ * Trailing carriage returns are stripped because a shell heredoc and a piped
+ * `echo` both add one on Windows, and a credential that differs by an
+ * invisible character fails verification with nothing to read. Interior
+ * whitespace is kept: a passphrase may legitimately contain spaces.
  */
-async function readSecretFromStdin(prompt: string): Promise<string> {
-  process.stderr.write(`${prompt}\n`);
+async function readStdinLines(): Promise<string[]> {
   const chunks: Uint8Array[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk as Uint8Array);
-  const text = Buffer.concat(chunks).toString("utf8").replace(/\r?\n$/, "");
-  if (!text) throw new CliUsageError("no secret was supplied on standard input", USAGE);
-  return text;
+  return Buffer.concat(chunks)
+    .toString("utf8")
+    .split("\n")
+    .map(line => line.replace(/\r$/, ""));
+}
+
+/** The first line, required. */
+function requireSecret(lines: string[], what: string): string {
+  const value = lines[0] ?? "";
+  if (!value) throw new CliUsageError(`no ${what} was supplied on standard input`, USAGE);
+  return value;
 }
 
 async function status(argv: string[], deps: RuntimeApiDeps): Promise<void> {
@@ -123,7 +138,8 @@ async function enable(argv: string[], deps: RuntimeApiDeps): Promise<void> {
 async function disable(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const json = takeFlag(argv, "--json");
   rejectArgs(argv, USAGE);
-  const secret = await readSecretFromStdin("Unlock secret (read from stdin, not echoed):");
+  process.stderr.write("Unlock secret (read from stdin, not echoed):\n");
+  const secret = requireSecret(await readStdinLines(), "unlock secret");
   const result = await runtimeRequest<SchoolModeStatus>(
     "/api/school-mode/disable",
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) },
@@ -142,10 +158,13 @@ async function disable(argv: string[], deps: RuntimeApiDeps): Promise<void> {
 async function credential(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const json = takeFlag(argv, "--json");
   rejectArgs(argv, USAGE);
-  const newSecret = await readSecretFromStdin("New unlock secret (read from stdin, not echoed):");
-  const currentSecret = await readSecretFromStdin(
-    "Current unlock secret, or an empty line if none is set yet:",
-  ).catch(() => "");
+  // One read, two lines: the new secret first, then the current one where a
+  // credential already exists. Two reads would have lost the second line to a
+  // drained stream — see `readStdinLines`.
+  process.stderr.write("Line 1: the new unlock secret. Line 2: the current one, or blank if none is set.\n");
+  const lines = await readStdinLines();
+  const newSecret = requireSecret(lines, "new unlock secret");
+  const currentSecret = lines[1] ?? "";
   const result = await runtimeRequest<SchoolModeStatus>(
     "/api/school-mode/credential",
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(currentSecret ? { newSecret, currentSecret } : { newSecret }) },
