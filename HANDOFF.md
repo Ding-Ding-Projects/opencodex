@@ -1,5 +1,134 @@
 # Handoff
 
+## Five parallel lanes, a one-test red build, and an inventory that had drifted both ways — 2026-08-14
+
+### What this pass was
+
+Five independently releasable lanes, each in its own linked worktree branched from `10da25ec`, each
+owned by one implementation agent, no shared paths. Integration, conflict resolution, merging and
+publication were done by the coordinating session; no lane merged or pushed itself.
+
+**This was an ultra-speed pass and the verification boundary is narrow — read it before trusting
+anything below.** Test suites, linters, static analysis, accessibility checks and screenshot
+captures were **deliberately not run**. The two exceptions are both compilation rather than
+verification (`bun run typecheck`, `cd gui && bun run build`, each exit 0 after the final merge) and
+one single test file, `tests/cli-headless-parity.test.ts`, because that file *was* a lane's
+deliverable. Windows CI on a clean runner remains the authoritative verdict.
+
+### Two structural findings, both of which changed the plan
+
+**The red build was one test.** Windows CI at `b15244e9` failed, and a red run reads as a broken
+tree. It was not. Reading the complete 12,200-line log rather than the run summary, the entire run
+contained exactly one `(fail)` line — the headless-parity guard. Everything else passed. That single
+test is what kept `main` red, and fixing it is what allows the release gate to publish, so it was
+sequenced first and landed alone.
+
+**A docs-only commit can never produce a release, and nothing reports this.** `ci.yml` filters on
+`paths:` covering `src/**`, `bin/**`, `tests/**`, `scripts/**`, `gui/**` and a handful of root
+files. It does **not** cover `docs/**`, `CHANGELOG.md`, `HANDOFF.md` or `docs-site/**`. The previous
+tip `10da25ec` was docs-only, so CI never registered a run for it at all. `Auto release`
+[`31771241124`](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/31771241124) then did
+exactly what it was written to do:
+
+| Step | Result |
+| --- | --- |
+| Require successful CI for this commit | `success` — the step carries `continue-on-error: true` |
+| Create the release | **`skipped`** |
+| Point at the artifact when no release was published | `success` |
+
+The gate polls forty times at thirty-second intervals, sees `total == 0` throughout, times out, and
+publication is skipped. The installer was built and left as a run artifact.
+
+> This extends a trap already recorded further down this file. It was known that the workflow's
+> green tick is not evidence of a release. What is new is that **a whole class of commit can never
+> satisfy the gate** — not because CI failed, but because CI was never asked. The symptom is
+> indistinguishable from a slow run.
+
+The practical consequence for anyone landing work here: **the final commit on `main` must touch a
+CI-triggering path**, or the release skips however green the tree is. This pass satisfies that
+incidentally, because four of five lanes touch `gui/**` or `tests/**`. It has deliberately **not**
+been fixed — widening the filter is out of these lanes' scope and is a decision about whether a
+docs-only commit deserves an installer, which is the owner's to make.
+
+### What landed
+
+| Lane | Commit | What it does |
+| --- | --- | --- |
+| `feat/ylc-cliparity` | `199e0746` | Endpoint discovery parses source instead of regexing it |
+| `feat/ylc-inventory` | `c09a7040` | Re-derives eight inventory rows against the tree that exists |
+| `feat/ylc-menushortcuts` | `cb9c3a77` | Every context-menu item shows its shortcut, from one registry |
+| `feat/ylc-groupicker` | `617e37af` | Move-into-group as an anchored picker with its own search |
+| `feat/ylc-apprename` | `f8353062` | User-renamable display name, decoupled from identity |
+
+Forty-four files, +2,491 / −135.
+
+### The inventory had drifted in both directions at once
+
+`docs/FEATURE-INVENTORY.md` existed because a status written once and never re-derived is a claim
+about the past wearing the present tense. It had become exactly that itself.
+
+The 2026-08-14 re-derivation ran in a worktree whose base predated the wave-two merges, and was then
+merged forward. So it carried `absent` verdicts for eight contracts that were sitting in `gui/src`
+the entire time: School mode, per-element toy locks, the Support Tickets desk, TOTP registration,
+the built-in authenticator, app-logo customization, scheduled settings, and external settings
+sources. **A file whose entire purpose is detecting a feature nobody built had started denying the
+existence of features that were built.**
+
+All eight moved to `partial` and **none to `present`**, each naming the half that is genuinely
+missing — most commonly that the contract ships on the desktop app and does not reach the
+documentation site, which is the precise failure mode this file was created to catch. Two further
+rows had false *evidence* corrected without their verdict changing: the secret-mutation-history row
+and three neighbours asserted there was no OS credential vault anywhere, which
+`src/lib/os-credential-vault.ts` (Windows DPAPI) disproves.
+
+The totals moved **up**, from 50 to 53 contracts outstanding: `11 present · 47 partial · 6 absent ·
+1 n/a`. A correction that makes the number worse is the one most likely to be right.
+
+> The re-derivation note now states outright that **only these rows were re-read**. Every other
+> row's line numbers remain claims about `b5af3839`, not about this commit. That limit is written
+> into the file rather than left for a reader to discover.
+
+### Integration edits made by the coordinating session
+
+Named explicitly, because these are the edits no single lane could own:
+
+- `CHANGELOG.md` — both lanes wrote an `## Unreleased` section; merged into one, keeping the
+  generator note the shortcuts lane added.
+- `docs-site/astro.config.mjs` — both lanes added a sidebar entry at the same line; kept both.
+- `docs/FEATURE-INVENTORY.md` — three lanes edited it. The rename lane, working from the pre-
+  re-derivation base, carried stale totals *and* a correct change to its own row; the re-derived
+  totals were kept and the row change folded in.
+- `HANDOFF.md` — the outstanding-contract count above.
+
+**One defect was caught by re-counting rather than by reading.** After resolving, an independent
+recount of every status cell disagreed with the stated totals by one. The cause was in slice 3: the
+group-picker lane moved its own row `absent` → `partial`, but the slice summary table was being
+rewritten in a *different* lane, so the cell moved and the summary did not follow it. Every slice
+row and both totals were then re-derived from the actual cells and now agree. This is worth
+imitating: in a file whose whole value is that its arithmetic is trustworthy, a summary that is
+merely *merged* rather than *recomputed* is a summary that is quietly wrong.
+
+### Open, and honest about it
+
+- **No tests beyond the one parity file were run, and no captures were taken.** The four GUI lanes
+  compile and build; none of their behaviour has been exercised. In particular the tab group
+  picker's filter, keyboard model, collapsed-group behaviour and focus return are **unguarded** —
+  the lane that built it added no tests, and this is recorded in the inventory's `Missing` column
+  rather than left implicit.
+- **Three test files were edited to match a deliberate menu change and have not been watched pass**
+  (`gui/tests/tab-context-menu.test.tsx`, `dropdown-menu-filter-inventory.test.ts`,
+  `every-search-bar-has-a-builder.test.ts`). They compile and lint. CI is what will say.
+- **The app rename's decoupling is held by construction and by no guard.** The storage module has
+  no imports, its keys are literals, and the consumer list is four display surfaces long — but
+  nothing asserts it stays that way, and the failure it protects against is orphaned user profiles
+  rather than a cosmetic regression. That is the highest-value missing test in this pass.
+- **The docs-site tab strip still inlines one menu item per group** at
+  `docs-site/src/components/TabStrip.tsx:673-684` — the exact shape the picker lane was written to
+  remove. Fixed on the app, not on the site; recorded in the inventory.
+- **`gui/src/docs/generated-articles.ts` carried pre-existing drift** against `web-dashboard.md`.
+  Regenerating it is unavoidable once a guide is added, so an unrelated content correction rides
+  along in the group-picker commit.
+
 ## Universal feature contract — inventory, and the first two waves — 2026-08-14
 
 ### What this session was, and what it turned out to be
@@ -64,7 +193,7 @@ No installer was downloaded or executed. Asset sizes come from the release recor
 
 ### Open, and honest about it
 
-- **Fifty of sixty-five contracts remain partial or absent.** The largest are unbuilt products rather than missing switches: the universal file converter, the Ollama suite manager, per-element toy locks, the built-in authenticator, School mode's cross-app record, and browser-extension download capture. `docs/FEATURE-INVENTORY.md` names each with its evidence.
+- **Fifty-three of sixty-five contracts remain partial or absent** (47 partial, 6 absent, 1 n/a). The largest absences are unbuilt products rather than missing switches: the universal file converter, PDF tools, the Ollama suite manager, and browser-extension download capture. `docs/FEATURE-INVENTORY.md` names each with its evidence. Note the count moved *up*, not down, on 2026-08-14 — see the section at the top of this file for why the previous figure was wrong in both directions at once.
 - **All wave-two lanes landed**: the built-in authenticator with TOTP pairing, per-element toy locks with the Support Tickets desk, School mode, scheduled settings, app-logo customization, the offline documentation browser, and `ocx schedule`.
 - **`tests/cli-headless-parity.test.ts` is green (9 pass, 0 fail); the scanner was the defect and the scanner was fixed.** The endpoint discovery no longer regexes raw file text. `tests/helpers/api-call-sites.ts` parses each GUI source and accepts a path only inside a *request target* — a string or template literal, in code, that is itself a URL — so the documentation browser's generated article corpus can no longer present quoted prose as GUI behaviour. Two rules carry it: text nested inside a string literal is not code (the TypeScript parser does the lexing, so a backtick in an article body is a character rather than a template), and a URL has no whitespace (an article body is rejected whole, without guessing which sentences look path-shaped). A literal carrying its own `://` is another vendor's origin, not this API. Not an ignore list: a route that stops being called drops out on its own, and a new route named only in a docs table still fails to count as reachable.
   - Watched fail before being trusted. Planting ``fetch(`${apiBase}/api/brand-new-uncovered-route`)`` in `gui/src` turns the parity test red; deleting either scanner rule turns the new prose test red. Both were restored.
