@@ -536,7 +536,7 @@ export default function PdfTools({ apiBase }: { apiBase: string }) {
         {history.length === 0 ? (
           <Empty title={t("pdf.historyEmptyTitle")}>{t("pdf.historyEmpty")}</Empty>
         ) : filteredHistory.length === 0 ? (
-          <p className="m3-field-hint" role="status">{t("pdf.historyEmptyFiltered", { query: historyQuery })}</p>
+          <Empty title={t("pdf.historyEmptyFiltered", { query: historyQuery })} />
         ) : (
           <ul className="m3-pdf-history-list">
             {filteredHistory.map(entry => (

@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Banner, Button, Card, Chip, Dialog, Empty, Field, SelectField, TextInput, Toggle } from "../shell/m3-ui";
+import { Banner, Button, Card, Chip, Dialog, Empty, Field, Segmented, SelectField, TextInput, Toggle } from "../shell/m3-ui";
 import { LOCALES, useT } from "../i18n/shared";
 import type { TKey } from "../i18n/shared";
 import { useSettingsDrafts } from "../settings-drafts-context";
@@ -354,14 +354,15 @@ export default function ScheduledSettings({ apiBase }: ScheduledSettingsProps) {
           </Field>
 
           <Field label={t("schedule.days")}>
-            <div className="m3-segmented" role="radiogroup" aria-label={t("schedule.days")}>
-              <button type="button" role="radio" aria-checked={editing.form.daysMode === "everyday"}
-                className={`m3-segment${editing.form.daysMode === "everyday" ? " selected" : ""}`}
-                onClick={() => patch({ daysMode: "everyday" })}>{t("schedule.daysEveryday")}</button>
-              <button type="button" role="radio" aria-checked={editing.form.daysMode === "custom"}
-                className={`m3-segment${editing.form.daysMode === "custom" ? " selected" : ""}`}
-                onClick={() => patch({ daysMode: "custom" })}>{t("schedule.days")}</button>
-            </div>
+            <Segmented
+              value={editing.form.daysMode}
+              label={t("schedule.days")}
+              onChange={daysMode => patch({ daysMode })}
+              options={[
+                { value: "everyday", label: t("schedule.daysEveryday") },
+                { value: "custom", label: t("schedule.days") },
+              ]}
+            />
             {editing.form.daysMode === "custom" && (
               <div className="m3-row" style={{ gap: 8, flexWrap: "wrap" }} role="group" aria-label={t("schedule.days")}>
                 {ALL_WEEKDAYS.map(day => (

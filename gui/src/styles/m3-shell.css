@@ -1761,6 +1761,52 @@ html[data-desktop] .m3-appbar .m3-avatar {
 }
 
 /*
+  PDF tools (pages/PdfTools.tsx): the inspect result and the recent-operations
+  list. These classes render unconditionally on every visit to the page but had
+  never been given rules — an oversight the account-history list above never
+  had, since every property here was landing on the browser's own defaults
+  (a bare bulleted list, no row separation, no way to tell a failed operation
+  from a finished one short of reading its detail sentence).
+*/
+.m3-pdf-capabilities {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.m3-pdf-history-list { list-style: none; margin: 0; padding: 0; }
+.m3-pdf-history-ok,
+.m3-pdf-history-fail {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-pdf-history-ok:last-child,
+.m3-pdf-history-fail:last-child { border-bottom: none; }
+.m3-pdf-history-op {
+  flex: 0 0 auto;
+  font-size: var(--t-body-s);
+  font-weight: 600;
+}
+.m3-pdf-history-fail .m3-pdf-history-op { color: var(--m3-error); }
+.m3-pdf-history-detail {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-pdf-history-time {
+  flex: 0 0 auto;
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+
+/*
   A paused account in the switcher is refused by the server, so the row must look
   refused too. It was styled identically to a selectable row, which made "nothing
   happened" the only feedback for a click that was never going to work.

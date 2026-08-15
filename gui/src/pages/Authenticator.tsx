@@ -15,7 +15,7 @@ import { useNotifications } from "../shell/notifications-context";
 import { useT } from "../i18n/shared";
 import BulkBar from "../shell/BulkBar";
 import { invert as invertSelection, selectAll as selectAllIds, selectRange, toggle as toggleSelection } from "../shell/bulk-selection";
-import { Banner, Button, Empty } from "../shell/m3-ui";
+import { Banner, Button, Empty, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
@@ -208,8 +208,7 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
       <div className="m3-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "var(--sp-2)", marginBottom: "var(--sp-3)" }}>
         <div className="m3-row" role="search" style={{ flex: "1 1 260px" }}>
           <IconSearch width={20} height={20} aria-hidden="true" />
-          <input
-            className="m3-input"
+          <TextInput
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder={t("auth.search")}
