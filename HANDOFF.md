@@ -1,190 +1,152 @@
 # Handoff
 
-## Eleven lanes, four traps, and two releases — 2026-08-15
+## Every contract has code behind it now — 2026-08-15
 
 ### Position
 
-`main` is at `741aaa934`. Windows CI run
-[`31864113176`](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/31864113176) is
-**green** on that exact commit, and release
-[`build-188`](https://github.com/Ding-Ding-Projects/opencodex/releases/tag/build-188) is published
-against it, non-draft, with a complete Squirrel feed.
+79 commits, 363 files, +38,998 / −425. **Zero `absent` rows remain** in
+`docs/FEATURE-INVENTORY.md`: **11 present · 53 partial · 0 absent · 1 n/a**.
 
 | | |
 | --- | --- |
-| Root suite | **7055 pass · 0 fail** (`bun test --isolate tests --max-concurrency=8`) |
-| GUI suite | **1498 pass · 0 fail** |
-| Typecheck, privacy scan, release-helper, GUI build | all exit 0 |
-| Releases shipped | `build-183` @ `22188bc38`, `build-188` @ `741aaa934` |
-| Feature inventory | 11 present · 50 partial · 3 absent · 1 n/a |
+| Root suite | **7398 pass · 0 fail** |
+| GUI suite | **1595 pass · 0 fail** |
+| Typecheck (root + gui), privacy scan | all clean |
+| Releases | `build-193` … `build-200`, published automatically per commit |
+| Captures | 42 app · 12 menus · 19 design-prototype · 19 side-by-side composites |
 
-Release assets were verified with real bytes rather than a status code: the installer's first two
-bytes are `4d5a` (`MZ`), and `RELEASES` carries a SHA1 plus `262113890`, matching the `.nupkg`
-asset size exactly. **Not claimed:** nothing was installed, launched, or visually inspected.
+The 53 partials each name the half still missing. **Nothing was promoted to `present` for having
+shipped the hard part** — that restraint is the only thing that makes the count worth reading.
 
-### What landed
+### The release deadlock is gone
 
-Eleven lanes, each in its own linked worktree, integrated one at a time with conflicts resolved by
-hand.
+This session began with `main` unable to produce a release for a day, and four unrelated-looking
+defects were jointly responsible while every workflow reported success:
 
-| Lane | What it does |
-| --- | --- |
-| `ylc-cliparity` | Endpoint discovery parses source instead of regexing it |
-| `ylc-inventory` | Eight stale `absent` rows re-derived against the real tree |
-| `ylc-menushortcuts` | Every context-menu item shows its shortcut, from one binding registry |
-| `ylc-groupicker` | Move-into-group as an anchored picker with its own search |
-| `ylc-apprename` | User-renamable display name, decoupled from installed identity |
-| `b2-guitests` | Two count assertions repaired |
-| `b2-upstream` | `docs/UPSTREAM-SURVEY.md` — the real divergence, measured |
-| `b2-secrethistory` | Encrypted, password-gated TOTP and display-name mutation history |
-| `b2-pdftools` | Seven PDF operations with post-write reopen validation |
-| `b3-security` | Four confirmed upstream security gaps closed |
-| `b3-proxyhang` | The proxy freeze that made every screenshot impossible |
+1. The CLI-parity guard regexed raw file text for `/api/…`, so the documentation browser's bundled
+   article corpus — one enormous string literal — reported five other vendors' base URLs as
+   uncovered endpoints. One `(fail)` line in a 12,200-line run, and it was the whole of CI's red.
+2. A privacy-scan exemption was attached to a **directory** rather than to content, so the same
+   bytes failed the scan after the build copied them elsewhere.
+3. Two count assertions had pinned the article corpus size and the settings list.
+4. Underneath all of it: `ci.yml`'s `paths:` filter excludes `docs/**`, so **a docs-only commit
+   registers no CI run at all**, the release gate polls forty times for a run that cannot arrive,
+   and publication skips with every step green.
 
-### Four traps, and why each is worth knowing
+> Neither the workflow's green tick nor the gate step's own `success` proves a release published —
+> the gate carries `continue-on-error: true`. Only `Create the release` reporting `success` rather
+> than `skipped`, and the release record itself, tell the truth.
 
-**A red build was one test.** CI at `b15244e9` failed and a red run reads as a broken tree. Reading
-the complete 12,200-line log rather than the run summary, the entire run held exactly one `(fail)`
-line. The tree was fine; one scanner had a defect. Always count the `(fail)` lines before
-concluding anything about scope.
+**(4) is deliberately unfixed.** Widening the filter is a decision about whether a docs-only commit
+deserves an installer, and it belongs to the repository owner. The workaround is
+`gh workflow run ci.yml --ref main` for that exact commit; the releases above show the pipeline is
+otherwise self-sustaining.
 
-**A docs-only commit can never satisfy the release gate, and nothing reports this.** `ci.yml`
-filters on `paths:` covering `src/**`, `gui/**`, `tests/**`, `scripts/**`, `bin/**` and a few root
-files — but not `docs/**`, `CHANGELOG.md`, `HANDOFF.md` or `docs-site/**`. A docs-only tip
-therefore registers **no CI run at all**, the auto-release gate polls forty times at thirty-second
-intervals for a run that cannot arrive, times out, and publication is skipped while every step
-reports `success`.
+### The recurring defect in this codebase has a shape
 
-> Neither the workflow's green tick nor the gate step's own `success` is evidence a release
-> published — the gate carries `continue-on-error: true`. Only `Create the release` reporting
-> `success` rather than `skipped`, and the release record itself, tell the truth.
+Five independent instances this session, and they are worth recognising on sight: **a capability
+wired at one end and consumed at neither, with nothing erroring to say so.**
 
-**Deliberately not fixed.** Widening the filter is a decision about whether a docs-only commit
-deserves an installer, and that belongs to the repository owner. The workaround, used for this very
-handoff, is `workflow_dispatch` on `ci.yml` for the exact commit.
+- A bundled engine the app could not find, because the resources root was never exposed on its
+  process bridge.
+- A provider **Test connection** button whose backend probe had existed all along at
+  `POST /api/providers/test`, already backing `ocx provider test`, with four strings translated into
+  **all seven locales** and no caller anywhere.
+- Converter adapters proven bundled with no route, CLI or GUI action able to run them.
+- `PdfTools.tsx` referencing CSS classes defined in no stylesheet.
+- A lossy-conversion disclosure enforced in the GUI and not in the service, so `ocx convert` could
+  silently lose types.
 
-**An exemption attached to a directory does not travel with its content.** The privacy scan allows
-an example macOS home path under `docs-site/`, because the CLI reference prints a sample
-`ocx status` payload and that placeholder is exactly what the rule exists to permit. The offline
-documentation browser bundles those articles verbatim into `gui/src/docs/generated-articles.ts`,
-where the exemption no longer applied — it was written against a directory rather than against the
-content. It stayed latent only because the generated file was stale and did not yet contain the
-sample; adding a guide regenerated it and an old hole arrived looking like a new one.
+The tell is always the same: nothing fails, so nothing reports it. **Follow a capability to its
+consumer before believing it ships.**
 
-> This paragraph originally quoted that placeholder literally and **the privacy scan rejected this
-> very file for it** — a root-level document has no exemption, and the scan was right. Left as
-> prose rather than weakening the rule for a piece of documentation: a guard that gets an exception
-> carved out every time it is inconvenient stops being a guard. Describe the placeholder here;
-> the literal form belongs only where the exemption already covers it.
+### Two instruments, and why both were needed
 
-**The framing of a bug report can point at the wrong event entirely.** The screenshot harness could
-not write a single image, and the symptom was "the proxy dies when the renderer reloads". It does
-not. The freeze happens on **first mount**: the dashboard fires a dozen-plus `/api/*` requests at
-once, several reach a module through `await import(...)` for the first time, and one starts a second
-outbound fetch to an account the startup prime had fetched half a second earlier. Under that exact
-concurrency Bun 1.3.14 on Windows stops dispatching anything further on the listener, permanently,
-including a plain `/healthz` from an unrelated process. An independent `setTimeout` raced against
-the stuck call never fired either — which is what proves a runtime freeze rather than application
-logic waiting on something. A reload merely exposes it, because the navigation cannot complete
-against a proxy that is already dead.
+A six-lane source audit and a pixel side-by-side of the real prototype against the real app answered
+different questions, and where they agreed the finding was certain — the missing Test-connection
+button was found independently by both.
 
-### Two guards added, both watched fail before being trusted
+The side-by-side required building a plain Electron shell over `design/OpenCodex M3.dc.html`
+(`design/shell/main.mjs`, `scripts/design-capture-shots.ts`). Two details make its output
+trustworthy: it serves `design/` over a throwaway loopback server rather than `file://`, because
+`support.js` resolves siblings through dynamic `import()` which Chromium handles unreliably over
+`file://`; and it refuses to write an image unless exactly one `[data-screen-label]` section is
+visible and matches the target.
 
-**`tests/feature-inventory-arithmetic.test.ts`.** Three separate lanes moved a contract's status
-cell from `absent` to `partial` and left the per-slice table, the grand total and the header line
-stating the old number. Each edited row was correct; each summary forty lines away was wrong. In a
-file whose entire value is being trustworthy about counts, a total contradicting its own rows costs
-the reader every other figure in it. The guard derives every number from the status cells — per
-slice, grand total, and the sentence that spells the count out in words — and was watched red on all
-three drifts and green on restore.
+**Only the pixels found some defects.** A data-loss bug in `Subagents.tsx` — `persisted.current`
+captured and never diffed, so reordering a featured model and navigating away lost it silently. A
+hard-coded `#c44` standing in for a `--danger` token **defined nowhere in the tree**, ignoring dark
+mode and every appearance setting. And the download popup asking "Start this download?" over a blank
+gap where the filename and source URL belong.
 
-**The privacy scan's sentinel rule.** Its bearer allowlist accepted three fixture families that all
-read like real tokens on purpose. The new credential-forwarding and redaction suites need the
-opposite: values a human can tell are fake at a glance, because the point of
-`SENTINEL-DO-NOT-FORWARD-TOKEN` is that anyone finding it in a log knows instantly nothing leaked.
-A scan that only accepts token-shaped fakes teaches everyone to write token-shaped fakes, and then a
-real one hides among them. Narrowed to an uppercase `SENTINEL-` prefix in `tests/` only, and
-verified by planting an `sk-live-` token that still turns it red on two rules.
+**And the answer to "why does it still look like there are gaps":** the implementation grew from 19
+pages to 28 while the prototype stayed at 19. Of 26 real differences found, **11 were the prototype
+being out of date**, not the app being wrong. `page-meta.ts` still carried a comment claiming it
+mirrors the prototype's page list; that comment was itself stale.
 
-### Security
+### Two CSS bugs from one spec section, running opposite ways
 
-Four items from `docs/UPSTREAM-SURVEY.md`, each confirmed missing here rather than guessed, each
-read from the real upstream diff and adapted rather than transplanted, each with a test watched red
-first:
+Both are automatic minimum size (CSS Flexbox §4.5), and together they are the most transferable
+thing here.
 
-- **Codex OAuth credential forwarding is pinned** to the canonical ChatGPT host and refused for any
-  other `authMode: "forward"` provider's `baseUrl`; cross-origin redirects refused on all five
-  credential-bearing sidecar fetches. A misconfigured forward provider previously received the
-  caller's live bearer, `session_id` and `chatgpt-account-id`.
-- **OAuth expiry guarded** against `NaN`, `Infinity` and negatives — widened beyond the survey to
-  `kimi.ts` and `codex/account-store.ts`, independently confirmed vulnerable. The account-store case
-  had a second-order failure: an `Infinity` expiry does not round-trip through JSON, so the
-  corrupted value then failed the store's own type guard and **silently dropped the whole credential
-  record**.
-- **Redaction hardened** for colon-labelled and quoted-JSON credentials, including closing the
-  "prefix it with Bearer" smuggling hole the first exemption opened. The remaining ~14 commits of
-  that upstream arc are recorded as an open gap in `UPSTREAM-SURVEY.md` §8, not silently skipped.
-- **Windows ACL failures classify as 503**, not 401. On a Windows-only fork, a filesystem permission
-  problem was telling users their credentials were wrong.
+- **Bottom nav overflowed.** `.m3-bottom-nav .m3-nav-item` set `min-height: 0` and not
+  `min-width: 0`, so each grid item refused to shrink below its content, blew past its `1fr` track,
+  and `text-overflow: ellipsis` never fired because the label was never constrained. Invisible in
+  English; visible in bilingual mode at phone width.
+- **Download popup collapsed.** A column flex layout in a 220px window holding ~256px of content had
+  to put the shortfall somewhere, and the spec **disables** the content-based `min-height` floor for
+  any item whose `overflow` is not `visible`. `__file` and `__url` were the only two children with
+  `overflow: hidden`, for their ellipsis — so both were crushed to a 2px sliver and nothing else
+  moved.
 
-### Upstream
+The discriminator for the second: **width stayed at normal text size while only height collapsed.**
+A font-size failure would have shrunk both. An earlier grep-based theory — that the popup window
+never applied its tokens — was traced and disproved by measuring `--m3-primary` live on the popup's
+own `<html>`.
 
-The fork is **3,249 commits behind** `lidge-jun/opencodex`, not the 2,979 recorded here for weeks —
-a figure carried forward without anyone fetching to check it. `docs/UPSTREAM-SURVEY.md` records the
-real merge base (`c0ad57ad`, 2026-07-29), the counts each way, the commands that produced them, and
-a prioritised port list. It ports nothing else on purpose: a 3,249-commit catch-up is not a side
-effect of a survey.
+### Guards added, each watched fail first
 
-### Open, and stated rather than rounded away
+`tests/feature-inventory-arithmetic.test.ts` derives every figure in the inventory from its own
+status cells, after **three separate lanes** moved a cell and left the summary forty lines away
+stating the old number. It has since caught two more drifts and one bug in itself.
 
-- **Three contracts remain absent**: the universal file converter, the Ollama suite manager, and
-  browser-extension download capture. These are products rather than missing switches.
-- **Screenshots have not been replaced, and the reason is unresolved.** Two careful attempts got
-  *opposite* results, and the difference between them is the most useful thing recorded here.
+`gui/tests/app-name-identity-guard.test.tsx` is the one to keep: 33 tests scanning 753 files for any
+reference to the display-name module against a hand-written allowlist, plus behavioural proof that
+the data path is byte-identical under a name **containing the shipped name as a substring** — so a
+naive `.replace()` "fix" is still caught. What it protects against is orphaned user profiles.
 
-  | Attempt | Route | Result |
-  | --- | --- | --- |
-  | Capture run, real profile | packaged Electron on a headless desktop | **hung, 2 of 2** — `/healthz` returned 0 bytes throughout |
-  | Capture run, empty profile | same | **succeeded, 1 of 1** |
-  | Repro attempt, synthetic 25 MB profile | `bin/ocx.mjs` spawned as `electron/main.mjs` does | **no freeze**, 864 requests |
-  | Same, at the pre-fix commit `0f51e1942` | same CLI chain | **no freeze**, 15 rounds |
+`gui/tests/badge-tone-single-source.test.ts` asserts against a hand-written list of call sites,
+because a guard that only checks the badges it can find passes happily on a screen that rolled its
+own.
 
-  The last row is what matters. A harness that cannot reproduce the bug **at the commit before the
-  fix** has not shown the bug is gone; it has shown the harness does not reach it. So the negative
-  result is about the route, not about the defect, and the freeze should still be assumed live
-  through the packaged app.
+### Open
 
-  The plausible mechanism was also disproved on the way: `responses-state.json` is 24.5 MB, but all
-  twelve endpoints the dashboard fires on mount were enumerated and **none of them reaches
-  `/v1/responses`**, which is the only path that loads it. Size alone is not the trigger.
+- **The `ci.yml` path-filter decision** above — yours, not mine.
+- **No real built-artifact captures exist for some surfaces**, and the download-capture row says so
+  on its own stated bar rather than being rounded up.
+- **The converter queue accepts structured-data jobs only**; ZIP and PDF have working adapters not
+  yet wired as queue jobs, and the queue has no GUI page — reachable via route and
+  `ocx convert queue`.
+- **The Ollama manager has no allowlisted harness launch.** Deliberately: a half-built launcher
+  accepting an unvalidated argument is worse than none.
+- **~11 more files carry the same badge drift** outside the converted set. Bounded and known; the
+  guard is scoped to a hand-written list rather than a repo-wide sweep that would fail on
+  pre-existing drift.
+- **`Mobile.tsx` is deliberately not on the shared component library** — a separate documented design
+  language for the phone surface. Recorded, not "fixed".
 
-  Leads for whoever continues, in the order they seem worth trying: drive the **real packaged
-  Electron build** rather than the CLI process chain; add a profile with several routed
-  (non-`openai`) providers, which adds concurrent live model-discovery fetches a single-provider
-  fixture never exercises; note that real WHAM responses are 200s with larger bodies while fake
-  tokens get fast 401s, a different timing profile entirely; and note that this app keeps **every
-  previously-opened tab mounted**, so a long-lived profile launches with several tabs each firing
-  their own mount fetches — a materially larger and differently shaped burst than the twelve
-  Dashboard endpoints that were tested.
+### Two hazards for whoever runs agents here
 
-- **The capture matrix has three real gaps regardless of the freeze.** `scripts/capture-shots.ts`
-  has no `pdf` entry in its `ROUTE_HEADINGS` map, so the PDF tools page is never captured, and
-  `scripts/capture-menus.ts` lists neither the secret-history dialog nor the tab group picker. Even
-  a successful run today would not have covered everything that shipped. `assets/shots/prompt.png`
-  is also an orphan — it matches no target and nothing in the repository references it.
-- **The tab-group picker is unguarded**: no test exercises its filter, keyboard model,
-  collapsed-group behaviour or focus return.
-- **The app-rename decoupling is held by construction and by no guard.** What it protects against is
-  orphaned user profiles rather than a cosmetic regression, which makes it the highest-value missing
-  test in the tree.
-- **Two branches are deliberately retained.** `feat/w2-schoolmode` holds an alternative
-  `ocx school-mode` while `main` ships its own; `feat/w3-shortcuts` holds a second shortcut registry
-  competing with the `shortcuts.ts` that shipped here. Each carries one commit that is not an
-  ancestor of `main`, so neither was removed during cleanup — unmerged work is not redundant work.
-- **`gh` can silently retarget.** Adding the upstream remote in a linked worktree changes
-  `.git/config` for the whole repository, and `gh` began resolving to `lidge-jun/opencodex`. Its
-  push URL is now disabled and the CLI default is pinned, but anyone adding a remote here should
-  re-pin with `gh repo set-default` and check the `owner/repo` in any returned URL.
+**`OPENCODEX_HOME` does not isolate the Codex config.** `startServer()` unconditionally writes
+routing into `$CODEX_HOME/config.toml`, which is a separate global path. Two agents mutated the
+operator's live `~/.codex/config.toml` this session by isolating only `OPENCODEX_HOME`; both caught
+and restored it. Isolate **all three** — `OPENCODEX_HOME`, `CODEX_HOME`, `GROK_HOME` — as
+`scripts/capture-shots.ts` already does.
+
+**Adding a remote in a linked worktree retargets the CLI repository-wide.** Worktrees share
+`.git/config`, so a survey's `git remote add upstream` made `gh` resolve to the upstream project;
+the tell was a run list containing SHAs that do not exist here. Its push URL is now disabled and the
+CLI default pinned.
 
 ## Universal feature contract — inventory, and the first two waves — 2026-08-14
 
