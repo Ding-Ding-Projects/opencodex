@@ -6,8 +6,11 @@ an item is only "done" when the code exists in this repository.
 > **Feature completeness lives in [`docs/FEATURE-INVENTORY.md`](docs/FEATURE-INVENTORY.md), not
 > here.** That file is the authority: it names every canonical feature contract — including the ones
 > with no implementation at all — and carries a status, the evidence, and for anything short of
-> complete, precisely which half is missing. As of 2026-08-14 it reads 11 complete, 37 partial, 16
-> absent, 1 not applicable, out of 65.
+> complete, precisely which half is missing. As of 2026-08-15 it reads 11 complete, 53 partial, 0
+> absent, 1 not applicable, out of 65 — the `absent` column is empty for the first time. The
+> "Completed" section below titled *PDF tools, the universal file converter, the Ollama suite
+> manager, and browser-extension download capture* records what moved and, for each, points at the
+> inventory row naming its own honestly-scoped missing half.
 >
 > This roadmap remains the record of **work**: what was built, when, and under which commit. The two
 > answer different questions, and neither should restate the other. When a feature's status changes,
@@ -16,7 +19,11 @@ an item is only "done" when the code exists in this repository.
 **Audit dates are per-row, not per-file.** The original sweep was **2026-07-30**. The Known gaps
 section and the release-state paragraph below were re-checked against the tree on **2026-08-13**;
 every other row still carries its 2026-07-30 date and has not been re-verified since. A row is not
-re-dated on faith — if it says 2026-07-30, that is the last time anyone actually looked.
+re-dated on faith — if it says 2026-07-30, that is the last time anyone actually looked. **One new
+section was added, not re-derived, on 2026-08-15**: the "Completed" entry for PDF tools, the
+universal file converter, the Ollama suite manager and browser-extension download capture records
+work that landed after the 2026-08-13 re-check and was previously absent from this file entirely,
+even though all four had already shipped. It does not re-check any other row.
 
 That re-check mattered. Six features listed here as missing had in fact shipped between 2026-07-30
 and 2026-07-31 — the day of the original audit and the day after it — so the audit recorded them as
@@ -24,13 +31,54 @@ absent hours before they landed and nothing corrected it afterwards. Cantonese, 
 the funny-level ladder, word-depth typography, dim sum photographs and the shared settings search
 were all described here as unbuilt while their code sat on `main`. Those rows are rewritten below.
 
-Release state, re-checked 2026-08-13: the newest non-preview `v*` tag is still **v2.7.42**
-(2026-07-28), but `v*` is no longer the only release series. `.github/workflows/auto-release.yml`
-publishes a real GitHub release per green run, tagged `build-<run_number>`, and refuses to publish
-one without a Windows installer attached. Ten such tags exist, from **build-120** (2026-08-02) to
-**build-152** (2026-08-09), and build-152 points at the current `main` tip. Every feature commit in
-the table below is an ancestor of build-120, so all of it has shipped in a tagged release — the
-opposite of what this file said until now.
+Release state, re-checked 2026-08-13, tag range re-checked again 2026-08-15: the newest non-preview
+`v*` tag is still **v2.7.42** (2026-07-28), but `v*` is no longer the only release series.
+`.github/workflows/auto-release.yml` publishes a real GitHub release per green run, tagged
+`build-<run_number>`, and refuses to publish one without a Windows installer attached. **29** such
+tags exist as of 2026-08-15, from **build-120** (2026-08-02) to **build-202** (2026-08-15) — the
+2026-08-13 text said ten tags ending at build-152 and is nineteen releases stale; `build-152` was
+never the ceiling, it was just the newest tag that existed on the day someone last looked. Every
+commit for PDF tools, the universal file converter, the Ollama suite manager and browser-extension
+download capture (see the Completed section below) is a verified ancestor of `build-202`
+(`git merge-base --is-ancestor`), so all of that has shipped in a tagged release too; `build-202`
+itself sits two ordinary commits behind the current `main` tip.
+
+## Completed — PDF tools, the universal file converter, the Ollama suite manager, and browser-extension download capture close the inventory's absent column (2026-08-14 to 2026-08-15)
+
+These four were `docs/FEATURE-INVENTORY.md`'s last four `absent` rows, and none of them had ever had
+a line in this file — there was no commit to point at until now. All four shipped inside a 26-hour
+window, 2026-08-14 to 2026-08-15, each landing as `partial` rather than `present`: something real
+ships and a named half does not. The inventory rows are the actual evidence (two to three thousand
+words each, with file/line citations and a describe-a-guard/watch-it-fail-then-pass discipline on
+every load-bearing safety check); this entry is a pointer into that record plus the commits, not a
+restatement of it.
+
+| Item | What shipped | Named missing half | Commits |
+| --- | --- | --- | --- |
+| PDF tools | All seven operations — inspect, split, merge, extract, reorder, rotate, edit metadata — a bounded worker sandbox, atomic writes with post-write reopen validation, a GUI page and a CLI counterpart, 70 passing tests. | None recorded against this row; it is the one member of the foursome the inventory does not mark down. | `cae7fac34`, `22188bc38` |
+| Universal file converter | A categorized eight-family adapter catalogue (`src/lib/converter/registry.ts`) that proves `bundled: true` with a genuine runtime check per family rather than a static claim. Three families are wired end to end, not just catalogued: Documents/PDF (adopts PDF tools' own operations), Archives (a hand-written ZIP central-directory extractor), and Structured Data (CSV/TSV/JSON/XML), each with real magic-byte/heuristic detection and independently-proven defenses (path traversal, zip bombs by two separate bounds, CRC32 tampering, XML billion-laughs by two separate defenses, JSON depth bombs). A durable bounded-concurrency batch queue sits under both the dashboard and the CLI, with byte-accurate storage preflight, pause/resume/cancel/retry, and crash-safe restart recovery; the lossy-conversion disclosure is enforced in the service layer itself, not only the GUI. | Images, Audio, Video and the rest of Code/Text and Binary Encodings stay honestly disabled with their exact missing dependency named — no second bundled family landed beyond the ZIP and structured-data pair this pass added. The queue covers exactly three job kinds (structured-data conversion, ZIP extraction, one PDF operation — page rotation); PDF's other six operations (split, merge, extract, reorder, metadata) each need a parameter shape the queue's one-source/one-destination item can't carry, so they stay reachable only through the PDF Tools page and CLI, not the queue or the batch builder. No native file-browse dialog on the source/destination fields. | `191a288f9`, `a9061af2f`/`daf477e99`, `0d21f829f`, `e111d4607`, `0297ddb6f` |
+| Local Ollama suite manager | Health/recovery built only on Ollama's documented local HTTP API (five states — `healthy`/`missing`/`stopped`/`unhealthy`/`offline` — decided by a real executable probe, never guessed), a local installed-model catalogue (every installed tag, never a curated subset), hardware-fit verdicts (`runs-well`/`runs-with-limits`/`unlikely`/`unknown`) that fold a failed probe toward `unknown` rather than optimism, a batch-pull cart (byte-accurate progress where the runtime reports a size, bounded concurrency, crash-safe resume that reconciles against Ollama's *real current* state rather than the queue file's memory of it, and a static guard proving the pull path never imports the model-deletion route), and a full streaming chat surface — token-by-token against `POST /api/chat`, attachments gated on the model's real fetched vision capability, redacted export. | **No allowlisted harness launch at all.** The inventory names it as its own lane — an allowlisted-argument process launcher is large enough to deserve one — and records the decision not to half-build it. Also: the catalogue is exhaustive of what is *installed*, never of `ollama.com`'s full library (there is no documented local API for that); no persisted custom-host setting in the GUI, so a non-default `OLLAMA_HOST` needs the app restarted with the environment variable set. | `5a3a961ca`, `88d015a2e`/`4b23ce3e4`, `f39ffbc72` |
+| Browser-extension download capture | A real unpacked Manifest V3 extension (`extension/`) that hands a captured download URL to opencodex over its local API and only cancels the browser's own copy on a 2xx response (fail-open on any refusal). A real streaming transfer engine (`src/lib/downloads/manager.ts`) — a genuine chunked `fetch()` into a temp file, atomically renamed on success, a real per-transfer `AbortController` behind pause/resume/cancel, and a real `Range`-header resume that restarts from byte zero (resetting the counter, not just the file) when the server doesn't honour one. Routes, a CLI counterpart, and three real surfaces: the Downloading page, a Start-download decision dialog, and an Electron `alwaysOnTop` completion popup. A real capture pass — an unpacked extension loaded into a live Edge instance, a real HTTP download, a real Electron popup — found the Start/Complete popups rendering their filename and URL at a ~2px sliver (a CSS Flexbox `min-height:auto` interaction with the two `overflow:hidden` ellipsis-truncated children), traced to the actual mechanism rather than patched with a fallback value, fixed in `gui/src/styles/m3-shell.css` and `electron/main.mjs`'s popup window sizing, guarded by a new regression check (`scripts/download-popup-layout-check.ts`, watched red on the unfixed CSS before being trusted green), and recaptured on the fixed build: `assets/shots/download-start-popup.png`, `download-active-transfer.png`, `download-complete-popup.png`, `download-history.png`. | None recorded specific to the extension or transfer engine; every load-bearing safety property (fail-open, atomic rename, real abort-on-cancel, byte-accurate resume-from-zero) is proven by a test watched failing before it was trusted passing. | `3a28c073b`, `c7813cc22`/`1be7c4955`, `8dbe7eaf3` |
+
+**Where this table's "docs-site" facts differ from `docs/FEATURE-INVENTORY.md` itself: the tree, not
+the inventory, is what this table follows.** `docs-site/src/content/docs/guides/file-converter.md`,
+`ollama-manager.md`, `ollama-chat.md` and `download-capture.md` all exist and are substantial
+(134–261 lines each) — added same-day, in `191a288f9`, `5a3a961ca`, `f39ffbc72` and `6148d8d0a`
+respectively, with `file-converter.md` and `ollama-manager.md` each updated again by a later commit
+(`0297ddb6f`, `f39ffbc72`) to stay in step with the feature. The universal-file-converter inventory
+row's own Missing column says its docs page "was not touched by this update and still describes
+only the PDF hand-off" — `git log -- docs-site/src/content/docs/guides/file-converter.md` shows
+`0297ddb6f`, the exact commit that wrote that sentence, touched that file in the same commit, and
+its content today (`## Batch queue`, the three queueable job kinds, the lossy-disclosure section) is
+current. The browser-extension-download-capture row's own Missing column goes further and says the
+documentation site "has none of this — no article" — `download-capture.md` is a real 203-line
+article covering the extension, the transfer engine and all three surfaces, added in `6148d8d0a`.
+Per this file's own header, the inventory is re-derived from source and normally the more trustworthy
+of the two documents; here it is simply stale on this one narrow point for both rows, most likely
+because `docs(site)` commit `6148d8d0a` landed between the pass that wrote each row's text and the
+pass that re-read it. Nothing else in either row is contradicted by this — the missing halves listed
+in the table above (no harness launch, three queue job kinds, disabled format families) all check
+out directly against the source.
 
 ## Completed — Windows release integrity and automatic conflict repair (2026-08-09)
 
