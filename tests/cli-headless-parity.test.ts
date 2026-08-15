@@ -81,6 +81,7 @@ describe("headless GUI parity CLI", () => {
       ["/api/schedule", "ocx schedule"],
       ["/api/school-mode", "ocx school-mode"],
       ["/api/pdf", "ocx pdf"],
+      ["/api/converter", "ocx convert"],
       ["/api/changelog", "ocx changelog"],
       ["/api/combos", "ocx combo"],
       ["/api/debug", "ocx debug/observe"],

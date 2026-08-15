@@ -31,7 +31,8 @@ export type Page =
   | "docs"
   | "locks"
   | "authenticator"
-  | "pdf";
+  | "pdf"
+  | "converter";
 
 export const VALID_PAGES = new Set<Page>([
   "dashboard",
@@ -62,6 +63,7 @@ export const VALID_PAGES = new Set<Page>([
   "locks",
   "authenticator",
   "pdf",
+  "converter",
 ]);
 
 /** Product pages sit above the system pages in the nav, separated by a divider. */
@@ -94,6 +96,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   locks: "system",
   authenticator: "system",
   pdf: "system",
+  converter: "system",
 };
 
 /**

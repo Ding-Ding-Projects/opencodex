@@ -128,6 +128,20 @@ const MAP: Record<string, string> = {
   // The provider Overview's "Test connection" button. The prototype's own glyph
   // for exactly this action — a live-signal check, not a generic refresh or link.
   IconNetworkCheck: "network_check",
+  // The universal file converter's nav glyph and its eight adapter categories.
+  // `sync_alt` reads as "turn one thing into another," which is what the whole
+  // surface does; the category glyphs are each upstream's literal name for that
+  // file kind rather than a shape picked for looking roughly right.
+  IconSyncAlt: "sync_alt",
+  IconImage: "image",
+  IconAudioFile: "audio_file",
+  IconVideoFile: "video_file",
+  IconFolderZip: "folder_zip",
+  IconTableChart: "table_chart",
+  IconCode: "code",
+  IconDataObject: "data_object",
+  IconUpload: "upload",
+  IconPlaylistAdd: "playlist_add",
 };
 
 /**
@@ -165,6 +179,8 @@ const ORDER = [
   "IconEyedropper", "IconDownload", "IconVolume",
   "IconReceiptLong", "IconApi", "IconRestartAlt", "IconMenuBook", "IconPictureAsPdf",
   "IconNetworkCheck",
+  "IconSyncAlt", "IconImage", "IconAudioFile", "IconVideoFile", "IconFolderZip",
+  "IconTableChart", "IconCode", "IconDataObject", "IconUpload", "IconPlaylistAdd",
 ];
 
 interface Geometry { inner: string; viewBox: string }
