@@ -31,6 +31,8 @@ import LocksPage from "./pages/Locks";
 import PdfTools from "./pages/PdfTools";
 import Converter from "./pages/Converter";
 import Ollama from "./pages/Ollama";
+import Downloads from "./pages/Downloads";
+import DownloadsBridge from "./shell/DownloadsBridge";
 import OnboardingWizard from "./shell/OnboardingWizard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import RemoteConnectionDialog from "./components/RemoteConnectionDialog";
@@ -133,6 +135,7 @@ function renderPage(page: Page): ReactNode {
     case "pdf": return <PdfTools apiBase={API_BASE} />;
     case "converter": return <Converter apiBase={API_BASE} />;
     case "ollama": return <Ollama apiBase={API_BASE} />;
+    case "downloads": return <Downloads apiBase={API_BASE} />;
     case "mobile": return <MobileRemote apiBase={API_BASE} />;
   }
 }
@@ -430,6 +433,11 @@ function AppShell() {
       <OnboardingWizard apiBase={API_BASE} />
       {/* Renders nothing; raises a snackbar when a scheduled rule's remote source fails. */}
       <ScheduleNotificationBridge />
+      {/* Watches /api/downloads for the browser extension: opens the Start-download
+          decision surface for a new capture and the completion surface once a
+          transfer finishes. See shell/DownloadsBridge.tsx for the Electron
+          always-on-top popup path vs. the in-page fallback it renders without one. */}
+      <DownloadsBridge apiBase={API_BASE} />
     </div>
     </ElementAppearanceHost>
   );

@@ -2,7 +2,7 @@
 
 import {
   IconActivity, IconApi, IconBell, IconBolt, IconBot, IconBoxes, IconChangelog, IconClock,
-  IconDevices, IconGauge, IconGrid, IconHardDrive, IconHistory, IconKey, IconLock, IconMenuBook, IconPalette,
+  IconDevices, IconDownload, IconGauge, IconGrid, IconHardDrive, IconHistory, IconKey, IconLock, IconMenuBook, IconPalette,
   IconPictureAsPdf, IconReceiptLong, IconRegex, IconRestartAlt, IconServer, IconShuffle, IconSliders,
   IconSparkle, IconSyncAlt, IconTerminal, IconTranslate,
 } from "../icons";
@@ -47,6 +47,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   pdf: IconPictureAsPdf,
   converter: IconSyncAlt,
   ollama: IconGauge,
+  downloads: IconDownload,
 };
 
 const TKEYS: Record<Page, TKey> = {
@@ -80,6 +81,7 @@ const TKEYS: Record<Page, TKey> = {
   pdf: "nav.pdf",
   converter: "nav.converter",
   ollama: "nav.ollama",
+  downloads: "nav.downloads",
 };
 
 /** Nav order is deliberate: dashboard first, then auth, then the rest of the product. */
@@ -87,7 +89,7 @@ const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
   "appearance", "language", "schedule", "regex", "changelog", "docs", "history", "notifications",
-  "network", "locks", "authenticator", "pdf", "converter", "ollama", "settings", "terminal", "mobile",
+  "network", "locks", "authenticator", "pdf", "converter", "ollama", "downloads", "settings", "terminal", "mobile",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({

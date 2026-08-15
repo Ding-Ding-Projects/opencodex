@@ -85,4 +85,16 @@ contextBridge.exposeInMainWorld("opencodexDesktop", {
     /** Opens it in the platform's own file manager. Never deletes anything itself. */
     open: () => ipcRenderer.invoke("appData:open"),
   },
+  /**
+   * The always-on-top Start-download / Download-complete popups (see
+   * `shell/DownloadsBridge.tsx`). One fixed channel, two caller-supplied
+   * strings: which of the two fixed popup kinds, and which download record —
+   * never an arbitrary URL or window configuration. The main process resolves
+   * the actual window position, size and `alwaysOnTop` flag; the renderer
+   * cannot ask for anything beyond "show me the decision/completion card for
+   * this id".
+   */
+  downloads: {
+    openPopup: (kind, id) => ipcRenderer.invoke("downloads:open-popup", { kind, id }),
+  },
 });

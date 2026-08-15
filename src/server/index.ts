@@ -109,6 +109,7 @@ import {
   corsHeaders,
   managementCorsHeaders,
   hasValidApiAuth,
+  isAllowedDownloadCaptureOrigin,
   isAllowedRequestOrigin,
   isAllowedManagementOrigin,
   isApiAuthRequired,
@@ -431,8 +432,13 @@ export function startServer(port?: number) {
 
       if (req.method === "OPTIONS") {
         const managementPreflight = url.pathname.startsWith("/api/");
+        // Extension fetches to a host covered by their own `host_permissions`
+        // are not normally preflighted at all, so this branch is a defensive
+        // fallback rather than the download-capture endpoint's real gate (that
+        // check is the one `handleManagementAPI` runs on the actual request).
+        const downloadsPreflight = url.pathname.startsWith("/api/downloads") && isAllowedDownloadCaptureOrigin(req, config);
         const allowed = managementPreflight
-          ? isAllowedManagementOrigin(req, config)
+          ? (isAllowedManagementOrigin(req, config) || downloadsPreflight)
           : isAllowedRequestOrigin(req, config);
         if (!allowed) {
           return new Response(null, { status: 403, headers: corsHeaders() });

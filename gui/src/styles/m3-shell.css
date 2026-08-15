@@ -2813,3 +2813,124 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   border-radius: var(--r-l, 16px);
   background: #000;
 }
+
+/* ------------------------------------------------------------- downloads -- */
+
+/* The Downloading page (pages/Downloads.tsx): active transfers, then history. */
+.m3-dl-section { margin-top: var(--sp-4, 20px); }
+.m3-dl-section:first-child { margin-top: var(--sp-2, 12px); }
+.m3-dl-section__title {
+  margin: 0 0 var(--sp-2, 12px);
+  font-size: var(--t-label-l, 14px);
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.m3-dl-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3, 16px);
+  padding: var(--sp-3, 16px);
+  border-radius: var(--r-m, 12px);
+  background: var(--el-card-bg, var(--m3-surface-container-low));
+  border: 1px solid var(--m3-outline-variant);
+  margin-bottom: var(--sp-2, 12px);
+}
+.m3-dl-row__main { flex: 1 1 auto; min-width: 0; }
+.m3-dl-row__name { font-weight: 600; overflow-wrap: anywhere; }
+.m3-dl-row__url {
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-dl-row__stats {
+  display: flex;
+  gap: var(--sp-3, 16px);
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  margin-top: var(--sp-1, 6px);
+}
+.m3-dl-row__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-2, 12px);
+  flex: 0 0 auto;
+}
+.m3-dl-progress {
+  width: 100%;
+  height: 6px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--m3-surface-container-highest);
+  overflow: hidden;
+  margin-top: var(--sp-2, 12px);
+}
+.m3-dl-progress__fill {
+  height: 100%;
+  background: var(--m3-primary);
+  border-radius: inherit;
+  transition: width 200ms ease;
+}
+/* An unknown-length transfer (no Content-Length) still moves — a thin
+   indeterminate sweep rather than a bar frozen at 0%, which reads as hung.
+   React omits `aria-valuenow` entirely when the prop is `undefined`, so the
+   absence of the attribute is exactly the "unknown total" signal. */
+.m3-dl-progress:not([aria-valuenow]) .m3-dl-progress__fill {
+  width: 40% !important;
+  animation: m3-dl-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes m3-dl-indeterminate {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .m3-dl-progress__fill { animation: none !important; transition: none; }
+}
+
+/* The always-on-top popup window (pages/DownloadPopup.tsx) — the whole
+   window IS this card, so it fills the viewport rather than floating inside
+   a dialog surface of its own. */
+.m3-dlpopup {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--sp-2, 12px);
+  width: 100%;
+  height: 100vh;
+  padding: var(--sp-4, 20px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+}
+.m3-dlpopup__icon { color: var(--m3-primary); }
+.m3-dlpopup--completed .m3-dlpopup__icon { color: var(--m3-tertiary, var(--m3-primary)); }
+.m3-dlpopup--error .m3-dlpopup__icon { color: var(--m3-error); }
+.m3-dlpopup__title { margin: 0; font-size: var(--t-title-m, 16px); }
+.m3-dlpopup__file {
+  margin: 0;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-dlpopup__url {
+  margin: 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-dlpopup__hint { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.m3-dlpopup__actions {
+  display: flex;
+  gap: var(--sp-2, 12px);
+  margin-top: auto;
+  padding-top: var(--sp-2, 12px);
+}
