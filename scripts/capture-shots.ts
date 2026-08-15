@@ -95,6 +95,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { type Rect, toDevicePixels, transientOutOfBounds } from "./capture-transient-bounds";
 
 const ROOT = join(import.meta.dir, "..");
 const OUT = join(ROOT, "assets", "shots");
@@ -294,18 +295,26 @@ const PROBE = `
         heading: heading && visible(heading) ? text(heading) : "",
       };
     }),
-    transient: transient.map(text),
+    // The rect travels with the text now, not just the text: a corner surface
+    // can say the right thing and still sit somewhere PrintWindow will not
+    // show, which is exactly the shape of the dim sum card's clipped capture
+    // (see the doc comment on captureOne's geometry check, below).
+    transient: transient.map(el => {
+      const box = el.getBoundingClientRect();
+      return { text: text(el), rect: { x: box.x, y: box.y, w: box.width, h: box.height } };
+    }),
     body: (document.body && document.body.innerText) || "",
     busy: pick("[aria-busy=true]").length,
   };
 })()`;
 
 interface Overlay { label: string; heading: string }
+interface TransientSurface { text: string; rect: Rect }
 interface Probe {
   h1: string[];
   mobileTitle: string[];
   overlays: Overlay[];
-  transient: string[];
+  transient: TransientSurface[];
   body: string;
   busy: number;
 }
@@ -318,7 +327,7 @@ async function probe(): Promise<Probe> {
     h1: (raw?.h1 ?? []).map(norm),
     mobileTitle: (raw?.mobileTitle ?? []).map(norm),
     overlays: (raw?.overlays ?? []).map((o: Overlay) => ({ label: norm(o.label), heading: norm(o.heading) })),
-    transient: (raw?.transient ?? []).map(norm),
+    transient: (raw?.transient ?? []).map((t: TransientSurface) => ({ text: norm(t.text), rect: t.rect })),
     body: norm(raw?.body),
     busy: Number(raw?.busy ?? 0),
   };
@@ -394,13 +403,13 @@ function assertMatches(target: Target, seen: Probe): void {
     if (seen.transient.length !== 1) {
       fail(`expected exactly one corner surface containing "${e.transient}", saw ${seen.transient.length}`);
     }
-    if (!seen.transient[0].toLowerCase().includes(e.transient.toLowerCase())) {
-      fail(`the corner surface reads ${JSON.stringify(seen.transient[0])}, expected it to contain "${e.transient}"`);
+    if (!seen.transient[0].text.toLowerCase().includes(e.transient.toLowerCase())) {
+      fail(`the corner surface reads ${JSON.stringify(seen.transient[0].text)}, expected it to contain "${e.transient}"`);
     }
   } else if (seen.transient.length > 0) {
     // The rule that would have caught the "Skip setup" toast sitting in the
     // corner of the Startup and Dashboard shots, clipping a button.
-    fail(`${seen.transient.length} toast/corner surface(s) are loitering: ${JSON.stringify(seen.transient)}`);
+    fail(`${seen.transient.length} toast/corner surface(s) are loitering: ${JSON.stringify(seen.transient.map(t => t.text))}`);
   }
 
   for (const needle of e.contains ?? []) {
@@ -1025,10 +1034,25 @@ async function forceDimSum(): Promise<() => Promise<void>> {
 
 // -------------------------------------------------------------------- capture
 
-/** Take the picture. Only ever called after `assertMatches` has passed. */
-async function writeShot(target: Target): Promise<void> {
+/**
+ * Take the picture. Only ever called after `assertMatches` has passed.
+ *
+ * `region` is the corner surface's own claimed box, in *device* pixels — see
+ * `captureOne` for why it exists. Forwarded to `-Action capture` so the same
+ * PowerShell call that photographs the window also samples that one
+ * sub-rectangle and refuses to write a file where it is blank, the same way
+ * `assertMatches` already refuses to write one whose DOM claim does not match.
+ */
+async function writeShot(target: Target, region?: Rect): Promise<void> {
   const file = join(OUT, `${target.id}.png`);
-  const line = powershell(["-Action", "capture", "-Hwnd", String(hwnd), "-Out", file]);
+  const args = ["-Action", "capture", "-Hwnd", String(hwnd), "-Out", file];
+  if (region) {
+    args.push(
+      "-CheckX", String(region.x), "-CheckY", String(region.y),
+      "-CheckW", String(region.w), "-CheckH", String(region.h),
+    );
+  }
+  const line = powershell(args);
   const [, w, h] = line.split(/\s+/);
 
   const [wantW, wantH] = pixels(target.viewport ?? DESKTOP);
@@ -1048,8 +1072,33 @@ async function captureOne(target: Target): Promise<void> {
   // a half-faded panel that reads as a rendering bug.
   await Bun.sleep(700);
 
-  assertMatches(target, await probe());
-  await writeShot(target);
+  const seen = await probe();
+  assertMatches(target, seen);
+
+  // The DOM claim just passed: something visible, opaque, un-hidden reads the
+  // right text. `assets/shots/dimsum.png` shipped with the dim sum card
+  // clipped by the bottom of the window despite that exact claim passing —
+  // `position: fixed; bottom: 16px` cannot geometrically produce a box past
+  // the viewport's own bottom edge, and yet there it was. So a passing DOM
+  // claim is necessary and not sufficient: also ask whether the corner
+  // surface's own measured rect actually fits inside the window PrintWindow
+  // is about to photograph, and refuse to write the file if it does not —
+  // exactly the same "prove it, don't infer it" rule this harness already
+  // applies to text content, just applied to geometry too.
+  let region: Rect | undefined;
+  if (target.expect.transient !== undefined) {
+    const vp = target.viewport ?? DESKTOP;
+    const rect = seen.transient[0].rect;
+    const reason = transientOutOfBounds(rect, { width: vp.css[0], height: vp.css[1] });
+    if (reason) {
+      throw new Error(
+        `the "${target.expect.transient}" corner surface ${reason} — refusing to write a shot that would clip it`,
+      );
+    }
+    region = toDevicePixels(rect, vp.scale);
+  }
+
+  await writeShot(target, region);
 }
 
 // ----------------------------------------------------------------------- main
