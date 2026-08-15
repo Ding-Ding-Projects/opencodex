@@ -138,8 +138,9 @@ test("the settings search filters this surface and reports matches on another ta
       .map(node => node.firstElementChild?.textContent);
 
   // Unfiltered, the index lists every setting this surface owns — including
-  // the app-logo customization row `AppLogoPicker` contributes.
-  expect(hitLabels()).toEqual(["Theme", "Seed colour", "Density", "Interface font", "Text size", "Text weight", "App logo"]);
+  // the app-logo customization row `AppLogoPicker` contributes and the
+  // app-rename row for the user-chosen display name.
+  expect(hitLabels()).toEqual(["Theme", "Seed colour", "Density", "Interface font", "Text size", "Text weight", "App logo", "App name"]);
 
   await act(async () => { typeInto(search!, "density"); });
   expect(hitLabels()).toEqual(["Density"]);
