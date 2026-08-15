@@ -1,133 +1,153 @@
 # Handoff
 
-## Five parallel lanes, a one-test red build, and an inventory that had drifted both ways — 2026-08-14
+## Eleven lanes, four traps, and two releases — 2026-08-15
 
-### What this pass was
+### Position
 
-Five independently releasable lanes, each in its own linked worktree branched from `10da25ec`, each
-owned by one implementation agent, no shared paths. Integration, conflict resolution, merging and
-publication were done by the coordinating session; no lane merged or pushed itself.
+`main` is at `741aaa934`. Windows CI run
+[`31864113176`](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/31864113176) is
+**green** on that exact commit, and release
+[`build-188`](https://github.com/Ding-Ding-Projects/opencodex/releases/tag/build-188) is published
+against it, non-draft, with a complete Squirrel feed.
 
-**This was an ultra-speed pass and the verification boundary is narrow — read it before trusting
-anything below.** Test suites, linters, static analysis, accessibility checks and screenshot
-captures were **deliberately not run**. The two exceptions are both compilation rather than
-verification (`bun run typecheck`, `cd gui && bun run build`, each exit 0 after the final merge) and
-one single test file, `tests/cli-headless-parity.test.ts`, because that file *was* a lane's
-deliverable. Windows CI on a clean runner remains the authoritative verdict.
-
-### Two structural findings, both of which changed the plan
-
-**The red build was one test.** Windows CI at `b15244e9` failed, and a red run reads as a broken
-tree. It was not. Reading the complete 12,200-line log rather than the run summary, the entire run
-contained exactly one `(fail)` line — the headless-parity guard. Everything else passed. That single
-test is what kept `main` red, and fixing it is what allows the release gate to publish, so it was
-sequenced first and landed alone.
-
-**A docs-only commit can never produce a release, and nothing reports this.** `ci.yml` filters on
-`paths:` covering `src/**`, `bin/**`, `tests/**`, `scripts/**`, `gui/**` and a handful of root
-files. It does **not** cover `docs/**`, `CHANGELOG.md`, `HANDOFF.md` or `docs-site/**`. The previous
-tip `10da25ec` was docs-only, so CI never registered a run for it at all. `Auto release`
-[`31771241124`](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/31771241124) then did
-exactly what it was written to do:
-
-| Step | Result |
+| | |
 | --- | --- |
-| Require successful CI for this commit | `success` — the step carries `continue-on-error: true` |
-| Create the release | **`skipped`** |
-| Point at the artifact when no release was published | `success` |
+| Root suite | **7055 pass · 0 fail** (`bun test --isolate tests --max-concurrency=8`) |
+| GUI suite | **1498 pass · 0 fail** |
+| Typecheck, privacy scan, release-helper, GUI build | all exit 0 |
+| Releases shipped | `build-183` @ `22188bc38`, `build-188` @ `741aaa934` |
+| Feature inventory | 11 present · 50 partial · 3 absent · 1 n/a |
 
-The gate polls forty times at thirty-second intervals, sees `total == 0` throughout, times out, and
-publication is skipped. The installer was built and left as a run artifact.
-
-> This extends a trap already recorded further down this file. It was known that the workflow's
-> green tick is not evidence of a release. What is new is that **a whole class of commit can never
-> satisfy the gate** — not because CI failed, but because CI was never asked. The symptom is
-> indistinguishable from a slow run.
-
-The practical consequence for anyone landing work here: **the final commit on `main` must touch a
-CI-triggering path**, or the release skips however green the tree is. This pass satisfies that
-incidentally, because four of five lanes touch `gui/**` or `tests/**`. It has deliberately **not**
-been fixed — widening the filter is out of these lanes' scope and is a decision about whether a
-docs-only commit deserves an installer, which is the owner's to make.
+Release assets were verified with real bytes rather than a status code: the installer's first two
+bytes are `4d5a` (`MZ`), and `RELEASES` carries a SHA1 plus `262113890`, matching the `.nupkg`
+asset size exactly. **Not claimed:** nothing was installed, launched, or visually inspected.
 
 ### What landed
 
-| Lane | Commit | What it does |
-| --- | --- | --- |
-| `feat/ylc-cliparity` | `199e0746` | Endpoint discovery parses source instead of regexing it |
-| `feat/ylc-inventory` | `c09a7040` | Re-derives eight inventory rows against the tree that exists |
-| `feat/ylc-menushortcuts` | `cb9c3a77` | Every context-menu item shows its shortcut, from one registry |
-| `feat/ylc-groupicker` | `617e37af` | Move-into-group as an anchored picker with its own search |
-| `feat/ylc-apprename` | `f8353062` | User-renamable display name, decoupled from identity |
+Eleven lanes, each in its own linked worktree, integrated one at a time with conflicts resolved by
+hand.
 
-Forty-four files, +2,491 / −135.
+| Lane | What it does |
+| --- | --- |
+| `ylc-cliparity` | Endpoint discovery parses source instead of regexing it |
+| `ylc-inventory` | Eight stale `absent` rows re-derived against the real tree |
+| `ylc-menushortcuts` | Every context-menu item shows its shortcut, from one binding registry |
+| `ylc-groupicker` | Move-into-group as an anchored picker with its own search |
+| `ylc-apprename` | User-renamable display name, decoupled from installed identity |
+| `b2-guitests` | Two count assertions repaired |
+| `b2-upstream` | `docs/UPSTREAM-SURVEY.md` — the real divergence, measured |
+| `b2-secrethistory` | Encrypted, password-gated TOTP and display-name mutation history |
+| `b2-pdftools` | Seven PDF operations with post-write reopen validation |
+| `b3-security` | Four confirmed upstream security gaps closed |
+| `b3-proxyhang` | The proxy freeze that made every screenshot impossible |
 
-### The inventory had drifted in both directions at once
+### Four traps, and why each is worth knowing
 
-`docs/FEATURE-INVENTORY.md` existed because a status written once and never re-derived is a claim
-about the past wearing the present tense. It had become exactly that itself.
+**A red build was one test.** CI at `b15244e9` failed and a red run reads as a broken tree. Reading
+the complete 12,200-line log rather than the run summary, the entire run held exactly one `(fail)`
+line. The tree was fine; one scanner had a defect. Always count the `(fail)` lines before
+concluding anything about scope.
 
-The 2026-08-14 re-derivation ran in a worktree whose base predated the wave-two merges, and was then
-merged forward. So it carried `absent` verdicts for eight contracts that were sitting in `gui/src`
-the entire time: School mode, per-element toy locks, the Support Tickets desk, TOTP registration,
-the built-in authenticator, app-logo customization, scheduled settings, and external settings
-sources. **A file whose entire purpose is detecting a feature nobody built had started denying the
-existence of features that were built.**
+**A docs-only commit can never satisfy the release gate, and nothing reports this.** `ci.yml`
+filters on `paths:` covering `src/**`, `gui/**`, `tests/**`, `scripts/**`, `bin/**` and a few root
+files — but not `docs/**`, `CHANGELOG.md`, `HANDOFF.md` or `docs-site/**`. A docs-only tip
+therefore registers **no CI run at all**, the auto-release gate polls forty times at thirty-second
+intervals for a run that cannot arrive, times out, and publication is skipped while every step
+reports `success`.
 
-All eight moved to `partial` and **none to `present`**, each naming the half that is genuinely
-missing — most commonly that the contract ships on the desktop app and does not reach the
-documentation site, which is the precise failure mode this file was created to catch. Two further
-rows had false *evidence* corrected without their verdict changing: the secret-mutation-history row
-and three neighbours asserted there was no OS credential vault anywhere, which
-`src/lib/os-credential-vault.ts` (Windows DPAPI) disproves.
+> Neither the workflow's green tick nor the gate step's own `success` is evidence a release
+> published — the gate carries `continue-on-error: true`. Only `Create the release` reporting
+> `success` rather than `skipped`, and the release record itself, tell the truth.
 
-The totals moved **up**, from 50 to 53 contracts outstanding: `11 present · 47 partial · 6 absent ·
-1 n/a`. A correction that makes the number worse is the one most likely to be right.
+**Deliberately not fixed.** Widening the filter is a decision about whether a docs-only commit
+deserves an installer, and that belongs to the repository owner. The workaround, used for this very
+handoff, is `workflow_dispatch` on `ci.yml` for the exact commit.
 
-> The re-derivation note now states outright that **only these rows were re-read**. Every other
-> row's line numbers remain claims about `b5af3839`, not about this commit. That limit is written
-> into the file rather than left for a reader to discover.
+**An exemption attached to a directory does not travel with its content.** The privacy scan allows
+`/Users/example/` in `docs-site/`, because the CLI reference prints a sample `ocx status` payload
+where an example home path is the placeholder that rule exists to permit. The offline documentation
+browser bundles those articles verbatim into `gui/src/docs/generated-articles.ts`, where the
+exemption no longer applied. It stayed latent only because the generated file was stale and did not
+yet contain the sample; adding a guide regenerated it and an old hole arrived looking like a new one.
 
-### Integration edits made by the coordinating session
+**The framing of a bug report can point at the wrong event entirely.** The screenshot harness could
+not write a single image, and the symptom was "the proxy dies when the renderer reloads". It does
+not. The freeze happens on **first mount**: the dashboard fires a dozen-plus `/api/*` requests at
+once, several reach a module through `await import(...)` for the first time, and one starts a second
+outbound fetch to an account the startup prime had fetched half a second earlier. Under that exact
+concurrency Bun 1.3.14 on Windows stops dispatching anything further on the listener, permanently,
+including a plain `/healthz` from an unrelated process. An independent `setTimeout` raced against
+the stuck call never fired either — which is what proves a runtime freeze rather than application
+logic waiting on something. A reload merely exposes it, because the navigation cannot complete
+against a proxy that is already dead.
 
-Named explicitly, because these are the edits no single lane could own:
+### Two guards added, both watched fail before being trusted
 
-- `CHANGELOG.md` — both lanes wrote an `## Unreleased` section; merged into one, keeping the
-  generator note the shortcuts lane added.
-- `docs-site/astro.config.mjs` — both lanes added a sidebar entry at the same line; kept both.
-- `docs/FEATURE-INVENTORY.md` — three lanes edited it. The rename lane, working from the pre-
-  re-derivation base, carried stale totals *and* a correct change to its own row; the re-derived
-  totals were kept and the row change folded in.
-- `HANDOFF.md` — the outstanding-contract count above.
+**`tests/feature-inventory-arithmetic.test.ts`.** Three separate lanes moved a contract's status
+cell from `absent` to `partial` and left the per-slice table, the grand total and the header line
+stating the old number. Each edited row was correct; each summary forty lines away was wrong. In a
+file whose entire value is being trustworthy about counts, a total contradicting its own rows costs
+the reader every other figure in it. The guard derives every number from the status cells — per
+slice, grand total, and the sentence that spells the count out in words — and was watched red on all
+three drifts and green on restore.
 
-**One defect was caught by re-counting rather than by reading.** After resolving, an independent
-recount of every status cell disagreed with the stated totals by one. The cause was in slice 3: the
-group-picker lane moved its own row `absent` → `partial`, but the slice summary table was being
-rewritten in a *different* lane, so the cell moved and the summary did not follow it. Every slice
-row and both totals were then re-derived from the actual cells and now agree. This is worth
-imitating: in a file whose whole value is that its arithmetic is trustworthy, a summary that is
-merely *merged* rather than *recomputed* is a summary that is quietly wrong.
+**The privacy scan's sentinel rule.** Its bearer allowlist accepted three fixture families that all
+read like real tokens on purpose. The new credential-forwarding and redaction suites need the
+opposite: values a human can tell are fake at a glance, because the point of
+`SENTINEL-DO-NOT-FORWARD-TOKEN` is that anyone finding it in a log knows instantly nothing leaked.
+A scan that only accepts token-shaped fakes teaches everyone to write token-shaped fakes, and then a
+real one hides among them. Narrowed to an uppercase `SENTINEL-` prefix in `tests/` only, and
+verified by planting an `sk-live-` token that still turns it red on two rules.
 
-### Open, and honest about it
+### Security
 
-- **No tests beyond the one parity file were run, and no captures were taken.** The four GUI lanes
-  compile and build; none of their behaviour has been exercised. In particular the tab group
-  picker's filter, keyboard model, collapsed-group behaviour and focus return are **unguarded** —
-  the lane that built it added no tests, and this is recorded in the inventory's `Missing` column
-  rather than left implicit.
-- **Three test files were edited to match a deliberate menu change and have not been watched pass**
-  (`gui/tests/tab-context-menu.test.tsx`, `dropdown-menu-filter-inventory.test.ts`,
-  `every-search-bar-has-a-builder.test.ts`). They compile and lint. CI is what will say.
-- **The app rename's decoupling is held by construction and by no guard.** The storage module has
-  no imports, its keys are literals, and the consumer list is four display surfaces long — but
-  nothing asserts it stays that way, and the failure it protects against is orphaned user profiles
-  rather than a cosmetic regression. That is the highest-value missing test in this pass.
-- **The docs-site tab strip still inlines one menu item per group** at
-  `docs-site/src/components/TabStrip.tsx:673-684` — the exact shape the picker lane was written to
-  remove. Fixed on the app, not on the site; recorded in the inventory.
-- **`gui/src/docs/generated-articles.ts` carried pre-existing drift** against `web-dashboard.md`.
-  Regenerating it is unavoidable once a guide is added, so an unrelated content correction rides
-  along in the group-picker commit.
+Four items from `docs/UPSTREAM-SURVEY.md`, each confirmed missing here rather than guessed, each
+read from the real upstream diff and adapted rather than transplanted, each with a test watched red
+first:
+
+- **Codex OAuth credential forwarding is pinned** to the canonical ChatGPT host and refused for any
+  other `authMode: "forward"` provider's `baseUrl`; cross-origin redirects refused on all five
+  credential-bearing sidecar fetches. A misconfigured forward provider previously received the
+  caller's live bearer, `session_id` and `chatgpt-account-id`.
+- **OAuth expiry guarded** against `NaN`, `Infinity` and negatives — widened beyond the survey to
+  `kimi.ts` and `codex/account-store.ts`, independently confirmed vulnerable. The account-store case
+  had a second-order failure: an `Infinity` expiry does not round-trip through JSON, so the
+  corrupted value then failed the store's own type guard and **silently dropped the whole credential
+  record**.
+- **Redaction hardened** for colon-labelled and quoted-JSON credentials, including closing the
+  "prefix it with Bearer" smuggling hole the first exemption opened. The remaining ~14 commits of
+  that upstream arc are recorded as an open gap in `UPSTREAM-SURVEY.md` §8, not silently skipped.
+- **Windows ACL failures classify as 503**, not 401. On a Windows-only fork, a filesystem permission
+  problem was telling users their credentials were wrong.
+
+### Upstream
+
+The fork is **3,249 commits behind** `lidge-jun/opencodex`, not the 2,979 recorded here for weeks —
+a figure carried forward without anyone fetching to check it. `docs/UPSTREAM-SURVEY.md` records the
+real merge base (`c0ad57ad`, 2026-07-29), the counts each way, the commands that produced them, and
+a prioritised port list. It ports nothing else on purpose: a 3,249-commit catch-up is not a side
+effect of a survey.
+
+### Open, and stated rather than rounded away
+
+- **Three contracts remain absent**: the universal file converter, the Ollama suite manager, and
+  browser-extension download capture. These are products rather than missing switches.
+- **Screenshots have not been replaced.** The proxy fix unblocks the harness — it now gets past the
+  step it died on, four runs out of four against a real packaged build — but the capture matrix
+  itself has not been regenerated. That is the next obvious task and it is now unblocked.
+- **The tab-group picker is unguarded**: no test exercises its filter, keyboard model,
+  collapsed-group behaviour or focus return.
+- **The app-rename decoupling is held by construction and by no guard.** What it protects against is
+  orphaned user profiles rather than a cosmetic regression, which makes it the highest-value missing
+  test in the tree.
+- **Two branches are deliberately retained.** `feat/w2-schoolmode` holds an alternative
+  `ocx school-mode` while `main` ships its own; `feat/w3-shortcuts` holds a second shortcut registry
+  competing with the `shortcuts.ts` that shipped here. Each carries one commit that is not an
+  ancestor of `main`, so neither was removed during cleanup — unmerged work is not redundant work.
+- **`gh` can silently retarget.** Adding the upstream remote in a linked worktree changes
+  `.git/config` for the whole repository, and `gh` began resolving to `lidge-jun/opencodex`. Its
+  push URL is now disabled and the CLI default is pinned, but anyone adding a remote here should
+  re-pin with `gh repo set-default` and check the `owner/repo` in any returned URL.
 
 ## Universal feature contract — inventory, and the first two waves — 2026-08-14
 
