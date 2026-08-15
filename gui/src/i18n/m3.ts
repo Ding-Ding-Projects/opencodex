@@ -2014,7 +2014,7 @@ export const M3_EN = {
   "converter.openInPdfTools": "Open in PDF Tools",
   "converter.catalogTitle": "Adapter catalogue",
   "converter.catalogSubtitle": "{enabled} of {total} known format(s) are bundled and enabled right now.",
-  "converter.scopeNote": "Only the Documents/PDF family is enabled today, adopting the seven operations PDF Tools already implements and tests. Every other format below is real in the catalogue and honestly disabled, naming the exact dependency it is missing rather than being hidden.",
+  "converter.scopeNote": "Three families are enabled today: Documents/PDF (the seven operations PDF Tools already implements and tests), Archives (ZIP extraction, on node:zlib alone), and Structured Data (JSON, CSV, TSV and XML, hand-written and bounded, no external dependency). Every other format below is real in the catalogue and honestly disabled, naming the exact dependency it is missing rather than being hidden.",
   "converter.category.documentsPdf": "Documents / PDF",
   "converter.category.images": "Images",
   "converter.category.audio": "Audio",

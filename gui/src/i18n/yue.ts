@@ -3513,7 +3513,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "converter.openInPdfTools": "去 PDF 工具開",
   "converter.catalogTitle": "適配器目錄",
   "converter.catalogSubtitle": "宜家有 {enabled} / {total} 個已知格式係打包咗兼啟用緊嘅。",
-  "converter.scopeNote": "而家淨係「文件 / PDF」呢一族啟用咗,採用咗 PDF 工具已經實現同測試過嘅七個操作。下面其餘格式喺目錄度都係真嘅,老實噉標住停用,講清楚差咗邊樣依賴,唔會收埋。",
+  "converter.scopeNote": "而家有三族啟用咗:「文件 / PDF」(PDF 工具已經實現同測試過嘅七個操作)、「壓縮檔」(淨係靠 node:zlib 拆 ZIP,唔使裝外部工具)、同「結構化數據」(JSON、CSV、TSV 同 XML,自己手寫,有邊界,唔靠外部套件)。下面其餘格式喺目錄度都係真嘅,老實噉標住停用,講清楚差咗邊樣依賴,唔會收埋。",
   "converter.category.documentsPdf": "文件 / PDF",
   "converter.category.images": "圖片",
   "converter.category.audio": "音頻",
