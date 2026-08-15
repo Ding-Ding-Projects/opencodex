@@ -6,6 +6,10 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(codex): stop the proxy from freezing solid when the dashboard's first mount fires its usual burst of `/api/*` requests, by warming every dynamically-imported module the burst reaches before the listener opens, and by throttling repeat passive WHAM usage fetches per account so a startup quota prime and the dashboard's own account poll can never both hit the network within a few seconds of each other
+
+## Unreleased
+
 - feat(auth): add a password/TOTP-protected, encrypted local history for TOTP-entry and display-name mutations
 - feat(pdf): inspect, split, merge, extract, reorder, rotate and edit metadata for local PDF files, with a bounded worker sandbox and post-write reopen validation
 - feat(cli): add `ocx pdf` as the headless counterpart to the new PDF tools page

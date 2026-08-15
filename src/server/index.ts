@@ -279,7 +279,60 @@ function attachLiveSidebandUpstream(ws: ServerWebSocket<WsData>): void {
 // trackSseForRequestLog(
 // export function relaySseWithHeartbeat
 
+/**
+ * Modules that the dashboard's very first mount reaches through a dynamic
+ * `import()`, warmed sequentially (one at a time, never concurrently with each
+ * other) before the listener opens for real traffic.
+ *
+ * Reproduced live (2026-08-15, devlog b3-proxyhang): loading the desktop
+ * dashboard for the first time fires a burst of a dozen-plus `/api/*` requests
+ * at once, several of which reach one of these modules through `await
+ * import(...)` for the very first time in the process's life. Under that
+ * concurrent load — several first-time dynamic imports and an outbound
+ * `fetch()` all in flight together — Bun 1.3.14 on Windows has been observed to
+ * permanently stop dispatching ANY further request on the `Bun.serve()`
+ * listener, including calls to unrelated synchronous routes (`/healthz`) made
+ * by a completely separate process. An independent `setTimeout` raced against
+ * the stuck operation never fired either, so this is a runtime-level freeze,
+ * not a bug in the awaited call's own error handling — nothing this project's
+ * TypeScript can catch or retry its way out of once it happens.
+ *
+ * The same imports, done ALONE (no concurrent request load) — exactly what
+ * happens here, at the moment `startServer` runs and before the listener has
+ * accepted a single connection — have never reproduced the freeze in dozens of
+ * runs. So the fix is not to change what these routes do; it is to make sure
+ * the very first time each module is touched is this quiet moment rather than
+ * the first real page load. A module already resolved in Bun's module registry
+ * costs nothing extra to `import()` again later. Best-effort: a warm failure
+ * here must never block startup or be treated as a real error, since the
+ * routes that use these modules already handle a failed import on their own.
+ */
+async function warmDashboardMountModules(): Promise<void> {
+  const specifiers = [
+    "../codex/inject",
+    "../claude/gateway-cache",
+    "./system-env",
+    "../claude/agents-inject",
+    "../lib/app-launcher",
+    "../lib/app-installer",
+    "../codex/auth-api",
+  ];
+  for (const specifier of specifiers) {
+    try {
+      await import(specifier);
+    } catch {
+      // Best-effort warm only — the real request handler's own import will
+      // surface (and handle) any genuine load failure.
+    }
+  }
+}
+
 export function startServer(port?: number) {
+  // Fire-and-forget, started before anything else: the whole point is that
+  // these first-time imports finish (or fail) with no concurrent request load
+  // to race against, well before the listener below can accept a connection.
+  void warmDashboardMountModules();
+
   const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()));
   applyProxyEnv(config);
   assertServerAuthConfig(config);
