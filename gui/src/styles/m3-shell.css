@@ -1820,6 +1820,45 @@ html[data-desktop] .m3-appbar .m3-avatar {
 }
 
 /*
+  Ollama suite manager (pages/Ollama.tsx): the hardware-fact list and the
+  per-model fit disclosure. Same reasoning as the PDF-tools block above — these
+  classes render on every visit and had never been given rules, so the hardware
+  facts read as an undifferentiated wall of text and the fit evidence list had
+  no visual separation from the table row it belonged to.
+*/
+.m3-ollama-hardware {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.m3-ollama-hardware__fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  font-size: var(--t-body-m);
+}
+.m3-ollama-hardware__fact svg { flex: 0 0 auto; margin-top: 2px; color: var(--m3-on-surface-variant); }
+.m3-ollama-fit { display: flex; flex-direction: column; gap: var(--sp-1); align-items: flex-start; }
+.m3-ollama-fit__toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--t-label-s);
+  color: var(--m3-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.m3-ollama-fit__evidence {
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  max-width: 320px;
+}
+.m3-ollama-fit__evidence li { margin-bottom: var(--sp-1); }
+
+/*
   A paused account in the switcher is refused by the server, so the row must look
   refused too. It was styled identically to a selectable row, which made "nothing
   happened" the only feedback for a click that was never going to work.

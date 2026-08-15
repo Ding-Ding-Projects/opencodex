@@ -74,6 +74,7 @@ import { handleScheduleRoutes } from "./management/schedule-routes";
 import { handleAuthenticatorRoutes } from "./management/authenticator-routes";
 import { handleSchoolModeRoutes } from "./management/school-mode-routes";
 import { handlePdfRoutes } from "./management/pdf-routes";
+import { handleModelRuntimeRoutes } from "./management/model-runtime-routes";
 import type { ManagementContext } from "./management/context";
 export type { ManagementApiDeps } from "./management/context";
 import { fetchAllModels } from "./management/shared";
@@ -190,7 +191,8 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleScheduleRoutes(ctx))
     ??     (await handleAuthenticatorRoutes(ctx))
     ??     (await handleSchoolModeRoutes(ctx))
-    ??     (await handlePdfRoutes(ctx));
+    ??     (await handlePdfRoutes(ctx))
+    ??     (await handleModelRuntimeRoutes(ctx));
   if (routed) return routed;
 
   if (url.pathname === "/api/stop" && req.method === "POST") {
