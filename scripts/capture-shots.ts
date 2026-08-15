@@ -823,6 +823,22 @@ const surfaces: Target[] = [
     expect: { h1: "Language & voice", transient: "Narrator is off" },
     prepare: () => clickText("button", "Speak a test message"),
     note: "A real non-blocking toast, pushed by a real action rather than injected.",
+    // KNOWN GAP, 2026-08-15. The `transient` probe passes -- the harness will not
+    // write this file otherwise -- and yet the committed `snackbar.png` shows the
+    // Language & voice page with no toast anywhere in frame. Opened and looked at,
+    // twice, rather than inferred.
+    //
+    // So the probe and the shutter disagree, and only one of them is telling the
+    // truth about what a reader sees. Two candidates, neither confirmed: the toast
+    // auto-dismisses between the probe and `PrintWindow`, or it renders outside the
+    // captured region. Whichever it is, this target currently produces an image
+    // whose filename promises something the picture does not contain -- the exact
+    // failure the visibility probe was added to prevent, arriving through the one
+    // gap the probe does not cover.
+    //
+    // Left as a named gap rather than "fixed" by relaxing the probe, which would
+    // only make the disagreement quieter. Whoever picks this up: measure the toast's
+    // rect at shutter time, do not reason about it.
   },
   {
     id: "dimsum",
