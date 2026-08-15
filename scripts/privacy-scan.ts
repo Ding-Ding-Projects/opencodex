@@ -68,6 +68,14 @@ function isAllowedHomePath(file: string, username: string): boolean {
   }
   if (file.startsWith("docs/") && (username === "me" || username === "user")) return true;
   if (file.startsWith("docs-site/") && username === "example") return true;
+  // The offline documentation browser bundles the docs-site articles verbatim,
+  // so the sample `ocx status` output above -- already allowed at its source on
+  // the line before this one -- arrives here under a path the source rule cannot
+  // match. Allowing it only for this one generated file, and only for the same
+  // `example` placeholder, keeps the exemption attached to the content rather
+  // than to the directory it happens to be sitting in. Anything else in this
+  // file, including a real username, still fails.
+  if (file === "gui/src/docs/generated-articles.ts" && username === "example") return true;
   return false;
 }
 
