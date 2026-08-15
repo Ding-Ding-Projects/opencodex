@@ -212,6 +212,8 @@ export default defineConfig({
             { label: "Export & Bulk Actions", translations: { ko: "내보내기 & 일괄 작업", "zh-CN": "导出与批量操作", ru: "Экспорт и массовые действия", ja: "エクスポート & 一括操作" }, slug: "guides/export-and-bulk-actions" },
             { label: "PDF Tools", translations: { ko: "PDF 도구", "zh-CN": "PDF 工具", ru: "Инструменты PDF", ja: "PDF ツール" }, slug: "guides/pdf-tools" },
             { label: "File Converter", translations: { ko: "파일 변환기", "zh-CN": "文件转换器", ru: "Конвертер файлов", ja: "ファイル変換ツール" }, slug: "guides/file-converter" },
+            { label: "Ollama Suite Manager", translations: { ko: "Ollama 스위트 관리자", "zh-CN": "Ollama 套件管理器", ru: "Менеджер набора Ollama", ja: "Ollama スイートマネージャー" }, slug: "guides/ollama-manager" },
+            { label: "Browser-Extension Download Capture", translations: { ko: "브라우저 확장 다운로드 캡처", "zh-CN": "浏览器扩展下载捕获", ru: "Перехват загрузок через расширение браузера", ja: "ブラウザ拡張ダウンロードキャプチャ" }, slug: "guides/download-capture" },
             { label: "Super express release", translations: { ko: "슈퍼 익스프레스 릴리스", "zh-CN": "超级快速发布", ru: "Суперэкспресс-релиз", ja: "スーパーエクスプレスリリース" }, slug: "guides/super-express-release" },
           ],
         },
