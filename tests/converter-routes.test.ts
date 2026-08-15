@@ -5,9 +5,10 @@
  * service actually agree once wired behind the route, not only in isolation.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildZip } from "../src/lib/export-archive";
 import { handleConverterRoutes } from "../src/server/management/converter-routes";
 import { setServerRef } from "../src/server/lifecycle";
 import { removeTempDir } from "./helpers/temp-dir";
@@ -121,6 +122,134 @@ describe("/api/converter/detect", () => {
       refreshCodexCatalogBestEffort: async () => {}, syncClaudeAgentDefsBestEffort: async () => {},
     });
     expect(res?.status).toBe(400);
+  });
+});
+
+describe("/api/converter/extract-zip", () => {
+  test("extracts a real ZIP end to end through the route", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const zipPath = join(dir, "archive.zip");
+    writeFileSync(zipPath, buildZip([
+      { path: "readme.txt", data: new TextEncoder().encode("hello from the route") },
+      { path: "sub/nested.txt", data: new TextEncoder().encode("nested") },
+    ]));
+    const destDir = join(dir, "extracted");
+    const res = await handleConverterRoutes(ctx("/api/converter/extract-zip", "POST", { path: zipPath, destination: destDir }));
+    expect(res?.status).toBe(200);
+    const body = await res!.json() as { ok: boolean; destination: string; entryCount: number; bytesWritten: number };
+    expect(body.ok).toBe(true);
+    expect(body.entryCount).toBe(2);
+    expect(existsSync(join(destDir, "readme.txt"))).toBe(true);
+    expect(readFileSync(join(destDir, "readme.txt"), "utf-8")).toBe("hello from the route");
+    expect(readFileSync(join(destDir, "sub/nested.txt"), "utf-8")).toBe("nested");
+  });
+
+  test("refuses a relative path with 400", async () => {
+    listeningOn("127.0.0.1");
+    const res = await handleConverterRoutes(ctx("/api/converter/extract-zip", "POST", { path: "a.zip", destination: "b" }));
+    expect(res?.status).toBe(400);
+  });
+
+  test("refuses a relative destination with 400", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const zipPath = join(dir, "archive.zip");
+    writeFileSync(zipPath, buildZip([{ path: "a.txt", data: new TextEncoder().encode("a") }]));
+    const res = await handleConverterRoutes(ctx("/api/converter/extract-zip", "POST", { path: zipPath, destination: "relative" }));
+    expect(res?.status).toBe(400);
+  });
+
+  test("a malformed archive is reported as an honest 422 with its boundary, not a crash", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const badPath = join(dir, "notreally.zip");
+    writeFileSync(badPath, "this is not a zip file");
+    const destDir = join(dir, "out");
+    const res = await handleConverterRoutes(ctx("/api/converter/extract-zip", "POST", { path: badPath, destination: destDir }));
+    expect(res?.status).toBe(422);
+    const body = await res!.json() as { error: string; boundary: string };
+    expect(body.boundary).toBe("malformed");
+    expect(existsSync(destDir)).toBe(false);
+  });
+
+  test("refuses to overwrite an already-existing destination, and never touches its content", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const zipPath = join(dir, "archive.zip");
+    writeFileSync(zipPath, buildZip([{ path: "a.txt", data: new TextEncoder().encode("a") }]));
+    const destDir = join(dir, "already-here");
+    mkdirSync(destDir);
+    writeFileSync(join(destDir, "keep.txt"), "do not touch me");
+    const res = await handleConverterRoutes(ctx("/api/converter/extract-zip", "POST", { path: zipPath, destination: destDir }));
+    expect(res?.status).toBe(422);
+    expect(readFileSync(join(destDir, "keep.txt"), "utf-8")).toBe("do not touch me");
+  });
+});
+
+describe("/api/converter/convert-structured", () => {
+  test("converts a real JSON file to CSV end to end through the route, disclosing the lossy note", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify([{ name: "Ada", role: "engineer" }]));
+    const dest = join(dir, "out.csv");
+    const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
+      path: src, sourceFormat: "json", destination: dest, destFormat: "csv",
+    }));
+    expect(res?.status).toBe(200);
+    const body = await res!.json() as { ok: boolean; path: string; lossy: boolean; notes?: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.lossy).toBe(true);
+    expect(body.notes?.length).toBeGreaterThan(0);
+    expect(existsSync(dest)).toBe(true);
+    expect(readFileSync(dest, "utf-8")).toContain("Ada,engineer");
+  });
+
+  test("converts a real CSV file to JSON end to end through the route", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const src = join(dir, "in.csv");
+    writeFileSync(src, "a,b\r\n1,2\r\n");
+    const dest = join(dir, "out.json");
+    const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
+      path: src, sourceFormat: "csv", destination: dest, destFormat: "json",
+    }));
+    expect(res?.status).toBe(200);
+    expect(JSON.parse(readFileSync(dest, "utf-8"))).toEqual([{ a: "1", b: "2" }]);
+  });
+
+  test("rejects an unknown sourceFormat with 400", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
+      path: join(dir, "in.json"), sourceFormat: "yaml", destination: join(dir, "out.json"), destFormat: "json",
+    }));
+    expect(res?.status).toBe(400);
+  });
+
+  test("rejects an unknown destFormat with 400", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
+      path: join(dir, "in.json"), sourceFormat: "json", destination: join(dir, "out.toml"), destFormat: "toml",
+    }));
+    expect(res?.status).toBe(400);
+  });
+
+  test("malformed JSON input is reported as an honest 422 with its boundary, not a crash", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, "{not valid json");
+    const dest = join(dir, "out.csv");
+    const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
+      path: src, sourceFormat: "json", destination: dest, destFormat: "csv",
+    }));
+    expect(res?.status).toBe(422);
+    const body = await res!.json() as { error: string; boundary: string };
+    expect(body.boundary).toBe("malformed");
+    expect(existsSync(dest)).toBe(false);
   });
 });
 
