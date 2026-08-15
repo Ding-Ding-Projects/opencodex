@@ -2632,6 +2632,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "sub.revisionSaved": "精選子代理模型設定咗做 {models}",
   "sub.savedTitle": "已儲存 {n} 個模型。",
   "sub.savedBody": "開一個新嘅 Codex session（或者行 {cmd}）就會見到佢哋做 spawn_agent 嘅覆寫。",
+  "sub.unsaved": "有改動未儲存",
+  "sub.upToDate": "精選位已經係最新",
 
   // ---- startup safety ----
   "startup.overallStatus": "整體狀態",

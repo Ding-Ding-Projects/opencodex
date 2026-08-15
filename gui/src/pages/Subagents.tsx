@@ -120,10 +120,29 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
    * Last state the server actually holds. A revision's `before` must be this, not the
    * edits being saved — snapshotting the new picks makes "restore" replay the save it
    * was meant to undo, which is the one failure that makes a history panel unsafe.
+   *
+   * State rather than a ref: `dirty` below reads it during render (compared
+   * against `chosen`), and reading a ref's `.current` during render rather
+   * than inside an effect or event handler is exactly the stale-read hazard
+   * `useRef` exists to warn about — nothing here needs a value that survives
+   * a render without being re-read.
    */
-  const persisted = useRef<string[]>([]);
+  const [persisted, setPersisted] = useState<string[]>([]);
 
   const chosenSet = useMemo(() => new Set(chosen), [chosen]);
+
+  /**
+   * Compared against `persisted`, the state the server actually holds — never
+   * against `available`, which changes as the catalog loads and would make
+   * the page read dirty before the user has touched anything.
+   *
+   * Order-sensitive on purpose: `JSON.stringify` bakes array order into the
+   * string, so a pure reorder (no add, no remove) still counts as dirty. The
+   * featured order *is* the saved value — it sets positions 1-5 in the Codex
+   * picker — so a reorder that Save ignored would be a silent no-op with the
+   * button reporting nothing left to save.
+   */
+  const dirty = JSON.stringify(chosen) !== JSON.stringify(persisted);
 
   const load = useCallback(async () => {
     try {
@@ -134,7 +153,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       const availSet = new Set(avail);
       setAvailable(avail);
       const stored = (r.chosen ?? []).filter((m: string) => availSet.has(m));
-      persisted.current = stored;
+      setPersisted(stored);
       setChosen(stored);
     } catch {
       notify({ tone: "error", title: t("sub.loadFail") });
@@ -148,6 +167,23 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [load]);
+
+  /**
+   * Same guard the global settings draft uses (`settings-drafts.tsx`) for the
+   * same reason: this screen's edits live only in `chosen`, kept-alive tabs or
+   * not, and a reload or window close is the one navigation no in-app "unsaved
+   * changes" indicator can catch. Reordering or removing a featured model and
+   * then closing the window used to lose that work with nothing to stop it.
+   */
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
 
   const toggle = (m: string) => {
     if (busy) return;
@@ -168,7 +204,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
     if (busy || saveInFlight.current) return;
     saveInFlight.current = true;
     setBusy(true);
-    const before = persisted.current;
+    const before = persisted;
     try {
       const r = await fetch(`${apiBase}/api/subagent-models`, {
         method: "PUT",
@@ -177,7 +213,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       });
       const d = await readJsonOrThrow<{ applied?: string[] }>(r, t("sub.saveFailed"));
       const applied = d?.applied ?? chosen;
-      persisted.current = applied;
+      setPersisted(applied);
       if (d?.applied) setChosen(d.applied);
       // The revision panel needs a named event ("set to gpt-5, …"), not "Updated" — and a
       // save that clears every slot is still an event, so it keeps the counted wording.
@@ -230,8 +266,18 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
 
       <Card
         title={t("sub.featured")}
-        subtitle={<span>{chosen.length}/5</span>}
-        actions={<Button variant="filled" onClick={() => void save()} disabled={busy}>{t("common.save")}</Button>}
+        subtitle={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span>{chosen.length}/5</span>
+            {/* Reflects the same `dirty` comparison the Save button gates on,
+                so the two can never disagree about whether there is anything
+                to save. */}
+            <span style={{ color: dirty ? "var(--m3-warn)" : "var(--m3-on-surface-variant)", fontWeight: dirty ? 600 : 400 }}>
+              {dirty ? t("sub.unsaved") : t("sub.upToDate")}
+            </span>
+          </span>
+        }
+        actions={<Button variant="filled" onClick={() => void save()} disabled={busy || !dirty}>{t("common.save")}</Button>}
       >
         <div
           className="m3-row"

@@ -48,6 +48,7 @@ import { ConfirmProvider } from "./shell/confirm";
 import { useNotifications } from "./shell/notifications-context";
 import { useConfirm } from "./shell/confirm-context";
 import { useTabRouting } from "./shell/use-tab-routing";
+import { setNotificationSourcePage } from "./shell/notification-source";
 import { codenameLabel, fullBuildLabel, readBuildInfo, shortBuildLabel, windowTitle } from "./shell/build-info";
 import AdaptiveNav, { BottomNav } from "./shell/AdaptiveNav";
 import AppBar from "./shell/AppBar";
@@ -294,6 +295,15 @@ function AppShell() {
   };
 
   const activePage = tabs.activePage;
+
+  // Mirrors the active page into `notification-source.ts` so `notify()` can
+  // stamp a new notice with the screen that triggered it, even though
+  // `NotificationsProvider` sits above this component in the provider stack
+  // and cannot read `tabs.activePage` any other way.
+  useEffect(() => {
+    setNotificationSourcePage(activePage);
+  }, [activePage]);
+
   const title = t(PAGE_META_BY_ID[activePage].tkey);
   // The semantic version alone read the same across a dozen installers, so it
   // could not answer "is the fix in the build I am running". Build number and

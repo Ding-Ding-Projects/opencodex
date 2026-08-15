@@ -1173,6 +1173,8 @@ export const M3_EN = {
   "sub.revisionSaved": "Featured subagent models set to {models}",
   "sub.savedTitle": "Saved {n} models.",
   "sub.savedBody": "Start a new Codex session (or run {cmd}) to see them as spawn_agent overrides.",
+  "sub.unsaved": "Unsaved changes",
+  "sub.upToDate": "Featured slots are up to date",
   // Not rendered anywhere: it is what the Startup search indexes the hero under.
   // The hero shows a verdict ("Protected", "Action required") and never the word
   // "status", so without this a user typing the obvious thing found nothing on a
