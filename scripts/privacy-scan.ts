@@ -80,9 +80,20 @@ function isAllowedHomePath(file: string, username: string): boolean {
 }
 
 function isAllowedTokenLooking(file: string, token: string): boolean {
-  if (!file.startsWith("tests/")) return false;
   // Test fixture sentinels: sk-rawsentinel..., sk-test-...
-  return /^sk-(?:rawsentinel|test-)\d+[a-z]*$/.test(token);
+  if (file.startsWith("tests/") && /^sk-(?:rawsentinel|test-)\d+[a-z]*$/.test(token)) return true;
+  // The screenshot seed needs providers that look configured, so it writes
+  // key-shaped values into a throwaway profile. `CAPTURE-FIXTURE` sits in the
+  // middle of the value and the rest is zeros, which is about as far from a
+  // real key as a key-shaped string can get -- and that legibility is the
+  // point. Renaming it to something that passes the `tests/` pattern above
+  // would make it *less* obviously fake to a human reading a diff, which is
+  // the wrong direction for a value that ends up in a committed script.
+  //
+  // Scoped to that one file and that one marker. Anything else here, including
+  // a real key, still fails.
+  if (file === "scripts/capture-seed.ts" && /^sk-(?:ant-)?CAPTURE-FIXTURE-0+$/.test(token)) return true;
+  return false;
 }
 
 function isAllowedBearerToken(file: string, token: string): boolean {
