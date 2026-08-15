@@ -212,6 +212,20 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const pageRefs = useRef<(HTMLButtonElement | null)[]>([]);
   /** Set by the handlers that move the active tab and want focus to follow it. */
   const focusActiveOnCommit = useRef(false);
+  /**
+   * Set by a handler that just re-parented a tab — into a group, out of one,
+   * anywhere its button moves to a different spot in the tree — and wants
+   * focus to land on that exact tab once the new DOM exists. A tab's button
+   * is keyed by id, but React only reuses a DOM node for a key that stays in
+   * the same parent across a render; moving into (or out of) a group changes
+   * the parent, so the old button unmounts and a new one mounts in its place.
+   * Focusing the old node synchronously is a no-op the moment that happens —
+   * the browser drops focus to `<body>` — so this holds the id to focus
+   * *after* the commit instead, the same shape `focusActiveOnCommit` already
+   * uses for "the tab I want focused is the active one"; this one is for "the
+   * tab I want focused is this specific one, active or not".
+   */
+  const focusTabOnCommit = useRef<string | null>(null);
 
   const pageSearchId = useId();
   const bulkQueryId = useId();
@@ -808,6 +822,16 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     tabButtons.current.get(tabs.activeTab)?.focus();
   }, [tabs.activeTab, tabs.tabs]);
 
+  // Same shape, a specific id instead of "whichever tab is active" — see
+  // `focusTabOnCommit`'s own comment for why a moved tab's button cannot be
+  // focused synchronously by the handler that moved it.
+  useLayoutEffect(() => {
+    const id = focusTabOnCommit.current;
+    if (!id) return;
+    focusTabOnCommit.current = null;
+    tabButtons.current.get(id)?.focus();
+  }, [tabs.tabs]);
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     // Shift+F10 and the ContextMenu key are the keyboard's right-click. Without
     // them the tab menu would be mouse-only, which is not a menu at all for
@@ -1389,25 +1413,39 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                  collapsed group leaves it collapsed — which is what the user
                  asked for by collapsing it, and what the picker's "Collapsed"
                  tag warns about before the choice is made.
-                 The consequence is a focus problem, not a state one:
-                 `visibleTabs` keeps a collapsed group's members off the strip
-                 unless one of them is the tab in front, so moving any OTHER tab
-                 there unmounts the very button this panel is anchored to.
-                 Focusing it would land on a detached node and drop focus to
-                 `<body>` a frame later, so focus follows the active tab instead
-                 — the same route the close and duplicate paths already take for
-                 the same reason. */
+                 Every successful move re-parents the tab's button — from a
+                 loose run straight under `.m3-tablist` to inside the target
+                 group's `<div>` — so the button this panel is anchored to is
+                 never the node still on screen afterwards, even when the
+                 target group is not collapsed and the tab never left
+                 `visibleTabs`. Calling `anchor.focus()` here (what
+                 `closeMovePicker` does) would focus a node one commit away
+                 from being discarded; the browser drops focus to `<body>` the
+                 moment React swaps it, same as for a genuinely collapsed
+                 target. So every successful move — collapsed or not — routes
+                 through `focusTabOnCommit`/`focusActiveOnCommit` instead of
+                 `closeMovePicker`, and only the tab that actually vanished
+                 from the strip (a collapsed group swallowing a background
+                 tab, per `visibleTabs`) falls back to the active tab; every
+                 other move focuses the moved tab itself, wherever it landed. */
               const collapsed = tabs.groups.find(group => group.id === groupId)?.collapsed;
               const vanishes = !!collapsed && tab.id !== tabs.activeTab;
               tabs.assignGroup(tab.id, groupId);
-              if (!vanishes) { closeMovePicker(); return; }
-              focusActiveOnCommit.current = true;
               setMovePicker(null);
+              if (vanishes) focusActiveOnCommit.current = true;
+              else focusTabOnCommit.current = tab.id;
             }}
             /* One call, not create-then-assign: `createGroup` takes its members,
                so the group and its first tab land in a single commit and there is
-               no frame in which an empty group exists. */
-            onCreate={name => { tabs.createGroup(name, [tab.id]); closeMovePicker(); }}
+               no frame in which an empty group exists. A fresh group is never
+               collapsed, so the tab can only ever move, never vanish — but move
+               is still a reparent, so this needs the same `focusTabOnCommit`
+               route as `onPick` above, not `closeMovePicker`'s stale anchor. */
+            onCreate={name => {
+              tabs.createGroup(name, [tab.id]);
+              setMovePicker(null);
+              focusTabOnCommit.current = tab.id;
+            }}
             onClose={closeMovePicker}
           />
         );
