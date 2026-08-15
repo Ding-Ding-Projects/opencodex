@@ -37,12 +37,19 @@
 .PARAMETER Action
   find    - locate the app window owned by -OwnerPid.  Prints "OK <hwnd> <w> <h>".
   fit     - resize -Hwnd until its CLIENT area is exactly -Width x -Height.
-  capture - PrintWindow -Hwnd into the PNG at -Out.
+  capture - PrintWindow -Hwnd into the PNG at -Out. With -CheckW/-CheckH also
+            sample the -CheckX/-CheckY/-CheckW/-CheckH sub-rectangle (device
+            pixels) and refuse to write the file if that region reads as
+            blank -- see the doc comment above "capture-transient-bounds.ts"
+            for why this exists: a corner surface (a toast, the dim sum card)
+            can pass every DOM check and still not be in the pixels
+            PrintWindow actually handed back.
 
 .EXAMPLE
   window-tools.ps1 -Action find -OwnerPid 1234
   window-tools.ps1 -Action fit -Hwnd 65552 -Width 2880 -Height 1800
   window-tools.ps1 -Action capture -Hwnd 65552 -Out shots/dashboard.png
+  window-tools.ps1 -Action capture -Hwnd 65552 -Out shots/dimsum.png -CheckX 2208 -CheckY 1472 -CheckW 640 -CheckH 298
 #>
 param(
   [Parameter(Mandatory = $true)][ValidateSet('find', 'fit', 'capture')][string]$Action,
@@ -50,7 +57,11 @@ param(
   [int]$OwnerPid = 0,
   [int]$Width = 0,
   [int]$Height = 0,
-  [string]$Out = ''
+  [string]$Out = '',
+  [int]$CheckX = 0,
+  [int]$CheckY = 0,
+  [int]$CheckW = 0,
+  [int]$CheckH = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -215,6 +226,35 @@ for ($x = 0; $x -lt $c.W; $x += $stepX) {
 if ($distinct.Count -lt 8) {
   $bmp.Dispose()
   throw "capture of hwnd $Hwnd sampled only $($distinct.Count) distinct colours, so the window painted blank (no PW_RENDERFULLCONTENT, or the GPU process is not compositing)"
+}
+
+# The targeted twin of the check above: the whole-window grid can pass (the
+# app chrome is real) while the ONE small region a corner surface claims to
+# occupy is blank, because a coarse 40x40 grid over a 2880x1800 bitmap can
+# step clean over a 640x298 toast without ever landing a sample inside it.
+# `capture-transient-bounds.ts` already proved the claimed rect fits inside
+# the window; this proves the pixels there are not just the plain background
+# underneath it -- the same "prove it, do not infer it" rule applied one level
+# closer to the actual bytes PrintWindow handed back.
+if ($CheckW -gt 0 -and $CheckH -gt 0) {
+  $right = $CheckX + $CheckW
+  $bottom = $CheckY + $CheckH
+  if ($CheckX -lt 0 -or $CheckY -lt 0 -or $right -gt $c.W -or $bottom -gt $c.H) {
+    $bmp.Dispose()
+    throw "check region ($CheckX,$CheckY,$CheckW,$CheckH) falls outside the captured $($c.W)x$($c.H) bitmap"
+  }
+  $regionDistinct = New-Object 'System.Collections.Generic.HashSet[int]'
+  $rStepX = [Math]::Max(1, [int]($CheckW / 16))
+  $rStepY = [Math]::Max(1, [int]($CheckH / 16))
+  for ($x = $CheckX; $x -lt $right; $x += $rStepX) {
+    for ($y = $CheckY; $y -lt $bottom; $y += $rStepY) {
+      [void]$regionDistinct.Add($bmp.GetPixel($x, $y).ToArgb())
+    }
+  }
+  if ($regionDistinct.Count -lt 4) {
+    $bmp.Dispose()
+    throw "the check region ($CheckX,$CheckY,$CheckW,$CheckH) sampled only $($regionDistinct.Count) distinct colours -- the DOM said a corner surface was there, but the captured pixels at that spot look blank"
+  }
 }
 
 $dir = Split-Path -Parent $Out
