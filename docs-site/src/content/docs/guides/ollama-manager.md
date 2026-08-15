@@ -1,6 +1,6 @@
 ---
 title: Ollama suite manager
-description: Health and guided recovery for the local Ollama runtime, an exhaustive catalogue of every model actually installed on this machine, and a conservative, evidence-backed hardware-fit estimate for each — built only on Ollama's documented local HTTP API.
+description: Health and guided recovery for the local Ollama runtime, an exhaustive catalogue of every model actually installed on this machine, a conservative hardware-fit estimate for each, and a batch-pull download queue — built only on Ollama's documented local HTTP API.
 ---
 
 opencodex ships a manager for [Ollama](https://ollama.com), the local model runtime — reachable from
@@ -36,6 +36,49 @@ the renderer never talks to the Ollama daemon directly.
 It can also remove an installed model (`DELETE /api/delete`), behind the same confirmation dialog the
 rest of the app uses for a recoverable, single-item removal.
 
+## The batch-pull cart
+
+"Cart" means batch pull only, never money — there is no price, checkout, account, or entitlement
+concept anywhere in this feature. It queues downloads; that is the whole of what it does.
+
+1. **Type or paste a list of tags**, one per line or comma-separated, and choose a concurrency (1–5
+   at once) and whether an already-installed tag should be force-re-pulled instead of skipped.
+2. **Review the batch before anything downloads.** `POST /pull-queue/preflight` reports, per tag:
+   whether it is already installed, its real reused size when one exists (Ollama's local API has no
+   "how big is this before I pull it" route for a tag that has never been installed, so a genuinely
+   new tag's size is honestly reported as *unknown until the pull begins* rather than guessed),
+   conservative additional-disk headroom, the tag's existing hardware-fit verdict where one exists,
+   and a plain disclosure sentence. An aggregate estimate is shown too, explicitly marked partial
+   when any one tag's size is unknown, so a partial sum is never mistaken for the whole batch.
+3. **Start processes the batch with bounded concurrency.** Each item moves through
+   `queued → pulling → pulled | skipped | cancelled | failed`. Byte progress is shown exactly where
+   Ollama's `/api/pull` stream reports it (summed across every digest/layer the runtime has started
+   reporting on) and an honest "Downloading…" badge — never a synthesised percentage — where it does
+   not yet.
+4. **Cancel one item, or the whole batch.** Closing the pull's own HTTP connection is the way every
+   Ollama client cancels a pull — there is no separate documented cancel route — and that is exactly
+   what an `AbortSignal` does here.
+5. **Retry a failed or cancelled item** without re-typing anything; it resets that one item back to
+   `queued` and rejoins the batch's own processing.
+6. **The queue survives a restart of this app.** Its state is a small JSON file, written atomically,
+   outside the main configuration. On the next launch, any item that was `pulling` when the process
+   ended is reconciled against the runtime's *real current* `/api/tags` — never against what the file
+   remembered — and either marked `pulled` (it actually finished; the process just never recorded it)
+   or requeued with its progress cleared and genuinely re-pulled.
+
+**A failed item never turns the batch's own summary green, and a failed or cancelled pull never
+deletes anything already installed.** The batch-pull engine (`src/lib/model-runtime/pull-queue-engine.ts`)
+never imports the model-deletion route at all — there is no code path in it that can remove a model
+from this machine. Ollama's own pull only replaces a model's manifest after every layer verifies
+successfully, so an interrupted or failed pull leaves whatever was already installed exactly as it
+was before the attempt.
+
+Every mutating pull-queue route — starting, cancelling, retrying, resuming, and clearing finished
+items — is gated exactly like model deletion: refused the instant the app is reached from the LAN,
+because each one starts real local downloads or removes queue bookkeeping, and a remote administrator
+credential should not be able to trigger that. The plain state read (`GET /pull-queue`) is not gated;
+it only reports whatever is already known and never itself triggers a network call or a resume.
+
 ## What "exhaustive catalogue" means here, and what it deliberately does not
 
 Ollama's *documented local HTTP API* has no endpoint that lists every model `ollama.com` publishes —
@@ -48,11 +91,11 @@ runtime's own reported version) and a `completeness` verdict explicitly, so a fu
 `/api/tags` — or a documented, official source for the internet-wide half — could slot in without a
 breaking change to the shape.
 
-**The batch-pull cart, the streaming chat surface, and allowlisted harness launch are separate, larger
-lanes, still `absent`.** This page can show what is installed and remove it; it cannot pull a new
-model, and it has no chat surface. A half-built pull queue, or a harness launcher that accepts an
-unvalidated shell argument, would be worse than not having one yet — see
-`docs/FEATURE-INVENTORY.md`'s Ollama row for the exact accounting.
+**The streaming chat surface and allowlisted harness launch are separate, larger lanes, still
+`absent`.** This page can show what is installed, remove it, and pull new models in a batch; it has
+no chat surface yet, and no harness-profile concept. A harness launcher that accepts an unvalidated
+shell argument would be worse than not having one yet — see `docs/FEATURE-INVENTORY.md`'s Ollama row
+for the exact accounting.
 
 ## Hardware-fit verdicts are conservative evidence, never a promise
 
@@ -83,16 +126,23 @@ its row.
 Every route is a thin caller of `src/lib/model-runtime/*`:
 
 ```
-GET    /api/model-runtime/health    -> { state, baseUrl, version, detail, hostWarning, checkedAt }
-GET    /api/model-runtime/catalog   -> { health, catalog: CatalogResult | null }
-DELETE /api/model-runtime/models    { name } -> { ok:true } | refused
+GET    /api/model-runtime/health              -> { state, baseUrl, version, detail, hostWarning, checkedAt }
+GET    /api/model-runtime/catalog             -> { health, catalog: CatalogResult | null }
+DELETE /api/model-runtime/models              { name } -> { ok:true } | refused
+POST   /api/model-runtime/pull-queue/preflight { tags } -> { ok:true, preflight: PullPreflight } — read-only, not gated
+GET    /api/model-runtime/pull-queue          -> { ok:true, state, summary, concurrency } — read-only, not gated, never resumes/kicks processing
+POST   /api/model-runtime/pull-queue/resume   -> reconciles the persisted queue and continues any still-queued item — gated
+POST   /api/model-runtime/pull-queue/start    { tags, concurrency?, force? } -> { ok:true, state } | refused
+POST   /api/model-runtime/pull-queue/cancel   { id? } -> cancels one item, or every non-terminal item when `id` is omitted — gated
+POST   /api/model-runtime/pull-queue/retry    { id } -> { ok:true, state } | refused
+POST   /api/model-runtime/pull-queue/clear    -> drops finished items only — gated
 ```
 
 `catalog` is `null` whenever the runtime is not `healthy` — the page never fabricates an installed-model
-list for a runtime it could not actually reach. Removing a model is gated exactly like PDF tools' and
-the scheduler's Home Assistant token storage: refused the instant the proxy is reachable from the LAN,
-because it starts real local state changes that a remote administrator credential should not be able
-to trigger.
+list for a runtime it could not actually reach. Removing a model and every mutating pull-queue route are
+gated exactly like PDF tools' and the scheduler's Home Assistant token storage: refused the instant the
+proxy is reachable from the LAN, because each one starts real local state changes (a download, a
+deletion, a background resume) that a remote administrator credential should not be able to trigger.
 
 ## Where the local runtime is reached
 

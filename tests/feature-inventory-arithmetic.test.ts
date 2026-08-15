@@ -126,11 +126,14 @@ test("the prose sentence naming the absent count agrees with the absent rows", (
   // drifted twice while the tables were being kept correct, which is its own
   // lesson: a number spelled out reads as prose and stops being audited.
   //
-  // Matched loosely on number agreement, because the count reaching one makes
-  // the plural ungrammatical — "One row have no code behind them" is not a
-  // sentence anyone should have to write to keep a test happy. The guard exists
-  // to check the number, not to freeze the grammar around it.
-  const sentence = lines.find(l => /ha(?:s|ve) no code behind (?:it|them) at all/.test(l));
+  // Anchored to the STABLE PREFIX rather than to the clause after the count.
+  // That clause has legitimately changed shape twice as the number fell —
+  // "Four rows … have no code behind them", then "One row … has no code behind
+  // it", then "Zero rows are `absent`" — because English number agreement and
+  // the natural phrasing for none are not the test's business. Matching on the
+  // trailing wording made this guard fail on prose that was correct, which is
+  // the worst failure mode a guard has: it cries wolf and gets edited away.
+  const sentence = lines.find(l => /^That is \d+% done\. /.test(l));
   expect(sentence, "the 'have no code behind them' sentence is missing").toBeDefined();
 
   const stated = WORDS.findIndex(w => sentence!.startsWith(`That is 17% done. ${w} row`));
