@@ -122,6 +122,9 @@ const MAP: Record<string, string> = {
   // plainer `book` or `article`, because this destination is specifically a
   // browsable collection of pages with a contents list, not a single document.
   IconMenuBook: "menu_book",
+  // PDF tools' nav glyph. The literal upstream name for exactly this: a document
+  // page marked with the format it is being operated on, not a generic file icon.
+  IconPictureAsPdf: "picture_as_pdf",
 };
 
 /**
@@ -157,7 +160,7 @@ const ORDER = [
   "IconPalette", "IconTranslate", "IconRegex", "IconChangelog", "IconHistory",
   "IconBell", "IconPin", "IconDevices", "IconBolt", "IconUndo", "IconCopy",
   "IconEyedropper", "IconDownload", "IconVolume",
-  "IconReceiptLong", "IconApi", "IconRestartAlt", "IconMenuBook",
+  "IconReceiptLong", "IconApi", "IconRestartAlt", "IconMenuBook", "IconPictureAsPdf",
 ];
 
 interface Geometry { inner: string; viewBox: string }

@@ -284,6 +284,36 @@ const helpEntries: Record<string, HelpEntry> = {
       "field under Scheduled settings.",
     ],
   },
+  pdf: {
+    usage: "ocx pdf <inspect|metadata|split|merge|extract|reorder|rotate> ...",
+    summary: "Inspect, split, merge, extract, reorder, rotate and edit metadata on local PDF files.",
+    details: [
+      "inspect <path>            Page count, per-page size/rotation, metadata, and capability boundaries",
+      "                          (not-a-pdf/malformed/encrypted/bounds-exceeded) — the same disclosure the",
+      "                          dashboard's PDF tools page shows before any write.",
+      "metadata read <path>      Print title/author/subject/keywords/creator/producer/dates.",
+      "metadata write <path> --destination <path> [--title ...] [--author ...] ...",
+      "                          Write only the fields given; every other field is left exactly as it was.",
+      "split <path> --ranges 1-2,3-5 --destinations a.pdf,b.pdf",
+      "                          One output file per range, in the same order as --ranges/--destinations.",
+      "merge --sources a.pdf,b.pdf --destination out.pdf",
+      "                          Concatenate every source's pages, in the order given.",
+      "extract <path> --pages 3,1,2 --destination out.pdf",
+      "                          Pull the listed pages into one new PDF, in the order listed (repeats allowed).",
+      "reorder <path> --order 3,1,2 --destination out.pdf",
+      "                          Every existing page exactly once, in the new order.",
+      "rotate <path> --rotations 1:90,2:180 --destination out.pdf [--relative]",
+      "                          Set (or, with --relative, add to) each listed page's rotation.",
+      "",
+      "Every mutating command requires --acknowledge-signed when the source carries a digital signature —",
+      "pdf-lib cannot preserve one, so an edit always invalidates it, and this flag is the caller confirming",
+      "it saw that disclosure. Encrypted sources are refused outright: there is no password-input channel.",
+      "Every write is atomic and is reopened from disk to confirm the actual page order, count, rotation",
+      "and metadata match the request before the command reports success; a mismatch deletes the output",
+      "and reports the exact failure. Local-machine-gated like ocx export data --open-vscode: refused the",
+      "instant the proxy is reachable from the LAN.",
+    ],
+  },
   logs: { usage: "ocx logs [filters] [--follow] [--json|--jsonl]", summary: "Alias of ocx observe logs." },
   usage: { usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", summary: "Alias of ocx observe usage." },
   storage: { usage: "ocx storage [--json]", summary: "Alias of ocx observe storage." },
@@ -433,6 +463,7 @@ Usage:
   ocx observe <sub>           Logs, usage, storage, memory, and debug data
   ocx narrator <sub>          Narrator voices and speech (installed voices; --edge adds Microsoft's)
   ocx schedule <sub>          Headless checks for scheduled-settings rules (status|test-api|test-ha|ha-token)
+  ocx pdf <sub>               Inspect, split, merge, extract, reorder, rotate, edit metadata on local PDFs
   ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply

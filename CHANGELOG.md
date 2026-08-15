@@ -6,6 +6,12 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- feat(pdf): inspect, split, merge, extract, reorder, rotate and edit metadata for local PDF files, with a bounded worker sandbox and post-write reopen validation
+- feat(cli): add `ocx pdf` as the headless counterpart to the new PDF tools page
+- docs(guides): document PDF tools, its capability disclosures and its reopen-validation contract
+
+## Unreleased
+
 - feat(gui): move a tab into a group from an anchored picker
 - docs(gui): document tab groups and the four tab searches
 

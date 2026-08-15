@@ -80,6 +80,7 @@ describe("headless GUI parity CLI", () => {
       // browser-only state (see src/cli/schedule.ts).
       ["/api/schedule", "ocx schedule"],
       ["/api/school-mode", "ocx school-mode"],
+      ["/api/pdf", "ocx pdf"],
       ["/api/changelog", "ocx changelog"],
       ["/api/combos", "ocx combo"],
       ["/api/debug", "ocx debug/observe"],
