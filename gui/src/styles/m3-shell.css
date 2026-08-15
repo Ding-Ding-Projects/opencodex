@@ -673,6 +673,36 @@ html[data-viewport-preview] .m3-app {
 }
 .m3-menu-item:hover { background: var(--m3-surface-container-highest); }
 .m3-menu-item svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+
+/* The keyboard-shortcut column, per `MenuItem.tsx`.
+
+   `margin-inline-start: auto` rather than a reserved grid column: the row is a
+   flex line whose icon may or may not be there, and a column would put an empty
+   gutter on every item that has no shortcut — which is exactly the placeholder
+   the rule forbids. Pushed to the end instead, so it is right-aligned when it
+   exists and occupies nothing when it does not.
+
+   `end` rather than `right`, and `padding-inline-start` rather than `-left`, so
+   the column lands on the correct side under a right-to-left locale. */
+.m3-menu-shortcut {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  padding-inline-start: 16px;
+  font-size: var(--t-label-m);
+  /* The notation is read as a unit rather than as prose; tabular figures keep
+     `F10` and `F9` the same width so a column of them does not shimmer. */
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+  text-align: end;
+  white-space: nowrap;
+}
+/* The overflow menu's rows are `.m3-tab`, not `.m3-menu-item`: a stretch-aligned
+   flex line whose children are full-height buttons. Without this the notation
+   would sit against the top edge of a 40px row instead of beside the ✕ it
+   belongs to. The `.m3-tab-btn` beside it already grows, so the auto margin
+   above has nothing to push against and the chip simply follows the label. */
+.m3-tab > .m3-menu-shortcut { align-self: center; padding-inline: 4px; }
+
 .m3-menu-heading {
   padding: 8px 12px 4px;
   font-size: var(--t-label-m);

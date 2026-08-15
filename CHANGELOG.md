@@ -3,6 +3,14 @@
 Generated from release tags by `bun scripts/generate-changelog.ts`.
 Preview tags are omitted. The dashboard reads this file through `/api/changelog`.
 
+## Unreleased
+
+Hand-written until the next release tag exists. The generator rebuilds this file
+from tags and takes each entry from a commit subject, so these lines are absorbed
+into their release section — not lost — the next time it runs.
+
+- feat(gui): show every context-menu item's keyboard shortcut from one binding registry
+
 ## 2.7.42 — 2026-07-28
 
 - fix(ci): tighten issue-quality soft-pass structure gate

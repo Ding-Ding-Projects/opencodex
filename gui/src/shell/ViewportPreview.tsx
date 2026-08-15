@@ -53,6 +53,7 @@ import {
   useViewportPreview,
 } from "../theme/viewport-preview";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
+import { MenuItem } from "./MenuItem";
 
 interface PreviewOption {
   id: string;
@@ -202,13 +203,15 @@ export default function ViewportPreview() {
           >
             <div className="m3-menu-heading" id="viewport-menu-heading">{t("viewport.menuTitle")}</div>
             <div role="menu" aria-labelledby="viewport-menu-heading">
+              {/* Each row picks an emulated width. No keyboard binding reaches
+                  one, so none prints a shortcut — and the pixel figure beside
+                  the label is data about the choice, not a key to press, which
+                  is why it keeps its own class rather than the shortcut column's. */}
               {OPTIONS.map(option => (
-                <button
+                <MenuItem
                   key={option.id}
-                  type="button"
                   role="menuitemradio"
                   aria-checked={option.width === preview}
-                  className="m3-menu-item"
                   onClick={() => choose(option.width)}
                 >
                   <span style={{ flex: "1 1 auto", fontWeight: option.width === preview ? 600 : 400 }}>
@@ -217,7 +220,7 @@ export default function ViewportPreview() {
                   {option.width !== null && (
                     <span className="m3-preview-px">{t("viewport.px", { width: option.width })}</span>
                   )}
-                </button>
+                </MenuItem>
               ))}
             </div>
             <p className="m3-preview-note">{t("viewport.note")}</p>

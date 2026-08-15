@@ -35,6 +35,8 @@ import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
 import { ELEMENT_SELECTORS, FONT_CHOICES, elementSelectorFor } from "../theme/m3";
 import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
 import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
+import { MenuItem } from "./MenuItem";
+import { matchesShortcut } from "./shortcuts";
 import type { TKey } from "../i18n/shared";
 
 /**
@@ -264,7 +266,7 @@ export default function ElementAppearanceHost({ children }: { children: ReactNod
     // have, so it is wired once here rather than per surface.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+      if (!matchesShortcut("contextMenu", event)) return;
       const node = (document.activeElement as HTMLElement | null) ?? null;
       if (node?.closest("[data-element-style-editor], [data-appearance-menu]")) return;
       if (inTopLayerModal(node)) return;
@@ -444,18 +446,18 @@ function AppearanceChainMenu(
         resultCount={filter.visible.length}
       />
       <MenuFilterStatus matcher={filter.matcher} query={filter.query} resultCount={filter.visible.length} />
+      {/* No `shortcut` on any row, and that is the honest state rather than an
+          oversight. Shift+F10 and the Menu key *open* this menu; nothing
+          activates a row of it, and the one press that reaches an editor
+          directly does so only when the chain holds a single target — which is
+          precisely the case where this menu is never shown. Showing a chord here
+          would be advertising a key that lands on the menu, not on the row. */}
       {filter.visible.map(entry => (
-        <button
-          key={entry.id}
-          type="button"
-          role="menuitem"
-          className="m3-menu-item"
-          onClick={() => onPick(entry)}
-        >
+        <MenuItem key={entry.id} role="menuitem" onClick={() => onPick(entry)}>
           {entry === menu.chain[0]
             ? phrase("appearance.editElement", nameOf(entry))
             : phrase("appearance.editContainer", nameOf(entry))}
-        </button>
+        </MenuItem>
       ))}
     </div>
   );
