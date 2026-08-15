@@ -9,10 +9,11 @@ is a small, deliberately bounded surface built on [pdf-lib](https://pdf-lib.js.o
 JavaScript library with no native bindings and no network calls of its own, so it ships inside the
 installed app and works with the network unplugged.
 
-This is **not** the universal file converter the project's completeness inventory also names. That
-is a separate, still-unbuilt surface with a categorized adapter catalogue covering images, audio,
-video, archives and structured data alongside PDF. PDF tools is built so that converter can adopt
-these operations later, but it does not attempt to be it.
+This is **not** the [universal file converter](/guides/file-converter/) the project's completeness
+inventory also names, though the two are now connected: the converter's categorized adapter
+catalogue lists Documents/PDF as its one enabled family, and a PDF detected there hands off straight
+to this page rather than re-implementing these seven operations a second time. PDF tools remains the
+one real implementation; the converter is a second door into it, not a second copy of it.
 
 ## The one property every write shares: it is proven, not assumed
 

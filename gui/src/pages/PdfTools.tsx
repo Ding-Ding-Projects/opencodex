@@ -32,6 +32,7 @@ import { SearchField } from "../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { useT, type TKey } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
+import { takeHandoffSourceFromUrl } from "../lib/converter-handoff";
 
 type Operation = "inspect" | "split" | "merge" | "extract" | "reorder" | "rotate" | "metadata";
 
@@ -177,7 +178,10 @@ export default function PdfTools({ apiBase }: { apiBase: string }) {
   const { notify } = useNotifications();
 
   const [blocked, setBlocked] = useState<string | null>(null);
-  const [sourcePath, setSourcePath] = useState("");
+  // Prefills from the converter catalogue's "Open in PDF Tools" hand-off
+  // (`lib/converter-handoff.ts`), exactly once, then falls back to empty —
+  // the same one-shot hash-param pattern `lib/mobile-pairing.ts` uses.
+  const [sourcePath, setSourcePath] = useState(() => takeHandoffSourceFromUrl() ?? "");
   const [operation, setOperation] = useState<Operation>("inspect");
 
   const [inspectBusy, setInspectBusy] = useState(false);

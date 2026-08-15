@@ -1130,6 +1130,11 @@ switch (command) {
     process.exitCode = await handlePdfCommand(args.slice(1));
     break;
   }
+  case "convert": {
+    const { handleConvertCommand } = await import("./converter");
+    process.exitCode = await handleConvertCommand(args.slice(1));
+    break;
+  }
   case "access": {
     const { handleAccessCommand } = await import("./access");
     process.exitCode = await handleAccessCommand(args.slice(1));

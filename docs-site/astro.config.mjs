@@ -211,6 +211,7 @@ export default defineConfig({
             { label: "Sub-agent Surface", translations: { ko: "서브에이전트 서피스", "zh-CN": "子代理界面", ru: "Интерфейс подагентов", ja: "サブエージェントサーフェス" }, slug: "guides/sub-agent-surface" },
             { label: "Export & Bulk Actions", translations: { ko: "내보내기 & 일괄 작업", "zh-CN": "导出与批量操作", ru: "Экспорт и массовые действия", ja: "エクスポート & 一括操作" }, slug: "guides/export-and-bulk-actions" },
             { label: "PDF Tools", translations: { ko: "PDF 도구", "zh-CN": "PDF 工具", ru: "Инструменты PDF", ja: "PDF ツール" }, slug: "guides/pdf-tools" },
+            { label: "File Converter", translations: { ko: "파일 변환기", "zh-CN": "文件转换器", ru: "Конвертер файлов", ja: "ファイル変換ツール" }, slug: "guides/file-converter" },
             { label: "Super express release", translations: { ko: "슈퍼 익스프레스 릴리스", "zh-CN": "超级快速发布", ru: "Суперэкспресс-релиз", ja: "スーパーエクスプレスリリース" }, slug: "guides/super-express-release" },
           ],
         },

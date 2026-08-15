@@ -314,6 +314,21 @@ const helpEntries: Record<string, HelpEntry> = {
       "instant the proxy is reachable from the LAN.",
     ],
   },
+  convert: {
+    usage: "ocx convert <catalog|detect> ...",
+    summary: "The universal file converter's categorized adapter catalogue and byte-level file detection.",
+    details: [
+      "catalog                    Every known format across all eight categories, and whether it is bundled",
+      "                          and enabled right now or disabled with its exact missing dependency.",
+      "detect <path>               Byte-level detection of a local file — magic numbers and bounded text",
+      "                          heuristics only, never a filename extension or claimed content-type.",
+      "",
+      "Only the Documents/PDF family is actually enabled today, adopting the seven operations ocx pdf",
+      "already implements (see 'ocx pdf'). Every other category is listed honestly as disabled, naming",
+      "the real dependency it is missing, rather than hidden from the catalogue. Local-machine-gated like",
+      "ocx pdf: refused the instant the proxy is reachable from the LAN.",
+    ],
+  },
   logs: { usage: "ocx logs [filters] [--follow] [--json|--jsonl]", summary: "Alias of ocx observe logs." },
   usage: { usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", summary: "Alias of ocx observe usage." },
   storage: { usage: "ocx storage [--json]", summary: "Alias of ocx observe storage." },
@@ -464,6 +479,7 @@ Usage:
   ocx narrator <sub>          Narrator voices and speech (installed voices; --edge adds Microsoft's)
   ocx schedule <sub>          Headless checks for scheduled-settings rules (status|test-api|test-ha|ha-token)
   ocx pdf <sub>               Inspect, split, merge, extract, reorder, rotate, edit metadata on local PDFs
+  ocx convert <sub>           File converter catalogue and byte-level detection (catalog|detect)
   ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply
