@@ -21,6 +21,15 @@ import { jsonToXml, xmlToJson } from "./xml-convert";
 
 export type StructuredFormat = "json" | "csv" | "tsv" | "xml";
 
+/**
+ * Why a conversion did not happen at all — parallel to `PdfBoundary` in
+ * `../pdf-tools/types.ts`. `"lossy-not-acknowledged"` is this module's
+ * equivalent of PDF's signed-source refusal: the destination format always
+ * loses information (see `delimited.ts`/`xml-convert.ts`'s own module
+ * headers) and the caller has not yet supplied `acknowledgeLossy: true`.
+ */
+export type StructuredBoundary = "too-large" | "malformed" | "unsupported" | "bomb-suspected" | "lossy-not-acknowledged";
+
 export interface StructuredConversionOutcome {
   ok: boolean;
   path?: string;
@@ -199,16 +208,25 @@ function writeTextAtomically(destPath: string, text: string): { ok: true; bytesW
 
 /**
  * Read `sourcePath` as `sourceFormat`, convert to `destFormat`, and write the
- * result to `destPath` atomically. Every lossy or metadata-changing step is
- * disclosed in the returned `notes` — the caller is expected to have shown
- * that disclosure and gotten the user's go-ahead before this runs, exactly
- * as the PDF family requires `acknowledgeSigned` before a mutating write.
+ * result to `destPath` atomically.
+ *
+ * Every lossy step is enforced here, not merely disclosed: when the produced
+ * output is marked `lossy`, this refuses to write it — boundary
+ * `"lossy-not-acknowledged"` — unless `acknowledgeLossy` is `true`. That
+ * mirrors `../pdf-tools/operations.ts`'s `assertWritable`, which refuses a
+ * signed source's mutation until `acknowledgeSigned: true` is supplied: the
+ * disclosure lives in the *service*, so `ocx convert` and a direct call to
+ * `/api/converter/convert-structured` are held to the same "disclose before
+ * it runs" rule the GUI's own toggle only *reflected* until now — the GUI
+ * cannot be the enforcement, because nothing stops a caller from skipping it
+ * entirely.
  */
 export function convertStructuredDataAtPath(
   sourcePath: string,
   sourceFormat: StructuredFormat,
   destPath: string,
   destFormat: StructuredFormat,
+  acknowledgeLossy?: boolean,
 ): StructuredConversionOutcome {
   const source = readSourceText(sourcePath);
   if (!source.ok || source.text === undefined) return { ok: false, error: source.error ?? "the source could not be read" };
@@ -218,6 +236,17 @@ export function convertStructuredDataAtPath(
 
   const serialized = serializeFromJsonValue(parsed.value, destFormat);
   if (!serialized.ok || serialized.text === undefined) return { ok: false, error: serialized.error ?? "the value could not be serialized" };
+
+  if (serialized.lossy && !acknowledgeLossy) {
+    const noteText = serialized.notes?.length ? serialized.notes.join("; ") : "type information is not preserved";
+    return {
+      ok: false,
+      boundary: "lossy-not-acknowledged" satisfies StructuredBoundary,
+      lossy: true,
+      notes: serialized.notes,
+      error: `converting to ${destFormat} loses information (${noteText}) — retry with acknowledgeLossy: true once you have shown the user that disclosure`,
+    };
+  }
 
   const written = writeTextAtomically(destPath, serialized.text);
   if (!written.ok) return { ok: false, error: written.error };

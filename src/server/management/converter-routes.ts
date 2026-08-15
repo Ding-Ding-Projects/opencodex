@@ -18,7 +18,7 @@
  * - GET  /api/converter/catalog             -> ConverterCatalog
  * - POST /api/converter/detect              { path } -> DetectedSource
  * - POST /api/converter/extract-zip         { path, destination } -> ExtractZipAtPathResult
- * - POST /api/converter/convert-structured  { path, sourceFormat, destination, destFormat } -> StructuredConversionOutcome
+ * - POST /api/converter/convert-structured  { path, sourceFormat, destination, destFormat, acknowledgeLossy? } -> StructuredConversionOutcome
  */
 import { isAbsolute } from "node:path";
 import { extractZipAtPath } from "../../lib/converter/archive-service";
@@ -84,14 +84,19 @@ export async function handleConverterRoutes(ctx: ManagementContext): Promise<Res
   }
 
   if (url.pathname === "/api/converter/convert-structured" && req.method === "POST") {
-    let body: { path?: unknown; sourceFormat?: unknown; destination?: unknown; destFormat?: unknown };
+    let body: { path?: unknown; sourceFormat?: unknown; destination?: unknown; destFormat?: unknown; acknowledgeLossy?: unknown };
     try { body = await req.json(); } catch { return badRequest(ctx, "invalid JSON body"); }
     if (!isAbsolutePathField(body.path)) return badRequest(ctx, "path must be an absolute path");
     if (!isStructuredFormat(body.sourceFormat)) return badRequest(ctx, "sourceFormat must be one of json, csv, tsv, xml");
     if (!isAbsolutePathField(body.destination)) return badRequest(ctx, "destination must be an absolute path");
     if (!isStructuredFormat(body.destFormat)) return badRequest(ctx, "destFormat must be one of json, csv, tsv, xml");
-    const result = convertStructuredDataAtPath(body.path, body.sourceFormat, body.destination, body.destFormat);
-    if (!result.ok) return jsonResponse({ error: result.error, boundary: result.boundary }, UNPROCESSABLE, req, config);
+    if (body.acknowledgeLossy !== undefined && typeof body.acknowledgeLossy !== "boolean") {
+      return badRequest(ctx, "acknowledgeLossy must be a boolean");
+    }
+    const result = convertStructuredDataAtPath(
+      body.path, body.sourceFormat, body.destination, body.destFormat, body.acknowledgeLossy as boolean | undefined,
+    );
+    if (!result.ok) return jsonResponse({ error: result.error, boundary: result.boundary, lossy: result.lossy, notes: result.notes }, UNPROCESSABLE, req, config);
     return jsonResponse(result, 200, req, config);
   }
 

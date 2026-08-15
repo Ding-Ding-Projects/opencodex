@@ -195,7 +195,7 @@ describe("/api/converter/convert-structured", () => {
     writeFileSync(src, JSON.stringify([{ name: "Ada", role: "engineer" }]));
     const dest = join(dir, "out.csv");
     const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
-      path: src, sourceFormat: "json", destination: dest, destFormat: "csv",
+      path: src, sourceFormat: "json", destination: dest, destFormat: "csv", acknowledgeLossy: true,
     }));
     expect(res?.status).toBe(200);
     const body = await res!.json() as { ok: boolean; path: string; lossy: boolean; notes?: string[] };
@@ -204,6 +204,35 @@ describe("/api/converter/convert-structured", () => {
     expect(body.notes?.length).toBeGreaterThan(0);
     expect(existsSync(dest)).toBe(true);
     expect(readFileSync(dest, "utf-8")).toContain("Ada,engineer");
+  });
+
+  test("refuses a lossy conversion through the route with 422 lossy-not-acknowledged when acknowledgeLossy is omitted — the route/service enforces this itself, not only the GUI's own toggle", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify([{ name: "Ada", role: "engineer" }]));
+    const dest = join(dir, "out.csv");
+    const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
+      path: src, sourceFormat: "json", destination: dest, destFormat: "csv",
+    }));
+    expect(res?.status).toBe(422);
+    const body = await res!.json() as { error: string; boundary: string; lossy?: boolean };
+    expect(body.boundary).toBe("lossy-not-acknowledged");
+    expect(body.error).toContain("acknowledgeLossy: true");
+    expect(existsSync(dest)).toBe(false);
+  });
+
+  test("rejects a non-boolean acknowledgeLossy with 400, before any file is touched", async () => {
+    listeningOn("127.0.0.1");
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify([{ name: "Ada" }]));
+    const dest = join(dir, "out.csv");
+    const res = await handleConverterRoutes(ctx("/api/converter/convert-structured", "POST", {
+      path: src, sourceFormat: "json", destination: dest, destFormat: "csv", acknowledgeLossy: "yes",
+    }));
+    expect(res?.status).toBe(400);
+    expect(existsSync(dest)).toBe(false);
   });
 
   test("converts a real CSV file to JSON end to end through the route", async () => {

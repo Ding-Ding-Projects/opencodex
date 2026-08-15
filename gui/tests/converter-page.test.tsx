@@ -335,7 +335,10 @@ test("a lossy target format shows its exact disclosure and gates Convert behind 
 
   expect(runRequests).toEqual([{
     path: "/api/converter/convert-structured",
-    body: { path: "C:\\Users\\me\\data.json", sourceFormat: "json", destination: "C:\\Users\\me\\out.csv", destFormat: "csv" },
+    // The toggle's acknowledgement actually has to reach the server — the
+    // service is what enforces it (boundary lossy-not-acknowledged), not
+    // merely this button's disabled state.
+    body: { path: "C:\\Users\\me\\data.json", sourceFormat: "json", destination: "C:\\Users\\me\\out.csv", destFormat: "csv", acknowledgeLossy: true },
   }]);
   expect(container.textContent).toContain("Converted json to csv, wrote C:\\Users\\me\\out.csv");
 

@@ -8,6 +8,14 @@
  * pathologically deep value must not crash the process), and — the property
  * only a real filesystem can prove — that a write which fails validation
  * never leaves a partial or wrong file at the destination.
+ *
+ * "convertStructuredDataAtPath: the lossy acknowledgement is enforced here"
+ * below proves the correctness fix this file exists to cover: the service
+ * itself refuses to write a lossy conversion without `acknowledgeLossy:
+ * true`, the same way `../pdf-tools/operations.ts`'s `assertWritable`
+ * refuses a signed source without `acknowledgeSigned: true` — a caller that
+ * skips the GUI's toggle entirely (a direct route call, `ocx convert`) can
+ * no longer produce a silent lossy write.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -32,7 +40,7 @@ describe("convertStructuredDataAtPath: the real happy paths", () => {
     writeFileSync(src, JSON.stringify([{ name: "Ada", role: "engineer" }, { name: "Alan", role: "mathematician" }]));
     const dest = join(dir, "out.csv");
 
-    const result = convertStructuredDataAtPath(src, "json", dest, "csv");
+    const result = convertStructuredDataAtPath(src, "json", dest, "csv", true);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.lossy).toBe(true);
@@ -135,8 +143,85 @@ describe("convertStructuredDataAtPath: the failure paths", () => {
     writeFileSync(src, JSON.stringify([{ a: 1 }]));
     const destDir = join(dir, "already-a-directory");
     mkdirSync(destDir);
-    const result = convertStructuredDataAtPath(src, "json", destDir, "csv");
+    // acknowledgeLossy: true — this test's whole point is proving the
+    // existing-directory refusal, which only fires once the write is
+    // actually attempted; without the acknowledgement the lossy-not-
+    // acknowledged refusal above it would fire first and this would prove
+    // nothing about the directory check.
+    const result = convertStructuredDataAtPath(src, "json", destDir, "csv", true);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("convertStructuredDataAtPath: the lossy acknowledgement is enforced here", () => {
+  test("refuses a lossy conversion (json -> csv) without acknowledgeLossy, and writes nothing", () => {
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify([{ name: "Ada" }]));
+    const dest = join(dir, "out.csv");
+
+    const result = convertStructuredDataAtPath(src, "json", dest, "csv");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.boundary).toBe("lossy-not-acknowledged");
+    expect(result.error).toContain("acknowledgeLossy: true");
+    expect(existsSync(dest)).toBe(false);
+  });
+
+  test("refuses explicitly with acknowledgeLossy: false, exactly like omitting it", () => {
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify([{ name: "Ada" }]));
+    const dest = join(dir, "out.csv");
+
+    const result = convertStructuredDataAtPath(src, "json", dest, "csv", false);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.boundary).toBe("lossy-not-acknowledged");
+  });
+
+  test("proceeds and writes once acknowledgeLossy: true is supplied — the exact same conversion as above, only acknowledged", () => {
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify([{ name: "Ada" }]));
+    const dest = join(dir, "out.csv");
+
+    const result = convertStructuredDataAtPath(src, "json", dest, "csv", true);
+    expect(result.ok).toBe(true);
+    expect(existsSync(dest)).toBe(true);
+  });
+
+  test("json -> xml is refused without acknowledgement too — every lossy destination format is covered, not only CSV", () => {
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify({ greeting: "hi" }));
+    const dest = join(dir, "out.xml");
+
+    const result = convertStructuredDataAtPath(src, "json", dest, "xml");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.boundary).toBe("lossy-not-acknowledged");
+    expect(existsSync(dest)).toBe(false);
+  });
+
+  test("json -> json is never refused for lack of acknowledgement — the pivot format converting to itself is not lossy", () => {
+    const dir = tempDir();
+    const src = join(dir, "in.json");
+    writeFileSync(src, JSON.stringify({ a: 1 }));
+    const dest = join(dir, "out.json");
+
+    const result = convertStructuredDataAtPath(src, "json", dest, "json");
+    expect(result.ok).toBe(true);
+  });
+
+  test("csv -> json is never refused for lack of acknowledgement — converting into the non-lossy pivot format needs no disclosure", () => {
+    const dir = tempDir();
+    const src = join(dir, "in.csv");
+    writeFileSync(src, "a,b\r\n1,2\r\n");
+    const dest = join(dir, "out.json");
+
+    const result = convertStructuredDataAtPath(src, "csv", dest, "json");
+    expect(result.ok).toBe(true);
   });
 });
 
@@ -151,7 +236,7 @@ describe("convertStructuredDataAtPath: atomic write proof", () => {
     writeFileSync(src, JSON.stringify(source));
     const dest = join(dir, "out.csv");
 
-    const result = convertStructuredDataAtPath(src, "json", dest, "csv");
+    const result = convertStructuredDataAtPath(src, "json", dest, "csv", true);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const onDisk = readFileSync(dest, "utf-8");
@@ -166,7 +251,7 @@ describe("convertStructuredDataAtPath: atomic write proof", () => {
 
     const src = join(dir, "bad.json");
     writeFileSync(src, "not json at all {{{");
-    const result = convertStructuredDataAtPath(src, "json", dest, "csv");
+    const result = convertStructuredDataAtPath(src, "json", dest, "csv", true);
     expect(result.ok).toBe(false);
     // The original file is completely untouched — no temp file swapped in,
     // no truncation.
