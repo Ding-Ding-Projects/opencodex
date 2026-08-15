@@ -142,6 +142,10 @@ const MAP: Record<string, string> = {
   IconDataObject: "data_object",
   IconUpload: "upload",
   IconPlaylistAdd: "playlist_add",
+  // The streaming chat surface's nav glyph — upstream's literal name for a
+  // conversation bubble, distinct from `IconBot` (Subagents' single machine
+  // glyph) and from `IconSparkle` (Claude's own nav row).
+  IconChat: "chat",
 };
 
 /**
@@ -181,6 +185,7 @@ const ORDER = [
   "IconNetworkCheck",
   "IconSyncAlt", "IconImage", "IconAudioFile", "IconVideoFile", "IconFolderZip",
   "IconTableChart", "IconCode", "IconDataObject", "IconUpload", "IconPlaylistAdd",
+  "IconChat",
 ];
 
 interface Geometry { inner: string; viewBox: string }

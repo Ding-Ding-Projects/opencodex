@@ -25,8 +25,12 @@
  * guarantee. The queue survives a restart of this app on its own — see
  * `resume` below.
  *
- * The streaming chat surface and allowlisted harness launch remain separate,
- * still-`absent` contracts (`docs/FEATURE-INVENTORY.md`, slice 8).
+ * The streaming chat surface now lives on its own page (`OllamaChat.tsx`,
+ * reached from the header action below and from the shared nav) rather than
+ * being folded into this already-large manager screen — a session list,
+ * transcript, composer and per-session settings deserve their own surface
+ * rather than one more card here. The allowlisted harness launch remains a
+ * separate, still-`absent` contract (`docs/FEATURE-INVENTORY.md`, slice 8).
  *
  * ## Server-authored diagnostic text stays in English
  *
@@ -45,7 +49,7 @@ import type { BadgeTone } from "../shell/badge-tone";
 import { SearchField } from "../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import {
-  IconArrowDown, IconArrowUp, IconCheckCircle, IconDownload, IconError, IconGauge, IconHardDrive,
+  IconArrowDown, IconArrowUp, IconChat, IconCheckCircle, IconDownload, IconError, IconGauge, IconHardDrive,
   IconList, IconNetworkCheck, IconPower, IconRefresh, IconRestartAlt, IconSweep, IconTrash, IconX,
 } from "../icons";
 import { useI18n } from "../i18n/shared";
@@ -53,6 +57,7 @@ import type { TFn, TKey } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import { useConfirm } from "../shell/confirm-context";
 import { formatBytes } from "../format-bytes";
+import { hashRouteFor } from "../app-routing";
 
 type OllamaHealthState = "healthy" | "missing" | "stopped" | "unhealthy" | "offline";
 
@@ -592,7 +597,11 @@ export default function Ollama({ apiBase }: { apiBase: string }) {
 
   return (
     <div className="m3-stack">
-      <Card title={t("ollama.title")} subtitle={t("ollama.subtitle")}>
+      <Card
+        title={t("ollama.title")}
+        subtitle={t("ollama.subtitle")}
+        actions={<a className="m3-btn m3-btn--filled" href={hashRouteFor("ollama-chat")}><IconChat width={16} height={16} /> {t("ollama.openChat")}</a>}
+      >
         {error && <Banner tone="error">{error}</Banner>}
 
         {health && (() => {

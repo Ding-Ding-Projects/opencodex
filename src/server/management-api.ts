@@ -77,6 +77,7 @@ import { handlePdfRoutes } from "./management/pdf-routes";
 import { handleConverterRoutes } from "./management/converter-routes";
 import { handleConverterQueueRoutes } from "./management/converter-queue-routes";
 import { handleModelRuntimeRoutes } from "./management/model-runtime-routes";
+import { handleModelRuntimeChatRoutes } from "./management/model-runtime-chat-routes";
 import { handleDownloadRoutes } from "./management/download-routes";
 import type { ManagementContext } from "./management/context";
 export type { ManagementApiDeps } from "./management/context";
@@ -205,6 +206,7 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleConverterRoutes(ctx))
     ??     (await handleConverterQueueRoutes(ctx))
     ??     (await handleModelRuntimeRoutes(ctx))
+    ??     (await handleModelRuntimeChatRoutes(ctx))
     ??     (await handleDownloadRoutes(ctx));
   if (routed) return routed;
 

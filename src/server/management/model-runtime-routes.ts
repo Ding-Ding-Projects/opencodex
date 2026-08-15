@@ -27,8 +27,10 @@
  * NOT gated — it never triggers a network call or resumes anything, it only
  * reports whatever is already in memory, the same as health/catalog.
  *
- * Streaming chat and allowlisted harness launch remain explicitly out of
- * scope for this surface — see `docs/FEATURE-INVENTORY.md`'s Ollama row for
+ * Streaming chat now lives at `/api/model-runtime/chat/*`
+ * (`model-runtime-chat-routes.ts`) rather than being folded into this file.
+ * The allowlisted harness launch remains explicitly out of scope for this
+ * surface — see `docs/FEATURE-INVENTORY.md`'s Ollama row for
  * why they are separate lanes rather than a half-built stub here.
  */
 

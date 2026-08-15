@@ -1,7 +1,7 @@
 /** Nav order, icon and label key for every page. Mirrors `PAGES` in the design prototype. */
 
 import {
-  IconActivity, IconApi, IconBell, IconBolt, IconBot, IconBoxes, IconChangelog, IconClock,
+  IconActivity, IconApi, IconBell, IconBolt, IconBot, IconBoxes, IconChangelog, IconChat, IconClock,
   IconDevices, IconDownload, IconGauge, IconGrid, IconHardDrive, IconHistory, IconKey, IconLock, IconMenuBook, IconPalette,
   IconPictureAsPdf, IconReceiptLong, IconRegex, IconRestartAlt, IconServer, IconShuffle, IconSliders,
   IconSparkle, IconSyncAlt, IconTerminal, IconTranslate,
@@ -47,6 +47,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   pdf: IconPictureAsPdf,
   converter: IconSyncAlt,
   ollama: IconGauge,
+  "ollama-chat": IconChat,
   downloads: IconDownload,
 };
 
@@ -81,6 +82,7 @@ const TKEYS: Record<Page, TKey> = {
   pdf: "nav.pdf",
   converter: "nav.converter",
   ollama: "nav.ollama",
+  "ollama-chat": "nav.ollamaChat",
   downloads: "nav.downloads",
 };
 
@@ -89,7 +91,7 @@ const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
   "appearance", "language", "schedule", "regex", "changelog", "docs", "history", "notifications",
-  "network", "locks", "authenticator", "pdf", "converter", "ollama", "downloads", "settings", "terminal", "mobile",
+  "network", "locks", "authenticator", "pdf", "converter", "ollama", "ollama-chat", "downloads", "settings", "terminal", "mobile",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({
