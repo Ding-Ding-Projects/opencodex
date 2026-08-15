@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { IconKey, IconLock, IconPause, IconPlay, IconRefresh } from "../icons";
+import { Banner } from "../shell/m3-ui";
 import QuotaBars from "./QuotaBars";
 import { CodexTicketBadge } from "./codex-account-pool-helpers";
 import {
@@ -195,20 +196,26 @@ export function CodexAccountPoolLoadStates({
       {loadState === "loading" && accountsCount === 0 && (
         <p className="m3-card-sub" role="status" style={{ marginBottom: "var(--sp-3)" }}>{t("pws.accountsLoading")}</p>
       )}
+      {/* Banner, not a hand-rolled row. It already carries the error tone pair,
+          sets role="alert" for that tone by itself, and has an `action` slot for
+          exactly this retry button -- so the local copy of
+          --m3-error-container / --m3-on-error-container was a second source of
+          truth for a treatment the shared component already owns. Two
+          design-parity audits flagged it independently; this is the last of
+          them. The margin stays inline because .m3-banner sets none of its own
+          and this one sits above sibling content inside the card. */}
       {loadState === "error" && (
-        <div
-          className="m3-row m3-row--split"
-          role="alert"
-          style={{
-            marginBottom: "var(--sp-3)",
-            padding: "var(--sp-2)",
-            borderRadius: "var(--r-m)",
-            background: "var(--m3-error-container)",
-            color: "var(--m3-on-error-container)",
-          }}
-        >
-          <span>{t("codexAuth.loadFailed")}</span>
-          <button type="button" className="m3-btn m3-btn--text" onClick={onRetry}>{t("pws.retryAccounts")}</button>
+        <div style={{ marginBottom: "var(--sp-3)" }}>
+          <Banner
+            tone="error"
+            action={
+              <button type="button" className="m3-btn m3-btn--text" onClick={onRetry}>
+                {t("pws.retryAccounts")}
+              </button>
+            }
+          >
+            {t("codexAuth.loadFailed")}
+          </Banner>
         </div>
       )}
     </>
