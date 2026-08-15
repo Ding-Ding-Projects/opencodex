@@ -35,12 +35,13 @@ import { useAppearanceTarget } from "./use-appearance-target";
 import TabSearchPanel from "./TabSearchPanel";
 import { useTabRegistry } from "./use-tab-registry";
 import {
-  IconChevron, IconCopy, IconFilter, IconPalette, IconPin, IconPlus, IconSearch, IconTrash, IconX,
+  IconBoxes, IconChevron, IconCopy, IconFilter, IconPalette, IconPin, IconPlus, IconSearch, IconTrash, IconX,
 } from "../icons";
 import { useT } from "../i18n/shared";
 import { PAGE_META, PAGE_META_BY_ID } from "./page-meta";
 import { SearchField } from "./RegexBuilderButton";
 import TabAppearanceEditor from "./TabAppearanceEditor";
+import TabGroupPicker from "./TabGroupPicker";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import { Button, Segmented, TextInput, Toggle } from "./m3-ui";
 import {
@@ -63,7 +64,7 @@ interface GroupTarget { id: string; x: number; y: number }
 type ContextAction =
   | "close" | "others" | "right" | "pin" | "duplicate"
   | "containing" | "notContaining" | "appearance"
-  | "newGroup" | "ungroupTab";
+  | "newGroup" | "moveToGroup" | "ungroupTab";
 
 /** Every command the group-header menu offers. */
 type GroupAction = "collapse" | "rename" | "appearance" | "ungroup";
@@ -86,6 +87,11 @@ interface BulkTarget { id: string; invert: boolean; x: number; y: number }
 /** An open appearance editor. The anchor is captured at open time rather than
  * read from the button map during render, so it cannot be a stale element. */
 interface StyleTarget { id: string; anchor: HTMLElement | null }
+
+/** An open "Move… into group…" picker: the tab it moves, and the button it sits
+ * beside. Same shape and same reasoning as `StyleTarget` — the anchor is the tab
+ * button captured when the menu entry was activated, not a render-time lookup. */
+type MoveTarget = StyleTarget;
 
 /**
  * The badge has no class of its own in `m3-shell.css`, so it is styled from the
@@ -171,6 +177,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const [bulkPinned, setBulkPinned] = useState(false);
   const [bulkSize, setBulkSize] = useState({ width: 0, height: 0 });
   const [styleTarget, setStyleTarget] = useState<StyleTarget | null>(null);
+  const [movePicker, setMovePicker] = useState<MoveTarget | null>(null);
   const [groupStyleTarget, setGroupStyleTarget] = useState<StyleTarget | null>(null);
   const [groupMenu, setGroupMenu] = useState<GroupTarget | null>(null);
   const [groupMenuSize, setGroupMenuSize] = useState({ width: 0, height: 0 });
@@ -379,6 +386,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     setOverflowOpen(false);
     setBulk(null);
     setStyleTarget(null);
+    setMovePicker(null);
     setContextIndex(0);
     setContext({ id, x, y });
   };
@@ -397,7 +405,33 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const openStyleEditor = (id: string) => {
     setContext(null);
     setBulk(null);
+    setMovePicker(null);
     setStyleTarget({ id, anchor: tabButtons.current.get(id) ?? null });
+  };
+
+  /**
+   * "Move… into group…" — one menu entry opening one surface, never a list of
+   * groups grown into the menu itself.
+   *
+   * The anchor is read from the button map here, in an event handler, and then
+   * held as state: the picker outlives the menu that opened it, so a render-time
+   * lookup would be reading a ref map for an element the menu no longer has any
+   * claim on. See `TabGroupPicker.tsx` for what the surface itself promises.
+   */
+  const openMovePicker = (id: string) => {
+    setContext(null);
+    setBulk(null);
+    setStyleTarget(null);
+    setMovePicker({ id, anchor: tabButtons.current.get(id) ?? null });
+  };
+
+  /** Close the picker and hand focus back to the tab it was opened from —
+   * whether the tab moved or the user changed their mind. A panel that closes
+   * and drops focus to `<body>` restarts a keyboard user at the top of the page. */
+  const closeMovePicker = () => {
+    const anchor = movePicker?.anchor;
+    setMovePicker(null);
+    anchor?.focus();
   };
 
   const openBulkClose = (id: string, invert: boolean, x: number, y: number) => {
@@ -460,6 +494,12 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
       // collapsible group cannot promise that. `assignGroup` refuses it too, so
       // offering it enabled would be a menu entry that silently does nothing.
       { action: "newGroup", label: t("tabs.newGroup"), Icon: IconPlus, disabled: contextTab.pinned },
+      // One entry with an ellipsis, and it opens a picker. Never one entry per
+      // group: that list grows without bound and pushes the entries below it off
+      // the bottom of a menu whose shape is supposed to be stable. Enabled with
+      // no groups yet, because the picker's own create path is the way to the
+      // first one; disabled for a pinned tab, which `assignGroup` refuses.
+      { action: "moveToGroup", label: t("tabs.moveToGroup"), Icon: IconBoxes, disabled: contextTab.pinned },
       { action: "ungroupTab", label: t("tabs.removeFromGroup"), Icon: IconX, disabled: !contextTab.groupId },
     ]
     : [];
@@ -510,6 +550,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
         setContext(null);
         setNaming({ groupId: null, tabId: id, value: "" });
         break;
+      case "moveToGroup":
+        openMovePicker(id);
+        break;
       case "ungroupTab":
         tabs.assignGroup(id, undefined);
         setContext(null);
@@ -540,6 +583,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     setBulk(null);
     setContext(null);
     setStyleTarget(null);
+    setMovePicker(null);
     setGroupStyleTarget(null);
     setGroupMenu({ id, x, y });
   };
@@ -1278,6 +1322,45 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
             // fresh lookup: the anchor is the tab button this editor was opened
             // from, and it is already here, held as state.
             onClose={() => { const anchor = styleTarget.anchor; setStyleTarget(null); anchor?.focus(); }}
+          />
+        );
+      })()}
+
+      {movePicker && (() => {
+        const tab = tabs.tabs.find(item => item.id === movePicker.id);
+        if (!tab) return null;
+        return (
+          <TabGroupPicker
+            groups={tabs.groups}
+            memberCount={id => tabs.tabs.filter(item => item.groupId === id).length}
+            tabLabel={labelOf(tab)}
+            currentGroupId={tab.groupId}
+            anchor={movePicker.anchor}
+            onPick={groupId => {
+              /* `assignGroup` never touches `collapsed`, so a move into a
+                 collapsed group leaves it collapsed — which is what the user
+                 asked for by collapsing it, and what the picker's "Collapsed"
+                 tag warns about before the choice is made.
+                 The consequence is a focus problem, not a state one:
+                 `visibleTabs` keeps a collapsed group's members off the strip
+                 unless one of them is the tab in front, so moving any OTHER tab
+                 there unmounts the very button this panel is anchored to.
+                 Focusing it would land on a detached node and drop focus to
+                 `<body>` a frame later, so focus follows the active tab instead
+                 — the same route the close and duplicate paths already take for
+                 the same reason. */
+              const collapsed = tabs.groups.find(group => group.id === groupId)?.collapsed;
+              const vanishes = !!collapsed && tab.id !== tabs.activeTab;
+              tabs.assignGroup(tab.id, groupId);
+              if (!vanishes) { closeMovePicker(); return; }
+              focusActiveOnCommit.current = true;
+              setMovePicker(null);
+            }}
+            /* One call, not create-then-assign: `createGroup` takes its members,
+               so the group and its first tab land in a single commit and there is
+               no frame in which an empty group exists. */
+            onCreate={name => { tabs.createGroup(name, [tab.id]); closeMovePicker(); }}
+            onClose={closeMovePicker}
           />
         );
       })()}
