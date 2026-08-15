@@ -109,7 +109,12 @@ test("search reaches article BODY content, not only the title and description", 
   });
   const titles = [...container.querySelectorAll(".m3-docs-item-title")].map(e => e.textContent).sort();
   expect(titles).toEqual(["Claude Code", "Providers"]);
-  expect(container.textContent).toContain("2 of 28 articles");
+  // The "2" is the meaningful half of this assertion — the filtered match
+  // count for a body-text-only query. The total is a fact about how many
+  // articles are bundled, not about this test; derive it from the real
+  // corpus so a new guide never breaks this test while a wrong filtered
+  // count still would.
+  expect(container.textContent).toContain(`2 of ${DOCS_ARTICLES.length} articles`);
   await act(async () => { root.unmount(); });
 });
 
