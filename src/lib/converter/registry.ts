@@ -8,30 +8,45 @@
  * and disabled, naming its exact missing dependency, rather than disappearing
  * from the catalogue.
  *
- * ## Why only Documents/PDF is enabled
+ * ## Three bundled families now, each proven at runtime rather than claimed
  *
- * `bundled: true` is never a static claim in this file — it is computed by
- * `isPdfLibReachable()` below, which actually resolves the `pdf-lib` module at
- * call time. That is real, if partial, proof: `pdf-lib` is a `dependencies`
- * entry (not `devDependencies`), so it ships inside the installed app; it has
- * no native `.node` bindings anywhere under it and no `fetch(...)` calls other
- * than doc-comment examples (confirmed by reading the installed package for
- * the PDF-tools work this module adopts); and `src/lib/pdf-tools/` already
- * runs 70 tests against it with no network and no external process. What this
- * check does NOT prove is that a *packaged* installer's `asar` actually
- * contains it — nobody has opened a built `.exe` to look, which is recorded
- * as an open gap in `docs/FEATURE-INVENTORY.md` for the PDF-tools row and
- * inherited honestly here rather than re-claimed as settled.
+ * `bundled: true` is never a static assertion in this file for *any* format —
+ * every one is computed by actually exercising the real adapter at catalogue-
+ * build time and checking a real result, never by reading `package.json` or
+ * trusting a comment:
  *
- * Every other category has no such dependency anywhere in `package.json`.
- * Wiring a PATH-discovered `ffmpeg`, a network image service, or a
- * developer-machine-only tool would make those formats *appear* enabled while
- * violating the one rule this catalogue exists to enforce, so they are marked
- * disabled with the exact reason instead. Building real bundled adapters for
- * images, audio, video and the rest is future work, not a shortcut taken here.
+ *  - **Documents/PDF** (`isPdfLibReachable`): a genuine `await import("pdf-lib")`,
+ *    checking `PDFDocument` really is a function. `pdf-lib` is a production
+ *    dependency with no native bindings and no network calls, and
+ *    `src/lib/pdf-tools/` runs 70 tests against it. What this does NOT prove
+ *    is that a *packaged* installer's `asar` actually contains it — nobody has
+ *    opened a built `.exe` to look, recorded as an open gap in
+ *    `docs/FEATURE-INVENTORY.md`'s PDF-tools row and inherited honestly here.
+ *  - **Archives** (`isZipExtractReachable`): builds a tiny real ZIP with the
+ *    existing `export-archive.ts` writer, extracts it with this module's own
+ *    `zip-extract.ts`, and checks the round-tripped bytes actually match. Both
+ *    halves are dependency-free — `node:zlib` alone — so this family can never
+ *    be silently unavailable the way a PATH-discovered tool could be.
+ *  - **Structured Data** (`isStructuredDataReachable`): runs a real JSON→CSV→JSON
+ *    and JSON→XML→JSON round trip through `delimited.ts` and `xml-convert.ts`
+ *    and checks the results. Also dependency-free.
+ *
+ * Every other category still has no bundled dependency anywhere in
+ * `package.json`. Wiring a PATH-discovered `ffmpeg`, a network image service,
+ * or a developer-machine-only tool would make those formats *appear* enabled
+ * while violating the one rule this catalogue exists to enforce, so they stay
+ * disabled with the exact reason instead. Images, audio, video and the rest
+ * remain future work, not a shortcut taken here. 7-Zip is the one archive
+ * format that is *not* a near-term candidate: the existing 7z support spawns
+ * the real executable off `PATH`, which this contract's rule 1 explicitly
+ * forbids counting as bundled.
  */
 
+import { buildZip } from "../export-archive";
+import { delimitedToJson, jsonToDelimited } from "./delimited";
 import type { AdapterCategoryId, CatalogCategory, CatalogFormat, ConverterCatalog } from "./types";
+import { jsonToXml, xmlToJson } from "./xml-convert";
+import { extractZip } from "./zip-extract";
 
 /** English category labels. The GUI overrides these with localized copy keyed by `id`; the CLI and raw API consumers use these as-is. */
 const CATEGORY_LABELS: Record<AdapterCategoryId, string> = {
@@ -88,35 +103,22 @@ function staticFormats(): CatalogFormat[] {
     { id: "avi", label: "AVI", category: "video", extensions: ["avi"], bundled: false, missingDependency: "a video transcoder", reason: NO_TRANSCODER },
 
     // ---- archives ----
-    // ZIP has a real, dependency-free precedent in this codebase
-    // (`src/lib/export-archive.ts`, written on `node:zlib` alone), which is
-    // exactly the kind of bundled-and-offline implementation rule 1 wants —
-    // named honestly rather than silently repeated as "missing dependency"
-    // when the truer reason is "not wired into this contract yet".
-    {
-      id: "zip", label: "ZIP", category: "archives", extensions: ["zip"], bundled: false,
-      missingDependency: "extraction support and converter-contract wiring (bounds, sandboxing, disclosure, output validation)",
-      reason: "src/lib/export-archive.ts already writes ZIP on node:zlib with no external dependency, but it only creates archives — it has no extraction path — and it has not been wired through this converter's sandbox/bounds/disclosure contract yet. Reusing it here is real future work, not a missing-dependency gap.",
-    },
+    // ZIP itself is added separately below, once its bundled status is known
+    // — the same pattern PDF already uses. 7z, tar and gzip stay static:
     {
       id: "7z", label: "7-Zip", category: "archives", extensions: ["7z"], bundled: false,
       missingDependency: "a bundled, offline 7-Zip implementation",
       reason: "the existing 7z support in src/lib/export-archive.ts spawns the real 7-Zip executable discovered on PATH, which rule 1 explicitly forbids counting as \"bundled\"",
     },
     { id: "tar", label: "TAR", category: "archives", extensions: ["tar"], bundled: false, missingDependency: "a bundled tar reader/writer", reason: NOT_BUILT_YET },
-    { id: "gzip", label: "gzip", category: "archives", extensions: ["gz"], bundled: false, missingDependency: "converter-contract wiring around node:zlib's gzip codec", reason: "node:zlib can gzip/gunzip with no external dependency, exactly like the ZIP writer above, but nothing wires it through this contract's bounds/sandbox/disclosure/output-validation pipeline yet" },
+    { id: "gzip", label: "gzip", category: "archives", extensions: ["gz"], bundled: false, missingDependency: "converter-contract wiring around node:zlib's gzip codec", reason: "node:zlib can gzip/gunzip with no external dependency, exactly like the ZIP extractor, but nothing wires it through this contract's bounds/sandbox/disclosure/output-validation pipeline yet" },
 
     // ---- structured-data ----
-    // These are the strongest near-term candidates for a second bundled family:
-    // JSON is native to the runtime, and CSV/TSV/YAML/XML/TOML need only a
-    // hand-written, bounded parser/serializer — no external dependency at all,
-    // the same shape as the ZIP writer already in this codebase. None of that
-    // exists yet, so they stay honestly disabled rather than half-built.
-    { id: "csv", label: "CSV", category: "structured-data", extensions: ["csv"], bundled: false, missingDependency: "a bounded, sandboxed CSV<->JSON adapter", reason: NOT_BUILT_YET },
-    { id: "tsv", label: "TSV", category: "structured-data", extensions: ["tsv"], bundled: false, missingDependency: "a bounded, sandboxed TSV<->JSON adapter", reason: NOT_BUILT_YET },
-    { id: "json", label: "JSON", category: "structured-data", extensions: ["json"], bundled: false, missingDependency: "a bounded, sandboxed JSON<->{CSV,YAML,XML,TOML} adapter", reason: NOT_BUILT_YET },
+    // JSON, CSV, TSV and XML are added separately below, once their bundled
+    // status is known. YAML and TOML are the two structured-data formats
+    // still genuinely unbuilt — unlike their JSON/CSV/TSV/XML siblings, no
+    // bounded parser/serializer exists yet for either.
     { id: "yaml", label: "YAML", category: "structured-data", extensions: ["yaml", "yml"], bundled: false, missingDependency: "a bundled YAML parser/serializer", reason: NOT_BUILT_YET },
-    { id: "xml", label: "XML", category: "structured-data", extensions: ["xml"], bundled: false, missingDependency: "a bundled XML parser/serializer", reason: NOT_BUILT_YET },
     { id: "toml", label: "TOML", category: "structured-data", extensions: ["toml"], bundled: false, missingDependency: "a bundled TOML parser/serializer", reason: NOT_BUILT_YET },
 
     // ---- code-text ----
@@ -146,15 +148,69 @@ export async function isPdfLibReachable(): Promise<boolean> {
   }
 }
 
+const ZIP_CANARY_TEXT = "archives-adapter-canary";
+
+/**
+ * Real, runtime proof that ZIP extraction actually works right now: builds a
+ * genuine ZIP with the existing `export-archive.ts` writer, extracts it with
+ * this module's own `zip-extract.ts`, and checks the round-tripped bytes
+ * actually match — never a static `true`.
+ */
+export async function isZipExtractReachable(): Promise<boolean> {
+  try {
+    const canary = buildZip([{ path: "canary.txt", data: new TextEncoder().encode(ZIP_CANARY_TEXT) }]);
+    const result = extractZip(canary);
+    return result.ok
+      && result.entries.length === 1
+      && result.entries[0].path === "canary.txt"
+      && new TextDecoder().decode(result.entries[0].data) === ZIP_CANARY_TEXT;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Real, runtime proof that the structured-data adapters actually work right
+ * now: a JSON→CSV→JSON round trip through `delimited.ts` and a JSON→XML→JSON
+ * round trip through `xml-convert.ts`, checking real results rather than
+ * asserting a static `true`.
+ */
+export async function isStructuredDataReachable(): Promise<boolean> {
+  try {
+    const csv = jsonToDelimited([{ a: 1, b: "x" }], "csv");
+    if (!csv.ok) return false;
+    const csvBack = delimitedToJson(csv.text, "csv");
+    if (!csvBack.ok || csvBack.value.length !== 1) return false;
+    if (csvBack.value[0].a !== "1" || csvBack.value[0].b !== "x") return false;
+
+    const xml = jsonToXml({ greeting: "hi" });
+    if (!xml.ok) return false;
+    const xmlBack = xmlToJson(xml.text);
+    if (!xmlBack.ok) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface BuildCatalogOptions {
   /** Injectable for tests — the default performs the real dynamic import above. */
   checkPdfLib?: () => Promise<boolean>;
+  /** Injectable for tests — the default runs the real ZIP round trip above. */
+  checkZipExtract?: () => Promise<boolean>;
+  /** Injectable for tests — the default runs the real structured-data round trip above. */
+  checkStructuredData?: () => Promise<boolean>;
 }
 
 /** Build the full catalogue, computing every `bundled` flag fresh rather than caching a stale verdict. */
 export async function buildConverterCatalog(options: BuildCatalogOptions = {}): Promise<ConverterCatalog> {
   const checkPdfLib = options.checkPdfLib ?? isPdfLibReachable;
-  const pdfBundled = await checkPdfLib();
+  const checkZipExtract = options.checkZipExtract ?? isZipExtractReachable;
+  const checkStructuredData = options.checkStructuredData ?? isStructuredDataReachable;
+  const [pdfBundled, zipBundled, structuredBundled] = await Promise.all([
+    checkPdfLib(), checkZipExtract(), checkStructuredData(),
+  ]);
 
   const pdfFormat: CatalogFormat = pdfBundled
     ? {
@@ -169,7 +225,65 @@ export async function buildConverterCatalog(options: BuildCatalogOptions = {}): 
         reason: "pdf-lib could not be resolved in this process at catalogue build time, so the PDF family is disabled even though it is normally bundled — this should not happen outside a broken install",
       };
 
-  const all = [pdfFormat, ...staticFormats()];
+  const zipFormat: CatalogFormat = zipBundled
+    ? {
+        id: "zip", label: "ZIP", category: "archives", extensions: ["zip"],
+        bundled: true, operations: ["extract"],
+      }
+    : {
+        id: "zip", label: "ZIP", category: "archives", extensions: ["zip"],
+        bundled: false, missingDependency: "a working ZIP extractor",
+        reason: "the bundled ZIP extractor's own round-trip self-test failed at catalogue build time, so this family is disabled even though it is normally bundled — this should not happen outside a broken install",
+      };
+
+  const csvFormat: CatalogFormat = structuredBundled
+    ? {
+        id: "csv", label: "CSV", category: "structured-data", extensions: ["csv"],
+        bundled: true, operations: ["to-json", "from-json"], lossy: true,
+        lossyNote: "every cell becomes plain text — numbers, booleans and null all lose their JSON type and read back as strings; nested objects/arrays are JSON-stringified into their cell",
+      }
+    : {
+        id: "csv", label: "CSV", category: "structured-data", extensions: ["csv"],
+        bundled: false, missingDependency: "a working CSV<->JSON adapter",
+        reason: "the bundled structured-data adapters' own round-trip self-test failed at catalogue build time, so this format is disabled even though it is normally bundled — this should not happen outside a broken install",
+      };
+
+  const tsvFormat: CatalogFormat = structuredBundled
+    ? {
+        id: "tsv", label: "TSV", category: "structured-data", extensions: ["tsv"],
+        bundled: true, operations: ["to-json", "from-json"], lossy: true,
+        lossyNote: "every cell becomes plain text — numbers, booleans and null all lose their JSON type and read back as strings; nested objects/arrays are JSON-stringified into their cell",
+      }
+    : {
+        id: "tsv", label: "TSV", category: "structured-data", extensions: ["tsv"],
+        bundled: false, missingDependency: "a working TSV<->JSON adapter",
+        reason: "the bundled structured-data adapters' own round-trip self-test failed at catalogue build time, so this format is disabled even though it is normally bundled — this should not happen outside a broken install",
+      };
+
+  const jsonFormat: CatalogFormat = structuredBundled
+    ? {
+        id: "json", label: "JSON", category: "structured-data", extensions: ["json"],
+        bundled: true, operations: ["to-csv", "to-tsv", "to-xml", "from-csv", "from-tsv", "from-xml"],
+      }
+    : {
+        id: "json", label: "JSON", category: "structured-data", extensions: ["json"],
+        bundled: false, missingDependency: "a working structured-data adapter set",
+        reason: "the bundled structured-data adapters' own round-trip self-test failed at catalogue build time, so this format is disabled even though it is normally bundled — this should not happen outside a broken install",
+      };
+
+  const xmlFormat: CatalogFormat = structuredBundled
+    ? {
+        id: "xml", label: "XML", category: "structured-data", extensions: ["xml"],
+        bundled: true, operations: ["to-json", "from-json"], lossy: true,
+        lossyNote: "attributes are never emitted when converting JSON to XML and every scalar becomes plain element text, so types and the array-vs-single-value distinction are not preserved through a round trip; reading real XML back also discards insignificant whitespace and does not guarantee attribute ordering",
+      }
+    : {
+        id: "xml", label: "XML", category: "structured-data", extensions: ["xml"],
+        bundled: false, missingDependency: "a working XML<->JSON adapter",
+        reason: "the bundled structured-data adapters' own round-trip self-test failed at catalogue build time, so this format is disabled even though it is normally bundled — this should not happen outside a broken install",
+      };
+
+  const all = [pdfFormat, zipFormat, csvFormat, tsvFormat, jsonFormat, xmlFormat, ...staticFormats()];
 
   const categories: CatalogCategory[] = CATEGORY_ORDER.map(id => ({
     id,

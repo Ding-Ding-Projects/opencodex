@@ -8,7 +8,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { ADAPTER_CATEGORY_IDS } from "../src/lib/converter/types";
-import { buildConverterCatalog, isPdfLibReachable } from "../src/lib/converter/registry";
+import {
+  buildConverterCatalog,
+  isPdfLibReachable,
+  isStructuredDataReachable,
+  isZipExtractReachable,
+} from "../src/lib/converter/registry";
 
 describe("buildConverterCatalog", () => {
   test("carries all eight required categories, in order, and no more", async () => {
@@ -32,7 +37,11 @@ describe("buildConverterCatalog", () => {
   });
 
   test("PDF is disabled, honestly, if pdf-lib fails to resolve — bundled status is never assumed", async () => {
-    const catalog = await buildConverterCatalog({ checkPdfLib: async () => false });
+    const catalog = await buildConverterCatalog({
+      checkPdfLib: async () => false,
+      checkZipExtract: async () => false,
+      checkStructuredData: async () => false,
+    });
     const pdf = catalog.categories.find(c => c.id === "documents-pdf")!.formats.find(f => f.id === "pdf")!;
     expect(pdf.bundled).toBe(false);
     expect(pdf.reason).toBeTruthy();
@@ -50,12 +59,30 @@ describe("buildConverterCatalog", () => {
   });
 
   test("no format is enabled unless it is genuinely proven bundled — never a PATH-discovered or network tool", async () => {
-    const catalog = await buildConverterCatalog({ checkPdfLib: async () => true });
+    const catalog = await buildConverterCatalog({
+      checkPdfLib: async () => true,
+      checkZipExtract: async () => true,
+      checkStructuredData: async () => true,
+    });
     const enabled = catalog.categories.flatMap(c => c.formats).filter(f => f.bundled);
-    // Exactly the PDF family today. A second entry here without real proof
-    // (a resolvable, dependency-declared, offline module) would be exactly
-    // the false "enabled" the contract forbids.
-    expect(enabled.map(f => f.id)).toEqual(["pdf"]);
+    // Exactly the three proven-bundled families today. A new entry here
+    // without real proof (a resolvable, dependency-declared, offline
+    // adapter) would be exactly the false "enabled" the contract forbids.
+    expect(new Set(enabled.map(f => f.id))).toEqual(new Set(["pdf", "zip", "csv", "tsv", "json", "xml"]));
+  });
+
+  test("archives and structured-data stay honestly disabled when their own self-test fails", async () => {
+    const catalog = await buildConverterCatalog({
+      checkPdfLib: async () => true,
+      checkZipExtract: async () => false,
+      checkStructuredData: async () => false,
+    });
+    const zip = catalog.categories.find(c => c.id === "archives")!.formats.find(f => f.id === "zip")!;
+    const csv = catalog.categories.find(c => c.id === "structured-data")!.formats.find(f => f.id === "csv")!;
+    expect(zip.bundled).toBe(false);
+    expect(zip.reason).toBeTruthy();
+    expect(csv.bundled).toBe(false);
+    expect(csv.reason).toBeTruthy();
   });
 
   test("totalFormats and enabledFormats agree with the categories actually returned", async () => {
@@ -78,5 +105,17 @@ describe("isPdfLibReachable — the real, uninjected check", () => {
     // default check genuinely imports the real dependency rather than always
     // reporting true.
     expect(await isPdfLibReachable()).toBe(true);
+  });
+});
+
+describe("isZipExtractReachable — the real, uninjected check", () => {
+  test("actually builds and extracts a real ZIP in this process", async () => {
+    expect(await isZipExtractReachable()).toBe(true);
+  });
+});
+
+describe("isStructuredDataReachable — the real, uninjected check", () => {
+  test("actually round-trips real JSON<->CSV and JSON<->XML conversions in this process", async () => {
+    expect(await isStructuredDataReachable()).toBe(true);
   });
 });
