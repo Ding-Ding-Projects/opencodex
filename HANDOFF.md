@@ -139,9 +139,39 @@ effect of a survey.
 
 - **Three contracts remain absent**: the universal file converter, the Ollama suite manager, and
   browser-extension download capture. These are products rather than missing switches.
-- **Screenshots have not been replaced.** The proxy fix unblocks the harness — it now gets past the
-  step it died on, four runs out of four against a real packaged build — but the capture matrix
-  itself has not been regenerated. That is the next obvious task and it is now unblocked.
+- **Screenshots have not been replaced, and the reason is unresolved.** Two careful attempts got
+  *opposite* results, and the difference between them is the most useful thing recorded here.
+
+  | Attempt | Route | Result |
+  | --- | --- | --- |
+  | Capture run, real profile | packaged Electron on a headless desktop | **hung, 2 of 2** — `/healthz` returned 0 bytes throughout |
+  | Capture run, empty profile | same | **succeeded, 1 of 1** |
+  | Repro attempt, synthetic 25 MB profile | `bin/ocx.mjs` spawned as `electron/main.mjs` does | **no freeze**, 864 requests |
+  | Same, at the pre-fix commit `0f51e1942` | same CLI chain | **no freeze**, 15 rounds |
+
+  The last row is what matters. A harness that cannot reproduce the bug **at the commit before the
+  fix** has not shown the bug is gone; it has shown the harness does not reach it. So the negative
+  result is about the route, not about the defect, and the freeze should still be assumed live
+  through the packaged app.
+
+  The plausible mechanism was also disproved on the way: `responses-state.json` is 24.5 MB, but all
+  twelve endpoints the dashboard fires on mount were enumerated and **none of them reaches
+  `/v1/responses`**, which is the only path that loads it. Size alone is not the trigger.
+
+  Leads for whoever continues, in the order they seem worth trying: drive the **real packaged
+  Electron build** rather than the CLI process chain; add a profile with several routed
+  (non-`openai`) providers, which adds concurrent live model-discovery fetches a single-provider
+  fixture never exercises; note that real WHAM responses are 200s with larger bodies while fake
+  tokens get fast 401s, a different timing profile entirely; and note that this app keeps **every
+  previously-opened tab mounted**, so a long-lived profile launches with several tabs each firing
+  their own mount fetches — a materially larger and differently shaped burst than the twelve
+  Dashboard endpoints that were tested.
+
+- **The capture matrix has three real gaps regardless of the freeze.** `scripts/capture-shots.ts`
+  has no `pdf` entry in its `ROUTE_HEADINGS` map, so the PDF tools page is never captured, and
+  `scripts/capture-menus.ts` lists neither the secret-history dialog nor the tab group picker. Even
+  a successful run today would not have covered everything that shipped. `assets/shots/prompt.png`
+  is also an orphan — it matches no target and nothing in the repository references it.
 - **The tab-group picker is unguarded**: no test exercises its filter, keyboard model,
   collapsed-group behaviour or focus return.
 - **The app-rename decoupling is held by construction and by no guard.** What it protects against is
