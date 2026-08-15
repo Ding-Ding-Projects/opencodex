@@ -21,6 +21,7 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 - fix(gui): replace the undefined `--danger` token in CodexPoolStrategySetting and MemoryObservabilityCard with the real M3 error role, which was rendering as a hard-coded red regardless of theme
 - fix(gui): port CodexPoolStrategySetting off legacy `.card`/`.card-sub` markup onto the shared M3 card classes the rest of the Codex Auth screen already uses
 - fix(gui): show a notice's tone, timestamp and source screen in the app bar's notification popover, matching the design instead of title/body alone
+- fix(gui): give the bottom nav's grid item and its label both the `min-width: 0` a grid/flex item never gets by default, so the four labels stop overflowing their own tracks — running into each other with no gap and pushing the fourth off the screen edge — at phone widths in bilingual mode
 Hand-written until the next release tag exists. The generator rebuilds this file
 from tags and takes each entry from a commit subject, so these lines are absorbed
 into their release section — not lost — the next time it runs.
