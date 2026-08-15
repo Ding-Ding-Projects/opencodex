@@ -75,6 +75,7 @@ import { handleAuthenticatorRoutes } from "./management/authenticator-routes";
 import { handleSchoolModeRoutes } from "./management/school-mode-routes";
 import { handlePdfRoutes } from "./management/pdf-routes";
 import { handleConverterRoutes } from "./management/converter-routes";
+import { handleConverterQueueRoutes } from "./management/converter-queue-routes";
 import { handleModelRuntimeRoutes } from "./management/model-runtime-routes";
 import { handleDownloadRoutes } from "./management/download-routes";
 import type { ManagementContext } from "./management/context";
@@ -202,6 +203,7 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleSchoolModeRoutes(ctx))
     ??     (await handlePdfRoutes(ctx))
     ??     (await handleConverterRoutes(ctx))
+    ??     (await handleConverterQueueRoutes(ctx))
     ??     (await handleModelRuntimeRoutes(ctx))
     ??     (await handleDownloadRoutes(ctx));
   if (routed) return routed;

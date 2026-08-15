@@ -318,7 +318,11 @@ export default function Converter({ apiBase }: { apiBase: string }) {
     const result = await callConverterApi<StructuredConversionOutcome>(apiBase, "/api/converter/convert-structured", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path, sourceFormat, destination, destFormat: targetFormat }),
+      // The toggle above only reflects the disclosure to the user — the
+      // service itself is what refuses an unacknowledged lossy conversion
+      // (boundary `lossy-not-acknowledged`), so this has to actually carry
+      // the acknowledgement rather than merely gate the button.
+      body: JSON.stringify({ path, sourceFormat, destination, destFormat: targetFormat, acknowledgeLossy }),
     });
     setRunBusy(false);
     if (!result.ok) {

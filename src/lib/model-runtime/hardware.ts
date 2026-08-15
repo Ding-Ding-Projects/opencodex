@@ -133,7 +133,13 @@ async function detectWindowsGpusViaWmi(): Promise<GpuFact[] | null> {
   return gpus.length ? gpus : null;
 }
 
-async function detectFreeDiskBytes(targetPath: string): Promise<number | null> {
+/**
+ * Exported so other local-disk-bound features (the converter batch queue's
+ * storage-capacity preflight — `src/lib/converter/queue-preflight.ts`) can
+ * reuse the same real, platform-appropriate free-space probe rather than
+ * inventing a second one that could silently disagree with this one.
+ */
+export async function detectFreeDiskBytes(targetPath: string): Promise<number | null> {
   if (currentPlatform() === "win32") {
     const drive = targetPath.slice(0, 2).toUpperCase(); // "C:"
     if (!/^[A-Z]:$/.test(drive)) return null;

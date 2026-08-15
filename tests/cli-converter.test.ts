@@ -4,6 +4,9 @@
  * parity discipline `tests/cli-pdf.test.ts` already established.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { handleConvertCommand } from "../src/cli/converter";
 
 type Recorded = { path: string; method: string; body: unknown };
@@ -158,7 +161,7 @@ describe("ocx convert", () => {
     expect(out.lines.join("\n")).toContain("Refused (malformed): the archive is malformed");
   });
 
-  test("structured sends path, --from, --to and --destination to POST /api/converter/convert-structured", async () => {
+  test("structured sends path, --from, --to and --destination to POST /api/converter/convert-structured, with acknowledgeLossy false by default", async () => {
     const runtime = fakeRuntime(() => ({ body: { ok: true, path: "C:\\out\\a.csv", bytesWritten: 10, lossy: true, notes: ["numbers become plain text"] } }));
     const out = captureConsole();
     let code: number;
@@ -172,8 +175,43 @@ describe("ocx convert", () => {
     expect(runtime.requests).toEqual([{
       path: "/api/converter/convert-structured",
       method: "POST",
-      body: { path: "C:\\docs\\a.json", sourceFormat: "json", destination: "C:\\out\\a.csv", destFormat: "csv" },
+      body: { path: "C:\\docs\\a.json", sourceFormat: "json", destination: "C:\\out\\a.csv", destFormat: "csv", acknowledgeLossy: false },
     }]);
+  });
+
+  test("structured --acknowledge-lossy sets acknowledgeLossy: true on the request body", async () => {
+    const runtime = fakeRuntime(() => ({ body: { ok: true, path: "C:\\out\\a.csv", bytesWritten: 10, lossy: true, notes: [] } }));
+    const out = captureConsole();
+    let code: number;
+    try {
+      code = await handleConvertCommand(
+        ["structured", "C:\\docs\\a.json", "--from", "json", "--to", "csv", "--destination", "C:\\out\\a.csv", "--acknowledge-lossy", "--json"],
+        runtime.deps,
+      );
+    } finally { out.restore(); }
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{
+      path: "/api/converter/convert-structured",
+      method: "POST",
+      body: { path: "C:\\docs\\a.json", sourceFormat: "json", destination: "C:\\out\\a.csv", destFormat: "csv", acknowledgeLossy: true },
+    }]);
+  });
+
+  test("structured surfaces the route's lossy-not-acknowledged refusal rather than a raw 422", async () => {
+    const runtime = fakeRuntime(() => ({
+      status: 422,
+      body: { error: "converting to csv loses information (…) — retry with acknowledgeLossy: true once you have shown the user that disclosure", boundary: "lossy-not-acknowledged" },
+    }));
+    const out = captureConsole();
+    let code: number;
+    try {
+      code = await handleConvertCommand(
+        ["structured", "C:\\docs\\a.json", "--from", "json", "--to", "csv", "--destination", "C:\\out\\a.csv"],
+        runtime.deps,
+      );
+    } finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(out.lines.join("\n")).toContain("Refused (lossy-not-acknowledged)");
   });
 
   test("structured's human-readable output names the conversion and echoes lossy notes", async () => {
@@ -209,6 +247,138 @@ describe("ocx convert", () => {
     const out = captureConsole();
     let code: number;
     try { code = await handleConvertCommand(["structured", "C:\\docs\\a.json", "--from", "json", "--to", "csv"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(runtime.requests).toHaveLength(0);
+  });
+});
+
+describe("ocx convert queue", () => {
+  let dir: string;
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+
+  function jobsFile(jobs: unknown[]): string {
+    dir = mkdtempSync(join(tmpdir(), "ocx-cli-convert-queue-"));
+    const file = join(dir, "jobs.json");
+    writeFileSync(file, JSON.stringify(jobs));
+    return file;
+  }
+
+  test("queue enqueue reads --jobs-file and posts it to POST /api/converter/queue/enqueue", async () => {
+    const file = jobsFile([{ sourcePath: "C:\\a.json", sourceFormat: "json", destPath: "C:\\a.csv", destFormat: "csv", acknowledgeLossy: true }]);
+    const runtime = fakeRuntime(() => ({ body: { ok: true, added: 1, state: { items: [{}] } } }));
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["queue", "enqueue", "--jobs-file", file, "--json"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).toBe(0);
+    expect(runtime.requests).toHaveLength(1);
+    expect(runtime.requests[0]!.path).toBe("/api/converter/queue/enqueue");
+    expect(runtime.requests[0]!.method).toBe("POST");
+    const body = runtime.requests[0]!.body as { jobs: unknown[] };
+    expect(body.jobs).toEqual([{ sourcePath: "C:\\a.json", sourceFormat: "json", destPath: "C:\\a.csv", destFormat: "csv", acknowledgeLossy: true, overwrite: false }]);
+  });
+
+  test("queue enqueue without --jobs-file is a usage error, not a request", async () => {
+    const runtime = fakeRuntime();
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["queue", "enqueue"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  test("queue enqueue with a non-JSON --jobs-file is a usage error, not a request", async () => {
+    dir = mkdtempSync(join(tmpdir(), "ocx-cli-convert-queue-"));
+    const file = join(dir, "jobs.json");
+    writeFileSync(file, "not json at all {{{");
+    const runtime = fakeRuntime();
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["queue", "enqueue", "--jobs-file", file], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  test("queue status reports GET /api/converter/queue's summary in human-readable form", async () => {
+    const runtime = fakeRuntime(() => ({
+      body: { state: { paused: false, items: [] }, summary: { total: 3, queued: 1, converting: 0, converted: 1, skipped: 0, cancelled: 0, failed: 1, outcome: "in-progress" }, concurrency: 3 },
+    }));
+    const out = captureConsole();
+    try { await handleConvertCommand(["queue", "status"], runtime.deps); }
+    finally { out.restore(); }
+    expect(runtime.requests).toEqual([{ path: "/api/converter/queue", method: "GET", body: null }]);
+    expect(out.lines.join("\n")).toContain("3 job(s): 1 queued, 0 converting, 1 converted, 0 skipped, 0 cancelled, 1 failed — in-progress");
+  });
+
+  test("queue pause posts to POST /api/converter/queue/pause and reports the paused summary", async () => {
+    const runtime = fakeRuntime(() => ({ body: { summary: { total: 1, queued: 1, converting: 0, converted: 0, skipped: 0, cancelled: 0, failed: 0, outcome: "paused" } } }));
+    const out = captureConsole();
+    try { await handleConvertCommand(["queue", "pause"], runtime.deps); }
+    finally { out.restore(); }
+    expect(runtime.requests).toEqual([{ path: "/api/converter/queue/pause", method: "POST", body: null }]);
+    expect(out.lines.join("\n")).toContain("(paused)");
+  });
+
+  test("queue resume posts to POST /api/converter/queue/resume-run", async () => {
+    const runtime = fakeRuntime(() => ({ body: { summary: { total: 0, queued: 0, converting: 0, converted: 0, skipped: 0, cancelled: 0, failed: 0, outcome: "empty" } } }));
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["queue", "resume"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{ path: "/api/converter/queue/resume-run", method: "POST", body: null }]);
+  });
+
+  test("queue cancel with no --id sends an empty body (cancel everything pending)", async () => {
+    const runtime = fakeRuntime(() => ({ body: { ok: true, summary: {} } }));
+    const out = captureConsole();
+    try { await handleConvertCommand(["queue", "cancel"], runtime.deps); }
+    finally { out.restore(); }
+    expect(runtime.requests).toEqual([{ path: "/api/converter/queue/cancel", method: "POST", body: {} }]);
+  });
+
+  test("queue cancel --id sends that id", async () => {
+    const runtime = fakeRuntime(() => ({ body: { ok: true, state: {} } }));
+    const out = captureConsole();
+    try { await handleConvertCommand(["queue", "cancel", "--id", "abc-123"], runtime.deps); }
+    finally { out.restore(); }
+    expect(runtime.requests).toEqual([{ path: "/api/converter/queue/cancel", method: "POST", body: { id: "abc-123" } }]);
+  });
+
+  test("queue retry requires --id", async () => {
+    const runtime = fakeRuntime();
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["queue", "retry"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  test("queue retry --id posts to POST /api/converter/queue/retry", async () => {
+    const runtime = fakeRuntime(() => ({ body: { ok: true, state: {} } }));
+    const out = captureConsole();
+    try { await handleConvertCommand(["queue", "retry", "--id", "abc-123"], runtime.deps); }
+    finally { out.restore(); }
+    expect(runtime.requests).toEqual([{ path: "/api/converter/queue/retry", method: "POST", body: { id: "abc-123" } }]);
+  });
+
+  test("queue clear posts to POST /api/converter/queue/clear", async () => {
+    const runtime = fakeRuntime(() => ({ body: { summary: { total: 0, queued: 0, converting: 0, converted: 0, skipped: 0, cancelled: 0, failed: 0, outcome: "empty" } } }));
+    const out = captureConsole();
+    try { await handleConvertCommand(["queue", "clear"], runtime.deps); }
+    finally { out.restore(); }
+    expect(runtime.requests).toEqual([{ path: "/api/converter/queue/clear", method: "POST", body: null }]);
+  });
+
+  test("an unknown queue subcommand is a usage error", async () => {
+    const runtime = fakeRuntime();
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["queue", "nonsense"], runtime.deps); }
     finally { out.restore(); }
     expect(code).not.toBe(0);
     expect(runtime.requests).toHaveLength(0);
