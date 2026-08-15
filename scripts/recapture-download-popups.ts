@@ -30,9 +30,19 @@
  * exact same two popup windows.
  *
  * `defaultDownloadsDir()` is not scoped by `OPENCODEX_HOME` (see
- * `src/lib/downloads/paths.ts`) and always resolves to the OS's real
- * Downloads folder — this script deletes the one file it writes there and
- * verifies it is gone before exiting, every time, success or failure.
+ * `src/lib/downloads/paths.ts`) and always resolves to `os.homedir()`'s real
+ * Downloads folder. Deleting the one file this script writes there and
+ * verifying it is gone (every time, success or failure) is necessary but was
+ * not sufficient: the deletion never undid the fact that the completed
+ * transfer's destination path — the operator's real Windows username inside
+ * it — had already been photographed into `download-complete-popup.png`
+ * before the delete ever ran. `capture-env-privacy.ts`'s
+ * `applyNeutralCaptureHome()`, called below before `os.homedir()` is ever
+ * read, is what actually fixes that: it rehomes this whole process tree onto
+ * `C:\Users\Public\...`, so `defaultDownloadsDir()` resolves to a neutral
+ * path and the pixels never carry the real username in the first place. The
+ * delete-and-verify step stays, unchanged, as real cleanup of a real write
+ * outside the isolated profile — it was just never the privacy fix.
  *
  * Run it: `bun run scripts/recapture-download-popups.ts`
  * (build `gui/dist` first — `cd gui && bun run build`).
@@ -42,6 +52,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { applyNeutralCaptureHome } from "./capture-env-privacy";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]):/, "$1:");
 const OUT = join(ROOT, "assets", "shots");
@@ -51,6 +62,18 @@ const PROXY_PORT = Number(process.env.OCX_RECAPTURE_PORT || 10193);
 const CDP_PORT = Number(process.env.OCX_RECAPTURE_CDP_PORT || 10194);
 
 const RECAPTURE_TAG = "ocx-recapture-popup-fix-test";
+
+/**
+ * Rehome BEFORE `tmpdir()` is touched below — `os.tmpdir()` reads
+ * `TEMP`/`TMP`, which default to the real `C:\Users\<operator>\...\Temp`.
+ * The module doc comment above already names the exact defect this fixes:
+ * `defaultDownloadsDir()` (`src/lib/downloads/paths.ts`) is not scoped by
+ * `OPENCODEX_HOME`, so the "complete" popup's real confirmed transfer wrote
+ * — and this script's own committed `download-complete-popup.png`
+ * photographed — the operator's real Windows username before this line
+ * existed. See `capture-env-privacy.ts` for the full account.
+ */
+const NEUTRAL = applyNeutralCaptureHome("ocx-recapture-privacy-home");
 
 // -------------------------------------------------------------- isolation --
 
@@ -64,6 +87,7 @@ for (const dir of [CAPTURE_HOME, CAPTURE_CODEX_HOME]) mkdirSync(dir, { recursive
 console.log(`isolated OPENCODEX_HOME=${CAPTURE_HOME}`);
 console.log(`isolated CODEX_HOME=${CAPTURE_CODEX_HOME}`);
 console.log(`isolated GROK_HOME=${CAPTURE_GROK_HOME} (left unwritten on purpose)`);
+console.log(`neutral os.homedir()=${NEUTRAL.root} (real Downloads folder now resolves under this, not the real profile)`);
 
 // ---------------------------------------------------------------- electron --
 
@@ -430,10 +454,12 @@ try {
 
   // `defaultDownloadsDir()` is not scoped by OPENCODEX_HOME (see
   // src/lib/downloads/paths.ts) — the confirmed transfer above really did
-  // land in the operator's real Downloads folder. Delete it, and every
-  // "(1)", "(2)", … collision variant a repeated run of this script could
-  // have left behind, then verify none remain.
-  const downloadsDir = join(require("node:os").homedir(), "Downloads");
+  // land in `os.homedir()`'s real Downloads folder, which `NEUTRAL.root`
+  // above has already rehomed to `C:\Users\Public\...` rather than the
+  // operator's real profile. Delete it, and every "(1)", "(2)", … collision
+  // variant a repeated run of this script could have left behind, then
+  // verify none remain.
+  const downloadsDir = NEUTRAL.downloads;
   const leftovers: string[] = [];
   try {
     for (const name of readdirSync(downloadsDir)) {
