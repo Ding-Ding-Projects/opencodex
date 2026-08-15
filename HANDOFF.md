@@ -64,11 +64,18 @@ deserves an installer, and that belongs to the repository owner. The workaround,
 handoff, is `workflow_dispatch` on `ci.yml` for the exact commit.
 
 **An exemption attached to a directory does not travel with its content.** The privacy scan allows
-`/Users/example/` in `docs-site/`, because the CLI reference prints a sample `ocx status` payload
-where an example home path is the placeholder that rule exists to permit. The offline documentation
-browser bundles those articles verbatim into `gui/src/docs/generated-articles.ts`, where the
-exemption no longer applied. It stayed latent only because the generated file was stale and did not
-yet contain the sample; adding a guide regenerated it and an old hole arrived looking like a new one.
+an example macOS home path under `docs-site/`, because the CLI reference prints a sample
+`ocx status` payload and that placeholder is exactly what the rule exists to permit. The offline
+documentation browser bundles those articles verbatim into `gui/src/docs/generated-articles.ts`,
+where the exemption no longer applied — it was written against a directory rather than against the
+content. It stayed latent only because the generated file was stale and did not yet contain the
+sample; adding a guide regenerated it and an old hole arrived looking like a new one.
+
+> This paragraph originally quoted that placeholder literally and **the privacy scan rejected this
+> very file for it** — a root-level document has no exemption, and the scan was right. Left as
+> prose rather than weakening the rule for a piece of documentation: a guard that gets an exception
+> carved out every time it is inconvenient stops being a guard. Describe the placeholder here;
+> the literal form belongs only where the exemption already covers it.
 
 **The framing of a bug report can point at the wrong event entirely.** The screenshot harness could
 not write a single image, and the symptom was "the proxy dies when the renderer reloads". It does
