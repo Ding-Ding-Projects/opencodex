@@ -97,5 +97,6 @@ export const PAGE_META_BY_ID: Record<Page, PageMeta> = Object.fromEntries(
   PAGE_META.map(m => [m.id, m]),
 ) as Record<Page, PageMeta>;
 
-/** The four pages the compact bottom bar shows; everything else lives in the drawer. */
-export const BOTTOM_NAV_PAGES: Page[] = ["dashboard", "codex-auth", "providers", "logs"];
+/** The four pages the compact bottom bar shows; everything else lives in the drawer.
+ *  Mirrors the prototype's `navItems.slice(0, 4)` — the first four entries of `ORDER`. */
+export const BOTTOM_NAV_PAGES: Page[] = ["dashboard", "codex-auth", "providers", "models"];

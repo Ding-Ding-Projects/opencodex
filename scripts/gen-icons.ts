@@ -125,6 +125,9 @@ const MAP: Record<string, string> = {
   // PDF tools' nav glyph. The literal upstream name for exactly this: a document
   // page marked with the format it is being operated on, not a generic file icon.
   IconPictureAsPdf: "picture_as_pdf",
+  // The provider Overview's "Test connection" button. The prototype's own glyph
+  // for exactly this action — a live-signal check, not a generic refresh or link.
+  IconNetworkCheck: "network_check",
 };
 
 /**
@@ -161,6 +164,7 @@ const ORDER = [
   "IconBell", "IconPin", "IconDevices", "IconBolt", "IconUndo", "IconCopy",
   "IconEyedropper", "IconDownload", "IconVolume",
   "IconReceiptLong", "IconApi", "IconRestartAlt", "IconMenuBook", "IconPictureAsPdf",
+  "IconNetworkCheck",
 ];
 
 interface Geometry { inner: string; viewBox: string }

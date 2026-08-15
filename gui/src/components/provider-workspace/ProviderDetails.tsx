@@ -262,6 +262,7 @@ export default function ProviderDetails({
               />
             ) : undefined}
             item={item}
+            apiBase={apiBase}
             usageTotals={usageTotals}
             quotaReport={quotaReport}
             oauthEmail={oauthEmail}
