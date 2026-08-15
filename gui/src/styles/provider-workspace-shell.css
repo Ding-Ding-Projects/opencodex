@@ -671,6 +671,17 @@
   flex-shrink: 0;
 }
 
+/* Connection card action row: Test connection + Edit settings share one line
+   until they wrap, matching the prototype's Connection card. */
+.pws-connection-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.pws-connection-actions > * { margin-top: 0; }
+
 /* Edit settings / View usage links */
 .pws-edit-settings-link,
 .pws-view-usage-link {
@@ -807,7 +818,6 @@
   background: var(--m3-secondary-container);
   color: var(--m3-on-secondary-container);
 }
-.pws-detail-panel:focus { outline: none; }
 
 /* Section blocks */
 /* Every panel body sits on an M3 card surface. */
