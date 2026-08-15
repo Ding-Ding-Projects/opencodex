@@ -95,14 +95,28 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { applyNeutralCaptureHome } from "./capture-env-privacy";
 import { type Rect, toDevicePixels, transientOutOfBounds } from "./capture-transient-bounds";
 
 const ROOT = join(import.meta.dir, "..");
 const OUT = join(ROOT, "assets", "shots");
 const PS_TOOL = join(ROOT, "scripts", "window-tools.ps1");
-const PROFILE = join(ROOT, "node_modules", ".cache", "ocx-capture-profile");
 const PROXY_PORT = Number(process.env.OCX_CAPTURE_PORT || 10188);
 const CDP_PORT = Number(process.env.CDP_PORT || 9223);
+
+/**
+ * Rehome the whole capture run onto `C:\Users\Public\...` BEFORE anything
+ * below derives a path from `os.homedir()`, `LOCALAPPDATA`, or `ROOT` — see
+ * `capture-env-privacy.ts`'s module doc comment for why this exists.
+ * `download-complete-popup.png` and `snackbar.png` shipped the operator's
+ * real Windows username to a public repository because this call was
+ * missing; `storage.png`, `logs.png` and `grok.png` shipped it too, because
+ * `CAPTURE_HOME`/`CAPTURE_CODEX_HOME`/`CAPTURE_GROK_HOME` below used to be
+ * built from `ROOT`, which is the checkout's own real path on disk — itself
+ * under the real profile. Everything derived from `NEUTRAL` instead now.
+ */
+const NEUTRAL = applyNeutralCaptureHome("ocx-capture-privacy-home");
+const PROFILE = join(NEUTRAL.root, "electron-profile");
 
 /**
  * The proxy's own state, isolated the same way `PROFILE` above isolates the
@@ -117,9 +131,15 @@ const CDP_PORT = Number(process.env.CDP_PORT || 9223);
  * (via `src/config.ts`'s `getConfigDir()`) by reading `process.env` itself.
  * Setting it here is what makes the seed and the launched child agree on
  * which directory they mean.
+ *
+ * Built from `NEUTRAL.root`, not `ROOT`: the Storage and Logs & Debug pages
+ * render `OPENCODEX_HOME`/`CODEX_HOME` verbatim, and the Grok page renders
+ * `GROK_HOME`'s config path — a value built from the checkout's real
+ * on-disk path would still leak the operator's username even though it is
+ * never read from `os.homedir()` at all.
  */
-const CAPTURE_HOME = join(ROOT, "node_modules", ".cache", "ocx-capture-home");
-const CAPTURE_CODEX_HOME = join(ROOT, "node_modules", ".cache", "ocx-capture-codex-home");
+const CAPTURE_HOME = join(NEUTRAL.root, "opencodex-home");
+const CAPTURE_CODEX_HOME = join(NEUTRAL.root, "codex-home");
 /**
  * Deliberately never created (see the wipe step below). `injectGrokConfig()`
  * no-ops on a `GROK_HOME` that is not a directory — that is its own
@@ -127,7 +147,7 @@ const CAPTURE_CODEX_HOME = join(ROOT, "node_modules", ".cache", "ocx-capture-cod
  * so pointing it at a path that never exists is the whole fix, regardless of
  * whether the machine actually has Grok installed.
  */
-const CAPTURE_GROK_HOME = join(ROOT, "node_modules", ".cache", "ocx-capture-no-grok-home");
+const CAPTURE_GROK_HOME = join(NEUTRAL.root, "no-grok-home");
 process.env.OPENCODEX_HOME = CAPTURE_HOME;
 process.env.CODEX_HOME = CAPTURE_CODEX_HOME;
 process.env.GROK_HOME = CAPTURE_GROK_HOME;
@@ -744,6 +764,24 @@ terminal.prepare = async () => {
 
 const TAB = ".m3-tab[data-tab-id]";
 
+/**
+ * The filename `download-history`'s seeded record ships as. No committed
+ * script produced `assets/shots/download-history.png` before this — the
+ * original was captured through a real unpacked browser extension in a real
+ * Edge instance, built as a one-off "throwaway orchestrator" per the commit
+ * that added it, and never saved. Reproducing that whole flow just to keep a
+ * screenshot's Downloads history non-empty would be a lot of surface for
+ * very little: the History section renders identically regardless of
+ * whether the record's `source` is `"extension"` or came from a direct API
+ * call, and `recapture-download-popups.ts` already establishes that a real
+ * same-origin `fetch()` through `/api/downloads/capture` is "the SAME way
+ * the extension does" it. So this target seeds one real, real completed
+ * transfer the same way, then captures the already-shipped `downloads`
+ * route showing it — a real transfer through the real engine, just not
+ * through a real browser chrome around it.
+ */
+const DOWNLOAD_HISTORY_FILENAME = "ocx-capture-history-demo.png";
+
 const surfaces: Target[] = [
   {
     id: "mobile",
@@ -854,6 +892,58 @@ const surfaces: Target[] = [
     hash: "dashboard",
     expect: { h1: "Dashboard", transient: "Dim sum time!" },
     note: "The 1%-per-launch surprise, made deterministic. See forceDimSum().",
+  },
+  {
+    id: "download-history",
+    hash: "downloads",
+    expect: { h1: "Downloads", contains: [DOWNLOAD_HISTORY_FILENAME] },
+    prepare: async () => {
+      const id: string = await evaluate(`(async () => {
+        const res = await fetch("/api/downloads/capture", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            url: window.location.origin + "/favicon.png",
+            suggestedFilename: ${lit(DOWNLOAD_HISTORY_FILENAME)},
+            pageUrl: window.location.href,
+            mimeType: "image/png",
+          }),
+        });
+        if (!res.ok) throw new Error("capture failed: " + res.status + " " + await res.text());
+        const record = await res.json();
+        const confirmRes = await fetch("/api/downloads/" + record.id + "/confirm", { method: "POST" });
+        if (!confirmRes.ok) throw new Error("confirm failed: " + confirmRes.status + " " + await confirmRes.text());
+        return record.id;
+      })()`);
+      // A real transfer through the real engine, same as
+      // recapture-download-popups.ts's "complete" popup — poll the real
+      // record rather than assuming a same-origin favicon-sized fetch
+      // finishes instantly.
+      for (let i = 0; i < 40; i++) {
+        const state: string = await evaluate(`(async () => {
+          const res = await fetch(${lit("/api/downloads/")} + ${lit(id)});
+          const record = await res.json();
+          return record.state;
+        })()`);
+        if (state === "completed") break;
+        if (state === "error") throw new Error("download-history seed download errored");
+        await Bun.sleep(150);
+      }
+      // The already-mounted Downloads page fetched its record list before
+      // this record existed and would not otherwise refetch for up to
+      // IDLE_POLL_MS (6s) — press the page's own real Refresh button rather
+      // than waiting out the poll or reaching past the UI into React state.
+      await clickText("button", "Refresh");
+      await settle();
+    },
+    note:
+      "No committed script produced the original of this image — it came from a one-off "
+      + "\"throwaway orchestrator\" (real unpacked browser extension, real Edge instance) that "
+      + "was never saved. This target reproduces the History section with a real completed "
+      + "transfer instead, seeded the same way recapture-download-popups.ts's popups are: a real "
+      + "same-origin fetch through /api/downloads/capture, which is documented there as "
+      + "\"the SAME way the extension does it\" for the History section's own rendering, which "
+      + "does not care whether a record's source was \"extension\" or a direct API call.",
   },
 ];
 
@@ -1130,6 +1220,10 @@ mkdirSync(CAPTURE_HOME, { recursive: true });
 rmSync(CAPTURE_CODEX_HOME, { recursive: true, force: true });
 mkdirSync(CAPTURE_CODEX_HOME, { recursive: true });
 rmSync(CAPTURE_GROK_HOME, { recursive: true, force: true });
+// Wipe the neutral Downloads folder too, so a completed `download-history`
+// capture never accumulates stale files across repeated runs.
+rmSync(NEUTRAL.downloads, { recursive: true, force: true });
+mkdirSync(NEUTRAL.downloads, { recursive: true });
 ensureOcxShim();
 const { seedMinimalCaptureHome, seedRichCaptureHome } = await import("./capture-seed");
 // Minimal (no configured providers) so the `onboarding` target's wizard has
