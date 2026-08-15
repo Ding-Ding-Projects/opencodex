@@ -29,11 +29,19 @@ import {
   removeAuthenticatorEntries,
   removeAuthenticatorEntry,
   removeAuthenticatorGroup,
+  replaceAuthenticatorState,
   toEntryMeta,
   updateAuthenticatorEntry,
   updateAuthenticatorGroup,
   type AuthenticatorEntryMeta,
 } from "../../lib/authenticator-store";
+import {
+  getSecretHistoryRetentionDays,
+  listSecretHistoryEntries,
+  recordSecretHistoryMutation,
+  restoreSecretHistorySnapshot,
+  setSecretHistoryRetentionDays,
+} from "../../lib/secret-history";
 import {
   checkPendingRegistrationCode,
   createPendingRegistration,
@@ -90,6 +98,40 @@ function entryCodeResponse(entry: { secret: string; algorithm: TotpAlgorithm; di
     secondsRemaining: secondsRemaining(entry.period, now),
     serverTime: Date.now(),
   };
+}
+
+/**
+ * Records one TOTP-entry mutation into the secret history: called AFTER the
+ * real mutation on `authenticator.json` already succeeded, and its return
+ * value never unwinds that mutation on failure — see `secret-history.ts`'s
+ * module header. The sensitive payload is always the FULL current state
+ * (entries with secrets, plus groups), not just the one entry that changed,
+ * so a restore can bring back more than a single field; `redacted` carries
+ * the same state with every secret stripped, which is what the history
+ * manager browses and diffs without ever touching the vault key.
+ *
+ * Awaited by every call site (rather than fire-and-forget) specifically so
+ * `historyRecorded`/`historyReason` can ride along in the same response the
+ * GUI already reads — a silent fire-and-forget commit would make the
+ * contract's "fail-safe and VISIBLE" requirement unreachable from the client.
+ */
+async function recordTotpHistory(
+  action: string,
+  changed?: { id: string; issuer: string; account: string },
+): Promise<{ historyRecorded: boolean; historyReason?: string }> {
+  const entries = loadAuthenticatorEntries();
+  const groups = loadAuthenticatorGroups();
+  const result = await recordSecretHistoryMutation({
+    kind: "totp-entry",
+    action,
+    redacted: {
+      entries: entries.map(toEntryMeta),
+      groups,
+      ...(changed ? { changedEntryId: changed.id, changedIssuer: changed.issuer, changedAccount: changed.account } : {}),
+    },
+    sensitive: { entries, groups },
+  });
+  return { historyRecorded: result.recorded, historyReason: result.reason };
 }
 
 export async function handleAuthenticatorRoutes(ctx: ManagementContext): Promise<Response | null> {
@@ -192,7 +234,8 @@ export async function handleAuthenticatorRoutes(ctx: ManagementContext): Promise
       algorithm: reg.algorithm, digits: reg.digits, period: reg.period, groupId: reg.groupId,
     });
     discardPendingRegistration(reg.id);
-    return respond({ entry: toEntryMeta(entry) });
+    const history = await recordTotpHistory("created", { id: entry.id, issuer: entry.issuer, account: entry.account });
+    return respond({ entry: toEntryMeta(entry), ...history });
   }
 
   if (url.pathname === "/api/host/authenticator/pending" && req.method === "DELETE") {
@@ -217,15 +260,19 @@ export async function handleAuthenticatorRoutes(ctx: ManagementContext): Promise
     if (typeof body.order === "number") patch.order = body.order;
     const updated = updateAuthenticatorEntry(id, patch);
     if (!updated) return respond({ error: "entry not found" }, 404);
-    return respond({ entry: toEntryMeta(updated) });
+    const history = await recordTotpHistory("updated", { id: updated.id, issuer: updated.issuer, account: updated.account });
+    return respond({ entry: toEntryMeta(updated), ...history });
   }
 
   if (url.pathname === "/api/host/authenticator/entry" && req.method === "DELETE") {
     const id = url.searchParams.get("id") ?? "";
     if (!id) return respond({ error: "missing id" }, 400);
+    // Read before removing so the redacted "what was deleted" summary can name it.
+    const before = getAuthenticatorEntry(id);
     const removed = removeAuthenticatorEntry(id);
     if (removed === 0) return respond({ error: "entry not found" }, 404);
-    return respond({ ok: true });
+    const history = await recordTotpHistory("removed", before ? { id: before.id, issuer: before.issuer, account: before.account } : undefined);
+    return respond({ ok: true, ...history });
   }
 
   if (url.pathname === "/api/host/authenticator/bulk-delete" && req.method === "POST") {
@@ -234,7 +281,8 @@ export async function handleAuthenticatorRoutes(ctx: ManagementContext): Promise
     const ids = Array.isArray(body.ids) ? body.ids.filter((v): v is string => typeof v === "string") : [];
     if (ids.length === 0) return respond({ error: "ids must be a non-empty array" }, 400);
     const removed = removeAuthenticatorEntries(ids);
-    return respond({ removed, skipped: ids.filter(id => !removed.includes(id)) });
+    const history = removed.length > 0 ? await recordTotpHistory("bulk-removed") : { historyRecorded: true as const };
+    return respond({ removed, skipped: ids.filter(id => !removed.includes(id)), ...history });
   }
 
   if (url.pathname === "/api/host/authenticator/bulk-group" && req.method === "POST") {
@@ -302,6 +350,103 @@ export async function handleAuthenticatorRoutes(ctx: ManagementContext): Promise
       exportedAt: new Date().toISOString(),
       entries: rows,
     });
+  }
+
+  /* -------------------------------------------------------------- secret & display-name history
+   *
+   * These routes carry no server-side credential of their own — this app has
+   * no multi-user auth model, exactly like every other route above. The
+   * password/TOTP gate the contract requires is enforced client-side (the
+   * built-in toy-lock credential system, `gui/src/shell/credential-vault.ts`,
+   * reused under its own fixed lock id) before the GUI ever calls these.
+   * `confirmed: true` on the mutating routes is the same defense-in-depth
+   * `export-secrets` above already uses: not the real gate, a second check
+   * that a script cannot accidentally satisfy by omission.
+   */
+
+  if (url.pathname === "/api/host/authenticator/history" && req.method === "GET") {
+    return respond({
+      entries: listSecretHistoryEntries(200),
+      retentionDays: getSecretHistoryRetentionDays(),
+    });
+  }
+
+  if (url.pathname === "/api/host/authenticator/history/restore" && req.method === "POST") {
+    let body: { hash?: unknown; confirmed?: unknown };
+    try { body = await req.json(); } catch { return respond({ error: "malformed request body" }, 400); }
+    if (body.confirmed !== true) return respond({ error: "a history restore requires explicit confirmation" }, 400);
+    const hash = typeof body.hash === "string" ? body.hash : "";
+    if (!hash) return respond({ error: "hash is required" }, 400);
+
+    const snapshot = await restoreSecretHistorySnapshot(hash);
+    if (!snapshot.ok) return respond({ error: `could not restore that revision: ${snapshot.reason}`, reason: snapshot.reason }, 409);
+
+    if (snapshot.kind === "totp-entry") {
+      const payload = snapshot.sensitive as { entries?: unknown; groups?: unknown } | undefined;
+      if (!payload) return respond({ error: "that revision has no recoverable snapshot", reason: "not-found" }, 409);
+      const { entries, groups } = replaceAuthenticatorState(payload.entries, payload.groups);
+      const history = await recordTotpHistory("restored");
+      return respond({
+        ok: true, kind: "totp-entry",
+        entries: entries.map(toEntryMeta), groups,
+        ...history,
+      });
+    }
+
+    if (snapshot.kind === "display-name") {
+      const redacted = snapshot.redacted as { previous?: unknown; next?: unknown } | undefined;
+      const value = typeof redacted?.next === "string" ? redacted.next : null;
+      // The GUI applies `value` to `theme/app-name.ts` itself (that store is a
+      // browser-only singleton this server never touches) and then calls the
+      // display-name history route below with action "restored" to record it.
+      return respond({ ok: true, kind: "display-name", value });
+    }
+
+    return respond({ error: `unknown history kind "${snapshot.kind}"` }, 409);
+  }
+
+  if (url.pathname === "/api/host/authenticator/history/export" && req.method === "POST") {
+    let body: { confirmed?: unknown };
+    try { body = await req.json(); } catch { return respond({ error: "malformed request body" }, 400); }
+    if (body.confirmed !== true) return respond({ error: "exporting history requires explicit confirmation" }, 400);
+    return respond({
+      warning: "This export carries only redacted metadata — issuer, account, group, timestamps, display-name changes. It never carries a TOTP secret.",
+      exportedAt: new Date().toISOString(),
+      entries: listSecretHistoryEntries(500),
+    });
+  }
+
+  if (url.pathname === "/api/host/authenticator/history/retention" && req.method === "POST") {
+    let body: { days?: unknown; confirmed?: unknown };
+    try { body = await req.json(); } catch { return respond({ error: "malformed request body" }, 400); }
+    if (body.confirmed !== true) return respond({ error: "changing retention requires explicit confirmation" }, 400);
+    const days = body.days === null ? null : Number(body.days);
+    if (days !== null && (!Number.isFinite(days) || !Number.isInteger(days) || days <= 0)) {
+      return respond({ error: "days must be a positive integer or null" }, 400);
+    }
+    const result = await setSecretHistoryRetentionDays(days);
+    return respond({ ...result, retentionDays: getSecretHistoryRetentionDays() }, result.ok ? 200 : 409);
+  }
+
+  /**
+   * The one mutation this server does not own: the display name lives only in
+   * the GUI's browser-local `theme/app-name.ts` store. The GUI calls this
+   * AFTER that store already committed the rename, exactly like every other
+   * history route — best-effort, reported back rather than silently dropped.
+   */
+  if (url.pathname === "/api/host/authenticator/history/display-name" && req.method === "POST") {
+    let body: { action?: unknown; previous?: unknown; next?: unknown };
+    try { body = await req.json(); } catch { return respond({ error: "malformed request body" }, 400); }
+    const action = typeof body.action === "string" ? body.action : "renamed";
+    const previous = typeof body.previous === "string" ? body.previous : "";
+    const next = typeof body.next === "string" ? body.next : "";
+    const result = await recordSecretHistoryMutation({
+      kind: "display-name",
+      action,
+      redacted: { previous, next },
+      sensitive: null,
+    });
+    return respond({ historyRecorded: result.recorded, historyReason: result.reason });
   }
 
   return null;

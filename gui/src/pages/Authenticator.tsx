@@ -19,11 +19,12 @@ import { Banner, Button, Empty } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconPlus, IconSearch } from "../icons";
+import { IconHistory, IconPlus, IconSearch } from "../icons";
 import AuthenticatorEntryRow from "../components/authenticator/AuthenticatorEntryRow";
 import AuthenticatorAddDialog from "../components/authenticator/AuthenticatorAddDialog";
 import AuthenticatorGroupPicker from "../components/authenticator/AuthenticatorGroupPicker";
 import AuthenticatorExportDialog from "../components/authenticator/AuthenticatorExportDialog";
+import SecretHistoryDialog from "../components/authenticator/SecretHistoryDialog";
 import {
   bulkDeleteAuthenticatorEntries, bulkSetAuthenticatorGroup, createAuthenticatorGroup,
   deleteAuthenticatorEntry, fetchAuthenticatorList, patchAuthenticatorEntry,
@@ -68,6 +69,7 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [movePicker, setMovePicker] = useState<{ ids: string[] } | null>(null);
 
   const groupsById = useMemo(() => new Map(data.groups.map(g => [g.id, g] as const)), [data.groups]);
@@ -112,14 +114,25 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
 
   const refresh = useCallback(() => resource.refresh({ forceLoading: false }), [resource]);
 
+  // "Fail-safe and VISIBLE": every history-recording outcome below gets its
+  // own, lower-severity notice when it did not land — the mutation itself
+  // always already succeeded by the time this is checked, so this is never
+  // what tells the user their edit/delete/add failed.
+  const noteHistoryOutcome = useCallback((outcome: { historyRecorded: boolean; historyReason?: string }) => {
+    if (!outcome.historyRecorded) {
+      notify({ tone: "warn", title: t("secretHistory.recoveryNotice", { reason: outcome.historyReason ?? "" }) });
+    }
+  }, [notify, t]);
+
   const handleRename = useCallback(async (id: string, issuer: string, account: string) => {
     try {
-      await patchAuthenticatorEntry(apiBase, id, { issuer, account });
+      const result = await patchAuthenticatorEntry(apiBase, id, { issuer, account });
+      noteHistoryOutcome(result);
       refresh();
     } catch {
       notify({ tone: "error", title: t("auth.entry.saveFailed") });
     }
-  }, [apiBase, notify, refresh, t]);
+  }, [apiBase, noteHistoryOutcome, notify, refresh, t]);
 
   const handleDeleteOne = useCallback(async (entry: AuthenticatorEntryMeta) => {
     const label = entry.issuer ? `${entry.issuer} · ${entry.account}` : entry.account;
@@ -130,14 +143,16 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
       tone: "danger",
     });
     if (!ok) return;
-    if (await deleteAuthenticatorEntry(apiBase, entry.id)) {
+    const result = await deleteAuthenticatorEntry(apiBase, entry.id);
+    if (result.ok) {
       notify({ tone: "warn", title: t("auth.entry.deleted"), body: label });
+      noteHistoryOutcome(result);
       setSelected(current => { const next = new Set(current); next.delete(entry.id); return next; });
       refresh();
     } else {
       notify({ tone: "error", title: t("auth.entry.saveFailed") });
     }
-  }, [apiBase, confirm, notify, refresh, t]);
+  }, [apiBase, confirm, noteHistoryOutcome, notify, refresh, t]);
 
   const bulkDelete = useCallback(async (ids: string[]) => {
     const ok = await confirm({
@@ -150,7 +165,8 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
     cancelBulk.current = false;
     setBulkProgress({ done: 0, total: ids.length });
     try {
-      const { removed } = await bulkDeleteAuthenticatorEntries(apiBase, ids);
+      const result = await bulkDeleteAuthenticatorEntries(apiBase, ids);
+      const { removed } = result;
       setBulkProgress({ done: ids.length, total: ids.length });
       setSelected(new Set());
       refresh();
@@ -160,10 +176,11 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
       } else {
         notify({ tone: "warn", title: t("bulk.deleteAuthenticatorEntries"), body: t("bulk.doneAll", { action: t("bulk.deleteAuthenticatorEntries"), succeeded: removed.length }) });
       }
+      if (removed.length > 0) noteHistoryOutcome(result);
     } finally {
       setBulkProgress(null);
     }
-  }, [apiBase, confirm, notify, refresh, t]);
+  }, [apiBase, confirm, noteHistoryOutcome, notify, refresh, t]);
 
   const applyMove = useCallback(async (groupId: string | null) => {
     if (!movePicker) return;
@@ -231,6 +248,9 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
           >
             {t("auth.exportSecrets")}
           </button>
+          <Button variant="outlined" onClick={() => setHistoryDialogOpen(true)}>
+            <IconHistory width={18} height={18} aria-hidden="true" /> {t("secretHistory.openButton")}
+          </Button>
         </div>
       </div>
 
@@ -305,6 +325,14 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
           entryCount={data.entries.length}
           anchorRef={exportButtonRef}
           onClose={() => setExportDialogOpen(false)}
+        />
+      )}
+
+      {historyDialogOpen && (
+        <SecretHistoryDialog
+          apiBase={apiBase}
+          onClose={() => setHistoryDialogOpen(false)}
+          onTotpRestored={refresh}
         />
       )}
     </>

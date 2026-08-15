@@ -335,3 +335,116 @@ describe("POST /api/host/authenticator/export-secrets", () => {
     void entry;
   });
 });
+
+/**
+ * `/api/host/authenticator/history*` end to end — real git, real DPAPI,
+ * exactly like `tests/secret-history.test.ts`. This file already spawns real
+ * processes for every other authenticator test, so the same 30s budget
+ * applies here for the same reason `cli-export-history.test.ts` documents.
+ */
+describe("secret & display-name mutation history", () => {
+  const HISTORY_TEST_TIMEOUT_MS = 30_000;
+
+  test("creating, editing and removing an entry each land as their own history commit, with historyRecorded reported back", async () => {
+    const created = await confirmedEntry("Example", "alice@example.com");
+    // The create route call above is `confirmedEntry`'s own `call(...)`, which
+    // does not surface `historyRecorded` to this test — read it back from the
+    // route's OWN response instead by making the call directly this time.
+    const gen = await call("/api/host/authenticator/pending", { method: "POST", body: JSON.stringify({ mode: "generate", issuer: "X", account: "b" }) });
+    const code = totp(secretBytes(gen.body.secret), { algorithm: gen.body.algorithm, digits: gen.body.digits, period: gen.body.period });
+    const confirmed = await call("/api/host/authenticator/pending/confirm", { method: "POST", body: JSON.stringify({ pendingId: gen.body.pendingId, code }) });
+    expect(confirmed.body.historyRecorded).toBe(true);
+
+    const patched = await call("/api/host/authenticator/entry", {
+      method: "PATCH", query: { id: created.id }, body: JSON.stringify({ issuer: "Renamed" }),
+    });
+    expect(patched.body.historyRecorded).toBe(true);
+
+    const deleted = await call("/api/host/authenticator/entry", { method: "DELETE", query: { id: confirmed.body.entry.id } });
+    expect(deleted.body.historyRecorded).toBe(true);
+
+    const history = await call("/api/host/authenticator/history");
+    expect(history.status).toBe(200);
+    const actions = history.body.entries.map((e: any) => e.action);
+    expect(actions).toEqual(["removed", "updated", "created", "created"]); // newest first
+    expect(actions.every((a: string) => a !== undefined)).toBe(true);
+    // No entry's redacted metadata ever carries a `secret` field.
+    for (const entry of history.body.entries) {
+      expect(JSON.stringify(entry.redacted)).not.toContain("secret");
+    }
+  }, HISTORY_TEST_TIMEOUT_MS);
+
+  test("restoring a totp-entry history commit brings the removed account back, secret included", async () => {
+    const entry = await confirmedEntry("Example", "restore-me@example.com");
+    const beforeDelete = await call("/api/host/authenticator/export-secrets", { method: "POST", body: JSON.stringify({ confirmed: true }) });
+    const originalSecret = beforeDelete.body.entries[0].secret;
+
+    await call("/api/host/authenticator/entry", { method: "DELETE", query: { id: entry.id } });
+    expect((await call("/api/host/authenticator")).body.entries).toEqual([]);
+
+    const history = await call("/api/host/authenticator/history");
+    // The commit taken BEFORE the delete — i.e. the "created" one — is what
+    // still has the entry in it; "removed" is the state with it already gone.
+    const createdCommit = history.body.entries.find((e: any) => e.action === "created");
+    expect(createdCommit).toBeTruthy();
+
+    const restore = await call("/api/host/authenticator/history/restore", {
+      method: "POST", body: JSON.stringify({ hash: createdCommit.hash, confirmed: true }),
+    });
+    expect(restore.status).toBe(200);
+    expect(restore.body.ok).toBe(true);
+    expect(restore.body.kind).toBe("totp-entry");
+    expect(restore.body.entries).toHaveLength(1);
+    expect(restore.body.historyRecorded).toBe(true);
+
+    const after = await call("/api/host/authenticator");
+    expect(after.body.entries).toHaveLength(1);
+    expect(after.body.entries[0].account).toBe("restore-me@example.com");
+
+    const secretsAfter = await call("/api/host/authenticator/export-secrets", { method: "POST", body: JSON.stringify({ confirmed: true }) });
+    expect(secretsAfter.body.entries[0].secret).toBe(originalSecret);
+  }, HISTORY_TEST_TIMEOUT_MS);
+
+  test("restore refuses without confirmed: true, and rejects a missing hash", async () => {
+    const noConfirm = await call("/api/host/authenticator/history/restore", { method: "POST", body: JSON.stringify({ hash: "abc1234" }) });
+    expect(noConfirm.status).toBe(400);
+
+    const noHash = await call("/api/host/authenticator/history/restore", { method: "POST", body: JSON.stringify({ confirmed: true }) });
+    expect(noHash.status).toBe(400);
+  });
+
+  test("the display-name history route records a rename, distinct from a totp-entry mutation", async () => {
+    const recorded = await call("/api/host/authenticator/history/display-name", {
+      method: "POST", body: JSON.stringify({ action: "renamed", previous: "opencodex", next: "My Robot" }),
+    });
+    expect(recorded.status).toBe(200);
+    expect(recorded.body.historyRecorded).toBe(true);
+
+    const history = await call("/api/host/authenticator/history");
+    expect(history.body.entries).toHaveLength(1);
+    expect(history.body.entries[0].kind).toBe("display-name");
+    expect(history.body.entries[0].redacted).toEqual({ previous: "opencodex", next: "My Robot" });
+    expect(history.body.entries[0].hasSensitiveSnapshot).toBe(false);
+  }, HISTORY_TEST_TIMEOUT_MS);
+
+  test("export requires confirmation and never carries a secret field", async () => {
+    await confirmedEntry("Example", "alice@example.com");
+    const refused = await call("/api/host/authenticator/history/export", { method: "POST", body: JSON.stringify({}) });
+    expect(refused.status).toBe(400);
+
+    const exported = await call("/api/host/authenticator/history/export", { method: "POST", body: JSON.stringify({ confirmed: true }) });
+    expect(exported.status).toBe(200);
+    expect(JSON.stringify(exported.body.entries)).not.toContain("secret");
+  }, HISTORY_TEST_TIMEOUT_MS);
+
+  test("retention: setting a policy is reported, and rejects a bad value", async () => {
+    await confirmedEntry("Example", "alice@example.com");
+    const bad = await call("/api/host/authenticator/history/retention", { method: "POST", body: JSON.stringify({ days: -1, confirmed: true }) });
+    expect(bad.status).toBe(400);
+
+    const ok = await call("/api/host/authenticator/history/retention", { method: "POST", body: JSON.stringify({ days: 90, confirmed: true }) });
+    expect(ok.status).toBe(200);
+    expect(ok.body.ok).toBe(true);
+    expect(ok.body.retentionDays).toBe(90);
+  }, HISTORY_TEST_TIMEOUT_MS);
+});
