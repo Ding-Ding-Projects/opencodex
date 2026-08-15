@@ -6,9 +6,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
-import { IconBell, IconDevices, IconMenu, IconPalette, IconSearch } from "../icons";
+import { IconAlert, IconBell, IconCheck, IconDevices, IconInfo, IconMenu, IconPalette, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
-import { useNotifications } from "./notifications-context";
+import { useNotifications, type NoticeTone } from "./notifications-context";
 import CostMeter from "./CostMeter";
 import QuickRestore from "./QuickRestore";
 import ViewportPreview from "./ViewportPreview";
@@ -21,7 +21,23 @@ import { useSettingsSave } from "./use-settings-save";
 import { Button } from "./m3-ui";
 import { useAppearanceTarget } from "./use-appearance-target";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
+import { PAGE_META_BY_ID } from "./page-meta";
 import type { Page } from "../app-routing";
+import type { TKey } from "../i18n/shared";
+
+/**
+ * The popover's compact tone chip — icon and container colour, matching the
+ * design's notification centre entry (`OpenCodex M3.dc.html` ~1805). The full
+ * history screen (`pages/Notifications.tsx`) additionally names the tone in
+ * text per A11Y-TONE-01; this list stays to 8 rows in a menu-width popover, so
+ * the icon carries an accessible name of its own instead of repeating that row.
+ */
+const NOTIF_TONE_CHIP: Record<NoticeTone, { bg: string; fg: string; nameKey: TKey; Icon: typeof IconInfo }> = {
+  error: { bg: "var(--m3-error-container)", fg: "var(--m3-on-error-container)", nameKey: "notif.toneErrorOne", Icon: IconAlert },
+  warn: { bg: "var(--m3-warn-container)", fg: "var(--m3-on-warn-container)", nameKey: "notif.toneWarnOne", Icon: IconAlert },
+  success: { bg: "var(--m3-ok-container)", fg: "var(--m3-on-ok-container)", nameKey: "notif.toneSuccessOne", Icon: IconCheck },
+  info: { bg: "var(--m3-surface-container-high)", fg: "var(--m3-on-surface-variant)", nameKey: "notif.toneInfoOne", Icon: IconInfo },
+};
 
 interface AppBarProps {
   apiBase: string;
@@ -159,12 +175,39 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
                 {t("notif.empty")}
               </div>
             )}
-            {history.slice(0, 8).map(n => (
-              <div key={n.id} className="m3-menu-item" style={{ display: "block", cursor: "default", minHeight: 0, padding: "8px 12px" }}>
-                <div style={{ fontWeight: 500 }}>{n.title}</div>
-                {n.body && <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>{n.body}</div>}
-              </div>
-            ))}
+            {history.slice(0, 8).map(n => {
+              const chip = NOTIF_TONE_CHIP[n.tone];
+              return (
+                <div key={n.id} className="m3-menu-item" style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "default", minHeight: 0, padding: "8px 12px" }}>
+                  <span
+                    role="img"
+                    aria-label={t(chip.nameKey)}
+                    style={{
+                      flex: "0 0 auto", display: "grid", placeItems: "center", width: 28, height: 28,
+                      borderRadius: "var(--r-pill)", background: chip.bg, color: chip.fg,
+                    }}
+                  >
+                    <chip.Icon width={16} height={16} aria-hidden="true" />
+                  </span>
+                  <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+                    <div style={{ fontWeight: 500 }}>{n.title}</div>
+                    {n.body && <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>{n.body}</div>}
+                    <div style={{
+                      marginTop: 4, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6,
+                      color: "var(--m3-on-surface-variant)", fontFamily: "var(--mono)", fontSize: "var(--t-label-s)",
+                    }}>
+                      <time dateTime={new Date(n.at).toISOString()}>{new Date(n.at).toLocaleString()}</time>
+                      {n.source && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>{t(PAGE_META_BY_ID[n.source].tkey)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
             <button type="button" className="m3-menu-item" onClick={() => { setNotifOpen(false); onOpen("notifications", false); }}>
               <span>{t("notif.viewAll")}</span>
             </button>

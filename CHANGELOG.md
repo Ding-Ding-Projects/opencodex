@@ -17,6 +17,10 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 - docs(guides): document PDF tools, its capability disclosures and its reopen-validation contract
 - feat(gui): move a tab into a group from an anchored picker
 - docs(gui): document tab groups and the four tab searches
+- fix(gui): track dirty state on the Subagents featured-slot editor and stop a window close/reload from silently discarding an unsaved reorder or removal
+- fix(gui): replace the undefined `--danger` token in CodexPoolStrategySetting and MemoryObservabilityCard with the real M3 error role, which was rendering as a hard-coded red regardless of theme
+- fix(gui): port CodexPoolStrategySetting off legacy `.card`/`.card-sub` markup onto the shared M3 card classes the rest of the Codex Auth screen already uses
+- fix(gui): show a notice's tone, timestamp and source screen in the app bar's notification popover, matching the design instead of title/body alone
 Hand-written until the next release tag exists. The generator rebuilds this file
 from tags and takes each entry from a commit subject, so these lines are absorbed
 into their release section — not lost — the next time it runs.

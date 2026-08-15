@@ -20,6 +20,7 @@ import {
   type Notice,
   type NotificationsApi,
 } from "./notifications-context";
+import { getNotificationSourcePage } from "./notification-source";
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<Notice[]>([]);
@@ -44,7 +45,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const notify = useCallback((input: Omit<Notice, "id" | "at" | "read">) => {
     const id = `n${++seq.current}-${Date.now()}`;
-    const notice: Notice = { ...input, id, at: Date.now(), read: false };
+    // The screen this notice belongs to, unless the caller already named one:
+    // almost none do, so this is what lets the notification centre show a
+    // source at all without threading a `source` argument through every
+    // `notify()` call site in the app.
+    const notice: Notice = { source: getNotificationSourcePage() ?? undefined, ...input, id, at: Date.now(), read: false };
     setLive(prev => prev.concat([notice]));
     setHistory(prev => [notice, ...prev].slice(0, HISTORY_CAP));
     if (autoDismisses(notice.tone)) {

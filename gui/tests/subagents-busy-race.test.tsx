@@ -142,6 +142,16 @@ test("blocks edits while save is busy and reconciles chosen from applied", async
 
   expect(removeButtons().length).toBe(2);
   expect(modelRow("a-2").getAttribute("aria-pressed")).toBe("true");
+  // Save is now dirty-gated (WP-B9-1): the pristine load has nothing to
+  // persist, so the button starts disabled until something actually changes.
+  expect(saveButton().disabled).toBe(true);
+
+  // A pure reorder — a-3 is untouched, so every later assertion about it
+  // still holds — is enough to make the draft dirty and arm Save.
+  await act(async () => {
+    moveUp("a-2").click();
+  });
+  expect(saveButton().disabled).toBe(false);
 
   await act(async () => {
     saveButton().click();
@@ -180,12 +190,20 @@ test("blocks edits while save is busy and reconciles chosen from applied", async
   expect(removeButtons().length).toBe(1);
   expect(removeButtons()[0]!.getAttribute("aria-label")).toBe("Remove a-1");
   expect(modelRow("a-2").getAttribute("aria-pressed")).toBe("false");
-  expect(saveButton().disabled).toBe(false);
+  // The applied state now matches `chosen` exactly, so there is nothing left
+  // to save — the dirty-gated button reports that instead of staying live.
+  expect(saveButton().disabled).toBe(true);
   expect(container.textContent).toContain("1/5");
 });
 
 test("rapid Save clicks issue only one PUT until the first settles", async () => {
   await mount();
+
+  // Dirty the draft first — a pristine load has nothing to save, and the
+  // dirty-gated button would swallow every one of the three clicks below.
+  await act(async () => {
+    moveUp("a-2").click();
+  });
 
   await act(async () => {
     const btn = saveButton();
@@ -204,6 +222,15 @@ test("rapid Save clicks issue only one PUT until the first settles", async () =>
   });
   await act(async () => {
     await new Promise((r) => setTimeout(r, 20));
+  });
+  // Reconciled to `appliedOnSave` (["a-1"]) with nothing further staged —
+  // clean, so Save reports nothing left to persist.
+  expect(saveButton().disabled).toBe(true);
+
+  // Dirty it again — a fresh addition, since a-2 no longer survived the
+  // first reconciliation — and confirm a later click can still fire.
+  await act(async () => {
+    modelRow("a-3").click();
   });
   expect(saveButton().disabled).toBe(false);
 
@@ -224,5 +251,5 @@ test("rapid Save clicks issue only one PUT until the first settles", async () =>
   await act(async () => {
     await new Promise((r) => setTimeout(r, 20));
   });
-  expect(saveButton().disabled).toBe(false);
+  expect(saveButton().disabled).toBe(true);
 });

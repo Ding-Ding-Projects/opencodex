@@ -7,6 +7,7 @@
  */
 
 import { createContext, useContext } from "react";
+import { VALID_PAGES, type Page } from "../app-routing";
 
 export type NoticeTone = "info" | "success" | "warn" | "error";
 
@@ -24,6 +25,13 @@ export interface Notice {
   /** Epoch ms — history is sorted and grouped on this. */
   at: number;
   read: boolean;
+  /**
+   * The screen whose action produced this notice — auto-stamped by `notify()`
+   * from `notification-source.ts` unless a caller supplies its own. Optional
+   * because history saved before this field existed carries none, and it
+   * degrades cleanly: a notice with no `source` just omits that detail.
+   */
+  source?: Page;
 }
 
 export interface NotificationsApi {
@@ -83,7 +91,15 @@ export function readHistory(): Notice[] {
     // Actions are callbacks — they cannot survive a reload, so they are dropped on read.
     return raw
       .filter((n: unknown): n is Notice => !!n && typeof n === "object" && typeof (n as Notice).id === "string")
-      .map((n: Notice) => ({ ...n, action: undefined }))
+      .map((n: Notice) => ({
+        ...n,
+        action: undefined,
+        // A `source` that is not one of today's real pages — an older build's
+        // now-retired route, or plain storage corruption — must not survive
+        // the read: it is handed straight to `PAGE_META_BY_ID[source]` at
+        // render time, and an unrecognised id there is a crash, not a blank.
+        source: typeof n.source === "string" && VALID_PAGES.has(n.source as Page) ? n.source : undefined,
+      }))
       .slice(0, HISTORY_CAP);
   } catch {
     return [];
@@ -93,6 +109,6 @@ export function readHistory(): Notice[] {
 /** Strip the non-serializable action before writing history to storage. */
 export function serializeHistory(history: Notice[]): string {
   return JSON.stringify(history.map(n => ({
-    id: n.id, tone: n.tone, title: n.title, body: n.body, at: n.at, read: n.read,
+    id: n.id, tone: n.tone, title: n.title, body: n.body, at: n.at, read: n.read, source: n.source,
   })));
 }
