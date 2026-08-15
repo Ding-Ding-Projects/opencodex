@@ -7,16 +7,15 @@
  */
 
 import { useMemo, useState } from "react";
-import { Button, Card, Chip, Empty, Field, TextInput } from "../shell/m3-ui";
+import { Badge, Button, Card, Chip, Empty, Field, TextInput, type BadgeTone } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconSearch } from "../icons";
+import { IconChangelog, IconSearch } from "../icons";
 import { useKeyedClientResource } from "../client-resource";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import { readJsonIfOk } from "../fetch-json";
-import type { CSSProperties } from "react";
 
 interface Release {
   version: string;
@@ -57,29 +56,6 @@ const PRESETS = [
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-type Tone = "ok" | "warn" | "error" | "neutral";
-
-/** Status palette — a functional data colour, not chrome, so it stays a role pair. */
-const TONE_COLOURS: Record<Tone, { background: string; color: string }> = {
-  ok: { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
-  warn: { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" },
-  error: { background: "var(--m3-error-container)", color: "var(--m3-on-error-container)" },
-  neutral: { background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
-};
-
-const BADGE: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  height: 24,
-  padding: "0 10px",
-  borderRadius: "var(--r-pill)",
-  fontFamily: "var(--mono)",
-  fontSize: "var(--t-label-s)",
-  fontWeight: 600,
-  letterSpacing: "0.2px",
-  whiteSpace: "nowrap",
-};
-
 /** `fix(gui)!: subject` — the shape `scripts/generate-changelog.ts` writes into CHANGELOG.md. */
 const CONVENTIONAL = /^(?<type>[a-z]+)(?<scope>\([^)]*\))?(?<breaking>!)?:\s*(?<rest>.+)$/;
 
@@ -89,11 +65,11 @@ const CONVENTIONAL = /^(?<type>[a-z]+)(?<scope>\([^)]*\))?(?<breaking>!)?:\s*(?<
  * conventional-commit type instead of being invented. An entry that carries no
  * type prefix keeps its full text and simply gets no badge.
  */
-function categorize(entry: string): { badge: string | null; text: string; tone: Tone } {
+function categorize(entry: string): { badge: string | null; text: string; tone: BadgeTone } {
   const m = CONVENTIONAL.exec(entry);
   if (!m?.groups) return { badge: null, text: entry, tone: "neutral" };
   const { type, scope, breaking, rest } = m.groups;
-  const tone: Tone = breaking || type === "security" ? "error"
+  const tone: BadgeTone = breaking || type === "security" ? "error"
     : type === "fix" || type === "revert" ? "warn"
     : type === "feat" ? "ok"
     : "neutral";
@@ -322,9 +298,9 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
       </Card>
 
       {!available ? (
-        <Empty title={t("changelog.unavailable")}>{t("changelog.unavailableBody")}</Empty>
+        <Empty title={t("changelog.unavailable")} icon={IconChangelog}>{t("changelog.unavailableBody")}</Empty>
       ) : rows.length === 0 ? (
-        <Empty title={t("changelog.noResults")}>{t("changelog.noResultsBody")}</Empty>
+        <Empty title={t("changelog.noResults")} icon={IconSearch}>{t("changelog.noResultsBody")}</Empty>
       ) : (
         rows.map(release => (
           <Card
@@ -345,7 +321,7 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
                 const { badge, text, tone } = categorize(entry);
                 return (
                   <li key={i} className="m3-row" style={{ gap: 10, alignItems: "baseline", padding: "6px 0" }}>
-                    {badge && <span style={{ ...BADGE, ...TONE_COLOURS[tone] }}>{badge}</span>}
+                    {badge && <Badge tone={tone} style={MONO}>{badge}</Badge>}
                     <span style={{ flex: "1 1 260px", minWidth: 0, fontSize: "var(--t-body-s)" }}>{text}</span>
                   </li>
                 );

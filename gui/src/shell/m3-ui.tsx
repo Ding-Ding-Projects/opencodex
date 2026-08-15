@@ -5,7 +5,10 @@
  * rewrite proceeds.
  */
 
-import { useEffect, useId, useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, type SVGProps } from "react";
+import { BADGE_TONE_STYLE, type BadgeTone } from "./badge-tone";
+
+export { BADGE_TONE_STYLE, type BadgeTone } from "./badge-tone";
 
 export function Card({ title, subtitle, actions, children, style }: {
   title?: ReactNode;
@@ -148,9 +151,36 @@ export function Toggle({ on, onChange, label, disabled }: {
   );
 }
 
-export function Empty({ title, children }: { title: ReactNode; children?: ReactNode }) {
+/**
+ * A Material 3 status pill, resolving its colour from the canonical
+ * `BADGE_TONE_STYLE` map (`./badge-tone.ts`) — the single place the
+ * prototype's `badgeStyle(tone)` helper (`design/OpenCodex M3.dc.html`) was
+ * promoted to. See that module for why "neutral" mattered enough to earn its
+ * own guard test.
+ */
+export function Badge({ tone = "neutral", children, style, className }: {
+  tone?: BadgeTone;
+  children: ReactNode;
+  style?: CSSProperties;
+  className?: string;
+}) {
+  return (
+    <span className={`m3-badge${className ? ` ${className}` : ""}`} style={{ ...BADGE_TONE_STYLE[tone], ...style }}>
+      {children}
+    </span>
+  );
+}
+
+export function Empty({ title, icon: Icon, children }: {
+  title: ReactNode;
+  /** Optional Material Symbol, per the prototype's dashed empty-state recipe. Leave it
+   *  off rather than reaching for an icon that does not actually fit the empty state. */
+  icon?: ComponentType<SVGProps<SVGSVGElement>>;
+  children?: ReactNode;
+}) {
   return (
     <div className="m3-empty">
+      {Icon && <Icon className="m3-empty-icon" aria-hidden="true" focusable="false" />}
       <div className="m3-empty-title">{title}</div>
       {children && <div className="m3-empty-body">{children}</div>}
     </div>

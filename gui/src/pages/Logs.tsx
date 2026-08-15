@@ -4,10 +4,10 @@ import { useI18n, LOCALES, type TFn } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { hashLogConversationQuery, matchesLogConversationId } from "../log-conversation-id";
 import { statusCodeInfo } from "../status-codes";
-import { IconSearch, IconX } from "../icons";
+import { IconReceiptLong, IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
 import { describePriceTier, resolveCost, type PriceTierInfo, type PricingSourceClassification } from "../cost-lanes";
-import { Banner, Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { Badge, Banner, Button, type BadgeTone, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { FLAGS } from "../regex/engine";
 import { DEFAULT_SEARCH_FLAGS, stripStatefulFlags } from "../shell/settings-search";
@@ -303,28 +303,14 @@ function statusColor(status: number): string {
 
 /**
  * Status is a tonal badge in the prototype, toned 2xx ok / 3xx-4xx warn / 5xx
- * error. Status palettes are functional data colours, so the containers are
- * addressed directly rather than through a chrome class.
+ * error. Colour comes from the shared `BADGE_TONE_STYLE` map (via `Badge`) —
+ * this used to inline its own copy of the same three container pairs, one of
+ * three places in the app that did.
  */
-function statusBadgeStyle(status: number): CSSProperties {
-  const tone = status < 300
-    ? { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" }
-    : status < 500
-      ? { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" }
-      : { background: "var(--m3-error-container)", color: "var(--m3-on-error-container)" };
-  return {
-    display: "inline-flex",
-    alignItems: "center",
-    height: 24,
-    padding: "0 10px",
-    borderRadius: "var(--r-pill)",
-    fontFamily: "var(--mono)",
-    fontSize: "var(--t-label-s)",
-    fontWeight: 600,
-    letterSpacing: "0.2px",
-    whiteSpace: "nowrap",
-    ...tone,
-  };
+function statusBadgeTone(status: number): BadgeTone {
+  if (status < 300) return "ok";
+  if (status < 500) return "warn";
+  return "error";
 }
 
 type SurfaceFilter = "all" | "codex" | "claude" | "grok";
@@ -1099,7 +1085,9 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       ) : loading && logs.length === 0 ? (
         <Empty title={t("common.loading")} />
       ) : filteredLogs.length === 0 ? (
-        <Empty title={t(logs.length > 0 && isNarrowed ? "logs.noMatch" : "logs.noRequests")} />
+        logs.length > 0 && isNarrowed
+          ? <Empty title={t("logs.noMatch")} icon={IconSearch} />
+          : <Empty title={t("logs.noRequests")} icon={IconReceiptLong} />
       ) : (
         <div ref={scrollContainerRef} style={TABLE_SHELL}>
           <table className="m3-table logs-table">
@@ -1142,12 +1130,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                         </span>
                       )}
                       {speedLabel(log) && (
-                        <span
-                          className="m3-chip"
-                          style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)", background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)", borderColor: "transparent" }}
-                        >
-                          {speedLabel(log)}
-                        </span>
+                        <Badge tone="warn">{speedLabel(log)}</Badge>
                       )}
                     </span>
                     {/* Effort rides under the model id in the prototype rather than
@@ -1158,7 +1141,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                   </td>
                   <td style={{ color: "var(--m3-on-surface-variant)" }}>{log.provider}</td>
                   <td>
-                    <span style={statusBadgeStyle(log.status)}>{log.status}</span>
+                    <Badge tone={statusBadgeTone(log.status)} style={{ fontFamily: "var(--mono)" }}>{log.status}</Badge>
                  </td>
                   <td className="mono log-col-tokens" title={tokensTitle(log, t)}>
                     {(() => {

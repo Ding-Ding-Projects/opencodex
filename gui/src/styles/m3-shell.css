@@ -654,6 +654,12 @@ html[data-viewport-preview] .m3-app {
   color: var(--el-menu-color, var(--m3-on-surface));
   font-family: var(--el-menu-font, inherit);
   box-shadow: var(--e3);
+  /* Prototype's anchored-panel entrance (`design/OpenCodex M3.dc.html`'s
+     tabs-overflow menu and notification centre): a 160ms rise, same easing
+     as the page-content fade. `prefers-reduced-motion` is handled globally
+     by the `.m3-app *` rule above, which clamps every animation duration to
+     1ms rather than needing a local opt-out here. */
+  animation: m3-rise 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 .m3-menu-item {
   width: 100%;
@@ -1030,14 +1036,39 @@ html[data-viewport-preview] .m3-app {
 }
 .m3-switch.on .m3-switch-thumb { left: 26px; width: 20px; height: 20px; background: var(--m3-on-primary); }
 
+/* Base geometry for `Badge` (shell/m3-ui.tsx). Tone colour is applied inline
+   from `BADGE_TONE_STYLE`, per tone, so this carries only the chrome every
+   tone shares — matching the prototype's `badgeStyle(tone)` helper. */
+.m3-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-label-s);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+/* Prototype's empty-state recipe: a dashed outline with no fill, not a
+   filled card — `design/OpenCodex M3.dc.html` (models/logs/changelog empty
+   states). The filled `surface-container-low` box this replaces was a
+   screen-local guess; every `<Empty>` now renders the one recipe. */
 .m3-empty {
-  padding: var(--sp-5);
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 56px 24px;
+  border: 1px dashed var(--m3-outline);
   border-radius: var(--r-l);
-  background: var(--m3-surface-container-low);
+  background: none;
   text-align: center;
   color: var(--m3-on-surface-variant);
 }
-.m3-empty-title { font-size: var(--t-title-m); color: var(--m3-on-surface); margin-bottom: 6px; }
+.m3-empty-icon { width: 32px; height: 32px; }
+.m3-empty-title { font-size: var(--t-title-m); color: var(--m3-on-surface); }
 .m3-empty-body { font-size: var(--t-body-s); }
 
 .m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
@@ -1306,6 +1337,10 @@ html[data-desktop] .m3-appbar .m3-avatar {
   gap: var(--sp-3, 16px);
   max-height: 84vh;
   overflow-y: auto;
+  /* Prototype's modal entrance (`design/OpenCodex M3.dc.html`'s `role="dialog"
+     aria-modal="true"` surface): a 200ms rise. `prefers-reduced-motion` is
+     handled globally by the `.m3-app *` rule above. */
+  animation: m3-rise 200ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .m3-dialog__head {

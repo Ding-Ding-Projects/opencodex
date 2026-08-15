@@ -428,8 +428,8 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
   const emptyState = entries.length === 0
     ? (serverLoading
       ? <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
-      : <Empty title={t("history.empty")}>{t("history.emptyBody")}</Empty>)
-    : <Empty title={t("modal.noMatch")}>{t("changelog.noResultsBody")}</Empty>;
+      : <Empty title={t("history.empty")} icon={IconHistory}>{t("history.emptyBody")}</Empty>)
+    : <Empty title={t("modal.noMatch")} icon={IconSearch}>{t("changelog.noResultsBody")}</Empty>;
 
   return (
     <>

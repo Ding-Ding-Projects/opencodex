@@ -3,6 +3,7 @@ import { useI18n, type TFn, type Locale } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { cachedNumberFormat, formatEstimatedUsdValue as formatUsdEstimate } from "../intl-formatters";
 import {
+  IconActivity,
   IconBolt,
   IconClock,
   IconCoin,
@@ -841,7 +842,7 @@ function UsageModelsTable({
       ) : null}
       {/* Only a *search* that matched nothing gets the no-match state; an unfiltered empty list
           would be a different fact, and the page-level empty state already covers it. */}
-      {models.length === 0 && modelQuery.trim() ? <Empty title={t("models.noMatch")} /> : table}
+      {models.length === 0 && modelQuery.trim() ? <Empty title={t("models.noMatch")} icon={IconSearch} /> : table}
     </section>
   );
 }
@@ -1112,7 +1113,7 @@ export default function Usage({ apiBase }: { apiBase: string }) {
       ) : loading && !data ? (
         <Empty title={t("usage.loading")} />
       ) : data?.summary.requests === 0 ? (
-        <Empty title={t("usage.empty")} />
+        <Empty title={t("usage.empty")} icon={IconActivity} />
       ) : data ? (
         <>
           <UsageSummaryCards summary={data.summary} activeDays={activeDays} locale={locale} t={t} />

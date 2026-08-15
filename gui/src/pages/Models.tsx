@@ -8,7 +8,7 @@ import BulkBar from "../shell/BulkBar";
 import {
   invert as invertSelection, selectAll as selectAllIds, selectRange, toggle as toggleSelection,
 } from "../shell/bulk-selection";
-import { IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
+import { IconBoxes, IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { useConfirm } from "../shell/confirm-context";
 import { recordRevision } from "../shell/revisions";
@@ -1406,7 +1406,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const emptyStateBlock = (
     <>
       {groups.length === 0 && (
-        <Empty title={t("models.noRouted")}>
+        <Empty title={t("models.noRouted")} icon={IconBoxes}>
           {t("models.noRoutedHint")}
         </Empty>
       )}
@@ -1416,7 +1416,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
   // The prototype's search_off state: the search found nothing, which is not the same
   // as "no routed models" (that empty state lives above and speaks about setup).
   const noMatchBlock = (
-    <Empty title={t("models.noMatch")} />
+    <Empty title={t("models.noMatch")} icon={IconSearch} />
   );
 
   const modalsBlock = (
