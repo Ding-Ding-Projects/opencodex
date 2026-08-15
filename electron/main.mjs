@@ -467,9 +467,28 @@ function openDownloadPopup(kind, id) {
     return;
   }
   const icon = iconPath();
+  // These heights are sized for the REAL content `pages/DownloadPopup.tsx`
+  // renders at default density/font-scale, not guessed. 220/180 (this
+  // window's dimensions before this fix) were too short for the six-child
+  // "start" card and the up-to-five-child "complete" card to lay out without
+  // shrinking — see the long comment on `.m3-dlpopup` in
+  // `gui/src/styles/m3-shell.css` for the exact flexbox mechanism that made
+  // the shortfall invisible (the filename/URL paragraphs collapsed to a ~2px
+  // line box) rather than an obvious clipped/overflowing card.
+  // `scripts/download-popup-layout-check.ts` measured the real, unsquished
+  // content height of every child in a real browser at these exact window
+  // dimensions: icon 34 + title 19.19 + file 21 + url 18.75 + hint 18.75 +
+  // actions 56 = 167.69, plus five `--sp-2` (10px) gaps and top+bottom
+  // `--sp-4` (19px) padding = 255.69px for "start"; the "complete" card drops
+  // the hint row but can still show icon/title/file/url/actions =
+  // 148.94 + four gaps + padding = 226.94px. Both get rounded up with a
+  // margin for locale/DPI/font-metric variance rather than shipped exact —
+  // `.m3-dlpopup`'s own `overflow-y: auto` is the remaining safety net for
+  // whatever margin still is not enough (a longer bilingual string, a larger
+  // font-scale preference).
   const win = new BrowserWindow({
     width: 360,
-    height: kind === "start" ? 220 : 180,
+    height: kind === "start" ? 260 : 230,
     resizable: false,
     minimizable: false,
     maximizable: false,

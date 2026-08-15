@@ -2894,7 +2894,16 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
 
 /* The always-on-top popup window (pages/DownloadPopup.tsx) — the whole
    window IS this card, so it fills the viewport rather than floating inside
-   a dialog surface of its own. */
+   a dialog surface of its own.
+
+   `overflow-y: auto` here (on the CONTAINER, not a flex item) is the safety
+   net for the bug documented below: if this card's real content is ever
+   taller than the window `electron/main.mjs` opens for it — a longer
+   bilingual string, a larger font-scale preference, a locale whose words run
+   long — the extra content scrolls into view instead of silently vanishing.
+   `electron/main.mjs`'s window heights are sized for the worst-case content at
+   default settings; this is the fallback for everything that sizing can't
+   anticipate. */
 .m3-dlpopup {
   box-sizing: border-box;
   display: flex;
@@ -2907,6 +2916,47 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   padding: var(--sp-4, 20px);
   background: var(--m3-surface);
   color: var(--m3-on-surface);
+  overflow-y: auto;
+}
+/*
+ * `flex-shrink: 0` on every direct child, deliberately, on all six of them —
+ * not just the two that were visibly broken.
+ *
+ * The bug this guards against: a flex item's `min-height: auto` normally
+ * floors at its CONTENT size (CSS Flexbox #4.5), so a flex column that is
+ * shorter than its children's combined natural height simply overflows rather
+ * than crushing anything — UNLESS an item's `overflow` is something other
+ * than `visible`, in which case that floor is disabled and the item can be
+ * squeezed to a sliver. `.m3-dlpopup__file`/`.m3-dlpopup__url` set
+ * `overflow: hidden` (required for their ellipsis truncation), so when this
+ * card's six children didn't fit in the fixed-height popup window, those two
+ * — and only those two — absorbed the entire deficit: rendered at a genuine,
+ * confirmed-in-the-DOM ~2px line box, invisible, while the sibling elements
+ * with no `overflow: hidden` (title, hint) kept their normal height and the
+ * card silently lost its filename and source URL. A live capture caught the
+ * exact numbers (`docs/FEATURE-INVENTORY.md` row 280): width stayed normal
+ * (155px / 263px) while height collapsed to 2-3px — proof it was a squeezed
+ * BOX, not missing text, a missing font, or a missing design token (the
+ * initial theory; disproven by tracing `main.tsx`, which wraps this popup
+ * route in the exact same `PrefsProvider` as the main window, and confirmed
+ * live by `scripts/download-popup-layout-check.ts` reading a real,
+ * non-empty `--m3-primary` off this window's own `<html>`).
+ *
+ * `flex-shrink: 0` removes the mechanism outright: none of these six items
+ * will EVER be compressed below their content size, on any of them, so
+ * adding `overflow: hidden` to a different one later cannot reopen this same
+ * hole. If the six together still do not fit — the actual root cause here,
+ * since `electron/main.mjs` opened these windows shorter than their content
+ * needs at default settings — the container's own `overflow-y: auto` above
+ * lets the excess scroll instead of any single child disappearing.
+ */
+.m3-dlpopup__icon,
+.m3-dlpopup__title,
+.m3-dlpopup__file,
+.m3-dlpopup__url,
+.m3-dlpopup__hint,
+.m3-dlpopup__actions {
+  flex-shrink: 0;
 }
 .m3-dlpopup__icon { color: var(--m3-primary); }
 .m3-dlpopup--completed .m3-dlpopup__icon { color: var(--m3-tertiary, var(--m3-primary)); }
