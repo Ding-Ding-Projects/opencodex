@@ -168,9 +168,22 @@
   gap: 2px;
   justify-content: center;
   min-height: 0;
+  /* And min-WIDTH, which is the one that was missing. The bar is a grid of
+     `1fr` columns and `.m3-nav-label` already asks for ellipsis, but a grid
+     item defaults to `min-width: auto` — it refuses to shrink below its own
+     content — so each item grew past its track instead of clipping. The
+     labels then ran into each other with no gap and the last one fell off the
+     screen edge, and `text-overflow` never fired because the label was never
+     actually constrained.
+     Invisible in English, where the labels are short. It shows in bilingual
+     mode at phone width, where "Codex Auth · Codex 登入" is roughly twice the
+     width the track can give it. */
+  min-width: 0;
 }
 .m3-bottom-nav .m3-nav-pill { width: 64px; height: 32px; }
-.m3-bottom-nav .m3-nav-label { font-size: var(--t-label-m); }
+/* The label is the element that clips, so it needs the same release from
+   `auto` inside its own flex column. */
+.m3-bottom-nav .m3-nav-label { font-size: var(--t-label-m); max-width: 100%; min-width: 0; }
 
 /* -------------------------------------------------------------- main col -- */
 
