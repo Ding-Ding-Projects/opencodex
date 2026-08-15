@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconUndo } from "../icons";
-import { useT } from "../i18n/shared";
+import { useI18n, useT } from "../i18n/shared";
 import { useConfirm } from "./confirm-context";
 import { useNotifications } from "./notifications-context";
 import { useSettingsDrafts } from "../settings-drafts-context";
@@ -105,6 +105,7 @@ async function waitForProxyGone(apiBase: string): Promise<boolean> {
 
 export default function QuickRestore({ apiBase }: { apiBase: string }) {
   const t = useT();
+  const { locale } = useI18n();
   const confirm = useConfirm();
   const { notify } = useNotifications();
   const { windowClass } = usePrefs();
@@ -329,8 +330,19 @@ export default function QuickRestore({ apiBase }: { apiBase: string }) {
     expanded breakpoint, or while that draft bar is up, these collapse into the
     single trigger and its panel rather than pushing the window controls off the
     end. Same two actions, same handler, same disabled reasons either way.
+
+    Bilingual mode is the same kind of pressure and gets the same treatment.
+    `windowClass` is measured against English-length labels; `bi` renders every
+    label as "English · 廣東話" — roughly double — so the row that fits two
+    English buttons at the expanded breakpoint does not fit two bilingual ones.
+    Reproduced live: at 1440 CSS px with both tools needing restore and the cost
+    chip showing, the title's flex box was squeezed to a genuine 0px width (not
+    merely clipped) and vanished from the page entirely — the harshest failure
+    mode this row has, since every other row loses a label, this one loses the
+    page's own heading. Collapsing to the single trigger here costs one click to
+    reach either restore action and buys back the room the title needs.
   */
-  const inline = windowClass === "expanded" && !dirty;
+  const inline = windowClass === "expanded" && !dirty && locale !== "bi";
 
   return (
     <div ref={rootRef} className="m3-quick-restore" style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
