@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>opencodex Download Capture — Settings</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    max-width: 480px;
+    margin: 32px auto;
+    padding: 0 20px;
+    color: #1b1b1f;
+    background: #fef7ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e6e1e5; background: #141218; }
+  }
+  h1 { font-size: 18px; }
+  label { display: block; margin: 16px 0 4px; font-weight: 600; }
+  input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #79747e;
+    font: inherit;
+  }
+  .hint { font-size: 12px; opacity: 0.75; margin: 4px 0 0; }
+  button {
+    margin-top: 16px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    border: none;
+    background: #6750a4;
+    color: white;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.secondary { background: transparent; color: #6750a4; border: 1px solid #79747e; margin-left: 8px; }
+  #status { margin-top: 12px; font-size: 13px; }
+  #status[data-tone="ok"] { color: #146c2e; }
+  #status[data-tone="error"] { color: #ba1a1a; }
+</style>
+</head>
+<body>
+  <h1>opencodex Download Capture</h1>
+  <p>Downloads this browser starts are sent to the opencodex desktop app instead
+     of saving here. opencodex must be running for a capture to succeed — if it
+     is not, the download proceeds normally in this browser.</p>
+
+  <label for="port">opencodex port</label>
+  <input id="port" type="number" min="1" max="65535" step="1" />
+  <p class="hint">The port opencodex's dashboard listens on (shown in the app's
+     status bar). Default is 10100.</p>
+
+  <button id="save">Save</button>
+  <button id="test" class="secondary">Test connection</button>
+  <p id="status" role="status"></p>
+
+<script src="options.js"></script>
+</body>
+</html>

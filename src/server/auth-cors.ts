@@ -114,6 +114,44 @@ export function isAllowedManagementOrigin(req: Request, config: OcxConfig): bool
   return !origin || origin === requestOrigin;
 }
 
+/**
+ * Matches a `chrome-extension://`, `moz-extension://` or `edge-extension://`
+ * origin — the only kind of Origin header a browser attaches to a fetch made
+ * from an extension's own background/service-worker context, distinct from
+ * every ordinary web page's `https://`/`http://` origin.
+ */
+const EXTENSION_ORIGIN_PATTERN = /^(?:chrome|moz|edge)-extension:\/\/[a-z0-9-]+$/i;
+
+export function isExtensionOrigin(value: string | null): boolean {
+  return !!value && EXTENSION_ORIGIN_PATTERN.test(value);
+}
+
+/**
+ * The one widening of the management-origin gate: the opencodex browser
+ * extension, and only the browser extension, may reach `/api/downloads/*`
+ * even though its Origin is not the dashboard's own.
+ *
+ * This is safe to widen — rather than a hole in the CORS story the rest of the
+ * management plane relies on — for two reasons that both have to hold:
+ *
+ * 1. An ordinary web page can never forge this. `chrome-extension://<id>` is a
+ *    browser-assigned origin no page-context `fetch()` can set; only code
+ *    actually running as that installed extension's own background/service
+ *    worker sends it. A hostile page's `fetch()` to this same URL still
+ *    carries the page's real `https://` origin and is rejected exactly as
+ *    before by `isAllowedManagementOrigin`.
+ * 2. It only ever widens who may be ANSWERED, never who may reach the
+ *    process at all: the request still has to land on a loopback-bound
+ *    listener (`isLoopbackRequestHost`), which is the same boundary
+ *    `requireLoopbackListener` re-checks inside the handler for every route
+ *    that writes to the local filesystem.
+ */
+export function isAllowedDownloadCaptureOrigin(req: Request, config: OcxConfig): boolean {
+  if (!isExtensionOrigin(req.headers.get("Origin"))) return false;
+  if (isApiAuthRequired(config)) return false; // Non-loopback bind: no extension-origin exception.
+  return isLoopbackRequestHost(req.headers.get("Host"));
+}
+
 export function browserSecurityHeaders(scriptNonce?: string): Record<string, string> {
   const scriptSources = ["'self'", ...(scriptNonce ? [`'nonce-${scriptNonce}'`] : [])].join(" ");
   return {

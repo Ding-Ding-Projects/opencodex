@@ -82,6 +82,12 @@ describe("headless GUI parity CLI", () => {
       ["/api/school-mode", "ocx school-mode"],
       ["/api/pdf", "ocx pdf"],
       ["/api/converter", "ocx convert"],
+      // The browser extension is the intended caller of `POST
+      // /api/downloads/capture`; `ocx downloads` reaches the whole family
+      // (capture/list/show/confirm/cancel/pause/resume/remove) so the
+      // dashboard's Downloading page and a headless script can never disagree
+      // about a transfer's state.
+      ["/api/downloads", "ocx downloads"],
       ["/api/changelog", "ocx changelog"],
       ["/api/combos", "ocx combo"],
       ["/api/debug", "ocx debug/observe"],

@@ -1135,6 +1135,11 @@ switch (command) {
     process.exitCode = await handleConvertCommand(args.slice(1));
     break;
   }
+  case "downloads": {
+    const { handleDownloadsCommand } = await import("./downloads");
+    process.exitCode = await handleDownloadsCommand(args.slice(1));
+    break;
+  }
   case "access": {
     const { handleAccessCommand } = await import("./access");
     process.exitCode = await handleAccessCommand(args.slice(1));

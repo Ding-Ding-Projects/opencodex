@@ -360,6 +360,14 @@ function registerWindowIpc() {
       return { ok: false, error: String(error?.message ?? error) };
     }
   });
+
+  ipcMain.handle("downloads:open-popup", (_event, payload) => {
+    const kind = payload?.kind === "start" || payload?.kind === "complete" ? payload.kind : null;
+    const id = typeof payload?.id === "string" && payload.id ? payload.id : null;
+    if (!kind || !id) return { ok: false };
+    openDownloadPopup(kind, id);
+    return { ok: true };
+  });
 }
 
 /* ----------------------------------------------------------------- window -- */
@@ -431,6 +439,63 @@ function createWindow(port) {
     }
   });
   mainWindow.on("closed", () => { mainWindow = null; });
+}
+
+/* ------------------------------------------------------ download popups -- */
+
+/**
+ * The Start-download and Download-complete surfaces the browser-extension
+ * download-capture contract asks be "above the originating browser window" —
+ * real OS-level `alwaysOnTop` windows, not an in-app overlay, so they float
+ * over Chrome/Edge/Firefox and not just over this app's own window.
+ *
+ * Keyed by `kind:id` so `DownloadsBridge.tsx` polling from a webContents that
+ * is still alive can call this repeatedly for the same record without
+ * stacking duplicate windows — a second call for an id already open focuses
+ * the existing one instead. Content is the SAME build the dashboard serves,
+ * just a different route (`pages/DownloadPopup.tsx` via `main.tsx`'s
+ * popup-mode branch): no second UI implementation to keep in sync.
+ */
+const downloadPopups = new Map();
+
+function openDownloadPopup(kind, id) {
+  const key = `${kind}:${id}`;
+  const existing = downloadPopups.get(key);
+  if (existing && !existing.isDestroyed()) {
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const icon = iconPath();
+  const win = new BrowserWindow({
+    width: 360,
+    height: kind === "start" ? 220 : 180,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    backgroundColor: "#101010",
+    title: kind === "start" ? "opencodex — Start download" : "opencodex — Download",
+    ...(icon ? { icon } : {}),
+    webPreferences: {
+      preload: join(HERE, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  // "Always on top" over ordinary windows still normally sits under another
+  // app's own always-on-top surfaces; the "screen-saver" level is what macOS
+  // and Windows both treat as floating above regular application windows,
+  // which is the actual ask here. Harmless where the platform ignores the level.
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.once("ready-to-show", () => win.show());
+  win.loadURL(`http://${HOST}:${proxyPort}/#/downloads?popup=${kind}&id=${encodeURIComponent(id)}`);
+  win.on("closed", () => { downloadPopups.delete(key); });
+  downloadPopups.set(key, win);
 }
 
 function showWindow() {
