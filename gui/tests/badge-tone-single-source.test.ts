@@ -63,6 +63,30 @@ import { fileURLToPath } from "node:url";
  * already renders via CSS classes in `m3-ui.tsx`, so it is real duplication —
  * just not of `BADGE_TONE_STYLE`, and not in badge shape, so it sits outside
  * this guard's scope.
+ *
+ * A third pass closed out the remaining container-background grep hits:
+ * api-keys-panels.tsx, claude-code-sections.tsx and LanguageVoice.tsx were
+ * re-checked and are unchanged from the second pass above (same medallion,
+ * card, tonal chip and funny-ladder findings, still correctly rejected); two
+ * files the earlier ten-file sweep never covered, Settings.tsx and
+ * codex-account-pool-main-card.tsx, were newly audited and both rejected too.
+ * Settings.tsx's `HISTORY_NOTE` pairs `--m3-tertiary-container` /
+ * `--m3-on-tertiary-container` on a `<p>` note below the local-history
+ * controls — tertiary isn't one of `BADGE_TONE_STYLE`'s five tones at all,
+ * and a `<p>` note is not pill-shaped either way.
+ * codex-account-pool-main-card.tsx hand-rolls the canonical "error" pair on a
+ * `role="alert"` retry row shown when the account list fails to load — a real
+ * duplicate of `Banner tone="error"` (same as the VersionHistory.tsx finding
+ * above: same CSS class `m3-banner--error` already exists in `m3-ui.tsx`),
+ * not of `BADGE_TONE_STYLE`, and not badge-shaped: it is a full-width alert
+ * row with a retry button, not a small tone-keyed label. The one real badge
+ * in that file's sibling module, `CodexTicketBadge`
+ * (`codex-account-pool-helpers.tsx`), already sources its tone through
+ * `chipStyle`/`chipButtonStyle` from the exempted `codex-account-pool-m3.ts`,
+ * so it needed no change either. `CALL_SITES` gains no new entries from this
+ * pass — every container-background hit this task's grep turns up is now
+ * either converted behind `Badge` or rejected with a recorded reason, and the
+ * badge-drift sweep is closed.
  */
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
