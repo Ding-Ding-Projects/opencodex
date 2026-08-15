@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PDFDocument } from "pdf-lib";
 import { handleConverterQueueRoutes } from "../src/server/management/converter-queue-routes";
 import {
   resetConvertQueueEngineForTests,
@@ -18,6 +19,8 @@ import { setConvertQueueStorePathForTests } from "../src/lib/converter/queue-sto
 import { setServerRef } from "../src/server/lifecycle";
 import type { ManagementContext } from "../src/server/management/context";
 import type { OcxConfig } from "../src/types";
+import { buildZip } from "../src/lib/export-archive";
+import { makePdf } from "./helpers/pdf-fixtures";
 
 function listeningOn(hostname: string | undefined): void {
   setServerRef(hostname === undefined ? undefined : ({ hostname, port: 10101 } as never));
@@ -251,5 +254,71 @@ describe("POST /api/converter/queue/resume", () => {
     expect(res?.status).toBe(200);
     const body = await res!.json() as { ok: boolean; state: { items: unknown[] } };
     expect(body.ok).toBe(true);
+  });
+});
+
+describe("POST /api/converter/queue/enqueue — kind: zip-extract and pdf-rotate", () => {
+  test("a real zip-extract job runs end to end through the route", async () => {
+    const src = join(dir, "in.zip");
+    writeFileSync(src, buildZip([{ path: "a.txt", data: new TextEncoder().encode("hello") }]));
+    const destDir = join(dir, "out-dir");
+
+    const res = await handleConverterQueueRoutes(ctx("/api/converter/queue/enqueue", "POST", {
+      jobs: [{ kind: "zip-extract", sourcePath: src, destPath: destDir }],
+    }));
+    expect(res?.status).toBe(200);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    const stateRes = await handleConverterQueueRoutes(ctx("/api/converter/queue", "GET"));
+    const state = await stateRes!.json() as { state: { items: { kind: string; status: string; sourceFormat: string | null }[] } };
+    expect(state.state.items[0].kind).toBe("zip-extract");
+    expect(state.state.items[0].sourceFormat).toBeNull();
+    expect(state.state.items[0].status).toBe("converted");
+    expect(readFileSync(join(destDir, "a.txt"), "utf-8")).toBe("hello");
+  });
+
+  test("a real pdf-rotate job runs end to end through the route", async () => {
+    const src = join(dir, "in.pdf");
+    writeFileSync(src, await makePdf([[100, 100], [100, 100]]));
+    const dest = join(dir, "out-rotated.pdf");
+
+    const res = await handleConverterQueueRoutes(ctx("/api/converter/queue/enqueue", "POST", {
+      jobs: [{ kind: "pdf-rotate", sourcePath: src, destPath: dest, rotateDegrees: 180 }],
+    }));
+    expect(res?.status).toBe(200);
+
+    // Unlike the structured/zip-extract kinds above, a real rotate runs
+    // inside `pdf-tools`' actual Worker thread (`sandbox.ts`) — genuine
+    // cross-thread messaging, not just a chain of already-resolved promises —
+    // so draining microtasks alone never observes it finish. Poll the real
+    // route instead of guessing how many ticks a worker thread needs.
+    let state!: { state: { items: { kind: string; status: string; rotateDegrees?: number }[] } };
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const stateRes = await handleConverterQueueRoutes(ctx("/api/converter/queue", "GET"));
+      state = await stateRes!.json() as typeof state;
+      if (state.state.items[0].status !== "queued" && state.state.items[0].status !== "converting") break;
+      if (Date.now() > deadline) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    expect(state.state.items[0].kind).toBe("pdf-rotate");
+    expect(state.state.items[0].rotateDegrees).toBe(180);
+    expect(state.state.items[0].status).toBe("converted");
+    const written = await PDFDocument.load(readFileSync(dest));
+    for (const page of written.getPages()) expect(page.getRotation().angle).toBe(180);
+  });
+
+  test("a pdf-rotate job with an invalid rotateDegrees is rejected with 400", async () => {
+    const res = await handleConverterQueueRoutes(ctx("/api/converter/queue/enqueue", "POST", {
+      jobs: [{ kind: "pdf-rotate", sourcePath: join(dir, "x.pdf"), destPath: join(dir, "y.pdf"), rotateDegrees: 45 }],
+    }));
+    expect(res?.status).toBe(400);
+  });
+
+  test("an unknown kind is rejected with 400", async () => {
+    const res = await handleConverterQueueRoutes(ctx("/api/converter/queue/enqueue", "POST", {
+      jobs: [{ kind: "not-a-real-kind", sourcePath: join(dir, "x"), destPath: join(dir, "y") }],
+    }));
+    expect(res?.status).toBe(400);
   });
 });

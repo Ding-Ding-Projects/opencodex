@@ -46,7 +46,7 @@ const USAGE = [
   "  structured <path> --from <json|csv|tsv|xml> --to <json|csv|tsv|xml> --destination <path>",
   "                              convert a JSON/CSV/TSV/XML file, disclosing any lossy target format",
   "  queue enqueue --jobs-file <path> [--concurrency <1-8>]",
-  "                              page a JSON array of structured-conversion jobs into the durable batch queue",
+  "                              page a JSON array of conversion jobs into the durable batch queue",
   "  queue status                 report the queue's current items and summary",
   "  queue preflight --jobs-file <path>",
   "                              report the storage-capacity estimate for a would-be batch without enqueuing it",
@@ -56,8 +56,11 @@ const USAGE = [
   "  queue retry --id <id>        requeue a failed or cancelled item",
   "  queue clear                  drop every finished item (converted/skipped/cancelled/failed), keeping queued/converting ones",
   "",
-  "A --jobs-file is a JSON array of {sourcePath, sourceFormat, destPath, destFormat, acknowledgeLossy?, overwrite?}.",
-  "structured refuses a lossy target format (boundary lossy-not-acknowledged) unless --acknowledge-lossy is given; a queued job carries the same acknowledgeLossy field.",
+  "A --jobs-file is a JSON array of job objects, each carrying an optional kind (default \"structured\"):",
+  "  kind \"structured\"  : {sourcePath, sourceFormat, destPath, destFormat, acknowledgeLossy?, overwrite?}",
+  "  kind \"zip-extract\" : {kind, sourcePath, destPath, overwrite?} — destPath is the extraction directory",
+  "  kind \"pdf-rotate\"  : {kind, sourcePath, destPath, rotateDegrees, acknowledgeLossy?, overwrite?} — rotates every page by rotateDegrees (0/90/180/270)",
+  "structured refuses a lossy target format, and pdf-rotate refuses a signed source, unless acknowledgeLossy/--acknowledge-lossy is given (boundary lossy-not-acknowledged); a queued job carries the same acknowledgeLossy field either way.",
   "Add --json for machine-readable output.",
 ].join("\n");
 
@@ -182,11 +185,13 @@ async function structured(argv: string[], deps: RuntimeApiDeps): Promise<void> {
 /* --------------------------------------------------------------- queue */
 
 interface QueueJobFileEntry {
+  kind?: unknown;
   sourcePath?: unknown;
   sourceFormat?: unknown;
   destPath?: unknown;
   destFormat?: unknown;
   acknowledgeLossy?: unknown;
+  rotateDegrees?: unknown;
   overwrite?: unknown;
 }
 
@@ -229,11 +234,13 @@ function readJobsFile(jobsFile: string): unknown[] {
     throw new CliUsageError(`--jobs-file ${jobsFile} must contain a non-empty JSON array of jobs`, USAGE);
   }
   return (parsed as QueueJobFileEntry[]).map(entry => ({
+    kind: entry.kind,
     sourcePath: entry.sourcePath,
     sourceFormat: entry.sourceFormat,
     destPath: entry.destPath,
     destFormat: entry.destFormat,
     acknowledgeLossy: entry.acknowledgeLossy === true,
+    rotateDegrees: entry.rotateDegrees,
     overwrite: entry.overwrite === true,
   }));
 }

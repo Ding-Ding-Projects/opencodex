@@ -50,6 +50,25 @@ function makeItem(overrides: Partial<ConvertQueueItem> = {}): ConvertQueueItem {
   };
 }
 
+function makeZipItem(overrides: Partial<ConvertQueueItem> = {}): ConvertQueueItem {
+  return makeItem({
+    id: "zip-1", kind: "zip-extract",
+    sourcePath: "C:\\docs\\a.zip", sourceFormat: null,
+    destPath: "C:\\out\\a-dir", destFormat: null,
+    ...overrides,
+  });
+}
+
+function makePdfRotateItem(overrides: Partial<ConvertQueueItem> = {}): ConvertQueueItem {
+  return makeItem({
+    id: "pdf-1", kind: "pdf-rotate",
+    sourcePath: "C:\\docs\\a.pdf", sourceFormat: null,
+    destPath: "C:\\out\\a-rotated.pdf", destFormat: null,
+    rotateDegrees: 90,
+    ...overrides,
+  });
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ocx-convert-queue-test-"));
   nestedDir = join(dir, "nested");
@@ -106,6 +125,66 @@ describe("getQueueState", () => {
     writeFileSync(storeFile, JSON.stringify({ version: 1, paused: true, items: [] }), "utf8");
     resetConvertQueueStoreForTests();
     expect(getQueueState().paused).toBe(true);
+  });
+});
+
+describe("zip-extract and pdf-rotate kinds", () => {
+  test("a zip-extract item round-trips with sourceFormat/destFormat honestly null", () => {
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(storeFile, JSON.stringify({ version: 1, paused: false, items: [makeZipItem()] }), "utf8");
+    resetConvertQueueStoreForTests();
+    const state = getQueueState();
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "zip-extract", sourceFormat: null, destFormat: null });
+  });
+
+  test("a pdf-rotate item round-trips with its rotateDegrees", () => {
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(storeFile, JSON.stringify({ version: 1, paused: false, items: [makePdfRotateItem({ rotateDegrees: 270 })] }), "utf8");
+    resetConvertQueueStoreForTests();
+    const state = getQueueState();
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "pdf-rotate", rotateDegrees: 270, sourceFormat: null, destFormat: null });
+  });
+
+  test("an unknown kind is dropped, valid siblings survive", () => {
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(storeFile, JSON.stringify({
+      version: 1, paused: false,
+      items: [makeZipItem({ id: "good" }), { ...makeZipItem({ id: "bad" }), kind: "not-a-real-kind" }],
+    }), "utf8");
+    resetConvertQueueStoreForTests();
+    expect(getQueueState().items.map(i => i.id)).toEqual(["good"]);
+  });
+
+  test("a pdf-rotate item with an invalid rotateDegrees is dropped", () => {
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(storeFile, JSON.stringify({
+      version: 1, paused: false,
+      items: [makePdfRotateItem({ id: "good" }), { ...makePdfRotateItem({ id: "bad" }), rotateDegrees: 45 }],
+    }), "utf8");
+    resetConvertQueueStoreForTests();
+    expect(getQueueState().items.map(i => i.id)).toEqual(["good"]);
+  });
+
+  test("a non-structured item carrying a stray sourceFormat is dropped rather than silently ignored", () => {
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(storeFile, JSON.stringify({
+      version: 1, paused: false,
+      items: [makeZipItem({ id: "good" }), { ...makeZipItem({ id: "bad" }), sourceFormat: "json" }],
+    }), "utf8");
+    resetConvertQueueStoreForTests();
+    expect(getQueueState().items.map(i => i.id)).toEqual(["good"]);
+  });
+
+  test("a structured item carrying a stray rotateDegrees is dropped rather than silently ignored", () => {
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(storeFile, JSON.stringify({
+      version: 1, paused: false,
+      items: [makeItem({ id: "good" }), { ...makeItem({ id: "bad" }), rotateDegrees: 90 }],
+    }), "utf8");
+    resetConvertQueueStoreForTests();
+    expect(getQueueState().items.map(i => i.id)).toEqual(["good"]);
   });
 });
 

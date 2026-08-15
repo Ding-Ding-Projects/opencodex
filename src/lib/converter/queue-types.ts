@@ -7,15 +7,25 @@
  * pause, resume, and cancel... per-file progress and outcomes" contract the
  * universal-converter section asks for, and the model-pull queue already
  * proved that exact shape for a different kind of job. A `ConvertQueueItem`
- * is one file-in/file-out conversion job — today only the structured-data
- * family (JSON/CSV/TSV/XML) is wired to it; see `queue-engine.ts`'s header
- * for what that means for other adapter families.
+ * is one file-in/file-out conversion job. Three families are wired today —
+ * structured-data (JSON/CSV/TSV/XML), ZIP extraction, and a PDF "rotate
+ * every page" job — see `queue-engine.ts`'s header for exactly what each
+ * kind does and does not cover.
  */
 
 import type { StructuredFormat } from "./structured-service";
 
-/** The one job kind the queue drives today. Kept as a discriminant so a second kind (e.g. ZIP extraction) can be added later without reshaping every item. */
-export type ConvertJobKind = "structured";
+/**
+ * `structured`  — a JSON/CSV/TSV/XML conversion through `convertStructuredDataAtPath`.
+ * `zip-extract` — an archive extraction through `extractZipAtPath`.
+ * `pdf-rotate`  — every page of a PDF rotated by the same amount, through
+ *                 `inspectPdfAtPath` + `rotatePagesAtPath`.
+ *
+ * Kept as a discriminant so each kind can carry only the fields it actually
+ * needs (`sourceFormat`/`destFormat` for `structured`, `rotateDegrees` for
+ * `pdf-rotate`, neither for `zip-extract`) without reshaping every item.
+ */
+export type ConvertJobKind = "structured" | "zip-extract" | "pdf-rotate";
 
 /**
  * `queued`     — accepted into the batch, not yet started.
@@ -40,11 +50,23 @@ export interface ConvertQueueItem {
   id: string;
   kind: ConvertJobKind;
   sourcePath: string;
-  sourceFormat: StructuredFormat;
+  /** Only meaningful for `kind === "structured"` — the structured source/target pair. `null` for `zip-extract` and `pdf-rotate`, which have no format concept. */
+  sourceFormat: StructuredFormat | null;
   destPath: string;
-  destFormat: StructuredFormat;
-  /** Supplied at enqueue time; carried through so a resumed/retried item does not silently re-ask. */
+  destFormat: StructuredFormat | null;
+  /**
+   * Supplied at enqueue time; carried through so a resumed/retried item does
+   * not silently re-ask. Overloaded per kind, same as the rest of this item:
+   * for `structured` it is the lossy-target acknowledgement
+   * `convertStructuredDataAtPath` enforces; for `pdf-rotate` it is the
+   * signed-source acknowledgement `rotatePagesAtPath` enforces
+   * (`acknowledgeSigned`, same "disclose before it runs" shape, reusing this
+   * field rather than adding a second one that would mean the same thing for
+   * a different kind). Meaningless for `zip-extract`, which has no such risk.
+   */
   acknowledgeLossy: boolean;
+  /** Only meaningful for `kind === "pdf-rotate"` — degrees every page of the source is rotated by. `undefined` for every other kind. */
+  rotateDegrees?: 0 | 90 | 180 | 270;
   status: ConvertQueueItemStatus;
   requestedAt: number;
   startedAt: number | null;

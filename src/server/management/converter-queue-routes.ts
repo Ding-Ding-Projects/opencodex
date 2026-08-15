@@ -6,10 +6,21 @@
  * request-shape validators over a durable, resumable engine in `src/lib/`
  * that the GUI and `ocx convert queue` (`src/cli/converter.ts`) call
  * identically — `src/lib/converter/queue-engine.ts` here. Every job this
- * queue runs still goes through `convertStructuredDataAtPath`, so the
- * lossy-disclosure enforcement in `structured-service.ts` applies to a
- * queued job exactly as it does to a single ad-hoc conversion; the queue
- * adds no separate code path around it.
+ * queue runs still goes through the real service its `kind` names
+ * (`convertStructuredDataAtPath`, `extractZipAtPath`, or `inspectPdfAtPath` +
+ * `rotatePagesAtPath` — see `queue-engine.ts`'s header), so every disclosure
+ * those services enforce (structured's lossy-target refusal, PDF's
+ * signed-source refusal) applies to a queued job exactly as it does to a
+ * single ad-hoc conversion; the queue adds no separate code path around any
+ * of them.
+ *
+ * `jobs[].kind` selects the family: `"structured"` (the default when omitted,
+ * for every caller that predates this field) requires `sourceFormat`/
+ * `destFormat`; `"zip-extract"` requires neither; `"pdf-rotate"` requires
+ * `rotateDegrees` (one of `0`/`90`/`180`/`270`) and ignores both formats. Every
+ * kind shares `acknowledgeLossy` — for `pdf-rotate` it is PDF's own
+ * `acknowledgeSigned` disclosure, reused rather than duplicated (see
+ * `queue-types.ts`).
  *
  * Endpoints:
  * - POST /api/converter/queue/preflight  { jobs: [{ destPath, sourcePath? }] } -> ConvertQueuePreflight — read-only, no gate
@@ -48,15 +59,26 @@ import {
   type ConvertJobInput,
 } from "../../lib/converter/queue-engine";
 import { buildConvertQueuePreflight } from "../../lib/converter/queue-preflight";
+import type { ConvertJobKind } from "../../lib/converter/queue-types";
 import type { StructuredFormat } from "../../lib/converter/structured-service";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
 import { requireLoopbackListener } from "./local-machine-gate";
 
 const STRUCTURED_FORMATS: readonly StructuredFormat[] = ["json", "csv", "tsv", "xml"];
+const JOB_KINDS: readonly ConvertJobKind[] = ["structured", "zip-extract", "pdf-rotate"];
+const ROTATE_DEGREES: readonly number[] = [0, 90, 180, 270];
 
 function isStructuredFormat(value: unknown): value is StructuredFormat {
   return typeof value === "string" && (STRUCTURED_FORMATS as readonly string[]).includes(value);
+}
+
+function isJobKind(value: unknown): value is ConvertJobKind {
+  return typeof value === "string" && (JOB_KINDS as readonly string[]).includes(value);
+}
+
+function isRotateDegrees(value: unknown): value is 0 | 90 | 180 | 270 {
+  return typeof value === "number" && ROTATE_DEGREES.includes(value);
 }
 
 function isAbsolutePathField(value: unknown): value is string {
@@ -72,11 +94,13 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 interface JobBody {
+  kind?: unknown;
   sourcePath?: unknown;
   sourceFormat?: unknown;
   destPath?: unknown;
   destFormat?: unknown;
   acknowledgeLossy?: unknown;
+  rotateDegrees?: unknown;
   overwrite?: unknown;
 }
 
@@ -85,20 +109,32 @@ function parseJobsBody(body: { jobs?: unknown }): ConvertJobInput[] | { error: s
   const jobs: ConvertJobInput[] = [];
   for (const raw of body.jobs as JobBody[]) {
     if (!raw || typeof raw !== "object") return { error: "each job must be an object" };
+    if (raw.kind !== undefined && !isJobKind(raw.kind)) return { error: "each job's kind must be one of structured, zip-extract, pdf-rotate" };
+    const kind: ConvertJobKind = isJobKind(raw.kind) ? raw.kind : "structured";
     if (!isAbsolutePathField(raw.sourcePath)) return { error: "each job's sourcePath must be an absolute path" };
-    if (!isStructuredFormat(raw.sourceFormat)) return { error: "each job's sourceFormat must be one of json, csv, tsv, xml" };
     if (!isAbsolutePathField(raw.destPath)) return { error: "each job's destPath must be an absolute path" };
-    if (!isStructuredFormat(raw.destFormat)) return { error: "each job's destFormat must be one of json, csv, tsv, xml" };
+    if (kind === "structured") {
+      if (!isStructuredFormat(raw.sourceFormat)) return { error: "each structured job's sourceFormat must be one of json, csv, tsv, xml" };
+      if (!isStructuredFormat(raw.destFormat)) return { error: "each structured job's destFormat must be one of json, csv, tsv, xml" };
+    }
+    if (kind === "pdf-rotate" && !isRotateDegrees(raw.rotateDegrees)) {
+      return { error: "each pdf-rotate job's rotateDegrees must be one of 0, 90, 180, 270" };
+    }
     if (raw.acknowledgeLossy !== undefined && typeof raw.acknowledgeLossy !== "boolean") return { error: "each job's acknowledgeLossy must be a boolean" };
     if (raw.overwrite !== undefined && typeof raw.overwrite !== "boolean") return { error: "each job's overwrite must be a boolean" };
-    jobs.push({
+    const job: ConvertJobInput = {
+      kind,
       sourcePath: raw.sourcePath,
-      sourceFormat: raw.sourceFormat,
       destPath: raw.destPath,
-      destFormat: raw.destFormat,
       acknowledgeLossy: raw.acknowledgeLossy === true,
       overwrite: raw.overwrite === true,
-    });
+    };
+    if (kind === "structured") {
+      job.sourceFormat = raw.sourceFormat as StructuredFormat;
+      job.destFormat = raw.destFormat as StructuredFormat;
+    }
+    if (kind === "pdf-rotate") job.rotateDegrees = raw.rotateDegrees as 0 | 90 | 180 | 270;
+    jobs.push(job);
   }
   return jobs;
 }
