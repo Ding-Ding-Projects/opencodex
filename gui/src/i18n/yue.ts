@@ -1805,6 +1805,9 @@ export const yue: Partial<Record<TKey, string>> = {
   "tabs.overflow": "所有分頁",
   "tabs.hidden": "收埋咗嘅分頁（{count}）",
   "tabs.newTab": "開新分頁",
+  // 個 {keys} 係鍵盤上面印住嘅字（Del、Ctrl+Shift+F、⌘⇧F），照原樣擺，唔翻譯，
+  // 因為翻咗之後粒掣上面就搵唔返。
+  "menu.shortcut": "鍵盤快捷鍵：{keys}",
   "tabs.menuAria": "{name} 嘅動作",
   "tabs.closeTab": "閂咗呢個分頁",
   "tabs.closeOthers": "閂晒其他分頁",

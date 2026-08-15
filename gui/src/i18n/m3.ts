@@ -293,6 +293,15 @@ export const M3_EN = {
   "tabs.hidden": "Hidden tabs ({count})",
   "tabs.newTab": "New tab",
 
+  // ---- menu keyboard shortcuts ----
+  // The tooltip on the shortcut column every menu row carries when its command
+  // has a binding. `{keys}` is the platform's own notation — "Del", "Ctrl+Shift+F",
+  // "⌘⇧F" — and is never translated, because those are the legends printed on the
+  // keys themselves and a reader hunting for a translated one will not find it.
+  // The column is `aria-hidden`; the keys reach a screen reader through
+  // `aria-keyshortcuts` instead, so nothing here is announced twice.
+  "menu.shortcut": "Keyboard shortcut: {keys}",
+
   // ---- the tab context menu ----
   // Named per tab, because several menus can have existed in one session and a
   // screen reader announcing a bare "Tab actions" cannot say which tab it acts on.

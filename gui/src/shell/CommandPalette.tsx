@@ -55,6 +55,7 @@ import {
   type LiveControlKind, type PaletteDestination, type PaletteEntry, type PaletteSetting,
 } from "./command-palette-index";
 import { teleportToSetting } from "./command-palette-teleport";
+import { matchesShortcut } from "./shortcuts";
 import { PAGE_META_BY_ID } from "./page-meta";
 import { IconSearch, IconWinMaximize, IconWinRestore, IconX } from "../icons";
 import { LOCALES, useI18n } from "../i18n/shared";
@@ -465,9 +466,10 @@ export default function CommandPalette({ tabs }: CommandPaletteProps) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const isShortcut = event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey
-        && (event.key === "F" || event.key === "f" || event.code === "KeyF");
-      if (!isShortcut) return;
+      // The chord itself lives in `shortcuts.ts`, which is also what any menu
+      // offering this command would print — one declaration, so the label and
+      // the key that opens this cannot drift apart.
+      if (!matchesShortcut("commandPalette", event)) return;
       event.preventDefault();
       setOpen(o => !o);
     };

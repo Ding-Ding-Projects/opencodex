@@ -27,6 +27,7 @@ import { formatUsd } from "./cost-format";
 import { resolveSummaryCost, type LaneBearingSummary, type ResolvedSummaryCost } from "../cost-lanes";
 import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
 import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
+import { MenuItem } from "./MenuItem";
 
 const RANGES: { range: CostRange; tkey: TKey }[] = [
   { range: "all", tkey: "cost.rangeAll" },
@@ -194,19 +195,20 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
               resultCount={filter.visible.length}
             />
             <MenuFilterStatus matcher={filter.matcher} query={filter.query} resultCount={filter.visible.length} />
+            {/* A range is a value, not a command, so no row prints a shortcut.
+                Rendered through `MenuItem` regardless, so the column arrives
+                with any binding one of these later grows. */}
             {filter.visible.map((item, index) => (
-              <button
+              <MenuItem
                 key={item.range}
-                type="button"
                 role="menuitemradio"
                 aria-checked={item.range === range}
-                className="m3-menu-item"
                 ref={element => { itemRefs.current[index] = element; }}
                 onKeyDown={event => onItemKeyDown(event, index)}
                 onClick={() => { setPrefs({ costRange: item.range }); setMenuOpen(false); }}
               >
                 <span style={{ fontWeight: item.range === range ? 600 : 400 }}>{t(item.tkey)}</span>
-              </button>
+              </MenuItem>
             ))}
           </div>
         </div>

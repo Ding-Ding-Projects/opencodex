@@ -18,6 +18,7 @@ import { useNotifications } from "./notifications-context";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
 import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
+import { MenuItem } from "./MenuItem";
 
 interface PoolAccount {
   id: string;
@@ -243,9 +244,13 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
             const weekly = account.quota?.weeklyPercent;
             const unavailable = !!account.paused;
             return (
-              <button
+              /* A row here picks a value rather than running a command, so
+                 there is no binding to print — an account cannot have a
+                 keyboard shortcut of its own. It renders through `MenuItem`
+                 all the same, so the day one of these grows a command the
+                 column is already there. */
+              <MenuItem
                 key={account.id}
-                type="button"
                 role="menuitemradio"
                 aria-checked={isActive}
                 className={`m3-menu-item${unavailable ? " m3-menu-item--unavailable" : ""}`}
@@ -273,7 +278,7 @@ export default function AccountSwitcher({ apiBase }: { apiBase: string }) {
                   </span>
                 </span>
                 {isActive && <span style={{ flex: "0 0 auto", color: "var(--m3-primary)", fontWeight: 600 }}>{t("switcher.active")}</span>}
-              </button>
+              </MenuItem>
             );
           })}
         </div>

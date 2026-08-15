@@ -40,6 +40,8 @@ import {
 import { useT } from "../i18n/shared";
 import { PAGE_META, PAGE_META_BY_ID } from "./page-meta";
 import { SearchField } from "./RegexBuilderButton";
+import { MenuItem, MenuShortcut, menuShortcutProps } from "./MenuItem";
+import { matchesShortcut, type ShortcutId } from "./shortcuts";
 import TabAppearanceEditor from "./TabAppearanceEditor";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import { Button, Segmented, TextInput, Toggle } from "./m3-ui";
@@ -434,10 +436,31 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
    * Nothing is ever hidden. A close entry with nothing to close is disabled, so
    * the menu keeps one shape — a menu whose items move between openings is a
    * menu whose muscle memory is wrong.
+   *
+   * `shortcut` names a binding in `shortcuts.ts`, and only where that binding
+   * genuinely reaches *this* command from *this* surface. Most of these rows
+   * have no keyboard route at all and carry nothing, which is the right answer:
+   * a column of invented chords teaches keys that do nothing.
    */
-  const contextEntries: { action: ContextAction; label: string; Icon: typeof IconX; disabled?: boolean }[] = contextTab
+  const contextEntries: {
+    action: ContextAction; label: string; Icon: typeof IconX; disabled?: boolean; shortcut?: ShortcutId;
+  }[] = contextTab
     ? [
-      { action: "close", label: t("tabs.closeTab"), Icon: IconX, disabled: !closable },
+      {
+        action: "close",
+        label: t("tabs.closeTab"),
+        Icon: IconX,
+        disabled: !closable,
+        // Delete on the strip closes the *active* tab, and this menu acts on the
+        // tab that was right-clicked. Those are the same tab often enough that
+        // dropping the shortcut entirely would hide a real binding, and different
+        // often enough that printing it unconditionally would be a lie with
+        // consequences — press it after right-clicking a background tab and the
+        // tab you were looking at closes instead. So it is shown exactly when it
+        // is true. A shortcut that appears and disappears is a smaller surprise
+        // than one that closes the wrong thing.
+        shortcut: contextTab.id === tabs.activeTab ? "closeTab" : undefined,
+      },
       {
         action: "others",
         label: t("tabs.closeOthers"),
@@ -522,7 +545,14 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
 
   const menuGroup = groupMenu ? tabs.groups.find(group => group.id === groupMenu.id) : undefined;
 
-  const groupEntries: { action: GroupAction; label: string; Icon: typeof IconX }[] = menuGroup
+  // No row here carries a `shortcut` today: a group header answers Enter and
+  // Space, which are activation rather than a binding, and nothing else reaches
+  // collapse, rename, appearance or ungroup from the keyboard. The field is
+  // still here so that giving one of them a binding is a single edit in the same
+  // object the label lives in, rather than a second declaration to keep in step.
+  const groupEntries: {
+    action: GroupAction; label: string; Icon: typeof IconX; shortcut?: ShortcutId;
+  }[] = menuGroup
     ? [
       { action: "collapse", label: menuGroup.collapsed ? t("tabs.expand") : t("tabs.collapse"), Icon: IconChevron },
       { action: "rename", label: t("tabs.renameGroup"), Icon: IconCopy },
@@ -738,7 +768,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     // Shift+F10 and the ContextMenu key are the keyboard's right-click. Without
     // them the tab menu would be mouse-only, which is not a menu at all for
     // anyone driving this from the keyboard.
-    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+    if (matchesShortcut("contextMenu", e)) {
       e.preventDefault();
       openContextMenuFromKeyboard(tabs.activeTab);
       return;
@@ -755,7 +785,11 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     else if (e.key === "ArrowLeft") move(index - 1);
     else if (e.key === "Home") move(0);
     else if (e.key === "End") move(visible.length - 1);
-    else if (e.key === "Delete") { e.preventDefault(); requestClose(tabs.activeTab); }
+    // The binding the tab menu prints beside "Close tab". Matched through the
+    // registry rather than against `"Delete"` here, so the two cannot disagree —
+    // and the registry's chord requires a bare Delete, which is what the label
+    // says: Ctrl+Delete is a different press and was never being advertised.
+    else if (matchesShortcut("closeTab", e)) { e.preventDefault(); requestClose(tabs.activeTab); }
   };
 
   /* ---------------------------------------------------------- menu keys --- */
@@ -795,7 +829,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     else if (e.key === "End") moveRow(count - 1);
     else if (e.key === "ArrowRight" && closable) { e.preventDefault(); setFocusColumn("close"); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); setFocusColumn("item"); }
-    else if (e.key === "Delete" || e.key === "Backspace") {
+    // Printed beside the ✕ of whichever row currently has menu focus — which is
+    // the row this closes. Same registry entry drives both.
+    else if (matchesShortcut("closeMenuRow", e)) {
       e.preventDefault();
       closeFromMenu(overflow[menuIndex].id);
     }
@@ -1026,8 +1062,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                     className="m3-tab"
                     style={{ ...style.surface, maxWidth: "none", width: "100%", borderRadius: "var(--r-s)" }}
                   >
-                    <button
-                      type="button"
+                    {/* Activating a row switches to the tab, and no key does
+                        that beyond Enter on the focused item — so this half of
+                        the row carries no shortcut. Delete belongs to the ✕. */}
+                    <MenuItem
                       role="menuitem"
                       className="m3-tab-btn"
                       style={{ ...style.label, borderRadius: "var(--r-s)" }}
@@ -1039,7 +1077,15 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                       onClick={() => activateFromMenu(tab.id)}
                     >
                       <TabIdentity tab={tab} label={label} />
-                    </button>
+                    </MenuItem>
+                    {/* On the focused row only, because the menu's Delete acts on
+                        the focused row: printed on every row it would promise
+                        each of them a key that closes whichever other row the
+                        arrows happen to be sitting on. It renders outside the ✕
+                        rather than inside it — that button is a fixed 28px grid
+                        cell with an icon centred in it, and text pushed in there
+                        would either overflow it or shove the icon off centre. */}
+                    {closable && index === menuIndex && <MenuShortcut shortcut="closeMenuRow" />}
                     <button
                       type="button"
                       role="menuitem"
@@ -1051,6 +1097,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                       onClick={() => closeFromMenu(tab.id)}
                       aria-label={t("tabs.close", { name: label })}
                       title={t("tabs.close", { name: label })}
+                      // The announcement route for the same binding. The visible
+                      // chip above is `aria-hidden`, so the keys are stated once.
+                      {...menuShortcutProps("closeMenuRow")}
                     >
                       <IconX aria-hidden />
                     </button>
@@ -1127,19 +1176,19 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                   : t("tabs.searchNone", { query: pageQuery })}
               </p>
             ) : (
+              /* Opening a page in a new tab has no keyboard binding of its own,
+                 so no row here prints one. */
               pageResults.map((row, index) => (
-                <button
+                <MenuItem
                   key={row.meta.id}
-                  type="button"
                   role="menuitem"
-                  className="m3-menu-item"
                   ref={el => { pageRefs.current[index] = el; }}
                   onKeyDown={e => onPageResultKeyDown(e, index)}
                   onClick={() => openInNewTab(row.meta.id)}
                 >
                   <row.meta.Icon aria-hidden />
                   <span>{row.label}</span>
-                </button>
+                </MenuItem>
               ))
             )}
           </div>
@@ -1156,11 +1205,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           onKeyDown={onContextKeyDown}
         >
           {contextEntries.map((entry, index) => (
-            <button
+            <MenuItem
               key={entry.action}
-              type="button"
               role="menuitem"
-              className="m3-menu-item"
+              shortcut={entry.shortcut}
               disabled={entry.disabled}
               // Roving tabindex: the menu is one Tab stop, arrows move within it.
               tabIndex={index === contextFocus ? 0 : -1}
@@ -1169,7 +1217,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
             >
               <entry.Icon aria-hidden />
               <span>{entry.label}</span>
-            </button>
+            </MenuItem>
           ))}
         </div>
       )}
@@ -1310,18 +1358,17 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           style={{ position: "fixed", left: groupMenuPosition.left, top: groupMenuPosition.top, minWidth: 240 }}
         >
           {groupEntries.map((entry, index) => (
-            <button
+            <MenuItem
               key={entry.action}
-              type="button"
               role="menuitem"
-              className="m3-menu-item"
+              shortcut={entry.shortcut}
               tabIndex={index === 0 ? 0 : -1}
               ref={el => { groupEntryRefs.current[index] = el; }}
               onClick={() => runGroupEntry(entry.action)}
             >
               <entry.Icon aria-hidden />
               <span>{entry.label}</span>
-            </button>
+            </MenuItem>
           ))}
         </div>
       )}
