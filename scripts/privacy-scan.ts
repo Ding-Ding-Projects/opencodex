@@ -87,7 +87,20 @@ function isAllowedTokenLooking(file: string, token: string): boolean {
 
 function isAllowedBearerToken(file: string, token: string): boolean {
   if (!file.startsWith("tests/")) return false;
-  return /^(?:access|stack|usage-debug)-token(?:-value)?-[A-Za-z0-9-]+$/.test(token);
+  // The original three fixture families, which read like real tokens on purpose
+  // so the code under test cannot tell the difference.
+  if (/^(?:access|stack|usage-debug)-token(?:-value)?-[A-Za-z0-9-]+$/.test(token)) return true;
+  // An explicit sentinel, in tests only. The credential-forwarding and redaction
+  // suites need values a *reader* can tell are fake at a glance -- the whole point
+  // of `SENTINEL-DO-NOT-FORWARD-TOKEN` is that anyone who finds it in a log knows
+  // immediately that nothing leaked. Forcing those to masquerade as
+  // `access-token-...` to satisfy this scan would trade that clarity for nothing:
+  // a scan that only accepts token-shaped fakes teaches people to write
+  // token-shaped fakes, and then a real one hides among them.
+  //
+  // Deliberately narrow: uppercase prefix, uppercase-and-digits body, tests/ only.
+  // A real credential does not look like this, and nothing outside tests/ may use it.
+  return /^SENTINEL-[A-Z0-9][A-Z0-9-]*$/.test(token);
 }
 
 function addFindingsForPattern(
