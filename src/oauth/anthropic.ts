@@ -81,10 +81,22 @@ function parseTokenResponse(responseBody: string): AnthropicTokenResponse {
 function credsFrom(data: AnthropicTokenResponse, refreshFallback?: string): OAuthCredentials {
   const accountUuid = data.account?.uuid;
   const email = data.account?.email_address;
+  // B3 security port (upstream 2186e98cb + fc5889e0a + 355b69e5b): guard against a
+  // missing/non-finite/negative expires_in (malformed upstream response) — a NaN expiry
+  // would never compare as expired, and a negative duration would stamp an already-past
+  // expiry — both break refresh semantics.
+  const expiresIn =
+    typeof data.expires_in === "number" && Number.isFinite(data.expires_in) && data.expires_in >= 0
+      ? data.expires_in
+      : 3600;
+  // The computed timestamp itself must stay finite too: Number.MAX_VALUE passes
+  // Number.isFinite but overflows to Infinity once multiplied by 1000.
+  const computedExpires = Date.now() + expiresIn * 1000 - 5 * 60 * 1000;
+  const expires = Number.isFinite(computedExpires) ? computedExpires : Date.now() + 3600 * 1000 - 5 * 60 * 1000;
   return {
     refresh: data.refresh_token || refreshFallback || "",
     access: data.access_token,
-    expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
+    expires,
     accountId: typeof accountUuid === "string" && accountUuid.length > 0 ? accountUuid : undefined,
     email: typeof email === "string" && email.length > 0 ? email : undefined,
   };

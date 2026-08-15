@@ -151,16 +151,31 @@ async function requestDeviceAuthorization(): Promise<{
 }
 
 function parseTokenPayload(payload: TokenResponse, refreshFallback?: string): OAuthCredentials {
-  if (!payload.access_token || typeof payload.expires_in !== "number") {
+  // B3 security port (upstream 2186e98cb + fc5889e0a + 355b69e5b): typeof NaN === "number",
+  // so a bare typeof check lets a non-finite expires_in through and produces a
+  // never-refreshing expiry. A negative duration would stamp an already-past expiry — also
+  // malformed, so also rejected here rather than silently accepted.
+  if (
+    !payload.access_token
+    || typeof payload.expires_in !== "number"
+    || !Number.isFinite(payload.expires_in)
+    || payload.expires_in < 0
+  ) {
     throw new Error("Kimi token response missing required fields");
   }
   const refresh = payload.refresh_token ?? refreshFallback;
   if (!refresh) throw new Error("Kimi token response missing refresh token");
+  // The computed timestamp itself must also stay finite: Number.MAX_VALUE passes
+  // Number.isFinite but overflows to Infinity once multiplied by 1000.
+  const expires = Date.now() + payload.expires_in * 1000 - OAUTH_EXPIRY_SKEW_MS;
+  if (!Number.isFinite(expires)) {
+    throw new Error("Kimi token response missing required fields");
+  }
   const identity = identityFromKimiTokens(payload.access_token, refresh);
   return {
     access: payload.access_token,
     refresh,
-    expires: Date.now() + payload.expires_in * 1000 - OAUTH_EXPIRY_SKEW_MS,
+    expires,
     ...identity,
   };
 }

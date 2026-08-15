@@ -6,6 +6,13 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(auth): pin forwarded Codex OAuth credentials to the canonical ChatGPT host and refuse to forward them to any other configured `authMode: "forward"` provider; refuse cross-origin redirects on every credential-bearing sidecar fetch (ported from upstream lidge-jun/opencodex#1471)
+- fix(oauth): guard `expires_in` and the computed token expiry against `NaN`, `Infinity`/overflow, and negative values across the Anthropic, ChatGPT, Kimi, and Codex-account-store OAuth refresh paths, so a malformed token response cannot stamp a credential as valid forever or already-expired (ported from upstream lidge-jun/opencodex, three-commit chain ending 355b69e5b)
+- fix(redact): mask colon-labelled credentials echoed back by upstream error bodies (`x-api-key: <value>`), close the "prefix it with Bearer" smuggling hole that exemption first opened, and recognize quoted credential keys a serialized headers object uses (`{"x-api-key":"<value>"}`) that the prior pattern list did not cover (ported, intent merged rather than transplanted, from upstream lidge-jun/opencodex's redact.ts hardening arc)
+- fix(errors): classify local Windows NTFS/ACL hardening (`icacls`) failures as 503 server errors instead of 401 authentication errors, so a local filesystem permission problem is never reported to the user as an invalid credential (ported from upstream lidge-jun/opencodex#1296)
+
+## Unreleased
+
 - feat(auth): add a password/TOTP-protected, encrypted local history for TOTP-entry and display-name mutations
 - feat(pdf): inspect, split, merge, extract, reorder, rotate and edit metadata for local PDF files, with a bounded worker sandbox and post-write reopen validation
 - feat(cli): add `ocx pdf` as the headless counterpart to the new PDF tools page

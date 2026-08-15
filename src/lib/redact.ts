@@ -3,7 +3,10 @@ export const REDACTED_SECRET = "[REDACTED]";
 const SENSITIVE_KEY_PATTERN = /^(?:authorization|proxy-authorization|cookie|set-cookie|set-cookie2|api[-_]?key|x-api-key|x-goog-api-key|x-amz-security-token|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|client[-_]?secret|password|profile[-_]?arn)$/i;
 
 const SECRET_VALUE_PATTERNS: Array<[RegExp, string]> = [
-  [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, `Bearer ${REDACTED_SECRET}`],
+  // Captures the scheme word and its separating whitespace so a later rule can preserve
+  // both while still recognizing this value as already sanitized (see the colon-labelled
+  // rule below).
+  [/\b(Bearer)(\s+)[A-Za-z0-9._~+/=-]{8,}\b/gi, `$1$2${REDACTED_SECRET}`],
   [/\b(sk-[A-Za-z0-9][A-Za-z0-9._-]{6,})\b/g, REDACTED_SECRET],
   // GitHub tokens (classic + fine-grained + OAuth/refresh): ghp_/gho_/ghu_/ghs_/ghr_/github_pat_.
   [/\b(gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{20,})\b/g, REDACTED_SECRET],
@@ -12,7 +15,33 @@ const SECRET_VALUE_PATTERNS: Array<[RegExp, string]> = [
   // a Bearer-prefix rule alone leaves the suffix intact.
   [/\btid=[A-Za-z0-9-]+(?:;[A-Za-z0-9_.-]+=[^;\s"']*)+(?::[A-Za-z0-9+/=_-]+)?/g, REDACTED_SECRET],
   [/\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|refreshToken|accessToken|clientSecret|apiKey)=)([^&\s"',;]+)/gi, `$1${REDACTED_SECRET}`],
-  [/((?:"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|refreshToken|accessToken|clientSecret|apiKey)"\s*:\s*"))([^"]+)(")/gi, `$1${REDACTED_SECRET}$3`],
+  // B3 security port (upstream e1edd4ef1 -> 30360ea60 -> 753781d25 -> 1bf8f3409, adopted
+  // as "merge the intent" rather than the later Unicode-confusable/XML rewrite these
+  // commits led into). Colon-labelled credentials: an upstream 4xx body frequently quotes
+  // the offending header back at the caller ("x-api-key: <value>"), and the `=` rule above
+  // never fires for that shape — a custom credential in that form used to survive into
+  // client-visible error text.
+  //
+  // The value runs to end-of-line rather than stopping at a quote, space, or semicolon: an
+  // early attempt tokenized on those characters and leaked every delimiter-bearing variant
+  // (`x-api-key: "quoted…"` kept the whole quoted secret, `Authorization: Basic <payload>`
+  // kept the payload, `Cookie: a=1; b=2` kept everything after the first `;`). A credential
+  // header's value IS the rest of the line.
+  //
+  // `Bearer` is the one readable exception, and — critically — the exemption is for the
+  // SANITIZED result ("Bearer [REDACTED]", produced by the rule above, which runs first)
+  // only, never a raw "Bearer …" value. Exempting the bare scheme word would let a
+  // credential be smuggled past this rule simply by prefixing it "Bearer": the dedicated
+  // Bearer rule only matches a single opaque token, so a quoted value, one containing
+  // punctuation, or one under its length floor would otherwise slip through untouched.
+  [/\b((?:x-api-key|x-goog-api-key|x-amz-security-token|api[_-]?key|apiKey|access[_-]?token|accessToken|refresh[_-]?token|refreshToken|id[_-]?token|client[_-]?secret|clientSecret|authorization|proxy-authorization|cookie|set-cookie|password|secret|token)\s*:)(?![^\S\r\n]*(?:Bearer[^\S\r\n]+\[REDACTED\]|\[REDACTED\])(?![^\s.,;)\]]))(?![^\S\r\n]*(?:\r?\n|$))([^\S\r\n]*)[^\r\n]+/gi, `$1$2${REDACTED_SECRET}`],
+  // B3 security port (upstream 0e29a1b3f, "merge the intent" — widened to the same
+  // credential vocabulary as the colon rule above, rather than porting the confusable-
+  // folding rescan engine that commit's own file had grown into by the time it landed).
+  // Quoted-JSON credential leaks: ordinary JSON serialization of a headers object
+  // (`{"x-api-key":"<secret>"}`) puts the credential in a quoted field whose key this
+  // list did not previously include — a real gap, not merely a homoglyph-evasion one.
+  [/((?:"(?:x-api-key|x-goog-api-key|x-amz-security-token|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|refreshToken|accessToken|clientSecret|apiKey|authorization|proxy-authorization|cookie|set-cookie|password|secret)"\s*:\s*"))([^"]+)(")/gi, `$1${REDACTED_SECRET}$3`],
   // Raw JSON "token" field values (Copilot token exchange bodies echo the credential here).
   [/(("token"\s*:\s*"))([^"]+)(")/gi, `$1${REDACTED_SECRET}$4`],
   [/\b(arn:aws:[A-Za-z0-9_-]+:[A-Za-z0-9-]*:\d{12}:[A-Za-z0-9_/:+=,.@-]+)\b/g, REDACTED_SECRET],

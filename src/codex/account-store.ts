@@ -410,11 +410,23 @@ export async function getValidCodexToken(id: string): Promise<CodexTokenResult> 
       throw new TokenRefreshError(reason, `Codex token refresh failed (${reason}); reauthenticate the account.`);
     }
     const data = (await res.json()) as { access_token: string; refresh_token?: string; expires_in: number };
+    // B3 security port (upstream 2186e98cb + fc5889e0a + 355b69e5b): guard against a
+    // missing/non-finite/negative expires_in (malformed upstream response) — a NaN expiry
+    // never compares as expired (refresh blocked forever), a negative duration stamps an
+    // already-past expiry, and — specific to this on-disk store — an Infinity expiresAt
+    // fails to round-trip through JSON (JSON.stringify(Infinity) === "null"), corrupting
+    // the persisted credential record on the next read.
+    const expiresIn =
+      typeof data.expires_in === "number" && Number.isFinite(data.expires_in) && data.expires_in >= 0
+        ? data.expires_in
+        : 3600;
+    const expiresAt = Date.now() + expiresIn * 1000;
+    const safeExpiresAt = Number.isFinite(expiresAt) ? expiresAt : Date.now() + 3600 * 1000;
 
     const updated: CodexAccountCredentials = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token ?? lockedCred.refreshToken,
-      expiresAt: Date.now() + data.expires_in * 1000,
+      expiresAt: safeExpiresAt,
       chatgptAccountId: lockedCred.chatgptAccountId,
     };
     if (!saveCodexAccountCredentialIfGeneration(id, startGeneration, updated)) {

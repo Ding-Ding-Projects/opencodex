@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createResponsesPassthroughAdapter } from "../src/adapters/openai-responses";
 import { selectForwardHeaders } from "../src/server/ws-bridge";
 
-const forwardProvider = { adapter: "openai-responses", baseUrl: "https://chat.openai.com/backend-api/codex", authMode: "forward" as const };
+const forwardProvider = { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" as const };
 
 describe("passthrough token override", () => {
   test("buildRequest uses original auth when no override", () => {

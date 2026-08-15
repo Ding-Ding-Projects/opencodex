@@ -49,10 +49,21 @@ export function extractEmail(idToken?: string, accessToken?: string): string | u
 function credsFromToken(data: Record<string, unknown>): OAuthCredentials {
   const idToken = typeof data.id_token === "string" ? data.id_token : undefined;
   const accessToken = data.access_token as string;
+  // B3 security port (upstream 2186e98cb + fc5889e0a + 355b69e5b): `?? 3600` only guards
+  // null/undefined — a NaN, Infinity, string, or negative expires_in would otherwise
+  // produce an expiry that never compares as expired (or one already in the past).
+  const expiresIn =
+    typeof data.expires_in === "number" && Number.isFinite(data.expires_in) && data.expires_in >= 0
+      ? data.expires_in
+      : 3600;
+  // The computed timestamp itself must stay finite too: Number.MAX_VALUE passes
+  // Number.isFinite but overflows to Infinity once multiplied by 1000.
+  const computedExpires = Date.now() + expiresIn * 1000;
+  const expires = Number.isFinite(computedExpires) ? computedExpires : Date.now() + 3600 * 1000;
   return {
     access: accessToken,
     refresh: (data.refresh_token as string) ?? "",
-    expires: Date.now() + ((data.expires_in as number) ?? 3600) * 1000,
+    expires,
     accountId: extractAccountId(idToken, accessToken),
     email: extractEmail(idToken, accessToken),
   };
