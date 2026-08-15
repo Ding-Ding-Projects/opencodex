@@ -23,6 +23,7 @@
  * than admitting it is not a release.
  */
 
+import { SHIPPED_APP_NAME } from "../theme/app-name";
 import type { DimSumDish } from "./dimsum";
 
 export interface BuildInfo {
@@ -113,8 +114,15 @@ export function codenameLabel(info: BuildInfo): { zh: string; name: string } | n
  *
  * The version rides along for the same reason it does in the bar: the dish names
  * the build and the number orders it.
+ *
+ * `appName` is the app's *display* name, which the user can change — `App.tsx`
+ * passes whatever `theme/app-name.ts` currently holds. The default is the
+ * shipped constant rather than a second copy of the literal, so the two cannot
+ * drift; and note that a rename reaches this string and nothing else, since
+ * every identity this app has is baked in at build time and unreachable from
+ * here.
  */
-export function windowTitle(info: BuildInfo, appName = "opencodex"): string {
+export function windowTitle(info: BuildInfo, appName: string = SHIPPED_APP_NAME): string {
   const parts = [appName];
   if (info.dish) parts.push(`${info.dish.zh} ${info.dish.name}`);
   parts.push(info.released ? `v${info.version} build ${info.build}` : `v${info.version} local build`);

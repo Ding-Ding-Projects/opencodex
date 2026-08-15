@@ -18,6 +18,10 @@ into their release section — not lost — the next time it runs.
 - feat(gui): show every context-menu item's keyboard shortcut from one binding registry
 - fix(test): read GUI endpoints from call sites, not documentation prose
 
+## Unreleased
+
+- feat(gui): let the user rename the app's display name
+
 ## 2.7.42 — 2026-07-28
 
 - fix(ci): tighten issue-quality soft-pass structure gate

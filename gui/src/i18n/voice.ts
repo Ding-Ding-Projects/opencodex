@@ -978,6 +978,27 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
   // success
   // ------------------------------------------------------------------
 
+  /**
+   * The rename confirmation. `{name}` is what the user just typed, so it is
+   * the one token every rung has to carry — a level that celebrates without
+   * repeating the name back does not confirm anything.
+   */
+  "appearance.appNameSavedBody": {
+    cat: "success",
+    en: {
+      1: "The display name is now {name}.",
+      2: "It is called {name} now.",
+      4: "Say hello to {name}.",
+      5: "It answers to {name} from here on. Same app underneath, new name on the door. 🪧",
+    },
+    yue: {
+      1: "顯示名稱而家係 {name}。",
+      2: "而家叫做 {name} 喇。",
+      4: "同 {name} 打個招呼啦。",
+      5: "由而家開始佢應「{name}」呢個名。底下仲係同一個 app，只係塊招牌換咗 🪧",
+    },
+  },
+
   "launch.installed": {
     cat: "success",
     en: {
@@ -1327,6 +1348,29 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
       2: "本地 opencodex proxy、佢啲供應商同路由入 Codex 嘅模型嘅即時狀態。",
       4: "本地 opencodex proxy 而家做緊嘅所有嘢 —— 佢啲供應商，同埋路由入 Codex 嘅模型。",
       5: "由你部機直播：一個 opencodex proxy、佢啲供應商，同一大堆路由入 Codex 嘅模型。",
+    },
+  },
+
+  /**
+   * The rename card's lead.
+   *
+   * Voiced because the level ladder is exactly where a disclosure gets quietly
+   * dropped: the fact that must survive to level 5 is that a new name moves
+   * the label and nothing underneath it. Every rung says so.
+   */
+  "appearance.appNameSub": {
+    cat: "guidance",
+    en: {
+      1: "Changes the name this app displays. Storage locations, update configuration and the on-disk application name are unaffected.",
+      2: "Changes the name this app shows you. Where your settings live, how it updates and what it is called on disk all stay put.",
+      4: "Call it whatever you like. It is only a label — your settings stay exactly where they are, and so does everything else under the hood.",
+      5: "Name it after your cat if you want. It is a label and nothing more: your settings, your updates and the name on disk carry on exactly as they were, entirely unbothered.",
+    },
+    yue: {
+      1: "更改此 app 顯示嘅名稱。儲存位置、更新設定同硬碟上嘅名稱一律不受影響。",
+      2: "改呢個 app 顯示畀你睇嘅名。設定擺喺邊、點更新、喺硬碟叫咩，全部照舊。",
+      4: "鍾意叫呢個 app 做咩就咩。淨係一個名牌 —— 你啲設定原封不動，底下嘅嘢一樣都唔會郁。",
+      5: "改做你隻貓個名都得。呢個純粹係塊名牌：你啲設定、更新、硬碟上個 app 名，全部照舊，一啲都唔理你改咗咩。",
     },
   },
 

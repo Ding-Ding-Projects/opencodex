@@ -38,6 +38,7 @@ import { openRemoteDashboard } from "./remote-navigation";
 import { requestProxyStop } from "./stop-proxy";
 import { usePrefs } from "./theme/prefs-context";
 import { useAppLogoFaviconSync } from "./theme/use-app-logo";
+import { useAppDisplayName } from "./theme/use-app-name";
 import { SettingsDraftProvider } from "./settings-drafts";
 import { LanguageProvider } from "./i18n/provider";
 import { PrefsProvider } from "./theme/prefs";
@@ -158,6 +159,8 @@ function AppShell() {
   // since it lives in `<head>` rather than in this component tree. Mounted
   // once, here, rather than in every screen that happens to render.
   useAppLogoFaviconSync();
+  // The name the app calls itself, for the OS window title below.
+  const appName = useAppDisplayName();
 
   // The tab strip owns the active page and the hash follows it. Both directions
   // live in one hook because wiring them as a pair of effects here is a cycle
@@ -306,9 +309,15 @@ function AppShell() {
   // the OS shows them beside each other. Set from here rather than from
   // `BrowserWindow({ title })` because the page's own <title> wins the moment it
   // loads — which is why the value passed at window creation never survived.
+  //
+  // The name is the user's chosen display name, so a rename reaches the
+  // taskbar and Alt+Tab live. The build identity beside it is untouched by
+  // that: version, run number and code name still say exactly which build this
+  // is, which is what makes the retitled window still identifiable to anyone
+  // reading over the user's shoulder.
   useEffect(() => {
-    document.title = windowTitle(buildInfo);
-  }, [buildInfo.version, buildInfo.build, buildInfo.commit]);
+    document.title = windowTitle(buildInfo, appName);
+  }, [buildInfo.version, buildInfo.build, buildInfo.commit, appName]);
 
   // The remote control used to short-circuit the whole shell here, on the
   // reasoning that a nav rail and a tab strip are the wrong furniture for a

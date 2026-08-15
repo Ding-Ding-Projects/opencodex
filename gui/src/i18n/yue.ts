@@ -48,7 +48,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "common.retry": "再試一次",
 
   // ---- app chrome ----
-  "app.logoAria": "opencodex 標誌",
+  "app.logoAria": "{name} 標誌",
   "app.claudeOn": "Claude 已開",
   "app.claudeOff": "Claude 已閂",
 
@@ -1760,7 +1760,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "settings.historyNote": "呢一版每個改動都會喺你 config 目錄嘅本機 git 紀錄寫低一個快照。唔會 push 去任何地方。",
 
   // ---- onboarding ----
-  "onboard.title": "歡迎使用 opencodex",
+  "onboard.title": "歡迎使用 {name}",
   "onboard.sub": "三個步驟，之後全部都改得。",
   "onboard.skip": "跳過設定",
   "onboard.back": "返上一步",
@@ -2007,6 +2007,28 @@ export const yue: Partial<Record<TKey, string>> = {
   "appearance.previewPrimary": "主要",
   "appearance.previewTonal": "色調",
   "appearance.previewOutlined": "外框",
+  // ---- app name ----
+  "appearance.appNameTitle": "App 名",
+  "appearance.appNameSub": "改呢個 app 顯示畀你睇嘅名。淨係一個名牌 —— 你嘅設定擺喺邊、點更新、喺硬碟叫咩，一律唔會跟住郁。",
+  "appearance.appNameLabel": "顯示名",
+  "appearance.appNameHint": "最多 {max} 個字。想返去原本個名，打返 {shipped} 就得。",
+  "appearance.appNameSave": "儲存個名",
+  "appearance.appNameReset": "還原做原本個名",
+  "appearance.appNameStateShipped": "而家用緊原本個名 {shipped}。",
+  "appearance.appNameStateCustom": "而家顯示 {name}。原本個名係 {shipped}。",
+  "appearance.appNameEmpty": "打個名先，或者還原做原本個名。",
+  "appearance.appNameTooLong": "超過 {max} 個字。儲存嗰陣會變做「{name}」。",
+  "appearance.appNameUnchanged": "而家顯示緊嘅就係呢個名喇。",
+  "appearance.appNameSavedNotice": "App 名改咗",
+  "appearance.appNameSavedBody": "呢個 app 而家叫自己做 {name}。",
+  "appearance.appNameResetNotice": "App 名還原咗",
+  "appearance.appNameResetBody": "返返去原本個名 {shipped}。",
+  "appearance.appNameAlreadyShipped": "而家已經係 {shipped}",
+  "appearance.appNameWhere": "呢個名會出現喺導航列、標誌畀螢幕閱讀器讀嘅名、工作列同 Alt+Tab 見到嘅視窗標題，同埋第一次開機嘅歡迎畫面。",
+  "appearance.appNameIdentityNote": "改名淨係改你睇到嘅字，其他乜都唔郁。App 嘅識別碼、放設定同鎖同紀錄嗰個資料夾、安裝程式同更新來源，全部照用原本個名，所以改咗名都唔會搵唔返你啲嘢。",
+  "appearance.appNameDiagnosticNote": "診斷、當機紀錄，同你去開 issue 嗰啲，一律送出原本個名 {shipped}，噉睇嘅人先知你講緊邊個軟件。",
+  "appearance.appNameRevisionSet": "顯示名改咗做 {name}",
+  "appearance.appNameRevisionReset": "顯示名還原做 {shipped}",
   // ---- app logo ----
   "appearance.logoTitle": "App 標誌",
   "appearance.logoSub": "揀個內建標誌、幾款自帶徽章嘅其中一款，又或者自己上載一張圖。",
