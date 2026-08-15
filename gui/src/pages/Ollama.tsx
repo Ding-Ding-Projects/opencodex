@@ -4,36 +4,50 @@
  * A thin client over `/api/model-runtime/*`
  * (`src/server/management/model-runtime-routes.ts`), which is itself a thin
  * caller of `src/lib/model-runtime/*` — the module that talks to Ollama's
- * documented local HTTP API (health, version, tags, ps, show, delete) and
- * runs the hardware-fit estimate. The renderer never reaches the Ollama
+ * documented local HTTP API (health, version, tags, ps, show, delete, pull)
+ * and runs the hardware-fit estimate. The renderer never reaches the Ollama
  * daemon directly; every request here goes through this app's own privileged
  * process, exactly like PDF tools' filesystem operations.
  *
- * ## What this page does NOT do (yet), on purpose
+ * ## The batch-pull cart lives here now
  *
- * The batch-pull cart, the streaming chat surface, and allowlisted harness
- * launch are separate, still-`absent` contracts
- * (`docs/FEATURE-INVENTORY.md`, slice 8) — large enough each to deserve their
- * own lane, and a half-built pull queue or a harness launcher that accepts
- * an unvalidated argument would be worse than not having one. This page can
- * show what is already installed and remove it; it cannot install anything.
+ * "Cart" means batch pull only, never money — there is no price, checkout,
+ * account, or entitlement concept anywhere below. Reviewing a batch
+ * (`POST /pull-queue/preflight`) shows every tag's already-installed state,
+ * real reused size where one exists, conservative disk headroom, and the
+ * plain network disclosure, before anything downloads. Starting a batch
+ * (`POST /pull-queue/start`) processes it with bounded, user-chosen
+ * concurrency; every item's real byte progress is shown where the runtime
+ * reports it, and an honest "downloading…" badge — never a guessed
+ * percentage — where it does not yet. A failed item never turns the whole
+ * batch's summary green, and it never removes anything already installed;
+ * see `src/lib/model-runtime/pull-queue-engine.ts`'s header for the full
+ * guarantee. The queue survives a restart of this app on its own — see
+ * `resume` below.
+ *
+ * The streaming chat surface and allowlisted harness launch remain separate,
+ * still-`absent` contracts (`docs/FEATURE-INVENTORY.md`, slice 8).
  *
  * ## Server-authored diagnostic text stays in English
  *
- * `health.detail`, every string in `fit.evidence`, and every string in
- * `hardware.warnings` are generated in `src/lib/model-runtime/*` — plain
- * English sentences describing what was actually measured, in the same way
+ * `health.detail`, every string in `fit.evidence`, every string in
+ * `hardware.warnings`, and every `PullQueueItem.lastStatusMessage`/`error`
+ * are generated in `src/lib/model-runtime/*` — plain English sentences
+ * describing what was actually measured or reported, in the same way
  * `PdfTools.tsx` displays a server's `error` string verbatim rather than
  * re-localizing it. Only this page's own chrome (labels, buttons, headers)
  * goes through `t()`.
  */
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Badge, Banner, Button, Card, Empty, Segmented, SelectField, Toggle } from "../shell/m3-ui";
+import { Badge, Banner, Button, Card, Empty, Field, Segmented, SelectField, Slider, TextArea, Toggle } from "../shell/m3-ui";
 import type { BadgeTone } from "../shell/badge-tone";
 import { SearchField } from "../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconArrowDown, IconArrowUp, IconCheckCircle, IconError, IconGauge, IconHardDrive, IconNetworkCheck, IconPower, IconRefresh, IconTrash } from "../icons";
+import {
+  IconArrowDown, IconArrowUp, IconCheckCircle, IconDownload, IconError, IconGauge, IconHardDrive,
+  IconList, IconNetworkCheck, IconPower, IconRefresh, IconRestartAlt, IconSweep, IconTrash, IconX,
+} from "../icons";
 import { useI18n } from "../i18n/shared";
 import type { TFn, TKey } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
@@ -114,6 +128,128 @@ interface CatalogResponse {
   catalog: CatalogResult | null;
 }
 
+/* ------------------------------------------------------------ pull queue */
+
+type PullItemStatus = "queued" | "pulling" | "pulled" | "skipped" | "cancelled" | "failed";
+
+interface PullQueueItem {
+  id: string;
+  tag: string;
+  status: PullItemStatus;
+  requestedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  receivedBytes: number;
+  totalBytes: number;
+  totalKnown: boolean;
+  lastStatusMessage: string | null;
+  estimatedSizeBytes: number | null;
+  error: string | null;
+}
+
+interface PullQueueState {
+  version: 1;
+  items: PullQueueItem[];
+}
+
+type PullQueueOutcome = "empty" | "in-progress" | "complete-success" | "complete-partial";
+
+interface PullQueueSummary {
+  total: number;
+  queued: number;
+  pulling: number;
+  pulled: number;
+  skipped: number;
+  cancelled: number;
+  failed: number;
+  outcome: PullQueueOutcome;
+}
+
+interface PullPreflightItem {
+  tag: string;
+  alreadyInstalled: boolean;
+  estimatedSizeBytes: number | null;
+  estimatedAdditionalDiskBytes: number | null;
+  fitVerdict: FitVerdict | null;
+  disclosure: string;
+}
+
+interface PullPreflight {
+  items: PullPreflightItem[];
+  aggregateEstimatedBytes: number;
+  aggregateSizeFullyKnown: boolean;
+  freeDiskBytes: number | null;
+  diskPath: string | null;
+  networkDisclosure: string;
+}
+
+const PULL_STATUS_LABEL_KEY: Record<PullItemStatus, TKey> = {
+  queued: "ollama.pull.status.queued",
+  pulling: "ollama.pull.status.pulling",
+  pulled: "ollama.pull.status.pulled",
+  skipped: "ollama.pull.status.skipped",
+  cancelled: "ollama.pull.status.cancelled",
+  failed: "ollama.pull.status.failed",
+};
+
+const PULL_STATUS_TONE: Record<PullItemStatus, BadgeTone> = {
+  queued: "neutral",
+  pulling: "accent",
+  pulled: "ok",
+  skipped: "neutral",
+  cancelled: "warn",
+  failed: "error",
+};
+
+const MIN_PULL_CONCURRENCY = 1;
+const MAX_PULL_CONCURRENCY = 5;
+const DEFAULT_PULL_CONCURRENCY = 2;
+
+/** One tag per line, or comma-separated — matches how someone would paste a short list from anywhere. */
+function parsePullTags(raw: string): string[] {
+  const pieces = raw.split(/[\n,]/).map(s => s.trim()).filter(s => s.length > 0);
+  return Array.from(new Set(pieces));
+}
+
+function sameTagList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((tag, i) => tag === b[i]);
+}
+
+/** Polls while the batch is actually in flight; a completed/empty queue does not need a live poll. */
+const PULL_QUEUE_POLL_MS = 1_500;
+
+function PullProgressCell({ item, locale, t }: { item: PullQueueItem; locale: Parameters<typeof formatBytes>[1]; t: TFn }) {
+  if (item.status === "pulling") {
+    if (item.totalKnown && item.totalBytes > 0) {
+      const pct = Math.min(100, Math.max(0, Math.round((item.receivedBytes / item.totalBytes) * 100)));
+      return (
+        <div className="m3-ollama-pull-progress">
+          <span
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={item.tag}
+            style={BAR_TRACK}
+          >
+            <span aria-hidden="true" style={{ ...BAR_FILL, width: `${Math.max(2, pct)}%` }} />
+          </span>
+          <span className="m3-field-hint">{t("ollama.pull.progress.determinate", { received: formatBytes(item.receivedBytes, locale), total: formatBytes(item.totalBytes, locale), pct })}</span>
+        </div>
+      );
+    }
+    // Never a synthesised percentage: honestly indeterminate until the runtime reports a real size.
+    return (
+      <div className="m3-ollama-pull-progress">
+        <Badge tone="accent">{t("ollama.pull.progress.indeterminate")}</Badge>
+        {item.receivedBytes > 0 && <span className="m3-field-hint">{t("ollama.pull.progress.bytesSoFar", { received: formatBytes(item.receivedBytes, locale) })}</span>}
+      </div>
+    );
+  }
+  if (item.lastStatusMessage) return <span className="m3-field-hint">{item.lastStatusMessage}</span>;
+  return <span>—</span>;
+}
+
 type SortKey = "name" | "size" | "fit";
 
 const FIT_ORDER: Record<FitVerdict, number> = { "runs-well": 0, "runs-with-limits": 1, unlikely: 2, unknown: 3 };
@@ -174,6 +310,16 @@ const COMPLETENESS_KEY: Record<CompletenessVerdict, TKey> = {
 const AUTO_RETRY_MS = 12_000;
 
 const TABLE_WRAP: CSSProperties = { overflowX: "auto", marginTop: "var(--sp-2)" };
+const BAR_TRACK: CSSProperties = {
+  display: "block",
+  width: "100%",
+  minWidth: 96,
+  height: 8,
+  borderRadius: "var(--r-pill)",
+  background: "var(--m3-surface-container-highest)",
+  overflow: "hidden",
+};
+const BAR_FILL: CSSProperties = { display: "block", height: "100%", background: "var(--m3-primary)" };
 
 async function fetchJson<T>(apiBase: string, path: string, init?: RequestInit): Promise<{ ok: true; data: T } | { ok: false; error: string; status: number }> {
   let res: Response;
@@ -272,6 +418,123 @@ export default function Ollama({ apiBase }: { apiBase: string }) {
     const timer = setInterval(() => { void load(); }, AUTO_RETRY_MS);
     return () => clearInterval(timer);
   }, [health, load]);
+
+  /* ---------------------------------------------------------- pull queue */
+
+  const [pullTagsInput, setPullTagsInput] = useState("");
+  const [forceRepull, setForceRepull] = useState(false);
+  const [concurrency, setConcurrency] = useState(DEFAULT_PULL_CONCURRENCY);
+  const [preflight, setPreflight] = useState<PullPreflight | null>(null);
+  const [preflightedTags, setPreflightedTags] = useState<string[]>([]);
+  const [preflighting, setPreflighting] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [queueState, setQueueState] = useState<PullQueueState | null>(null);
+  const [queueSummary, setQueueSummary] = useState<PullQueueSummary | null>(null);
+
+  const requestedTags = useMemo(() => parsePullTags(pullTagsInput), [pullTagsInput]);
+  const preflightIsCurrent = preflight !== null && sameTagList(preflightedTags, requestedTags);
+
+  const loadQueue = useCallback(async (signal?: AbortSignal) => {
+    const result = await fetchJson<{ ok: true; state: PullQueueState; summary: PullQueueSummary; concurrency: number }>(apiBase, "/api/model-runtime/pull-queue", { signal });
+    if (signal?.aborted || !result.ok) return;
+    setQueueState(result.data.state);
+    setQueueSummary(result.data.summary);
+  }, [apiBase]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    // Resuming is the loopback-gated call that reconciles the persisted queue
+    // against the runtime's real current state and continues anything still
+    // queued (see the module header). A LAN-connected dashboard session gets
+    // a plain 403 here and simply falls back to the read-only GET below —
+    // it can see the queue, it just cannot kick a resume from a bare page load.
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        await fetchJson(apiBase, "/api/model-runtime/pull-queue/resume", { method: "POST", signal: controller.signal });
+        if (controller.signal.aborted) return;
+        await loadQueue(controller.signal);
+      })();
+    }, 0);
+    return () => { window.clearTimeout(timeout); controller.abort(); };
+  }, [apiBase, loadQueue]);
+
+  useEffect(() => {
+    if (queueSummary?.outcome !== "in-progress") return;
+    const timer = setInterval(() => { void loadQueue(); }, PULL_QUEUE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [queueSummary?.outcome, loadQueue]);
+
+  async function handlePreflight(): Promise<void> {
+    if (requestedTags.length === 0) return;
+    setPreflighting(true);
+    const result = await fetchJson<{ ok: true; preflight: PullPreflight }>(apiBase, "/api/model-runtime/pull-queue/preflight", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: requestedTags }),
+    });
+    setPreflighting(false);
+    if (!result.ok) {
+      notify({ tone: "error", title: t("ollama.pull.reviewFailedTitle"), body: result.error });
+      return;
+    }
+    setPreflight(result.data.preflight);
+    setPreflightedTags(requestedTags);
+  }
+
+  async function handleStartPull(): Promise<void> {
+    if (!preflightIsCurrent) return;
+    setStarting(true);
+    const result = await fetchJson<{ ok: true; state: PullQueueState }>(apiBase, "/api/model-runtime/pull-queue/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: requestedTags, concurrency, force: forceRepull }),
+    });
+    setStarting(false);
+    if (!result.ok) {
+      notify({ tone: "error", title: t("ollama.pull.startFailedTitle"), body: result.error });
+      return;
+    }
+    setQueueState(result.data.state);
+    setPreflight(null);
+    setPreflightedTags([]);
+    setPullTagsInput("");
+    notify({ tone: "success", title: t("ollama.pull.startedTitle"), body: t("ollama.pull.startedBody", { count: requestedTags.length }) });
+    void loadQueue();
+  }
+
+  async function handleCancelPullItem(item: PullQueueItem): Promise<void> {
+    const result = await fetchJson(apiBase, "/api/model-runtime/pull-queue/cancel", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id }),
+    });
+    if (!result.ok) notify({ tone: "error", title: t("ollama.pull.cancelFailedTitle"), body: result.error });
+    void loadQueue();
+  }
+
+  async function handleCancelAllPulls(): Promise<void> {
+    const result = await fetchJson(apiBase, "/api/model-runtime/pull-queue/cancel", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+    });
+    if (!result.ok) notify({ tone: "error", title: t("ollama.pull.cancelFailedTitle"), body: result.error });
+    void loadQueue();
+  }
+
+  async function handleRetryPullItem(item: PullQueueItem): Promise<void> {
+    const result = await fetchJson(apiBase, "/api/model-runtime/pull-queue/retry", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id }),
+    });
+    if (!result.ok) notify({ tone: "error", title: t("ollama.pull.retryFailedTitle"), body: result.error });
+    void loadQueue();
+  }
+
+  async function handleClearFinishedPulls(): Promise<void> {
+    const result = await fetchJson(apiBase, "/api/model-runtime/pull-queue/clear", { method: "POST" });
+    if (!result.ok) notify({ tone: "error", title: t("ollama.pull.clearFailedTitle"), body: result.error });
+    void loadQueue();
+  }
+
+  const queueItems = queueState?.items ?? [];
+  const hasActivePulls = queueItems.some(i => i.status === "queued" || i.status === "pulling");
+  const hasFinishedPulls = queueItems.some(i => i.status === "pulled" || i.status === "skipped" || i.status === "cancelled" || i.status === "failed");
 
   async function handleDelete(entry: CatalogEntry): Promise<void> {
     const confirmed = await confirm({
@@ -375,6 +638,149 @@ export default function Ollama({ apiBase }: { apiBase: string }) {
             )}
             {hardware.gpus.map((gpu, i) => <GpuFactRow key={i} gpu={gpu} t={t} locale={locale} />)}
             {hardware.warnings.map((w, i) => <p key={i} className="m3-field-hint">{w}</p>)}
+          </div>
+        </Card>
+      )}
+
+      <Card title={t("ollama.pull.title")} subtitle={t("ollama.pull.subtitle")}>
+        <Field label={t("ollama.pull.tagsLabel")} hint={t("ollama.pull.tagsHint")} id="ollama-pull-tags">
+          <TextArea
+            id="ollama-pull-tags"
+            rows={3}
+            value={pullTagsInput}
+            onChange={e => { setPullTagsInput(e.target.value); setPreflight(null); }}
+            placeholder={t("ollama.pull.tagsPlaceholder")}
+          />
+        </Field>
+
+        <div className="m3-row" style={{ flexWrap: "wrap", gap: 16, alignItems: "center", marginTop: 8 }}>
+          <Toggle on={forceRepull} onChange={setForceRepull} label={t("ollama.pull.forceLabel")} />
+          <Slider
+            id="ollama-pull-concurrency"
+            label={t("ollama.pull.concurrencyLabel")}
+            min={MIN_PULL_CONCURRENCY}
+            max={MAX_PULL_CONCURRENCY}
+            value={concurrency}
+            onChange={setConcurrency}
+            valueLabel={String(concurrency)}
+          />
+        </div>
+
+        <div className="m3-row" style={{ gap: 8, marginTop: 12 }}>
+          <Button variant="outlined" onClick={() => void handlePreflight()} disabled={requestedTags.length === 0 || preflighting}>
+            <IconList width={16} height={16} /> {preflighting ? t("ollama.pull.reviewing") : t("ollama.pull.review")}
+          </Button>
+          <Button variant="filled" onClick={() => void handleStartPull()} disabled={!preflightIsCurrent || starting}>
+            <IconDownload width={16} height={16} /> {starting ? t("ollama.pull.starting") : t("ollama.pull.start")}
+          </Button>
+        </div>
+        {!preflightIsCurrent && requestedTags.length > 0 && <p className="m3-field-hint">{t("ollama.pull.reviewFirstHint")}</p>}
+
+        {preflight && (
+          <div className="m3-ollama-pull-preflight">
+            <p className="m3-field-hint">{preflight.networkDisclosure}</p>
+            <div className="m3-row" style={{ flexWrap: "wrap", gap: 12 }}>
+              {preflight.freeDiskBytes != null && (
+                <Badge>{t("ollama.pull.freeDisk", { free: formatBytes(preflight.freeDiskBytes, locale) })}</Badge>
+              )}
+              <Badge tone={preflight.aggregateSizeFullyKnown ? "neutral" : "warn"}>
+                {preflight.aggregateSizeFullyKnown
+                  ? t("ollama.pull.aggregateKnown", { size: formatBytes(preflight.aggregateEstimatedBytes, locale) })
+                  : t("ollama.pull.aggregatePartial", { size: formatBytes(preflight.aggregateEstimatedBytes, locale) })}
+              </Badge>
+            </div>
+            <div style={TABLE_WRAP}>
+              <table className="m3-table">
+                <thead>
+                  <tr>
+                    <th>{t("ollama.pull.col.tag")}</th>
+                    <th>{t("ollama.pull.col.status")}</th>
+                    <th>{t("ollama.pull.col.size")}</th>
+                    <th>{t("ollama.pull.col.disk")}</th>
+                    <th>{t("ollama.pull.col.fit")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preflight.items.map(item => (
+                    <tr key={item.tag}>
+                      <td>{item.tag}</td>
+                      <td>
+                        <Badge tone={item.alreadyInstalled ? "neutral" : "accent"}>
+                          {item.alreadyInstalled ? t("ollama.pull.alreadyInstalled") : t("ollama.pull.newPull")}
+                        </Badge>
+                        <div className="m3-field-hint">{item.disclosure}</div>
+                      </td>
+                      <td>{item.estimatedSizeBytes != null ? formatBytes(item.estimatedSizeBytes, locale) : t("ollama.pull.sizeUnknown")}</td>
+                      <td>{item.estimatedAdditionalDiskBytes != null ? formatBytes(item.estimatedAdditionalDiskBytes, locale) : "—"}</td>
+                      <td>{item.fitVerdict ? <Badge tone={FIT_BADGE_TONE[item.fitVerdict]}>{t(FIT_LABEL_KEY[item.fitVerdict])}</Badge> : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {queueItems.length > 0 && queueSummary && (
+        <Card
+          title={t("ollama.pull.queueTitle")}
+          subtitle={t("ollama.pull.queueSummary", {
+            pulled: queueSummary.pulled,
+            skipped: queueSummary.skipped,
+            failed: queueSummary.failed,
+            cancelled: queueSummary.cancelled,
+            active: queueSummary.queued + queueSummary.pulling,
+          })}
+          actions={
+            <div className="m3-row" style={{ gap: 8 }}>
+              <Button variant="text" onClick={() => void handleCancelAllPulls()} disabled={!hasActivePulls}>
+                <IconX width={16} height={16} /> {t("ollama.pull.cancelAll")}
+              </Button>
+              <Button variant="text" onClick={() => void handleClearFinishedPulls()} disabled={!hasFinishedPulls}>
+                <IconSweep width={16} height={16} /> {t("ollama.pull.clearFinished")}
+              </Button>
+            </div>
+          }
+        >
+          {queueSummary.outcome === "complete-partial" && (
+            <Banner tone="warn">{t("ollama.pull.partialBanner")}</Banner>
+          )}
+          <div style={TABLE_WRAP}>
+            <table className="m3-table">
+              <thead>
+                <tr>
+                  <th>{t("ollama.pull.col.tag")}</th>
+                  <th>{t("ollama.pull.col.status")}</th>
+                  <th>{t("ollama.pull.col.progress")}</th>
+                  <th><span className="sr-only">{t("ollama.catalog.col.actions")}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {queueItems.map(item => (
+                  <tr key={item.id}>
+                    <td>{item.tag}</td>
+                    <td>
+                      <Badge tone={PULL_STATUS_TONE[item.status]}>{t(PULL_STATUS_LABEL_KEY[item.status])}</Badge>
+                      {item.error && <div className="m3-field-hint">{item.error}</div>}
+                    </td>
+                    <td><PullProgressCell item={item} locale={locale} t={t} /></td>
+                    <td>
+                      {(item.status === "queued" || item.status === "pulling") && (
+                        <Button variant="text" onClick={() => void handleCancelPullItem(item)}>
+                          <IconX width={16} height={16} /> {t("ollama.pull.cancel")}
+                        </Button>
+                      )}
+                      {(item.status === "failed" || item.status === "cancelled") && (
+                        <Button variant="text" onClick={() => void handleRetryPullItem(item)}>
+                          <IconRestartAlt width={16} height={16} /> {t("ollama.pull.retry")}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
       )}
