@@ -91,11 +91,10 @@ runtime's own reported version) and a `completeness` verdict explicitly, so a fu
 `/api/tags` — or a documented, official source for the internet-wide half — could slot in without a
 breaking change to the shape.
 
-**The streaming chat surface and allowlisted harness launch are separate, larger lanes, still
-`absent`.** This page can show what is installed, remove it, and pull new models in a batch; it has
-no chat surface yet, and no harness-profile concept. A harness launcher that accepts an unvalidated
-shell argument would be worse than not having one yet — see `docs/FEATURE-INVENTORY.md`'s Ollama row
-for the exact accounting.
+**The streaming chat surface now ships, on its own page — the allowlisted harness launch remains a
+separate, larger lane, still `absent`.** See [Ollama chat](/guides/ollama-chat) for what that page
+does. A harness launcher that accepts an unvalidated shell argument would be worse than not having
+one yet — see `docs/FEATURE-INVENTORY.md`'s Ollama row for the exact accounting.
 
 ## Hardware-fit verdicts are conservative evidence, never a promise
 
@@ -207,6 +206,8 @@ All new copy is localized in `m3.ts`/`yue.ts`, watched by `gui/tests/i18n-voice-
 
 ## Suggested articles
 
+- [Ollama chat](/guides/ollama-chat) — the streaming session surface reached from this page's
+  **Open chat** action, for talking to a model this page shows you have installed.
 - [PDF tools](/guides/pdf-tools) — the other locally-gated file/process management surface this page's
   route and confirmation conventions are drawn from.
 - [Web dashboard](/guides/web-dashboard) — the tabbed shell the Ollama page lives inside.

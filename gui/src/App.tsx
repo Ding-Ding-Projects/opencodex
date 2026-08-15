@@ -31,6 +31,7 @@ import LocksPage from "./pages/Locks";
 import PdfTools from "./pages/PdfTools";
 import Converter from "./pages/Converter";
 import Ollama from "./pages/Ollama";
+import OllamaChat from "./pages/OllamaChat";
 import Downloads from "./pages/Downloads";
 import DownloadsBridge from "./shell/DownloadsBridge";
 import OnboardingWizard from "./shell/OnboardingWizard";
@@ -135,6 +136,7 @@ function renderPage(page: Page): ReactNode {
     case "pdf": return <PdfTools apiBase={API_BASE} />;
     case "converter": return <Converter apiBase={API_BASE} />;
     case "ollama": return <Ollama apiBase={API_BASE} />;
+    case "ollama-chat": return <OllamaChat apiBase={API_BASE} />;
     case "downloads": return <Downloads apiBase={API_BASE} />;
     case "mobile": return <MobileRemote apiBase={API_BASE} />;
   }

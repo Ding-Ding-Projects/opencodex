@@ -34,6 +34,7 @@ export type Page =
   | "pdf"
   | "converter"
   | "ollama"
+  | "ollama-chat"
   | "downloads";
 
 export const VALID_PAGES = new Set<Page>([
@@ -67,6 +68,7 @@ export const VALID_PAGES = new Set<Page>([
   "pdf",
   "converter",
   "ollama",
+  "ollama-chat",
   "downloads",
 ]);
 
@@ -102,6 +104,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   pdf: "system",
   converter: "system",
   ollama: "system",
+  "ollama-chat": "system",
   downloads: "system",
 };
 
