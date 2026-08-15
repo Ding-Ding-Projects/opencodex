@@ -193,7 +193,7 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleAuthenticatorRoutes(ctx))
     ??     (await handleSchoolModeRoutes(ctx))
     ??     (await handlePdfRoutes(ctx))
-    ??     (await handleConverterRoutes(ctx));
+    ??     (await handleConverterRoutes(ctx))
     ??     (await handleModelRuntimeRoutes(ctx));
   if (routed) return routed;
 

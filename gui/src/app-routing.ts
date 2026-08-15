@@ -32,7 +32,7 @@ export type Page =
   | "locks"
   | "authenticator"
   | "pdf"
-  | "converter";
+  | "converter"
   | "ollama";
 
 export const VALID_PAGES = new Set<Page>([

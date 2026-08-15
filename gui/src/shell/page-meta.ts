@@ -87,8 +87,7 @@ const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
   "appearance", "language", "schedule", "regex", "changelog", "docs", "history", "notifications",
-  "network", "locks", "authenticator", "pdf", "converter", "settings", "terminal", "mobile",
-  "network", "locks", "authenticator", "pdf", "ollama", "settings", "terminal", "mobile",
+  "network", "locks", "authenticator", "pdf", "converter", "ollama", "settings", "terminal", "mobile",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({
