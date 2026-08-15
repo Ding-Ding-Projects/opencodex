@@ -30,6 +30,7 @@ import SettingsPage from "./pages/Settings";
 import LocksPage from "./pages/Locks";
 import PdfTools from "./pages/PdfTools";
 import Converter from "./pages/Converter";
+import Ollama from "./pages/Ollama";
 import OnboardingWizard from "./shell/OnboardingWizard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import RemoteConnectionDialog from "./components/RemoteConnectionDialog";
@@ -131,6 +132,7 @@ function renderPage(page: Page): ReactNode {
     case "terminal": return <Terminal apiBase={API_BASE} />;
     case "pdf": return <PdfTools apiBase={API_BASE} />;
     case "converter": return <Converter apiBase={API_BASE} />;
+    case "ollama": return <Ollama apiBase={API_BASE} />;
     case "mobile": return <MobileRemote apiBase={API_BASE} />;
   }
 }

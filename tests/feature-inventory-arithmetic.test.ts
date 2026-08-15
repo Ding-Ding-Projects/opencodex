@@ -125,7 +125,12 @@ test("the prose sentence naming the absent count agrees with the absent rows", (
   // The one sentence in the preamble that states the absent count in words. It
   // drifted twice while the tables were being kept correct, which is its own
   // lesson: a number spelled out reads as prose and stops being audited.
-  const sentence = lines.find(l => /have no code behind them at all/.test(l));
+  //
+  // Matched loosely on number agreement, because the count reaching one makes
+  // the plural ungrammatical — "One row have no code behind them" is not a
+  // sentence anyone should have to write to keep a test happy. The guard exists
+  // to check the number, not to freeze the grammar around it.
+  const sentence = lines.find(l => /ha(?:s|ve) no code behind (?:it|them) at all/.test(l));
   expect(sentence, "the 'have no code behind them' sentence is missing").toBeDefined();
 
   const stated = WORDS.findIndex(w => sentence!.startsWith(`That is 17% done. ${w} row`));
