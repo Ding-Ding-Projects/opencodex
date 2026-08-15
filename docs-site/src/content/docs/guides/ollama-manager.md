@@ -151,6 +151,60 @@ environment-variable convention is honoured **only** when it names a loopback or
 a value pointing anywhere else is rejected and the default is used instead, with the rejection reported
 plainly in the health result — this manager only ever reaches the local runtime, never a remote one.
 
+**There is no GUI field for this yet.** `OLLAMA_HOST` is read from the process environment only; to
+point the manager at a non-default loopback port, restart opencodex with that environment variable
+set. A settings field to type an alternate port into without restarting is real, recorded future work.
+
+## Failure modes
+
+| Symptom | Cause |
+| --- | --- |
+| `missing` | No `ollama` executable found by the positive install-path/`where`/`which` probe — never a guess |
+| `stopped` | The executable is installed, but the daemon is not answering on the resolved base URL |
+| `unhealthy` | Something answered on the port, but not correctly — a wrong process, a corrupted response |
+| `offline` | A network-level failure reaching the base URL at all |
+| A model shows *unknown* fit | A hardware fact could not be read (no GPU detected, memory unreadable) — the arithmetic widens toward *unknown* rather than assuming a comfortable fit |
+| `OLLAMA_HOST` is set but ignored | It resolved to a non-loopback address and was rejected; the health result's `hostWarning` says so |
+| A pull is stuck at `pulling` after a crash | Reconciled against the runtime's *real* `/api/tags` on next launch — marked `pulled` if it actually finished, requeued with progress cleared if it did not |
+
+## Security considerations
+
+Every route that mutates local state — deleting a model, and every pull-queue action except the
+plain state read — is gated by `requireLoopbackListener`, exactly like PDF Tools and the scheduler's
+Home Assistant token storage: refused the instant opencodex's management proxy is reachable from the
+LAN, so a remote administrator credential cannot trigger a local download or deletion. `GET
+/api/model-runtime/pull-queue` is deliberately left ungated because it only reports already-known
+state and never itself starts a network call or a resume.
+
+The batch-pull engine (`pull-queue-engine.ts`) **never imports the model-deletion route at all** — a
+static guard plus a functional test (mocking `fetch` to fail the test on any `DELETE` call) both prove
+a failed re-pull of an already-installed tag can never remove it. Ollama's own pull only replaces a
+model's manifest after every layer verifies successfully, so an interrupted or failed pull leaves
+whatever was already installed exactly as it was.
+
+Every probe this manager runs (`ollama` executable detection, `nvidia-smi`, the WMI fallbacks) is
+`Bun.spawn`-based with a manual timeout, never Node's `execFileSync` — the documented Windows-hang
+precedent this codebase has already hit elsewhere.
+
+## Verification
+
+- `tests/model-runtime-client.test.ts` — **22 tests**: every health-state branch, the `OLLAMA_HOST`
+  loopback boundary, and oversized/malformed/redirected responses.
+- `tests/model-runtime-fit.test.ts` — **14 tests**: every fit-verdict branch's arithmetic, including
+  the missing-fact-widens-to-*unknown* rule.
+- `tests/model-runtime-hardware.test.ts` — **10 tests**; `tests/model-runtime-executable-detect.test.ts`
+  — **5 tests**: every hardware-probe success/failure/platform combination via injected test seams.
+- `tests/model-runtime-catalog.test.ts` — **5 tests**; `tests/model-runtime-routes.test.ts` —
+  **26 tests**, including the loopback gate on delete.
+- `tests/model-runtime-pull-client.test.ts` — **10 tests**; `tests/model-runtime-pull-queue-store.test.ts`
+  — **8 tests**; `tests/model-runtime-pull-queue-engine.test.ts` — **22 tests**, including mid-batch
+  cancel, a failed item beside successful ones, and resume after a restart; `tests/model-runtime-pull-preflight.test.ts`
+  — **6 tests**.
+- `gui/tests/ollama-pull-queue.test.tsx` — **7 tests**, proving the page's own wiring (review-must-match-start,
+  per-status actions, the partial-batch banner) rather than re-proving the engine's own logic.
+
+All new copy is localized in `m3.ts`/`yue.ts`, watched by `gui/tests/i18n-voice-and-locales.test.ts`.
+
 ## Suggested articles
 
 - [PDF tools](/guides/pdf-tools) — the other locally-gated file/process management surface this page's
