@@ -63,6 +63,26 @@
  *     also makes the first-run surfaces deterministic instead of depending on
  *     whether someone dismissed the wizard on this machine last week.
  *
+ *   - It ALSO isolates `OPENCODEX_HOME`, `CODEX_HOME` and `GROK_HOME` — the
+ *     proxy's own state, not the renderer's. This one was missing for a long
+ *     time and cost two failed capture passes to find. Left unset,
+ *     `OPENCODEX_HOME` falls back to `~/.opencodex`: this machine's real
+ *     config, real usage history, real accounts. That is two bugs, not one —
+ *     the screenshots differ between machines from the same commit, and a
+ *     real profile has been observed to freeze the proxy solid (devlog
+ *     b3-proxyhang; see the doc comment on `fetchWhamUsage` in
+ *     `src/codex/auth-api.ts`). `scripts/capture-seed.ts` fills the isolated
+ *     `OPENCODEX_HOME` back up with synthetic-but-realistic providers and
+ *     usage history — an *empty* isolated profile does not freeze, but it
+ *     also does not show anything worth screenshotting (the app-bar cost
+ *     chip renders nothing at all with zero priced usage; see its own doc
+ *     comment). `CODEX_HOME` and `GROK_HOME` are isolated purely for safety:
+ *     without them, a normal `ocx start` unconditionally rewrites
+ *     `~/.grok/config.toml` if it exists, and can rewrite
+ *     `~/.codex/config.toml` if a prior real injection already pointed it at
+ *     a proxy — an earlier run of this exact script did that by accident and
+ *     needed `ocx restore` to undo it.
+ *
  *   - It forces a device scale factor and then fits the window to an exact pixel
  *     size, because otherwise identical code produces 1440x900 images on one
  *     machine and 2880x1800 on another, and that diff is unexplainable.
@@ -73,8 +93,8 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 const OUT = join(ROOT, "assets", "shots");
@@ -82,6 +102,59 @@ const PS_TOOL = join(ROOT, "scripts", "window-tools.ps1");
 const PROFILE = join(ROOT, "node_modules", ".cache", "ocx-capture-profile");
 const PROXY_PORT = Number(process.env.OCX_CAPTURE_PORT || 10188);
 const CDP_PORT = Number(process.env.CDP_PORT || 9223);
+
+/**
+ * The proxy's own state, isolated the same way `PROFILE` above isolates the
+ * renderer. See the "Three details are load-bearing" section above for why
+ * this matters: an unset `OPENCODEX_HOME` silently falls back to this
+ * machine's real `~/.opencodex`, which is both non-deterministic and (per
+ * devlog b3-proxyhang) has been observed to freeze the proxy solid.
+ *
+ * Set on `process.env` here, at module scope, rather than only in `launch()`'s
+ * child `env:` — `scripts/capture-seed.ts` is imported and run in THIS
+ * process, before Electron ever starts, and it resolves `OPENCODEX_HOME`
+ * (via `src/config.ts`'s `getConfigDir()`) by reading `process.env` itself.
+ * Setting it here is what makes the seed and the launched child agree on
+ * which directory they mean.
+ */
+const CAPTURE_HOME = join(ROOT, "node_modules", ".cache", "ocx-capture-home");
+const CAPTURE_CODEX_HOME = join(ROOT, "node_modules", ".cache", "ocx-capture-codex-home");
+/**
+ * Deliberately never created (see the wipe step below). `injectGrokConfig()`
+ * no-ops on a `GROK_HOME` that is not a directory — that is its own
+ * documented, tested behavior, not something this script has to replicate —
+ * so pointing it at a path that never exists is the whole fix, regardless of
+ * whether the machine actually has Grok installed.
+ */
+const CAPTURE_GROK_HOME = join(ROOT, "node_modules", ".cache", "ocx-capture-no-grok-home");
+process.env.OPENCODEX_HOME = CAPTURE_HOME;
+process.env.CODEX_HOME = CAPTURE_CODEX_HOME;
+process.env.GROK_HOME = CAPTURE_GROK_HOME;
+
+/**
+ * A one-file `ocx` shim, so the `terminal` target's embedded shell can find
+ * the command its own script types into it.
+ *
+ * `terminal.prepare` (below) submits `ocx --version` into the app's real
+ * Terminal feature, which spawns a genuine `powershell.exe -NoProfile` child
+ * (`src/lib/terminal-session.ts`) inheriting THIS process's environment. On a
+ * checkout that was never `npm install -g`'d — every fresh worktree, this one
+ * included — `ocx`/`opencodex` is not on `PATH` at all, so the shell answers
+ * "not recognized" and the capture fails with "the shell never printed a
+ * version line". Installing it for real is a machine-wide, persistent change
+ * this script has no business making just to take a screenshot; a shim
+ * confined to `CAPTURE_BIN_DIR` and only ever handed to the child processes
+ * THIS script spawns is the throwaway-profile treatment applied to one more thing
+ * the harness depends on. `bin/ocx.mjs` (the real npm `bin` entry, see
+ * `package.json`) already runs correctly via a bare `node`, verified directly:
+ * `node bin/ocx.mjs --version` prints `opencodex 2.7.42 (@bitkyc08/opencodex)`.
+ */
+const CAPTURE_BIN_DIR = join(ROOT, "node_modules", ".cache", "ocx-capture-bin");
+function ensureOcxShim(): void {
+  mkdirSync(CAPTURE_BIN_DIR, { recursive: true });
+  const target = join(ROOT, "bin", "ocx.mjs").replace(/\//g, "\\");
+  writeFileSync(join(CAPTURE_BIN_DIR, "ocx.cmd"), `@echo off\r\nnode "${target}" %*\r\n`);
+}
 
 /**
  * Committed geometry. The window is fitted to these exact pixel sizes so a
@@ -522,7 +595,13 @@ async function primeProfile(): Promise<void> {
       localStorage.setItem(${JSON.stringify(LANG_KEY)}, ${JSON.stringify(CAPTURE_LOCALE)});
       return true;
     })()`);
-  await send("Page.reload");
+  // `ignoreCache: true`: defense in depth against a stale cached GET
+  // surviving the reload. Not the fix for the stale-`dashboard.png` defect
+  // this file's `Page.reload` calls once carried a long explanation of —
+  // that turned out to be the long-lived proxy process itself holding a
+  // startup-time config in memory, unrelated to what the browser cached; see
+  // `seedRichCaptureHome()`'s doc comment in `capture-seed.ts`.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2500);
   await settle();
 }
@@ -539,7 +618,8 @@ async function setCaptureLocale(): Promise<void> {
       localStorage.setItem(${JSON.stringify(LANG_KEY)}, ${JSON.stringify(CAPTURE_LOCALE)});
       return true;
     })()`);
-  await send("Page.reload");
+  // See the comment on primeProfile's reload above.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2500);
   await settle();
 }
@@ -561,7 +641,8 @@ async function clearOverlays(): Promise<void> {
     await Bun.sleep(450);
   }
   // Neither Escape nor a close button shifted it; a reload always does.
-  await send("Page.reload");
+  // See the comment on primeProfile's reload above.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2500);
   await settle();
 }
@@ -585,6 +666,7 @@ const ROUTE_HEADINGS: Record<string, string> = {
   logs: "Logs & Debug",
   usage: "Usage",
   storage: "Storage",
+  pdf: "PDF tools",
   "codex-auth": "Codex Auth",
   api: "API",
   claude: "Claude",
@@ -716,7 +798,13 @@ const surfaces: Target[] = [
   {
     id: "cost-meter",
     hash: "dashboard",
-    expect: { h1: "Dashboard", overlay: "Estimated cost range" },
+    // "Cost basis" (`usage.cost.laneHeading`), not "Estimated cost range"
+    // (`cost.menuTitle`): CostMeter.tsx now renders a lane-breakdown section
+    // ABOVE the range picker (direct vs. api-equivalent $, added after this
+    // target was first written), so the panel's first `.m3-menu-heading` in
+    // DOM order — the one PROBE's overlay-heading query finds — is the lane
+    // heading. The range picker is still there, just no longer first.
+    expect: { h1: "Dashboard", overlay: "Cost basis" },
     prepare: () => clickSelector("header.m3-appbar button.m3-cost-chip"),
   },
   {
@@ -843,7 +931,13 @@ async function launch(viewport: Viewport): Promise<void> {
     `--user-data-dir=${PROFILE}`,
   ], {
     cwd: ROOT,
-    env: { ...process.env, OPENCODEX_PORT: String(PROXY_PORT) },
+    env: {
+      ...process.env,
+      OPENCODEX_PORT: String(PROXY_PORT),
+      // Prepended, not appended: a real `ocx` earlier on PATH must win over
+      // the shim, but the shim must still be found when there is none.
+      PATH: `${CAPTURE_BIN_DIR}${delimiter}${process.env.PATH ?? ""}`,
+    },
     stdio: "ignore",
   });
 
@@ -891,12 +985,19 @@ async function forceDimSum(): Promise<() => Promise<void>> {
       // switch, so seeding the launch markers is the whole of the setup.
     `,
   });
-  await send("Page.reload");
+  // `ignoreCache: true`: defense in depth against a stale cached GET
+  // surviving the reload. Not the fix for the stale-`dashboard.png` defect
+  // this file's `Page.reload` calls once carried a long explanation of —
+  // that turned out to be the long-lived proxy process itself holding a
+  // startup-time config in memory, unrelated to what the browser cached; see
+  // `seedRichCaptureHome()`'s doc comment in `capture-seed.ts`.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2600);
   await settle();
   return async () => {
     await send("Page.removeScriptToEvaluateOnNewDocument", { identifier: injected.identifier });
-    await send("Page.reload");
+    // See the comment on the reload above.
+    await send("Page.reload", { ignoreCache: true });
     await Bun.sleep(2600);
     await settle();
   };
@@ -952,7 +1053,33 @@ mkdirSync(OUT, { recursive: true });
 // depending on what someone dismissed on this machine last week.
 rmSync(PROFILE, { recursive: true, force: true });
 
+// Same wipe-then-seed treatment for the proxy's own state (see the module doc
+// comment and the CAPTURE_HOME block above). CAPTURE_GROK_HOME is removed but
+// deliberately never recreated — see its own comment.
+rmSync(CAPTURE_HOME, { recursive: true, force: true });
+mkdirSync(CAPTURE_HOME, { recursive: true });
+rmSync(CAPTURE_CODEX_HOME, { recursive: true, force: true });
+mkdirSync(CAPTURE_CODEX_HOME, { recursive: true });
+rmSync(CAPTURE_GROK_HOME, { recursive: true, force: true });
+ensureOcxShim();
+const { seedMinimalCaptureHome, seedRichCaptureHome } = await import("./capture-seed");
+// Minimal (no configured providers) so the `onboarding` target's wizard has
+// something to show; `seedRichCaptureHome()` is layered on right after,
+// either immediately below (no firstRunOnly target in this run) or once the
+// wizard itself has been captured and dismissed (see the loop below and
+// capture-seed.ts's module doc comment for why the order is load-bearing).
+await seedMinimalCaptureHome();
+
 const failures: string[] = [];
+// Config persists to disk from the very first `seedRichCaptureHome()` call
+// (the management API writes through), so a later viewport's fresh proxy
+// process boots already "configured" — `hasFirstRun` false, straight into
+// the `else` branch below — and would otherwise seed the providers and 22
+// usage rows a SECOND time, doubling every number `dimsum`/`mobile` show
+// next to what `dashboard`/`cost-meter` showed a moment earlier. Reproduced
+// live: the app-bar chip read "$0.336" on the desktop pass and "$0.672" —
+// exactly double — on the phone pass that followed it.
+let richSeeded = false;
 const byViewport = [
   { viewport: DESKTOP, list: selected.filter(t => (t.viewport ?? DESKTOP) === DESKTOP) },
   { viewport: PHONE, list: selected.filter(t => t.viewport === PHONE) },
@@ -977,8 +1104,23 @@ for (const { viewport, list } of byViewport) {
     // which is the same thing finishing the wizard does.
     // The pass that photographs the wizard needs it still unseen; every other
     // pass writes the flag so it does not sit over the first target.
-    if (list.some(t => t.firstRunOnly)) await setCaptureLocale();
-    else await primeProfile();
+    const hasFirstRun = list.some(t => t.firstRunOnly);
+    if (hasFirstRun) await setCaptureLocale();
+    else {
+      // No wizard to protect in this run: safe to layer the rich seed on
+      // immediately rather than waiting for a firstRunOnly target's cleanup
+      // (there isn't one) to trigger it below. The proxy is already up (see
+      // `launch()` above), so the management-API calls inside
+      // `seedRichCaptureHome()` land on the real running process. Guarded by
+      // `richSeeded` — see its own comment — so a later viewport pass, whose
+      // fresh proxy already reads yesterday's rich `config.json` off disk,
+      // does not layer a second helping of it on top.
+      if (!richSeeded) {
+        await seedRichCaptureHome(`http://127.0.0.1:${PROXY_PORT}`);
+        richSeeded = true;
+      }
+      await primeProfile();
+    }
     for (const target of list) {
       let restore: (() => Promise<void>) | null = null;
       try {
@@ -995,6 +1137,25 @@ for (const { viewport, list } of byViewport) {
           if (restore) await restore();
           if (target.cleanup) await target.cleanup();
         } catch { /* the next target's clearOverlays is the backstop */ }
+      }
+      // The wizard's own capture (pass or fail) is the one moment
+      // `hasConfiguredProvider()` was allowed to say "nothing configured yet".
+      // Every target after it — in this same list — wants the rich seed, so
+      // this fires once, right here, rather than a second time up front. It
+      // goes through the live management API (see `seedRichCaptureHome()`'s
+      // doc comment in `capture-seed.ts`), not a second `config.json` write —
+      // the already-running proxy holds its config in memory from startup and
+      // never notices a file changing under it. The reload afterward is still
+      // needed too: `dashboard`'s hash is the same one `onboarding` was just
+      // shown over, so `goto()`'s hash assignment on the next target is a
+      // same-value no-op and the panel would not otherwise re-mount to pick
+      // up what the API calls just changed.
+      if (target.firstRunOnly) {
+        if (!richSeeded) {
+          await seedRichCaptureHome(`http://127.0.0.1:${PROXY_PORT}`);
+          richSeeded = true;
+        }
+        await primeProfile();
       }
     }
   } finally {
