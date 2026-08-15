@@ -157,6 +157,16 @@
   align-items: stretch;
   height: 80px;
   padding: var(--el-bottomNav-pad, 12px 8px 16px);
+  /* No gap was declared at all, so adjacent items could touch with zero
+     pixels between them at exactly-fitting widths — measured while fixing
+     the overflow bug just above: "總覽" landed flush against "Codex" with no
+     seam, in bilingual mode at phone width. Not the overflow defect (nothing
+     overlapped), just no breathing room between tracks. 4px, matching the
+     tab strip's own `.m3-tabstrip`/`.m3-tablist` gap just below, rather than
+     a density token: the audit runs at a fixed 320px, and this bar has none
+     of the width slack to spare that a comfortable-density `--sp-1` (up to
+     8px × 3 gaps = 24px) would eat into. */
+  column-gap: 4px;
   background: var(--el-bottomNav-bg, var(--m3-surface-container));
   color: var(--el-bottomNav-color, inherit);
   font-family: var(--el-bottomNav-font, inherit);
