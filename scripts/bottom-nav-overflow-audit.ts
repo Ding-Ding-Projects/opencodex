@@ -235,8 +235,11 @@ try {
     }
 
     // No two items' boxes may overlap — that is the "ran into each other with
-    // no gap" half. Grid tracks are adjacent by design (no declared gap), so
-    // touching (right === next.left) is fine; genuine overlap is not.
+    // no gap" half. `.m3-bottom-nav` now declares a small `column-gap`, so
+    // adjacent tracks should sit apart rather than touching — but the bound
+    // here is deliberately just "not overlapping" (right <= next.left),
+    // never "gap is exactly N px": a genuinely zero gap is still a pass, so
+    // this keeps working if the gap value is ever retuned.
     for (let i = 0; i < byLeft.length - 1; i++) {
       const a = byLeft[i], b = byLeft[i + 1];
       if (a.rect.right > b.rect.left + EPS) {

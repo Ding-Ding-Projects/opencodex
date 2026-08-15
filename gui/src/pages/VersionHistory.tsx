@@ -27,7 +27,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { Button, Card, Chip, Dialog, Empty, Field, TextInput } from "../shell/m3-ui";
+import { Banner, Button, Card, Chip, Dialog, Empty, Field, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
@@ -563,16 +563,15 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
         Sits above the timeline and stays visible even when local revisions render
         below it: "the git history could not be read" must never be silently
         swallowed by a list that happens to have client rows in it.
+
+        `Banner tone="error"` rather than a hand-rolled `<p>`: it was reinventing
+        the shared component's own error tone — same container/on-container
+        tokens, same `role="alert"` — one class of banner drawn two ways instead
+        of one, per the badge-drift audit that flagged this site as banner-shaped
+        duplication (out of scope for the Badge sweep itself, since this is a
+        banner, not a pill).
       */}
-      {serverFailed && (
-        <p role="alert" style={{
-          margin: "0 0 var(--sp-2)", padding: "var(--sp-2) var(--sp-3)", borderRadius: "var(--r-m)",
-          background: "var(--m3-error-container)", color: "var(--m3-on-error-container)",
-          fontSize: "var(--t-body-s)",
-        }}>
-          {t("network.historyFailed")}
-        </p>
-      )}
+      {serverFailed && <Banner tone="error">{t("network.historyFailed")}</Banner>}
 
       {!selected ? emptyState : (
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "var(--sp-3)" }}>
