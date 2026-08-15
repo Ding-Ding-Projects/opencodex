@@ -547,6 +547,194 @@ ocx recover-history --legacy-openai
 
 See the **[Configuration reference](https://opencodex.me/reference/configuration/)** for every field.
 
+## Screenshots
+
+Every capture below is a real screen from the real built dashboard — the same Material 3 desktop app
+`ocx gui` opens — taken through this project's own capture harness (`scripts/capture-shots.ts` /
+`scripts/capture-menus.ts` / `scripts/design-capture-shots.ts`) rather than mocked up or hand-edited.
+The full-page shots are at commit
+[`824f3d153`](https://github.com/lidge-jun/opencodex/commit/824f3d153), the most recent commit to
+touch `assets/shots/`, merged into `main` at the current tip
+[`df4104c22`](https://github.com/lidge-jun/opencodex/commit/df4104c22). Bilingual mode (English +
+廣東話) was on for most captures, which is why nearly every label carries both languages side by
+side — that is the shipped bilingual rendering, not a translation artifact.
+
+<details>
+<summary><b>First run, dashboard & the dim sum surprise</b></summary>
+<br/>
+
+<img src="assets/shots/onboarding.png" alt="Welcome to opencodex onboarding dialog, step 1 of 4, with the language-mode picker (English, 廣東話, English + 廣東話, and more) and a Skip setup option" width="800">
+
+<img src="assets/shots/dashboard.png" alt="Dashboard overview showing proxy status Online, version, uptime, provider and token counters, and Launch cards for Codex CLI, Claude Code, Grok CLI, and the ChatGPT/Claude/Grok desktop apps" width="800">
+
+<img src="assets/shots/dimsum.png" alt="Dashboard with the non-blocking dim sum surprise toast in the bottom-right corner reading Dim sum time!" width="800">
+
+</details>
+
+<details>
+<summary><b>Providers, models, accounts & agent integrations</b></summary>
+<br/>
+
+<img src="assets/shots/providers.png" alt="Providers page listing configured LLM providers (Anthropic Claude, OpenAI API, OpenAI Codex login) with ready/needs-attention counts and recently-used request totals" width="800">
+
+<img src="assets/shots/models.png" alt="Models page: per-provider model visibility toggles, a Shadow Call Intercept control, and a context-cap picker from 100k to 950k tokens" width="800">
+
+<img src="assets/shots/combos.png" alt="Combos page for building named model-routing aliases across providers" width="800">
+
+<img src="assets/shots/codex-auth.png" alt="Codex Auth page for managing the pooled ChatGPT/Codex accounts opencodex can route new sessions to" width="800">
+
+<img src="assets/shots/account-switcher.png" alt="App-bar Codex account switcher panel listing signed-in Codex accounts with a filter field" width="800">
+
+<img src="assets/shots/claude.png" alt="Claude page for configuring the Anthropic Messages API surface Claude Code and Claude Desktop route through" width="800">
+
+<img src="assets/shots/grok.png" alt="Grok page for configuring Grok Build's routed model access" width="800">
+
+<img src="assets/shots/subagents.png" alt="Subagents page for delegating tasks to routed or native models from Codex's subagent picker" width="800">
+
+<img src="assets/shots/api.png" alt="API page covering the local management/data-plane API surface" width="800">
+
+</details>
+
+<details>
+<summary><b>Settings, appearance & language</b></summary>
+<br/>
+
+<img src="assets/shots/settings.png" alt="Settings page listing every adjustable value in one place, with a note that each change is recorded to local history so it can be undone" width="800">
+
+<img src="assets/shots/appearance.png" alt="Appearance settings for theme, density, seed colour and font customization" width="800">
+
+<img src="assets/shots/language.png" alt="Language & voice settings: interface language mode picker, School Mode section, and per-language funny-level sliders at level 3" width="800">
+
+<img src="assets/shots/startup.png" alt="Startup page comparing the always-on service and the on-demand codex-shim autostart methods" width="800">
+
+</details>
+
+<details>
+<summary><b>Search, tabs & the regex builder</b></summary>
+<br/>
+
+<img src="assets/shots/new-tab.png" alt="New-tab picker panel listing every destination page with a Filter pages field" width="800">
+
+<img src="assets/shots/tab-menu.png" alt="Tab right-click context menu: close tab, close others, close to the right, pin tab, duplicate, close tabs containing/not containing text, edit tab appearance, new group, and move into group" width="800">
+
+<img src="assets/shots/tab-appearance.png" alt="Anchored per-tab appearance editor open beside the Dashboard tab, showing font, label colour, and background controls" width="800">
+
+<img src="assets/shots/regex.png" alt="Standalone Regex builder page with guided construction blocks for literals, character classes, anchors, groups, alternation, and quantifiers, and a live pattern field" width="800">
+
+<img src="assets/shots/regex-popover.png" alt="Anchored regex builder popover opened from a search bar's own affordance" width="800">
+
+</details>
+
+<details>
+<summary><b>Notifications & confirmations</b></summary>
+<br/>
+
+<img src="assets/shots/notifications.png" alt="Notifications page: full history with All/Errors/Warnings/Successes/Info filters and a search field" width="800">
+
+<img src="assets/shots/notification-centre.png" alt="App-bar bell popover showing the notification centre with the latest message and a View all notifications link" width="800">
+
+<img src="assets/shots/snackbar.png" alt="Language & voice settings page captured for the non-blocking snackbar/notification example" width="800">
+
+<img src="assets/shots/confirm.png" alt="Export everything destructive-action confirmation dialog warning that the download contains every API key and OAuth token in plaintext, with Cancel and Download export actions" width="800">
+
+</details>
+
+<details>
+<summary><b>Usage, cost, storage, logs & network</b></summary>
+<br/>
+
+<img src="assets/shots/usage.png" alt="Usage page: local token accounting with requests, total tokens, cache reads, coverage, active days, estimated cost, a daily-activity heatmap, and a per-model breakdown table" width="800">
+
+<img src="assets/shots/cost-meter.png" alt="App-bar cost meter expanded into its popover: cost basis (direct API key vs API-equivalent pricing) and an estimated-cost-range filter" width="800">
+
+<img src="assets/shots/storage.png" alt="Storage page: CODEX_HOME disk-use diagnostics with total size, file count, archived size, and a per-bucket breakdown table" width="800">
+
+<img src="assets/shots/logs.png" alt="Logs & Debug page for the proxy's request log and diagnostic output" width="800">
+
+<img src="assets/shots/network.png" alt="Remote access & backup (Network) page: reachable-from-other-devices toggle, custom key entry, and the full-state export action" width="800">
+
+</details>
+
+<details>
+<summary><b>Local history & the changelog viewer</b></summary>
+<br/>
+
+<img src="assets/shots/history.png" alt="Version history page: append-only local Git-backed history with an account-change/revisions filter, a date-range picker with presets, and a diff plus Restore action" width="800">
+
+<img src="assets/shots/changelog.png" alt="In-app changelog viewer listing released versions with categorized changes" width="800">
+
+</details>
+
+<details>
+<summary><b>The universal file converter, PDF tools & the Ollama suite manager</b></summary>
+<br/>
+
+<img src="assets/shots/converter.png" alt="File converter page: byte-detected source picker and a Batch queue card offering Structured data, ZIP extract, and PDF rotate-pages job kinds" width="800">
+
+<img src="assets/shots/pdf.png" alt="PDF tools page: Inspect/Split/Merge/Extract/Reorder/Rotate/Metadata operations over a real PDF path, with a recent-operations list" width="800">
+
+<img src="assets/shots/ollama.png" alt="Ollama suite manager page: local runtime health banner and a batch-pull card for queuing several model tags to download at once" width="800">
+
+<img src="assets/shots/ollama-chat.png" alt="Ollama Chat page: session list and an empty-state pick-a-session panel for streaming chat against locally installed models" width="800">
+
+</details>
+
+<details>
+<summary><b>Browser-extension download capture</b></summary>
+<br/>
+
+<img src="assets/shots/downloads.png" alt="Downloads page empty state, pointing at installing the opencodex browser extension to start capturing downloads" width="800">
+
+<img src="assets/shots/download-start-popup.png" alt="Always-on-top Start-download decision popup showing the filename, source URL, destination folder, and Cancel/Download actions" width="800">
+
+<img src="assets/shots/download-active-transfer.png" alt="Downloads page showing a real active transfer captured from the browser extension, with byte count, transfer rate, and a progress bar" width="800">
+
+<img src="assets/shots/download-complete-popup.png" alt="Always-on-top download-complete popup naming the finished file and its destination path, with a Close action" width="800">
+
+<img src="assets/shots/download-history.png" alt="Downloads page history section showing a finished transfer with its source URL and real destination path on disk" width="800">
+
+</details>
+
+<details>
+<summary><b>Remote control, mobile & the built-in terminal</b></summary>
+<br/>
+
+<img src="assets/shots/mobile.png" alt="Mobile remote-control layout at phone width: model picker, settings search, chat composer, and a bottom Dashboard/Codex Auth/Providers/Models tab bar" width="420">
+
+<img src="assets/shots/terminal.png" alt="In-app Terminal page with Shell/Codex CLI/Claude Code/Grok CLI session tabs and a command input running ocx --version" width="800">
+
+</details>
+
+<details>
+<summary><b>Menus, pickers & anchored builders</b></summary>
+<br/>
+
+<img src="assets/shots/menus/new-tab-picker.png" alt="The plus-button new-tab picker panel filtered by every destination page" width="800">
+
+<img src="assets/shots/menus/tab-context.png" alt="Tab right-click context menu with Pin tab highlighted, including Edit tab appearance and Move into group entries" width="800">
+
+<img src="assets/shots/menus/tab-appearance-editor.png" alt="Anchored per-tab appearance editor with a Lock this tab action and font/colour/background controls set to Inherits the theme" width="800">
+
+<img src="assets/shots/menus/tab-group-picker.png" alt="Move into group picker dialog offering to create a new tab group, with an empty-groups message" width="800">
+
+<img src="assets/shots/menus/tab-search.png" alt="Find a tab panel with three separate searches: tabs in this window, groups by name, and every open tab" width="800">
+
+<img src="assets/shots/menus/element-context.png" alt="Per-element right-click context menu offering Edit appearance for the filled button, its containing div, the launch grid, and the card" width="800">
+
+<img src="assets/shots/menus/element-appearance-editor.png" alt="Anchored per-element appearance editor targeting the Dashboard stat tiles, with font, label colour, background, corner-radius, and padding controls" width="800">
+
+<img src="assets/shots/menus/settings-search-regex.png" alt="Anchored regex builder popover opened from the Remote access and backup settings search bar, with flag toggles and guided-construction blocks" width="800">
+
+<img src="assets/shots/menus/cost-range.png" alt="Cost meter popover with a filterable Estimated cost range list (lifetime, 30 days, 7 days)" width="800">
+
+<img src="assets/shots/menus/account-menu.png" alt="Codex accounts switcher popover with a filter field and the active Codex App login entry" width="800">
+
+<img src="assets/shots/menus/secret-history.png" alt="Lock: Secret and display-name history wizard, step 1 of 3, choosing Password or Authenticator code (TOTP), beside the built-in authenticator's empty accounts list" width="800">
+
+<img src="assets/shots/menus/notifications.png" alt="App-bar bell popover notification centre, matching the standalone notification-centre capture" width="800">
+
+</details>
+
 ## Documentation
 
 The public docs — install, providers, routing, sidecars, Codex integration, Codex App model picker, and CLI/config reference — are built from [`docs-site/`](./docs-site) and published to **[opencodex.me](https://opencodex.me/)**.
