@@ -10,30 +10,19 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 - fix(oauth): guard `expires_in` and the computed token expiry against `NaN`, `Infinity`/overflow, and negative values across the Anthropic, ChatGPT, Kimi, and Codex-account-store OAuth refresh paths, so a malformed token response cannot stamp a credential as valid forever or already-expired (ported from upstream lidge-jun/opencodex, three-commit chain ending 355b69e5b)
 - fix(redact): mask colon-labelled credentials echoed back by upstream error bodies (`x-api-key: <value>`), close the "prefix it with Bearer" smuggling hole that exemption first opened, and recognize quoted credential keys a serialized headers object uses (`{"x-api-key":"<value>"}`) that the prior pattern list did not cover (ported, intent merged rather than transplanted, from upstream lidge-jun/opencodex's redact.ts hardening arc)
 - fix(errors): classify local Windows NTFS/ACL hardening (`icacls`) failures as 503 server errors instead of 401 authentication errors, so a local filesystem permission problem is never reported to the user as an invalid credential (ported from upstream lidge-jun/opencodex#1296)
-
-## Unreleased
-
+- fix(codex): stop the proxy from freezing solid when the dashboard's first mount fires its usual burst of `/api/*` requests, by warming every dynamically-imported module the burst reaches before the listener opens, and by throttling repeat passive WHAM usage fetches per account so a startup quota prime and the dashboard's own account poll can never both hit the network within a few seconds of each other
 - feat(auth): add a password/TOTP-protected, encrypted local history for TOTP-entry and display-name mutations
 - feat(pdf): inspect, split, merge, extract, reorder, rotate and edit metadata for local PDF files, with a bounded worker sandbox and post-write reopen validation
 - feat(cli): add `ocx pdf` as the headless counterpart to the new PDF tools page
 - docs(guides): document PDF tools, its capability disclosures and its reopen-validation contract
-
-## Unreleased
-
 - feat(gui): move a tab into a group from an anchored picker
 - docs(gui): document tab groups and the four tab searches
-
-## Unreleased
-
 Hand-written until the next release tag exists. The generator rebuilds this file
 from tags and takes each entry from a commit subject, so these lines are absorbed
 into their release section — not lost — the next time it runs.
 
 - feat(gui): show every context-menu item's keyboard shortcut from one binding registry
 - fix(test): read GUI endpoints from call sites, not documentation prose
-
-## Unreleased
-
 - feat(gui): let the user rename the app's display name
 
 ## 2.7.42 — 2026-07-28
